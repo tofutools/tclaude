@@ -2,6 +2,8 @@ package usageapi
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,8 +21,10 @@ func setupTestCache(t *testing.T) {
 	db.ResetForTest()
 }
 
-// stubFuncs replaces fetchFunc, getTokenFunc, and refreshTokenFunc for the duration of a test.
-// Pass nil for refresh to use a default that always fails (no refresh available).
+// stubFuncs replaces fetchFunc, credentialCandidatesFunc, and refreshTokenFunc
+// for the duration of a test. The token func supplies the single credential
+// source the fetch path sees. Pass nil for refresh to use a default that always
+// fails (no refresh available).
 func stubFuncs(t *testing.T, token func() (string, error), fetch func(string) (*Response, error)) {
 	t.Helper()
 	stubFuncsWithRefresh(t, token, fetch, func() (string, error) {
@@ -30,17 +34,29 @@ func stubFuncs(t *testing.T, token func() (string, error), fetch func(string) (*
 
 func stubFuncsWithRefresh(t *testing.T, token func() (string, error), fetch func(string) (*Response, error), refresh func() (string, error)) {
 	t.Helper()
+	stubCandidates(t, func() []tokenCandidate {
+		tok, err := token()
+		if err != nil || tok == "" {
+			return nil
+		}
+		return []tokenCandidate{{token: tok, store: storeFile}}
+	})
 	origFetch := fetchFunc
-	origToken := getTokenFunc
 	origRefresh := refreshTokenFunc
 	fetchFunc = fetch
-	getTokenFunc = token
 	refreshTokenFunc = refresh
 	t.Cleanup(func() {
 		fetchFunc = origFetch
-		getTokenFunc = origToken
 		refreshTokenFunc = origRefresh
 	})
+}
+
+// stubCandidates swaps the credential-source enumerator for the duration of a test.
+func stubCandidates(t *testing.T, fn func() []tokenCandidate) {
+	t.Helper()
+	prev := credentialCandidatesFunc
+	credentialCandidatesFunc = fn
+	t.Cleanup(func() { credentialCandidatesFunc = prev })
 }
 
 func okToken() (string, error) { return "test-token", nil }
@@ -351,6 +367,207 @@ func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
 	require.NotNil(t, cached.FiveHour, "expected 55%%, got %+v", cached.FiveHour)
 	require.Equal(t, 55.0, cached.FiveHour.Pct, "expected 55%%, got %+v", cached.FiveHour)
 	assert.Equal(t, int32(2), fetchCount.Load(), "expected 2 fetches")
+}
+
+func TestHasClaudeOAuth(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"valid login blob", `{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r"}}`, true},
+		{"mcpOAuth-only file (the regression)", `{"mcpOAuth":{"some-server":{"accessToken":"x"}}}`, false},
+		{"claudeAiOauth present but empty accessToken", `{"claudeAiOauth":{"accessToken":"","refreshToken":"r"}}`, false},
+		{"empty object", `{}`, false},
+		{"garbage", `not json`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasClaudeOAuth([]byte(tc.data)))
+		})
+	}
+}
+
+// redirectHome points os.UserHomeDir at a fresh temp dir on every platform
+// (HOME on Unix, USERPROFILE on Windows) and returns it.
+func redirectHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
+// writeCredFile writes body to $HOME/.claude/.credentials.json.
+func writeCredFile(t *testing.T, home, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(body), 0o600))
+}
+
+// stubOSCredentialReader swaps the OS secret-store reader for the duration of a test.
+func stubOSCredentialReader(t *testing.T, fn func() ([]byte, credentialStore)) {
+	t.Helper()
+	prev := osCredentialReader
+	osCredentialReader = fn
+	t.Cleanup(func() { osCredentialReader = prev })
+}
+
+// Both sources contribute candidates, file first: GetAccessToken returns the
+// file token (highest priority), and the keychain token is enumerated behind
+// it (so the fetch path can fall through to it).
+func TestCredentialCandidates_FilePriority(t *testing.T) {
+	home := redirectHome(t)
+	writeCredFile(t, home, `{"claudeAiOauth":{"accessToken":"file-token","refreshToken":"r"}}`)
+	stubOSCredentialReader(t, func() ([]byte, credentialStore) {
+		return []byte(`{"claudeAiOauth":{"accessToken":"keychain-token"}}`), storeMacKeychain
+	})
+
+	cands := credentialCandidates()
+	require.Len(t, cands, 2, "both file and keychain enumerated")
+	assert.Equal(t, "file-token", cands[0].token)
+	assert.Equal(t, storeFile, cands[0].store)
+	assert.Equal(t, "keychain-token", cands[1].token)
+
+	tok, err := GetAccessToken()
+	require.NoError(t, err)
+	assert.Equal(t, "file-token", tok)
+}
+
+// Identical tokens in the file and the keychain collapse to one candidate.
+func TestCredentialCandidates_DedupesIdenticalToken(t *testing.T) {
+	home := redirectHome(t)
+	writeCredFile(t, home, `{"claudeAiOauth":{"accessToken":"same-token"}}`)
+	stubOSCredentialReader(t, func() ([]byte, credentialStore) {
+		return []byte(`{"claudeAiOauth":{"accessToken":"same-token"}}`), storeMacKeychain
+	})
+
+	cands := credentialCandidates()
+	require.Len(t, cands, 1, "duplicate token de-duplicated")
+	assert.Equal(t, "same-token", cands[0].token)
+}
+
+// The regression: an mcpOAuth-only ~/.claude/.credentials.json (MCP server
+// tokens, no login token) contributes no candidate, so the keychain token is
+// the one that gets used instead of shadowing it.
+func TestCredentialCandidates_McpOnlyFileSkipped(t *testing.T) {
+	home := redirectHome(t)
+	writeCredFile(t, home, `{"mcpOAuth":{"some-server":{"accessToken":"mcp-token"}}}`)
+	stubOSCredentialReader(t, func() ([]byte, credentialStore) {
+		return []byte(`{"claudeAiOauth":{"accessToken":"keychain-token","refreshToken":"r"}}`), storeMacKeychain
+	})
+
+	cands := credentialCandidates()
+	require.Len(t, cands, 1, "mcpOAuth-only file contributes no candidate")
+	assert.Equal(t, "keychain-token", cands[0].token)
+
+	tok, err := GetAccessToken()
+	require.NoError(t, err)
+	assert.Equal(t, "keychain-token", tok, "must use the keychain login token, not the mcpOAuth file")
+}
+
+// With no credentials file at all, the OS secret store is the sole source.
+func TestCredentialCandidates_NoFile_UsesOSStore(t *testing.T) {
+	redirectHome(t) // empty home, no .credentials.json
+	stubOSCredentialReader(t, func() ([]byte, credentialStore) {
+		return []byte(`{"claudeAiOauth":{"accessToken":"keychain-token"}}`), storeMacKeychain
+	})
+
+	tok, err := GetAccessToken()
+	require.NoError(t, err)
+	assert.Equal(t, "keychain-token", tok)
+}
+
+// When neither the file nor the OS store yields a login token, the caller
+// gets the honest "no token" error rather than a silent wrong source.
+func TestCredentialCandidates_NoSources_Errors(t *testing.T) {
+	home := redirectHome(t)
+	writeCredFile(t, home, `{"mcpOAuth":{"some-server":{"accessToken":"mcp-token"}}}`)
+	stubOSCredentialReader(t, func() ([]byte, credentialStore) { return nil, "" })
+
+	require.Empty(t, credentialCandidates())
+	_, err := GetAccessToken()
+	require.Error(t, err)
+}
+
+// The core of the user's requirement: a stale-but-syntactically-valid file
+// token (rejected 401 by the API) must not trap us — the fetch path falls
+// through to the next source (the fresh keychain token) and succeeds.
+func TestFetchUsage_FallsThroughOnAuthError(t *testing.T) {
+	setupTestCache(t)
+	stubCandidates(t, func() []tokenCandidate {
+		return []tokenCandidate{
+			{token: "stale-file", store: storeFile},
+			{token: "fresh-keychain", store: storeMacKeychain},
+		}
+	})
+
+	var fetchCount atomic.Int32
+	origFetch := fetchFunc
+	fetchFunc = func(token string) (*Response, error) {
+		fetchCount.Add(1)
+		if token == "stale-file" {
+			return nil, &AuthError{Status: 401, Body: "expired"}
+		}
+		return okFetch(63.0)(token)
+	}
+	t.Cleanup(func() { fetchFunc = origFetch })
+
+	resp, err := FetchUsage()
+	require.NoError(t, err)
+	require.NotNil(t, resp.FiveHour)
+	assert.Equal(t, 63.0, resp.FiveHour.Utilization)
+	assert.Equal(t, int32(2), fetchCount.Load(), "tried the stale token, then fell through to the keychain")
+}
+
+// A 429 is NOT a per-source auth problem: it must not trigger trying the next
+// source (which is the same account and would just burn rate-limit budget).
+func TestFetchUsage_NoFallthroughOn429(t *testing.T) {
+	setupTestCache(t)
+	stubCandidates(t, func() []tokenCandidate {
+		return []tokenCandidate{
+			{token: "first", store: storeFile},
+			{token: "second", store: storeMacKeychain},
+		}
+	})
+
+	var fetchCount atomic.Int32
+	origFetch := fetchFunc
+	fetchFunc = func(token string) (*Response, error) {
+		fetchCount.Add(1)
+		return rateLimitFetch(token)
+	}
+	t.Cleanup(func() { fetchFunc = origFetch })
+
+	_, err := FetchUsage()
+	require.Error(t, err)
+	assert.Equal(t, int32(1), fetchCount.Load(), "429 stops at the first source — no per-source fallthrough")
+}
+
+// When every source's token is rejected, the last auth error is returned.
+func TestFetchUsage_AllSourcesAuthFail(t *testing.T) {
+	setupTestCache(t)
+	stubCandidates(t, func() []tokenCandidate {
+		return []tokenCandidate{
+			{token: "a", store: storeFile},
+			{token: "b", store: storeMacKeychain},
+		}
+	})
+
+	var fetchCount atomic.Int32
+	origFetch := fetchFunc
+	fetchFunc = func(token string) (*Response, error) {
+		fetchCount.Add(1)
+		return nil, &AuthError{Status: 401, Body: "nope"}
+	}
+	t.Cleanup(func() { fetchFunc = origFetch })
+
+	_, err := FetchUsage()
+	require.Error(t, err)
+	var authErr *AuthError
+	require.ErrorAs(t, err, &authErr)
+	assert.Equal(t, int32(2), fetchCount.Load(), "tried every source before giving up")
 }
 
 func TestCarryForwardWindow(t *testing.T) {

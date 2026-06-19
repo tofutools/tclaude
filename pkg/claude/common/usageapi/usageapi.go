@@ -28,11 +28,15 @@ const (
 	cacheTTL      = 5 * time.Minute
 )
 
-// fetchFunc, getTokenFunc, and refreshTokenFunc are swappable for testing.
+// fetchFunc, refreshTokenFunc, and credentialCandidatesFunc are swappable for testing.
 var (
 	fetchFunc        = Fetch
-	getTokenFunc     = GetAccessToken
 	refreshTokenFunc = RefreshAccessToken
+
+	// credentialCandidatesFunc enumerates login-token sources in priority
+	// order (file, then OS keychain/keyring) so the fetch path can fall
+	// through to the next source when one's token is rejected by the API.
+	credentialCandidatesFunc = credentialCandidates
 )
 
 // RateLimitError is returned when the API responds with HTTP 429.
@@ -42,6 +46,19 @@ type RateLimitError struct {
 
 func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("rate limited (429): %s", e.Body)
+}
+
+// AuthError is returned when the API rejects the token (HTTP 401/403). It is
+// the signal the fetch path uses to fall through to the next credential
+// source — a stale or revoked token in one store should not block a valid
+// token in another.
+type AuthError struct {
+	Status int
+	Body   string
+}
+
+func (e *AuthError) Error() string {
+	return fmt.Sprintf("token rejected (%d): %s", e.Status, e.Body)
 }
 
 // credentialStore identifies where credentials were loaded from.
@@ -164,32 +181,119 @@ func ReadCredentialsForTest() (data []byte, store string, err error) {
 	return result.data, string(result.store), nil
 }
 
+// hasClaudeOAuth reports whether a credentials blob actually carries a Claude
+// login token (claudeAiOauth.accessToken). Claude Code also writes an
+// mcpOAuth-only ~/.claude/.credentials.json holding *MCP server* OAuth tokens
+// — which is not the login credential and must not be mistaken for one. On
+// macOS the login credential lives in the keychain, so when this file exists
+// with only mcpOAuth, we must fall through to the OS secret store rather than
+// treating the file as authoritative (otherwise GetAccessToken reports
+// "no access token found in credentials"). See the usage-command regression.
+func hasClaudeOAuth(data []byte) bool {
+	return parseAccessToken(data) != ""
+}
+
+// parseAccessToken extracts claudeAiOauth.accessToken from a credentials blob,
+// or "" if the blob is unparseable or carries no login token (e.g. an
+// mcpOAuth-only file).
+func parseAccessToken(data []byte) string {
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return ""
+	}
+	return creds.ClaudeAiOauth.AccessToken
+}
+
+// tokenCandidate is one credential source's login token plus where it came
+// from (used for logging and, on refresh, where to write back).
+type tokenCandidate struct {
+	token string
+	store credentialStore
+}
+
+// credentialCandidates enumerates every credential source that carries a
+// usable login token, in priority order (file first, then the OS secret
+// store), de-duplicated by token. A source with no claudeAiOauth token (e.g.
+// the mcpOAuth-only ~/.claude/.credentials.json) is skipped — there's nothing
+// to try. Returning all sources lets the fetch path fall through to the next
+// one when the API rejects a token as unauthorized: a stale token left behind
+// in the file (after Claude Code moved the login to the keychain) no longer
+// traps us, because the keychain token is tried next.
+func credentialCandidates() []tokenCandidate {
+	var out []tokenCandidate
+	seen := map[string]bool{}
+	add := func(data []byte, store credentialStore) {
+		tok := parseAccessToken(data)
+		if tok == "" || seen[tok] {
+			return
+		}
+		seen[tok] = true
+		out = append(out, tokenCandidate{token: tok, store: store})
+	}
+
+	if path := credentialsPath(); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			add(data, storeFile)
+		}
+	}
+	if data, store := osCredentialReader(); data != nil {
+		add(data, store)
+	}
+	return out
+}
+
+// errNoCredentials is returned when no source yielded a login token.
+func errNoCredentials() error {
+	return fmt.Errorf("no Claude login token found in credentials file or OS keychain/keyring")
+}
+
+// osCredentialReader reads the Claude login credentials from the OS secret
+// store for the current platform (macOS keychain / Linux keyring) and reports
+// which store they came from. Returns nil data when unavailable or on an
+// unsupported platform. Swappable for testing.
+var osCredentialReader = readOSCredentials
+
+func readOSCredentials() ([]byte, credentialStore) {
+	switch runtime.GOOS {
+	case "darwin":
+		if data := readMacKeychain(); data != nil {
+			return data, storeMacKeychain
+		}
+	case "linux":
+		if data := readLinuxKeyring(); data != nil {
+			return data, storeLinuxKeyring
+		}
+	}
+	return nil, ""
+}
+
 // readCredentialsJSON returns the raw credentials JSON and where it was found,
-// trying the file first, then falling back to the OS keychain/keyring.
+// trying the file first, then falling back to the OS keychain/keyring. The
+// file is only accepted when it actually holds a login token — an
+// mcpOAuth-only file (see hasClaudeOAuth) is skipped so the keychain/keyring
+// fallback still runs.
 func readCredentialsJSON() (*credentialResult, error) {
-	// Try the credentials file first
+	// Try the credentials file first — but only trust it if it carries a
+	// login token; otherwise fall through to the OS secret store.
 	path := credentialsPath()
 	if path != "" {
 		if data, err := os.ReadFile(path); err == nil {
-			slog.Debug("credentials read from file", "path", path)
-			return &credentialResult{data: data, store: storeFile}, nil
+			if hasClaudeOAuth(data) {
+				slog.Debug("credentials read from file", "path", path)
+				return &credentialResult{data: data, store: storeFile}, nil
+			}
+			slog.Debug("credentials file has no claudeAiOauth token; falling back to OS secret store", "path", path)
 		}
 	}
 
-	// On macOS, fall back to the keychain
-	if runtime.GOOS == "darwin" {
-		if data := readMacKeychain(); data != nil {
-			slog.Debug("credentials read from macOS keychain")
-			return &credentialResult{data: data, store: storeMacKeychain}, nil
-		}
-	}
-
-	// On Linux, fall back to secret-tool (libsecret / GNOME Keyring)
-	if runtime.GOOS == "linux" {
-		if data := readLinuxKeyring(); data != nil {
-			slog.Debug("credentials read from Linux keyring")
-			return &credentialResult{data: data, store: storeLinuxKeyring}, nil
-		}
+	// Fall back to the OS secret store (macOS keychain / Linux keyring).
+	if data, store := osCredentialReader(); data != nil {
+		slog.Debug("credentials read from OS secret store", "store", string(store))
+		return &credentialResult{data: data, store: store}, nil
 	}
 
 	return nil, fmt.Errorf("cannot read credentials from file or keychain/keyring")
@@ -232,27 +336,16 @@ func readLinuxKeyring() []byte {
 	return nil
 }
 
-// GetAccessToken reads the OAuth access token from Claude credentials
+// GetAccessToken returns the first available login token (file, then OS
+// keychain/keyring). Callers that fetch usage should prefer FetchUsage /
+// FetchUsageRaw, which try every source and fall through on an unauthorized
+// token; GetAccessToken only exposes the highest-priority token.
 func GetAccessToken() (string, error) {
-	result, err := readCredentialsJSON()
-	if err != nil {
-		return "", err
+	cands := credentialCandidatesFunc()
+	if len(cands) == 0 {
+		return "", errNoCredentials()
 	}
-
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(result.data, &creds); err != nil {
-		return "", fmt.Errorf("cannot parse credentials: %w", err)
-	}
-
-	if creds.ClaudeAiOauth.AccessToken == "" {
-		return "", fmt.Errorf("no access token found in credentials")
-	}
-
-	return creds.ClaudeAiOauth.AccessToken, nil
+	return cands[0].token, nil
 }
 
 // RefreshAccessToken uses the refresh token to obtain a new access token,
@@ -414,11 +507,13 @@ func writeCredentials(store credentialStore, data []byte) error {
 	}
 }
 
-// FetchRawWithRetry calls the usage API. On 429 it attempts a token refresh
-// only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because
-// refreshing from tclaude invalidates Claude Code's in-memory refresh token).
-func FetchRawWithRetry(token string) ([]byte, error) {
-	body, err := FetchRaw(token)
+// FetchUsageRaw fetches the raw usage JSON, trying every credential source
+// (file, then keychain/keyring) and falling through to the next on an
+// unauthorized token, plus the opt-in 429→refresh retry. This is the
+// source-robust entry point for callers that don't already hold a token
+// (e.g. `tclaude usage --json`).
+func FetchUsageRaw() ([]byte, error) {
+	body, err := fetchRawWithSources()
 	if err == nil {
 		return body, nil
 	}
@@ -427,27 +522,54 @@ func FetchRawWithRetry(token string) ([]byte, error) {
 	if !errors.As(err, &rateLimitErr) {
 		return nil, err
 	}
-
 	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
 		return nil, err
 	}
 
-	slog.Info("FetchRawWithRetry: got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
+	slog.Info("FetchUsageRaw: got 429, attempting token refresh (TCLAUDE_DEBUG_REFRESH=1)")
 	newToken, refreshErr := refreshTokenFunc()
 	if refreshErr != nil {
-		slog.Warn("FetchRawWithRetry: token refresh failed", "error", refreshErr)
+		slog.Warn("FetchUsageRaw: token refresh failed", "error", refreshErr)
 		return nil, err
 	}
 
-	slog.Info("FetchRawWithRetry: retrying with new token")
+	slog.Info("FetchUsageRaw: retrying with new token")
 	body, retryErr := FetchRaw(newToken)
 	if retryErr != nil {
-		slog.Warn("FetchRawWithRetry: retry failed after token refresh", "error", retryErr)
+		slog.Warn("FetchUsageRaw: retry failed after token refresh", "error", retryErr)
 		return nil, retryErr
 	}
 
-	slog.Info("FetchRawWithRetry: succeeded after token refresh")
+	slog.Info("FetchUsageRaw: succeeded after token refresh")
 	return body, nil
+}
+
+// fetchRawWithSources tries each credential source's token against the usage
+// API, advancing to the next source only when the API rejects the current
+// token as unauthorized (an AuthError — stale/revoked). Rate-limit (429),
+// network, and other errors are returned as-is: switching source won't fix
+// them, and a 429 must not trigger extra API calls.
+func fetchRawWithSources() ([]byte, error) {
+	cands := credentialCandidatesFunc()
+	if len(cands) == 0 {
+		return nil, errNoCredentials()
+	}
+	var lastErr error
+	for i, c := range cands {
+		body, err := FetchRaw(c.token)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		var authErr *AuthError
+		if errors.As(err, &authErr) && i < len(cands)-1 {
+			slog.Warn("usage token rejected; trying next credential source",
+				"rejected_store", string(c.store), "next_store", string(cands[i+1].store))
+			continue
+		}
+		return nil, err
+	}
+	return nil, lastErr
 }
 
 // FetchRaw calls the Anthropic usage API and returns the raw JSON response body.
@@ -479,6 +601,11 @@ func FetchRaw(token string) ([]byte, error) {
 		return nil, &RateLimitError{Body: string(body)}
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		slog.Warn("usage API rejected token (auth)", "status", resp.StatusCode, "body", string(body))
+		return nil, &AuthError{Status: resp.StatusCode, Body: string(body)}
+	}
+
 	if resp.StatusCode != 200 {
 		slog.Warn("usage API returned non-200", "status", resp.StatusCode, "body", string(body))
 		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
@@ -488,9 +615,34 @@ func FetchRaw(token string) ([]byte, error) {
 	return body, nil
 }
 
-// FetchWithRetry calls the usage API and on 429 refreshes the token and retries once.
+// FetchUsage fetches parsed usage, trying every credential source (file, then
+// keychain/keyring) and falling through to the next on an unauthorized token,
+// plus the opt-in 429→refresh retry. Source-robust entry point for callers
+// that don't already hold a token (e.g. `tclaude usage`).
+func FetchUsage() (*Response, error) {
+	return fetchWithRateLimitRetry()
+}
+
+// FetchWithRetry calls the usage API with a single, caller-supplied token and
+// on 429 refreshes the token and retries once. It does NOT do source
+// fallback (the caller already chose the token); use FetchUsage for that.
 func FetchWithRetry(token string) (*Response, error) {
-	return fetchWithRateLimitRetry(token)
+	resp, err := fetchFunc(token)
+	if err == nil {
+		return resp, nil
+	}
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		return nil, err
+	}
+	if os.Getenv("TCLAUDE_DEBUG_REFRESH") != "1" {
+		return nil, err
+	}
+	newToken, refreshErr := refreshTokenFunc()
+	if refreshErr != nil {
+		return nil, err
+	}
+	return fetchFunc(newToken)
 }
 
 // Fetch calls the Anthropic usage API and returns the parsed response.
@@ -535,12 +687,40 @@ func stampLastAttempt(err error) {
 	saveCache(cached)
 }
 
-// fetchWithRateLimitRetry fetches usage data. On 429 it attempts a token
-// refresh only when TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default
-// because refreshing from tclaude invalidates Claude Code's in-memory
-// refresh token).
-func fetchWithRateLimitRetry(token string) (*Response, error) {
-	resp, err := fetchFunc(token)
+// fetchWithSources tries each credential source's token against the usage API,
+// advancing to the next source only when the API rejects the current token as
+// unauthorized (an AuthError — stale/revoked). Rate-limit (429), network, and
+// other errors are returned as-is: switching source won't fix them, and a 429
+// must not trigger extra API calls.
+func fetchWithSources() (*Response, error) {
+	cands := credentialCandidatesFunc()
+	if len(cands) == 0 {
+		return nil, errNoCredentials()
+	}
+	var lastErr error
+	for i, c := range cands {
+		resp, err := fetchFunc(c.token)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		var authErr *AuthError
+		if errors.As(err, &authErr) && i < len(cands)-1 {
+			slog.Warn("usage token rejected; trying next credential source",
+				"rejected_store", string(c.store), "next_store", string(cands[i+1].store))
+			continue
+		}
+		return nil, err
+	}
+	return nil, lastErr
+}
+
+// fetchWithRateLimitRetry fetches usage data across all credential sources
+// (see fetchWithSources). On 429 it attempts a token refresh only when
+// TCLAUDE_DEBUG_REFRESH=1 is set (disabled by default because refreshing from
+// tclaude invalidates Claude Code's in-memory refresh token).
+func fetchWithRateLimitRetry() (*Response, error) {
+	resp, err := fetchWithSources()
 	if err == nil {
 		return resp, nil
 	}
@@ -656,13 +836,7 @@ func RefreshCache() {
 		return // still fresh or another process claimed it
 	}
 
-	token, err := getTokenFunc()
-	if err != nil {
-		slog.Warn("RefreshCache: failed to get access token", "error", err)
-		stampLastAttempt(err)
-		return
-	}
-	resp, err := fetchWithRateLimitRetry(token)
+	resp, err := fetchWithRateLimitRetry()
 	if err != nil {
 		slog.Warn("RefreshCache: failed to fetch usage data", "error", err)
 		stampLastAttempt(err)
@@ -713,17 +887,7 @@ func GetCached() (*CachedUsage, error) {
 		return cached, nil
 	}
 
-	token, err := getTokenFunc()
-	if err != nil {
-		stampLastAttempt(err)
-		if stale := loadCacheStale(); stale != nil && !stale.FetchedAt.IsZero() {
-			return stale, fmt.Errorf("using stale cache: %w", err)
-		}
-		slog.Warn("no usage data available", "error", err)
-		return nil, err
-	}
-
-	resp, err := fetchWithRateLimitRetry(token)
+	resp, err := fetchWithRateLimitRetry()
 	if err != nil {
 		stampLastAttempt(err)
 		if stale := loadCacheStale(); stale != nil && !stale.FetchedAt.IsZero() {
