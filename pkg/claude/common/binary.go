@@ -44,15 +44,29 @@ func DetectAbsoluteArgs() []string {
 
 // DetectCmd returns the full shell command string for invoking a tclaude subcommand.
 // E.g. DetectCmd("session", "focus") → "tclaude session focus".
+//
+// Each argument is shell-quoted, so a binary path containing spaces (e.g.
+// os.Executable() resolving to "/Users/First Last/go/bin/tclaude") still emits
+// a runnable POSIX shell command. Args without shell-special characters pass
+// through unchanged, so the common case is byte-for-byte identical to a bare join.
 func DetectCmd(subcommands ...string) string {
-	args := append(DetectArgs(), subcommands...)
-	return strings.Join(args, " ")
+	return shellJoin(append(DetectArgs(), subcommands...))
 }
 
 // DetectAbsoluteCmd returns the full shell command string using absolute paths.
 // Use this when the command will be executed outside the user's normal shell
-// environment (e.g. terminal-notifier -execute).
+// environment (e.g. terminal-notifier -execute). Arguments are shell-quoted; see
+// DetectCmd for the rationale.
 func DetectAbsoluteCmd(subcommands ...string) string {
-	args := append(DetectAbsoluteArgs(), subcommands...)
-	return strings.Join(args, " ")
+	return shellJoin(append(DetectAbsoluteArgs(), subcommands...))
+}
+
+// shellJoin quotes each argument with ShellQuoteArg and joins them with spaces,
+// producing a string safe to execute via a POSIX shell.
+func shellJoin(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = ShellQuoteArg(a)
+	}
+	return strings.Join(quoted, " ")
 }
