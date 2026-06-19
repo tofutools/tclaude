@@ -237,8 +237,12 @@ func TestDashboardUsage_ShowsBothWindowsOrNeither(t *testing.T) {
 	assert.Nil(t, snap.Usage.FiveHour, "no 5h bar when nothing is live")
 	assert.Nil(t, snap.Usage.SevenDay, "no 7d bar when nothing is live")
 
-	// Case D: both windows are open but at 0% (a fresh subscription account
-	// with no usage yet) — still nothing to show.
+	// Case D: both windows are open (future resets) but at 0% — a current
+	// account that simply hasn't spent into either window yet. The data IS
+	// valid: a future reset means the period is live, so both bars render at
+	// a genuine 0% rather than collapsing to "usage: n/a". This is the
+	// operator's headline case — the statusline shows "5h 0% / 7d 0%" and the
+	// dashboard must agree, not show n/a.
 	now = time.Now()
 	seedUsageCache(t, usageapi.CachedUsage{
 		FiveHour:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(2 * time.Hour)},
@@ -247,7 +251,13 @@ func TestDashboardUsage_ShowsBothWindowsOrNeither(t *testing.T) {
 		LastAttemptAt: now,
 	})
 	snap = fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable when both windows are zero")
+	require.True(t, snap.Usage.Available, "available when both windows are live at 0%")
+	require.NotNil(t, snap.Usage.FiveHour, "5h bar present at 0%")
+	assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "5h shows a genuine 0%")
+	assert.NotEmpty(t, snap.Usage.FiveHour.Remaining, "live 0% 5h keeps its remaining-time hint")
+	require.NotNil(t, snap.Usage.SevenDay, "7d bar present at 0%")
+	assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "7d shows a genuine 0%")
+	assert.NotEmpty(t, snap.Usage.SevenDay.Remaining, "live 0% 7d keeps its remaining-time hint")
 }
 
 // seedCostSession writes one sessions row carrying a recorded API

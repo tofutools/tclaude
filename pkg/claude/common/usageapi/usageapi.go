@@ -621,21 +621,26 @@ func carryForwardWindows(fresh, prev *CachedUsage, now time.Time) {
 
 // carryForwardWindow decides which bucket to keep for a single window. A
 // fresh reading always wins. When the fresh reading omits the window, the
-// previous bucket is carried forward only while it still represents
-// nonzero usage whose window has not yet reset — i.e. the usage it
-// describes hasn't aged out. A zero, missing, or past-reset previous
-// bucket is dropped (returns nil), so the bar disappears once there's
-// genuinely been no usage within the window. For the 7d window this is
-// exactly "keep it as long as there's nonzero usage within the last 7
-// days"; the 5h window self-bounds at its own (much shorter) reset.
+// previous bucket is carried forward only while it still describes the
+// current rolling period — i.e. its reset lies in the future. A missing or
+// past-reset previous bucket is dropped (returns nil), so the bar
+// disappears once the period it described has elapsed. The percent is
+// deliberately NOT a condition: a 0% window with a future reset is real,
+// current data (the account just hasn't spent into it yet), so it is
+// carried forward and keeps its remaining-time hint rather than flickering
+// to a hintless zero-fill on the next omitting render. This mirrors the
+// dashboard read path's liveUsageWindow, which now likewise keys liveness
+// on a future reset, not a nonzero percent. For the 7d window this is "keep
+// it as long as its week hasn't reset"; the 5h window self-bounds at its
+// own (much shorter) reset.
 func carryForwardWindow(fresh, prev *CachedBucket, now time.Time) *CachedBucket {
 	if fresh != nil {
 		return fresh
 	}
-	if prev == nil || prev.Pct <= 0 {
+	if prev == nil {
 		return nil
 	}
-	if prev.ResetsAt.IsZero() || !prev.ResetsAt.After(now) {
+	if !prev.ResetsAt.After(now) {
 		return nil
 	}
 	return prev

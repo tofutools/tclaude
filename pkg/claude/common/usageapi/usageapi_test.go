@@ -357,6 +357,7 @@ func TestCarryForwardWindow(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	future := &CachedBucket{Pct: 40, ResetsAt: now.Add(3 * 24 * time.Hour)}
 	fresh := &CachedBucket{Pct: 12, ResetsAt: now.Add(2 * time.Hour)}
+	liveZero := &CachedBucket{Pct: 0, ResetsAt: now.Add(time.Hour)}
 
 	tests := []struct {
 		name       string
@@ -368,7 +369,10 @@ func TestCarryForwardWindow(t *testing.T) {
 		{"fresh wins even over nil prev", fresh, nil, fresh},
 		{"omitted + nonzero unreset prev → carried forward", nil, future, future},
 		{"omitted + nil prev → dropped", nil, nil, nil},
-		{"omitted + zero-usage prev → dropped", nil, &CachedBucket{Pct: 0, ResetsAt: now.Add(time.Hour)}, nil},
+		// A 0% window whose reset is still in the future is the current
+		// period with no spend yet — real data, carried forward so it keeps
+		// its remaining-time hint (matches the dashboard's liveUsageWindow).
+		{"omitted + live zero-usage prev → carried forward", nil, liveZero, liveZero},
 		{"omitted + past-reset prev → dropped", nil, &CachedBucket{Pct: 40, ResetsAt: now.Add(-time.Minute)}, nil},
 		{"omitted + no-reset prev → dropped", nil, &CachedBucket{Pct: 40}, nil},
 	}
