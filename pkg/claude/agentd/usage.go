@@ -133,18 +133,24 @@ func collectUsageSnapshot() dashboardUsage {
 }
 
 // liveUsageWindow returns the wire shape for a cached bucket only while it
-// still represents live usage: present, nonzero, and not past its own
-// reset. An absent, zero, or already-reset bucket returns nil — the caller
-// then renders it as a 0% bar (see pairUsageWindows), so e.g. a 5h window
-// whose 5 hours have elapsed reads as 0 rather than a stale percentage.
-// The reset check here also makes the 2-second snapshot self-correct the
-// instant a window resets, ahead of the 3-minute usage poll that drops it
-// from the cache.
+// still represents the current rolling period: present, and with a reset
+// that lies in the future. A future reset is what makes a window "live" —
+// a window the account simply hasn't spent into yet reads as a genuine 0%
+// rather than disappearing, so a quiet-but-current account shows "0%"
+// instead of "n/a" (the bug this gate caused when both windows were idle).
+// An absent bucket, or one whose reset has already elapsed (or carries no
+// reset at all), returns nil — the caller then renders it as a 0% bar (see
+// pairUsageWindows), so e.g. a 5h window whose 5 hours have elapsed reads
+// as 0 rather than its now-stale percentage. Keying liveness on the reset
+// (not on a nonzero percent) is also what self-corrects that just-reset
+// window the instant it resets, ahead of the 3-minute usage poll that
+// drops it from the cache; in practice every nonzero reading carries a
+// future reset, so the two only diverge for exactly that stale case.
 func liveUsageWindow(b *usageapi.CachedBucket, now time.Time) *usageWindow {
-	if b == nil || b.Pct <= 0 {
+	if b == nil {
 		return nil
 	}
-	if b.ResetsAt.IsZero() || !b.ResetsAt.After(now) {
+	if !b.ResetsAt.After(now) {
 		return nil
 	}
 	return usageWindowFor(b)
