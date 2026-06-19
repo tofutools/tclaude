@@ -91,12 +91,11 @@ func groupsLsCmd() *cobra.Command {
 }
 
 type groupSummary struct {
-	Name         string `json:"name"`
-	Descr        string `json:"descr,omitempty"`
-	Members      int    `json:"members"`
-	Online       int    `json:"online"`
+	Name           string `json:"name"`
+	Descr          string `json:"descr,omitempty"`
+	Members        int    `json:"members"`
+	Online         int    `json:"online"`
 	MaxMembers     int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
-	DefaultModel   string `json:"default_model,omitempty"`   // legacy default model (JOH-210: vestigial, no longer read at spawn)
 	DefaultProfile string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
 	Archived       bool   `json:"archived,omitempty"`
 	NotifyMuted    bool   `json:"notify_muted,omitempty"` // OS notifications switched off for this group's agents

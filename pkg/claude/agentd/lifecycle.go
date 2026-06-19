@@ -888,8 +888,8 @@ type spawnParams struct {
 	Effort string
 	// Model is the validated Claude model alias to forward to the new
 	// session's `tclaude session new --model`. "" falls back to the
-	// group's default_model inside executeSpawn; if that is unset too,
-	// the flag is omitted entirely.
+	// group's default spawn profile inside executeSpawn (applyDefaultProfile);
+	// if that is unset too, the flag is omitted entirely.
 	Model string
 	// Harness is the resolved harness name to launch ("" or "claude" =
 	// Claude Code, the default; "codex" = Codex CLI). It forwards to

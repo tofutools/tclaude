@@ -16,7 +16,6 @@ type AgentGroup struct {
 	Descr          string
 	DefaultCwd     string // pre-filled cwd for agents spawned into this group; "" = none
 	DefaultContext string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
-	DefaultModel   string // DEPRECATED (JOH-210 inc2): no longer read at spawn — replaced by DefaultProfile. Column kept vestigial for export back-compat; dropped in a follow-up.
 	DefaultProfile string // name of the spawn profile whose launch fields fill blank spawn fields server-side (JOH-210); "" = none
 	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
@@ -377,23 +376,6 @@ func SetAgentGroupDefaultContext(name, context string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// SetAgentGroupDefaultModel sets (or, with model == "", clears) the
-// default Claude model for agents spawned into the named group. The
-// caller validates the value via common.ValidateModel before it gets
-// here. Returns the number of rows affected — 0 means no group by
-// that name, so the caller can answer 404.
-func SetAgentGroupDefaultModel(name, model string) (int64, error) {
-	db, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	res, err := db.Exec(`UPDATE agent_groups SET default_model = ? WHERE name = ?`, model, name)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
 // SetAgentGroupDefaultProfile sets (or, with profile == "", clears) the
 // name of the spawn profile whose launch fields fill blank spawn fields
 // for agents spawned into the named group (JOH-210). The caller validates
@@ -494,7 +476,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -509,7 +491,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_model, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -523,7 +505,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_model, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +554,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_model, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -914,7 +896,7 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.conv_id = ?
@@ -971,7 +953,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_model, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
@@ -1939,7 +1921,7 @@ type rowScanner interface {
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultModel, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &createdAt, &archivedAt); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
 	g.CreatedAt = parseTimeOrZero(createdAt)

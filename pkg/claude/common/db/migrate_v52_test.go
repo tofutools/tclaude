@@ -50,42 +50,9 @@ func TestMigrateV51toV52_AddsDefaultModel(t *testing.T) {
 	assert.Equal(t, "", model, "pre-existing groups read back as unset")
 }
 
-// TestMigrateV51toV52_FreshSchemaRoundTrips builds a fresh DB through
-// the full migrate() chain and round-trips a group default model
-// through the production setter + getter. The literal currentVersion
-// pin moved forward into the v53 test (migrate_v53_test.go).
-func TestMigrateV51toV52_FreshSchemaRoundTrips(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-
-	_, err = CreateAgentGroup("g", "")
-	require.NoError(t, err, "CreateAgentGroup")
-
-	n, err := SetAgentGroupDefaultModel("g", "sonnet")
-	require.NoError(t, err, "SetAgentGroupDefaultModel")
-	require.EqualValues(t, 1, n, "one row updated")
-
-	g, err := GetAgentGroupByName("g")
-	require.NoError(t, err, "GetAgentGroupByName")
-	require.NotNil(t, g)
-	assert.Equal(t, "sonnet", g.DefaultModel, "default model round-trips")
-
-	// Clearing: "" stores and reads back as unset.
-	n, err = SetAgentGroupDefaultModel("g", "")
-	require.NoError(t, err, "clear default model")
-	require.EqualValues(t, 1, n)
-	g, err = GetAgentGroupByName("g")
-	require.NoError(t, err)
-	require.NotNil(t, g)
-	assert.Equal(t, "", g.DefaultModel, "cleared default reads back unset")
-
-	// Unknown group: 0 rows so the HTTP layer can 404.
-	n, err = SetAgentGroupDefaultModel("nope", "opus")
-	require.NoError(t, err)
-	assert.EqualValues(t, 0, n, "unknown group affects 0 rows")
-}
+// NOTE: the v52 default_model column is dropped at head by migrateV62toV63
+// (JOH-220) — Spawn Profiles (default_profile) superseded it. The former
+// fresh-schema round-trip test (production setter/getter for default_model)
+// was retired with the column and its setter; the migration itself is still
+// covered above on a raw v51 seed, and the column's removal is covered by the
+// v63 migration test.
