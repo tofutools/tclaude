@@ -327,6 +327,34 @@ func CreateAgentGroup(name, descr string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// CreateAgentGroupFrom inserts a new group named `name` that carries
+// every configurable setting from `src` — descr, default cwd / context
+// / profile, the max-members cap and the notify switch. created_at is
+// stamped fresh and the new group comes up active (archived_at left
+// zero) regardless of src's archived state, so cloning an archived
+// group yields a live one. Returns the new group's ID.
+//
+// This is the full-fidelity sibling of CreateAgentGroup (which sets only
+// name + descr): group-clone needs every column copied, not just descr,
+// so a cloned group is configured identically to its source.
+func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`
+		INSERT INTO agent_groups
+			(name, descr, default_cwd, default_context, default_profile,
+			 max_members, notify_enabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile,
+		src.MaxMembers, src.NotifyEnabled, time.Now().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
 // SetAgentGroupDescr sets (or, with descr == "", clears) the group's
 // own one-line description — the text shown next to the group name on
 // the dashboard, distinct from any per-member descr. Returns the

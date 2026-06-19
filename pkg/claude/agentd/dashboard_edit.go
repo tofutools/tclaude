@@ -428,6 +428,7 @@ func looksLikeConvID(s string) bool {
 //	POST   /api/groups/import/inspect           → dry-run analyse an uploaded .zip (preview)
 //	DELETE /api/groups/{name}                   → delete group
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
+//	POST   /api/groups/{name}/clone             → clone the group (body: {new_name?, no_clone_members?})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
 //	GET    /api/groups/{name}/export            → download the group as a .zip archive
 //	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
@@ -469,6 +470,13 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("PATCH /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupUpdate(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/clone", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		// asDashboardHumanPeer so the shared, permission-checked
+		// handleGroupClone sees the cookie-authed dashboard caller as a
+		// human — same wiring as the export/rename routes. Body:
+		// {new_name?, no_clone_members?}.
+		handleGroupClone(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))

@@ -37,6 +37,13 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	var body struct {
 		NewName    string `json:"new_name,omitempty"`
 		NoCopyConv bool   `json:"no_copy_conv,omitempty"`
+		// NoCloneMembers skips the per-member clone loop entirely: the new
+		// group is created with every source setting + the source owners,
+		// but no member agents. The "clone the group config, not the
+		// workers" mode. Owners still copy (group governance is a setting,
+		// not a worker agent). Default false = clone members (the original
+		// behaviour).
+		NoCloneMembers bool `json:"no_clone_members,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -74,10 +81,17 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		return
 	}
 
+	// Clone EVERY configurable setting onto the new group — default cwd,
+	// startup context, default profile, max-members cap and the notify
+	// switch — not just the description. A clone is meant to come up
+	// configured identically to its source.
+	//
 	// normalizeGroupDescr again on the cloned-over descr: the source
 	// value was stored before this fold existed, so re-applying it
 	// keeps the one-line header invariant on the clone too.
-	newGroupID, err := db.CreateAgentGroup(newName, normalizeGroupDescr(src.Descr))
+	srcSettings := *src
+	srcSettings.Descr = normalizeGroupDescr(src.Descr)
+	newGroupID, err := db.CreateAgentGroupFrom(newName, srcSettings)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"create new group: "+err.Error())
@@ -101,7 +115,15 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	}
 	results := make([]memberResult, 0, len(srcMembers))
 
-	for _, m := range srcMembers {
+	// "Without agents" mode skips the per-member clone loop — the new
+	// group keeps the source settings + owners (copied below) but gets no
+	// member agents. results stays an empty slice, surfacing as 0 members
+	// in the response.
+	membersToClone := srcMembers
+	if body.NoCloneMembers {
+		membersToClone = nil
+	}
+	for _, m := range membersToClone {
 		// Source member must be alive — cloneSpawnOnce reads the cwd
 		// from a live tmux session. Surface a clear "skipped — offline"
 		// status instead of failing the whole group clone.

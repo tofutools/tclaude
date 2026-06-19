@@ -88,7 +88,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	// templates are literals in the embedded source.
 	for _, act := range []string{
 		"add-member", "cron-new", "message-new", "rename-group",
-		"export-group", "cleanup-group", "window-modal-group",
+		"clone-group", "export-group", "cleanup-group", "window-modal-group",
 		"delete-group", "term", "clone", "reincarnate", "edit-member",
 		"grant-owner", "revoke-owner", "perm-edit", "sudo-grant",
 		"remove-member", "delete-agent",
