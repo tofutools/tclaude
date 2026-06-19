@@ -31,13 +31,8 @@ func Cmd() *cobra.Command {
 }
 
 func runUsage(params *Params) error {
-	token, err := usageapi.GetAccessToken()
-	if err != nil {
-		return err
-	}
-
 	if params.JSON {
-		raw, err := usageapi.FetchRawWithRetry(token)
+		raw, err := usageapi.FetchUsageRaw()
 		if err != nil {
 			return err
 		}
@@ -45,7 +40,7 @@ func runUsage(params *Params) error {
 		return nil
 	}
 
-	resp, err := usageapi.FetchWithRetry(token)
+	resp, err := usageapi.FetchUsage()
 	if err != nil {
 		return err
 	}
