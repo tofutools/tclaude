@@ -65,10 +65,13 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	}
 
 	// --- the group row ---
+	// default_model is intentionally NOT selected: the vestigial column was
+	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
+	// stays "" and is left out of the manifest (omitempty).
 	if err := d.QueryRow(`
-		SELECT descr, default_context, default_model, max_members, created_at, archived_at
+		SELECT descr, default_context, max_members, created_at, archived_at
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
-		&exp.Group.Descr, &exp.Group.DefaultContext, &exp.Group.DefaultModel,
+		&exp.Group.Descr, &exp.Group.DefaultContext,
 		&exp.Group.MaxMembers, &exp.Group.CreatedAt, &exp.Group.ArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
 	}
@@ -587,17 +590,58 @@ func (c *importCtx) run() error {
 
 func (c *importCtx) group() error {
 	g := c.exp.Group
+	// default_model is not inserted: the vestigial column was dropped
+	// (JOH-220). A pre-v2 archive that still carried one is handled by
+	// legacyDefaultModelProfile below, which synthesizes a default spawn
+	// profile from it rather than resurrecting the column.
 	res, err := c.tx.Exec(`
 		INSERT INTO agent_groups
-			(name, descr, default_cwd, default_context, default_model, max_members, created_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			(name, descr, default_cwd, default_context, max_members, created_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		c.plan.TargetName, g.Descr, c.plan.TargetCwd, g.DefaultContext,
-		g.DefaultModel, g.MaxMembers, g.CreatedAt, g.ArchivedAt)
+		g.MaxMembers, g.CreatedAt, g.ArchivedAt)
 	if err != nil {
 		return fmt.Errorf("import: create group: %w", err)
 	}
 	if c.newGroupID, err = res.LastInsertId(); err != nil {
 		return fmt.Errorf("import: group id: %w", err)
+	}
+	return c.legacyDefaultModelProfile()
+}
+
+// legacyDefaultModelProfile preserves the spawn default of a PRE-v2
+// (format v1) archive. Such an archive carries the retired per-group
+// default_model (JOH-220); the current schema has no column for it, so the
+// importer turns a non-empty value into a synthesized claude spawn profile
+// — mirroring the v62 forward migration — and points the freshly imported
+// group's default_profile at it, so the older export's effective spawn
+// default does not silently regress. A v2 export leaves DefaultModel "",
+// making this a no-op. The synthesized profile name is deduped against
+// existing profiles, so a re-import (or a name already taken by a real
+// profile) takes a numeric suffix instead of colliding.
+func (c *importCtx) legacyDefaultModelProfile() error {
+	model := strings.TrimSpace(c.exp.Group.DefaultModel)
+	if model == "" {
+		return nil
+	}
+	name, err := uniqueSpawnProfileName(c.tx, "group-default-"+c.plan.TargetName)
+	if err != nil {
+		return fmt.Errorf("import: pick legacy default-model profile name: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// harness 'claude': a legacy default_model passed the Claude-only model
+	// gate by construction. Only name/harness/model are set; every other
+	// field takes its column default.
+	if _, err := c.tx.Exec(
+		`INSERT INTO spawn_profiles (name, harness, model, created_at, updated_at)
+		 VALUES (?, 'claude', ?, ?, ?)`,
+		name, model, now, now); err != nil {
+		return fmt.Errorf("import: synthesize legacy default-model profile: %w", err)
+	}
+	if _, err := c.tx.Exec(
+		`UPDATE agent_groups SET default_profile = ? WHERE id = ?`,
+		name, c.newGroupID); err != nil {
+		return fmt.Errorf("import: point group at legacy default-model profile: %w", err)
 	}
 	return nil
 }

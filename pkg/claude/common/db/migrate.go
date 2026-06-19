@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 62
+const currentVersion = 63
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -403,6 +403,64 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 63 {
+		if err := migrateV62toV63(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV62toV63 drops agent_groups.default_model — the Claude-only
+// per-group spawn model (v52). JOH-210 inc2 replaced it with the
+// harness-correct default_profile (v62) and stopped reading it at spawn,
+// keeping the column vestigial only so the versioned group export/import
+// format could round-trip it unchanged. With the export format bumped to
+// drop it (groupexport.FormatVersion 2) and the import path synthesizing a
+// default profile from any legacy default_model carried by an old archive,
+// nothing reads or writes the column any more, so it is dropped to keep the
+// schema honest (JOH-220).
+//
+// Guarded behind a pragma_table_info probe (the migrateV59toV60 / v56→v57
+// convention): SQLite has no DROP COLUMN IF EXISTS, and a re-run (or a DB
+// that somehow never had the column) must converge rather than wedge on
+// "no such column". Tolerates a DB with no agent_groups table at all (a
+// minimally-seeded migration-heal DB). Rides one transaction with the
+// version bump.
+func migrateV62toV63(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v62→v63 (drop agent_groups.default_model): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v62→v63 (drop default_model): probe agent_groups: %w", err)
+	}
+	if haveTable > 0 {
+		var haveCol int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'default_model'`,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v62→v63 (drop default_model): probe column: %w", err)
+		}
+		if haveCol > 0 {
+			if _, err := tx.Exec(`ALTER TABLE agent_groups DROP COLUMN default_model`); err != nil {
+				return fmt.Errorf("migrate v62→v63 (drop default_model): drop column: %w", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 63`); err != nil {
+		return fmt.Errorf("migrate v62→v63 (drop default_model): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v62→v63 (drop default_model): commit: %w", err)
+	}
 	return nil
 }
 

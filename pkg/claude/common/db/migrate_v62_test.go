@@ -165,9 +165,8 @@ func TestMigrateV61toV62_HealsHalfAppliedRun(t *testing.T) {
 }
 
 // TestMigrateV61toV62_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts agent_groups carries the default_profile column. v62 is
-// head, so this is where the literal currentVersion pin lives — the tripwire
-// the next migration's author moves forward into their own v63 test.
+// chain and asserts agent_groups carries the default_profile column. (The
+// literal currentVersion tripwire moved forward to the v63 test.)
 func TestMigrateV61toV62_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -176,9 +175,6 @@ func TestMigrateV61toV62_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v61 test —
-	// the next migration's author moves it into their own v63 test.
-	require.Equal(t, 62, currentVersion, "currentVersion is 62")
 
 	var haveCol int
 	require.NoError(t, d.QueryRow(

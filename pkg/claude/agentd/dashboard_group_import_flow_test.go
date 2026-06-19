@@ -192,7 +192,7 @@ func TestDashboardGroupImport_InspectReportsCollisionsWithoutWriting(t *testing.
 	assert.Equal(t, "team", ins.SourceGroup)
 	assert.Equal(t, "team", ins.TargetName)
 	assert.Equal(t, 2, ins.AgentCount)
-	assert.Equal(t, 1, ins.FormatVersion)
+	assert.Equal(t, 2, ins.FormatVersion) // v2: default_model dropped (JOH-220)
 	assert.NotEmpty(t, ins.SourceOS, "the manifest records the source OS")
 	assert.True(t, ins.TargetNameValid)
 	assert.True(t, ins.GroupNameTaken, "the exported name 'team' already exists locally")

@@ -21,7 +21,14 @@ package groupexport
 // than mishandled (see container.go). Bump this on any breaking change
 // to the Export shape; the export format is meant to live in source
 // control, so forward-incompatible changes must be detectable.
-const FormatVersion = 1
+//
+// v2 (JOH-220) drops the vestigial Group.default_model field: Spawn
+// Profiles (agent_groups.default_profile) replaced the per-group spawn
+// model, so a v2 export no longer carries default_model. A v1 archive that
+// still does imports fine — the importer reads its legacy default_model and
+// synthesizes a default spawn profile from it (see db.ImportGroup), so the
+// older export's effective spawn default does not silently regress.
+const FormatVersion = 2
 
 // Export is the complete, format-agnostic, in-memory representation of
 // one per-group export.
@@ -82,9 +89,14 @@ type Export struct {
 type Group struct {
 	Descr          string `json:"descr"`
 	DefaultContext string `json:"default_context"`
-	// DefaultModel is portable (a model alias / ID, not a path), so —
-	// unlike default_cwd — it survives export/import. Absent in
-	// pre-default_model archives, which decodes to "" (unset).
+	// DefaultModel is LEGACY / import-only (JOH-220). The vestigial
+	// per-group default_model column was dropped, so a current (v2) export
+	// never writes this field — CollectGroupExport leaves it "" and
+	// omitempty keeps it out of the manifest. It survives on the struct
+	// solely to decode a pre-v2 (v1) archive that still carries it: on
+	// import a non-empty value is turned into a synthesized default spawn
+	// profile (see db.ImportGroup) so the older export's spawn default does
+	// not regress. Decodes to "" (unset) for any v2 archive.
 	DefaultModel string `json:"default_model,omitempty"`
 	MaxMembers   int    `json:"max_members"`
 	CreatedAt    string `json:"created_at"`

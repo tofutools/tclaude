@@ -47,19 +47,31 @@ function groupDefaultCwd(groupName) {
 
 // updateSpawnModelDefaultLabel rewrites the Model dropdown's "Default"
 // option so it names the model an omitted pick actually resolves to —
-// instead of an opaque "Default". It shows a migrated group's legacy
-// default_model when present; otherwise the daemon fills blank launch
-// fields from the group's default spawn profile (JOH-210) at spawn, and
-// claude itself falls back to the user-level settings.json model. (Full
-// profile-aware prefill is a coming update.) Called on modal open and
-// whenever the group <select> changes.
-function updateSpawnModelDefaultLabel(groupName) {
+// instead of an opaque "Default". The group's spawn-model default now comes
+// from its default spawn profile (JOH-210; the per-group default_model was
+// retired in JOH-220), so it resolves the group's default profile and reads
+// its model; failing that, the daemon falls back to the user-level
+// settings.json model, then to claude's own default. Async because the
+// profile lookup may fetch — fire-and-forget; the label updates when it
+// settles. Called on modal open and whenever the group <select> changes.
+async function updateSpawnModelDefaultLabel(groupName) {
   const opt = $('#agent-spawn-model').querySelector('option[value=""]');
   if (!opt) return;
-  const groups = (lastSnapshot && lastSnapshot.groups) || [];
-  const g = groups.find(x => x.name === groupName);
-  const groupModel = (g && g.default_model) || '';
   const userModel = (lastSnapshot && lastSnapshot.user_default_model) || '';
+  // Resolve the group's default profile to its model. Only a claude-harness
+  // profile's model belongs in this (claude) Model dropdown's label — a
+  // codex profile's model isn't a value this control offers.
+  let groupModel = '';
+  const profileName = groupDefaultProfileName(groupName);
+  if (profileName) {
+    try {
+      const p = await getProfile(profileName);
+      if (p && p.model && (!p.harness || p.harness === 'claude')) groupModel = p.model;
+    } catch (_) { /* lookup failed — fall through to user/claude default */ }
+    // The await yielded; bail if the group selection moved on under us.
+    const sel = $('#agent-spawn-group');
+    if (sel && sel.value !== groupName) return;
+  }
   if (groupModel) {
     opt.textContent = `Default (${groupModel} — group default)`;
   } else if (userModel) {

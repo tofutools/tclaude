@@ -2024,13 +2024,10 @@ type groupSummary struct {
 	// MaxMembers is the group's hard member cap (agent_groups.max_members);
 	// 0 = unlimited. A spawn that would exceed it is refused.
 	MaxMembers int `json:"max_members,omitempty"`
-	// DefaultModel is the group's legacy default model (JOH-210: vestigial,
-	// no longer read at spawn — see DefaultProfile). Still surfaced so the
-	// dashboard's read-only model badge keeps showing a migrated group's
-	// former default; "" = none.
-	DefaultModel string `json:"default_model,omitempty"`
 	// DefaultProfile is the name of the spawn profile whose launch fields fill
-	// blank spawn fields for this group's agents (JOH-210); "" = none.
+	// blank spawn fields for this group's agents (JOH-210); "" = none. It is
+	// the spawn default's single source — the vestigial per-group
+	// default_model was dropped (JOH-220).
 	DefaultProfile string `json:"default_profile,omitempty"`
 	Archived       bool   `json:"archived,omitempty"`
 	// NotifyMuted flags a group whose OS notifications are switched
@@ -2112,12 +2109,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			out = append(out, groupSummary{
-				Name:         g.Name,
-				Descr:        g.Descr,
-				Members:      len(members),
-				Online:       online,
+				Name:           g.Name,
+				Descr:          g.Descr,
+				Members:        len(members),
+				Online:         online,
 				MaxMembers:     g.MaxMembers,
-				DefaultModel:   g.DefaultModel,
 				DefaultProfile: g.DefaultProfile,
 				Archived:       g.IsArchived(),
 				NotifyMuted:    !g.NotifyEnabled,
