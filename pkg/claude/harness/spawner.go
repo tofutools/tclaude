@@ -16,6 +16,26 @@ type SpawnSpec struct {
 	// fresh session. The flag/sub-command form is harness-specific
 	// (`claude --resume <id>` vs `codex resume <id>`).
 	ResumeID string
+	// SessionID is a caller-chosen conversation id for a FRESH launch,
+	// realised as `claude --session-id <uuid>` — it makes the conv-id known
+	// to tclaude *before* the harness starts, so the daemon can enroll the
+	// agent (group membership + inbox briefing) and bake the rename + welcome
+	// into the launch command rather than injecting them over tmux afterwards
+	// (see Harness.SupportsLaunchEnrollment). "" mints the harness's own id at
+	// launch (the historical behavior). Mutually exclusive with ResumeID: a
+	// resume continues an existing conversation whose id is already known, so
+	// the Spawner emits --session-id only on a fresh launch. Harnesses that
+	// cannot accept a preset conv-id (Codex generates its own at first turn)
+	// ignore it. Must be a valid UUID when set.
+	SessionID string
+	// Name is a display name applied at launch, realised as `claude --name
+	// <name>` — Claude Code writes it into the conversation's `.jsonl` as a
+	// `custom-title` turn (byte-identical to what its `/rename` slash command
+	// writes), so tclaude's conv-index picks it up as the title with no
+	// post-launch `/rename` injection. "" omits the flag. Harnesses with no
+	// launch-name flag (Codex renames out of band) ignore it. The value flows
+	// into the launch command, so the Spawner shell-quotes it.
+	Name string
 	// Effort is a validated, normalized reasoning-effort token, or "" to
 	// omit the flag entirely. Validate via ModelCatalog.ValidateEffort
 	// before building the spec.

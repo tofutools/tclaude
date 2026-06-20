@@ -14,6 +14,8 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -1153,7 +1155,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
 
-	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+	spawnArgs := clcommon.SpawnArgs{
 		Label:      label,
 		Cwd:        p.Cwd,
 		Effort:     p.Effort,
@@ -1163,7 +1165,55 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Approval:   p.ApprovalPolicy,
 		AutoReview: p.AutoReview,
 		TrustDir:   p.TrustDir,
-	}); err != nil {
+	}
+
+	// Launch-enrollment path (Claude Code, unless reverted via config): the
+	// conv-id can be PRESET, so enroll the agent and bake its rename + welcome
+	// into the launch command — no post-connect tmux injection, no conv-id
+	// poll-wait. We generate the conv-id, enroll (group membership + inbox
+	// briefing) BEFORE the fork (the welcome must reference the briefing's
+	// message id), and forward the id/name/welcome as launch args. Harnesses
+	// that can't preset a conv-id (Codex) keep the inject-after-connect flow.
+	//
+	// Resolve (not Get) so a blank p.Harness normalises to the Claude Code
+	// default — callers like the template instantiator and the pending-spawn
+	// sweeper leave Harness unset, and those CC spawns must take the same
+	// launch-enrollment path as the HTTP spawn endpoint. Resolve also tolerates
+	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
+	// so a bad harness degrades to the legacy path rather than panicking.
+	spawnHarness, _ := harness.Resolve(p.Harness)
+	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	var preConvID string
+	var preMsgID int64
+	if launchEnroll {
+		preConvID = convops.GenerateUUID()
+		mid, fail := enrollSpawnedConv(g, p, preConvID)
+		if fail != nil {
+			return nil, fail
+		}
+		preMsgID = mid
+		spawnArgs.SessionID = preConvID
+		// Match the legacy path's title gate: a name that isn't a valid rename
+		// title is not applied as the launch --name (claude records it as the
+		// conversation title), but it is still kept as the pending name (set by
+		// enrollSpawnedConv) so the dashboard shows the intended name.
+		if p.Name != "" && isValidRenameTitle(p.Name) {
+			spawnArgs.Name = p.Name
+		} else if p.Name != "" {
+			slog.Warn("spawn: name not a valid rename title; skipping launch --name",
+				"conv", preConvID, "name", p.Name)
+		}
+		spawnArgs.InitialPrompt = buildSpawnWelcome(p.Name, p.Role, p.Descr, g.Name,
+			preMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
+			resolveSpawnerTitle(p.SpawnedByConv))
+	}
+
+	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+		if launchEnroll {
+			// The enrollment ran before the fork; roll it back so a failed
+			// launch doesn't strand a group member + orphan briefing.
+			rollbackSpawnEnrollment(g, preConvID, preMsgID)
+		}
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -1209,13 +1259,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	//
 	// The harness is resolved once; an empty/unknown --harness yields a nil
 	// descriptor and discoverSpawnedConvID no-ops, leaving CC on the hook.
+	//
+	// On the launch-enrollment path the forked `session new --session-id`
+	// stamps the row's conv-id (= preConvID) the moment it writes the session
+	// row — so this poll resolves to the preset id on its first iteration,
+	// without waiting on the hook. It still polls (rather than skipping
+	// straight through) so it confirms the pane actually came up and fires
+	// auto-focus, and so a genuine launch failure is caught below.
 	launchedAt := time.Now()
 	pollBudget := timeout
 	if p.Async && asyncSpawnInlineGrace < pollBudget {
 		pollBudget = asyncSpawnInlineGrace
 	}
 	deadline := launchedAt.Add(pollBudget)
-	spawnHarness, _ := harness.Get(p.Harness)
 	var convID, tmuxSession string
 	var lastDiscoveryScan time.Time
 	for time.Now().Before(deadline) {
@@ -1232,8 +1288,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		// Fallback for a lazy-hook harness: once a pane exists but no hook has
 		// reported a conv-id within the grace, ask the harness conv store.
-		// Throttled so the tree-walking scan doesn't run every 250ms.
-		if tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
+		// Throttled so the tree-walking scan doesn't run every 250ms. Skipped on
+		// the launch-enrollment path: that conv-id was preset (preConvID), so
+		// the scan could only ever rediscover it — or, worse, pick a sibling
+		// .jsonl in a busy shared cwd.
+		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
 			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt); id != "" {
@@ -1248,9 +1307,32 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	// Conv-id resolved within the poll: finish enrollment inline and return a
-	// fully-spawned agent — the CC and seeded-Codex common case, unchanged by
-	// the non-blocking refactor.
+	// Launch-enrollment path: the conv-id was PRESET, the enrollment
+	// (membership + inbox briefing) ran before the fork, and the rename +
+	// welcome are baked into the launch command — so the spawn has already
+	// succeeded as far as the daemon is concerned, whether or not the poll
+	// confirmed the session row in time. Return the preset id (NOT the polled
+	// convID, which the loop may have left empty on a slow fork). The poll
+	// above fired focus when the pane came up; fire once more in case the row
+	// landed late. We deliberately do NOT roll back on a slow/missing row: the
+	// pane is most likely just coming up, and rolling back would strand a live,
+	// named, greeted, group-less pane whose welcome points at a deleted inbox
+	// message. A genuinely failed launch (Start error) was already caught and
+	// rolled back above; a pane that dies at startup leaves an offline member
+	// the operator can retire, exactly like any agent that crashes on boot.
+	if launchEnroll {
+		focusSpawn()
+		if preMsgID > 0 {
+			if err := db.MarkAgentMessageDelivered(preMsgID); err != nil {
+				slog.Warn("spawn: failed to mark startup context delivered",
+					"conv", preConvID, "msg_id", preMsgID, "error", err)
+			}
+		}
+		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label}, nil
+	}
+
+	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
+	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 			return nil, fail
@@ -1318,6 +1400,46 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 // its startup gates and took its first turn. That preserves JOH-205's
 // no-send-keys-before-connection property through the non-blocking refactor.
 func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spawnFailure {
+	spawnContextMsgID, fail := enrollSpawnedConv(g, p, convID)
+	if fail != nil {
+		return fail
+	}
+
+	// Post-spawn injection: rename the new pane to the agent's name and
+	// drop a [system: ...] welcome describing the agent's identity. It
+	// also materialises the .jsonl (CC only writes the file once it has
+	// content), so `agent resume` has something to resume. Runs in a
+	// goroutine so the caller returns promptly; the goroutine waits for
+	// the pane to come alive before injecting.
+	goBackground(func() {
+		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
+			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
+			p.SpawnedByConv)
+	})
+
+	return nil
+}
+
+// enrollSpawnedConv performs the DB-only enrollment for a spawned conv: add it
+// to the group, record its pending display name, and drop its startup briefing
+// (group context + task brief) into its inbox as a single "Startup context"
+// agent_messages row. It returns that message's id (0 when there was no
+// briefing) so the caller can reference it in the welcome and mark it delivered
+// once the welcome lands.
+//
+// It is the shared enrollment step of both spawn paths:
+//   - the legacy inject-after-connect path (finishSpawnEnrollment) calls it
+//     once the conv-id is polled, then injects the rename + welcome over tmux;
+//   - the launch-enrollment path calls it BEFORE the fork — the welcome baked
+//     into the launch command must reference this briefing's message id — and
+//     forwards the rename + welcome as launch args.
+//
+// Only the membership write is fatal — the agent cannot join without it; the
+// pending name + inbox insert are best-effort and only log, since the agent is
+// already (about to be) spawned and grouped. The pending name is stored even
+// when it isn't a valid rename title, so the dashboard can show the intended
+// name during the brief window before the title materialises.
+func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *spawnFailure) {
 	// Membership add. Permission gating already happened in the caller;
 	// this is just the DB write.
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
@@ -1326,21 +1448,15 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 		Role:    p.Role,
 		Descr:   p.Descr,
 	}); err != nil {
-		return &spawnFailure{http.StatusInternalServerError, "io",
+		return 0, &spawnFailure{http.StatusInternalServerError, "io",
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
-	// Record the requested name as the agent's pending display name. The
-	// /rename injection in runSpawnPostInit only lands a couple seconds
-	// later, and until it does the conversation has no custom title — so
-	// without this the dashboard would show "(unknown)" for that whole
-	// window. agent.FreshTitle reads pending_name as a fallback; a real
-	// /rename supersedes it. AddAgentGroupMember just enrolled the conv,
-	// so this UPDATE has a row to hit. Best-effort: a failed write only
-	// costs the "(unknown)" window — the pre-feature behaviour — so it is
-	// logged, never bubbled. Stored even when the name is not a valid
-	// rename title (the /rename is then skipped): the dashboard can still
-	// show the intended name.
+	// Record the requested name as the agent's pending display name. Until
+	// the title materialises (a tick later on the legacy path; at launch on
+	// the launch-enrollment path) the dashboard would otherwise show
+	// "(unknown)". agent.FreshTitle reads pending_name as a fallback; the
+	// real custom title supersedes it.
 	if name := strings.TrimSpace(p.Name); name != "" {
 		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
 			slog.Warn("spawn: failed to record pending name",
@@ -1355,8 +1471,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// large briefing bracketed-pasted into CC's input box risks
 	// overflowing its input-size limit, and the inbox keeps newlines
 	// verbatim regardless. The welcome line points the agent at the
-	// message; runSpawnPostInit marks it delivered once the welcome
-	// lands.
+	// message; the spawn path marks it delivered once the welcome lands.
 	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
@@ -1378,20 +1493,47 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 			spawnContextMsgID = mid
 		}
 	}
+	return spawnContextMsgID, nil
+}
 
-	// Post-spawn injection: rename the new pane to the agent's name and
-	// drop a [system: ...] welcome describing the agent's identity. It
-	// also materialises the .jsonl (CC only writes the file once it has
-	// content), so `agent resume` has something to resume. Runs in a
-	// goroutine so the caller returns promptly; the goroutine waits for
-	// the pane to come alive before injecting.
-	goBackground(func() {
-		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
-			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
-			p.SpawnedByConv)
-	})
+// rollbackSpawnEnrollment undoes enrollSpawnedConv when a launch-enrollment
+// spawn's fork itself fails to start (the `tclaude session new` subprocess
+// never even launches — e.g. the binary is missing from PATH). The enrollment
+// ran before the fork (the welcome had to reference the briefing's message id),
+// so without this the failed spawn would strand a group member + orphan
+// briefing for a conv-id that will never exist. It is NOT called on a slow/
+// missing conv-id poll: there the pane is most likely coming up, so the spawn
+// is returned as a success against the preset id rather than rolled back (see
+// the launch-enrollment branch in executeSpawn). Both removals are best-effort
+// — a failure here only leaves a harmless orphan the operator can clear from
+// the dashboard — so they log rather than bubble. The pending-name row is keyed
+// by a conv-id that now never materialises, so it is never read again and is
+// left in place.
+func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
+	if msgID > 0 {
+		if _, err := db.DeleteAgentMessageByID(msgID, convID); err != nil {
+			slog.Warn("spawn: rollback failed to delete orphan briefing",
+				"conv", convID, "msg_id", msgID, "error", err)
+		}
+	}
+	if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
+		slog.Warn("spawn: rollback failed to remove group member",
+			"conv", convID, "group", g.Name, "error", err)
+	}
+}
 
-	return nil
+// spawnUsesLegacyInjection reports whether the operator has reverted the
+// Claude Code spawn flow to the legacy inject-after-connect path via
+// config.Agent.SpawnLegacyInjection. The default (no config / false) uses the
+// faster launch-enrollment path. A config read error falls back to the default
+// (false) so a malformed config never silently disables the new path without a
+// log; config.Load already logs parse failures.
+func spawnUsesLegacyInjection() bool {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil || cfg.Agent == nil || cfg.Agent.SpawnLegacyInjection == nil {
+		return false
+	}
+	return *cfg.Agent.SpawnLegacyInjection
 }
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
@@ -1701,6 +1843,15 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
+	// Launch-enrollment fields (set only on the launch-args spawn path, CC):
+	// the preset conv-id, display name, and welcome ride in as launch flags so
+	// `claude` is named + greeted at startup with no post-connect injection.
+	if a.SessionID != "" {
+		args = append(args, "--session-id", a.SessionID)
+	}
+	if a.Name != "" {
+		args = append(args, "--name", a.Name)
+	}
 	if a.Effort != "" {
 		args = append(args, "--effort", a.Effort)
 	}
@@ -1712,7 +1863,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	args = appendTrustDirFlag(args, a.TrustDir)
-	args = appendInitialPromptFlag(args, a.Harness)
+	args = appendInitialPromptArg(args, a)
 	return args
 }
 
@@ -1778,6 +1929,18 @@ func appendInitialPromptFlag(args []string, h string) []string {
 		args = append(args, "--initial-prompt", codexSpawnSeedPrompt)
 	}
 	return args
+}
+
+// appendInitialPromptArg forwards the first-turn launch prompt. When the
+// caller supplied one explicitly (the launch-enrollment path, where it is the
+// agent's welcome turn), it rides through verbatim. Otherwise it falls back to
+// the harness's default seed (Codex's conv-id seed; nothing for Claude Code on
+// the legacy injection path, where the welcome is sent over tmux instead).
+func appendInitialPromptArg(args []string, a clcommon.SpawnArgs) []string {
+	if a.InitialPrompt != "" {
+		return append(args, "--initial-prompt", a.InitialPrompt)
+	}
+	return appendInitialPromptFlag(args, a.Harness)
 }
 
 // appendSandboxArgs adds the launch-containment flag(s) to a `tclaude session

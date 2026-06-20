@@ -234,11 +234,10 @@ func TestSpawnCLI_WorktreeRepoMonorepoRidesAlong(t *testing.T) {
 	assert.Equal(t, resolveSym(t, monorepo), resolveSym(t, rows[0].Cwd),
 		"agent should launch in the monorepo (cwd), not the worktree")
 
-	// The welcome injected into the new pane names the worktree path +
+	// The welcome (delivered as the launch prompt) names the worktree path +
 	// branch so the agent edits code in the right place.
-	target := resp.TmuxSession + ":0.0"
-	f.AssertSentContains(target, wantWorktree, 5*time.Second)
-	f.AssertSentContains(target, "feat-y", 5*time.Second)
+	f.AssertSpawnInitialPrompt(resp.ConvID, wantWorktree, 5*time.Second)
+	f.AssertSpawnInitialPrompt(resp.ConvID, "feat-y", 5*time.Second)
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker

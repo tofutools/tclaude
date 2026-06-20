@@ -47,11 +47,10 @@ func TestSpawn_SubdirWorktree_LaunchesInMonorepoTellsWorktree(t *testing.T) {
 	assert.Equal(t, monorepo, s.Cwd,
 		"agent should launch in the monorepo (cwd), not the worktree")
 
-	// The welcome message injected into the new pane names the
-	// worktree path + branch so the agent edits code in the right
-	// place. /rename lands first; the welcome follows ~2.5s later.
-	f.AssertSentContains(spawn.TmuxTarget(), worktreeDir, 5*time.Second)
-	f.AssertSentContains(spawn.TmuxTarget(), "feature-x", 5*time.Second)
+	// The welcome (delivered as the launch prompt) names the worktree
+	// path + branch so the agent edits code in the right place.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, worktreeDir, 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "feature-x", 5*time.Second)
 }
 
 // Scenario: an invalid worktree_path (a typo, a stale dir) is caught
@@ -86,11 +85,10 @@ func TestSpawn_SubdirWorktree_OmittedLeavesWelcomeClean(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
-	// Wait for the welcome itself to land (it carries this marker),
-	// then confirm it said nothing about a worktree.
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 5*time.Second)
-	for _, sent := range f.World.Tmux.Sent() {
-		assert.NotContainsf(t, sent.Text, "git worktree for code changes",
-			"a worktree-free spawn must not mention a worktree; got %q", sent.Text)
-	}
+	// Wait for the welcome itself (it carries this marker), then confirm
+	// it said nothing about a worktree.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 5*time.Second)
+	prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID)
+	assert.NotContainsf(t, prompt, "git worktree for code changes",
+		"a worktree-free spawn must not mention a worktree; got %q", prompt)
 }

@@ -115,12 +115,38 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		return s.spawnNewCodex(args)
 	}
 	label := args.Label
-	cc := NewCCSim(s.t, s.w.HomeDir, args.Cwd)
+	// The launch-enrollment spawn path presets the conv-id (claude
+	// --session-id); honor it so the sim's .jsonl + SessionRow use the id the
+	// daemon already enrolled against. An empty SessionID keeps the historical
+	// behaviour of minting a fresh id (a human `session new`, or the legacy
+	// inject-after-connect path where the conv-id comes from the hook).
+	var cc *CCSim
+	if args.SessionID != "" {
+		cc = NewCCSimWithID(s.t, s.w.HomeDir, args.SessionID, args.Cwd)
+	} else {
+		cc = NewCCSim(s.t, s.w.HomeDir, args.Cwd)
+	}
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
 	cc.SessionID = label
 	if err := cc.Start(); err != nil {
 		return err
+	}
+	// Launch-arg rename + welcome (the launch-enrollment path): real `claude
+	// --name` writes a custom-title turn at startup — byte-identical to its
+	// /rename — and the positional [prompt] lands as the first user turn.
+	// Mirror both so the production read paths (conv_index title resolution;
+	// the agent's first turn) see what a launch-enrolled CC would have
+	// written, with NO tmux send-keys. Empty on the legacy / human path.
+	if args.Name != "" {
+		if err := cc.WriteCustomTitle(args.Name); err != nil {
+			return err
+		}
+	}
+	if args.InitialPrompt != "" {
+		if err := cc.WriteUserTurn(args.InitialPrompt); err != nil {
+			return err
+		}
 	}
 	// Capture the effort, model and sandbox the spawn path threaded
 	// through, keyed by the new conv-id, so a flow test can assert them —
@@ -131,18 +157,28 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(cc.ConvID, args.Approval)
 	s.w.RecordSpawnAutoReview(cc.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
+	s.w.RecordSpawnName(cc.ConvID, args.Name)
+	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
 	// can't derive the project dir.
-	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: label,
-		ConvID:      cc.ConvID,
-		Cwd:         cc.Cwd,
-		Status:      "running",
-	}); err != nil {
-		return err
+	//
+	// SkipSpawnRow models a forked `tclaude session new` whose SessionRow write
+	// lags past the daemon's conv-id poll: the pane (CCSim + .jsonl + tmux
+	// registration) still exists, but the row the daemon polls for never lands
+	// in time. The pane is still registered so it behaves like a real
+	// slow-to-record launch, not a dead one.
+	if !s.w.SkipSpawnRow {
+		if err := db.SaveSession(&db.SessionRow{
+			ID:          label,
+			TmuxSession: label,
+			ConvID:      cc.ConvID,
+			Cwd:         cc.Cwd,
+			Status:      "running",
+		}); err != nil {
+			return err
+		}
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
@@ -842,6 +878,51 @@ func (f *Flow) AssertSentContains(target, contains string, timeout time.Duration
 	if !f.World.Tmux.WaitForSendKeys(target, contains, timeout) {
 		f.T.Fatalf("expected send-keys to %s containing %q within %s; got %+v",
 			target, contains, timeout, f.World.Tmux.Sent())
+	}
+}
+
+// AssertSpawnInitialPrompt asserts the launch-enrollment spawn path delivered
+// the agent's welcome as a launch arg (`claude <prompt>`) whose text contains
+// `contains` — the surface that replaces the legacy tmux welcome injection.
+// Polls briefly because the spawn records it as the simSpawner runs.
+func (f *Flow) AssertSpawnInitialPrompt(convID, contains string, timeout time.Duration) {
+	f.T.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		if p, ok := f.World.SpawnInitialPrompt(convID); ok {
+			last = p
+			if strings.Contains(p, contains) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			f.T.Fatalf("expected launch prompt for %s containing %q within %s; got %q",
+				convID, contains, timeout, last)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// AssertSpawnName asserts the launch-enrollment spawn path applied `want` as
+// the agent's launch display name (`claude --name`) — the surface that
+// replaces the legacy `/rename` injection.
+func (f *Flow) AssertSpawnName(convID, want string, timeout time.Duration) {
+	f.T.Helper()
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		if n, ok := f.World.SpawnName(convID); ok {
+			last = n
+			if n == want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			f.T.Fatalf("expected launch --name for %s = %q within %s; got %q",
+				convID, want, timeout, last)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

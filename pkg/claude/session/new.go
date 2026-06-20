@@ -103,7 +103,7 @@ type NewParams struct {
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
 	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (shorthand for agent spawn + foreground attach)"`
-	Name      string `long:"name" optional:"true" help:"Name for the new agent in --join-group (e.g. 'reviewer'); becomes its conversation title"`
+	Name      string `long:"name" optional:"true" help:"Display name for the session (claude --name; becomes its conversation title). With --join-group it is the new agent's name"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
 	Descr     string `long:"descr" optional:"true" help:"Description of the new member's purpose in --join-group"`
 
@@ -115,7 +115,15 @@ type NewParams struct {
 	// (JOH-205); a direct human `session new` leaves it empty and types
 	// their own first message. Ignored by a harness that reports its conv-id
 	// at launch (Claude Code) and on a --resume. See codexSpawner.BuildCommand.
-	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (Codex needs this to materialise its conv-id; Claude Code ignores it). Daemon spawns set it automatically"`
+	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
+
+	// SessionID pins the conversation id for a FRESH Claude Code launch
+	// (`claude --session-id <uuid>`), so the conv-id is known before the pane
+	// starts. The daemon's launch-enrollment spawn path sets it so the agent
+	// can be enrolled + named via launch args instead of post-connect tmux
+	// injection. A direct human launch may set it to choose a specific id.
+	// Mutually exclusive with --resume; Claude-Code-only; must be a valid UUID.
+	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code session (claude --session-id). Mutually exclusive with --resume"`
 }
 
 func NewCmd() *cobra.Command {
@@ -220,6 +228,24 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.Model = model
+
+	// --session-id pins a fresh conversation id for Claude Code
+	// (`claude --session-id`). It is mutually exclusive with --resume (a
+	// resume already has an id) and only the default harness accepts a preset
+	// conv-id — Codex generates its own at first turn. Validate the shape here
+	// so a malformed id fails cleanly rather than at `claude` launch.
+	params.SessionID = strings.TrimSpace(params.SessionID)
+	if params.SessionID != "" {
+		if params.Resume != "" {
+			return fmt.Errorf("--session-id cannot be combined with --resume")
+		}
+		if h.Name != harness.DefaultName {
+			return fmt.Errorf("--session-id is only supported for the %q harness", harness.DefaultName)
+		}
+		if !clcommon.IsValidUUID(params.SessionID) {
+			return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
+		}
+	}
 
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
 	// `tclaude session new` is the human's own session, and the human is the
@@ -475,9 +501,21 @@ func runNew(params *NewParams) error {
 		}
 	}
 
+	// A preset --session-id makes the conv-id known before launch (fresh CC
+	// only). Stamp it on the session row now — the SessionStart hook reports
+	// the same id — so the daemon's launch-enrollment path sees the conv-id
+	// immediately rather than polling for the hook. A resume already resolved
+	// fullConvID above; an unset id leaves the row's conv-id for the hook.
+	rowConvID := fullConvID
+	if params.SessionID != "" && fullConvID == "" {
+		rowConvID = params.SessionID
+	}
+
 	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports:        envExports,
 		ResumeID:          fullConvID,
+		SessionID:         params.SessionID,
+		Name:              params.Name,
 		Effort:            effort,
 		Model:             model,
 		ExtraArgs:         extraArgs,
@@ -533,7 +571,7 @@ func runNew(params *NewParams) error {
 		TmuxSession: tmuxSession,
 		PID:         pid,
 		Cwd:         cwd,
-		ConvID:      fullConvID,
+		ConvID:      rowConvID,
 		Status:      StatusIdle,
 		Harness:     h.Name,
 		// Record the resolved launch sandbox descriptor so the dashboard can

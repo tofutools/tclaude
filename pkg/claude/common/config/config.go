@@ -316,6 +316,17 @@ type AgentConfig struct {
 	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
 	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
+
+	// SpawnLegacyInjection reverts the daemon's Claude Code spawn flow to the
+	// legacy path: launch a bare `claude`, poll for its conv-id, then inject
+	// `/rename <name>` and the welcome turn over tmux with delays. The default
+	// (absent / false) uses the faster launch-enrollment path — `claude
+	// --session-id --name <prompt>` — which names + greets the agent at launch
+	// with no post-connect tmux injection. Set it true to fall back if the
+	// launch-arg path ever misbehaves. No effect on harnesses that don't
+	// support launch enrollment (Codex always uses the inject-after-connect
+	// flow). See agentd.spawnUsesLegacyInjection.
+	SpawnLegacyInjection *bool `json:"spawn_legacy_injection,omitempty"`
 }
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

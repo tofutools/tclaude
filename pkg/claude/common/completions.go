@@ -223,6 +223,29 @@ func ShouldRunClaudeDirect(extraArgs []string) bool {
 	return false
 }
 
+// IsValidUUID reports whether s is a canonical 8-4-4-4-12 hex UUID
+// (case-insensitive). Used to validate a caller-supplied `--session-id`
+// before it reaches `claude --session-id`, which requires a valid UUID.
+func IsValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			if !isHex {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // ShellQuoteArg quotes a single argument for safe inclusion in a sh -c command string.
 func ShellQuoteArg(s string) string {
 	if !strings.ContainsAny(s, " \t\n\"'\\$`|&;<>(){}*?[]#~!") {

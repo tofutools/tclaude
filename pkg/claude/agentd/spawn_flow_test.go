@@ -12,11 +12,10 @@ import (
 // Action: the human asks the daemon to spawn a worker into "alpha".
 //
 // Expected:
-//   - The daemon launches a fresh CC session and registers it in
-//     the group.
-//   - Shortly after the response returns, a background goroutine
-//     types `/rename worker` into the new pane so the agent shows
-//     up under that name.
+//   - The daemon launches a fresh CC session (with a preset conv-id) and
+//     registers it in the group.
+//   - The agent is named via a launch arg (`claude --name worker`) — no
+//     post-connect `/rename` is injected over tmux.
 //   - When the worker later goes offline (CC crashed, human closed
 //     the pane), `tclaude agent resume` brings it back via a fresh
 //     subprocess — it does NOT silently report success against the
@@ -28,17 +27,19 @@ func TestSpawn_RenamesAndResumes(t *testing.T) {
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
-	// /rename lands ~2.5s after spawn returns (waitForConvAlive
-	// poll + readyDelay + two paste-mode pauses); 5s gives slack.
-	f.AssertSentContains(spawn.TmuxTarget(), "/rename worker", 5*time.Second)
+	// The name rides in as the launch display name, not a tmux injection.
+	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
 
-	// What the human would see at the contact surface after the
-	// rename settles: `tclaude agent groups members alpha` lists the
-	// new conv with title "worker". Pinning at this surface catches
-	// the bug class where the daemon's send-keys returns success but
-	// the rename never actually lands as a renderable title (CC
-	// dropped it, paste-mode swallowed Enter, etc.).
+	// What the human would see at the contact surface: `tclaude agent groups
+	// members alpha` lists the new conv with title "worker". `claude --name`
+	// writes a custom-title turn just like /rename, so the conv-index resolves
+	// the title from the .jsonl exactly as before.
 	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
+
+	// The launch-enrollment path injects NOTHING over tmux — the whole point.
+	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
+		t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
+	}
 
 	f.MarkOffline(spawn.TmuxSession)
 	resume := f.AsHuman().Resume(spawn.ConvID)
@@ -48,7 +49,7 @@ func TestSpawn_RenamesAndResumes(t *testing.T) {
 // Scenario: `tclaude agent spawn alpha --name reviewer`.
 //
 // The agent has exactly one name — its conversation title. The spawn
-// `--name` becomes that title via the post-spawn /rename injection;
+// `--name` becomes that title via the launch-arg rename (`claude --name`);
 // there is no separate per-group alias. This pins the two guarantees
 // the human cares about:
 //   - the new agent's title (its single name) IS the spawned name, as
@@ -63,8 +64,8 @@ func TestSpawn_NameBecomesTitleResolvableBySelector(t *testing.T) {
 
 	spawn := f.AsHuman().Spawn("alpha", "reviewer")
 
-	// The post-spawn injection renames the pane to the given name.
-	f.AssertSentContains(spawn.TmuxTarget(), "/rename reviewer", 5*time.Second)
+	// The name is applied at launch (`claude --name reviewer`), not injected.
+	f.AssertSpawnName(spawn.ConvID, "reviewer", 5*time.Second)
 
 	// The name surfaces as the agent's title on the members view.
 	f.AssertGroupMember("alpha", spawn.ConvID, "reviewer", 5*time.Second)

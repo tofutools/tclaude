@@ -124,6 +124,60 @@ func TestClaudeModels_Delegation(t *testing.T) {
 	}
 }
 
+// TestClaudeSpawner_LaunchEnrollment covers the launch-enrollment flags the
+// daemon's efficient spawn path relies on: a preset conv-id (--session-id), a
+// launch display name (--name), and a positional first-turn prompt. Each is a
+// fresh-launch-only flag, and each is shell-quoted because it reaches `sh -c`.
+func TestClaudeSpawner_LaunchEnrollment(t *testing.T) {
+	spec := SpawnSpec{
+		SessionID:     "2567b392-357b-4d6c-9a59-74fd23424cda",
+		Name:          "worker bee",
+		InitialPrompt: "[system: spawned by the human; read inbox #7]",
+	}
+	got := claudeSpawner{}.BuildCommand(spec)
+
+	if !strings.Contains(got, "--session-id 2567b392-357b-4d6c-9a59-74fd23424cda") {
+		t.Fatalf("expected --session-id, got %q", got)
+	}
+	// The name has a space, so it must be quoted.
+	if !strings.Contains(got, `--name 'worker bee'`) {
+		t.Fatalf("expected quoted --name, got %q", got)
+	}
+	// The welcome carries shell metacharacters ([], #, ;), so the whole
+	// positional prompt must arrive as one quoted arg at the end.
+	if !strings.Contains(got, `'[system: spawned by the human; read inbox #7]'`) {
+		t.Fatalf("expected quoted positional prompt, got %q", got)
+	}
+
+	// On a --resume the preset id + positional prompt are omitted (the
+	// conversation already has an id and history); --name still applies.
+	r := claudeSpawner{}.BuildCommand(SpawnSpec{
+		ResumeID:      "conv-9",
+		SessionID:     "2567b392-357b-4d6c-9a59-74fd23424cda",
+		Name:          "worker",
+		InitialPrompt: "hello",
+	})
+	if strings.Contains(r, "--session-id") {
+		t.Fatalf("a resume must not emit --session-id, got %q", r)
+	}
+	if strings.Contains(r, "hello") {
+		t.Fatalf("a resume must not emit a positional prompt, got %q", r)
+	}
+	if !strings.Contains(r, "--resume conv-9") || !strings.Contains(r, "--name worker") {
+		t.Fatalf("resume must keep --resume and --name, got %q", r)
+	}
+
+	// The default (claude) harness advertises the capability; an unset spec
+	// emits none of the flags.
+	if !Default().SupportsLaunchEnrollment() {
+		t.Fatalf("claude must support launch enrollment")
+	}
+	bare := claudeSpawner{}.BuildCommand(SpawnSpec{})
+	if strings.Contains(bare, "--session-id") || strings.Contains(bare, "--name") {
+		t.Fatalf("an empty spec must omit launch-enrollment flags, got %q", bare)
+	}
+}
+
 // TestClaudeLifecycle_Tokens pins the CC slash-command tokens so the
 // capability flags report supported and the injection call sites keep
 // typing the exact commands CC understands.

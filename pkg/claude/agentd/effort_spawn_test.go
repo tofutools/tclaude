@@ -35,6 +35,36 @@ func TestSessionNewArgs_CodexGetsInitialPromptSeed(t *testing.T) {
 	}
 }
 
+// TestSessionNewArgs_LaunchEnrollment covers the launch-enrollment fields the
+// daemon's efficient CC spawn path forwards: a preset conv-id (--session-id), a
+// launch display name (--name), and an explicit first-turn prompt
+// (--initial-prompt, the welcome). An explicit InitialPrompt overrides the
+// Codex seed fallback; an unset trio omits all three.
+func TestSessionNewArgs_LaunchEnrollment(t *testing.T) {
+	args := sessionNewArgs(clcommon.SpawnArgs{
+		Label:         "lbl",
+		Cwd:           "/tmp/x",
+		SessionID:     "2567b392-357b-4d6c-9a59-74fd23424cda",
+		Name:          "worker",
+		InitialPrompt: "[system: welcome]",
+	})
+	if i := slices.Index(args, "--session-id"); i < 0 || i+1 >= len(args) || args[i+1] != "2567b392-357b-4d6c-9a59-74fd23424cda" {
+		t.Fatalf("must append --session-id, got %v", args)
+	}
+	if i := slices.Index(args, "--name"); i < 0 || i+1 >= len(args) || args[i+1] != "worker" {
+		t.Fatalf("must append --name worker, got %v", args)
+	}
+	if i := slices.Index(args, "--initial-prompt"); i < 0 || i+1 >= len(args) || args[i+1] != "[system: welcome]" {
+		t.Fatalf("explicit InitialPrompt must ride through verbatim, got %v", args)
+	}
+
+	// Unset trio → none of the three flags (the historical CC argv).
+	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"})
+	if slices.Contains(bare, "--session-id") || slices.Contains(bare, "--name") || slices.Contains(bare, "--initial-prompt") {
+		t.Fatalf("an unset launch-enrollment trio must omit all three flags, got %v", bare)
+	}
+}
+
 // TestSessionNewArgs_EffortIncludedWhenSet verifies an explicit level is
 // passed through as `--effort <level>` to the forked session.
 func TestSessionNewArgs_EffortIncludedWhenSet(t *testing.T) {
