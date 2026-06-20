@@ -128,3 +128,27 @@ func TestBuildEnvExports_EmptyAdditional(t *testing.T) {
 	// Should still export current environment (minus skipped vars)
 	assert.NotEmpty(t, result, "BuildEnvExports() with empty map should still export current environment")
 }
+
+func TestIsValidUUID(t *testing.T) {
+	valid := []string{
+		"2567b392-357b-4d6c-9a59-74fd23424cda",
+		"00000000-0000-0000-0000-000000000000",
+		"ABCDEF12-3456-7890-ABCD-EF1234567890", // upper-case hex accepted
+	}
+	for _, s := range valid {
+		assert.Truef(t, IsValidUUID(s), "expected %q to be a valid UUID", s)
+	}
+
+	invalid := []string{
+		"",
+		"not-a-uuid",
+		"2567b392357b4d6c9a5974fd23424cda",      // no hyphens
+		"2567b392-357b-4d6c-9a59-74fd23424cd",   // too short
+		"2567b392-357b-4d6c-9a59-74fd23424cda0", // too long
+		"2567b392_357b_4d6c_9a59_74fd23424cda",  // wrong separators
+		"gggggggg-357b-4d6c-9a59-74fd23424cda",  // non-hex
+	}
+	for _, s := range invalid {
+		assert.Falsef(t, IsValidUUID(s), "expected %q to be rejected", s)
+	}
+}

@@ -31,6 +31,28 @@ type SpawnArgs struct {
 	// ConvID is the conversation to relaunch (SpawnResume). Unused by SpawnNew.
 	ConvID string
 
+	// SessionID is a caller-chosen conversation id for a fresh spawn (SpawnNew),
+	// forwarded as `tclaude session new --session-id <uuid>` so Claude Code uses
+	// it (`claude --session-id`) and tclaude knows the conv-id before the pane
+	// starts. The daemon sets it on the launch-enrollment path so the agent is
+	// enrolled and named via launch args instead of post-connect tmux injection.
+	// "" mints the harness's own id at launch. A valid UUID when set; mutually
+	// exclusive with ConvID (a resume already knows its id). Unused by SpawnResume.
+	SessionID string
+
+	// Name is the display name for a fresh spawn (SpawnNew), forwarded as
+	// `tclaude session new --name <name>` so Claude Code applies it at launch
+	// (`claude --name`, recorded as a custom-title turn). "" omits it. Unused by
+	// SpawnResume.
+	Name string
+
+	// InitialPrompt is the first-turn prompt the launched harness submits to
+	// itself, forwarded as `tclaude session new --initial-prompt <text>` →
+	// the harness's positional [prompt]. On the launch-enrollment path it
+	// carries the agent's welcome turn so it need not be injected over tmux.
+	// "" omits it. Fresh-spawn only (SpawnNew); a resume takes no launch prompt.
+	InitialPrompt string
+
 	// Cwd is the working directory to launch in; "" omits -C.
 	Cwd string
 

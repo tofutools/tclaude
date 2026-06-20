@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,21 +44,21 @@ func TestSpawn_AgentSpawner_KickoffAttributesSpawner(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
 
 	spawn := f.AsAgent(poConv).Spawn("alpha", "worker")
-	target := spawn.TmuxTarget()
 
-	// The post-spawn injection renames the pane, then drops the welcome.
-	// The welcome's opening clause must name the PO, not the human.
-	f.AssertSentContains(target, "/rename worker", 5*time.Second)
-	f.AssertSentContains(target, "spawned by tclaude-PO", 5*time.Second)
+	// The worker is named via launch arg, and its welcome rides in as the
+	// launch prompt. The welcome's opening clause must name the PO, not the
+	// human.
+	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by tclaude-PO", 5*time.Second)
 
-	// Airtight: with an agent spawner, the misattributing phrase must
-	// appear in NO keystroke sent to the new pane.
-	for _, sk := range f.World.Tmux.Sent() {
-		if sk.Target != target {
-			continue
-		}
-		assert.NotContains(t, sk.Text, "spawned by the human",
-			"an agent-spawned agent must not be told the human spawned it")
+	// Airtight: with an agent spawner, the misattributing phrase must appear
+	// nowhere — not in the launch prompt, and the launch-enrollment path sends
+	// no keystrokes at all.
+	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); strings.Contains(prompt, "spawned by the human") {
+		t.Fatalf("an agent-spawned agent must not be told the human spawned it; got %q", prompt)
+	}
+	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
+		t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
 	}
 }
 
@@ -72,10 +73,9 @@ func TestSpawn_HumanSpawner_KickoffAttributesHuman(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
-	target := spawn.TmuxTarget()
 
-	f.AssertSentContains(target, "/rename worker", 5*time.Second)
-	f.AssertSentContains(target, "spawned by the human", 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 5*time.Second)
 }
 
 // Scenario: an agent spawns a worker, but the spawner's conv-id has no
@@ -97,15 +97,10 @@ func TestSpawn_AgentSpawner_UnresolvableName_StillNotHuman(t *testing.T) {
 
 	spawn := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equal(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-	target := spawn.TmuxTarget()
 
-	f.AssertSentContains(target, "spawned by another agent", 5*time.Second)
-	for _, sk := range f.World.Tmux.Sent() {
-		if sk.Target != target {
-			continue
-		}
-		assert.NotContains(t, sk.Text, "spawned by the human",
-			"an agent-spawned agent must not be told the human spawned it")
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 5*time.Second)
+	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); strings.Contains(prompt, "spawned by the human") {
+		t.Fatalf("an agent-spawned agent must not be told the human spawned it; got %q", prompt)
 	}
 }
 
@@ -114,14 +109,13 @@ func TestSpawn_AgentSpawner_UnresolvableName_StillNotHuman(t *testing.T) {
 // Claude Code's own /rename never charset-checks a title (only the
 // daemon's /rename endpoint does), and FreshTitle also falls back to a
 // free-form summary / first prompt — so the daemon must not trust the
-// resolved string. The welcome is injected with tmux send-keys, where
-// a raw newline lands as a premature submit, which would split the
-// [system: ...] welcome and run whatever followed as its own command.
+// resolved string when it composes the worker's welcome.
 //
 // Expected: resolveSpawnerTitle gates the title through
 // isValidRenameTitle, rejects it, and the welcome falls back to the
 // safe generic "spawned by another agent" — no fragment of the
-// hostile title reaches the worker's pane as keystrokes.
+// hostile title reaches the worker, even though the welcome now rides in
+// as a launch arg rather than a tmux injection.
 func TestSpawn_AgentSpawner_HostileTitle_WelcomeStaysClean(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -132,23 +126,18 @@ func TestSpawn_AgentSpawner_HostileTitle_WelcomeStaysClean(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
 
 	spawn := f.AsAgent(poConv).Spawn("alpha", "worker")
-	target := spawn.TmuxTarget()
 
 	// The hostile title is rejected; the welcome uses the safe fallback.
-	f.AssertSentContains(target, "spawned by another agent", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 5*time.Second)
 
-	// No fragment of the hostile title reached the pane — neither the
-	// "evil" text nor the newline-injected "/exit" command — and the
-	// welcome stayed a control-char-free single line.
-	for _, sk := range f.World.Tmux.Sent() {
-		if sk.Target != target {
-			continue
-		}
-		assert.NotContains(t, sk.Text, "evil",
-			"a control-char-bearing spawner title must not reach the new pane")
-		assert.NotContains(t, sk.Text, "/exit",
-			"the welcome must never carry a smuggled-in slash command")
-		assert.NotContains(t, sk.Text, "\n",
-			"keystrokes sent to the pane must not carry a raw newline")
-	}
+	// No fragment of the hostile title reached the worker — neither the
+	// "evil" text nor the "/exit" command — and the welcome stayed a
+	// control-char-free single line.
+	prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID)
+	assert.NotContains(t, prompt, "evil",
+		"a control-char-bearing spawner title must not reach the new agent")
+	assert.NotContains(t, prompt, "/exit",
+		"the welcome must never carry a smuggled-in slash command")
+	assert.NotContains(t, prompt, "\n",
+		"the welcome must stay a single line")
 }

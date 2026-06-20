@@ -91,6 +91,18 @@ type Harness struct {
 	// which without mouse mode means the wheel does nothing in a tmux pane.
 	// See JOH-213.
 	TmuxScrollback bool
+
+	// LaunchEnrollment marks a harness whose conv-id can be PRESET at launch
+	// (SpawnSpec.SessionID → `claude --session-id <uuid>`) AND whose display
+	// name + first-turn prompt can ride in as launch args (SpawnSpec.Name →
+	// `--name`, SpawnSpec.InitialPrompt → the positional [prompt]). When true,
+	// the daemon spawn path can enroll the agent (group membership + inbox
+	// briefing) and bake the rename + welcome into the launch command, instead
+	// of polling for the conv-id and injecting `/rename` + the welcome over
+	// tmux with delays afterwards. Claude Code sets it true; Codex leaves it
+	// false (it generates its own conv-id at first turn and renames out of
+	// band), so a Codex spawn keeps the inject-after-connect flow.
+	LaunchEnrollment bool
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -143,6 +155,14 @@ func (h *Harness) CanRename() bool {
 // predicate.
 func (h *Harness) CanCompact() bool {
 	return h.SupportsCompact()
+}
+
+// SupportsLaunchEnrollment reports whether the daemon can spawn this harness
+// fully enrolled at launch — preset conv-id + launch-arg rename + launch-arg
+// welcome — and so skip the post-connect `/rename` + welcome tmux injection.
+// See Harness.LaunchEnrollment.
+func (h *Harness) SupportsLaunchEnrollment() bool {
+	return h != nil && h.LaunchEnrollment && h.Spawn != nil
 }
 
 // SupportsSandbox reports whether the harness takes a launch-time sandbox

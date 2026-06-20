@@ -68,9 +68,10 @@ func TestGroupDefaultContext_InjectedOnSpawn(t *testing.T) {
 	assert.Contains(t, msg.Body, "Project Phoenix", "briefing carries the group context")
 	assert.Contains(t, msg.Body, "shared guidance", "group-context section header")
 
-	// The welcome lands and points the agent at that inbox message.
-	f.AssertSentContains(spawn.TmuxTarget(), "spawned by the human", 10*time.Second)
-	f.AssertSentContains(spawn.TmuxTarget(),
+	// The welcome rides in as the launch prompt and points the agent at that
+	// inbox message.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID,
 		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 }
 
@@ -100,8 +101,8 @@ func TestGroupDefaultContext_OptOutSkipsInjection(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	assert.Empty(t, rows, "opted-out spawn with no brief must get no inbox message")
 
-	// The welcome lands and tells the agent to wait — no inbox pointer.
-	f.AssertSentContains(spawn.TmuxTarget(), "Wait for the first instruction", 10*time.Second)
+	// The welcome (launch prompt) tells the agent to wait — no inbox pointer.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "Wait for the first instruction", 10*time.Second)
 }
 
 // Scenario: a group with no startup context, spawned into with no task
@@ -117,7 +118,7 @@ func TestGroupDefaultContext_NoContextNoInjection(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	assert.Empty(t, rows, "group with no context + no brief must get no inbox message")
 
-	f.AssertSentContains(spawn.TmuxTarget(), "Wait for the first instruction", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "Wait for the first instruction", 10*time.Second)
 }
 
 // Scenario: clearing the context (PATCH default_context:"") removes
@@ -219,10 +220,11 @@ func TestGroupDefaultContext_MergedWithInitialMessage(t *testing.T) {
 		"group context should come before the task brief")
 	assert.Contains(t, msg.Body, "Your task brief:", "task-brief section header")
 
-	// With a task brief present, the welcome tells the agent to act.
-	f.AssertSentContains(spawn.TmuxTarget(),
+	// With a task brief present, the welcome (launch prompt) tells the agent
+	// to act.
+	f.AssertSpawnInitialPrompt(spawn.ConvID,
 		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
-	f.AssertSentContains(spawn.TmuxTarget(), "act on the brief", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "act on the brief", 10*time.Second)
 }
 
 // Scenario: a context over the size cap is rejected, and nothing is

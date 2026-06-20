@@ -22,6 +22,11 @@ func init() {
 		Models:      claudeModels{},
 		Life:        claudeLifecycle{},
 		Convs:       claudeConvStore{},
+		// Claude Code accepts a preset conv-id (--session-id), a launch-time
+		// display name (--name, written as a custom-title turn just like
+		// /rename), and a positional first-turn prompt — so the daemon can
+		// spawn it fully enrolled and skip the post-connect tmux injection.
+		LaunchEnrollment: true,
 	})
 }
 
@@ -44,6 +49,20 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}
+	// --session-id pins the conversation id for a FRESH launch only (a
+	// resume continues an existing id). It lets the daemon know the conv-id
+	// before the pane starts, so the rename + welcome ride in as launch args
+	// instead of post-launch tmux injections. Quoted defensively even though
+	// it is a validated UUID.
+	if spec.SessionID != "" && spec.ResumeID == "" {
+		cmd += " --session-id " + clcommon.ShellQuoteArg(spec.SessionID)
+	}
+	// --name sets the display name at launch; Claude Code records it as a
+	// `custom-title` turn the same way /rename does. Quoted because the name
+	// is free-ish text handed to `sh -c`.
+	if spec.Name != "" {
+		cmd += " --name " + clcommon.ShellQuoteArg(spec.Name)
+	}
 	if spec.Effort != "" {
 		// Quote defensively even though effort is a validated single
 		// token: this string is handed to `sh -c`, so quoting keeps the
@@ -63,6 +82,16 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 			quoted[i] = clcommon.ShellQuoteArg(a)
 		}
 		cmd += " " + strings.Join(quoted, " ")
+	}
+	// `claude [options] [prompt]` — a trailing positional prompt the
+	// interactive session submits itself at launch (verified against the
+	// `claude --help` "[prompt] Your prompt" arg). The daemon spawn path
+	// uses it to deliver the agent's welcome turn without a tmux send-keys
+	// injection. Only on a FRESH launch: a --resume continues an existing
+	// conversation and takes no launch prompt. Quoted as a single arg so the
+	// whole prompt is one positional, never split into stray flags/words.
+	if spec.InitialPrompt != "" && spec.ResumeID == "" {
+		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
 	return cmd
 }

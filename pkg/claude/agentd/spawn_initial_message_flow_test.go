@@ -55,20 +55,20 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	assert.Contains(t, msg.Body, initialMessage, "the briefing must carry the verbatim task brief")
 	assert.Contains(t, msg.Body, "Your task brief:", "the task-brief section header")
 
-	target := spawn.TmuxTarget()
-	// /rename lands first, then the welcome — each its own turn. The
-	// welcome must point the agent at the inbox message by id. 5s gives
-	// slack for the post-init goroutine.
-	f.AssertSentContains(target, "/rename worker", 5*time.Second)
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+	// The agent is named + greeted via launch args (`claude --name <prompt>`),
+	// not tmux injection. The welcome still points the agent at the inbox
+	// message by id — identical content, delivered more efficiently.
+	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
 
-	// The brief must NOT have been typed into the pane — that was the
-	// whole point of routing it through the inbox. Once the welcome has
-	// landed the post-init goroutine does no further send-keys, so the
-	// log is stable to scan here.
-	for _, sk := range f.World.Tmux.Sent() {
-		assert.NotContains(t, sk.Text, "timing-safe",
-			"the briefing must reach the agent via the inbox, never as pane keystrokes")
+	// The brief must NOT be typed into the pane NOR baked into the launch
+	// prompt — that was the whole point of routing it through the inbox. The
+	// launch-enrollment path injects nothing over tmux at all.
+	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
+		t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
+	}
+	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); strings.Contains(prompt, "timing-safe") {
+		t.Fatalf("the briefing must reach the agent via the inbox, never in the launch prompt; got %q", prompt)
 	}
 
 	// The contact surface a human reads: `tclaude agent groups members`.

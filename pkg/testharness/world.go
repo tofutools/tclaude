@@ -42,6 +42,13 @@ type World struct {
 	spawnApprovals  map[string]string
 	spawnAutoReview map[string]bool
 	spawnTrustDir   map[string]bool
+	// spawnNames / spawnInitialPrompts record the launch-arg display name
+	// (`--name`) and first-turn prompt (`--initial-prompt`) the launch-
+	// enrollment spawn path threaded through, keyed by the new conv-id, so a
+	// flow test can assert the agent was named + greeted at launch rather than
+	// via post-connect tmux injection.
+	spawnNames          map[string]string
+	spawnInitialPrompts map[string]string
 }
 
 // New builds a World wired to a fresh tmpdir HOME, a clean test DB,
@@ -58,17 +65,55 @@ func New(t *testing.T) *World {
 	t.Setenv("HOME", home)
 	db.ResetForTest()
 	return &World{
-		HomeDir:         home,
-		Tmux:            newTmuxSim(),
-		CCs:             newCCRegistry(),
-		Codexes:         newCodexRegistry(),
-		spawnEfforts:    map[string]string{},
-		spawnModels:     map[string]string{},
-		spawnSandboxes:  map[string]string{},
-		spawnApprovals:  map[string]string{},
-		spawnAutoReview: map[string]bool{},
-		spawnTrustDir:   map[string]bool{},
+		HomeDir:             home,
+		Tmux:                newTmuxSim(),
+		CCs:                 newCCRegistry(),
+		Codexes:             newCodexRegistry(),
+		spawnEfforts:        map[string]string{},
+		spawnModels:         map[string]string{},
+		spawnSandboxes:      map[string]string{},
+		spawnApprovals:      map[string]string{},
+		spawnAutoReview:     map[string]bool{},
+		spawnTrustDir:       map[string]bool{},
+		spawnNames:          map[string]string{},
+		spawnInitialPrompts: map[string]string{},
 	}
+}
+
+// RecordSpawnName captures the launch-arg display name (`claude --name`) a
+// simSpawner.SpawnNew received, keyed by the new conv-id. "" (no launch name)
+// is recorded too.
+func (w *World) RecordSpawnName(convID, name string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnNames[convID] = name
+}
+
+// SpawnName returns the launch name recorded for a spawned conv-id and whether
+// a spawn for that conv was observed.
+func (w *World) SpawnName(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	n, ok := w.spawnNames[convID]
+	return n, ok
+}
+
+// RecordSpawnInitialPrompt captures the launch-arg first-turn prompt
+// (`claude <prompt>`) a simSpawner.SpawnNew received, keyed by the new conv-id.
+// "" (no launch prompt) is recorded too.
+func (w *World) RecordSpawnInitialPrompt(convID, prompt string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnInitialPrompts[convID] = prompt
+}
+
+// SpawnInitialPrompt returns the launch prompt recorded for a spawned conv-id
+// and whether a spawn for that conv was observed.
+func (w *World) SpawnInitialPrompt(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	p, ok := w.spawnInitialPrompts[convID]
+	return p, ok
 }
 
 // RecordSpawnEffort captures the effort a simSpawner.SpawnNew received,

@@ -307,6 +307,19 @@ usually programmatic — whereas the dashboard modal defaults it on).
 `--no-group-context` opts the new agent out of the group's shared
 startup context (delivered by default, like every other spawn path).
 
+**How the agent is named + greeted.** For a Claude Code spawn the daemon
+preps the conversation id, then launches the agent already named and
+greeted: `claude --session-id <uuid> --name <name> "<welcome>"`. The name
+becomes the conversation title (Claude Code records `--name` as a
+custom-title turn, exactly as `/rename` does) and the welcome — the same
+single-line `[system: …]` line that points the agent at its inbox
+briefing — is the agent's first turn. No `/rename` or welcome keystrokes
+are injected over tmux, so there is no post-connect delay. (Codex, which
+generates its own conv-id at first turn, keeps the inject-after-connect
+flow.) To revert Claude Code to that older flow — launch a bare `claude`,
+poll for its conv-id, then inject `/rename` + the welcome over tmux — set
+`agent.spawn_legacy_injection: true` in `~/.tclaude/config.json`.
+
 **Spawn guardrails.** `groups.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
