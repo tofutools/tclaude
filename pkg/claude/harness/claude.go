@@ -129,10 +129,14 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
 	}
-	// The question is the trailing positional. Emitted last and as its own
-	// argv element, so it is never parsed as a flag value nor split on spaces.
+	// The question is the trailing positional, behind a `--` end-of-options
+	// marker. The prompt is fully untrusted (a typed question, or piped data
+	// like a `git diff` whose lines start with `-`), so `--` stops claude from
+	// parsing a leading-dash prompt as a flag. It is still its own argv element,
+	// so it is never word-split either. (Verified: `claude -p -- "--version"`
+	// answers as the model instead of printing the version.)
 	if spec.Prompt != "" {
-		argv = append(argv, spec.Prompt)
+		argv = append(argv, "--", spec.Prompt)
 	}
 	return argv
 }

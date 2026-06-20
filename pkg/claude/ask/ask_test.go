@@ -12,7 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+// forceConvExists overrides the on-disk conversation existence check (the flow
+// tests use a fake runner that writes no real .jsonl), restoring it on cleanup.
+func forceConvExists(t *testing.T, exists bool) {
+	t.Helper()
+	prev := convExists
+	convExists = func(*harness.Harness, string, string) bool { return exists }
+	t.Cleanup(func() { convExists = prev })
+}
 
 // setupAskTestDB points db.Open() at a throwaway SQLite under a temp HOME and
 // resets the singleton so each test gets a fresh, migrated database (the same
@@ -85,6 +95,7 @@ func io2buf() (askIO, *bytes.Buffer, *bytes.Buffer) {
 // --session-id); a question from a different cwd starts its own thread.
 func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 	setupAskTestDB(t)
+	forceConvExists(t, true) // pretend the resumed conv is on disk
 	f := &fakeRun{answer: "the answer\n", started: true}
 	f.install(t)
 
@@ -100,6 +111,7 @@ func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 	require.True(t, ok, "fresh turn pins a conv-id with --session-id")
 	assert.NotEmpty(t, conv)
 	assert.Equal(t, "what is up?", first.Argv[len(first.Argv)-1], "question is the trailing positional")
+	assert.Equal(t, "--", first.Argv[len(first.Argv)-2], "prompt is guarded by an end-of-options --")
 	assert.NotNil(t, first.Stdin, "interactive turn wires real stdin so the agent can ask back")
 	assert.Contains(t, out.String(), "the answer", "answer is streamed to stdout")
 
@@ -125,6 +137,32 @@ func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 	otherConv, ok := argvValue(third.Argv, "--session-id")
 	require.True(t, ok, "a new cwd starts fresh")
 	assert.NotEqual(t, conv, otherConv, "different cwd → different conversation")
+}
+
+// TestAsk_SelfHealsGhostConversation covers the robustness fix: if a recorded
+// thread points at a conversation that no longer exists on disk (a fresh turn
+// that died before it was written, or a conv the user deleted), the next
+// question starts fresh instead of trying to --resume the ghost forever.
+func TestAsk_SelfHealsGhostConversation(t *testing.T) {
+	setupAskTestDB(t)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+
+	// seed a thread (fresh turn records a conv-id)
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(interactiveInput("term-G", "/repo/x", "first"), aio))
+	seeded, ok := argvValue(f.last().Argv, "--session-id")
+	require.True(t, ok)
+
+	// the recorded conversation is now gone on disk
+	forceConvExists(t, false)
+	aio2, _, _ := io2buf()
+	require.NoError(t, runAsk(interactiveInput("term-G", "/repo/x", "second"), aio2))
+
+	healed, ok := argvValue(f.last().Argv, "--session-id")
+	require.True(t, ok, "a ghost conversation self-heals to a fresh --session-id")
+	assert.NotEqual(t, seeded, healed, "minted a new conversation, not the ghost")
+	assert.False(t, argvHas(f.last().Argv, "--resume"), "does not resume the ghost")
 }
 
 // TestAsk_CapturedModeFoldsStdin covers the `git diff | ai "safe?"` shape:

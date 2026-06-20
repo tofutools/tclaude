@@ -26,6 +26,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -33,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -187,6 +189,14 @@ func runAsk(in askInput, aio askIO) error {
 		return fmt.Errorf("harness %q does not support `tclaude ask` yet", h.Name)
 	}
 
+	// Self-heal a stale mapping: if the recorded conversation no longer exists
+	// (a fresh turn that died before the harness wrote it, or one the user
+	// deleted via `tclaude conv`), start fresh instead of trying to --resume a
+	// ghost — otherwise every question would error until the user found --new.
+	if !fresh && !convExists(h, thread.ConvID, in.Cwd) {
+		fresh = true
+	}
+
 	spec := harness.AskSpec{Print: printMode, Prompt: prompt}
 	if in.Model != "" {
 		m, err := h.Models.ValidateModel(in.Model)
@@ -198,6 +208,10 @@ func runAsk(in askInput, aio askIO) error {
 
 	var convID string
 	if fresh {
+		// A caller-minted id pins the fresh conversation (claude --session-id),
+		// so we can record the mapping. (Two concurrent asks from the same
+		// terminal+cwd would each mint their own and the last write wins,
+		// orphaning one empty conv — an accepted MVP corner, not corruption.)
 		convID = uuid.NewString()
 		spec.SessionID = convID
 	} else {
@@ -217,15 +231,36 @@ func runAsk(in askInput, aio askIO) error {
 
 	started, runErr := runner(plan)
 	if started {
-		// The conversation now exists on disk (claude created it under cwd as
-		// soon as it launched, even if the turn was interrupted), so record /
-		// refresh the mapping. A persist failure is non-fatal — the answer
-		// already happened; we only lose continuity for the next question.
+		// Record / refresh the (terminal,cwd)→conv mapping. We persist whenever
+		// the process started (incl. a Ctrl-C'd interactive turn, whose conv was
+		// already created), and rely on the self-heal check above to fall back to
+		// fresh next time if this conv turns out never to have been written. A
+		// persist failure is non-fatal — the answer already happened; we only
+		// lose continuity for the next question.
 		if err := db.SetAskThread(in.TermKey, in.Cwd, convID, h.Name); err != nil {
 			fmt.Fprintf(aio.Stderr, "ask: warning: could not persist conversation mapping: %v\n", err)
 		}
 	}
 	return runErr
+}
+
+// convExists reports whether a recorded ask conversation is still on disk, so a
+// stale mapping self-heals to a fresh thread instead of resuming a ghost.
+// Swapped in tests (the flow tests use a fake harness runner that writes no
+// real conversation files). See liveConvExists.
+var convExists = liveConvExists
+
+// liveConvExists checks the harness's on-disk conversation store. Claude keeps
+// one <convID>.jsonl per cwd-project dir; other harnesses can't be probed here
+// yet, so they're assumed present (only claude supports ask today). A future
+// harness ConvStore "exists" method would make this fully harness-agnostic.
+func liveConvExists(h *harness.Harness, convID, cwd string) bool {
+	if h.Name != harness.DefaultName {
+		return true
+	}
+	p := filepath.Join(convops.GetClaudeProjectPath(cwd), convID+".jsonl")
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // assemblePrompt builds the single prompt string from the typed question and
