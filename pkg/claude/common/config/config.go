@@ -327,7 +327,30 @@ type AgentConfig struct {
 	// support launch enrollment (Codex always uses the inject-after-connect
 	// flow). See agentd.spawnUsesLegacyInjection.
 	SpawnLegacyInjection *bool `json:"spawn_legacy_injection,omitempty"`
+
+	// SpawnInlineMaxChars bounds the launch-enrollment "inline the briefing"
+	// optimisation (Claude Code only). When a freshly-spawned agent's startup
+	// briefing (group context + task brief) fits within this many runes, the
+	// whole briefing is baked into the launch prompt right after the [system:
+	// ...] welcome — so the agent acts on its first turn instead of running a
+	// `tclaude agent inbox read <id>` round-trip first. A longer briefing keeps
+	// the single-line pointer welcome and stays in the inbox (scrollable,
+	// doesn't bloat the launch command / first turn). The briefing is ALWAYS
+	// also saved to the inbox either way; inlining only changes whether the
+	// first turn carries it. nil → DefaultSpawnInlineMaxChars; <= 0 disables
+	// inlining (always pointer). Has no effect on the legacy send-keys path,
+	// where the welcome must stay a single line (a newline = an early submit),
+	// nor on harnesses without launch enrollment (Codex). See
+	// agentd.spawnInlineMaxChars.
+	SpawnInlineMaxChars *int `json:"spawn_inline_max_chars,omitempty"`
 }
+
+// DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)
+// used when AgentConfig.SpawnInlineMaxChars is unset. Roughly a few paragraphs
+// — long enough to inline a typical short task brief on the first turn, short
+// enough that a genuinely large brief still routes to the inbox rather than
+// ballooning the launch command. See agentd.spawnInlineMaxChars.
+const DefaultSpawnInlineMaxChars = 2000
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
 // nudge that fires as a long-running agent's context fills. Off by

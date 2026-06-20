@@ -9,26 +9,41 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Scenario: a human spawns a new agent from the dashboard's spawn modal
 // and fills in BOTH the short "Descr" field and the longer "Initial msg"
 // field — the two were split precisely so a long task brief doesn't have
-// to be smuggled in via the description.
+// to be smuggled in via the description — AND the brief is too long to
+// inline into the first turn (over the inline cap, set tiny here so a
+// modest brief deterministically exercises the over-threshold path).
 //
 // Expected:
 //   - The initial message is delivered to the new agent's INBOX as the
 //     "Startup context" agent_messages row — not typed into its tmux
 //     pane. The pane stays free of CC's input-size limit; newlines
 //     survive (see TestSpawn_InitialMessageMultiLinePreserved).
-//   - The welcome line points the agent at that inbox message by id.
-//   - The long brief never lands in the pane as typed keystrokes.
+//   - Because it's over the inline cap, the welcome line POINTS the agent
+//     at that inbox message by id rather than carrying the brief inline.
+//   - The long brief never lands in the pane as typed keystrokes, nor in
+//     the launch prompt.
 //   - The group member's stored `descr` — what the dashboard's
 //     description column renders — is the SHORT descr, never the long
 //     initial message.
 func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	f := newFlow(t)
+
+	// Force the over-threshold (pointer) path with a tiny inline cap, so a
+	// modest brief routes to the inbox rather than inlining. config.Load reads
+	// it fresh on the spawn path and newFlow points HOME at this test's temp
+	// dir, so this governs this spawn only.
+	tiny := 10
+	require.NoError(t, config.Save(&config.Config{
+		Agent: &config.AgentConfig{SpawnInlineMaxChars: &tiny},
+	}))
+
 	f.HaveGroup("alpha")
 
 	const shortDescr = "auth reviewer"
@@ -56,8 +71,8 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	assert.Contains(t, msg.Body, "Your task brief:", "the task-brief section header")
 
 	// The agent is named + greeted via launch args (`claude --name <prompt>`),
-	// not tmux injection. The welcome still points the agent at the inbox
-	// message by id — identical content, delivered more efficiently.
+	// not tmux injection. Over the inline cap, the welcome points the agent at
+	// the inbox message by id — identical content, delivered more efficiently.
 	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
 	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -1203,9 +1204,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			slog.Warn("spawn: name not a valid rename title; skipping launch --name",
 				"conv", preConvID, "name", p.Name)
 		}
-		spawnArgs.InitialPrompt = buildSpawnWelcome(p.Name, p.Role, p.Descr, g.Name,
-			preMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv))
+		// Bake the welcome into the launch prompt. When the briefing is short
+		// enough it is inlined right after the welcome so the agent acts on its
+		// first turn (no `inbox read` round-trip); a long briefing keeps the
+		// pointer welcome and stays in the inbox. buildSpawnContextBody is the
+		// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
+		// (a cheap pure function of the same inputs) so the inlined copy is
+		// byte-identical to the inbox row — no shared mutable state to drift.
+		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
+			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
+			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
 	}
 
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
@@ -1536,6 +1545,22 @@ func spawnUsesLegacyInjection() bool {
 	return *cfg.Agent.SpawnLegacyInjection
 }
 
+// spawnInlineMaxChars returns the launch-enrollment briefing-inline threshold
+// (in runes): when a spawned agent's startup briefing fits within it, the whole
+// briefing is baked into the launch prompt instead of pointing at the inbox
+// copy (see buildSpawnLaunchPrompt). An unset config knob yields
+// config.DefaultSpawnInlineMaxChars; a configured <= 0 disables inlining
+// (always pointer). A config read error falls back to the default so a
+// malformed config never silently changes the spawn UX without a log
+// (config.Load already logs parse failures).
+func spawnInlineMaxChars() int {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil || cfg.Agent == nil || cfg.Agent.SpawnInlineMaxChars == nil {
+		return config.DefaultSpawnInlineMaxChars
+	}
+	return *cfg.Agent.SpawnInlineMaxChars
+}
+
 // runSpawnPostInit fires asynchronously after a successful spawn. It
 // waits for the new tmux pane to come online, then injects, in order:
 //
@@ -1721,36 +1746,7 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string) strin
 //   - a briefing with only the group's shared startup context →
 //     point at the inbox message, then tell it to wait.
 func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedBy string) string {
-	attribution := "spawned by the human"
-	if spawnedBy != "" {
-		attribution = "spawned by " + spawnedBy
-	}
-	parts := []string{attribution}
-	if name != "" {
-		parts = append(parts, fmt.Sprintf("as %q", name))
-	}
-	if role != "" {
-		parts = append(parts, fmt.Sprintf("(role: %s)", role))
-	}
-	if groupName != "" {
-		parts = append(parts, fmt.Sprintf("in group %q", groupName))
-	}
-	header := strings.Join(parts, " ")
-	body := header + "."
-	if descr != "" {
-		body += " Descr: " + descr + "."
-	}
-	// When the spawn targeted a sub-repo of a monorepo launch dir, the
-	// agent's cwd is the parent dir but its code work belongs in the
-	// worktree. Spell that out so it doesn't edit the parent's repos.
-	if worktreePath != "" {
-		body += " Your git worktree for code changes is at " + worktreePath
-		if worktreeBranch != "" {
-			body += " (branch " + worktreeBranch + ")"
-		}
-		body += " — make code edits there, not elsewhere under your start directory."
-	}
-	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
+	body := spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy)
 	switch {
 	case spawnContextMsgID <= 0:
 		body += " Wait for the first instruction."
@@ -1765,6 +1761,96 @@ func buildSpawnWelcome(name, role, descr, groupName string, spawnContextMsgID in
 			spawnContextMsgID, spawnContextMsgID)
 	}
 	return "[system: " + body + "]"
+}
+
+// spawnWelcomePrefix builds the identity/orientation half of the welcome —
+// everything up to (but not including) the trailing "where's my briefing"
+// instruction: attribution, name, role, group, description, sub-repo worktree
+// note, and the `tclaude agent` pointer. It is shared by the two welcome
+// shapes — buildSpawnWelcome's single-line pointer form and
+// buildSpawnLaunchPrompt's inline form — so the metadata they surface can't
+// drift apart. The result has no [system: ...] wrapper and no trailing
+// newline; callers append their own closing instruction and wrap.
+func spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy string) string {
+	attribution := "spawned by the human"
+	if spawnedBy != "" {
+		attribution = "spawned by " + spawnedBy
+	}
+	parts := []string{attribution}
+	if name != "" {
+		parts = append(parts, fmt.Sprintf("as %q", name))
+	}
+	if role != "" {
+		parts = append(parts, fmt.Sprintf("(role: %s)", role))
+	}
+	if groupName != "" {
+		parts = append(parts, fmt.Sprintf("in group %q", groupName))
+	}
+	body := strings.Join(parts, " ") + "."
+	if descr != "" {
+		body += " Descr: " + descr + "."
+	}
+	// When the spawn targeted a sub-repo of a monorepo launch dir, the
+	// agent's cwd is the parent dir but its code work belongs in the
+	// worktree. Spell that out so it doesn't edit the parent's repos.
+	if worktreePath != "" {
+		body += " Your git worktree for code changes is at " + worktreePath
+		if worktreeBranch != "" {
+			body += " (branch " + worktreeBranch + ")"
+		}
+		body += " — make code edits there, not elsewhere under your start directory."
+	}
+	body += " Use `tclaude agent` commands (whoami / help / inbox ls) to introspect and coordinate."
+	return body
+}
+
+// buildSpawnLaunchPrompt builds the positional launch prompt for the
+// launch-enrollment path (Claude Code). Unlike the legacy send-keys welcome it
+// can be MULTI-LINE: it rides in as a single shell-quoted argv positional
+// (clcommon.ShellQuoteArg handles every metacharacter, newlines included), not
+// typed into a tmux pane where a newline would submit early. So when the
+// startup briefing (already inserted into the inbox as message
+// #spawnContextMsgID) is short enough — at most inlineMaxChars runes — the
+// whole briefing is appended right after the [system: ...] welcome, and the
+// agent acts on its first turn without a `tclaude agent inbox read` round-trip.
+//
+// It falls back to the single-line pointer welcome (buildSpawnWelcome) when:
+//   - there is nothing to inline (contextBody is empty — no group context and
+//     no task brief; buildSpawnWelcome then tells the agent to wait), OR
+//   - inlining is disabled (inlineMaxChars <= 0), OR
+//   - the briefing is longer than inlineMaxChars (kept in the inbox, where it's
+//     scrollable and doesn't balloon the launch command / first turn).
+//
+// A failed inbox insert does NOT force the fallback: contextBody is recomputed
+// from the spawn inputs (not read back from the inbox), so it stays non-empty
+// and is still inlined — the inbox-copy note is just dropped (spawnContextMsgID
+// <= 0), making the inline copy the agent's only copy.
+//
+// contextBody is the exact inbox body (buildSpawnContextBody's output), so the
+// inlined copy is byte-identical to what `tclaude agent inbox read` would show.
+func buildSpawnLaunchPrompt(name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, contextBody, worktreePath, worktreeBranch, spawnedBy string, inlineMaxChars int) string {
+	body := strings.TrimSpace(contextBody)
+	if body == "" || inlineMaxChars <= 0 || utf8.RuneCountInString(body) > inlineMaxChars {
+		return buildSpawnWelcome(name, role, descr, groupName, spawnContextMsgID,
+			hasInitialMessage, worktreePath, worktreeBranch, spawnedBy)
+	}
+
+	welcome := spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy)
+	// Note the inbox copy only when we actually have its id — the briefing was
+	// inserted (the common case). If the insert failed (spawnContextMsgID <= 0)
+	// the inline copy below is the agent's only copy, so we don't claim an inbox
+	// message that doesn't exist.
+	inboxNote := ""
+	if spawnContextMsgID > 0 {
+		inboxNote = fmt.Sprintf(" (also saved to your inbox as message #%d)", spawnContextMsgID)
+	}
+	if hasInitialMessage {
+		welcome += " Your startup context and task brief are below" + inboxNote + "; act on the brief."
+	} else {
+		welcome += " Your group's startup context is below" + inboxNote +
+			"; read it, then wait for the first instruction."
+	}
+	return "[system: " + welcome + "]\n\n" + body
 }
 
 // resolveSpawnerTitle turns the spawning agent's conv-id into the

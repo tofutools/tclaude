@@ -68,11 +68,13 @@ func TestGroupDefaultContext_InjectedOnSpawn(t *testing.T) {
 	assert.Contains(t, msg.Body, "Project Phoenix", "briefing carries the group context")
 	assert.Contains(t, msg.Body, "shared guidance", "group-context section header")
 
-	// The welcome rides in as the launch prompt and points the agent at that
-	// inbox message.
+	// The welcome rides in as the launch prompt. This short context fits the
+	// default inline cap, so the context is inlined (with the inbox copy noted
+	// by id) rather than pointed at — the agent sees it on its first turn.
 	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "Project Phoenix", 10*time.Second)
 	f.AssertSpawnInitialPrompt(spawn.ConvID,
-		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
+		fmt.Sprintf("message #%d", msg.ID), 10*time.Second)
 }
 
 // Scenario: a spawn opts out via include_group_context:false and
@@ -220,10 +222,13 @@ func TestGroupDefaultContext_MergedWithInitialMessage(t *testing.T) {
 		"group context should come before the task brief")
 	assert.Contains(t, msg.Body, "Your task brief:", "task-brief section header")
 
-	// With a task brief present, the welcome (launch prompt) tells the agent
-	// to act.
+	// Both sections are short enough to inline: the launch prompt carries the
+	// merged briefing (group context then task brief), notes the inbox copy by
+	// id, and tells the agent to act.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, groupCtx, 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 10*time.Second)
 	f.AssertSpawnInitialPrompt(spawn.ConvID,
-		fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
+		fmt.Sprintf("message #%d", msg.ID), 10*time.Second)
 	f.AssertSpawnInitialPrompt(spawn.ConvID, "act on the brief", 10*time.Second)
 }
 

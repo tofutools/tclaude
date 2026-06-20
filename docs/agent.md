@@ -311,14 +311,29 @@ startup context (delivered by default, like every other spawn path).
 preps the conversation id, then launches the agent already named and
 greeted: `claude --session-id <uuid> --name <name> "<welcome>"`. The name
 becomes the conversation title (Claude Code records `--name` as a
-custom-title turn, exactly as `/rename` does) and the welcome — the same
-single-line `[system: …]` line that points the agent at its inbox
-briefing — is the agent's first turn. No `/rename` or welcome keystrokes
-are injected over tmux, so there is no post-connect delay. (Codex, which
-generates its own conv-id at first turn, keeps the inject-after-connect
-flow.) To revert Claude Code to that older flow — launch a bare `claude`,
-poll for its conv-id, then inject `/rename` + the welcome over tmux — set
-`agent.spawn_legacy_injection: true` in `~/.tclaude/config.json`.
+custom-title turn, exactly as `/rename` does) and the welcome — an
+`[system: …]` line orienting the agent (who it is, the group, the
+`tclaude agent` commands) — is the agent's first turn. No `/rename` or
+welcome keystrokes are injected over tmux, so there is no post-connect
+delay. (Codex, which generates its own conv-id at first turn, keeps the
+inject-after-connect flow.) To revert Claude Code to that older flow —
+launch a bare `claude`, poll for its conv-id, then inject `/rename` + the
+welcome over tmux — set `agent.spawn_legacy_injection: true` in
+`~/.tclaude/config.json`.
+
+**Inlined briefings.** The startup briefing (group context + task brief)
+is always saved to the new agent's inbox as its first message. When it's
+short, it's *also* inlined into the launch prompt right after the welcome
+— a real shell-quoted argv positional, so multi-line briefs ride along
+unescaped and intact (unlike the legacy send-keys path, where a newline
+would submit early) — so the agent acts on its first turn without a
+`tclaude agent inbox read <id>` round-trip. A longer briefing keeps the
+single-line welcome that points at the inbox copy by id, so it stays
+scrollable there and doesn't balloon the launch command. The cutoff is
+`agent.spawn_inline_max_chars` (runes; default 2000, `0` disables inlining
+so every spawn uses the inbox pointer). Only the launch-enrollment path
+inlines; the legacy / Codex inject-after-connect path always points at the
+inbox.
 
 **Spawn guardrails.** `groups.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.

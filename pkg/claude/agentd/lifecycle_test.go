@@ -174,3 +174,75 @@ func TestBuildSpawnWelcome_SingleLineNoControlChars(t *testing.T) {
 		assert.True(t, isValidFollowUp(got), "welcome should pass isValidFollowUp; got %q", got)
 	}
 }
+
+// TestBuildSpawnLaunchPrompt covers the launch-enrollment prompt builder:
+// inline the briefing when it's short, fall back to the single-line pointer
+// welcome otherwise. The fallback must be byte-identical to buildSpawnWelcome
+// so the legacy and over-cap paths stay consistent.
+func TestBuildSpawnLaunchPrompt(t *testing.T) {
+	const (
+		name      = "worker"
+		role      = "reviewer"
+		descr     = "reviews PRs"
+		groupName = "alpha"
+	)
+
+	t.Run("short task brief is inlined", func(t *testing.T) {
+		body := "Your task brief:\n\nAudit the auth module and report back."
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 42, true,
+			body, "", "", "", 2000)
+		assert.Contains(t, got, body, "the whole briefing rides inline, newlines and all")
+		assert.Contains(t, got, "[system:", "still opens with the system welcome")
+		assert.Contains(t, got, "tclaude agent", "keeps the coordination pointer")
+		assert.Contains(t, got, "message #42", "notes the inbox copy by id")
+		assert.Contains(t, got, "act on the brief", "a task brief tells the agent to act")
+		assert.NotContains(t, got, "inbox read", "an inlined brief needs no inbox round-trip")
+	})
+
+	t.Run("group-context-only inline tells the agent to wait", func(t *testing.T) {
+		body := "Group \"alpha\" startup context — shared guidance:\n\nSmall commits, tests first."
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 7, false,
+			body, "", "", "", 2000)
+		assert.Contains(t, got, body, "context inlined")
+		assert.Contains(t, got, "wait for the first instruction", "no brief → wait")
+		assert.NotContains(t, got, "act on the brief", "no brief → don't say act")
+	})
+
+	t.Run("over-cap brief falls back to the pointer welcome", func(t *testing.T) {
+		body := "Your task brief:\n\n" + strings.Repeat("x", 5000)
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 42, true,
+			body, "", "", "", 2000)
+		want := buildSpawnWelcome(name, role, descr, groupName, 42, true, "", "", "")
+		assert.Equal(t, want, got, "over-cap must be byte-identical to the pointer welcome")
+		assert.NotContains(t, got, "xxxxx", "the long brief must not be inlined")
+	})
+
+	t.Run("inlining disabled (<=0) falls back to the pointer welcome", func(t *testing.T) {
+		body := "Your task brief:\n\nshort"
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 42, true,
+			body, "", "", "", 0)
+		want := buildSpawnWelcome(name, role, descr, groupName, 42, true, "", "", "")
+		assert.Equal(t, want, got, "disabled inlining must use the pointer welcome")
+	})
+
+	t.Run("empty body falls back to the pointer welcome", func(t *testing.T) {
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 0, false,
+			"   ", "", "", "", 2000)
+		want := buildSpawnWelcome(name, role, descr, groupName, 0, false, "", "", "")
+		assert.Equal(t, want, got, "no briefing → pointer welcome (which says wait)")
+		assert.Contains(t, got, "Wait for the first instruction")
+	})
+
+	t.Run("inline without inbox id omits the inbox note", func(t *testing.T) {
+		// Edge case: the inbox insert failed (spawnContextMsgID <= 0) but the
+		// caller still has the body. Inlining is then the agent's only copy, so
+		// we must not claim a non-existent inbox message.
+		body := "Your task brief:\n\ndo the thing"
+		got := buildSpawnLaunchPrompt(name, role, descr, groupName, 0, true,
+			body, "", "", "", 2000)
+		assert.Contains(t, got, body, "brief still inlined")
+		assert.Contains(t, got, "act on the brief")
+		assert.NotContains(t, got, "saved to your inbox", "no inbox id → no inbox-copy claim")
+		assert.NotContains(t, got, "message #", "no inbox id → no message-number reference")
+	})
+}
