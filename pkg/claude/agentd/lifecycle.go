@@ -1174,7 +1174,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// briefing) BEFORE the fork (the welcome must reference the briefing's
 	// message id), and forward the id/name/welcome as launch args. Harnesses
 	// that can't preset a conv-id (Codex) keep the inject-after-connect flow.
-	spawnHarness, _ := harness.Get(p.Harness)
+	//
+	// Resolve (not Get) so a blank p.Harness normalises to the Claude Code
+	// default — callers like the template instantiator and the pending-spawn
+	// sweeper leave Harness unset, and those CC spawns must take the same
+	// launch-enrollment path as the HTTP spawn endpoint. Resolve also tolerates
+	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
+	// so a bad harness degrades to the legacy path rather than panicking.
+	spawnHarness, _ := harness.Resolve(p.Harness)
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
 	var preConvID string
 	var preMsgID int64
@@ -1281,8 +1288,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		// Fallback for a lazy-hook harness: once a pane exists but no hook has
 		// reported a conv-id within the grace, ask the harness conv store.
-		// Throttled so the tree-walking scan doesn't run every 250ms.
-		if tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
+		// Throttled so the tree-walking scan doesn't run every 250ms. Skipped on
+		// the launch-enrollment path: that conv-id was preset (preConvID), so
+		// the scan could only ever rediscover it — or, worse, pick a sibling
+		// .jsonl in a busy shared cwd.
+		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
 			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt); id != "" {
@@ -1297,36 +1307,37 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	// Conv-id resolved within the poll: the pane is up.
-	if convID != "" {
-		if launchEnroll {
-			// The launch command already enrolled, named, and greeted the
-			// agent — nothing to inject. Just mark the briefing delivered
-			// (the welcome it referenced has now landed at launch).
-			if preMsgID > 0 {
-				if err := db.MarkAgentMessageDelivered(preMsgID); err != nil {
-					slog.Warn("spawn: failed to mark startup context delivered",
-						"conv", convID, "msg_id", preMsgID, "error", err)
-				}
+	// Launch-enrollment path: the conv-id was PRESET, the enrollment
+	// (membership + inbox briefing) ran before the fork, and the rename +
+	// welcome are baked into the launch command — so the spawn has already
+	// succeeded as far as the daemon is concerned, whether or not the poll
+	// confirmed the session row in time. Return the preset id (NOT the polled
+	// convID, which the loop may have left empty on a slow fork). The poll
+	// above fired focus when the pane came up; fire once more in case the row
+	// landed late. We deliberately do NOT roll back on a slow/missing row: the
+	// pane is most likely just coming up, and rolling back would strand a live,
+	// named, greeted, group-less pane whose welcome points at a deleted inbox
+	// message. A genuinely failed launch (Start error) was already caught and
+	// rolled back above; a pane that dies at startup leaves an offline member
+	// the operator can retire, exactly like any agent that crashes on boot.
+	if launchEnroll {
+		focusSpawn()
+		if preMsgID > 0 {
+			if err := db.MarkAgentMessageDelivered(preMsgID); err != nil {
+				slog.Warn("spawn: failed to mark startup context delivered",
+					"conv", preConvID, "msg_id", preMsgID, "error", err)
 			}
-		} else if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
-			// Legacy / inject-after-connect path (Codex, or CC with the
-			// revert flag): enroll now and inject the rename + welcome.
+		}
+		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label}, nil
+	}
+
+	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
+	// with the legacy-injection revert flag) and inject the rename + welcome.
+	if convID != "" {
+		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 			return nil, fail
 		}
 		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
-	}
-
-	// Conv-id did not materialise within the poll. On the launch-enrollment
-	// path we already enrolled before the fork, so a never-up pane would
-	// strand a member + orphan briefing — roll the enrollment back and fail.
-	// (CC reports its conv-id at launch, so this only fires on a genuine
-	// launch failure, e.g. a broken tmux server.)
-	if launchEnroll {
-		rollbackSpawnEnrollment(g, preConvID, preMsgID)
-		return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
-			"spawned session " + label + " but it never came online within " + pollBudget.String() +
-				" — check `tclaude session attach " + label + "`"}
 	}
 
 	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
@@ -1486,13 +1497,18 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 }
 
 // rollbackSpawnEnrollment undoes enrollSpawnedConv when a launch-enrollment
-// spawn's fork fails or its pane never comes online. The enrollment ran before
-// the fork (the welcome had to reference the briefing's message id), so a
-// failed launch would otherwise strand a group member + orphan briefing. Both
-// removals are best-effort — a failure here only leaves a harmless orphan that
-// the operator can clear from the dashboard — so they log rather than bubble.
-// The pending-name row is keyed by a conv-id that now never materialises, so it
-// is never read again and is left in place.
+// spawn's fork itself fails to start (the `tclaude session new` subprocess
+// never even launches — e.g. the binary is missing from PATH). The enrollment
+// ran before the fork (the welcome had to reference the briefing's message id),
+// so without this the failed spawn would strand a group member + orphan
+// briefing for a conv-id that will never exist. It is NOT called on a slow/
+// missing conv-id poll: there the pane is most likely coming up, so the spawn
+// is returned as a success against the preset id rather than rolled back (see
+// the launch-enrollment branch in executeSpawn). Both removals are best-effort
+// — a failure here only leaves a harmless orphan the operator can clear from
+// the dashboard — so they log rather than bubble. The pending-name row is keyed
+// by a conv-id that now never materialises, so it is never read again and is
+// left in place.
 func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	if msgID > 0 {
 		if _, err := db.DeleteAgentMessageByID(msgID, convID); err != nil {

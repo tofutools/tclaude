@@ -163,14 +163,22 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// with the .jsonl's actual on-disk location. Otherwise an empty
 	// body.Cwd leaves the row with cwd="" and downstream cwd lookups
 	// can't derive the project dir.
-	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: label,
-		ConvID:      cc.ConvID,
-		Cwd:         cc.Cwd,
-		Status:      "running",
-	}); err != nil {
-		return err
+	//
+	// SkipSpawnRow models a forked `tclaude session new` whose SessionRow write
+	// lags past the daemon's conv-id poll: the pane (CCSim + .jsonl + tmux
+	// registration) still exists, but the row the daemon polls for never lands
+	// in time. The pane is still registered so it behaves like a real
+	// slow-to-record launch, not a dead one.
+	if !s.w.SkipSpawnRow {
+		if err := db.SaveSession(&db.SessionRow{
+			ID:          label,
+			TmuxSession: label,
+			ConvID:      cc.ConvID,
+			Cwd:         cc.Cwd,
+			Status:      "running",
+		}); err != nil {
+			return err
+		}
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)

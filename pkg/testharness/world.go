@@ -20,6 +20,14 @@ type World struct {
 	HomeDir string
 	Tmux    *TmuxSim
 	CCs     *CCRegistry
+	// SkipSpawnRow, when true, makes the CC simSpawner build the pane (CCSim +
+	// .jsonl + tmux registration) but NOT write the SessionRow — modelling a
+	// forked `tclaude session new` whose row write lags past the daemon's
+	// conv-id poll on a slow host. It lets a flow test exercise the
+	// launch-enrollment timeout branch (the daemon must return success against
+	// the preset id and keep the enrollment, never roll back a live pane).
+	SkipSpawnRow bool
+
 	// Codexes is the Codex analog of CCs: conv-id → CodexSim, so the
 	// simSpawner's `--harness codex` branch can stash the sim it built and
 	// the resume branch can re-attach it. Kept as a parallel registry (not

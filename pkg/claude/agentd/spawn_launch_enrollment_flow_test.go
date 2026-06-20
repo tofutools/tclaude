@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -60,6 +61,48 @@ func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
 		t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
 	}
+}
+
+// Scenario: a slow host — the forked `tclaude session new`'s session-row write
+// lags past the daemon's conv-id poll, so the poll times out even though the
+// pane is coming up fine (named + greeted via the launch args).
+//
+// Expected: because the launch-enrollment path preset the conv-id and enrolled
+// the agent BEFORE forking, the daemon returns SUCCESS against the preset id and
+// KEEPS the enrollment — it must NOT roll back, which would strand a live,
+// named, greeted, group-less pane whose welcome points at a deleted briefing.
+func TestSpawn_LaunchEnrollment_SlowRowWriteKeepsEnrollment(t *testing.T) {
+	f := newFlow(t)
+	// Shrink the async grace so the poll times out quickly, and make the sim
+	// withhold the SessionRow so the poll never resolves it.
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+	f.World.SkipSpawnRow = true
+
+	f.HaveGroup("alpha")
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name":            "worker",
+		"initial_message": "do the thing",
+	})
+
+	// A slow row write must still succeed against the preset id — never a 504
+	// or a rolled-back enrollment.
+	require.Equalf(t, http.StatusOK, spawn.Code,
+		"slow pane must still succeed, not fail/roll back; body=%s", spawn.Raw)
+	require.NotEmpty(t, spawn.ConvID, "must return the preset conv-id")
+
+	// The pre-fork enrollment survived: the agent is still a group member and
+	// its briefing is still in its inbox.
+	members := f.ListGroupMembers("alpha")
+	var found bool
+	for _, m := range members {
+		if m.ConvID == spawn.ConvID {
+			found = true
+		}
+	}
+	assert.Truef(t, found, "slow-pane agent %s must stay a group member, not be rolled back", spawn.ConvID)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Equal(t, "Startup context", msg.Subject, "the briefing must survive the slow poll")
 }
 
 // Scenario: the config escape hatch — agent.spawn_legacy_injection=true.
