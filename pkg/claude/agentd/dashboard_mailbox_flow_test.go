@@ -1090,6 +1090,24 @@ func TestDashboardMailbox_AllFirehoseKeepsReincarnationHandoff(t *testing.T) {
 	assert.Len(t, bob, 3, "bob sees the active row, the handoff, and the stale DM")
 }
 
+// Scenario: the same carve-out applies to a group folder, which shares the
+// exclude path with the firehose. carol (a retired ex-member) handed off to
+// bob (a live member), so the handoff is in the group's scope via bob; it
+// must survive the group folder's retired-member exclude just as it does the
+// firehose's, while carol's ordinary DM still drops.
+func TestDashboardMailbox_GroupFolderKeepsReincarnationHandoff(t *testing.T) {
+	f := newFlow(t)
+	dash := seedHandoffMailboxes(t, f)
+
+	p := getMailboxPageRetired(t, dash, "group:team", false)
+	subjects := subjectsOf(p.Messages)
+	assert.Contains(t, subjects, db.ReincarnationHandoffSubject,
+		"the handoff to the live member survives the group folder's retired exclude")
+	assert.Contains(t, subjects, "active only")
+	assert.NotContains(t, subjects, "stale chatter",
+		"the retired ex-member's ordinary DM still drops from the group folder")
+}
+
 // --- group folders ------------------------------------------------------
 //
 // A group folder ("group:<name>") is the "view this group's messages"
