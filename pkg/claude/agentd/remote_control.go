@@ -25,8 +25,9 @@ import (
 //     tracks its own best-known state (sessions.remote_control, JOH-256);
 //     the recorded flag decides the injection DIRECTION. Drift is possible
 //     if a human toggles in-pane — the state is "best-known", not authoritative.
-//   - DISABLING prompts for confirmation, so the disable path submits the
-//     toggle and then an extra Enter to answer the prompt.
+//   - DISABLING opens a confirm MENU (whose default highlight is NOT
+//     "disconnect"), so the disable path submits the toggle and then drives
+//     that menu — Up, Up, Enter — to select "disconnect".
 //
 // This is a send-keys injection sink. The toggle token is a compile-time
 // constant sourced from the harness Lifecycle (never user input), so nothing
@@ -51,14 +52,28 @@ func aliveSessionForConv(convID string) *db.SessionRow {
 }
 
 // remoteControlConfirmDelay is the pause between submitting the
-// /remote-control toggle and sending the confirmation Enter on a DISABLE.
-// Claude Code prompts before turning Remote Access OFF; the extra Enter
-// answers that prompt. Deliberately a touch longer than injectSettleDelay so
-// the confirm dialog has rendered before we answer it. A package var so flow
-// tests can shrink it (SetRemoteControlConfirmDelayForTest). If a future CC
-// build drops the confirm prompt, the extra Enter lands on an empty prompt —
-// a harmless no-op.
+// /remote-control toggle and driving its confirm menu on a DISABLE. Claude
+// Code opens a confirm menu before turning Remote Access OFF; this delay lets
+// it render before we send the menu keystrokes. Deliberately a touch longer
+// than injectSettleDelay. A package var so flow tests can shrink it
+// (SetRemoteControlConfirmDelayForTest).
 var remoteControlConfirmDelay = 700 * time.Millisecond
+
+// remoteControlMenuStepDelay is the gap between the individual keystrokes that
+// drive CC's disable-confirm menu (remoteControlDisableMenuKeys). Short: the
+// menu has already rendered (remoteControlConfirmDelay) and only needs to
+// register each highlight move before the next key. A package var so flow
+// tests can shrink it (SetRemoteControlConfirmDelayForTest shrinks both).
+var remoteControlMenuStepDelay = 150 * time.Millisecond
+
+// remoteControlDisableMenuKeys selects CC's "disconnect" entry in the confirm
+// menu that opens when /remote-control is toggled while ON: two Ups move the
+// highlight from the default entry up to "disconnect", then Enter chooses it
+// (operator-verified). A single Enter would accept the default and leave
+// Remote Access ON. These are compile-time constant keys — nothing
+// user-derived rides the send-keys sink here. If a future CC build changes the
+// menu layout, this slice is the one place to adjust.
+var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
 // is one of "enabled" | "disabled" | "noop" | "status"; RemoteControl is the
@@ -72,8 +87,9 @@ type remoteControlResp struct {
 }
 
 // deliverRemoteControl injects the harness's remote-control toggle into the
-// conv's live pane and, on a DISABLE, follows it with a confirmation Enter.
-// Returns the session row it injected into (so the caller records the new
+// conv's live pane and, on a DISABLE, drives the confirm menu it opens with
+// Up, Up, Enter to select "disconnect". Returns the session row it injected
+// into (so the caller records the new
 // state on that exact row) and whether delivery succeeded. The caller MUST
 // have gated on Harness.CanRemoteControl() first.
 func deliverRemoteControl(convID string, h *harness.Harness, disable bool, reason string) (*db.SessionRow, bool) {
@@ -90,13 +106,23 @@ func deliverRemoteControl(convID string, h *harness.Harness, disable bool, reaso
 		return nil, false
 	}
 	if disable {
-		// Answer CC's "disable remote control?" confirmation.
+		// CC opens a confirm menu when /remote-control is toggled while ON,
+		// and its default highlight is NOT "disconnect": pick that entry with
+		// Up, Up, Enter (a bare Enter accepts the default and leaves Remote
+		// Access ON). Let the menu render, then send one key per send-keys
+		// (the one-key-per-call convention of injectTextAndSubmit) with a
+		// short settle so each highlight move registers before the next key.
 		time.Sleep(remoteControlConfirmDelay)
-		if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-			// The toggle itself was submitted; the state may already have
-			// flipped. Log and treat as delivered — a stuck confirm dialog
-			// is a best-effort residual, not a failure of the toggle.
-			slog.Warn("remote-control confirm-enter failed", "error", err, "tmux", sess.TmuxSession, "reason", reason)
+		for i, key := range remoteControlDisableMenuKeys {
+			if i > 0 {
+				time.Sleep(remoteControlMenuStepDelay)
+			}
+			if err := clcommon.TmuxCommand("send-keys", "-t", target, key).Run(); err != nil {
+				// The toggle itself was submitted; the state may already have
+				// flipped. Log and keep going — a stuck confirm menu is a
+				// best-effort residual, not a failure of the toggle.
+				slog.Warn("remote-control confirm key failed", "error", err, "key", key, "tmux", sess.TmuxSession, "reason", reason)
+			}
 		}
 	}
 	slog.Info("remote-control injected via send-keys",

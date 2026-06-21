@@ -70,14 +70,20 @@ func SetInjectSettleDelayForTest(d time.Duration) func() {
 	return func() { injectSettleDelay = prev }
 }
 
-// SetRemoteControlConfirmDelayForTest shrinks the pause between the
-// /remote-control toggle and its disable-confirm Enter for the duration of a
-// test, the same reason as SetInjectSettleDelayForTest (the sim is
-// synchronous). Returns a restore closure for t.Cleanup.
+// SetRemoteControlConfirmDelayForTest shrinks the remote-control disable
+// timing for the duration of a test — BOTH the pause before CC's confirm menu
+// renders and the gap between the menu keystrokes (Up/Up/Enter) — the same
+// reason as SetInjectSettleDelayForTest (the sim is synchronous). Returns a
+// restore closure for t.Cleanup.
 func SetRemoteControlConfirmDelayForTest(d time.Duration) func() {
-	prev := remoteControlConfirmDelay
+	prevConfirm := remoteControlConfirmDelay
+	prevStep := remoteControlMenuStepDelay
 	remoteControlConfirmDelay = d
-	return func() { remoteControlConfirmDelay = prev }
+	remoteControlMenuStepDelay = d
+	return func() {
+		remoteControlConfirmDelay = prevConfirm
+		remoteControlMenuStepDelay = prevStep
+	}
 }
 
 // ResetCodexContextRefreshForTest clears the process-local Codex context

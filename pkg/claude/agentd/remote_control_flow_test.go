@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,19 @@ func TestRemoteControl_ToggleOnOff(t *testing.T) {
 	got, err = db.RemoteControlForConv(conv)
 	require.NoError(t, err)
 	assert.False(t, got, "persisted state flips off after disable")
+
+	// The disable path must DRIVE CC's confirm menu — Up, Up, Enter — not send
+	// a bare Enter: the menu's default highlight is not "disconnect", so two
+	// Ups move to it before Enter selects it. Assert those exact keys reached
+	// the pane in order (the "Up,Up,Enter" run only occurs on the disable).
+	var keys []string
+	for _, k := range f.World.Tmux.Sent() {
+		if k.Target == "tmux-cc-1:0.0" {
+			keys = append(keys, k.Text)
+		}
+	}
+	assert.Contains(t, strings.Join(keys, ","), "Up,Up,Enter",
+		"disable drives the confirm menu with Up, Up, Enter (a bare Enter would accept the default and leave it on)")
 
 	// Toggle flips from off → on.
 	tog := f.AsHuman().RemoteControl(conv, "toggle")
