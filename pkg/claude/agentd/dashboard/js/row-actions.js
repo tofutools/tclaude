@@ -840,7 +840,7 @@ function bindRowActions() {
           input.type = 'text';
           input.className = 'group-default-cwd-input';
           input.value = oldCwd;
-          input.placeholder = 'absolute path — empty clears the default';
+          input.placeholder = 'absolute path (~ OK) — empty clears the default';
           input.spellcheck = false;
           input.autocomplete = 'off';
           cwdEl.replaceWith(input);
