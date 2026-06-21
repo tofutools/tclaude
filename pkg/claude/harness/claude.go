@@ -533,9 +533,10 @@ func (f *claudeStreamFilter) putLocked(s string) {
 	}
 	// A visible character is about to hit stdout — let the indicator erase itself
 	// (and note the write) first, so it never overlaps the answer. Called before
-	// EVERY write (this is the single funnel for all of them: paced emit,
-	// unsmoothed passthrough, Flush fallback), which is also what lets the
-	// indicator re-appear during a mid-stream stall and clear again on resume.
+	// EVERY stdout write (this is the single funnel for all of them: paced emit,
+	// unsmoothed passthrough, the Flush fallback, AND the closing newline), which
+	// is also what lets the indicator re-appear during a mid-stream stall and
+	// clear again on resume.
 	if f.status != nil {
 		f.status.BeforeOutput()
 	}
@@ -583,10 +584,13 @@ func (f *claudeStreamFilter) Flush() error {
 	if !f.wroteText && f.finalResult != "" {
 		f.putLocked(f.finalResult)
 	}
-	if f.wroteText && !f.endedNL && f.writeErr == nil {
-		if _, err := io.WriteString(f.out, "\n"); err != nil {
-			f.writeErr = err
-		}
+	if f.wroteText && !f.endedNL {
+		// Route the closing newline through putLocked as well, so the indicator is
+		// stopped before it (the single-funnel invariant putLocked documents) and a
+		// stashed writeErr is honored. Without this, a still-shown inline indicator
+		// could be restored-and-cleared by the later spinner teardown ONTO the line
+		// above this newline — a stray cursor/clear artifact.
+		f.putLocked("\n")
 	}
 	return f.writeErr
 }
