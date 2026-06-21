@@ -114,6 +114,10 @@ type askInput struct {
 	NoSmoothing      bool
 	StdinIsTerminal  bool
 	StdoutIsTerminal bool
+	// StderrIsTerminal gates the streaming "working…" indicator: it is drawn on
+	// stderr, so we only show it when stderr is a real terminal (never into a
+	// redirected stderr). Defaults false, so tests get no spinner.
+	StderrIsTerminal bool
 }
 
 // askIO carries the streams runAsk wires into the harness process. In an
@@ -144,6 +148,7 @@ func runFromCLI(p *Params, args []string) error {
 
 	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	stderrIsTTY := term.IsTerminal(int(os.Stderr.Fd()))
 
 	var payload string
 	if !stdinIsTTY {
@@ -183,6 +188,7 @@ func runFromCLI(p *Params, args []string) error {
 		NoSmoothing:      p.NoSmoothing,
 		StdinIsTerminal:  stdinIsTTY,
 		StdoutIsTerminal: stdoutIsTTY,
+		StderrIsTerminal: stderrIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
 }
@@ -417,14 +423,27 @@ func runAsk(in askInput, aio askIO) error {
 	// end the line cleanly. spec.Stream is only ever set for a SupportsAskStream
 	// harness, so the type-assert always holds here.
 	var streamFlush harness.AskStreamFlusher
+	var spinner *streamSpinner
 	if spec.Stream {
 		if sa, ok := h.Ask.(harness.StreamAsker); ok {
-			filtered := sa.StreamFilter(aio.Stdout, resolveSmooth(in.NoSmoothing))
+			// A "working…" indicator on stderr while the answer is still on its way
+			// — shown only when stderr is itself a terminal (so a redirected stderr
+			// never collects escape codes). The filter erases it the instant the
+			// first character prints; see streamSpinner.
+			var status harness.StreamStatus
+			if in.StderrIsTerminal {
+				spinner = newStreamSpinner(aio.Stderr)
+				status = spinner
+			}
+			filtered := sa.StreamFilter(aio.Stdout, resolveSmooth(in.NoSmoothing), status)
 			plan.Stdout = filtered
 			if fl, ok := filtered.(harness.AskStreamFlusher); ok {
 				streamFlush = fl
 			}
 		}
+	}
+	if spinner != nil {
+		spinner.start()
 	}
 
 	// In capture mode some harnesses (Codex) write a verbose human transcript to
@@ -446,6 +465,12 @@ func runAsk(in askInput, aio askIO) error {
 		if flushErr := streamFlush.Flush(); flushErr != nil && runErr == nil {
 			fmt.Fprintf(aio.Stderr, "ask: warning: could not finish streaming output: %v\n", flushErr)
 		}
+	}
+	if spinner != nil {
+		// The filter already erased the indicator before the first character; this
+		// is the cleanup for a turn that printed nothing (and joins the goroutine).
+		spinner.Stop()
+		spinner.wait()
 	}
 	if hideStderr && runErr != nil {
 		// The run failed — surface the suppressed transcript so the failure

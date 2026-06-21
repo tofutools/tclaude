@@ -312,7 +312,7 @@ func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
 // the content-oriented tests exercise the real paced goroutine path without
 // waiting out the typewriter delays.
 func newTestStreamFilter(out io.Writer) io.Writer {
-	w := claudeAsker{}.StreamFilter(out, true)
+	w := claudeAsker{}.StreamFilter(out, true, nil)
 	w.(*claudeStreamFilter).sleep = func(time.Duration) {}
 	return w
 }
@@ -366,7 +366,7 @@ func TestPacingCPS(t *testing.T) {
 func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 	var out strings.Builder
 	var nowNs, sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out, true).(*claudeStreamFilter)
+	w := claudeAsker{}.StreamFilter(&out, true, nil).(*claudeStreamFilter)
 	w.clock = func() time.Time { return time.Unix(0, nowNs.Load()) }
 	w.sleep = func(d time.Duration) { nowNs.Add(int64(d)); sleeps.Add(1) }
 
@@ -395,7 +395,7 @@ func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	var out strings.Builder
 	var sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out, true).(*claudeStreamFilter)
+	w := claudeAsker{}.StreamFilter(&out, true, nil).(*claudeStreamFilter)
 	w.sleep = func(time.Duration) { sleeps.Add(1) }
 
 	big := strings.Repeat("x", streamDumpThreshold+500)
@@ -413,12 +413,89 @@ func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	}
 }
 
+// recordingStatus is a fake StreamStatus that records the filter's phase
+// callbacks. stopAtLen captures how many bytes had reached out when Stop fired,
+// proving the indicator is erased BEFORE the first visible character.
+type recordingStatus struct {
+	out         *strings.Builder
+	firstChunks int
+	stops       int
+	stopAtLen   int
+}
+
+func (r *recordingStatus) FirstChunk() { r.firstChunks++ }
+func (r *recordingStatus) Stop() {
+	if r.stops == 0 {
+		r.stopAtLen = r.out.Len()
+	}
+	r.stops++
+}
+
+// TestClaudeStreamFilter_DrivesStatus proves the filter drives the optional
+// StreamStatus indicator: FirstChunk fires once on the first visible delta, and
+// Stop fires once immediately BEFORE the first character reaches stdout — so the
+// indicator is always erased before the answer could overlap it.
+func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
+	var out strings.Builder
+	st := &recordingStatus{out: &out}
+	w := claudeAsker{}.StreamFilter(&out, true, st).(*claudeStreamFilter)
+	w.sleep = func(time.Duration) {}
+
+	for _, c := range []string{"Hello, ", "world"} {
+		if _, err := io.WriteString(w, streamTextDelta(c)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := out.String(); got != "Hello, world\n" {
+		t.Fatalf("answer = %q, want %q", got, "Hello, world\n")
+	}
+	if st.firstChunks != 1 {
+		t.Fatalf("FirstChunk fired %d times, want 1", st.firstChunks)
+	}
+	if st.stops != 1 {
+		t.Fatalf("Stop fired %d times, want 1", st.stops)
+	}
+	if st.stopAtLen != 0 {
+		t.Fatalf("Stop fired after %d bytes already on stdout, want 0 (erase must precede the first char)", st.stopAtLen)
+	}
+}
+
+// TestClaudeStreamFilter_StatusStopsOnDeltalessTurn proves a turn that streams no
+// deltas (only a result event, e.g. an error) still stops the indicator: the
+// fallback write in Flush funnels through the same Stop trigger.
+func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
+	var out strings.Builder
+	st := &recordingStatus{out: &out}
+	w := claudeAsker{}.StreamFilter(&out, true, st).(*claudeStreamFilter)
+	w.sleep = func(time.Duration) {}
+
+	line := `{"type":"result","subtype":"error","is_error":true,"result":"boom"}` + "\n"
+	if _, err := io.WriteString(w, line); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := out.String(); got != "boom\n" {
+		t.Fatalf("answer = %q, want %q", got, "boom\n")
+	}
+	if st.firstChunks != 0 {
+		t.Fatalf("no delta streamed, FirstChunk should not fire, got %d", st.firstChunks)
+	}
+	if st.stops != 1 || st.stopAtLen != 0 {
+		t.Fatalf("Stop should fire once before the fallback text, got stops=%d stopAtLen=%d", st.stops, st.stopAtLen)
+	}
+}
+
 // TestClaudeStreamFilter_SmoothOff proves smooth=false forwards deltas straight
 // through (no pacer goroutine), with identical final output. (The flag/env that
 // resolves to this bool is covered by the ask layer's resolveSmooth tests.)
 func TestClaudeStreamFilter_SmoothOff(t *testing.T) {
 	var out strings.Builder
-	w := claudeAsker{}.StreamFilter(&out, false)
+	w := claudeAsker{}.StreamFilter(&out, false, nil)
 	if cf := w.(*claudeStreamFilter); cf.smooth {
 		t.Fatal("StreamFilter(_, false) must not smooth")
 	}

@@ -122,11 +122,38 @@ type StreamAsker interface {
 	// built-in default; a filter that doesn't pace may ignore it. Either way the
 	// emitted bytes are identical — smooth only changes their timing.
 	//
+	// status is an optional sink for the live "working…" indicator (see
+	// StreamStatus); the filter drives its phase transitions as it parses. nil
+	// disables it. The filter calls status only at phase boundaries, never per
+	// byte, so a non-TTY caller simply passes nil.
+	//
 	// The returned writer may also implement AskStreamFlusher; `tclaude ask`
 	// calls Flush once after the process exits so the filter can emit any
 	// trailing text the stream implied but never streamed as deltas (a final
 	// result or an error message) and a terminating newline.
-	StreamFilter(w io.Writer, smooth bool) io.Writer
+	StreamFilter(w io.Writer, smooth bool, status StreamStatus) io.Writer
+}
+
+// StreamStatus is an optional sink for the transient "working…" indicator
+// `tclaude ask` shows (on stderr) while a streamed answer is still on its way —
+// so a human watching a TTY sees that the harness is alive during the model's
+// "thinking" pause before any text arrives. A StreamFilter drives the two phase
+// transitions it alone can observe; the ask layer supplies the concrete renderer
+// (a spinner) and owns its lifecycle (create, start, final stop). A nil
+// StreamStatus disables the indicator entirely.
+//
+// The renderer's methods may be called from the filter's stdout-parsing and
+// pacing goroutines, so an implementation must be safe for concurrent use.
+type StreamStatus interface {
+	// FirstChunk is called once, when the first visible answer text has been
+	// received but (under smoothing) not yet printed — the brief "buffering"
+	// moment between the model's first token and the first character on screen.
+	FirstChunk()
+	// Stop is called once, immediately before the first visible character is
+	// written to the real stdout — or, if the turn printed nothing, by the ask
+	// layer after the run. It must erase the indicator and halt. Idempotent:
+	// the ask layer also calls it as end-of-run cleanup.
+	Stop()
 }
 
 // AskStreamFlusher is the optional flush half of a StreamFilter's returned

@@ -198,10 +198,11 @@ func (claudeAsker) NoisyCaptureStderr() bool { return false }
 // purely cosmetic and only ever runs against a real TTY — the ask flow wires
 // this filter in only then (a piped or captured stdout keeps the buffered path)
 // and resolves the smooth flag from --no-smoothing / TCLAUDE_ASK_SMOOTH.
-func (claudeAsker) StreamFilter(w io.Writer, smooth bool) io.Writer {
+func (claudeAsker) StreamFilter(w io.Writer, smooth bool, status StreamStatus) io.Writer {
 	f := &claudeStreamFilter{
 		out:    w,
 		smooth: smooth,
+		status: status,
 		clock:  time.Now,
 		sleep:  time.Sleep,
 	}
@@ -268,18 +269,21 @@ type claudeStreamEvent struct {
 type claudeStreamFilter struct {
 	out    io.Writer
 	smooth bool
+	status StreamStatus // optional "working…" indicator; nil = none
 
 	buf []byte // incomplete trailing line carried between Write calls (guarded by mu)
 
-	mu          sync.Mutex
-	cond        *sync.Cond
-	pending     []rune // parsed visible text awaiting paced emit (smooth mode)
-	inputDone   bool   // Flush has been called: no more text will arrive
-	started     bool   // the pacer goroutine has been launched
-	wroteText   bool   // at least one text_delta rune has been forwarded to out
-	endedNL     bool   // the last bytes forwarded ended in a newline
-	finalResult string // result-event text, emitted by Flush only if nothing streamed
-	writeErr    error  // first error writing to out; returned by Flush
+	mu           sync.Mutex
+	cond         *sync.Cond
+	pending      []rune // parsed visible text awaiting paced emit (smooth mode)
+	inputDone    bool   // Flush has been called: no more text will arrive
+	started      bool   // the pacer goroutine has been launched
+	sawChunk     bool   // the first visible delta has been observed (status.FirstChunk fired)
+	paintStarted bool   // the first visible character has been written (status.Stop fired)
+	wroteText    bool   // at least one text_delta rune has been forwarded to out
+	endedNL      bool   // the last bytes forwarded ended in a newline
+	finalResult  string // result-event text, emitted by Flush only if nothing streamed
+	writeErr     error  // first error writing to out; returned by Flush
 
 	// Arrival stats feeding the pacing rate estimate, updated as deltas arrive.
 	haveFirst bool      // the first delta has been seen (first is valid)
@@ -344,6 +348,15 @@ func (f *claudeStreamFilter) consumeLocked(line []byte) {
 func (f *claudeStreamFilter) emitLocked(s string) {
 	if s == "" {
 		return
+	}
+	// First visible text: leave the "waiting" indicator and enter "buffering"
+	// (the about-to-print moment). Under smoothing the pacer prints a tick later;
+	// unsmoothed the very next putLocked stops the indicator outright.
+	if !f.sawChunk {
+		f.sawChunk = true
+		if f.status != nil {
+			f.status.FirstChunk()
+		}
 	}
 	if !f.smooth {
 		f.putLocked(s)
@@ -472,6 +485,16 @@ func pacingCPS(backlog, arrived, chunks int, elapsed time.Duration) float64 {
 func (f *claudeStreamFilter) putLocked(s string) {
 	if s == "" || f.writeErr != nil {
 		return
+	}
+	// The first visible character is about to hit stdout — erase the "working…"
+	// indicator first, so it never overlaps the answer. Done here (the single
+	// funnel for every stdout write: paced emit, unsmoothed passthrough, and the
+	// Flush fallback) so exactly one path stops it, just before the first byte.
+	if !f.paintStarted {
+		f.paintStarted = true
+		if f.status != nil {
+			f.status.Stop()
+		}
 	}
 	if _, err := io.WriteString(f.out, s); err != nil {
 		f.writeErr = err

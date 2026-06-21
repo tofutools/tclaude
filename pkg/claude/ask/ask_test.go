@@ -809,6 +809,27 @@ func TestAsk_ClaudeTTYNoSmoothingStillStreamsCleanly(t *testing.T) {
 	assert.Equal(t, "the answer\n", out.String(), "the unsmoothed stream still yields the clean answer")
 }
 
+// TestAsk_ClaudeTTYShowsThenClearsSpinner: when stderr is a terminal, the live
+// "working…" indicator is drawn on stderr and ERASED before the answer prints —
+// stdout carries only the clean answer, and stderr's last bytes are the line
+// erase, so the indicator never overlaps the answer.
+func TestAsk_ClaudeTTYShowsThenClearsSpinner(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "the answer\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-SP", "/repo/x", "what is up?")
+	in.StderrIsTerminal = true
+	aio, out, errb := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	assert.Equal(t, "the answer\n", out.String(), "the answer is clean on stdout")
+	assert.True(t, strings.HasSuffix(errb.String(), "\r\033[K"),
+		"the indicator is erased from stderr; stderr=%q", errb.String())
+	assert.NotContains(t, errb.String(), "the answer", "the answer never leaks onto the stderr indicator line")
+}
+
 // TestResolveSmooth pins the flag/env precedence: --no-smoothing forces off;
 // otherwise TCLAUDE_ASK_SMOOTH=falsey turns it off; otherwise it stays on.
 func TestResolveSmooth(t *testing.T) {
