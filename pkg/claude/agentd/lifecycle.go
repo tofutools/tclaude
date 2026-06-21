@@ -1453,6 +1453,16 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// (the stand-by seed still tells the agent to read its inbox), a lowered cap
 	// would inject a redundant pointer after an already-inlined seed. Neither
 	// loses the briefing.
+	//
+	// welcomeInSeed also drives the read-marking below (a seed-inlined briefing
+	// is marked read, since the agent already has its full text). The same
+	// raised-cap pathological case therefore also marks a stand-by (NOT actually
+	// inlined) briefing read — hiding it from the dashboard's unread list. The
+	// briefing is still NOT lost: the stand-by seed explicitly tells the agent to
+	// `tclaude agent inbox` for it, and a read message is still listed by a plain
+	// `inbox ls`. Fully closing this would mean persisting the launch-time inline
+	// decision on the pending_spawns row; deliberately skipped as disproportionate
+	// to an operator-induced, recoverable, cosmetic window.
 	h := harnessForConv(convID)
 	contextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
