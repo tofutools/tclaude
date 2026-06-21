@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,17 +14,39 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+// noopNotifyCommand returns a do-nothing external command for the test
+// notification path. It must execute the full production dispatch (so the
+// suppression guards in OnStateTransition are exercised for real) WITHOUT
+// touching anything under HOME.
+//
+// Specifically it must NOT be the Go toolchain. Every `go <subcmd>`
+// invocation writes telemetry counter files into <UserConfigDir>/go/telemetry
+// and can fork a *detached* telemetry child that flushes asynchronously. The
+// flow harness points HOME at a per-test t.TempDir(), so that child races the
+// temp dir's RemoveAll cleanup and trips "directory not empty" — a flaky test
+// failure (macOS-prone, where UserConfigDir is $HOME/Library/Application
+// Support). A bare no-op binary writes nothing under HOME, so there is no
+// race. The command's exit status is irrelevant: OnStateTransition stamps the
+// cooldown (what the tests assert on) regardless of whether dispatch's command
+// succeeds, so even a not-found binary keeps the assertions valid.
+func noopNotifyCommand() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "exit", "0"}
+	}
+	return []string{"true"}
+}
+
 // enableNotificationsForTest writes a tclaude config (into the flow
 // world's temp HOME) with OS notifications enabled and the delivery
-// routed to a harmless cross-platform command, so OnStateTransition
-// runs the full production path without popping real desktop
-// notifications on the machine running the tests.
+// routed to a harmless no-op command, so OnStateTransition runs the
+// full production path without popping real desktop notifications on
+// the machine running the tests.
 func enableNotificationsForTest(t *testing.T) {
 	t.Helper()
 	cfg, err := config.Load()
 	require.NoError(t, err, "load default config")
 	cfg.Notifications.Enabled = true
-	cfg.Notifications.NotificationCommand = []string{"go", "version"}
+	cfg.Notifications.NotificationCommand = noopNotifyCommand()
 	require.NoError(t, config.Save(cfg), "save test config")
 }
 
