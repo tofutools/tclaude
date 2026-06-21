@@ -110,6 +110,42 @@ func TestHumanMessages_MarkRead(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+func TestHumanMessages_MarkUnread(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "x"})
+	require.NoError(t, err)
+
+	// Marking an unread message unread is a no-op (nothing to transition).
+	changed, err := MarkHumanMessageUnread(id)
+	require.NoError(t, err)
+	assert.False(t, changed, "an already-unread message doesn't transition")
+
+	// Read it, then mark it unread — the read→unread opt-out.
+	_, err = MarkHumanMessageRead(id)
+	require.NoError(t, err)
+	n, _ := CountUnreadHumanMessages()
+	require.Equal(t, 0, n)
+
+	changed, err = MarkHumanMessageUnread(id)
+	require.NoError(t, err)
+	assert.True(t, changed, "a read message transitions back to unread")
+	msgs, _ := ListHumanMessages()
+	require.Len(t, msgs, 1)
+	assert.False(t, msgs[0].IsRead(), "read_at is cleared")
+	n, _ = CountUnreadHumanMessages()
+	assert.Equal(t, 1, n, "it counts as unread again")
+
+	// Idempotent: re-marking the now-unread message is a no-op.
+	changed, err = MarkHumanMessageUnread(id)
+	require.NoError(t, err)
+	assert.False(t, changed)
+
+	// A non-existent id is a no-op, not an error.
+	changed, err = MarkHumanMessageUnread(999999)
+	require.NoError(t, err)
+	assert.False(t, changed)
+}
+
 func TestHumanMessages_MarkAllReadAndClear(t *testing.T) {
 	setupTestDB(t)
 	for range 3 {

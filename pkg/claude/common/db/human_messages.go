@@ -149,6 +149,25 @@ func MarkHumanMessageRead(id int64) (bool, error) {
 	return n > 0, nil
 }
 
+// MarkHumanMessageUnread clears read_at on one message if it is currently
+// read — the reader's "mark unread" toggle, the opt-out complement to the
+// auto-mark-on-open. Idempotent: re-marking an already-unread message is a
+// no-op, and a non-existent id is also a no-op. Returns whether a row was
+// actually transitioned.
+func MarkHumanMessageUnread(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(
+		`UPDATE human_messages SET read_at = '' WHERE id = ? AND read_at != ''`, id)
+	if err != nil {
+		return false, fmt.Errorf("mark human message unread: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // MarkAllHumanMessagesRead stamps read_at on every currently-unread
 // message and returns how many were transitioned.
 func MarkAllHumanMessagesRead() (int, error) {

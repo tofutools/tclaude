@@ -30,7 +30,10 @@
 //                             "delete selected".
 //   reader  (#mail-reader)  → the selected message's headers + body,
 //                             plus per-folder actions (human folder:
-//                             mark-read / focus; agent + "all" folders:
+//                             mark-read/unread toggle + focus — opening a
+//                             notification auto-marks it read, so the
+//                             toggle mostly offers the "mark unread"
+//                             opt-out; agent + "all" folders:
 //                             mark-read/unread toggle; every folder:
 //                             delete).
 //
@@ -42,8 +45,10 @@
 // their read-state via /api/mailbox/mark-read (by id, or whole-folder by
 // conv) — the operator repairing a stuck agent's inbox on its behalf; the
 // human folder keeps its /api/human-messages/* path (delete accepts an ids
-// array for multi-select). The reader's human-only mark-read / focus
-// actions still flow through row-actions.js's document handler.
+// array for multi-select). The reader's human-only mark-read / mark-unread
+// / focus actions still flow through row-actions.js's document handler;
+// the auto-mark-on-open (markOpenedHumanRead) posts the same read endpoint
+// directly, since it's a selection side effect rather than a button.
 //
 // Bulk delete/wipe is split into many small batched requests (see
 // runBatches) rather than one giant call: a progress bar fills in the
@@ -865,7 +870,15 @@ function paintReader() {
   // route through this module's mail-msg-delete.
   let actions;
   if (mail.selected === HUMAN_ID) {
-    const readBtn = m.read ? '' : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
+    // Opening a notification auto-marks it read (markOpenedHumanRead), so
+    // the reader almost always shows a read message — offer the "mark
+    // unread" opt-out, the way a mail client lets you flag something to
+    // revisit. An unread message (e.g. just marked unread, then re-opened
+    // without a reload) keeps the explicit "mark read". Both route through
+    // row-actions.js's msg-mark-read / msg-mark-unread handlers.
+    const readBtn = m.read
+      ? `<button data-act="msg-mark-unread" data-id="${m.id}" title="Mark this message unread">mark unread</button>`
+      : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
     const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
     actions = `<div class="mail-reader-actions">${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
   } else {
@@ -938,8 +951,47 @@ function selectMailbox(id) {
 
 function selectMessage(id) {
   mail.selectedMsgId = Number(id);
-  paintList();        // re-highlight the active row
+  // Opening a human notification marks it read, the way a mail client
+  // does — the human is now looking at it. Scoped to the human folder:
+  // its read-state means "the human has seen this". Agent + "all" folders
+  // keep read-state as the operator's explicit inbox-repair toggle (set on
+  // a stuck agent's behalf), so merely opening one there must NOT flip it.
+  if (mail.selected === HUMAN_ID) markOpenedHumanRead(mail.selectedMsgId);
+  paintList();        // re-highlight the active row (+ clear its unread dot)
   paintReader();
+}
+
+// markOpenedHumanRead implements "opening it reads it" for the human
+// folder. Optimistic: it flips the local row synchronously so
+// selectMessage's repaint right after already shows it read (no flash from
+// a full reload), then persists in the background and refreshes just the
+// sidebar's unread badge — the open message + list page stay put. Silent
+// (no toast): it fires on every open, and the reader already reflects the
+// new state; the nav tab badge reconciles on the next 2s tick. A no-op for
+// an already-read row or one not on the current page. On a failed POST it
+// reverts so the row doesn't lie about the server state.
+function markOpenedHumanRead(id) {
+  const m = mail.messages.find(x => x.id === id);
+  if (!m || m.read) return;
+  m.read = true;  // optimistic — selectMessage repaints immediately after
+  (async () => {
+    try {
+      const r = await fetch('/api/human-messages/read', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      // The unread badge lives on the roster — refresh that alone, leaving
+      // the open message + list page undisturbed.
+      await loadMailboxes();
+      paintSidebar();
+    } catch {
+      m.read = false;  // revert to the real (still-unread) server state
+      paintList();
+      paintReader();
+    }
+  })();
 }
 
 // openMailbox brings the Messages tab forward and selects a folder — the
