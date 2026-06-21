@@ -15,8 +15,10 @@ const CodexName = "codex"
 // init registers the OpenAI Codex CLI harness. It provides the ConvStore
 // (read conversations from Codex's rollout files + threads state DB; see
 // codex_convstore.go), the Spawner + ModelCatalog (JOH-154) that let
-// `session new --harness codex` launch a Codex TUI in tmux, the
-// HookInstaller (JOH-157/158), and a Lifecycle for Codex's in-pane controls.
+// `session new --harness codex` launch a Codex TUI in tmux, the Asker
+// (`tclaude ask` one-shot turns via `codex exec` / the TUI — JOH-252; see
+// codex_asker.go), the HookInstaller (JOH-157/158), and a Lifecycle for
+// Codex's in-pane controls.
 // Rename stays out-of-band: Codex has no `/rename`-style command, so
 // SupportsRename folds to false and agentd routes a Codex rename through
 // ConvStore.SetTitle.
@@ -25,6 +27,7 @@ func init() {
 		Name:        CodexName,
 		DisplayName: "Codex CLI",
 		Spawn:       codexSpawner{},
+		Ask:         codexAsker{},
 		Models:      codexModels{},
 		Convs:       codexConvStore{},
 		Hooks:       codexHookInstaller{},
@@ -95,4 +98,26 @@ func (codexConvStore) Title(convID string) (string, error) {
 		return "", err
 	}
 	return codexTitle(home, convID)
+}
+
+// Exists reports whether convID still has a rollout file under
+// ~/.codex/sessions. Codex's store is globally indexed by id (not cwd-
+// scoped), so cwd is ignored — the same id resolves from anywhere, mirroring
+// `codex resume`. A located rollout is (true, nil); none is (false, nil); a
+// scan error is (false, err) so the ask caller keeps the thread on a
+// transient failure rather than self-healing. `tclaude ask` uses this to
+// drop a stale (terminal,cwd)→conv mapping whose Codex conversation is gone.
+func (codexConvStore) Exists(convID, _ string) (bool, error) {
+	if convID == "" {
+		return false, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	path, err := findCodexRollout(home, convID)
+	if err != nil {
+		return false, err
+	}
+	return path != "", nil
 }

@@ -71,6 +71,7 @@ instead of slash-command injection).
 |---|---|---|
 | **Spawn** | ✅ `claude` | ✅ `codex` |
 | **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` |
+| **Ad-hoc ask** (`tclaude ask`) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn |
 | **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB |
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) |
 | **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` |

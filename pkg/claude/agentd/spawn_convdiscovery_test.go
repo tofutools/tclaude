@@ -25,6 +25,7 @@ func (f fakeDiscoveryStore) ListConvs(string) ([]convops.SessionEntry, error) {
 func (fakeDiscoveryStore) Resolve(string, string, bool) (*harness.ConvRef, error) { return nil, nil }
 func (fakeDiscoveryStore) Title(string) (string, error)                           { return "", nil }
 func (fakeDiscoveryStore) SetTitle(string, string) error                          { return nil }
+func (fakeDiscoveryStore) Exists(string, string) (bool, error)                    { return true, nil }
 
 func harnessWithConvs(s harness.ConvStore) *harness.Harness {
 	return &harness.Harness{Name: "fake", Convs: s}

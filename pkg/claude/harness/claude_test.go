@@ -1,9 +1,13 @@
 package harness
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 )
 
 // build is a tiny helper that runs the claude harness's command builder
@@ -134,6 +138,35 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 	}
 	if argv[len(argv)-1] != "x" {
 		t.Fatalf("prompt must be the trailing positional, got %q", argv[len(argv)-1])
+	}
+}
+
+// TestClaudeConvStore_Exists covers the ask self-heal probe (JOH-252): a
+// present per-cwd `.jsonl` is true, an absent one false, an empty id false.
+func TestClaudeConvStore_Exists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cwd := "/home/u/proj"
+	dir := convops.GetClaudeProjectPath(cwd)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const id = "11111111-1111-1111-1111-111111111111"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := claudeConvStore{}
+	if ok, err := store.Exists(id, cwd); err != nil || !ok {
+		t.Fatalf("present conv: ok=%v err=%v, want true,nil", ok, err)
+	}
+	if ok, err := store.Exists("22222222-2222-2222-2222-222222222222", cwd); err != nil || ok {
+		t.Fatalf("absent conv: ok=%v err=%v, want false,nil", ok, err)
+	}
+	if ok, err := store.Exists("", cwd); err != nil || ok {
+		t.Fatalf("empty id: ok=%v err=%v, want false,nil", ok, err)
 	}
 }
 

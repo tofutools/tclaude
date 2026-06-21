@@ -156,6 +156,34 @@ func TestCodexConvStore_ListConvs_RolloutOnly(t *testing.T) {
 	assert.Equal(t, cx.RolloutPath, e.FullPath, "FullPath is the rollout path")
 }
 
+// TestCodexConvStore_Exists covers the ask self-heal probe (JOH-252): a
+// present rollout id resolves true regardless of cwd (Codex's store is
+// globally id-indexed), an unknown id is false, and an empty id is false.
+func TestCodexConvStore_Exists(t *testing.T) {
+	home := codexTestHome(t)
+	const id = "019ec004-4250-79b1-9ade-ebaea4135453"
+	startCodexSim(t, home, id, "/home/u/proj", "hello", "hi")
+
+	store := codexConvs(t)
+
+	ok, err := store.Exists(id, "/home/u/proj")
+	require.NoError(t, err)
+	assert.True(t, ok, "an existing rollout id exists")
+
+	// cwd is ignored — the same id resolves from anywhere, like `codex resume`.
+	ok, err = store.Exists(id, "/some/other/dir")
+	require.NoError(t, err)
+	assert.True(t, ok, "Codex's store is id-indexed, not cwd-scoped")
+
+	ok, err = store.Exists("ffffffff-ffff-ffff-ffff-ffffffffffff", "/home/u/proj")
+	require.NoError(t, err)
+	assert.False(t, ok, "an unknown id does not exist")
+
+	ok, err = store.Exists("", "/home/u/proj")
+	require.NoError(t, err)
+	assert.False(t, ok, "an empty id is never present")
+}
+
 func TestCodexConvStore_ListConvs_CwdFilter(t *testing.T) {
 	home := codexTestHome(t)
 	cwdA, cwdB := "/home/u/a", "/home/u/b"
