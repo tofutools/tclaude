@@ -61,6 +61,11 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	// clone must relaunch as Codex. "" for an untagged/claude source omits
 	// the flag (the default).
 	srcHarness := harnessForConv(sourceConv).Name
+	// Carry the source's armed Remote Access to the sibling (JOH-261). A clone
+	// becoming a SECOND phone-reachable session alongside the still-running
+	// original is the operator-decided semantics — drive either from the phone.
+	// False (and so omitted) for an unarmed source or a Codex source.
+	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
 	if noCopyConv {
 		label = generateSpawnLabel()
 		// A clone is a relaunch, not a fresh opt-in, so it never engages the
@@ -69,13 +74,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
 		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-			Label:    label,
-			Cwd:      cwd,
-			Effort:   effort,
-			Model:    model,
-			Harness:  srcHarness,
-			Sandbox:  sandboxForHarness(srcHarness),
-			Approval: approvalForHarness(srcHarness),
+			Label:         label,
+			Cwd:           cwd,
+			Effort:        effort,
+			Model:         model,
+			Harness:       srcHarness,
+			Sandbox:       sandboxForHarness(srcHarness),
+			Approval:      approvalForHarness(srcHarness),
+			RemoteControl: remoteControl,
 		}); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
@@ -88,6 +94,11 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 			if err == nil && s != nil {
 				newTmux = s.TmuxSession
 				if s.ConvID != "" {
+					// Tag the sibling row's best-known remote-control ON (JOH-261);
+					// the --remote-control launch flag already armed its pane.
+					if remoteControl {
+						armRemoteControlOnNewRow(label)
+					}
 					return s.ConvID, newTmux, label, "", nil
 				}
 			}
@@ -112,13 +123,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	}
 	newConv = copyResult.NewConvID
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:   newConv,
-		Cwd:      cwd,
-		Effort:   effort,
-		Model:    model,
-		Harness:  srcHarness,
-		Sandbox:  sandboxForHarness(srcHarness),
-		Approval: approvalForHarness(srcHarness),
+		ConvID:        newConv,
+		Cwd:           cwd,
+		Effort:        effort,
+		Model:         model,
+		Harness:       srcHarness,
+		Sandbox:       sandboxForHarness(srcHarness),
+		Approval:      approvalForHarness(srcHarness),
+		RemoteControl: remoteControl,
 	}); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
@@ -131,6 +143,13 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 			newTmux = s.TmuxSession
 			if s.ID != "" {
 				label = s.ID
+			}
+			// Tag the sibling row's best-known remote-control ON (JOH-261); the
+			// --remote-control launch flag (on the resume) already armed its
+			// pane. The copy path discovers the label from the row (s.ID), so
+			// tag only when it materialised — an empty label can't be keyed.
+			if remoteControl && label != "" {
+				armRemoteControlOnNewRow(label)
 			}
 			return newConv, newTmux, label, "", nil
 		}

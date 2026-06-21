@@ -241,10 +241,11 @@ func (w *World) SpawnTrustDir(convID string) (bool, bool) {
 }
 
 // RecordSpawnRemoteControl captures the remote-control opt-in a
-// simSpawner.SpawnNew received, keyed by the new conv-id, so a flow test can
-// assert the `--remote-control` the spawn path threaded through (JOH-258). The
-// default (false) is recorded too. Recorded only on the fresh-spawn path —
-// re-arming Remote Access across resume/reincarnate/clone is JOH-261.
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert the `--remote-control` the spawn path threaded through.
+// The default (false) is recorded too. Recorded on the fresh-spawn path
+// (JOH-258) AND the resume path (JOH-261, re-arming Remote Access across
+// resume/reincarnate/clone).
 func (w *World) RecordSpawnRemoteControl(convID string, remoteControl bool) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()

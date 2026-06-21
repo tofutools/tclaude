@@ -204,12 +204,15 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	// Same observability as SpawnNew: capture the effort, model and sandbox
 	// the resume path threaded through, keyed by the conv-id, so flow tests
-	// can assert inheritance on resume / clone-copy paths.
+	// can assert inheritance on resume / clone-copy paths. RemoteControl rides
+	// here too so a JOH-261 flow test can assert the relaunch re-armed (or, for
+	// an unarmed source / Codex, did not carry) --remote-control.
 	s.w.RecordSpawnEffort(convID, args.Effort)
 	s.w.RecordSpawnModel(convID, args.Model)
 	s.w.RecordSpawnSandbox(convID, args.Sandbox)
 	s.w.RecordSpawnApproval(convID, args.Approval)
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
+	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -309,6 +312,9 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnSandbox(convID, args.Sandbox)
 	s.w.RecordSpawnApproval(convID, args.Approval)
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
+	// Always false for Codex (no built-in Remote Access), but recorded so a
+	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
+	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
