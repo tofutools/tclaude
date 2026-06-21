@@ -1869,6 +1869,17 @@ func DeleteAgentMessagesByIDs(ids []int64) (int64, error) {
 // the returned count reflects real transitions (mirroring the idempotent
 // no-op the batched UI relies on). A non-existent id is a silent skip.
 // Returns how many rows changed.
+//
+// This is intentionally DIRECTION-AGNOSTIC: it flips read_at on whatever rows
+// the ids name, regardless of whether a row was received or sent by any
+// particular conv. read_at is a single shared column meaning "the recipient
+// (to_conv) has read this", so marking an id the operator reached via an
+// agent's *sent* messages flips that message's recipient-side read-state — the
+// operator's explicit choice (the per-message reader toggle is even labelled
+// "for the recipient"). This is the deliberate counterpart to
+// MarkAgentMailboxRead, which is received-side-only BECAUSE a whole-folder
+// "mark all read" must not silently flip other agents' read-state; do not
+// "unify" the two by making this one received-only.
 func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil

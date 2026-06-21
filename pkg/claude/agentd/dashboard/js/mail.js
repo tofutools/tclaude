@@ -883,6 +883,13 @@ async function wipeSelectedMailboxes() {
 // (read=false) on the recipient's behalf — the operator repairing a stuck
 // agent's inbox read-state. Non-destructive and reversible, so no confirm.
 // Reloads so the unread dots + the sidebar badge update.
+//
+// Unlike deleteSelectedMessages this sends the whole selection in one
+// request rather than batching: a mark is a single cheap UPDATE (no
+// per-row work to watch advance), and the server's 256KB body cap bounds
+// the id list well above any realistic selection (~21k ids) — an
+// over-large body just 4xx's and surfaces as a toast. No progress bar, so
+// mail.busy is intentionally left unset (matching deleteOneMessage).
 async function setMessagesRead(ids, read) {
   ids = ids.filter(Number.isFinite);
   if (mail.busy || !ids.length) return;
