@@ -47,14 +47,18 @@ import (
 //       is clamped to the last page, so a stale page after a delete still
 //       lands on real rows (the served page comes back in the response).
 //
-// Mutation surfaces — cookie-authed POSTs. Viewing an agent mailbox
-// still never mutates that agent's read-state (that would corrupt the
-// agent's own inbox view); the read-state stays the agent's. But the
+// Mutation surfaces — cookie-authed POSTs. Merely VIEWING an agent
+// mailbox still never mutates that agent's read-state (that would corrupt
+// the agent's own inbox view); the read-state stays the agent's. But the
 // operator (whose cookie + Origin is the human-consent layer) may delete
-// the shared rows:
+// the shared rows, and may EXPLICITLY set their read-state — repairing a
+// stuck agent's inbox is the whole point of the mark-read action, distinct
+// from a drive-by view:
 //
-//   POST /api/mailbox/delete  {ids:[...]}    -> handleDashboardMailboxDelete
-//   POST /api/mailbox/wipe    {convs:[...]}  -> handleDashboardMailboxWipe
+//   POST /api/mailbox/delete    {ids:[...]}              -> handleDashboardMailboxDelete
+//   POST /api/mailbox/wipe      {convs:[...]}            -> handleDashboardMailboxWipe
+//   POST /api/mailbox/mark-read {ids:[...],read:bool}    -> handleDashboardMailboxMarkRead
+//                               {conv:"<id>",read:true}  (folder-level "mark all read")
 //
 // The human folder keeps its own /api/human-messages/* mutation path
 // (its delete accepts an ids array for multi-select).
@@ -76,6 +80,7 @@ func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mailbox", handleDashboardMailbox)
 	mux.HandleFunc("POST /api/mailbox/delete", handleDashboardMailboxDelete)
 	mux.HandleFunc("POST /api/mailbox/wipe", handleDashboardMailboxWipe)
+	mux.HandleFunc("POST /api/mailbox/mark-read", handleDashboardMailboxMarkRead)
 }
 
 // dashboardMailbox is one sidebar entry. Kind is "human" or "agent".
@@ -646,4 +651,57 @@ func handleDashboardMailboxWipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// handleDashboardMailboxMarkRead serves POST /api/mailbox/mark-read — sets
+// the read-state of agent_messages rows on the recipient's behalf. Two modes:
+//
+//	{ids:[...], read:bool}   — mark the listed rows read (read=true) / unread
+//	                           (read=false)
+//	{conv:"<id>", read:true} — mark every message that conv has RECEIVED read
+//	                           (the per-folder "mark all read")
+//
+// This is the operator's authority to repair a stuck agent's inbox read-state:
+// unlike merely viewing an agent mailbox (which never touches the agent's
+// read-state), it is an explicit operator action, gated the same way as the
+// delete/wipe mutations (cookie + Origin = human consent). conv mode supports
+// read=true only — marking a whole inbox unread has no use and would be a
+// footgun. Returns {"marked": n}, the count of rows whose state changed.
+// Cookie-authed.
+func handleDashboardMailboxMarkRead(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var body struct {
+		IDs  []int64 `json:"ids"`
+		Conv string  `json:"conv"`
+		Read bool    `json:"read"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+		return
+	}
+	var (
+		n   int64
+		err error
+	)
+	switch {
+	case body.Conv != "":
+		if !body.Read {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "conv mode supports read=true only")
+			return
+		}
+		n, err = db.MarkAgentMailboxRead(body.Conv)
+	case len(body.IDs) > 0:
+		n, err = db.SetAgentMessagesRead(body.IDs, body.Read)
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_arg", "ids or conv is required")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"marked": n})
 }
