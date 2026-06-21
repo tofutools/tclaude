@@ -246,6 +246,25 @@ function pruneSelections() {
   for (const c of [...mail.selectedBoxes]) {
     if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
   }
+  // Snap an orphaned folder selection back to the firehose: if the open
+  // folder is an agent folder no longer in the roster — e.g. a retired
+  // conv persisted as the selection while retired agents are hidden (the
+  // initial-load twin of setShowRetired's toggle-time snap), or a folder
+  // whose agent was deleted — leaving it selected would show its mail with
+  // no matching sidebar row. Guarded on a loaded roster (the pinned all /
+  // human folders mean a real roster always has entries) so a transient
+  // empty fetch can't bounce a valid selection; clearMessages lets the
+  // next load fill in the firehose.
+  if (mail.mailboxes.length
+      && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
+      && !agentIds.has(mail.selected)) {
+    mail.selected = ALL_ID;
+    mail.selectedMsgId = null;
+    mail.selectedMsgs.clear();
+    mail.page = 1;
+    clearMessages();
+    dashPrefs.setItem(SELECTED_KEY, ALL_ID);
+  }
 }
 
 // --- rendering ------------------------------------------------------

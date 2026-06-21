@@ -381,12 +381,17 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	if id == allMailboxID {
 		// The firehose drops retired agents' traffic unless the operator
 		// opted in. A specific agent folder (below) never excludes — the
-		// operator opened it on purpose, so they see all of its mail.
+		// operator opened it on purpose, so they see all of its mail. A
+		// lookup error fails the request (matches the roster handler)
+		// rather than silently falling open to the unfiltered firehose.
 		var exclude []string
 		if !mailboxIncludeRetired(r) {
-			if _, ids, err := retiredAgentConvs(); err == nil {
-				exclude = ids
+			_, ids, err := retiredAgentConvs()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
 			}
+			exclude = ids
 		}
 		p, err := agentMailboxPage("", q, page, pageSize, exclude)
 		if err != nil {
