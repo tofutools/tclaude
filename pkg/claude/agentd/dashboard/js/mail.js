@@ -11,7 +11,11 @@
 //                             agent. Filtered by #filter-mailboxes (name
 //                             / id / group); each agent row carries a
 //                             checkbox for the bulk "wipe selected"
-//                             action (#mail-wipe-bar).
+//                             action (#mail-wipe-bar). Retired agents are
+//                             hidden (and their traffic dropped from the
+//                             "all" firehose) until the #mail-show-retired
+//                             footer toggle opts them back in
+//                             (include_retired, server-side).
 //   list    (#mail-list)    → the selected folder's messages, newest
 //                             first, filtered by #filter-messages. Each
 //                             row has a select checkbox and a delete
@@ -53,6 +57,10 @@ const ALL_ID = 'all';
 const SELECTED_KEY = 'tclaude.dash.mail.mailbox';
 const BOX_FILTER_KEY = 'tclaude.dash.mail.boxfilter';
 const PAGE_SIZE_KEY = 'tclaude.dash.mail.pagesize';
+// Whether the sidebar lists retired-agent folders (and the "all" firehose
+// counts their traffic). Off by default — a retired agent is demoted, so
+// its folder is clutter until the operator asks for it.
+const SHOW_RETIRED_KEY = 'tclaude.dash.mail.showretired';
 
 // Page sizes the selector offers. The default (50) is what a fresh
 // dashboard uses until the operator picks one; every value stays at or
@@ -95,6 +103,9 @@ const WIPE_BATCH = 5;
 const mail = {
   mailboxes: [],
   selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
+  // showRetired drives the include_retired param on both fetches. Sticky
+  // (persisted) so the operator's choice survives a reload.
+  showRetired: dashPrefs.getItem(SHOW_RETIRED_KEY) === '1',
   messages: [],
   selectedMsgId: null,
   selectedMsgs: new Set(),
@@ -147,7 +158,8 @@ function onlineConvs() {
 
 async function loadMailboxes() {
   try {
-    const r = await fetch('/api/mailboxes', { credentials: 'same-origin' });
+    const qs = mail.showRetired ? '?include_retired=1' : '';
+    const r = await fetch(`/api/mailboxes${qs}`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     mail.mailboxes = data.mailboxes || [];
@@ -164,6 +176,10 @@ async function loadMessages() {
     page: String(mail.page),
     page_size: String(mail.pageSize),
   });
+  // Only the "all" firehose honours include_retired server-side; sending
+  // it for a specific folder is harmless (a retired folder the operator
+  // opened explicitly still shows all of its mail).
+  if (mail.showRetired) params.set('include_retired', '1');
   try {
     const r = await fetch(`/api/mailbox?${params.toString()}`,
       { credentials: 'same-origin' });
@@ -229,6 +245,25 @@ function pruneSelections() {
     mail.mailboxes.filter(mb => mb.kind === 'agent').map(mb => mb.id));
   for (const c of [...mail.selectedBoxes]) {
     if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
+  }
+  // Snap an orphaned folder selection back to the firehose: if the open
+  // folder is an agent folder no longer in the roster — e.g. a retired
+  // conv persisted as the selection while retired agents are hidden (the
+  // initial-load twin of setShowRetired's toggle-time snap), or a folder
+  // whose agent was deleted — leaving it selected would show its mail with
+  // no matching sidebar row. Guarded on a loaded roster (the pinned all /
+  // human folders mean a real roster always has entries) so a transient
+  // empty fetch can't bounce a valid selection; clearMessages lets the
+  // next load fill in the firehose.
+  if (mail.mailboxes.length
+      && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
+      && !agentIds.has(mail.selected)) {
+    mail.selected = ALL_ID;
+    mail.selectedMsgId = null;
+    mail.selectedMsgs.clear();
+    mail.page = 1;
+    clearMessages();
+    dashPrefs.setItem(SELECTED_KEY, ALL_ID);
   }
 }
 
@@ -325,6 +360,34 @@ function setPageSize(n) {
   reloadMessagesPage();
 }
 
+// isSelectedRetired reports whether the open folder is a retired-agent
+// folder, per the current roster. Used to decide whether hiding retired
+// folders would strand the selection.
+function isSelectedRetired() {
+  const mb = mail.mailboxes.find(x => x.id === mail.selected);
+  return !!(mb && mb.retired);
+}
+
+// setShowRetired flips the "show retired agents" toggle, persists it, and
+// re-fetches so the roster + "all" firehose reflect the new scope. When
+// hiding retired folders with one currently open, it snaps the selection
+// back to the firehose first — otherwise the operator would be left
+// reading a folder that just vanished from the sidebar.
+function setShowRetired(on) {
+  if (on === mail.showRetired || mail.busy) return;
+  mail.showRetired = on;
+  if (on) dashPrefs.setItem(SHOW_RETIRED_KEY, '1');
+  else dashPrefs.removeItem(SHOW_RETIRED_KEY);
+  if (!on && isSelectedRetired()) {
+    mail.selected = ALL_ID;
+    mail.selectedMsgId = null;
+    mail.selectedMsgs.clear();
+    mail.page = 1;
+    dashPrefs.setItem(SELECTED_KEY, ALL_ID);
+  }
+  reloadMail();
+}
+
 function mailboxLabel(mb) {
   if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
@@ -360,11 +423,14 @@ function paintSidebar() {
       ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
       : '';
     const count = `<span class="mailbox-count" title="${mb.in} received · ${mb.out} sent">${mb.total}</span>`;
+    // Retired folders only appear when the toggle is on; tag them so they
+    // read as demoted rather than a live agent.
+    const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
     const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
       data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
       <span class="mailbox-icon">${mailboxIcon(mb)}</span>
       <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
-      ${count}${unread}
+      ${tag}${count}${unread}
     </button>`;
     // Only real agent mailboxes are checkable for the bulk wipe — the
     // virtual "all" and "human" folders are special views. A spacer
@@ -372,7 +438,7 @@ function paintSidebar() {
     const lead = mb.kind === 'agent'
       ? `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`
       : '<span class="mail-box-check-spacer"></span>';
-    return `<div class="mailbox-row">${lead}${btn}</div>`;
+    return `<div class="mailbox-row${mb.retired ? ' retired' : ''}">${lead}${btn}</div>`;
   }).join('');
 }
 
@@ -1018,6 +1084,21 @@ function initMail() {
       const v = boxFilter.value;
       if (v) dashPrefs.setItem(BOX_FILTER_KEY, v); else dashPrefs.removeItem(BOX_FILTER_KEY);
       paintSidebar();
+    });
+  }
+  // "Show retired agents" sidebar toggle. A dedicated listener (not the
+  // delegated tab handler) so a mid-bulk-op click stays in sync: it
+  // reverts the box to the live state and no-ops rather than the delegated
+  // handler's silent early-return, which would leave the box visually
+  // toggled but the state unchanged. The checkbox is static (never
+  // repainted), so its checked state is the source of truth between
+  // toggles; seed it from the persisted pref.
+  const showRetired = $('#mail-show-retired');
+  if (showRetired) {
+    showRetired.checked = mail.showRetired;
+    showRetired.addEventListener('change', () => {
+      if (mail.busy) { showRetired.checked = mail.showRetired; return; }
+      setShowRetired(showRetired.checked);
     });
   }
   // Load immediately when the human switches TO the Messages tab, rather

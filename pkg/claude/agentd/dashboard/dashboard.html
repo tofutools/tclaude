@@ -440,6 +440,13 @@
       <div class="mail-col mail-sidebar-col">
         <div id="mail-wipe-bar" class="mail-bulk-bar" hidden></div>
         <aside class="mail-sidebar" id="mail-sidebar"></aside>
+        <!-- Retired agents are hidden from the roster (and their traffic
+             from the "all" firehose) by default; this footer toggle pulls
+             them back in. mail.js persists the choice and re-fetches with
+             include_retired. -->
+        <label class="mail-sidebar-foot" title="Show folders for retired agents, and include their messages in the “All agent messages” firehose">
+          <input type="checkbox" id="mail-show-retired" /> show retired agents
+        </label>
       </div>
       <!-- Row 2, col 2: list body — the "delete selected" / select-all bar
            sits above the scrolling message list (#mail-list); the pager
