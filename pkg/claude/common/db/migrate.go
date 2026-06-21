@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 64
+const currentVersion = 65
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -415,6 +415,57 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 65 {
+		if err := migrateV64toV65(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV64toV65 adds sessions.remote_control — tclaude's best-known state
+// of whether Claude Code's built-in Remote Access is ON for a live session
+// (the /remote-control toggle / --remote-control launch flag). CC exposes no
+// programmatic readback of remote-control state, so tclaude tracks it itself;
+// the recorded flag decides whether the next toggle injection should enable
+// (toggle) or disable (toggle + confirm Enter). It is a LIVE-session property
+// (gone when the pane exits) like status, so it lives on sessions, defaults
+// off, and is re-armed only by a --remote-control spawn. Written out-of-band
+// (SetSessionRemoteControl), never by SaveSession's UPSERT, so hook ticks
+// can't clobber it. See JOH-256.
+//
+// Runs in one transaction AND guards the column add behind a
+// pragma_table_info probe (the migrateV56toV57 convention): SQLite has no
+// ADD COLUMN IF NOT EXISTS, and a half-applied run must converge on re-run
+// instead of wedging on "duplicate column name".
+func migrateV64toV65(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v64→v65 (add sessions.remote_control): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveCol int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'remote_control'`,
+	).Scan(&haveCol); err != nil {
+		return fmt.Errorf("migrate v64→v65 (add sessions.remote_control): probe column: %w", err)
+	}
+	if haveCol == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE sessions ADD COLUMN remote_control INTEGER NOT NULL DEFAULT 0`,
+		); err != nil {
+			return fmt.Errorf("migrate v64→v65 (add sessions.remote_control): add column: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 65`); err != nil {
+		return fmt.Errorf("migrate v64→v65 (add sessions.remote_control): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v64→v65 (add sessions.remote_control): commit: %w", err)
+	}
 	return nil
 }
 
@@ -529,7 +580,7 @@ func migrateV62toV63(db *sql.DB) error {
 //
 // Idempotent / self-healing (the migrateV56toV57 convention): the ADD COLUMN
 // is pragma_table_info-guarded, and the synthesis only touches groups whose
-// default_profile is still '' (so a re-run after a half-applied attempt skips
+// default_profile is still ” (so a re-run after a half-applied attempt skips
 // the groups it already converted). It also tolerates a DB with no agent_groups
 // table / no default_model column (a minimally-seeded migration-heal DB). The
 // whole thing rides one transaction with the version bump.
@@ -581,7 +632,7 @@ func migrateV61toV62(db *sql.DB) error {
 // synthesizeGroupDefaultProfiles migrates each group's legacy default_model
 // into a synthesized claude spawn profile and points the group's default_profile
 // at it, so the per-group spawn default survives the JOH-210 cutover. Only
-// groups not yet converted (default_profile still '') are touched, which makes
+// groups not yet converted (default_profile still ”) are touched, which makes
 // it converge on a re-run. A DB whose agent_groups predates the v52
 // default_model column (a minimally-seeded heal DB) has nothing to migrate, so
 // the absence of default_model is tolerated.

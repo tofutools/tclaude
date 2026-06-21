@@ -47,9 +47,13 @@ func TestMigrateV60toV61_HealsHalfAppliedRun(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	// Half-applied: table already there with a row, version still 60.
+	// A minimal sessions table is seeded too so the final migrate()-to-head
+	// reaches the v65 sessions.remote_control ALTER (added after v58, the last
+	// prior sessions-ALTER this v60 seed used to skip — see migrateV64toV65).
 	_, err = d.Exec(`
 		CREATE TABLE schema_version (version INTEGER NOT NULL);
 		INSERT INTO schema_version (version) VALUES (60);
+		CREATE TABLE sessions (id TEXT PRIMARY KEY);
 		CREATE TABLE spawn_profiles (
 			id                            INTEGER PRIMARY KEY AUTOINCREMENT,
 			name                          TEXT NOT NULL UNIQUE,
