@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
@@ -66,7 +66,7 @@ function memberRowHTML(m, ctx) {
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}${remoteControlBadge(m)}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>

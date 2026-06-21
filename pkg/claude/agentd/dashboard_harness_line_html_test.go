@@ -83,9 +83,12 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	}
 
 	// helpers.js: a non-default harness is flagged even with no model yet,
-	// so a mixed group is legible before the first tick.
+	// so a mixed group is legible before the first tick. A default-harness
+	// (Claude Code) no-model row stays clean UNLESS Remote Access is armed,
+	// in which case the bare 📱 indicator still earns a minimal line.
 	must("function isDefaultHarness(name)", "default-harness predicate defined")
-	must("if (isDefaultHarness(harness)) return ''", "no-model Claude Code rows stay clean; Codex still badges")
+	must("if (isDefaultHarness(harness)) {", "no-model Claude Code rows stay clean; Codex still badges")
+	must("return remoteEl ? `<div class=\"agent-harness\">${remoteEl}</div>` : '';", "an armed remote indicator still shows on a pre-tick CC row")
 
 	// helpers.js: the sandbox badge builder reads state.sandbox_mode, is
 	// exported, and special-cases the full-access (sandbox-off) mode.
