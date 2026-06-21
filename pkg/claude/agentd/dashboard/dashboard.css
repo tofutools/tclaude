@@ -246,7 +246,7 @@ body:has(#tab-messages.active) #tab-messages.active {
    folders (shown only when their own toggle is on) get the same dim — their
    "0" count is the only tag they need. */
 .mailbox-row.retired .mailbox,
-.mailbox-row.empty .mailbox { opacity: .6; }
+.mailbox-row.empty-box .mailbox { opacity: .6; }
 .mailbox-tag {
   flex: 0 0 auto; color: #8b949e; font-size: 9px; text-transform: uppercase;
   letter-spacing: .04em; border: 1px solid #2a3340; border-radius: 4px;
