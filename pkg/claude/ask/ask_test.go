@@ -749,6 +749,28 @@ func TestAsk_ClaudePipedStaysBuffered(t *testing.T) {
 	assert.Equal(t, "captured answer\n", out.String(), "captured answer is byte-for-byte the harness output")
 }
 
+// TestAsk_StreamFlushErrorWarns: when streaming output to the terminal fails
+// (a downstream write error the filter stashes), runAsk surfaces it as a
+// warning on stderr after the run — without masking a successful run's outcome.
+func TestAsk_StreamFlushErrorWarns(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "the answer\n", started: true}
+	f.install(t)
+
+	var errb bytes.Buffer
+	aio := askIO{Stdin: strings.NewReader(""), Stdout: failingWriter{}, Stderr: &errb}
+	require.NoError(t, runAsk(ttyInput("term-FE", "/repo/x", "q"), aio))
+	assert.Contains(t, errb.String(), "could not finish streaming output",
+		"a streaming write failure is surfaced as a warning")
+}
+
+// failingWriter is a stdout stand-in that always errors, to drive the stream
+// filter's stashed-write-error path through runAsk.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("tty gone") }
+
 // TestAsk_InteractiveDoesNotStreamJSON: interactive mode (-i, the full TUI)
 // streams natively and must never get the print-only stream-json flags.
 func TestAsk_InteractiveDoesNotStreamJSON(t *testing.T) {

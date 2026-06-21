@@ -220,6 +220,12 @@ type claudeStreamEvent struct {
 // split a write mid-line) and only ever acts on complete, newline-terminated
 // events. A failure writing to out is stashed and surfaced from Flush so a
 // short write never propagates back to claude's pipe (which would abort it).
+//
+// Memory is bounded by the largest single event line, not the whole turn: each
+// complete line is dropped from buf the moment its newline arrives. claude's
+// stream-json is one JSON object per line, so the cap is one event — the
+// terminal `result` (which carries the full answer) being the biggest — never
+// the cumulative stream.
 type claudeStreamFilter struct {
 	out         io.Writer
 	buf         []byte // incomplete trailing line carried between Write calls

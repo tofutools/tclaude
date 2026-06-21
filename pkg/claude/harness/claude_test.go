@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -270,7 +271,40 @@ func TestClaudeStreamFilter(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, "boom\n")
 		}
 	})
+
+	t.Run("a delta already ending in a newline gets no doubled newline", func(t *testing.T) {
+		if got := run(textDelta("line\n")); got != "line\n" {
+			t.Fatalf("got %q, want %q (Flush must not add a second newline)", got, "line\n")
+		}
+	})
+
+	// The short-write contract is the load-bearing claim: a downstream write
+	// failure must NOT propagate from Write (which would make os/exec tear the
+	// claude pipe down mid-turn) — it is stashed and reported only by Flush.
+	t.Run("write error is stashed, surfaced by Flush, never returned from Write", func(t *testing.T) {
+		fw := &errAfterWriter{err: errors.New("broken pipe")}
+		w := claudeAsker{}.StreamFilter(fw)
+		line := textDelta("hello")
+		n, err := io.WriteString(w, line)
+		if err != nil || n != len(line) {
+			t.Fatalf("Write must report full consumption with no error, got n=%d err=%v", n, err)
+		}
+		fl, ok := w.(AskStreamFlusher)
+		if !ok {
+			t.Fatal("filter should implement AskStreamFlusher")
+		}
+		if err := fl.Flush(); err == nil {
+			t.Fatal("Flush should surface the stashed write error")
+		}
+	})
 }
+
+// errAfterWriter is an io.Writer that always fails, used to prove the stream
+// filter's short-write contract (a downstream failure is stashed, not returned
+// from Write).
+type errAfterWriter struct{ err error }
+
+func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
 
 // TestClaudeConvStore_Exists covers the ask self-heal probe (JOH-252): a
 // present per-cwd `.jsonl` is true, an absent one false, an empty id false.
