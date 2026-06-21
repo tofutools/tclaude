@@ -1034,16 +1034,6 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-default-model:hover, .user-default-model:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-model.unset, .user-default-model.unset { color: #484f58; font-style: italic; }
 .group-default-model.unset:hover, .user-default-model.unset:hover { color: #d4d4d4; }
-/* The group remote-control-policy chip (JOH-262): same compact look as the
-   other clickable group chips; .unset (the "inherit" default) recedes. */
-.group-remote-policy {
-  font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
-  margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
-  border: 1px solid transparent; white-space: nowrap;
-}
-.group-remote-policy:hover { color: #d4d4d4; border-color: #58a6ff; }
-.group-remote-policy.unset { color: #484f58; font-style: italic; }
-.group-remote-policy.unset:hover { color: #d4d4d4; }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
    chip while choosing a default spawn profile (row-actions openProfilePicker).
    Same compact monospace look as the chip inputs above. */
