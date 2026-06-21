@@ -1186,6 +1186,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
 	var preConvID string
 	var preMsgID int64
+	// briefingInlined records whether the launch-enrollment prompt baked the
+	// whole briefing inline (short enough to fit) rather than pointing at the
+	// inbox copy. When it did, the inbox copy is marked read after launch — the
+	// agent already has the text, so it shouldn't linger as unread clutter.
+	var briefingInlined bool
 	if launchEnroll {
 		preConvID = convops.GenerateUUID()
 		mid, fail := enrollSpawnedConv(g, p, preConvID)
@@ -1212,9 +1217,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// (a cheap pure function of the same inputs) so the inlined copy is
 		// byte-identical to the inbox row — no shared mutable state to drift.
 		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+		inlineCap := spawnInlineMaxChars()
+		// Capture the inline decision from the SAME inputs (and cap) the prompt
+		// build uses, so the post-launch read-marking matches what actually went
+		// into the launch turn. spawnBriefingFitsLaunch mirrors
+		// buildSpawnLaunchPrompt's own inline-vs-pointer choice.
+		briefingInlined = spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
+			resolveSpawnerTitle(p.SpawnedByConv), inlineCap)
 	} else if spawnHarness.NeedsSpawnSeed() {
 		// Seed-needing harness (Codex): the conv-id can't be preset, so
 		// enrollment + the inbox briefing happen post-connect. But the pane still
@@ -1349,12 +1360,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// the operator can retire, exactly like any agent that crashes on boot.
 	if launchEnroll {
 		focusSpawn()
-		if preMsgID > 0 {
-			if err := db.MarkAgentMessageDelivered(preMsgID); err != nil {
-				slog.Warn("spawn: failed to mark startup context delivered",
-					"conv", preConvID, "msg_id", preMsgID, "error", err)
-			}
-		}
+		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
 		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label}, nil
 	}
 
@@ -1599,6 +1605,37 @@ func spawnInlineMaxChars() int {
 	return *cfg.Agent.SpawnInlineMaxChars
 }
 
+// markBriefingConsumed records that a spawned agent's startup-briefing inbox
+// message has reached the agent. It always stamps delivered_at — the welcome
+// (inline or pointer) has landed, so the inbox copy is no longer pending
+// delivery.
+//
+// When the briefing was INLINED into the launch prompt (inlined true), the
+// agent received its full text on its very first turn, so there is nothing left
+// for it to `inbox read`: the copy is also stamped read_at, so it doesn't
+// linger as unread clutter in the dashboard Messages tab. A briefing that
+// stayed a pointer (inlined false — a legacy CC injection, or a Codex briefing
+// too long to inline) is left unread, because the agent still has to open it
+// from the inbox.
+//
+// A msgID of 0 (no briefing was inserted) is a no-op. Both writes are
+// best-effort and only log on failure — the spawn has already succeeded.
+func markBriefingConsumed(convID string, msgID int64, inlined bool) {
+	if msgID <= 0 {
+		return
+	}
+	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
+		slog.Warn("spawn: failed to mark startup context delivered",
+			"conv", convID, "msg_id", msgID, "error", err)
+	}
+	if inlined {
+		if err := db.MarkAgentMessageRead(msgID); err != nil {
+			slog.Warn("spawn: failed to mark inlined startup context read",
+				"conv", convID, "msg_id", msgID, "error", err)
+		}
+	}
+}
+
 // runSpawnPostInit fires asynchronously after a successful spawn. It
 // waits for the new tmux pane to come online, then injects, in order:
 //
@@ -1702,13 +1739,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// before this goroutine fired. It reached the agent either as the
 	// post-connect welcome above (which named its message id) or, for a
 	// seed-delivered welcome, inline in the launch turn — so mark it
-	// delivered now that the greeting has landed.
-	if spawnContextMsgID > 0 {
-		if err := db.MarkAgentMessageDelivered(spawnContextMsgID); err != nil {
-			slog.Warn("spawn: failed to mark startup context delivered",
-				"conv", convID, "msg_id", spawnContextMsgID, "error", err)
-		}
-	}
+	// delivered now that the greeting has landed. welcomeInSeed also means
+	// the briefing rode in inline (buildSpawnSeedPrompt inlines exactly when
+	// the welcome fits the seed), so the agent already has its full text and
+	// the inbox copy is marked read too; a pointer welcome leaves it unread.
+	markBriefingConsumed(convID, spawnContextMsgID, welcomeInSeed)
 }
 
 // spawnTitlePersist* bound the post-welcome retry that writes an out-of-band
