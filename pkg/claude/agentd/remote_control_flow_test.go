@@ -2,7 +2,6 @@ package agentd_test
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,13 +38,37 @@ func TestRemoteControl_ToggleOnOff(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got, "persisted state flips on after enable")
 
+	// Real surface: the pane's modeled remote access is actually ON now, so the
+	// disable below exercises the genuine "toggle while on opens a confirm
+	// menu" path rather than a no-op.
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "alive session has a CCSim")
+	assert.True(t, cc.RemoteControlOn(), "the pane's modeled remote access is on after enable")
+
 	// Enabling again is a no-op (best-known state already on).
 	again := f.AsHuman().RemoteControl(conv, "on")
 	require.Equal(t, http.StatusOK, again.Code, "re-enable; body=%s", again.Raw)
 	assert.Equal(t, "noop", again.Action, "enabling an already-on session is a no-op")
 	assert.True(t, again.RemoteControl)
 
-	// Disable (exercises the confirm-Enter path).
+	// paneKeys snapshots the send-keys that reached this pane, in order.
+	paneKeys := func() []string {
+		var keys []string
+		for _, k := range f.World.Tmux.Sent() {
+			if k.Target == "tmux-cc-1:0.0" {
+				keys = append(keys, k.Text)
+			}
+		}
+		return keys
+	}
+	beforeDisable := len(paneKeys())
+
+	// Disable. This is the path that was silently (intermittently) broken:
+	// routing the toggle through injectTextAndSubmit sent a SECOND,
+	// belt-and-suspenders Enter that — when CC's confirm menu had already
+	// rendered — landed on that menu and accepted its default ("keep
+	// connected"), tearing it down before Up,Up,Enter could pick "disconnect",
+	// so Remote Access stayed ON. The fix submits the toggle exactly once.
 	off := f.AsHuman().RemoteControl(conv, "off")
 	require.Equal(t, http.StatusOK, off.Code, "disable; body=%s", off.Raw)
 	assert.False(t, off.RemoteControl, "disable reports remote control off")
@@ -54,24 +77,27 @@ func TestRemoteControl_ToggleOnOff(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got, "persisted state flips off after disable")
 
-	// The disable path must DRIVE CC's confirm menu — Up, Up, Enter — not send
-	// a bare Enter: the menu's default highlight is not "disconnect", so two
-	// Ups move to it before Enter selects it. Assert those exact keys reached
-	// the pane in order (the "Up,Up,Enter" run only occurs on the disable).
-	var keys []string
-	for _, k := range f.World.Tmux.Sent() {
-		if k.Target == "tmux-cc-1:0.0" {
-			keys = append(keys, k.Text)
-		}
-	}
-	assert.Contains(t, strings.Join(keys, ","), "Up,Up,Enter",
-		"disable drives the confirm menu with Up, Up, Enter (a bare Enter would accept the default and leave it on)")
+	// Real surface: the pane's modeled remote access actually went OFF —
+	// proving the injected keystrokes navigated the confirm menu to
+	// "disconnect", not merely that the daemon optimistically recorded the
+	// intended state. With the old double-Enter path the menu's default was
+	// accepted and this stayed true.
+	assert.False(t, cc.RemoteControlOn(),
+		"disable must drive the confirm menu to disconnect, leaving the pane's remote access off")
 
-	// Toggle flips from off → on.
+	// And the exact keystrokes: type the toggle, submit ONCE, then Up, Up,
+	// Enter to select "disconnect". A second Enter before the Ups is the
+	// regression (it accepts the menu's default and leaves remote access on).
+	disableKeys := paneKeys()[beforeDisable:]
+	assert.Equal(t, []string{"/remote-control", "Enter", "Up", "Up", "Enter"}, disableKeys,
+		"disable submits the toggle once then drives the menu (no stray belt-and-suspenders Enter)")
+
+	// Toggle flips from off → on (enable opens no confirm menu).
 	tog := f.AsHuman().RemoteControl(conv, "toggle")
 	require.Equal(t, http.StatusOK, tog.Code, "toggle; body=%s", tog.Raw)
 	assert.True(t, tog.RemoteControl, "toggle flips off→on")
 	assert.Equal(t, "enabled", tog.Action)
+	assert.True(t, cc.RemoteControlOn(), "the pane's modeled remote access is on again after the toggle")
 }
 
 // TestRemoteControl_NoLiveSessionRefuses: a mutating intent needs a live pane;

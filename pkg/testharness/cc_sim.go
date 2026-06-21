@@ -66,7 +66,29 @@ type CCSim struct {
 	buf      strings.Builder
 	handlers []handlerEntry
 	delays   []delayEntry
+
+	// Remote-control (CC's /remote-control) state machine. remoteOn is the
+	// modeled live state: a /remote-control toggle while OFF turns it on with
+	// no confirmation; a toggle while ON opens a disconnect-confirm MENU
+	// instead of flipping immediately. rcMenuOpen tracks that menu being up
+	// and rcMenuPos the highlight position — Up moves toward "disconnect"
+	// (rcDisconnectMenuOffset moves up from the default "keep connected"
+	// entry), Enter selects the highlight. This mirrors the real CC quirk the
+	// daemon's disable path must drive (Up, Up, Enter), so a flow test sees
+	// whether the injected keystrokes ACTUALLY disconnected — not merely that
+	// some keys reached the pane. Read via RemoteControlOn().
+	remoteOn   bool
+	rcMenuOpen bool
+	rcMenuPos  int
 }
+
+// rcDisconnectMenuOffset is how many Up presses move the disconnect-confirm
+// menu's highlight from its default entry ("keep connected") to "disconnect".
+// CC's menu sits the default away from disconnect on purpose, so a bare Enter
+// keeps the connection; the daemon walks Up, Up, Enter to actually disconnect
+// (operator-verified). The sim clamps at this offset (disconnect is the top
+// entry), so two-or-more Ups all land on it.
+const rcDisconnectMenuOffset = 2
 
 // InputHandler processes one submitted CC input. Return true to mark
 // the line consumed; false to fall through to the next handler.
@@ -157,6 +179,35 @@ func (c *CCSim) Receive(text string) {
 		c.mu.Unlock()
 		return
 	}
+	// While CC's disconnect-confirm menu is up, arrow keys move the highlight
+	// and Enter selects the highlighted entry — none of it touches the input
+	// buffer. Model that so a test observes the REAL effect of the disable
+	// keystrokes (did "disconnect" actually get chosen?) rather than just that
+	// keys reached the pane. A stray Enter here — e.g. injectTextAndSubmit's
+	// belt-and-suspenders second Enter — lands on the default entry and leaves
+	// remote access ON, which is the exact bug the disable path had.
+	if c.rcMenuOpen {
+		switch text {
+		case "Up":
+			if c.rcMenuPos < rcDisconnectMenuOffset {
+				c.rcMenuPos++
+			}
+		case "Down":
+			if c.rcMenuPos > 0 {
+				c.rcMenuPos--
+			}
+		case "Enter":
+			if c.rcMenuPos == rcDisconnectMenuOffset {
+				c.remoteOn = false
+			}
+			c.rcMenuOpen = false
+			c.rcMenuPos = 0
+		default:
+			// Typing does nothing while the confirm menu is up.
+		}
+		c.mu.Unlock()
+		return
+	}
 	if text != "Enter" {
 		c.buf.WriteString(text)
 		c.mu.Unlock()
@@ -205,6 +256,18 @@ func (c *CCSim) Title() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.title
+}
+
+// RemoteControlOn reports the simulator's modeled CC remote-access state — set
+// on by a /remote-control toggle while off, and back off only when the
+// disconnect-confirm menu's "disconnect" entry is actually selected (Up, Up,
+// Enter). Tests assert on THIS — the real outcome of the injected keystrokes —
+// not on the daemon's optimistically-recorded best-known state, which always
+// reflects the intended toggle whether or not the menu was driven correctly.
+func (c *CCSim) RemoteControlOn() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.remoteOn
 }
 
 // MarkDead flips alive=false. Handlers call this from /exit-style
@@ -405,6 +468,21 @@ func (c *CCSim) installDefaultHandlers() {
 		}},
 		{prefix: "/clear", fn: func(c *CCSim, _ string) bool {
 			c.clear()
+			return true
+		}},
+		{prefix: "/remote-control", fn: func(c *CCSim, _ string) bool {
+			c.mu.Lock()
+			if c.remoteOn {
+				// Toggling while ON opens the disconnect-confirm menu
+				// (default highlight = "keep connected") rather than
+				// flipping immediately; the caller must drive it.
+				c.rcMenuOpen = true
+				c.rcMenuPos = 0
+			} else {
+				// Toggling while OFF turns remote access on, no confirm.
+				c.remoteOn = true
+			}
+			c.mu.Unlock()
 			return true
 		}},
 		{prefix: "", fn: func(c *CCSim, line string) bool {
