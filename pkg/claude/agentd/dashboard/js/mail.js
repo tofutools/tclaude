@@ -582,9 +582,12 @@ function paintSidebar() {
       const members = (g.member_convs || [])
         .map(id => agentById.get(id))
         .filter(Boolean);
-      // A member can be absent from agentById because it has no mail, is
-      // retired, or doesn't match the sidebar filter — not only "no
-      // messages" — so keep the placeholder neutral about the reason.
+      // A member_convs id can be absent from agentById when its mailbox is
+      // empty (and "show agents without messages" is off) or it doesn't match
+      // the sidebar text filter — both keep it out of the flat Agents list it
+      // would nest from. Retired ex-members are not a reason: the server only
+      // lists them in member_convs when "show retired agents" is on, and then
+      // their flat folder is shown too. Keep the placeholder neutral.
       html += members.length
         ? members.map(mb => mailboxRowHTML(mb, true)).join('')
         : '<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span>'
