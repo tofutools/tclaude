@@ -5,8 +5,8 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
-  harnessCanRename,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
+  harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
 } from './helpers.js';
@@ -57,12 +57,16 @@ function memberRowHTML(m, ctx) {
   const dndSource = ctx.ungrouped
     ? 'data-dnd-source-ungrouped="1"'
     : `data-dnd-source-group="${esc(ctx.group.name)}"`;
-  const actions = ctx.ungrouped ? ungroupedMemberActions(m) : memberActions(ctx.group, m);
+  // canRemote gates the per-row remote-control toggle on the agent's harness
+  // capability (harnessCanRemoteControl), computed here where lastSnapshot is
+  // in scope — the same place renameNameCell reads harnessCanRename.
+  const canRemote = harnessCanRemoteControl(lastSnapshot, state.harness);
+  const actions = ctx.ungrouped ? ungroupedMemberActions(m, canRemote) : memberActions(ctx.group, m, canRemote);
   return `
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
+                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}${remoteControlBadge(m)}</td>
                 <td class="id">${esc(shortId(m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>

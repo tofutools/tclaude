@@ -447,6 +447,11 @@ type dashboardHarness struct {
 	// the same condition as a non-empty SandboxModes, surfaced explicitly
 	// so the dialog has a single boolean to gate the sandbox row on.
 	CanSandbox bool `json:"can_sandbox"`
+	// CanRemoteControl mirrors Harness.CanRemoteControl — true only for a
+	// harness with a built-in Remote Access toggle (Claude Code), false for
+	// one without it (Codex). The per-row remote-control toggle gates on
+	// this exactly the way the rename control gates on CanRename (JOH-259).
+	CanRemoteControl bool `json:"can_remote_control"`
 }
 
 // buildHarnessCatalog assembles the spawnable-harness catalog for the
@@ -462,13 +467,14 @@ func buildHarnessCatalog() []dashboardHarness {
 			continue // not spawnable — skip
 		}
 		dh := dashboardHarness{
-			Name:         h.Name,
-			DisplayName:  h.DisplayName,
-			Models:       h.Models.Models(),
-			EffortLevels: h.Models.EffortLevels(),
-			CanRename:    h.CanRename(),
-			CanCompact:   h.CanCompact(),
-			CanSandbox:   h.SupportsSandbox(),
+			Name:             h.Name,
+			DisplayName:      h.DisplayName,
+			Models:           h.Models.Models(),
+			EffortLevels:     h.Models.EffortLevels(),
+			CanRename:        h.CanRename(),
+			CanCompact:       h.CanCompact(),
+			CanSandbox:       h.SupportsSandbox(),
+			CanRemoteControl: h.CanRemoteControl(),
 		}
 		if dh.Models == nil {
 			dh.Models = []string{} // JSON [] not null, so JS .map() is safe
@@ -735,6 +741,16 @@ type agentState struct {
 	// "" for a harness with no launch sandbox (Claude Code) — the dashboard
 	// renders no sandbox badge for "". Surfaced regardless of liveness.
 	SandboxMode string `json:"sandbox_mode,omitempty"`
+	// RemoteControl is tclaude's best-known state of whether the harness's
+	// built-in Remote Access is enabled for this agent (JOH-256). It is a
+	// best-known flag — the harness exposes no readback, so the dashboard
+	// reflects the recorded intent and reconciles on refresh. Surfaced
+	// regardless of liveness; the per-row toggle lets the operator flip an
+	// agent's remote access before stepping away (JOH-259). The CAPABILITY
+	// gate (which harness can be remote-controlled at all) is not here — it
+	// rides the harness catalog's can_remote_control, the same place the
+	// rename control reads can_rename from.
+	RemoteControl bool `json:"remote_control,omitempty"`
 }
 
 // stateForConvIn looks up the most-recent live tmux session row for
@@ -784,6 +800,11 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		// exited override below only touches Status/StatusDetail.
 		Harness:     pick.Harness,
 		SandboxMode: pick.SandboxMode,
+		// RemoteControl is tclaude's best-known Remote Access flag for the
+		// conv (JOH-256), surfaced regardless of liveness like the other
+		// launch/row properties — the dashboard reflects the recorded intent
+		// and reconciles on the next refresh (the harness has no readback).
+		RemoteControl: pick.RemoteControl,
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)

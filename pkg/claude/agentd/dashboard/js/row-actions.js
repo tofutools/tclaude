@@ -371,6 +371,27 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'toggle-remote-control': {
+          // Per-agent Remote Access toggle. data-intent is the OPPOSITE of
+          // the current best-known state (set at render time), so one click
+          // flips it. The server owns the toggle direction + the disable
+          // confirm-Enter; the UI only sends intent and reconciles on the
+          // refresh below — the harness has no readback, so the state is
+          // best-known, not authoritative. (JOH-259)
+          const intent = btn.getAttribute('data-intent') || 'toggle';
+          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/remote-control`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ intent }),
+          });
+          if (!r.ok) { toast(`Remote control toggle failed: ${await r.text()}`, true); return; }
+          let resp = {};
+          try { resp = await r.json(); } catch (_) { /* tolerate a bodyless 200 */ }
+          const on = !!resp.remote_control;
+          toast(`${label}: remote access ${on ? 'ON — reachable from the Claude app' : 'OFF'}`);
+          refresh();
+          return;
+        }
         case 'toggle-global-notify': {
           // The top-bar master bell: flip config.notifications.enabled.
           const cur = btn.getAttribute('data-enabled') === '1';
