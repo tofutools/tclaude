@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
@@ -186,8 +189,35 @@ func (claudeAsker) NoisyCaptureStderr() bool { return false }
 // It is the read half of the streaming contract whose write half is the
 // stream-json flags BuildAskArgv emits for a Stream spec. Implementing it is
 // what makes claudeAsker a StreamAsker (so Harness.SupportsAskStream is true).
+//
+// By default the filter SMOOTHS the answer: instead of dumping each text_delta
+// the instant it arrives (which lands in visible bursts — a few words, a pause,
+// then a whole paragraph), it paces the characters out at an estimated steady
+// rate so the answer "types" itself fluidly. Purely cosmetic, and only ever
+// against a real TTY — the ask flow wires this filter in only then (a piped or
+// captured stdout keeps the buffered path). Set TCLAUDE_ASK_SMOOTH to a falsey
+// value (0/false/off/no) to forward chunks the instant they arrive instead.
 func (claudeAsker) StreamFilter(w io.Writer) io.Writer {
-	return &claudeStreamFilter{out: w}
+	f := &claudeStreamFilter{
+		out:    w,
+		smooth: smoothAskStream(),
+		clock:  time.Now,
+		sleep:  time.Sleep,
+	}
+	f.cond = sync.NewCond(&f.mu)
+	return f
+}
+
+// smoothAskStream reports whether `tclaude ask` should pace ("typewriter") the
+// streamed answer. On by default; TCLAUDE_ASK_SMOOTH set to a falsey value turns
+// it off so deltas forward the instant they arrive (the original behavior).
+func smoothAskStream() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TCLAUDE_ASK_SMOOTH"))) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // claudeStreamEvent is the slice of Claude Code's stream-json event schema this
@@ -221,18 +251,50 @@ type claudeStreamEvent struct {
 // events. A failure writing to out is stashed and surfaced from Flush so a
 // short write never propagates back to claude's pipe (which would abort it).
 //
-// Memory is bounded by the largest single event line, not the whole turn: each
-// complete line is dropped from buf the moment its newline arrives. claude's
-// stream-json is one JSON object per line, so the cap is one event — the
-// terminal `result` (which carries the full answer) being the biggest — never
-// the cumulative stream.
+// When smooth is set (the default — see StreamFilter), the extracted text is
+// not written straight through: Write/consume only ENQUEUE it (the JSON parsing
+// stays on claude's stdout goroutine) and a background pacer goroutine drains
+// the queue character-by-character at an estimated steady rate (see pace /
+// pacingCPS), so the answer types itself fluidly instead of arriving in chunky
+// bursts. Flush signals end-of-input and waits for the queue to drain before
+// returning. With smooth unset the text is written straight through, exactly as
+// before — no goroutine, no pacing.
+//
+// Concurrency: mu guards everything the pacer and claude's stdout goroutine both
+// touch (pending, the arrival stats, wroteText/endedNL, writeErr); cond wakes
+// the pacer when text is enqueued or input completes. buf is touched only on the
+// stdout goroutine (Write) and, after that goroutine is done, by Flush — never
+// concurrently — so it needs no lock.
+//
+// Memory is bounded by the largest single event line plus the un-emitted text
+// backlog — at steady state a fraction of a second of output, since the pacer
+// keeps pace with the model. Each complete JSON line is dropped from buf the
+// moment its newline arrives; claude's stream-json is one JSON object per line.
 type claudeStreamFilter struct {
-	out         io.Writer
-	buf         []byte // incomplete trailing line carried between Write calls
-	wroteText   bool   // at least one text_delta has been forwarded
+	out    io.Writer
+	smooth bool
+
+	buf []byte // incomplete trailing line carried between Write calls (stdout goroutine only)
+
+	mu          sync.Mutex
+	cond        *sync.Cond
+	pending     []rune // parsed visible text awaiting paced emit (smooth mode)
+	inputDone   bool   // Flush has been called: no more text will arrive
+	started     bool   // the pacer goroutine has been launched
+	wroteText   bool   // at least one text_delta rune has been forwarded to out
 	endedNL     bool   // the last bytes forwarded ended in a newline
 	finalResult string // result-event text, emitted by Flush only if nothing streamed
 	writeErr    error  // first error writing to out; returned by Flush
+
+	// Arrival stats feeding the pacing rate estimate, updated as deltas arrive.
+	haveFirst bool      // the first delta has been seen (first is valid)
+	first     time.Time // arrival time of the first delta
+	arrived   int       // total runes received across all deltas
+	chunks    int       // number of text_delta events received
+
+	clock  func() time.Time    // time.Now; swappable in tests
+	sleep  func(time.Duration) // time.Sleep; swappable in tests
+	doneCh chan struct{}       // closed when the pacer goroutine exits
 }
 
 func (f *claudeStreamFilter) Write(p []byte) (int, error) {
@@ -278,7 +340,142 @@ func (f *claudeStreamFilter) consume(line []byte) {
 	}
 }
 
+// emit forwards one delta's visible text. In smooth mode it ENQUEUES the text
+// for the pacer to type out; otherwise it writes straight through (the original
+// behavior). An empty string and a prior write error are no-ops either way.
 func (f *claudeStreamFilter) emit(s string) {
+	if s == "" {
+		return
+	}
+	if !f.smooth {
+		f.mu.Lock()
+		f.putLocked(s)
+		f.mu.Unlock()
+		return
+	}
+	f.enqueue(s)
+}
+
+// enqueue appends a delta's text to the pending queue, updates the arrival stats
+// the pacer uses to estimate speed, and (on the first delta) launches the pacer
+// goroutine. Runs on claude's stdout goroutine.
+func (f *claudeStreamFilter) enqueue(s string) {
+	rs := []rune(s)
+	f.mu.Lock()
+	if !f.haveFirst {
+		f.first = f.clock()
+		f.haveFirst = true
+	}
+	f.arrived += len(rs)
+	f.chunks++
+	f.pending = append(f.pending, rs...)
+	if !f.started {
+		f.started = true
+		f.doneCh = make(chan struct{})
+		go f.pace()
+	}
+	f.cond.Signal()
+	f.mu.Unlock()
+}
+
+const (
+	// streamPaceTick is how often the pacer emits a small batch. ~60 Hz reads as
+	// continuous typing to the eye while keeping the emit count (and syscalls)
+	// modest even for a fast model.
+	streamPaceTick = 16 * time.Millisecond
+	// streamDumpThreshold caps the backlog: past this many un-emitted runes the
+	// model is producing far faster than anything could plausibly be "typed", so
+	// the pacer stops pacing and flushes the rest at once rather than trail the
+	// model by seconds.
+	streamDumpThreshold = 4096
+)
+
+// pace is the background typewriter loop (smooth mode). It drains pending at the
+// rate pacingCPS estimates, emitting in small per-tick batches so a fast model
+// still keeps up while a slow trickle stays smooth. It exits once input is done
+// and the queue is empty, or as soon as a write to out has failed.
+func (f *claudeStreamFilter) pace() {
+	defer close(f.doneCh)
+	for {
+		f.mu.Lock()
+		for len(f.pending) == 0 && !f.inputDone && f.writeErr == nil {
+			f.cond.Wait()
+		}
+		if f.writeErr != nil {
+			f.pending = nil // a write failed; drop the rest, Flush surfaces the error
+			f.mu.Unlock()
+			return
+		}
+		if len(f.pending) == 0 { // implies inputDone: nothing left to type
+			f.mu.Unlock()
+			return
+		}
+		n, delay := f.planEmitLocked()
+		f.putLocked(string(f.pending[:n]))
+		f.pending = f.pending[n:]
+		drained := f.inputDone && len(f.pending) == 0
+		f.mu.Unlock()
+
+		// Skip the inter-tick wait when we just finished, or when a dump cleared
+		// the backlog in one shot — loop straight back instead of pausing.
+		if drained || delay <= 0 {
+			continue
+		}
+		f.sleep(delay)
+	}
+}
+
+// planEmitLocked decides how many runes to emit this tick and how long to wait
+// afterwards. Caller holds mu.
+func (f *claudeStreamFilter) planEmitLocked() (n int, delay time.Duration) {
+	backlog := len(f.pending)
+	if backlog >= streamDumpThreshold {
+		return backlog, 0 // hopelessly behind: dump the rest now
+	}
+	var elapsed time.Duration
+	if f.haveFirst {
+		elapsed = f.clock().Sub(f.first)
+	}
+	cps := pacingCPS(backlog, f.arrived, f.chunks, elapsed)
+	n = min(max(int(math.Round(cps*streamPaceTick.Seconds())), 1), backlog)
+	return n, streamPaceTick
+}
+
+// pacingCPS estimates the characters-per-second to type the streamed answer at.
+// It is deliberately a pure function of the observed stream so the policy can be
+// unit-tested without goroutines or a clock.
+//
+// The core is self-stabilizing: aim to drain the CURRENT backlog over a short
+// fixed horizon, so the rate rises when we fall behind and eases off as we catch
+// up. At steady state, with the model producing at rate M, the backlog settles
+// at ~M*horizon and we emit at ~M — i.e. we track the model's own speed with a
+// constant sub-second lag, no per-stream tuning needed.
+//
+// Once at least two chunks have arrived the model's average rate can also be
+// measured directly (arrived/elapsed) and is used as a FLOOR, so a steady fast
+// stream is never throttled below the speed it is actually arriving at (this is
+// the "estimate from ≥2 chunks" idea — but we start typing on chunk one rather
+// than stalling for it, then lock onto the measured rate once it's available).
+// Everything is clamped to a sane [min,max] so one tiny first chunk doesn't
+// crawl and a big burst doesn't machine-gun.
+func pacingCPS(backlog, arrived, chunks int, elapsed time.Duration) float64 {
+	const (
+		minCPS  = 25.0  // floor: never crawl slower than a brisk typist
+		maxCPS  = 480.0 // ceiling: faster than this is indistinguishable from instant
+		horizon = 0.55  // seconds to drain the current backlog at steady state
+	)
+	cps := float64(backlog) / horizon
+	if chunks >= 2 && elapsed > 0 {
+		cps = max(cps, float64(arrived)/elapsed.Seconds())
+	}
+	return min(max(cps, minCPS), maxCPS)
+}
+
+// putLocked writes s to out and updates the forwarded-text bookkeeping. Caller
+// holds mu. A first write error is stashed and silences all further writes; it
+// is surfaced by Flush. (Returning it from Write would make os/exec tear the
+// claude pipe down mid-turn.)
+func (f *claudeStreamFilter) putLocked(s string) {
 	if s == "" || f.writeErr != nil {
 		return
 	}
@@ -290,21 +487,36 @@ func (f *claudeStreamFilter) emit(s string) {
 	f.endedNL = strings.HasSuffix(s, "\n")
 }
 
-// Flush is called once after the claude process exits. It surfaces a buffered
-// final answer/error when nothing streamed, and leaves the cursor on a fresh
-// line — text_delta chunks carry no trailing newline, so without this the
-// shell prompt would resume mid-answer.
+// Flush is called once after the claude process exits. In smooth mode it tells
+// the pacer no more text is coming and waits for the queue to drain, so the
+// whole answer is on screen before we return. It then surfaces a buffered final
+// answer/error when nothing streamed, and leaves the cursor on a fresh line —
+// text_delta chunks carry no trailing newline, so without this the shell prompt
+// would resume mid-answer.
 func (f *claudeStreamFilter) Flush() error {
 	// Process any final line the stream didn't newline-terminate. claude's
 	// stream-json terminates every event (including the last) with a newline, so
 	// this is belt-and-suspenders — but it keeps a result event without a
-	// trailing newline from being silently dropped.
+	// trailing newline from being silently dropped. Must run BEFORE we signal
+	// input-done, since it can enqueue a last delta.
 	if len(bytes.TrimSpace(f.buf)) > 0 {
 		f.consume(f.buf)
 		f.buf = nil
 	}
+	if f.smooth && f.started {
+		f.mu.Lock()
+		f.inputDone = true
+		f.cond.Signal()
+		f.mu.Unlock()
+		<-f.doneCh // wait for the pacer to type out the remaining backlog
+	}
+	// The pacer has exited (or never ran) and claude's stdout goroutine is done,
+	// so we now have exclusive access; the lock just preserves putLocked's
+	// invariant.
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if !f.wroteText && f.finalResult != "" {
-		f.emit(f.finalResult)
+		f.putLocked(f.finalResult)
 	}
 	if f.wroteText && !f.endedNL && f.writeErr == nil {
 		if _, err := io.WriteString(f.out, "\n"); err != nil {

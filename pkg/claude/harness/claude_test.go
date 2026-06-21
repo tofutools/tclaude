@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 )
@@ -183,7 +185,7 @@ func TestClaudeAsker_SupportsStream(t *testing.T) {
 func TestClaudeStreamFilter(t *testing.T) {
 	run := func(chunks ...string) string {
 		var out strings.Builder
-		w := claudeAsker{}.StreamFilter(&out)
+		w := newTestStreamFilter(&out)
 		for _, c := range chunks {
 			if _, err := io.WriteString(w, c); err != nil {
 				t.Fatalf("write: %v", err)
@@ -283,7 +285,7 @@ func TestClaudeStreamFilter(t *testing.T) {
 	// claude pipe down mid-turn) — it is stashed and reported only by Flush.
 	t.Run("write error is stashed, surfaced by Flush, never returned from Write", func(t *testing.T) {
 		fw := &errAfterWriter{err: errors.New("broken pipe")}
-		w := claudeAsker{}.StreamFilter(fw)
+		w := newTestStreamFilter(fw)
 		line := textDelta("hello")
 		n, err := io.WriteString(w, line)
 		if err != nil || n != len(line) {
@@ -305,6 +307,137 @@ func TestClaudeStreamFilter(t *testing.T) {
 type errAfterWriter struct{ err error }
 
 func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
+
+// newTestStreamFilter builds the production smoothing stream filter but with a
+// no-op sleep, so the content-oriented tests exercise the real paced goroutine
+// path without waiting out the typewriter delays. Smoothing is forced on so an
+// ambient TCLAUDE_ASK_SMOOTH=0 in the dev's env can't quietly swap which path
+// these tests cover.
+func newTestStreamFilter(out io.Writer) io.Writer {
+	w := claudeAsker{}.StreamFilter(out)
+	cf := w.(*claudeStreamFilter)
+	cf.smooth = true
+	cf.sleep = func(time.Duration) {}
+	return w
+}
+
+// streamTextDelta renders one text_delta event line (the visible-answer carrier)
+// exactly as Claude Code's --include-partial-messages stream emits it.
+func streamTextDelta(s string) string {
+	b, _ := json.Marshal(s)
+	return `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":` + string(b) + `}}}` + "\n"
+}
+
+// TestPacingCPS pins the pure pacing policy: a tiny first chunk floors at a
+// brisk rate rather than crawling, a backlog drives the rate up (drain-the-
+// backlog-over-a-horizon core), the observed average rate acts as a floor once
+// two chunks are in, and everything is clamped to [min,max].
+func TestPacingCPS(t *testing.T) {
+	const (
+		minCPS = 25.0
+		maxCPS = 480.0
+	)
+	cases := []struct {
+		name    string
+		backlog int
+		arrived int
+		chunks  int
+		elapsed time.Duration
+		want    float64
+	}{
+		{"tiny first chunk floors at min", 5, 5, 1, 0, minCPS},
+		{"backlog sets the rate", 110, 0, 1, 0, 110 / 0.55},
+		{"huge backlog caps at max", 1_000_000, 0, 1, 0, maxCPS},
+		{"measured rate is a floor once two chunks are in", 10, 300, 2, time.Second, 300},
+		{"measured rate is clamped to max too", 10, 1000, 2, time.Second, maxCPS},
+		{"measured ignored below two chunks", 10, 1000, 1, time.Second, minCPS}, // 10/0.55≈18 → min
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pacingCPS(tc.backlog, tc.arrived, tc.chunks, tc.elapsed)
+			if got < tc.want-1 || got > tc.want+1 {
+				t.Fatalf("pacingCPS(%d,%d,%d,%v) = %.2f, want ≈%.2f", tc.backlog, tc.arrived, tc.chunks, tc.elapsed, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClaudeStreamFilter_PacesAcrossTicks proves the smooth path actually paces:
+// a multi-chunk answer is emitted over several ticks (more than one sleep), and
+// the final visible text is the whole answer with a single trailing newline —
+// pacing changes the timing, never the bytes. A fake clock advanced by the
+// recording sleep keeps the rate estimate deterministic.
+func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
+	var out strings.Builder
+	var nowNs, sleeps atomic.Int64
+	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
+	w.smooth = true
+	w.clock = func() time.Time { return time.Unix(0, nowNs.Load()) }
+	w.sleep = func(d time.Duration) { nowNs.Add(int64(d)); sleeps.Add(1) }
+
+	answer := strings.Repeat("the quick brown fox. ", 10) // 210 chars, well under the dump cap
+	mid := len(answer) / 2
+	for _, c := range []string{answer[:mid], answer[mid:]} {
+		if _, err := io.WriteString(w, streamTextDelta(c)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, want := out.String(), answer+"\n"; got != want {
+		t.Fatalf("paced output = %q, want %q", got, want)
+	}
+	if sleeps.Load() < 2 {
+		t.Fatalf("a 210-char answer should pace over several ticks, got %d sleeps", sleeps.Load())
+	}
+}
+
+// TestClaudeStreamFilter_DumpsHugeBacklog proves the safety valve: a backlog
+// past the dump threshold (a model dumping far faster than anything could be
+// "typed") is flushed at once with no pacing delay, so the visible answer never
+// trails the model by seconds.
+func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
+	var out strings.Builder
+	var sleeps atomic.Int64
+	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
+	w.smooth = true
+	w.sleep = func(time.Duration) { sleeps.Add(1) }
+
+	big := strings.Repeat("x", streamDumpThreshold+500)
+	if _, err := io.WriteString(w, streamTextDelta(big)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, want := out.String(), big+"\n"; got != want {
+		t.Fatalf("dumped output length = %d, want %d", len(got), len(want))
+	}
+	if sleeps.Load() != 0 {
+		t.Fatalf("a backlog past the dump threshold should flush without pacing, got %d sleeps", sleeps.Load())
+	}
+}
+
+// TestClaudeStreamFilter_SmoothOff proves the opt-out: TCLAUDE_ASK_SMOOTH=0
+// forwards deltas straight through (no goroutine), with identical final output.
+func TestClaudeStreamFilter_SmoothOff(t *testing.T) {
+	t.Setenv("TCLAUDE_ASK_SMOOTH", "0")
+	var out strings.Builder
+	w := claudeAsker{}.StreamFilter(&out)
+	if cf, ok := w.(*claudeStreamFilter); !ok || cf.smooth {
+		t.Fatal("TCLAUDE_ASK_SMOOTH=0 should disable smoothing")
+	}
+	if _, err := io.WriteString(w, streamTextDelta("Hello, ")+streamTextDelta("world")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.(AskStreamFlusher).Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := out.String(); got != "Hello, world\n" {
+		t.Fatalf("got %q, want %q", got, "Hello, world\n")
+	}
+}
 
 // TestClaudeConvStore_Exists covers the ask self-heal probe (JOH-252): a
 // present per-cwd `.jsonl` is true, an absent one false, an empty id false.
