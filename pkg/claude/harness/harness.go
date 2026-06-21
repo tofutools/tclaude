@@ -51,6 +51,11 @@ type Harness struct {
 
 	// Spawn builds the in-tmux launch command + resume form.
 	Spawn Spawner
+	// Ask builds the argv for a one-shot `tclaude ask` turn (a foreground,
+	// terminal-attached question/answer against a resumable per-(terminal,cwd)
+	// thread). nil = this harness can't answer ad-hoc questions yet; callers
+	// gate on SupportsAsk and degrade with a clear message. See JOH-250.
+	Ask Asker
 	// Models validates/normalizes model + effort for this harness.
 	Models ModelCatalog
 	// Life names the lifecycle slash commands this harness understands
@@ -121,6 +126,15 @@ func (h *Harness) SupportsCompact() bool {
 // soft-exit command (graceful "/exit" rather than killing the tmux pane).
 func (h *Harness) SupportsSoftExit() bool {
 	return h != nil && h.Life != nil && h.Life.SoftExitCommand() != ""
+}
+
+// SupportsAsk reports whether the harness can answer a one-shot `tclaude ask`
+// turn (it provides an Asker). `tclaude ask` gates on this and fails with a
+// clear message for a harness that hasn't implemented the ask argv yet (Codex
+// — its exec/resume shape is a follow-up), rather than building a bogus
+// command. See Harness.Ask / JOH-250.
+func (h *Harness) SupportsAsk() bool {
+	return h != nil && h.Ask != nil
 }
 
 // SupportsConvs reports whether the harness exposes a ConvStore. Callers

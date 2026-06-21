@@ -19,6 +19,7 @@ func init() {
 		Name:        DefaultName,
 		DisplayName: "Claude Code",
 		Spawn:       claudeSpawner{},
+		Ask:         claudeAsker{},
 		Models:      claudeModels{},
 		Life:        claudeLifecycle{},
 		Convs:       claudeConvStore{},
@@ -94,6 +95,58 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
 	return cmd
+}
+
+// claudeAsker builds the `claude` argv for a one-shot `tclaude ask` turn
+// (JOH-250). It returns an argv slice rather than a `sh -c` string because an
+// ask is exec'd directly with no shell: the question is one element of the
+// slice, so it needs no shell-quoting and can never be split into stray
+// flags/words.
+//
+// The shape mirrors the spawner's resume-vs-fresh fork, but for the ask flow:
+//   - fresh:  claude [-p] --session-id <uuid> [--model m] "<prompt>"
+//   - resume: claude [-p] --resume    <id>   [--model m] "<prompt>"
+//
+// --session-id pins a caller-minted conv-id for a fresh thread (so the caller
+// records the (terminal,cwd)→conv mapping); --resume continues that thread on
+// later turns. `-p` is non-interactive capture mode; without it claude runs
+// interactively, attached to the caller's TTY, so the agent can ask the human
+// back. The prompt is always the trailing positional, emitted LAST so no
+// variadic flag (e.g. --add-dir) could swallow it.
+type claudeAsker struct{}
+
+func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
+	argv := []string{"claude"}
+	if spec.Print {
+		argv = append(argv, "-p")
+	}
+	switch {
+	case spec.ResumeID != "":
+		argv = append(argv, "--resume", spec.ResumeID)
+	case spec.SessionID != "":
+		argv = append(argv, "--session-id", spec.SessionID)
+	}
+	if spec.Model != "" {
+		argv = append(argv, "--model", spec.Model)
+	}
+	// The question is the trailing positional. In PRINT mode it goes behind a
+	// `--` end-of-options marker: the prompt is fully untrusted (a typed
+	// question, or piped data like a `git diff` whose lines start with `-`), so
+	// `--` stops claude parsing a leading-dash prompt as a flag (verified:
+	// `claude -p -- "--version"` answers as the model instead of printing the
+	// version). In INTERACTIVE mode we must NOT emit `--`: it suppresses claude's
+	// "submit the positional prompt at launch" behavior (the same launch-arg
+	// path the spawn flow relies on, which carries no `--`), leaving the TUI open
+	// with no question submitted. Interactive prompts are typed questions that
+	// rarely start with `-`, and it's still a single argv element (no shell), so
+	// the residual flag-parse risk is acceptable there.
+	if spec.Prompt != "" {
+		if spec.Print {
+			argv = append(argv, "--")
+		}
+		argv = append(argv, spec.Prompt)
+	}
+	return argv
 }
 
 // claudeModels delegates to the curated clcommon validators so the model

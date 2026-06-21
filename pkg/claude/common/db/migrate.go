@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 63
+const currentVersion = 64
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -409,6 +409,52 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 64 {
+		if err := migrateV63toV64(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV63toV64 adds ask_threads — the (terminal, cwd) → conversation map
+// behind `tclaude ask` (project tclaude-ask, JOH-250). A terminal that asks
+// repeated questions from the same directory continues one conversation
+// instead of starting fresh each time; the row records which conv-id to
+// `--resume`. Keyed on (term_key, cwd) because a Claude Code conversation is
+// bound to its creation cwd (resume is cwd-scoped), and term_key scopes it to
+// one terminal so two terminals in the same dir stay independent.
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier run
+// converges on re-run (the migrateV55toV56 convention); the whole thing rides
+// one transaction with the version bump.
+func migrateV63toV64(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v63→v64 (add ask_threads): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS ask_threads (
+			term_key   TEXT NOT NULL,
+			cwd        TEXT NOT NULL,
+			conv_id    TEXT NOT NULL,
+			harness    TEXT NOT NULL DEFAULT 'claude',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (term_key, cwd)
+		);
+
+		UPDATE schema_version SET version = 64;
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate v63→v64 (add ask_threads): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v63→v64 (add ask_threads): commit: %w", err)
+	}
 	return nil
 }
 

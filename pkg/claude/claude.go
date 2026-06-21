@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/ask"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
@@ -46,6 +47,7 @@ func Cmd() *cobra.Command {
 			agent.Cmd(),
 			agentd.Cmd(),
 			memoryfiles.Cmd(),
+			ask.Cmd(),
 		},
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
 			if err := session.RunNew(params); err != nil {

@@ -109,9 +109,9 @@ func TestMigrateV62toV63_HealsMissingTable(t *testing.T) {
 }
 
 // TestMigrateV62toV63_FreshSchema builds a fresh DB through the full
-// migrate() chain and asserts agent_groups has no default_model column. v63
-// is head, so this is where the literal currentVersion pin lives — the
-// tripwire the next migration's author moves forward into their own v64 test.
+// migrate() chain and asserts agent_groups has no default_model column. The
+// literal currentVersion tripwire moved forward to the v64 test (head); this
+// keeps only the column-absence invariant, which still holds at head.
 func TestMigrateV62toV63_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -120,9 +120,6 @@ func TestMigrateV62toV63_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v62 test —
-	// the next migration's author moves it into their own v64 test.
-	require.Equal(t, 63, currentVersion, "currentVersion is 63")
 
 	var haveCol int
 	require.NoError(t, d.QueryRow(
