@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -291,6 +292,66 @@ func TestAsk_ModelValidatedAndPassed(t *testing.T) {
 	err := runAsk(bad, aio2)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--model")
+}
+
+// TestResolveAskDefaults covers the model/effort precedence: a per-call
+// flag wins, else the config ask profile, else the fast-by-default
+// constants — resolved independently per field (JOH-253).
+func TestResolveAskDefaults(t *testing.T) {
+	pinned := &config.Config{Ask: &config.AskConfig{Model: "opus", Effort: "high"}}
+	onlyModel := &config.Config{Ask: &config.AskConfig{Model: "sonnet"}}
+
+	cases := []struct {
+		name                  string
+		flagModel, flagEffort string
+		cfg                   *config.Config
+		wantModel, wantEffort string
+	}{
+		{"empty config → fast defaults", "", "", &config.Config{},
+			config.DefaultAskModel, config.DefaultAskEffort},
+		{"nil config → fast defaults", "", "", nil,
+			config.DefaultAskModel, config.DefaultAskEffort},
+		{"config profile used when no flag", "", "", pinned, "opus", "high"},
+		{"flag overrides config", "fable", "low", pinned, "fable", "low"},
+		{"flag overrides fast default", "fable", "max", &config.Config{}, "fable", "max"},
+		{"partial config: model only → fast effort", "", "", onlyModel,
+			"sonnet", config.DefaultAskEffort},
+		{"flag model only, effort falls through config", "fable", "", pinned,
+			"fable", "high"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, e := resolveAskDefaults(tc.flagModel, tc.flagEffort, tc.cfg)
+			assert.Equal(t, tc.wantModel, m, "model")
+			assert.Equal(t, tc.wantEffort, e, "effort")
+		})
+	}
+}
+
+// TestAsk_EffortValidatedAndPassed checks a valid effort reaches the argv
+// as --effort, and an invalid one is rejected before running anything —
+// the effort twin of TestAsk_ModelValidatedAndPassed.
+func TestAsk_EffortValidatedAndPassed(t *testing.T) {
+	setupAskTestDB(t)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-E", "/repo/x", "quick one")
+	in.Effort = "low"
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	e, ok := argvValue(f.last().Argv, "--effort")
+	require.True(t, ok, "--effort is forwarded")
+	assert.Equal(t, "low", e)
+
+	// an invalid effort is rejected before running anything
+	bad := ttyInput("term-E", "/repo/x", "quick one")
+	bad.Effort = "ludicrous"
+	aio2, _, _ := io2buf()
+	err := runAsk(bad, aio2)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--effort")
 }
 
 // TestAsk_NotStarted_NoMapping: if the harness never started (e.g. binary

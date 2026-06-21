@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,64 @@ func TestClaudeSpawner_Effort(t *testing.T) {
 	}
 	if !strings.Contains(got, "--effort max") {
 		t.Fatalf("expected --effort max, got %q", got)
+	}
+}
+
+// TestClaudeAsker_BuildAskArgv pins the exact `tclaude ask` argv shape —
+// crucially the ORDER (JOH-253). The ask flow tests scan the slice by
+// name (position-insensitive), so this is the guard that --effort / --model
+// land BEFORE the `--` end-of-options marker and the prompt is always the
+// trailing positional: a regression that emitted a flag after `--` would
+// make claude swallow it as prompt text, and only an exact-slice check
+// catches it. Interactive mode must omit both `-p` and `--`.
+func TestClaudeAsker_BuildAskArgv(t *testing.T) {
+	eq := func(name string, got, want []string) {
+		t.Helper()
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s:\n got %q\nwant %q", name, got, want)
+		}
+	}
+
+	// Fresh print turn: -p, the minted --session-id, --effort, --model,
+	// then the `--` guard with the prompt last.
+	eq("fresh print",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			Print: true, SessionID: "sid-1", Effort: "low", Model: "haiku", Prompt: "q?",
+		}),
+		[]string{"claude", "-p", "--session-id", "sid-1", "--effort", "low", "--model", "haiku", "--", "q?"})
+
+	// Resume print turn with no model/effort: the flags are simply absent,
+	// the prompt still behind `--`.
+	eq("resume print, no model/effort",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			Print: true, ResumeID: "rid-1", Prompt: "follow up",
+		}),
+		[]string{"claude", "-p", "--resume", "rid-1", "--", "follow up"})
+
+	// Interactive turn: NO -p, NO `--` (it would suppress claude's
+	// submit-at-launch), flags still before the trailing prompt.
+	eq("interactive",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			SessionID: "sid-2", Effort: "high", Model: "opus", Prompt: "pair on this",
+		}),
+		[]string{"claude", "--session-id", "sid-2", "--effort", "high", "--model", "opus", "pair on this"})
+
+	// Defensive cross-check of the ordering invariant the eq() above
+	// already encodes: every flag index precedes the `--` marker.
+	argv := claudeAsker{}.BuildAskArgv(AskSpec{
+		Print: true, SessionID: "s", Effort: "max", Model: "sonnet", Prompt: "x",
+	})
+	dashAt := slices.Index(argv, "--")
+	if dashAt < 0 {
+		t.Fatal("print mode must emit a `--` guard")
+	}
+	for _, flag := range []string{"-p", "--session-id", "--effort", "--model"} {
+		if i := slices.Index(argv, flag); i < 0 || i >= dashAt {
+			t.Fatalf("flag %q must appear before the `--` guard (at %d), got index %d", flag, dashAt, i)
+		}
+	}
+	if argv[len(argv)-1] != "x" {
+		t.Fatalf("prompt must be the trailing positional, got %q", argv[len(argv)-1])
 	}
 }
 
