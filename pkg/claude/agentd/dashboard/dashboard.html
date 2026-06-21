@@ -452,6 +452,14 @@
         <label class="mail-sidebar-foot" title="Show folders for retired agents, and include their messages in the “All agent messages” firehose">
           <input type="checkbox" id="mail-show-retired" /> show retired agents
         </label>
+        <!-- Agents that have never sent or received a message get a folder
+             only so they could be inspected; hidden by default. This footer
+             toggle pulls them back into the roster. mail.js persists the
+             choice and re-fetches with include_empty (roster only — an empty
+             mailbox has no messages to add to the firehose). -->
+        <label class="mail-sidebar-foot" title="Show folders for agents that have never sent or received a message">
+          <input type="checkbox" id="mail-show-empty" /> show agents without messages
+        </label>
       </div>
       <!-- Row 2, col 2: list body — the "delete selected" / select-all bar
            sits above the scrolling message list (#mail-list); the pager

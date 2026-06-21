@@ -88,6 +88,23 @@ func mailboxIncludeRetired(r *http.Request) bool {
 	}
 }
 
+// mailboxIncludeEmpty reports whether the request opted into agents with
+// an empty mailbox (the Messages-tab "show agents without messages"
+// toggle). Default off: the roster hides agent folders that have neither
+// sent nor received any mail — freshly-spawned / never-messaged agents
+// that the active-agent set adds purely so they could be inspected —
+// until the operator ticks the box. Unlike include_retired this is a
+// roster-only filter: an empty mailbox owns no agent_messages rows, so it
+// touches neither the "all" firehose nor its badge.
+func mailboxIncludeEmpty(r *http.Request) bool {
+	switch r.URL.Query().Get("include_empty") {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 // retiredAgentConvs returns the set of conv-ids whose agent enrollment
 // has been retired, both as a membership set (for the roster's skip /
 // mark decision) and as a slice (for MailboxFilter.ExcludeConvs). A nil
@@ -148,6 +165,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeRetired := mailboxIncludeRetired(r)
+	includeEmpty := mailboxIncludeEmpty(r)
 	retiredSet, retiredIDs, err := retiredAgentConvs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -220,6 +238,16 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		c := counts[conv]
+		// Agents with an empty mailbox (neither sent nor received any mail)
+		// are hidden unless the operator opted in. A conv with any mail is in
+		// counts, so an empty mailbox here only ever comes from the
+		// active-agent set — a freshly-spawned / never-messaged agent — never
+		// a folder that actually holds messages. No firehose/badge
+		// reconciliation is needed (unlike retired): an empty mailbox owns no
+		// rows, so excluding it changes nothing the "all" view counts.
+		if c.In == 0 && c.Out == 0 && !includeEmpty {
+			continue
+		}
 		title := agent.CachedTitle(conv)
 		if title == agent.UnknownTitle {
 			title = ""
