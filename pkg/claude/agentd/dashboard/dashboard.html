@@ -417,14 +417,19 @@
        act on the human folder only (mutating human_messages) and are
        shown/hidden by mail.js. -->
   <section id="tab-messages">
-    <!-- The mail client is a 3-column × 2-row grid. Row 1 holds the two
-         column filters: the recipient (mailbox) filter heads the sidebar,
-         the message filter heads the list. The two <input>s are kept
-         DOM-adjacent so Tab moves recipient-filter → message-filter
-         directly, even though they head different columns. Row 2 holds
-         each column's scrolling body; the reader spans both rows in
-         column 3. Explicit grid placement (dashboard.css) maps each child
-         to its cell. -->
+    <!-- The mail client is a 5-track × 2-row grid: sidebar | gutter | list
+         | gutter | reader. Row 1 holds the two column filters: the
+         recipient (mailbox) filter heads the sidebar, the message filter
+         heads the list. The two <input>s are kept DOM-adjacent so Tab
+         moves recipient-filter → message-filter directly, even though they
+         head different columns. Row 2 holds each column's scrolling body;
+         the reader spans both rows in the last column. The two .mail-gutter
+         bars (columns 2 + 4, spanning both rows) are drag handles that
+         resize the panes — mail-resize.js persists the layout to
+         dashPrefs. They live at the END of the markup (not between the
+         filters) so they stay out of the recipient→message Tab path.
+         Explicit grid placement (dashboard.css) maps each child to its
+         cell, so DOM order is free. -->
     <div class="mail-client">
       <!-- Row 1, col 1: the recipient (mailbox) filter — name / id / group. -->
       <input id="filter-mailboxes" type="text" class="mail-sidebar-filter" placeholder="Filter mailboxes (name / id)" autocomplete="off" spellcheck="false" />
@@ -470,8 +475,13 @@
         <div class="mail-list" id="mail-list"></div>
         <div id="mail-pager" class="mail-pager" hidden></div>
       </div>
-      <!-- Col 3, spanning both rows: the reading pane. -->
+      <!-- Last column, spanning both rows: the reading pane. -->
       <div class="mail-reader" id="mail-reader"></div>
+      <!-- Drag gutters (placed last to keep them out of the filter Tab
+           order; grid columns 2 + 4 via dashboard.css). Double-click a
+           gutter to reset the column layout to its default. -->
+      <div class="mail-gutter" data-boundary="sidebar-list" title="Drag to resize · double-click to reset"></div>
+      <div class="mail-gutter" data-boundary="list-reader" title="Drag to resize · double-click to reset"></div>
     </div>
   </section>
   <!-- Vegas tab — appears after Config only in slop mode. vegas.js

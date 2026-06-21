@@ -66,24 +66,56 @@ body:has(#tab-messages.active) #tab-messages.active {
 }
 .mail-client {
   display: grid;
-  grid-template-columns: 240px minmax(260px, 1fr) minmax(320px, 1.4fr);
+  /* Five tracks: sidebar | gutter | list | gutter | reader. The two 10px
+     gutter tracks replace the old column-gap and carry the drag handles
+     (.mail-gutter) that resize the panes; mail-resize.js overrides this
+     property inline from the saved layout (tclaude.dash.mail.cols) and
+     keeps the same shape. The values here are the default layout used
+     before any drag / when the pref is absent. */
+  grid-template-columns: 240px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr);
   grid-template-rows: auto 1fr;
-  /* row-gap (6px) matches the old in-column filter→body spacing;
-     column-gap (10px) is the inter-pane gutter. */
-  gap: 6px 10px;
+  /* row-gap (6px) matches the old in-column filter→body spacing; the
+     column gutters are now real tracks, so column-gap is 0. */
+  gap: 6px 0;
   /* Fill the height handed down by the flex chain above; min-height:0 lets
      the grid shrink so the panes' own overflow:auto engages instead of the
      grid growing past the viewport (which is what produced the scrollbar). */
   flex: 1 1 auto; min-height: 0;
 }
-/* Map each grid child to its cell: the two filters head columns 1 + 2 on
-   row 1, the scrolling bodies fill row 2, and the reader spans both rows
-   in column 3 (so its top aligns with the filters, as before). */
+/* Map each grid child to its cell: the two filters head columns 1 + 3 on
+   row 1, the scrolling bodies fill row 2, the reader spans both rows in
+   column 5 (so its top aligns with the filters, as before), and the two
+   drag gutters sit in columns 2 + 4 spanning both rows (full-height bars). */
 #filter-mailboxes { grid-column: 1; grid-row: 1; }
-.mail-list-filter { grid-column: 2; grid-row: 1; }
+.mail-list-filter { grid-column: 3; grid-row: 1; }
 .mail-sidebar-col { grid-column: 1; grid-row: 2; }
-.mail-list-col    { grid-column: 2; grid-row: 2; }
-.mail-reader      { grid-column: 3; grid-row: 1 / span 2; }
+.mail-list-col    { grid-column: 3; grid-row: 2; }
+.mail-reader      { grid-column: 5; grid-row: 1 / span 2; }
+/* Draggable column gutters. Each is a full-height bar with a thin centered
+   line inside its 10px track; col-resize cursor + a blue highlight on hover
+   or while dragging signal that it's grabbable. touch-action:none lets the
+   pointer drive a horizontal drag without the browser hijacking it for
+   scroll/pan. mail-resize.js owns the drag + persistence. */
+.mail-gutter {
+  grid-row: 1 / span 2;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: linear-gradient(to right,
+    transparent 4px, #2a3340 4px, #2a3340 6px, transparent 6px);
+}
+.mail-gutter[data-boundary="sidebar-list"] { grid-column: 2; }
+.mail-gutter[data-boundary="list-reader"]  { grid-column: 4; }
+.mail-gutter:hover,
+.mail-gutter.dragging {
+  background: linear-gradient(to right,
+    transparent 4px, #1f6feb 4px, #1f6feb 6px, transparent 6px);
+}
+/* While a gutter is being dragged the col-resize cursor and text-selection
+   suppression apply document-wide, so a fast pointer that outruns the 10px
+   bar keeps the resize cursor and never selects pane text. */
+body.mail-col-resizing { cursor: col-resize; }
+body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 /* The sidebar + list bodies each stack a bulk-action bar above a
    scrolling pane; the reader is the plain third column. */
 .mail-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }

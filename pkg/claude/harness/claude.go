@@ -162,6 +162,10 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 // discovering it after the turn.
 func (claudeAsker) PreMintsConvID() bool { return true }
 
+// NoisyCaptureStderr is false: `claude -p` prints just the answer to stdout and
+// keeps stderr quiet, so `tclaude ask` has no transcript to hide.
+func (claudeAsker) NoisyCaptureStderr() bool { return false }
+
 // claudeModels delegates to the curated clcommon validators so the model
 // and effort knowledge stays in one place; the catalog is the
 // harness-agnostic dispatch point that a future codex catalog parallels.

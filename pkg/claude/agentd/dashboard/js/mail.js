@@ -52,6 +52,7 @@
 
 import { $, $$, esc, relTime, shortId, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+import { initMailResize } from './mail-resize.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
 // refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
 // nothing here reads them at module top level — only inside handlers —
@@ -618,12 +619,17 @@ function paintWipeBar() {
 
 // counterparty returns the name to show in a non-aggregate message-list
 // row — the OTHER party relative to the selected mailbox. For a received
-// message that's the sender; for a sent one, the recipient.
+// message that's the sender; for a sent one, the recipient. A received
+// message with no originating conv (from_conv empty, so no resolvable title
+// either) was sent by the human/operator — e.g. the "Startup context" brief
+// from a spawn dialog — not an agent; it returns '' so the row drops the
+// party (caller-side, like the "all" firehose) rather than a misleading
+// "(unknown sender)". Mirrors allSenderLabel + the reader's omitted "From".
 function counterparty(m) {
   if (m.direction === 'out') {
     return m.to_title || shortId(m.to_conv) || '(unknown)';
   }
-  return m.from_title || shortId(m.from_conv) || '(unknown sender)';
+  return m.from_title || shortId(m.from_conv);
 }
 
 // allSenderLabel names a row's sender in the aggregate "all" view, or ''
@@ -712,7 +718,14 @@ function paintList() {
       const arrow = m.direction === 'out'
         ? '<span class="mail-dir out" title="sent">→</span>'
         : '<span class="mail-dir in" title="received">←</span>';
-      head = `${arrow}<span class="mail-row-party">${esc(counterparty(m))}</span>`;
+      // A sender-less received row (the human/operator's startup-context
+      // brief) has no party to name — show just the arrow, the way the "all"
+      // firehose drops an empty sender, instead of "(unknown sender)".
+      const party = counterparty(m);
+      const partyHTML = party
+        ? `<span class="mail-row-party">${esc(party)}</span>`
+        : '';
+      head = `${arrow}${partyHTML}`;
     }
     const grp = m.group ? `<span class="mail-row-group">${esc(m.group)}</span>` : '';
     return `<div class="mail-row-wrap">
@@ -1183,6 +1196,8 @@ async function markAllAgentRead() {
 // --- wiring ---------------------------------------------------------
 
 function initMail() {
+  // Restore + wire the draggable column layout (sidebar / list / reader).
+  initMailResize();
   const sec = $('#tab-messages');
   if (sec) {
     // Delegated click handler scoped to the Messages tab. The human-

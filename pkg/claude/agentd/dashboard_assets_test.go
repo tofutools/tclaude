@@ -172,6 +172,29 @@ func TestDashboardJS_ModalMinSizePinned(t *testing.T) {
 	}
 }
 
+// TestDashboardJS_MailColsResizable guards the draggable Messages-tab
+// column layout: two .mail-gutter drag bars sit in the mail-client grid,
+// mail-resize.js owns the drag + persists the layout to dashPrefs under
+// tclaude.dash.mail.cols, and mail.js wires it in at init. The CSS grid
+// must keep its five-track shape (sidebar | gutter | list | gutter |
+// reader) for the gutter placement to line up. A drop in any of these
+// pieces silently breaks resize or its persistence.
+func TestDashboardJS_MailColsResizable(t *testing.T) {
+	for _, needle := range []string{
+		"function initMailResize(",                 // resizer module exists (mail-resize.js)
+		"initMailResize()",                         // mail.js calls it from initMail
+		"tclaude.dash.mail.cols",                   // per-layout pref key
+		`data-boundary="sidebar-list"`,             // left gutter (HTML)
+		`data-boundary="list-reader"`,              // right gutter (HTML)
+		".mail-gutter {",                           // gutter styling (CSS)
+		"grid-template-columns: 240px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr);", // five-track default
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — Messages-tab column resize wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever
