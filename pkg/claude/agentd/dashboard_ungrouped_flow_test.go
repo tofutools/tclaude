@@ -102,16 +102,17 @@ type dashAgent struct {
 
 // dashHarness mirrors the relevant fields of agentd.dashboardHarness.
 type dashHarness struct {
-	Name            string            `json:"name"`
-	DisplayName     string            `json:"display_name"`
-	Models          []string          `json:"models"`
-	EffortLevels    []string          `json:"effort_levels"`
-	SandboxModes    []string          `json:"sandbox_modes"`
-	DefaultSandbox  string            `json:"default_sandbox"`
-	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
-	CanRename       bool              `json:"can_rename"`
-	CanCompact      bool              `json:"can_compact"`
-	CanSandbox      bool              `json:"can_sandbox"`
+	Name             string            `json:"name"`
+	DisplayName      string            `json:"display_name"`
+	Models           []string          `json:"models"`
+	EffortLevels     []string          `json:"effort_levels"`
+	SandboxModes     []string          `json:"sandbox_modes"`
+	DefaultSandbox   string            `json:"default_sandbox"`
+	SandboxModeHelp  map[string]string `json:"sandbox_mode_help"`
+	CanRename        bool              `json:"can_rename"`
+	CanCompact       bool              `json:"can_compact"`
+	CanSandbox       bool              `json:"can_sandbox"`
+	CanRemoteControl bool              `json:"can_remote_control"`
 }
 
 // dashState mirrors the relevant fields of agentd.agentState.
@@ -129,6 +130,7 @@ type dashState struct {
 	ExitReason        string  `json:"exit_reason,omitempty"`
 	Harness           string  `json:"harness,omitempty"`
 	SandboxMode       string  `json:"sandbox_mode,omitempty"`
+	RemoteControl     bool    `json:"remote_control,omitempty"`
 }
 
 func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {

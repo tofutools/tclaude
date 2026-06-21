@@ -329,6 +329,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardSetAgentNotify(w, r, convSelector)
 			return
+		case "remote-control":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardRemoteControlAgent(w, r, convSelector)
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
@@ -1005,6 +1012,27 @@ func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector s
 		return
 	}
 	handleAgentRename(w, asDashboardHumanPeer(r), res.ConvID)
+}
+
+// dashboardRemoteControlAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/remote-control: it flips the agent's harness Remote
+// Access (Claude Code's /remote-control toggle) on the operator's behalf so
+// the fleet view can expose an agent to the phone before the human steps
+// away (JOH-259). The dashboard cookie IS the human-consent layer, so it
+// delegates to the shared /v1 handler under a synthetic human peer
+// (asDashboardHumanPeer) — clearing the agent.remote-control gate exactly
+// the way the rename / clone / reincarnate dashboard verbs clear theirs.
+// Body: {intent} — "on" | "off" | "toggle" | "status"; the merged handler
+// owns the toggle direction + the disable confirm-Enter, the UI only sends
+// intent. Codex (no Remote Access) is rejected by the handler's
+// CanRemoteControl gate; the UI also hides the control for it.
+func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	handleAgentRemoteControl(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST

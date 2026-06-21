@@ -291,6 +291,24 @@ function harnessCanRename(snapshot, name) {
   return h ? !!h.can_rename : true;
 }
 
+// harnessCanRemoteControl reports whether an agent on harness `name` can
+// have its built-in Remote Access toggled, per the snapshot's harness
+// catalog (dashboardHarness.can_remote_control). True for Claude Code (the
+// `/remote-control` toggle), false for Codex (no Remote Access) — so the
+// per-row remote-control control is hidden for a harness that has none,
+// exactly as the rename control gates on can_rename (JOH-259).
+//
+// Fail-OPEN like harnessCanRename: an unknown harness, or a snapshot whose
+// catalog hasn't loaded yet, returns true — the only harness that ever
+// reports false is one the catalog explicitly marks can_remote_control:false
+// (Codex). Briefly showing the control on an incomplete snapshot is
+// harmless; the server still re-gates on the harness capability.
+function harnessCanRemoteControl(snapshot, name) {
+  const list = (snapshot && snapshot.harnesses) || [];
+  const h = list.find(x => x.name === (name || 'claude'));
+  return h ? !!h.can_remote_control : true;
+}
+
 // harnessModel returns "Claude Code · Opus 4.8" / "Codex CLI · gpt-5" for
 // tooltips, or '' when the model isn't known yet (the statusbar hook /
 // Codex telemetry hasn't ticked for this agent). The model comes from
@@ -414,6 +432,21 @@ function sandboxBadge(m) {
     ? `Sandbox: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `Sandbox: ${mode} — launch-time OS sandbox confining the agent's writes`;
   return `<span class="${cls}" title="${esc(tip)}">${glyph} ${esc(mode)}</span>`;
+}
+
+// remoteControlBadge renders the at-a-glance "remote on" chip — "📱 remote"
+// — from state.remote_control (tclaude's best-known Remote Access flag,
+// JOH-256). It is shown ONLY when remote control is on, mirroring
+// sandboxBadge: a clean row carries no chip, so an armed agent stands out
+// as reachable from the Claude app/phone. There is no "off" badge — off is
+// the silent default. Best-known: the harness has no readback, so this
+// reflects the last recorded intent and reconciles on the next refresh.
+function remoteControlBadge(m) {
+  const on = !!(m && m.state && m.state.remote_control);
+  if (!on) return '';
+  const tip = 'Remote Access is ON — this agent is reachable from the Claude app/phone. '
+    + 'Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
+  return `<span class="remote-badge" title="${esc(tip)}">📱 remote</span>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
@@ -678,6 +711,30 @@ function notifyMenuItem(m) {
   return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
+// remoteControlMenuItem renders the ⚙-menu "toggle Remote Access" item — the
+// per-agent twin of the harness's `/remote-control`. It carries data-intent
+// = the OPPOSITE of the current best-known state (state.remote_control), so
+// one click flips it: an off agent's button sends intent "on", an on
+// agent's sends "off". The handler (row-actions.js, toggle-remote-control)
+// POSTs /api/agents/{conv}/remote-control {intent} and refreshes; the server
+// owns the toggle direction + the disable confirm-Enter, the UI only sends
+// intent (JOH-259). Returns '' when the agent's harness has no Remote Access
+// (canRemote=false, e.g. Codex), so the affordance is hidden exactly the way
+// the rename control hides for a harness that can't deliver one. The phone
+// glyph differs on/off (📱 reachable / 📴 off) to read at a glance in the menu.
+function remoteControlMenuItem(m, canRemote) {
+  if (!canRemote) return '';
+  const label = m.title || m.conv_id;
+  const on = !!(m && m.state && m.state.remote_control);
+  const glyph = on ? '📱' : '📴';
+  const intent = on ? 'off' : 'on';
+  const text = on ? `${glyph} remote: on` : `${glyph} remote: off`;
+  const tip = on
+    ? `Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`
+    : `Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`;
+  return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+}
+
 // memberActions renders the per-row action cell for a real group
 // member. focus + hide stay at the TOP LEVEL — the window pair,
 // disabled when the agent is offline — and everything heavier (term,
@@ -685,10 +742,10 @@ function notifyMenuItem(m) {
 // notifications, cron, remove-from-group, retire) is collected behind
 // the ⚙ options cog so the row stays uncluttered. The cog is always
 // present and enabled.
-function memberActions(g, m) {
+function memberActions(g, m, canRemote) {
   const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
-    + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m) + removeMemberButton(g, m)
+    + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m) + removeMemberButton(g, m)
     + retireMemberButton(m);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
@@ -868,9 +925,9 @@ function retireMemberButton(m) {
 // Powering the agent up/down is the status
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
-function ungroupedMemberActions(m) {
+function ungroupedMemberActions(m, canRemote) {
   const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
-    + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m)
+    + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m)
     + retireMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
@@ -1108,8 +1165,8 @@ function withPreservedFocus(fn) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
-  harnessCanRename,
+  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
+  harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,

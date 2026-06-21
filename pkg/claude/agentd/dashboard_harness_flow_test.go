@@ -43,6 +43,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, claude.CanCompact, "claude compacts in-pane")
 	assert.False(t, claude.CanSandbox, "claude has no launch sandbox flag")
 	assert.Empty(t, claude.SandboxModes, "claude exposes no sandbox modes")
+	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
 
 	codex := findDashHarness(snap, "codex")
 	require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
@@ -55,6 +56,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
 	assert.True(t, codex.CanCompact, "codex supports /compact")
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
+	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
 	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
 	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
 	// Every selectable mode carries a one-line help string the dialog renders
