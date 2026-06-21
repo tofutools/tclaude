@@ -48,6 +48,7 @@ type Params struct {
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
 	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (fast by default)."`
 	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (low by default)."`
+	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 }
 
 func Cmd() *cobra.Command {
@@ -116,6 +117,12 @@ func runFromCLI(p *Params, args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
+	// --where is a read-only debug probe: report the resolved bucket and exit
+	// without reading stdin, loading config, or running a harness.
+	if p.Where {
+		return printWhere(cwd, os.Stdout)
+	}
+
 	if p.Print && p.Interactive {
 		return errors.New("--print and --interactive are mutually exclusive")
 	}
@@ -158,6 +165,33 @@ func runFromCLI(p *Params, args []string) error {
 		StdoutIsTerminal: stdoutIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+}
+
+// printWhere implements `tclaude ask --where`: it prints the bucket an ask from
+// here would land in — the resolved terminal key and which source identified
+// the terminal, the cwd, and the conversation currently mapped to that
+// (terminal, cwd) pair (or a note that the next ask starts fresh). It's purely
+// observational, so a DB lookup failure is reported inline rather than failing.
+func printWhere(cwd string, w io.Writer) error {
+	id, source := resolveTerminalID()
+	boot := bootID()
+	termKey := id + "." + boot
+
+	fmt.Fprintf(w, "term-key:  %s\n", termKey)
+	fmt.Fprintf(w, "term-id:   %s  (source: %s)\n", id, source)
+	fmt.Fprintf(w, "boot-id:   %s\n", boot)
+	fmt.Fprintf(w, "cwd:       %s\n", cwd)
+
+	thread, err := db.GetAskThread(termKey, cwd)
+	switch {
+	case err != nil:
+		fmt.Fprintf(w, "conv-id:   (lookup failed: %v)\n", err)
+	case thread == nil:
+		fmt.Fprintln(w, "conv-id:   (none yet — the next ask here starts a fresh conversation)")
+	default:
+		fmt.Fprintf(w, "conv-id:   %s  (harness: %s)\n", thread.ConvID, thread.Harness)
+	}
+	return nil
 }
 
 // resolveAskDefaults applies the ask model/effort precedence — a per-call
