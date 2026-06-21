@@ -1547,6 +1547,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
   max-width: min(1100px, calc(100vw - 32px));
   display: flex; flex-direction: column; gap: 10px;
   color: #c9d1d9; max-height: 86vh; overflow-y: auto;
+  /* Width of the label column shared by every .cron-create-row. Lives here
+     (not inline on the rule) so a field-aligned checkbox can indent to the
+     exact input column without the magic number drifting out of sync. */
+  --cron-label-w: 72px;
 }
 /* The spawn + clone dialogs are user-resizable (a long worktree label can
    make every field feel cramped): drag the bottom-right grip to size the
@@ -1592,7 +1596,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
 .cron-create-row .cron-create-label {
-  flex: 0 0 72px; color: #7d8590; padding-top: 6px;
+  flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
 .cron-create-row input[type=text],
 .cron-create-row select,
@@ -1670,6 +1674,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-enabled input { margin: 0; }
 .cron-create-enabled.disabled { color: #6e7681; }
 .cron-create-enabled.disabled input { cursor: not-allowed; }
+/* A checkbox that belongs to the field above it (the Codex pre-trust toggle,
+   the sync-worktree toggle) rather than the trailing options block. It indents
+   to the input column so it lines up under the inputs instead of jutting out
+   at the modal's left edge. Offset = the label column + the .cron-create-row
+   gap (10px). */
+.cron-create-enabled.cron-check-aligned {
+  padding-left: calc(var(--cron-label-w, 72px) + 10px);
+}
+/* Full-width divider between the spawn dialog's form fields and the trailing
+   option toggles (auto-focus / group-context / remote-control), which sit at
+   the modal's left edge rather than in the field column. The flex column's
+   10px gap supplies the breathing room above and below the line. */
+.cron-create-sep { border-top: 1px solid #2a3340; }
 .cron-create-error { color: #f85149; font-size: 12px; min-height: 14px; }
 .cron-create-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
