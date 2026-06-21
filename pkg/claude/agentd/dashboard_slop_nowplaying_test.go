@@ -7,12 +7,13 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // Tests for /api/slop/nowplaying — agentd's SomaFM recent-songs proxy that
@@ -42,14 +43,13 @@ func isoLatin1Feed() []byte {
 
 func resetNowPlayingCache() {
 	nowPlayingMu.Lock()
-	nowPlayingCache = nil
-	nowPlayingExpiry = time.Time{}
+	nowPlayingCache = map[string]cachedNowPlaying{}
 	nowPlayingMu.Unlock()
 }
 
 // stubNowPlaying swaps the network boundary for the duration of a test and
 // clears the shared cache before and after so cases don't bleed.
-func stubNowPlaying(t *testing.T, fn func(ctx context.Context) ([]byte, error)) {
+func stubNowPlaying(t *testing.T, fn func(ctx context.Context, channel string) ([]byte, error)) {
 	t.Helper()
 	prev := nowPlayingFetchBytes
 	nowPlayingFetchBytes = fn
@@ -139,7 +139,7 @@ func serveNowPlaying(r *http.Request) *httptest.ResponseRecorder {
 
 func TestNowPlayingAPI_ReturnsTrack(t *testing.T) {
 	withDashboardAuth(t)
-	stubNowPlaying(t, func(context.Context) ([]byte, error) { return isoLatin1Feed(), nil })
+	stubNowPlaying(t, func(context.Context, string) ([]byte, error) { return isoLatin1Feed(), nil })
 
 	w := serveNowPlaying(dashboardRequest(http.MethodGet, "/api/slop/nowplaying", ""))
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
@@ -155,7 +155,7 @@ func TestNowPlayingAPI_FailSoftEmptyObject(t *testing.T) {
 	withDashboardAuth(t)
 	// Unreachable feed → empty payload, still 200, so the UI just hides
 	// the song line instead of showing a broken-radio error.
-	stubNowPlaying(t, func(context.Context) ([]byte, error) { return nil, errors.New("network down") })
+	stubNowPlaying(t, func(context.Context, string) ([]byte, error) { return nil, errors.New("network down") })
 
 	w := serveNowPlaying(dashboardRequest(http.MethodGet, "/api/slop/nowplaying", ""))
 	require.Equal(t, http.StatusOK, w.Code)
@@ -165,7 +165,7 @@ func TestNowPlayingAPI_FailSoftEmptyObject(t *testing.T) {
 func TestNowPlayingAPI_CachesUpstream(t *testing.T) {
 	withDashboardAuth(t)
 	var calls int
-	stubNowPlaying(t, func(context.Context) ([]byte, error) {
+	stubNowPlaying(t, func(context.Context, string) ([]byte, error) {
 		calls++
 		return isoLatin1Feed(), nil
 	})
@@ -179,7 +179,7 @@ func TestNowPlayingAPI_CachesUpstream(t *testing.T) {
 
 func TestNowPlayingAPI_RequiresAuth(t *testing.T) {
 	withDashboardAuth(t)
-	stubNowPlaying(t, func(context.Context) ([]byte, error) { return isoLatin1Feed(), nil })
+	stubNowPlaying(t, func(context.Context, string) ([]byte, error) { return isoLatin1Feed(), nil })
 
 	// No cookie/Origin → rejected before any fetch.
 	r := httptest.NewRequest(http.MethodGet, "/api/slop/nowplaying", nil)
@@ -189,22 +189,105 @@ func TestNowPlayingAPI_RequiresAuth(t *testing.T) {
 
 func TestNowPlayingAPI_RejectsNonGet(t *testing.T) {
 	withDashboardAuth(t)
-	stubNowPlaying(t, func(context.Context) ([]byte, error) { return isoLatin1Feed(), nil })
+	stubNowPlaying(t, func(context.Context, string) ([]byte, error) { return isoLatin1Feed(), nil })
 
 	w := serveNowPlaying(dashboardRequest(http.MethodPost, "/api/slop/nowplaying", `{}`))
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// TestSlopNowPlaying_ChannelMatchesVegasJS pins the server channel to the
-// station vegas.js actually streams. If someone swaps one station and not
-// the other, the song line would show tracks from the wrong channel — this
-// fails instead.
+// TestSlopNowPlaying_ChannelMatchesVegasJS pins the browser channel catalog
+// (js/vegas.js's CHANNELS) to the server allowlist (config.SlopChannels).
+// A channel added on one side but not the other would either show the wrong
+// song line or be unstreamable — this fails CI instead.
 func TestSlopNowPlaying_ChannelMatchesVegasJS(t *testing.T) {
-	assert.Contains(t, somaSongsURL, somaChannel, "the songs-feed URL must use the channel constant")
+	// The default must itself be a known channel.
+	assert.True(t, config.IsKnownSlopChannel(config.DefaultSlopChannel),
+		"the default channel must be in the allowlist")
 
 	vegas, err := fs.ReadFile(dashboardAssetsFS, "js/vegas.js")
 	require.NoError(t, err)
 	src := string(vegas)
-	assert.Contains(t, src, somaChannel, "vegas.js must stream the same SomaFM channel the proxy reads")
+
 	assert.Contains(t, src, "/api/slop/nowplaying", "vegas.js must poll the now-playing proxy")
+
+	// Extract the channel ids from vegas.js's CHANNELS catalog (entries are
+	// `{ id: 'xxx', ... }`) and require an exact set match with the server
+	// allowlist.
+	re := regexp.MustCompile(`id:\s*'([a-z0-9]+)'`)
+	var jsIDs []string
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		jsIDs = append(jsIDs, m[1])
+	}
+	require.NotEmpty(t, jsIDs, "no channel ids parsed from vegas.js — did the catalog format change?")
+
+	assert.ElementsMatch(t, config.SlopChannels, jsIDs,
+		"vegas.js CHANNELS and config.SlopChannels must list the same channels")
+
+	// vegas.js falls back to CHANNELS[0], so the first catalog entry must be
+	// the configured default.
+	assert.Equal(t, config.DefaultSlopChannel, jsIDs[0],
+		"the first catalog channel must be the default")
+}
+
+func TestResolveSomaChannel(t *testing.T) {
+	assert.Equal(t, config.DefaultSlopChannel, resolveSomaChannel(""), "empty → default")
+	assert.Equal(t, config.DefaultSlopChannel, resolveSomaChannel("  "), "whitespace → default")
+	assert.Equal(t, config.DefaultSlopChannel, resolveSomaChannel("../etc/passwd"), "unknown → default (SSRF gate)")
+	assert.Equal(t, "groovesalad", resolveSomaChannel("groovesalad"), "known passes through")
+	assert.Equal(t, "groovesalad", resolveSomaChannel("  groovesalad  "), "known is trimmed")
+}
+
+func TestSomaSongsURL(t *testing.T) {
+	assert.Equal(t, "https://somafm.com/songs/illstreet.xml", somaSongsURL("illstreet"))
+}
+
+// TestNowPlayingAPI_ChannelParamSelectsFeed proves the ?channel= param
+// steers which feed the proxy reads, and that an unknown/absent channel
+// degrades to the default rather than reaching off the allowlist.
+func TestNowPlayingAPI_ChannelParamSelectsFeed(t *testing.T) {
+	withDashboardAuth(t)
+	var got []string
+	stubNowPlaying(t, func(_ context.Context, channel string) ([]byte, error) {
+		got = append(got, channel)
+		return isoLatin1Feed(), nil
+	})
+
+	cases := map[string]string{
+		"/api/slop/nowplaying?channel=groovesalad": "groovesalad",
+		"/api/slop/nowplaying?channel=evil-host":   config.DefaultSlopChannel, // unknown → default
+		"/api/slop/nowplaying":                     config.DefaultSlopChannel, // absent → default
+	}
+	for path, want := range cases {
+		// Reset between cases: the unknown-channel and absent-channel cases
+		// both resolve to the default, so without a clear the second would be
+		// served from the first's cache slot and never fetch.
+		resetNowPlayingCache()
+		got = nil
+		w := serveNowPlaying(dashboardRequest(http.MethodGet, path, ""))
+		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+		require.Len(t, got, 1, "%s must trigger exactly one fetch", path)
+		assert.Equal(t, want, got[0], "%s must read the %q feed", path, want)
+	}
+}
+
+// TestNowPlayingAPI_CacheIsPerChannel proves two channels don't share a
+// cache slot (a single global cache would serve one channel's track for the
+// other) while repeat polls of one channel still hit SomaFM once.
+func TestNowPlayingAPI_CacheIsPerChannel(t *testing.T) {
+	withDashboardAuth(t)
+	calls := map[string]int{}
+	stubNowPlaying(t, func(_ context.Context, channel string) ([]byte, error) {
+		calls[channel]++
+		return isoLatin1Feed(), nil
+	})
+
+	for range 2 {
+		require.Equal(t, http.StatusOK,
+			serveNowPlaying(dashboardRequest(http.MethodGet, "/api/slop/nowplaying?channel=groovesalad", "")).Code)
+		require.Equal(t, http.StatusOK,
+			serveNowPlaying(dashboardRequest(http.MethodGet, "/api/slop/nowplaying?channel=lush", "")).Code)
+	}
+	assert.Equal(t, 1, calls["groovesalad"], "repeat polls of one channel are cached")
+	assert.Equal(t, 1, calls["lush"], "repeat polls of one channel are cached")
+	assert.Len(t, calls, 2, "the two channels must not share a cache slot")
 }

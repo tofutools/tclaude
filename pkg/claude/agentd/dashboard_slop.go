@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
@@ -112,3 +113,87 @@ func handleDashboardSlopVolumesPost(w http.ResponseWriter, r *http.Request) {
 // errSlopConfigMalformed aborts the Update when the on-disk file is
 // corrupt — mapped to the 409 above rather than a 500.
 var errSlopConfigMalformed = errors.New("config.json is malformed")
+
+// ─── Channel picker ────────────────────────────────────────────────────
+// The Vegas radio's SomaFM channel is a slop setting like the volumes, so
+// it lives in the same config.json "slop" block and is read/written by the
+// same small twin pattern: GET resolves the current channel (+ the catalog
+// the picker renders), POST validates against the allowlist and merge-saves.
+
+// slopChannelBody is the POST wire shape — just the chosen channel id.
+type slopChannelBody struct {
+	Channel string `json:"channel"`
+}
+
+// handleDashboardSlopChannelAPI dispatches /api/slop/channel by method.
+// Mounted on the loopback dashboard mux by registerDashboardEditRoutes.
+func handleDashboardSlopChannelAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		handleDashboardSlopChannelGet(w)
+	case http.MethodPost:
+		handleDashboardSlopChannelPost(w, r)
+	default:
+		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+	}
+}
+
+// writeSlopChannel returns the resolved current channel plus the catalog
+// the picker renders (id + human label), so the browser need not hardcode
+// either — the allowlist stays single-sourced in config.SlopChannels.
+func writeSlopChannel(w http.ResponseWriter, cfg *config.Config) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"channel":  cfg.ResolvedSlopChannel(),
+		"channels": config.SlopChannels,
+	})
+}
+
+func handleDashboardSlopChannelGet(w http.ResponseWriter) {
+	// A malformed file degrades to the default channel — fine for a read;
+	// the write path below is the one that must not wipe it.
+	cfg, _ := config.Load()
+	writeSlopChannel(w, cfg)
+}
+
+func handleDashboardSlopChannelPost(w http.ResponseWriter, r *http.Request) {
+	var body slopChannelBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", "request body is not valid JSON: "+err.Error())
+		return
+	}
+	channel := strings.TrimSpace(body.Channel)
+	// Reject an unknown channel rather than silently saving it (the proxy
+	// would degrade it to the default, but a stored value that doesn't match
+	// what plays would be confusing). The allowlist is the SSRF gate too.
+	if !config.IsKnownSlopChannel(channel) {
+		writeError(w, http.StatusBadRequest, "unknown_channel",
+			"channel must be one of: "+strings.Join(config.SlopChannels, ", "))
+		return
+	}
+
+	cfg, err := config.Update(func(cfg *config.Config, loadErr error) error {
+		if loadErr != nil {
+			// Same reasoning as the volumes path: don't overwrite a corrupt
+			// file with defaults-plus-channel. The Config tab owns recovery.
+			return errSlopConfigMalformed
+		}
+		if cfg.Slop == nil {
+			cfg.Slop = &config.SlopConfig{}
+		}
+		cfg.Slop.Channel = &channel
+		return nil
+	})
+	if errors.Is(err, errSlopConfigMalformed) {
+		writeError(w, http.StatusConflict, "malformed_target",
+			"config.json on disk is corrupt — fix or replace it via the Config tab before changing the channel")
+		return
+	}
+	if err != nil {
+		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeSlopChannel(w, cfg)
+}

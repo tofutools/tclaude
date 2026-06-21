@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -224,11 +225,62 @@ type ConvWatchConfig struct {
 // explicit 0 (silent but not muted — the master 🔇/🔊 switch is a
 // separate localStorage-persisted preference in the browser).
 //
-// Written by the dashboard's volume sliders via POST /api/slop/volumes;
-// also round-trips through the Config tab like any other field.
+// Channel is the SomaFM channel id the Vegas radio tunes to (one of
+// SlopChannels; absent → DefaultSlopChannel). A pointer + omitempty so an
+// untouched config stays clean and an absent value is the default rather
+// than the empty string.
+//
+// Written by the dashboard's volume sliders via POST /api/slop/volumes and
+// the channel picker via POST /api/slop/channel; also round-trips through
+// the Config tab like any other field.
 type SlopConfig struct {
-	MusicVolume   *int `json:"music_volume,omitempty"`
-	EffectsVolume *int `json:"effects_volume,omitempty"`
+	MusicVolume   *int    `json:"music_volume,omitempty"`
+	EffectsVolume *int    `json:"effects_volume,omitempty"`
+	Channel       *string `json:"channel,omitempty"`
+}
+
+// SlopChannels is the allowlist of SomaFM channel ids slop mode's Vegas
+// radio can tune to. It is the SINGLE SOURCE OF TRUTH shared by config
+// validation (here), the now-playing proxy's SSRF gate (agentd), and the
+// browser's channel picker (js/vegas.js carries a matching catalog with
+// human labels, pinned to this set by TestSlopNowPlaying_ChannelMatchesVegasJS).
+//
+// Adding a channel is a one-line entry here plus a matching {id,label}
+// in vegas.js. Every other URL (stream, station home, songs feed) derives
+// from the id by SomaFM's fixed URL shape, so the id is all that's shared.
+var SlopChannels = []string{
+	"illstreet",   // Illinois Street Lounge — vintage cocktail / Rat-Pack
+	"secretagent", // Secret Agent — spy-jazz & surf
+	"groovesalad", // Groove Salad — ambient / downtempo
+	"lush",        // Lush — mostly vocal, mostly chilled
+	"bootliquor",  // Boot Liquor — americana roots
+	"u80s",        // Underground 80s — early alternative / new wave
+	"defcon",      // DEF CON Radio — music for hacking
+}
+
+// DefaultSlopChannel is the channel the Vegas radio plays when none is
+// configured — the original vintage lounge, so a fresh config keeps the
+// historical soundtrack.
+const DefaultSlopChannel = "illstreet"
+
+// IsKnownSlopChannel reports whether id is in the SlopChannels allowlist.
+func IsKnownSlopChannel(id string) bool {
+	return slices.Contains(SlopChannels, id)
+}
+
+// ResolvedSlopChannel returns the effective channel id: the configured one
+// when it's a known channel, else DefaultSlopChannel. A hand-edited unknown
+// id degrades to the default here (Validate reports it to the Config tab),
+// so readers always get a streamable channel. Nil-safe on the receiver.
+func (c *Config) ResolvedSlopChannel() string {
+	if c == nil || c.Slop == nil || c.Slop.Channel == nil {
+		return DefaultSlopChannel
+	}
+	id := strings.TrimSpace(*c.Slop.Channel)
+	if IsKnownSlopChannel(id) {
+		return id
+	}
+	return DefaultSlopChannel
 }
 
 // defaultSlopVolume is the effective volume for an absent slop volume
@@ -974,6 +1026,14 @@ func Validate(c *Config) []string {
 		}
 		if s.EffectsVolume != nil && (*s.EffectsVolume < 0 || *s.EffectsVolume > 100) {
 			errs = append(errs, fmt.Sprintf("slop.effects_volume %d is out of range (0–100)", *s.EffectsVolume))
+		}
+		// An empty/absent channel resolves to the default; only a non-empty
+		// value outside the allowlist is an error worth flagging.
+		if s.Channel != nil {
+			if id := strings.TrimSpace(*s.Channel); id != "" && !IsKnownSlopChannel(id) {
+				errs = append(errs, fmt.Sprintf("slop.channel %q is not a known SomaFM channel (one of: %s)",
+					*s.Channel, strings.Join(SlopChannels, ", ")))
+			}
 		}
 	}
 

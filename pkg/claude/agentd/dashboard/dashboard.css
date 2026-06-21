@@ -2455,6 +2455,24 @@ body.slop nav button[data-tab="vegas"] { display: block; }
   border-top: 1px solid rgba(255, 215, 0, 0.22);
   text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
 }
+/* The channel picker — a <select> themed into the station line. Gold text
+   on the dark card, a subtle gold border, so it reads as part of the casino
+   chrome rather than a stock OS dropdown. */
+.vegas-channel {
+  font: inherit;
+  color: #ffe88c;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
+}
+.vegas-channel:hover { border-color: rgba(255, 215, 0, 0.75); }
+.vegas-channel:focus-visible { outline: 2px solid #ffd700; outline-offset: 1px; }
+/* The popped-open option list renders with the OS palette; force dark text
+   on a light list so options stay legible across browsers. */
+.vegas-channel option { color: #1a1a1a; background: #f3e6c0; }
 /* The <audio> is a controls-less engine — hidden; the .vegas-transport
    button below is the rendered chrome. (UA stylesheets already hide a
    controls-less audio element; this is explicit for clarity.) */
