@@ -340,6 +340,13 @@ doesn't balloon the launch command. The cutoff is
 `agent.spawn_inline_max_chars` (runes; default 2000, `0` disables inlining
 so every spawn uses the inbox pointer).
 
+An *inlined* briefing's inbox copy is marked **read** at spawn — the agent
+already received its full text on its first turn, so the copy is just an
+archival duplicate and is kept out of the dashboard's unread list. A briefing
+that stays a pointer (over the cap, inlining disabled, or the legacy
+post-connect path) is left **unread**, because the agent still has to open it
+from the inbox.
+
 This works for both harnesses, with one wrinkle from the conv-id timing.
 Claude Code presets the conv-id, so its inbox briefing exists before launch
 and the welcome can reference it by message id either way (inline + id note,

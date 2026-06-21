@@ -48,6 +48,14 @@ func TestSpawn_ShortBriefInlinedIntoLaunchPrompt(t *testing.T) {
 	assert.Equal(t, "Startup context", msg.Subject, "inbox briefing subject")
 	assert.Contains(t, msg.Body, brief, "inbox copy carries the verbatim brief")
 
+	// Because the brief was INLINED into the launch prompt, the agent already
+	// has its full text on its first turn — so the additive inbox copy is marked
+	// read at spawn and never lingers as unread clutter in the dashboard.
+	assert.False(t, msg.ReadAt.IsZero(),
+		"an inlined briefing's inbox copy must be marked read")
+	assert.False(t, msg.DeliveredAt.IsZero(),
+		"an inlined briefing's inbox copy must be marked delivered")
+
 	// The launch prompt carries the brief INLINE — newlines and all — plus the
 	// welcome metadata and the inbox-copy note. AssertSpawnInitialPrompt does a
 	// substring match, so passing the multi-line brief proves the newlines
@@ -99,6 +107,15 @@ func TestSpawn_InlineDisabledByConfigKeepsPointer(t *testing.T) {
 	require.True(t, ok, "launch prompt should be recorded")
 	assert.NotContains(t, prompt, brief,
 		"with inlining disabled the brief must not be baked into the launch prompt")
+
+	// A pointer briefing is NOT inlined — the agent still has to open it from
+	// the inbox, so its copy stays UNREAD (only delivered). This is the
+	// behaviour the read-marking must preserve: don't hide a briefing the agent
+	// has yet to read.
+	assert.True(t, msg.ReadAt.IsZero(),
+		"a pointer (non-inlined) briefing must stay unread")
+	assert.False(t, msg.DeliveredAt.IsZero(),
+		"a pointer briefing is still marked delivered")
 }
 
 // Scenario: a group-context-only spawn (no per-spawn task brief) whose
@@ -130,4 +147,48 @@ func TestSpawn_GroupContextOnlyInlinedShort(t *testing.T) {
 		"a context-only spawn must not tell the agent to act on a (non-existent) brief")
 	assert.NotContains(t, strings.ToLower(prompt), "inbox read",
 		"an inlined context must not also tell the agent to run `inbox read`")
+}
+
+// Scenario: a briefing TOO LONG to inline (it exceeds the inline cap) keeps the
+// single-line pointer welcome and rides only in the inbox — exactly the case
+// the operator described as "long enough to trigger the old inbox mechanism".
+// Because the agent must still open it with `inbox read`, its inbox copy stays
+// UNREAD; the read-marking only fires when the brief actually went inline. This
+// is the length-driven sibling of the config-disabled pointer test above —
+// proving the decision tracks the real briefing length, not just the on/off
+// knob.
+func TestSpawn_LongBriefStaysUnread(t *testing.T) {
+	f := newFlow(t)
+
+	// A small cap so a modest brief is "long" without building a huge string.
+	inlineCap := 40
+	require.NoError(t, config.Save(&config.Config{
+		Agent: &config.AgentConfig{SpawnInlineMaxChars: &inlineCap},
+	}))
+
+	f.HaveGroup("alpha")
+	// Comfortably longer than the 40-rune cap (buildSpawnContextBody also prefixes
+	// "Your task brief:\n\n", so this is well over the threshold either way).
+	const brief = "Investigate the flaky deploy job, read the last ten CI runs, and write up the root cause in detail."
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name":            "worker",
+		"initial_message": brief,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, brief, "inbox copy carries the verbatim brief")
+
+	// Pointer welcome: it names the inbox message; the brief is NOT inlined.
+	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+	prompt, ok := f.World.SpawnInitialPrompt(spawn.ConvID)
+	require.True(t, ok, "launch prompt should be recorded")
+	assert.NotContains(t, prompt, brief,
+		"a brief over the inline cap must not be baked into the launch prompt")
+
+	// The agent still has to open it from the inbox, so it stays unread.
+	assert.True(t, msg.ReadAt.IsZero(),
+		"a briefing too long to inline must stay unread")
+	assert.False(t, msg.DeliveredAt.IsZero(),
+		"a too-long briefing is still marked delivered")
 }
