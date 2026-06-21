@@ -892,8 +892,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// then clamped to off for a harness with no Remote Access — a group/profile
 	// default must not fail a Codex spawn (an EXPLICIT opt-in for Codex already
 	// 400'd above). See resolveRemoteControlIntent.
+	// The profile's remote-control default applies only when the spawn actually
+	// runs on the profile's harness — the SAME gate the launch-field overlay
+	// above uses. A spawn that pins a different harness skipped the profile's
+	// other fields, so its remote-control default must be skipped too, or a
+	// claude profile's default would leak onto a foreign-harness spawn. Today the
+	// CanRemoteControl clamp below already forces a non-claude spawn off, so this
+	// is belt-and-braces for that case; it becomes load-bearing the day a second
+	// remote-control-capable harness is registered.
 	var profileRemoteControl *bool
-	if groupProfile != nil {
+	if groupProfile != nil && harnessOrDefault(groupProfile.Harness) == harnessOrDefault(h.Name) {
 		profileRemoteControl = groupProfile.RemoteControl
 	}
 	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, requestedRemoteControl)
