@@ -43,6 +43,7 @@ nav:
   - Conversation Management: conversations.md
   - Agent Coordination: agent.md
   - Agent Dashboard: dashboard.md
+  - Remote Control: remote-control.md
   - Semantic Search: semantic-search.md
   - Git Worktrees: worktrees.md
   - Notifications: notifications.md

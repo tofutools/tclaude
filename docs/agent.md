@@ -239,6 +239,7 @@ tclaude agent groups revoke-owner <group> <conv>
 tclaude agent groups set-default-dir <group> [dir]        # default cwd for agents spawned into the group
 tclaude agent groups set-max-members <group> [max]        # cap member count; a spawn that would exceed it is refused (0 = unlimited)
 tclaude agent groups set-context <group> [text]           # shared startup context delivered to every spawned agent's inbox
+tclaude agent groups set-remote-control <group> [inherit|optin|deny]  # group remote-control policy; overrides the spawn profile's default (Claude Code only)
 tclaude agent groups archive <group>                      # soft-delete: freeze, hide, keep history
 tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
@@ -397,6 +398,24 @@ original stays alive, and the clone is renamed to a `-c-<N>` title
 suffix. A **reincarnate**
 migrates identity onto a fresh conv-id and soft-stops the old one; the
 follow-up prompt is mandatory so the successor isn't left idle.
+
+### remote-control
+
+Arm Claude Code's built-in Remote Access (claude.ai/code + the mobile
+app) so the agent can be driven from your phone. Defaults to the calling
+agent (`self.remote-control`); `--target <selector>` retargets another
+(gated on `agent.remote-control` or group ownership).
+
+```bash
+tclaude agent remote-control            # toggle (default intent)
+tclaude agent remote-control on|off|status
+tclaude agent remote-control on --target worker-3
+```
+
+Re-arming survives resume / reincarnate / clone, and a group or spawn
+profile can default it on. Claude Code only (Codex has no remote access).
+See **[Remote Control](remote-control.md)** for the full guide, the
+claude.ai-login prerequisite, and the best-known-state caveat.
 
 ### stop / resume / dir
 
