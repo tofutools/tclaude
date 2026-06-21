@@ -82,7 +82,7 @@ func GenerateCA() (certPEM, keyPEM []byte, err error) {
 		Subject:               pkix.Name{CommonName: "tclaude remote-access CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(caValidity),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLenZero:        true, // signs leaves only, no sub-CAs

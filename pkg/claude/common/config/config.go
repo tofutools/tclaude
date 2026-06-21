@@ -1074,6 +1074,10 @@ func Validate(c *Config) []string {
 		}
 	}
 
+	if r := c.RemoteAccess; r != nil && r.Enabled && r.Bind == "" {
+		errs = append(errs, "remote_access.enabled is set but remote_access.bind is empty; set a bind address (e.g. 0.0.0.0:8443)")
+	}
+
 	if c.Notifications != nil {
 		if c.Notifications.CooldownSeconds < 0 {
 			errs = append(errs, "notifications.cooldown_seconds must not be negative")

@@ -36,6 +36,18 @@ import (
 // logs in once and stays logged in for the window.
 const remoteSessionTTL = 30 * 24 * time.Hour
 
+// remoteCookieName is the remote listener's session cookie. Deliberately
+// DISTINCT from the loopback dashboardCookieName: although the two can't be
+// confused (loopback does an exact-token compare a signed token never matches;
+// the remote path runs VerifyCookie which a raw loopback token fails), a
+// separate name removes any "could these collide?" question and keeps the two
+// auth schemes visibly independent.
+const remoteCookieName = "tclaude_remote_session"
+
+// maxLoginBodyBytes caps the /login POST body — defense-in-depth behind mTLS
+// against a client cert holder posting a giant form.
+const maxLoginBodyBytes = 64 << 10
+
 // remoteAuthedCtxKey marks a request that remoteAuthMiddleware has fully
 // authenticated (valid client cert + valid session cookie + same-origin).
 type remoteAuthedCtxKey struct{}
@@ -70,9 +82,11 @@ func startRemoteServer(bind string) (*http.Server, error) {
 	dashMux := http.NewServeMux()
 	registerDashboardRoutes(dashMux)
 
+	// The listener (tls.Listen) already terminates TLS, so srv.Serve over it
+	// is correct and srv.TLSConfig is intentionally NOT set (it would be
+	// unused — ServeTLS is the path that reads it).
 	srv := &http.Server{
 		Handler:           remoteAuthMiddleware(m, dashMux),
-		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -115,7 +129,7 @@ func remoteAuthMiddleware(m *remoteaccess.Material, next http.Handler) http.Hand
 // remoteSessionValid reports whether the request carries a valid (signed,
 // unexpired) remote session cookie.
 func remoteSessionValid(r *http.Request, m *remoteaccess.Material) bool {
-	c, err := r.Cookie(dashboardCookieName)
+	c, err := r.Cookie(remoteCookieName)
 	if err != nil {
 		return false
 	}
@@ -157,6 +171,7 @@ func handleRemoteLogin(w http.ResponseWriter, r *http.Request, m *remoteaccess.M
 			writeLoginPage(w, "Too many attempts — wait a moment and try again.", http.StatusTooManyRequests)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 		_ = r.ParseForm()
 		if !m.VerifyPassphrase(r.PostFormValue("passphrase")) {
 			remoteLoginFailed()
@@ -165,7 +180,7 @@ func handleRemoteLogin(w http.ResponseWriter, r *http.Request, m *remoteaccess.M
 		}
 		remoteLoginSucceeded()
 		http.SetCookie(w, &http.Cookie{
-			Name:     dashboardCookieName,
+			Name:     remoteCookieName,
 			Value:    remoteaccess.SignCookie(m.CookieKey(), "human", remoteSessionTTL),
 			Path:     "/",
 			HttpOnly: true,
