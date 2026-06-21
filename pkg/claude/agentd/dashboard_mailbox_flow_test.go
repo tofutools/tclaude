@@ -1169,6 +1169,26 @@ func TestDashboardMailbox_GroupFolderUnknownIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
 }
 
+// Scenario: an archived (soft-deleted) group gets no roster folder — parity
+// with the Groups tab, which hides archived groups from its default listing
+// (so there is no "view messages" deep link to reach one). The folder is
+// still openable by id directly (the handler resolves an archived group).
+func TestDashboardMailboxes_ArchivedGroupHasNoFolder(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	// Active: the folder is listed.
+	require.NotNil(t, findMailbox(getMailboxes(t, dash), "group:team"),
+		"an active group has a folder")
+
+	// Archive it → the roster drops the folder, but a direct read still works.
+	require.NoError(t, db.ArchiveAgentGroup("team"))
+	assert.Nil(t, findMailbox(getMailboxes(t, dash), "group:team"),
+		"an archived group is dropped from the roster")
+	p := getMailboxPage(t, dash, "group:team", "", 0, 0)
+	assert.Equal(t, 4, p.Total, "but the archived group's folder is still readable by id")
+}
+
 // --- empty-mailbox filtering --------------------------------------------
 //
 // The Messages tab hides agents whose mailbox is empty — never sent or

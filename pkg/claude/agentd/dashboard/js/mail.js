@@ -859,14 +859,21 @@ function selectMessage(id) {
 // openMailbox brings the Messages tab forward and selects a folder — the
 // deep-link target for the Groups-tab cog menus' "view messages" items (an
 // agent's conv-id, or "group:<name>"). The synthetic nav click activates
-// the tab (bindTabs) and fires renderMailTab; selectMailbox then switches
-// to and loads the target. Selecting a folder the cached roster doesn't
-// list yet still works — the server resolves it directly, and the next
-// roster refresh lists + highlights it.
-function openMailbox(id) {
+// the tab (bindTabs) and fires renderMailTab.
+//
+// The roster is refreshed (awaited) BEFORE selectMailbox so the target
+// folder is present when selectMailbox → pruneSelections runs: a deep link
+// from the Groups tab can target a folder the Messages-tab roster hasn't
+// loaded since it last changed (e.g. a group created while the operator was
+// on the Groups tab), and pruneSelections snaps any selection not in the
+// cached roster back to "all" — which would bounce the deep link. A failed
+// roster refresh leaves the cache as-is; selectMailbox still loads the
+// folder directly (the server resolves it regardless of the roster).
+async function openMailbox(id) {
   if (!id) return;
   const navBtn = $('nav button[data-tab="messages"]');
   if (navBtn) navBtn.click();
+  await loadMailboxes();
   selectMailbox(id);
 }
 

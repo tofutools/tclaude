@@ -752,6 +752,15 @@ func buildGroupMailboxes() []dashboardMailbox {
 	}
 	out := make([]dashboardMailbox, 0, len(groups))
 	for _, g := range groups {
+		// Skip archived (soft-deleted) groups — the Groups tab hides them
+		// from its default listing, so they carry no "view messages" deep
+		// link; listing a folder for one here would be an unreachable,
+		// inconsistent stray. (An archived group can still be opened
+		// directly by id if something already holds the selection; the
+		// handler resolves it — this only governs the roster.)
+		if g.IsArchived() {
+			continue
+		}
 		members, err := groupMemberConvs(g.ID)
 		if err != nil {
 			continue
