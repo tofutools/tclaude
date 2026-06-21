@@ -29,6 +29,39 @@ function cfgFloat(id, fallback) {
   return Number.isFinite(v) ? v : fallback;
 }
 
+// populateAskSelects fills the Ask-defaults Model / Effort dropdowns from
+// the snapshot's harness catalog (the same source the spawn modal uses),
+// so the lists track the server-side catalog with no hardcoded model list.
+// Each select gets a leading "Fast default" option (empty value = unpinned,
+// resolves to the built-in fast default server-side). The claude harness is
+// the only one wired for `tclaude ask` today; a hand-set value absent from
+// the catalog is added back by setAskSelectValue so it still round-trips.
+function populateAskSelects() {
+  const harnesses = (lastSnapshot && lastSnapshot.harnesses) || [];
+  const claude = harnesses.find(h => h.name === 'claude') || {};
+  fillAskSelect($('#ask-model'), claude.models || []);
+  fillAskSelect($('#ask-effort'), claude.effort_levels || []);
+}
+function fillAskSelect(sel, values) {
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Fast default</option>' +
+    (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+}
+// setAskSelectValue selects value, first adding it as an option when the
+// catalog doesn't list it (a hand-edited full model ID), so the form shows
+// what is actually on disk rather than silently snapping to another option.
+function setAskSelectValue(sel, value) {
+  if (!sel) return;
+  value = value || '';
+  if (value && !Array.from(sel.options).some(o => o.value === value)) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = value;
+    sel.appendChild(o);
+  }
+  sel.value = value;
+}
+
 // cfgStringRow / cfgTransitionRow build one removable row of a list
 // editor. renderCfg*List (re)populates a container with rows + an
 // "+ add" button; readCfg*List collects the non-blank values back.
@@ -220,6 +253,13 @@ function populateConfigForm(cfg) {
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
 
+  // Ask defaults — model/effort for `tclaude ask`. Options come from the
+  // harness catalog; an unset field shows "Fast default" (empty).
+  populateAskSelects();
+  const ask = cfg.ask || {};
+  setAskSelectValue($('#ask-model'), ask.model);
+  setAskSelectValue($('#ask-effort'), ask.effort);
+
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
   // keep: 0 and absent both mean "built-in default", so show a stored 0
@@ -295,6 +335,18 @@ function assembleConfig() {
   const cf = cfgFloat('cfg-cost-factor', 1);
   if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
+
+  // ask is an optional block. Clone the existing one so a future sub-field
+  // with no widget round-trips, then set the two form-owned keys. An empty
+  // value (the "Fast default" option) clears that field, and a block with
+  // nothing left is dropped so an all-default ask doesn't marshal as a
+  // spurious "ask": {} diff.
+  const ask = (cfg.ask && typeof cfg.ask === 'object') ? cfg.ask : {};
+  const askModel = $('#ask-model').value.trim();
+  const askEffort = $('#ask-effort').value.trim();
+  if (askModel) ask.model = askModel; else delete ask.model;
+  if (askEffort) ask.effort = askEffort; else delete ask.effort;
+  if (Object.keys(ask).length) cfg.ask = ask; else delete cfg.ask;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and
@@ -625,29 +677,6 @@ async function saveConfig() {
   }
 }
 
-// syncConfigBaseline refreshes the on-disk baseline (and the clone source
-// assembleConfig starts from) WITHOUT repopulating the form, so unsaved
-// widget edits in the DOM survive. Used when a sibling control writes
-// config.json out-of-band (the Ask defaults section's dedicated endpoint):
-// the big form's drift guard would otherwise 409 on a later Save because
-// its baseline went stale. A no-op until the tab has loaded once.
-async function syncConfigBaseline() {
-  if (!configLoaded) return;
-  try {
-    const r = await fetch('/api/config', { credentials: 'same-origin' });
-    if (!r.ok) return;
-    const data = await r.json();
-    if (data.raw) {
-      configBaseRaw = data.raw;
-      configObj = JSON.parse(configBaseRaw);
-      configFileMalformed = !!data.malformed;
-    }
-  } catch (e) {
-    // Best-effort: a failed resync just leaves the drift guard to catch
-    // it on the next Save, which is the correct fallback anyway.
-  }
-}
-
 function bindConfigTab() {
   // Lazy-load on the first activation of the Config tab.
   const navBtn = $('nav button[data-tab="config"]');
@@ -656,9 +685,6 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
-  // A sibling control (Ask defaults) wrote config.json through its own
-  // endpoint — resync our baseline so a later Save doesn't 409.
-  document.addEventListener('config-disk-changed', syncConfigBaseline);
   ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);

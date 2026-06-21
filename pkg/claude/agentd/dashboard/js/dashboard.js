@@ -37,7 +37,6 @@ import {
   bindReincarnateAgentModal,
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
-import { bindAskProfileSection } from './ask-profile.js';
 import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab } from './costs.js';
 import { initMail } from './mail.js';
@@ -112,7 +111,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindCloneAgentModal();
   bindReincarnateAgentModal();
   bindConfigTab();
-  bindAskProfileSection();
   bindPluginsUI();
   bindCostsTab();
   initMail();
