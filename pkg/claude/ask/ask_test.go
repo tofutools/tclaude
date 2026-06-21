@@ -790,6 +790,78 @@ func TestAsk_InteractiveDoesNotStreamJSON(t *testing.T) {
 	assert.False(t, argvHas(argv, "stream-json"), "interactive never gets the print-only streaming flags")
 }
 
+// TestAsk_ClaudeTTYNoSmoothingStillStreamsCleanly: --no-smoothing keeps the live
+// stream (still stream-json) but turns the pacing off; the clean answer is
+// unchanged. Smoothed vs unsmoothed differ only in timing, so we assert the
+// wiring (flag flows through to the filter) doesn't disturb the output.
+func TestAsk_ClaudeTTYNoSmoothingStillStreamsCleanly(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "the answer\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-NS", "/repo/x", "what is up?")
+	in.NoSmoothing = true
+	aio, out, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	assert.True(t, argvHas(f.last().Argv, "stream-json"), "--no-smoothing still streams, just unpaced")
+	assert.Equal(t, "the answer\n", out.String(), "the unsmoothed stream still yields the clean answer")
+}
+
+// TestAsk_ClaudeTTYShowsThenClearsSpinner: when stderr is a terminal, the live
+// "working…" indicator is drawn on stderr only — stdout carries the clean answer,
+// the answer never leaks onto the indicator line, and every indicator write ends
+// in a clear-to-EOL so nothing is left dangling. (How fast the answer arrives is
+// timing-dependent, so the exact frames aren't asserted here — the spinner's own
+// render test pins those deterministically.)
+func TestAsk_ClaudeTTYShowsThenClearsSpinner(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "the answer\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-SP", "/repo/x", "what is up?")
+	in.StderrIsTerminal = true
+	aio, out, errb := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	assert.Equal(t, "the answer\n", out.String(), "the answer is clean on stdout")
+	assert.NotContains(t, errb.String(), "the answer", "the answer never leaks onto the stderr indicator line")
+	if e := errb.String(); e != "" {
+		assert.True(t, strings.HasSuffix(e, "\033[K"), "any indicator output ends cleared; stderr=%q", e)
+	}
+}
+
+// TestResolveSmooth pins the flag/env precedence: --no-smoothing forces off;
+// otherwise TCLAUDE_ASK_SMOOTH=falsey turns it off; otherwise it stays on.
+func TestResolveSmooth(t *testing.T) {
+	t.Run("default on", func(t *testing.T) {
+		t.Setenv("TCLAUDE_ASK_SMOOTH", "")
+		assert.True(t, resolveSmooth(false))
+	})
+	t.Run("--no-smoothing forces off", func(t *testing.T) {
+		t.Setenv("TCLAUDE_ASK_SMOOTH", "")
+		assert.False(t, resolveSmooth(true))
+	})
+	t.Run("env falsey turns off", func(t *testing.T) {
+		for _, v := range []string{"0", "false", "off", "no", "OFF", " no "} {
+			t.Setenv("TCLAUDE_ASK_SMOOTH", v)
+			assert.Falsef(t, resolveSmooth(false), "env=%q", v)
+		}
+	})
+	t.Run("env truthy or unrecognized stays on", func(t *testing.T) {
+		for _, v := range []string{"1", "true", "yes", "on", "whatever"} {
+			t.Setenv("TCLAUDE_ASK_SMOOTH", v)
+			assert.Truef(t, resolveSmooth(false), "env=%q", v)
+		}
+	})
+	t.Run("flag beats a truthy env", func(t *testing.T) {
+		t.Setenv("TCLAUDE_ASK_SMOOTH", "1")
+		assert.False(t, resolveSmooth(true))
+	})
+}
+
 // TestAssemblePrompt covers the three prompt shapes directly.
 func TestAssemblePrompt(t *testing.T) {
 	assert.Equal(t, "q", assemblePrompt("q", ""))

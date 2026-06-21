@@ -308,16 +308,12 @@ type errAfterWriter struct{ err error }
 
 func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
 
-// newTestStreamFilter builds the production smoothing stream filter but with a
-// no-op sleep, so the content-oriented tests exercise the real paced goroutine
-// path without waiting out the typewriter delays. Smoothing is forced on so an
-// ambient TCLAUDE_ASK_SMOOTH=0 in the dev's env can't quietly swap which path
-// these tests cover.
+// newTestStreamFilter builds the smoothing stream filter with a no-op sleep, so
+// the content-oriented tests exercise the real paced goroutine path without
+// waiting out the typewriter delays.
 func newTestStreamFilter(out io.Writer) io.Writer {
-	w := claudeAsker{}.StreamFilter(out)
-	cf := w.(*claudeStreamFilter)
-	cf.smooth = true
-	cf.sleep = func(time.Duration) {}
+	w := claudeAsker{}.StreamFilter(out, true, nil)
+	w.(*claudeStreamFilter).sleep = func(time.Duration) {}
 	return w
 }
 
@@ -326,6 +322,68 @@ func newTestStreamFilter(out io.Writer) io.Writer {
 func streamTextDelta(s string) string {
 	b, _ := json.Marshal(s)
 	return `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":` + string(b) + `}}}` + "\n"
+}
+
+// streamTextBlockStart renders a content_block_start event for a text block —
+// the boundary marker that begins each text SECTION of a turn.
+func streamTextBlockStart() string {
+	return `{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text"}}}` + "\n"
+}
+
+// TestClaudeStreamFilter_SeparatesSections proves consecutive text sections (the
+// model emits text, runs a tool, then emits more text in a fresh block) are
+// separated by a newline rather than running together — but a section the model
+// already ended with a newline is not double-spaced, and the first section gets
+// no leading blank line.
+func TestClaudeStreamFilter_SeparatesSections(t *testing.T) {
+	run := func(parts ...string) string {
+		var out strings.Builder
+		w := newTestStreamFilter(&out)
+		for _, p := range parts {
+			if _, err := io.WriteString(w, p); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		}
+		if err := w.(AskStreamFlusher).Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		return out.String()
+	}
+	bs := streamTextBlockStart()
+
+	t.Run("separates sections when the prior one didn't end in a newline", func(t *testing.T) {
+		got := run(
+			bs, streamTextDelta("Let me check the files."),
+			// a tool round happens here (ignored events) — then a new text block:
+			bs, streamTextDelta("The largest is main.go."),
+		)
+		if want := "Let me check the files.\nThe largest is main.go.\n"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("does not double-space a section that already ended in a newline", func(t *testing.T) {
+		got := run(
+			bs, streamTextDelta("Done.\n"),
+			bs, streamTextDelta("Next."),
+		)
+		if want := "Done.\nNext.\n"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no leading separator before the first section", func(t *testing.T) {
+		if got := run(bs, streamTextDelta("Hello.")); got != "Hello.\n" {
+			t.Fatalf("got %q, want %q", got, "Hello.\n")
+		}
+	})
+
+	t.Run("multiple deltas within one section are not separated", func(t *testing.T) {
+		got := run(bs, streamTextDelta("Hello, "), streamTextDelta("world."))
+		if got != "Hello, world.\n" {
+			t.Fatalf("got %q, want %q (deltas inside one block must not be split)", got, "Hello, world.\n")
+		}
+	})
 }
 
 // TestPacingCPS pins the pure pacing policy: a tiny first chunk floors at a
@@ -370,8 +428,7 @@ func TestPacingCPS(t *testing.T) {
 func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 	var out strings.Builder
 	var nowNs, sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
-	w.smooth = true
+	w := claudeAsker{}.StreamFilter(&out, true, nil).(*claudeStreamFilter)
 	w.clock = func() time.Time { return time.Unix(0, nowNs.Load()) }
 	w.sleep = func(d time.Duration) { nowNs.Add(int64(d)); sleeps.Add(1) }
 
@@ -400,8 +457,7 @@ func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	var out strings.Builder
 	var sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
-	w.smooth = true
+	w := claudeAsker{}.StreamFilter(&out, true, nil).(*claudeStreamFilter)
 	w.sleep = func(time.Duration) { sleeps.Add(1) }
 
 	big := strings.Repeat("x", streamDumpThreshold+500)
@@ -419,14 +475,84 @@ func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	}
 }
 
-// TestClaudeStreamFilter_SmoothOff proves the opt-out: TCLAUDE_ASK_SMOOTH=0
-// forwards deltas straight through (no goroutine), with identical final output.
-func TestClaudeStreamFilter_SmoothOff(t *testing.T) {
-	t.Setenv("TCLAUDE_ASK_SMOOTH", "0")
+// recordingStatus is a fake StreamStatus that records the filter's BeforeOutput
+// announcements. firstAtLen captures how many bytes had reached out when the
+// FIRST one fired, proving the indicator is erased BEFORE the first visible char.
+type recordingStatus struct {
+	out        *strings.Builder
+	calls      int
+	firstAtLen int // bytes already on stdout at the FIRST BeforeOutput call
+}
+
+func (r *recordingStatus) BeforeOutput() {
+	if r.calls == 0 {
+		r.firstAtLen = r.out.Len()
+	}
+	r.calls++
+}
+
+// TestClaudeStreamFilter_DrivesStatus proves the filter announces every visible
+// write to the indicator, and that the FIRST announcement lands immediately
+// BEFORE the first character reaches stdout — so the indicator is always erased
+// before the answer could overlap it.
+func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
 	var out strings.Builder
-	w := claudeAsker{}.StreamFilter(&out)
-	if cf, ok := w.(*claudeStreamFilter); !ok || cf.smooth {
-		t.Fatal("TCLAUDE_ASK_SMOOTH=0 should disable smoothing")
+	st := &recordingStatus{out: &out}
+	w := claudeAsker{}.StreamFilter(&out, true, st).(*claudeStreamFilter)
+	w.sleep = func(time.Duration) {}
+
+	for _, c := range []string{"Hello, ", "world"} {
+		if _, err := io.WriteString(w, streamTextDelta(c)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := out.String(); got != "Hello, world\n" {
+		t.Fatalf("answer = %q, want %q", got, "Hello, world\n")
+	}
+	if st.calls == 0 {
+		t.Fatal("BeforeOutput was never called, want ≥1 (one per visible write)")
+	}
+	if st.firstAtLen != 0 {
+		t.Fatalf("first BeforeOutput fired after %d bytes already on stdout, want 0 (erase must precede the first char)", st.firstAtLen)
+	}
+}
+
+// TestClaudeStreamFilter_StatusStopsOnDeltalessTurn proves a turn that streams no
+// deltas (only a result event, e.g. an error) still announces its single write:
+// the fallback write in Flush funnels through the same BeforeOutput trigger,
+// before the fallback text reaches stdout.
+func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
+	var out strings.Builder
+	st := &recordingStatus{out: &out}
+	w := claudeAsker{}.StreamFilter(&out, true, st).(*claudeStreamFilter)
+	w.sleep = func(time.Duration) {}
+
+	line := `{"type":"result","subtype":"error","is_error":true,"result":"boom"}` + "\n"
+	if _, err := io.WriteString(w, line); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got := out.String(); got != "boom\n" {
+		t.Fatalf("answer = %q, want %q", got, "boom\n")
+	}
+	if st.calls != 1 || st.firstAtLen != 0 {
+		t.Fatalf("BeforeOutput should fire once before the fallback text, got calls=%d firstAtLen=%d", st.calls, st.firstAtLen)
+	}
+}
+
+// TestClaudeStreamFilter_SmoothOff proves smooth=false forwards deltas straight
+// through (no pacer goroutine), with identical final output. (The flag/env that
+// resolves to this bool is covered by the ask layer's resolveSmooth tests.)
+func TestClaudeStreamFilter_SmoothOff(t *testing.T) {
+	var out strings.Builder
+	w := claudeAsker{}.StreamFilter(&out, false, nil)
+	if cf := w.(*claudeStreamFilter); cf.smooth {
+		t.Fatal("StreamFilter(_, false) must not smooth")
 	}
 	if _, err := io.WriteString(w, streamTextDelta("Hello, ")+streamTextDelta("world")); err != nil {
 		t.Fatalf("write: %v", err)

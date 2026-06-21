@@ -50,6 +50,7 @@ type Params struct {
 	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (medium by default)."`
 	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 	Verbose     bool   `long:"verbose" short:"v" help:"Show the harness's full capture-mode transcript on stderr (the session banner, hook lifecycle, token counts). Off by default so a printed answer is just the answer; a failed run shows it regardless. No effect on -i."`
+	NoSmoothing bool   `long:"no-smoothing" help:"Print the streamed answer chunk-by-chunk as it arrives, instead of pacing it into a smooth character-by-character typewriter. Only affects a live answer on a terminal (piped/captured output is never smoothed). Also settable via TCLAUDE_ASK_SMOOTH=0."`
 }
 
 func Cmd() *cobra.Command {
@@ -106,9 +107,17 @@ type askInput struct {
 	// Verbose keeps the harness's capture-mode stderr transcript visible
 	// (otherwise hidden for harnesses that write one — see
 	// Asker.NoisyCaptureStderr). No effect in interactive mode.
-	Verbose          bool
+	Verbose bool
+	// NoSmoothing forwards the streamed answer chunk-by-chunk instead of pacing
+	// it into a typewriter. Only consulted when streaming to a TTY; see
+	// resolveSmooth for how it composes with TCLAUDE_ASK_SMOOTH.
+	NoSmoothing      bool
 	StdinIsTerminal  bool
 	StdoutIsTerminal bool
+	// StderrIsTerminal gates the streaming "working…" indicator: it is drawn on
+	// stderr, so we only show it when stderr is a real terminal (never into a
+	// redirected stderr). Defaults false, so tests get no spinner.
+	StderrIsTerminal bool
 }
 
 // askIO carries the streams runAsk wires into the harness process. In an
@@ -139,6 +148,7 @@ func runFromCLI(p *Params, args []string) error {
 
 	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	stderrIsTTY := term.IsTerminal(int(os.Stderr.Fd()))
 
 	var payload string
 	if !stdinIsTTY {
@@ -175,10 +185,30 @@ func runFromCLI(p *Params, args []string) error {
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
+		NoSmoothing:      p.NoSmoothing,
 		StdinIsTerminal:  stdinIsTTY,
 		StdoutIsTerminal: stdoutIsTTY,
+		StderrIsTerminal: stderrIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+}
+
+// resolveSmooth decides whether `tclaude ask` paces ("smooths") the streamed
+// answer into a character-by-character typewriter. Precedence: the
+// --no-smoothing flag forces it OFF; otherwise TCLAUDE_ASK_SMOOTH set to a
+// falsey value (0/false/off/no) turns it off; otherwise it is on (the default).
+// Only consulted when streaming to a real terminal — a piped/captured stdout is
+// never smoothed regardless.
+func resolveSmooth(noSmoothing bool) bool {
+	if noSmoothing {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TCLAUDE_ASK_SMOOTH"))) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // printWhere implements `tclaude ask --where`: it prints the bucket an ask from
@@ -393,14 +423,27 @@ func runAsk(in askInput, aio askIO) error {
 	// end the line cleanly. spec.Stream is only ever set for a SupportsAskStream
 	// harness, so the type-assert always holds here.
 	var streamFlush harness.AskStreamFlusher
+	var spinner *streamSpinner
 	if spec.Stream {
 		if sa, ok := h.Ask.(harness.StreamAsker); ok {
-			filtered := sa.StreamFilter(aio.Stdout)
+			// A "working…" indicator on stderr while the answer is still on its way
+			// — shown only when stderr is itself a terminal (so a redirected stderr
+			// never collects escape codes). The filter erases it the instant the
+			// first character prints; see streamSpinner.
+			var status harness.StreamStatus
+			if in.StderrIsTerminal {
+				spinner = newStreamSpinner(aio.Stderr)
+				status = spinner
+			}
+			filtered := sa.StreamFilter(aio.Stdout, resolveSmooth(in.NoSmoothing), status)
 			plan.Stdout = filtered
 			if fl, ok := filtered.(harness.AskStreamFlusher); ok {
 				streamFlush = fl
 			}
 		}
+	}
+	if spinner != nil {
+		spinner.start()
 	}
 
 	// In capture mode some harnesses (Codex) write a verbose human transcript to
@@ -422,6 +465,13 @@ func runAsk(in askInput, aio askIO) error {
 		if flushErr := streamFlush.Flush(); flushErr != nil && runErr == nil {
 			fmt.Fprintf(aio.Stderr, "ask: warning: could not finish streaming output: %v\n", flushErr)
 		}
+	}
+	if spinner != nil {
+		// Tear the indicator down and join its goroutine. The filter already
+		// hid it before the last character; this also covers a turn that printed
+		// nothing at all.
+		spinner.Done()
+		spinner.wait()
 	}
 	if hideStderr && runErr != nil {
 		// The run failed — surface the suppressed transcript so the failure

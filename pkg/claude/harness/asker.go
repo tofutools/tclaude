@@ -115,11 +115,44 @@ type StreamAsker interface {
 	// (`x=$(tclaude ask …)`) would still be just the answer, and a human
 	// watching sees it stream.
 	//
+	// smooth asks the filter to PACE the visible text into a steady, character-
+	// by-character "typewriter" (a cosmetic refinement for a human watching a
+	// TTY) rather than forwarding each chunk the instant it is parsed. `tclaude
+	// ask` resolves it from the --no-smoothing flag / TCLAUDE_ASK_SMOOTH and the
+	// built-in default; a filter that doesn't pace may ignore it. Either way the
+	// emitted bytes are identical — smooth only changes their timing.
+	//
+	// status is an optional sink for the live "working…" indicator (see
+	// StreamStatus); the filter drives its phase transitions as it parses. nil
+	// disables it. The filter calls status only at phase boundaries, never per
+	// byte, so a non-TTY caller simply passes nil.
+	//
 	// The returned writer may also implement AskStreamFlusher; `tclaude ask`
 	// calls Flush once after the process exits so the filter can emit any
 	// trailing text the stream implied but never streamed as deltas (a final
 	// result or an error message) and a terminating newline.
-	StreamFilter(w io.Writer) io.Writer
+	StreamFilter(w io.Writer, smooth bool, status StreamStatus) io.Writer
+}
+
+// StreamStatus is an optional sink for the transient "working…" indicator
+// `tclaude ask` shows (on stderr) while a streamed answer is still on its way —
+// so a human watching a TTY sees that the harness is alive both during the
+// model's initial "thinking" pause and during mid-stream stalls (when the agent
+// pauses to run a tool, then continues). The ask layer supplies the concrete
+// renderer (a spinner) and owns its lifecycle (create, start, final teardown). A
+// nil StreamStatus disables the indicator entirely.
+//
+// The filter's only job is to announce each visible write; the renderer decides,
+// from the timing of those announcements, when to show or hide itself. BeforeOutput
+// may be called from the filter's stdout-parsing and pacing goroutines, so an
+// implementation must be safe for concurrent use.
+type StreamStatus interface {
+	// BeforeOutput is called immediately before each visible character is written
+	// to the real stdout. The indicator must hide itself (erasing any on-screen
+	// frame) synchronously, so it never overlaps the answer, and note the write as
+	// activity (its idle timer drives the mid-stream re-show). Cheap and a no-op
+	// when already hidden.
+	BeforeOutput()
 }
 
 // AskStreamFlusher is the optional flush half of a StreamFilter's returned
