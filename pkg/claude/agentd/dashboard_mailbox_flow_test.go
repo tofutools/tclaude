@@ -446,6 +446,30 @@ func TestDashboardMailboxMarkRead_TogglesByID(t *testing.T) {
 		"back to unread in bob's folder")
 }
 
+// Scenario: the ids path is DIRECTION-AGNOSTIC — marking a row the folder
+// agent SENT (its read_at belongs to the OTHER party) flips it just the same.
+// This locks in the deliberate asymmetry with the conv path (received-only,
+// see TestDashboardMailboxMarkRead_MarkAllForConv): the per-message reader
+// toggle and the bulk-selection path can reach an outbound row, by design.
+func TestDashboardMailboxMarkRead_ByIDFlipsSentRow(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	// bob→alice "re: hi bob" is read in the seed; from bob's folder it is an
+	// outbound row (bob sent it; to_conv = alice).
+	sent := findMsg(t, getMailbox(t, dash, mbBob), "re: hi bob")
+	require.Equal(t, "out", sent.Direction, "the row bob sent")
+	require.True(t, sent.Read, "starts read")
+
+	// Mark that SENT row unread by id — the ids path doesn't gate on direction.
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{
+		"ids": []int64{sent.ID}, "read": false}))
+	assert.False(t, findMsg(t, getMailbox(t, dash, mbBob), "re: hi bob").Read,
+		"sent row now unread in bob's (sender) folder")
+	assert.False(t, findMsg(t, getMailbox(t, dash, mbAlice), "re: hi bob").Read,
+		"and in alice's (recipient) folder — same shared row")
+}
+
 // Scenario: POST /api/mailbox/mark-read {conv,read:true} marks every message
 // the conv has RECEIVED read, and does NOT touch rows it SENT (read_at there
 // belongs to the other party). The per-folder "mark all read" for a stuck

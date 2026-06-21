@@ -668,6 +668,14 @@ func handleDashboardMailboxWipe(w http.ResponseWriter, r *http.Request) {
 // read=true only — marking a whole inbox unread has no use and would be a
 // footgun. Returns {"marked": n}, the count of rows whose state changed.
 // Cookie-authed.
+//
+// The two modes differ on purpose (see SetAgentMessagesRead vs
+// MarkAgentMailboxRead): ids mode is direction-agnostic — it flips whatever
+// rows are named, including ones the viewed agent SENT (whose read_at is the
+// recipient's), which is the operator's explicit per-row / bulk-selection
+// choice — whereas conv mode is received-side-only so a one-click whole-folder
+// "mark all read" can't silently flip other agents' read-state. When both ids
+// and conv are present conv wins (the frontend never sends both).
 func handleDashboardMailboxMarkRead(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
