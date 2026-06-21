@@ -115,3 +115,14 @@ func TestCodexAsker_PreMintsConvID(t *testing.T) {
 		t.Fatal("claude must pre-mint a conv-id (--session-id)")
 	}
 }
+
+func TestCodexAsker_NoisyCaptureStderr(t *testing.T) {
+	var codex Asker = codexAsker{}
+	var claude Asker = claudeAsker{}
+	if !codex.NoisyCaptureStderr() {
+		t.Fatal("codex exec writes a verbose transcript to stderr — must be hideable")
+	}
+	if claude.NoisyCaptureStderr() {
+		t.Fatal("claude -p keeps stderr quiet — nothing to hide")
+	}
+}

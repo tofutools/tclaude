@@ -21,6 +21,7 @@
 package ask
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -48,6 +49,7 @@ type Params struct {
 	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (sonnet by default)."`
 	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (medium by default)."`
 	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
+	Verbose     bool   `long:"verbose" short:"v" help:"Show the harness's full capture-mode transcript on stderr (the session banner, hook lifecycle, token counts). Off by default so a printed answer is just the answer; a failed run shows it regardless. No effect on -i."`
 }
 
 func Cmd() *cobra.Command {
@@ -101,6 +103,10 @@ type askInput struct {
 	Effort           string
 	ForceInteractive bool
 	New              bool
+	// Verbose keeps the harness's capture-mode stderr transcript visible
+	// (otherwise hidden for harnesses that write one — see
+	// Asker.NoisyCaptureStderr). No effect in interactive mode.
+	Verbose          bool
 	StdinIsTerminal  bool
 	StdoutIsTerminal bool
 }
@@ -168,6 +174,7 @@ func runFromCLI(p *Params, args []string) error {
 		Effort:           effort,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
+		Verbose:          p.Verbose,
 		StdinIsTerminal:  stdinIsTTY,
 		StdoutIsTerminal: stdoutIsTTY,
 	}
@@ -371,7 +378,23 @@ func runAsk(in askInput, aio askIO) error {
 		plan.Stdin = aio.Stdin
 	}
 
+	// In capture mode some harnesses (Codex) write a verbose human transcript to
+	// stderr — banner, `hook: …` lines, token counts — separate from the clean
+	// answer on stdout. Buffer that so a printed answer is just the answer;
+	// --verbose keeps it live, and a failed run flushes the buffer so a real
+	// error is never swallowed.
+	hideStderr := printMode && !in.Verbose && h.Ask.NoisyCaptureStderr()
+	var stderrBuf bytes.Buffer
+	if hideStderr {
+		plan.Stderr = &stderrBuf
+	}
+
 	started, runErr := runner(plan)
+	if hideStderr && runErr != nil {
+		// The run failed — surface the suppressed transcript so the failure
+		// isn't silent (an auth error, a bad model, a sandbox denial, …).
+		_, _ = io.Copy(aio.Stderr, &stderrBuf)
+	}
 	if started {
 		// For a non-pre-minting fresh ask, discover the id Codex just created.
 		// An empty result (no new conv — e.g. the run errored before writing
