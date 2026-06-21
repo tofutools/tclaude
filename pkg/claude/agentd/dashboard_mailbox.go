@@ -73,6 +73,14 @@ import (
 const (
 	humanMailboxID = "human"
 	allMailboxID   = "all"
+	// groupMailboxPrefix namespaces a group folder's id ("group:<name>")
+	// so it can never collide with an agent folder (a conv-id UUID) or the
+	// "all"/"human" sentinels. The remainder after the prefix is the group
+	// name verbatim — a name may contain ":", so callers strip only this
+	// leading token. Keyed by name (not the stable group-id) because the
+	// Groups-tab deep links already carry the name; a rename strands the
+	// selection, which the frontend snaps back to "all" (pruneSelections).
+	groupMailboxPrefix = "group:"
 )
 
 // mailboxIncludeRetired reports whether the request opted into retired
@@ -129,11 +137,14 @@ type dashboardMailbox struct {
 	Online  bool     `json:"online"`
 	Retired bool     `json:"retired,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
-	In      int      `json:"in"`
-	Out     int      `json:"out"`
-	Total   int      `json:"total"`
-	Unread  int      `json:"unread"`
-	LastAt  string   `json:"last_at,omitempty"`
+	// Members is the current member count of a group folder (kind="group")
+	// — drives the sidebar tooltip. Omitted (0) for agent/human/all.
+	Members int    `json:"members,omitempty"`
+	In      int    `json:"in"`
+	Out     int    `json:"out"`
+	Total   int    `json:"total"`
+	Unread  int    `json:"unread"`
+	LastAt  string `json:"last_at,omitempty"`
 }
 
 // handleDashboardMailboxes serves GET /api/mailboxes — the sidebar
@@ -212,6 +223,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		LastAt: latestHumanMessageAt(humanMsgs),
 	})
 
+	agentBoxes := make([]dashboardMailbox, 0, len(convSet))
 	for conv := range convSet {
 		_, retired := retiredSet[conv]
 		// Retired agents are hidden unless the operator opted in; when
@@ -240,24 +252,34 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		if !c.Last.IsZero() {
 			mb.LastAt = c.Last.Format(time.RFC3339)
 		}
-		mailboxes = append(mailboxes, mb)
+		agentBoxes = append(agentBoxes, mb)
 	}
 
-	// Sort agent mailboxes by recency — newest mail on top, the way a
-	// mail client lists folders by last activity — then by title, then
-	// conv-id for a stable tiebreak. The two virtual folders stay pinned
-	// at the head (mailboxes[0]=all, mailboxes[1]=human); only the agent
-	// tail (mailboxes[2:]) is reordered.
-	agents := mailboxes[2:]
-	sort.Slice(agents, func(i, j int) bool {
-		if agents[i].LastAt != agents[j].LastAt {
-			return agents[i].LastAt > agents[j].LastAt
+	// Group folders sit between the pinned virtual folders and the
+	// per-agent folders — one per group, an aggregate "all member traffic"
+	// view. Total is the distinct row count in the group scope (members'
+	// traffic + the group's multicasts); In/Out/Unread are left 0 the way
+	// the "all" aggregate leaves them — those are per-recipient notions
+	// with no meaning for a group view. ListAgentGroups is name-ordered, so
+	// the group section reads alphabetically.
+	groupBoxes := buildGroupMailboxes()
+
+	// Sort agent mailboxes by recency — newest mail on top, the way a mail
+	// client lists folders by last activity — then by title, then conv-id
+	// for a stable tiebreak.
+	sort.Slice(agentBoxes, func(i, j int) bool {
+		if agentBoxes[i].LastAt != agentBoxes[j].LastAt {
+			return agentBoxes[i].LastAt > agentBoxes[j].LastAt
 		}
-		if agents[i].Title != agents[j].Title {
-			return agents[i].Title < agents[j].Title
+		if agentBoxes[i].Title != agentBoxes[j].Title {
+			return agentBoxes[i].Title < agentBoxes[j].Title
 		}
-		return agents[i].ID < agents[j].ID
+		return agentBoxes[i].ID < agentBoxes[j].ID
 	})
+
+	// Final order: [all, human] (pinned), then groups, then agents.
+	mailboxes = append(mailboxes, groupBoxes...)
+	mailboxes = append(mailboxes, agentBoxes...)
 
 	writeJSON(w, http.StatusOK, map[string]any{"mailboxes": mailboxes})
 }
@@ -402,6 +424,35 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 			"id":    allMailboxID,
 			"kind":  "all",
 			"title": "All agent messages",
+		}, p)
+		return
+	}
+
+	if name, ok := strings.CutPrefix(id, groupMailboxPrefix); ok {
+		// A group folder: all member traffic + the group's own multicasts.
+		g, err := db.GetAgentGroupByName(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if g == nil {
+			writeError(w, http.StatusNotFound, "not_found", "no such group: "+name)
+			return
+		}
+		members, err := groupMemberConvs(g.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		p, err := groupMailboxPage(members, g.ID, q, page, pageSize)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeMailboxPage(w, map[string]any{
+			"id":    id,
+			"kind":  "group",
+			"title": g.Name,
 		}, p)
 		return
 	}
@@ -588,6 +639,29 @@ func directionFor(forConv string, m *db.AgentMessage) string {
 // same hidden-retired view.
 func agentMailboxPage(forConv, q string, page, pageSize int, excludeConvs []string) (mailboxPage, error) {
 	scope := db.MailboxFilter{ForConv: forConv, ExcludeConvs: excludeConvs}
+	return mailboxPageForScope(scope, forConv, q, page, pageSize)
+}
+
+// groupMailboxPage builds one newest-first page of a GROUP folder — all
+// traffic touching any current member (sender or recipient) plus the
+// group's own multicasts (see MailboxFilter.ScopeConvs / ScopeGroupID).
+// Like the "all" firehose it has no single self to be relative to, so
+// every row renders from→to (forConv == ""). The group folder is NOT
+// retired-filtered: its member set is already current-members-only (a
+// retired agent loses its membership), and its channel history is shown
+// in full regardless of the "show retired" toggle.
+func groupMailboxPage(members []string, groupID int64, q string, page, pageSize int) (mailboxPage, error) {
+	scope := db.MailboxFilter{ScopeConvs: members, ScopeGroupID: groupID}
+	return mailboxPageForScope(scope, "", q, page, pageSize)
+}
+
+// mailboxPageForScope is the shared count → search → clamp → list →
+// decorate pipeline behind agentMailboxPage / groupMailboxPage. scope is
+// the folder predicate (a specific agent, a group, or the unscoped "all"
+// firehose); forConv labels each row's direction relative to the folder
+// ("in"/"out" for an agent folder, "" for an aggregate folder that
+// renders from→to).
+func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSize int) (mailboxPage, error) {
 	totalUnfiltered, err := db.CountMailbox(scope)
 	if err != nil {
 		return mailboxPage{}, err
@@ -620,6 +694,53 @@ func agentMailboxPage(forConv, q string, page, pageSize int, excludeConvs []stri
 		Total:           total,
 		TotalUnfiltered: totalUnfiltered,
 	}, nil
+}
+
+// groupMemberConvs returns the conv-ids of a group's current members,
+// dropping any blank id. The set that scopes a group folder.
+func groupMemberConvs(groupID int64) ([]string, error) {
+	members, err := db.ListAgentGroupMembers(groupID)
+	if err != nil {
+		return nil, err
+	}
+	convs := make([]string, 0, len(members))
+	for _, m := range members {
+		if m.ConvID != "" {
+			convs = append(convs, m.ConvID)
+		}
+	}
+	return convs, nil
+}
+
+// buildGroupMailboxes builds one sidebar roster entry per group — the
+// "view this group's messages" folders. Each carries the distinct row
+// count in the group scope as its Total; a per-group CountMailbox is cheap
+// (groups are few and human-curated). A lookup failure for one group skips
+// just that group rather than failing the whole roster.
+func buildGroupMailboxes() []dashboardMailbox {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return nil
+	}
+	out := make([]dashboardMailbox, 0, len(groups))
+	for _, g := range groups {
+		members, err := groupMemberConvs(g.ID)
+		if err != nil {
+			continue
+		}
+		total, err := db.CountMailbox(db.MailboxFilter{ScopeConvs: members, ScopeGroupID: g.ID})
+		if err != nil {
+			continue
+		}
+		out = append(out, dashboardMailbox{
+			ID:      groupMailboxPrefix + g.Name,
+			Kind:    "group",
+			Title:   g.Name,
+			Total:   total,
+			Members: len(members),
+		})
+	}
+	return out
 }
 
 // humanMailboxPage paginates the human_messages folder. The snapshot is

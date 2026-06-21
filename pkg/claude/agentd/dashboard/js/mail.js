@@ -54,6 +54,11 @@ import { confirmModal, toast } from './refresh.js';
 
 const HUMAN_ID = 'human';
 const ALL_ID = 'all';
+// Group folders are keyed "group:<name>" (the server's groupMailboxPrefix).
+// They're aggregate views like the "all" firehose — every row renders
+// from→to, there's no per-folder "mark all read" (a group isn't a single
+// recipient), and they aren't wipe-checkable (wipe is per-conv).
+const GROUP_PREFIX = 'group:';
 const SELECTED_KEY = 'tclaude.dash.mail.mailbox';
 const BOX_FILTER_KEY = 'tclaude.dash.mail.boxfilter';
 const PAGE_SIZE_KEY = 'tclaude.dash.mail.pagesize';
@@ -247,17 +252,19 @@ function pruneSelections() {
     if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
   }
   // Snap an orphaned folder selection back to the firehose: if the open
-  // folder is an agent folder no longer in the roster — e.g. a retired
+  // folder (agent OR group) is no longer in the roster — e.g. a retired
   // conv persisted as the selection while retired agents are hidden (the
-  // initial-load twin of setShowRetired's toggle-time snap), or a folder
-  // whose agent was deleted — leaving it selected would show its mail with
-  // no matching sidebar row. Guarded on a loaded roster (the pinned all /
-  // human folders mean a real roster always has entries) so a transient
-  // empty fetch can't bounce a valid selection; clearMessages lets the
-  // next load fill in the firehose.
+  // initial-load twin of setShowRetired's toggle-time snap), a deleted
+  // agent, or a renamed/deleted group — leaving it selected would show its
+  // mail with no matching sidebar row. Checked against the WHOLE roster
+  // (not just agentIds) so a valid group folder is kept. Guarded on a
+  // loaded roster (the pinned all / human folders mean a real roster always
+  // has entries) so a transient empty fetch can't bounce a valid selection;
+  // clearMessages lets the next load fill in the firehose.
+  const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected);
   if (mail.mailboxes.length
       && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
-      && !agentIds.has(mail.selected)) {
+      && !validFolder) {
     mail.selected = ALL_ID;
     mail.selectedMsgId = null;
     mail.selectedMsgs.clear();
@@ -388,15 +395,24 @@ function setShowRetired(on) {
   reloadMail();
 }
 
+// isGroupFolder reports whether the open folder is a group folder
+// ("group:<name>") — an aggregate of every member's traffic, rendered
+// from→to like the "all" firehose rather than relative to one agent.
+function isGroupFolder() {
+  return (mail.selected || '').startsWith(GROUP_PREFIX);
+}
+
 function mailboxLabel(mb) {
   if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
+  if (mb.kind === 'group') return mb.title || '(group)';
   return mb.title || shortId(mb.id) || '(unknown)';
 }
 
 function mailboxIcon(mb) {
   if (mb.kind === 'all') return '🗂';
   if (mb.kind === 'human') return '📬';
+  if (mb.kind === 'group') return '👥';
   return `<span class="mail-dot ${mb.online ? 'online' : 'offline'}">●</span>`;
 }
 
@@ -417,12 +433,29 @@ function paintSidebar() {
       : '<div class="empty">No mailboxes.</div>';
     return;
   }
+  // A one-line divider precedes the first group folder and the first agent
+  // folder, so the aggregate group views read as a distinct section from
+  // the per-agent ones. The pinned "all" / "human" folders need no header.
+  // Order is fixed by the server roster (all, human, groups…, agents…), so
+  // tracking the kind transition is enough; a header only appears when the
+  // filtered list actually contains that kind.
+  let prevKind = null;
   el.innerHTML = boxes.map(mb => {
+    let section = '';
+    if (mb.kind !== prevKind && (mb.kind === 'group' || mb.kind === 'agent')) {
+      section = `<div class="mailbox-section">${mb.kind === 'group' ? 'Groups' : 'Agents'}</div>`;
+    }
+    prevKind = mb.kind;
     const active = mb.id === mail.selected;
     const unread = mb.unread
       ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
       : '';
-    const count = `<span class="mailbox-count" title="${mb.in} received · ${mb.out} sent">${mb.total}</span>`;
+    // A group folder has no per-direction tally — show member count +
+    // message count instead of the agent folder's "received · sent".
+    const countTitle = mb.kind === 'group'
+      ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
+      : `${mb.in} received · ${mb.out} sent`;
+    const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
     // Retired folders only appear when the toggle is on; tag them so they
     // read as demoted rather than a live agent.
     const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
@@ -438,7 +471,7 @@ function paintSidebar() {
     const lead = mb.kind === 'agent'
       ? `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`
       : '<span class="mail-box-check-spacer"></span>';
-    return `<div class="mailbox-row${mb.retired ? ' retired' : ''}">${lead}${btn}</div>`;
+    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}">${lead}${btn}</div>`;
   }).join('');
 }
 
@@ -534,13 +567,16 @@ function paintList() {
       : '<div class="empty">This mailbox is empty.</div>';
     return;
   }
-  const isAll = mail.selected === ALL_ID;
+  // Both the "all" firehose and a group folder are aggregates with no
+  // single "self" to be relative to, so they render from→to rather than a
+  // received/sent arrow.
+  const isAggregate = mail.selected === ALL_ID || isGroupFolder();
   el.innerHTML = filtered.map(m => {
     const active = m.id === mail.selectedMsgId;
     const unread = !m.read;
     const checked = mail.selectedMsgs.has(m.id) ? ' checked' : '';
     let head;
-    if (isAll) {
+    if (isAggregate) {
       // The firehose has no "self" to be relative to — render from→to. A
       // sender-less row (human/operator) drops the empty party and reads as a
       // bare "→ recipient" rather than "(unknown) → recipient".
@@ -732,7 +768,10 @@ function paintReader() {
 // traffic is not a meaningful operator action.
 function paintBulkActions() {
   const human = mail.selected === HUMAN_ID;
-  const agentFolder = !human && mail.selected !== ALL_ID;
+  // A group folder is an aggregate, not a single agent's inbox — exclude it
+  // from agentFolder so it never shows the per-folder "mark all read" (that
+  // marks one conv's received mail; a group has no single recipient).
+  const agentFolder = !human && mail.selected !== ALL_ID && !isGroupFolder();
   const markAll = $('#mail-mark-all');
   const clearRead = $('#mail-clear-read');
   const agentMarkAll = $('#mail-agent-mark-all');
@@ -766,6 +805,20 @@ function selectMessage(id) {
   mail.selectedMsgId = Number(id);
   paintList();        // re-highlight the active row
   paintReader();
+}
+
+// openMailbox brings the Messages tab forward and selects a folder — the
+// deep-link target for the Groups-tab cog menus' "view messages" items (an
+// agent's conv-id, or "group:<name>"). The synthetic nav click activates
+// the tab (bindTabs) and fires renderMailTab; selectMailbox then switches
+// to and loads the target. Selecting a folder the cached roster doesn't
+// list yet still works — the server resolves it directly, and the next
+// roster refresh lists + highlights it.
+function openMailbox(id) {
+  if (!id) return;
+  const navBtn = $('nav button[data-tab="messages"]');
+  if (navBtn) navBtn.click();
+  selectMailbox(id);
 }
 
 // --- mutations ------------------------------------------------------
@@ -1110,4 +1163,4 @@ function initMail() {
     b.addEventListener('click', renderMailTab));
 }
 
-export { renderMailTab, initMail, onMailSearchChanged };
+export { renderMailTab, initMail, onMailSearchChanged, openMailbox };

@@ -1668,8 +1668,20 @@ func CountAgentMessages() (int, error) {
 //
 // A filter with empty Text and nil id-sets matches the whole scope (the
 // unfiltered total).
+//
+// ScopeConvs + ScopeGroupID select a GROUP folder — the Messages-tab
+// "view this group's messages" view (all member traffic). A row is in
+// scope when ANY of: its sender is a member, its recipient is a member,
+// or it is one of the group's own multicasts (group_id = ScopeGroupID).
+// That OR-set is the group analogue of ForConv's single-conv predicate —
+// a group folder is the union of its members' folders, plus the group
+// channel. ANDed with search / exclude like ForConv. A group folder sets
+// these and leaves ForConv empty; the two are mutually-exclusive folder
+// scopes.
 type MailboxFilter struct {
 	ForConv      string
+	ScopeConvs   []string
+	ScopeGroupID int64
 	Text         string
 	TitleConvs   []string
 	GroupIDs     []int64
@@ -1698,6 +1710,28 @@ func (f MailboxFilter) where() (string, []any) {
 	if f.ForConv != "" {
 		clauses = append(clauses, "(to_conv = ? OR from_conv = ?)")
 		args = append(args, f.ForConv, f.ForConv)
+	}
+	// Group folder scope: a row is in scope when a member is sender or
+	// recipient, or it is one of the group's own multicasts. Built as its
+	// own OR-group so it ANDs with search / exclude just like ForConv. A
+	// group with no members still scopes to its channel (group_id only).
+	if len(f.ScopeConvs) > 0 || f.ScopeGroupID != 0 {
+		var ors []string
+		if len(f.ScopeConvs) > 0 {
+			ph := sqlPlaceholders(len(f.ScopeConvs))
+			ors = append(ors, "from_conv IN ("+ph+")", "to_conv IN ("+ph+")")
+			for _, c := range f.ScopeConvs {
+				args = append(args, c)
+			}
+			for _, c := range f.ScopeConvs {
+				args = append(args, c)
+			}
+		}
+		if f.ScopeGroupID != 0 {
+			ors = append(ors, "group_id = ?")
+			args = append(args, f.ScopeGroupID)
+		}
+		clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
 	}
 	if f.HasSearch() {
 		var ors []string

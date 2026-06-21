@@ -27,6 +27,7 @@ const (
 	mbAlice = "mbox-alic-1111-2222-333333333301"
 	mbBob   = "mbox-bobb-1111-2222-333333333302"
 	mbCarol = "mbox-caro-1111-2222-333333333303"
+	mbDave  = "mbox-dave-1111-2222-333333333304"
 )
 
 // mailboxEntry mirrors the dashboardMailbox wire shape.
@@ -37,6 +38,7 @@ type mailboxEntry struct {
 	Online  bool     `json:"online"`
 	Retired bool     `json:"retired"`
 	Groups  []string `json:"groups"`
+	Members int      `json:"members"`
 	In      int      `json:"in"`
 	Out     int      `json:"out"`
 	Total   int      `json:"total"`
@@ -1010,4 +1012,153 @@ func TestDashboardMailbox_RetiredFolderReadableDirectly(t *testing.T) {
 	p := getMailboxPageRetired(t, dash, mbCarol, false)
 	assert.Equal(t, 2, p.Total, "carol's two messages (to + from) regardless of include_retired")
 	assert.Len(t, p.Messages, 2)
+}
+
+// --- group folders ------------------------------------------------------
+//
+// A group folder ("group:<name>") is the "view this group's messages"
+// view: every message touching a CURRENT member (sender or recipient),
+// plus the group's own multicasts (group_id). It is the union of its
+// members' folders + the group channel — the chosen "all member traffic"
+// semantics. These tests pin the roster entry and the scope through the
+// real handlers.
+
+// indexOf returns the position of a mailbox id in the roster, or -1.
+func indexOf(boxes []mailboxEntry, id string) int {
+	for i := range boxes {
+		if boxes[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// seedGroupMailbox stands up group "team" with current members alice + bob,
+// an outsider carol, and a never-a-member dave, then inserts five messages
+// spanning every scope edge:
+//
+//	alice→bob       member↔member            — in scope
+//	bob→alice       member↔member            — in scope
+//	alice→carol     member→outsider DM       — in scope (a member is a party)
+//	carol→dave      outsider↔outsider DM     — OUT of scope
+//	carol→team      multicast to the group   — in scope via group_id only
+//	                (carol broadcast then left: a channel row whose sender
+//	                is no longer a member, caught by group_id, not the
+//	                member set)
+//
+// So the group scope holds four of the five rows.
+func seedGroupMailbox(t *testing.T, f *testharness.Flow) (http.Handler, *db.AgentGroup) {
+	t.Helper()
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	f.HaveConvWithTitle(mbDave, "dave")
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "ab member dm", base)
+	mustMsg(mbBob, mbAlice, "ba member dm", base.Add(time.Minute))
+	mustMsg(mbAlice, mbCarol, "member to outsider", base.Add(2*time.Minute))
+	// dave→carol carries NO group_id so the outsider↔outsider row can't sneak
+	// in via the group channel.
+	_, err := db.InsertAgentMessage(&db.AgentMessage{
+		FromConv: mbCarol, ToConv: mbDave,
+		Subject: "outsider chatter", Body: "outsider chatter",
+		CreatedAt: base.Add(3 * time.Minute),
+	})
+	require.NoError(t, err)
+	// A multicast to the group (to_conv empty, group_id set) from a sender
+	// who is NOT a current member — only the group_id branch puts it in scope.
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbCarol, ToConv: "",
+		Subject: "team broadcast", Body: "team broadcast",
+		CreatedAt: base.Add(4 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	return dashHandlerForTest(t), g
+}
+
+// Scenario: the roster lists one folder per group, between the pinned
+// virtual folders and the per-agent folders, carrying the group's member
+// count and its in-scope message total.
+func TestDashboardMailboxes_ListsGroupFolders(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	boxes := getMailboxes(t, dash)
+	grp := findMailbox(boxes, "group:team")
+	require.NotNil(t, grp, "the group gets a folder")
+	assert.Equal(t, "group", grp.Kind)
+	assert.Equal(t, "team", grp.Title)
+	assert.Equal(t, 2, grp.Members, "alice + bob are the current members")
+	assert.Equal(t, 4, grp.Total, "four of the five rows touch the group scope")
+
+	// Ordering: group folders sit after the pinned human folder and before
+	// the per-agent folders.
+	assert.Greater(t, indexOf(boxes, "group:team"), indexOf(boxes, "human"),
+		"group folders follow the pinned virtual folders")
+	assert.Less(t, indexOf(boxes, "group:team"), indexOf(boxes, mbAlice),
+		"group folders precede the per-agent folders")
+}
+
+// Scenario: GET /api/mailbox?id=group:team returns all member traffic plus
+// the group channel — newest-first, every row from→to (direction "") like
+// the "all" firehose — and EXCLUDES the outsider↔outsider DM.
+func TestDashboardMailbox_GroupFolderShowsAllMemberTraffic(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	p := getMailboxPage(t, dash, "group:team", "", 0, 0)
+	assert.Equal(t, "group", p.Kind)
+	assert.Equal(t, 4, p.Total)
+	assert.Equal(t, 4, p.TotalUnfiltered)
+	require.Len(t, p.Messages, 4)
+
+	subjects := map[string]bool{}
+	for _, m := range p.Messages {
+		subjects[m.Subject] = true
+		assert.Equal(t, "", m.Direction, "a group folder renders from→to, no per-self direction")
+	}
+	assert.True(t, subjects["ab member dm"], "member↔member DM in scope")
+	assert.True(t, subjects["ba member dm"], "member↔member DM in scope")
+	assert.True(t, subjects["member to outsider"], "a member's DM to an outsider is in scope")
+	assert.True(t, subjects["team broadcast"], "the group channel multicast is in scope via group_id")
+	assert.False(t, subjects["outsider chatter"], "outsider↔outsider DM is NOT in the group scope")
+
+	// Newest-first: the broadcast (last inserted) leads.
+	assert.Equal(t, "team broadcast", p.Messages[0].Subject)
+}
+
+// Scenario: a group folder still honours server-side search — q narrows the
+// in-scope set, total tracks matches, total_unfiltered the whole scope.
+func TestDashboardMailbox_GroupFolderSearches(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	p := getMailboxPage(t, dash, "group:team", "broadcast", 0, 0)
+	assert.Equal(t, 1, p.Total, "one in-scope row matches 'broadcast'")
+	assert.Equal(t, 4, p.TotalUnfiltered, "the whole group scope is still four rows")
+	require.Len(t, p.Messages, 1)
+	assert.Equal(t, "team broadcast", p.Messages[0].Subject)
+}
+
+// Scenario: an unknown group id is a 404 — a renamed/deleted group folder
+// the frontend snaps back to "all".
+func TestDashboardMailbox_GroupFolderUnknownIs404(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?id=group:nope", nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
 }
