@@ -97,4 +97,13 @@ type SpawnArgs struct {
 	// Fresh-spawn-only — resume paths leave it false (a resumed conv's dir was
 	// already its own at first launch), so SpawnResume ignores it.
 	TrustDir bool
+
+	// RemoteControl arms the harness's built-in Remote Access at launch
+	// (Claude Code's --remote-control), forwarded as `tclaude session new
+	// --remote-control` so the agent is reachable from claude.ai/code + the
+	// Claude app from its first turn (JOH-258). false (the default) omits it.
+	// Harnesses with no Remote Access (Codex) ignore it. The daemon also tags
+	// sessions.remote_control=1 out-of-band once the row materialises, so the
+	// toggle's direction logic + dashboard indicator start armed.
+	RemoteControl bool
 }

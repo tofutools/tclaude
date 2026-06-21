@@ -43,13 +43,14 @@ type World struct {
 	// unset case ("") is recorded too. Guarded by spawnMu — spawns are
 	// sequential in flow tests, but the post-init goroutines make the
 	// mutex cheap insurance.
-	spawnMu         sync.Mutex
-	spawnEfforts    map[string]string
-	spawnModels     map[string]string
-	spawnSandboxes  map[string]string
-	spawnApprovals  map[string]string
-	spawnAutoReview map[string]bool
-	spawnTrustDir   map[string]bool
+	spawnMu            sync.Mutex
+	spawnEfforts       map[string]string
+	spawnModels        map[string]string
+	spawnSandboxes     map[string]string
+	spawnApprovals     map[string]string
+	spawnAutoReview    map[string]bool
+	spawnTrustDir      map[string]bool
+	spawnRemoteControl map[string]bool
 	// spawnNames / spawnInitialPrompts record the launch-arg display name
 	// (`--name`) and first-turn prompt (`--initial-prompt`) the launch-
 	// enrollment spawn path threaded through, keyed by the new conv-id, so a
@@ -83,6 +84,7 @@ func New(t *testing.T) *World {
 		spawnApprovals:      map[string]string{},
 		spawnAutoReview:     map[string]bool{},
 		spawnTrustDir:       map[string]bool{},
+		spawnRemoteControl:  map[string]bool{},
 		spawnNames:          map[string]string{},
 		spawnInitialPrompts: map[string]string{},
 	}
@@ -236,6 +238,26 @@ func (w *World) SpawnTrustDir(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	td, ok := w.spawnTrustDir[convID]
 	return td, ok
+}
+
+// RecordSpawnRemoteControl captures the remote-control opt-in a
+// simSpawner.SpawnNew received, keyed by the new conv-id, so a flow test can
+// assert the `--remote-control` the spawn path threaded through (JOH-258). The
+// default (false) is recorded too. Recorded only on the fresh-spawn path —
+// re-arming Remote Access across resume/reincarnate/clone is JOH-261.
+func (w *World) RecordSpawnRemoteControl(convID string, remoteControl bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnRemoteControl[convID] = remoteControl
+}
+
+// SpawnRemoteControl returns the remote-control opt-in recorded for a spawned
+// conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnRemoteControl(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	rc, ok := w.spawnRemoteControl[convID]
+	return rc, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the

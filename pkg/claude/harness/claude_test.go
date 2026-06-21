@@ -63,6 +63,53 @@ func TestClaudeSpawner_Model(t *testing.T) {
 	}
 }
 
+// TestClaudeSpawner_RemoteControl pins the JOH-258 launch flag: an unset
+// RemoteControl omits --remote-control entirely; a set one emits it FIRST
+// (immediately after `claude`), before --session-id / --resume and the
+// trailing positional [prompt]. The ordering is load-bearing: `claude
+// --remote-control` takes an OPTIONAL [name] positional, so commander would
+// swallow the next token as that name unless it starts with '-' — emitting the
+// flag first guarantees the following token is another --flag, never the prompt.
+func TestClaudeSpawner_RemoteControl(t *testing.T) {
+	// Unset → no --remote-control anywhere in the command.
+	plain := claudeSpawner{}.BuildCommand(SpawnSpec{
+		SessionID:     "11111111-1111-1111-1111-111111111111",
+		InitialPrompt: "hello world",
+	})
+	if strings.Contains(plain, "--remote-control") {
+		t.Fatalf("unset RemoteControl must omit --remote-control, got %q", plain)
+	}
+
+	// Set on a fresh launch → present, emitted first, before --session-id and
+	// before the positional prompt.
+	got := claudeSpawner{}.BuildCommand(SpawnSpec{
+		RemoteControl: true,
+		SessionID:     "11111111-1111-1111-1111-111111111111",
+		InitialPrompt: "hello world",
+	})
+	if !strings.Contains(got, "claude --remote-control ") {
+		t.Fatalf("--remote-control must be emitted first, right after claude, got %q", got)
+	}
+	rcIdx := strings.Index(got, "--remote-control")
+	sidIdx := strings.Index(got, "--session-id")
+	promptIdx := strings.Index(got, "hello world")
+	if rcIdx >= sidIdx || sidIdx >= promptIdx {
+		t.Fatalf("expected order --remote-control < --session-id < prompt, got %q", got)
+	}
+	// The token immediately after --remote-control must start with '-' (another
+	// flag), never a bare token claude would consume as the flag's optional [name].
+	after := strings.TrimSpace(got[rcIdx+len("--remote-control"):])
+	if !strings.HasPrefix(after, "-") {
+		t.Fatalf("--remote-control must be followed by a --flag, not a bare [name] token, got %q", got)
+	}
+
+	// On a resume it precedes --resume too (still first).
+	res := claudeSpawner{}.BuildCommand(SpawnSpec{RemoteControl: true, ResumeID: "conv-9"})
+	if !strings.Contains(res, "claude --remote-control --resume conv-9") {
+		t.Fatalf("on resume, --remote-control must precede --resume, got %q", res)
+	}
+}
+
 // TestClaudeSpawner_Effort is the acceptance check for the regular
 // `tclaude session new` surface: an unset effort must NOT add --effort to
 // the claude invocation (claude keeps its own default), and an explicit

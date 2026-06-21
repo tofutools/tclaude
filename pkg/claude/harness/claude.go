@@ -55,6 +55,18 @@ func (claudeSpawner) Binary() string { return "claude" }
 // so the "unset omits the flag" guarantee is unit-testable without tmux.
 func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	cmd := spec.EnvExports + "claude"
+	// --remote-control arms Claude Code's built-in Remote Access at launch
+	// (claude.ai/code + the mobile app), for an agent spawned phone-reachable
+	// (JOH-258). Emitted FIRST, before every other flag, on purpose: the flag
+	// takes an OPTIONAL positional [name], so commander would swallow the next
+	// token as that name unless it starts with '-'. Putting it first guarantees
+	// the following token is another --flag (--resume / --session-id, always
+	// present on a daemon spawn) or nothing — never the trailing positional
+	// [prompt]. It is a bare boolean flag (no value). Codex has no equivalent;
+	// its spawner ignores spec.RemoteControl.
+	if spec.RemoteControl {
+		cmd += " --remote-control"
+	}
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}

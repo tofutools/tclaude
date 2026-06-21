@@ -815,6 +815,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Gate the "start with remote control" opt-in: it is a Claude Code feature
+	// (the --remote-control launch flag), so requesting it for a harness with no
+	// built-in Remote Access (Codex) is a 400 here rather than a flag silently
+	// dropped. Off by default; only an explicit dashboard checkbox / CLI flag
+	// sets it. See JOH-258.
+	remoteControl, rcErr := harness.ResolveRemoteControl(h, body.RemoteControl)
+	if rcErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_remote_control", rcErr.Error())
+		return
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -836,6 +847,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ApprovalPolicy: approvalPolicy,
 		AutoReview:     autoReview,
 		TrustDir:       trustDir,
+		RemoteControl:  remoteControl,
 		ReplyToConv:    replyToConv,
 		SpawnedByConv:  spawnerConvID,
 		Timeout:        timeout,
@@ -930,6 +942,15 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn → harness.ResolveTrustDir) and never set on a
 	// relaunch (reincarnate/clone), exactly like AutoReview.
 	TrustDir bool
+	// RemoteControl arms the new agent's built-in Remote Access at launch
+	// (Claude Code's --remote-control), forwarding `--remote-control` to
+	// `tclaude session new` so the agent is reachable from the Claude app from
+	// its first turn (JOH-258). false (the default) leaves it local. Gated at
+	// the spawn boundary (handleGroupSpawn → harness.ResolveRemoteControl); a
+	// harness with no Remote Access (Codex) rejects a true value. executeSpawn
+	// also tags sessions.remote_control=1 once the row materialises, so the
+	// toggle direction logic + dashboard indicator start armed.
+	RemoteControl bool
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -1157,15 +1178,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	label := generateSpawnLabel()
 
 	spawnArgs := clcommon.SpawnArgs{
-		Label:      label,
-		Cwd:        p.Cwd,
-		Effort:     p.Effort,
-		Model:      p.Model,
-		Harness:    p.Harness,
-		Sandbox:    p.SandboxMode,
-		Approval:   p.ApprovalPolicy,
-		AutoReview: p.AutoReview,
-		TrustDir:   p.TrustDir,
+		Label:         label,
+		Cwd:           p.Cwd,
+		Effort:        p.Effort,
+		Model:         p.Model,
+		Harness:       p.Harness,
+		Sandbox:       p.SandboxMode,
+		Approval:      p.ApprovalPolicy,
+		AutoReview:    p.AutoReview,
+		TrustDir:      p.TrustDir,
+		RemoteControl: p.RemoteControl,
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -1316,12 +1338,30 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	deadline := launchedAt.Add(pollBudget)
 	var convID, tmuxSession string
 	var lastDiscoveryScan time.Time
+	remoteArmed := false
 	for time.Now().Before(deadline) {
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
 			tmuxSession = s.TmuxSession
 			if tmuxSession != "" {
 				focusSpawn() // pane is up — open it now, conv-id or not
+			}
+			// Arm best-known remote-control on the row the moment it
+			// materialises (JOH-258). The --remote-control launch flag already
+			// turned CC's Remote Access on; this records tclaude's best-known
+			// state so the toggle's direction logic + the dashboard indicator
+			// start armed. Tagged out-of-band here, NOT in the hook's
+			// SaveSession — whose UPSERT must not clobber the flag and which has
+			// no spawn intent (JOH-256). Done once; a write failure is logged,
+			// not fatal: the launch flag already armed CC, so a missed tag is a
+			// best-known-state drift the human can re-toggle, never a broken spawn.
+			if spawnArgs.RemoteControl && !remoteArmed {
+				if err := db.SetSessionRemoteControl(label, true); err != nil {
+					slog.Warn("spawn: failed to arm remote-control on session row",
+						"label", label, "error", err)
+				} else {
+					remoteArmed = true
+				}
 			}
 			if s.ConvID != "" {
 				convID = s.ConvID
@@ -2100,7 +2140,22 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	args = appendTrustDirFlag(args, a.TrustDir)
+	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendRemoteControlFlag adds `--remote-control` to a `tclaude session new`
+// argv when the spawn asked to start with Remote Access on (JOH-258). false
+// omits it. It is a bare boolean flag; the forked `session new` re-validates it
+// against the harness (a non-Claude-Code harness rejects it) and the CC spawner
+// emits `claude --remote-control`. Position in THIS argv is irrelevant (boa
+// parses flags); the load-bearing ordering is in claudeSpawner.BuildCommand,
+// which emits the flag first so its optional [name] can't swallow the prompt.
+func appendRemoteControlFlag(args []string, remoteControl bool) []string {
+	if remoteControl {
+		args = append(args, "--remote-control")
+	}
 	return args
 }
 

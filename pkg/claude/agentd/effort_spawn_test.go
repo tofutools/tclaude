@@ -189,3 +189,23 @@ func TestSessionNewArgs_TrustDir(t *testing.T) {
 		t.Fatalf("trustDir=true must append --trust-dir")
 	}
 }
+
+// TestSessionNewArgs_RemoteControl covers the --remote-control flag (JOH-258): a
+// bare boolean flag appended to the FRESH spawn argv only when the spawn opted
+// in (true), omitted otherwise. It is gated at the spawn boundary
+// (harness.ResolveRemoteControl) before reaching the argv builder. It is
+// deliberately NOT on the resume argv yet — re-arming Remote Access across
+// resume/reincarnate/clone is JOH-261 — so the resume builder must omit it
+// regardless of the flag, which this pins (JOH-261 will flip that assertion).
+func TestSessionNewArgs_RemoteControl(t *testing.T) {
+	if slices.Contains(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}), "--remote-control") {
+		t.Fatalf("remoteControl=false must omit --remote-control")
+	}
+	if !slices.Contains(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", RemoteControl: true}), "--remote-control") {
+		t.Fatalf("remoteControl=true must append --remote-control")
+	}
+	// Resume must NOT carry it yet — re-arm on relaunch is JOH-261.
+	if slices.Contains(sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x", RemoteControl: true}), "--remote-control") {
+		t.Fatalf("resume must NOT carry --remote-control yet (re-arm on relaunch is JOH-261)")
+	}
+}

@@ -161,6 +161,22 @@ func (h *Harness) CanRemoteControl() bool {
 	return h.SupportsRemoteControl()
 }
 
+// ResolveRemoteControl gates the spawn-time "start with Remote Access on"
+// opt-in (JOH-258): it returns the requested bool to thread into
+// SpawnSpec.RemoteControl, or an error if remote control was requested for a
+// harness with no built-in Remote Access (Codex). Like ResolveAutoReview a
+// single function serves both the daemon spawn path and the direct `session
+// new` path — false is the default everywhere and the flag is only ever set by
+// an explicit opt-in, so there is no non-false default to apply. Gated on
+// CanRemoteControl so silently dropping the flag can't hide a mistake.
+func ResolveRemoteControl(h *Harness, requested bool) (bool, error) {
+	if requested && !h.CanRemoteControl() {
+		return false, fmt.Errorf("harness %q has no built-in remote access "+
+			"(--remote-control is a Claude Code feature; not available for this harness)", h.Name)
+	}
+	return requested, nil
+}
+
 // SupportsAsk reports whether the harness can answer a one-shot `tclaude ask`
 // turn (it provides an Asker). `tclaude ask` gates on this and fails with a
 // clear message for a harness that hasn't implemented the ask argv yet (Codex
