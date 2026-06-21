@@ -240,8 +240,11 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 }
 
 // handleDashboardHumanMessagesRead serves POST /api/human-messages/read
-// — marks one message read ({"id": N}) or every message read
-// ({"all": true}). Cookie-authed (dashboard-only).
+// — sets read-state on one message ({"id": N}, optionally
+// {"read": false} to mark it unread) or marks every message read
+// ({"all": true}). The "read" field defaults to true when omitted, so
+// existing {"id": N} callers keep marking read; {"id": N, "read": false}
+// is the reader's "mark unread" opt-out. Cookie-authed (dashboard-only).
 func handleDashboardHumanMessagesRead(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -254,14 +257,17 @@ func handleDashboardHumanMessagesRead(w http.ResponseWriter, r *http.Request) {
 	// below anything legitimate so a stray huge POST cannot be buffered.
 	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
 	var body struct {
-		ID  int64 `json:"id"`
-		All bool  `json:"all"`
+		ID   int64 `json:"id"`
+		All  bool  `json:"all"`
+		Read *bool `json:"read"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
 	if body.All {
+		// "all" is the "mark all read" control; there's no "mark all
+		// unread" affordance, so it ignores the read field.
 		n, err := db.MarkAllHumanMessagesRead()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -274,7 +280,16 @@ func handleDashboardHumanMessagesRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id is required (or pass {\"all\":true})", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
+	// read defaults to true when omitted, so {"id": N} keeps marking read;
+	// {"id": N, "read": false} marks the message unread.
+	read := body.Read == nil || *body.Read
+	var err error
+	if read {
+		_, err = db.MarkHumanMessageRead(body.ID)
+	} else {
+		_, err = db.MarkHumanMessageUnread(body.ID)
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -235,6 +235,36 @@ func TestHumanMessages_DashboardMarkRead(t *testing.T) {
 	assert.Equal(t, 0, n, "all messages should now be read")
 }
 
+// Scenario: the read endpoint's {"read": false} opt-out — the reader's
+// "mark unread" toggle, the complement to the auto-mark-on-open. A message
+// marked read can be flagged back to unread over the same endpoint.
+func TestHumanMessages_DashboardMarkUnread(t *testing.T) {
+	newFlow(t)
+	dash := dashHandlerForTest(t)
+
+	id, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: "c", Body: "one"})
+	require.NoError(t, err)
+
+	// Mark it read (the omitted "read" defaults to true — what the
+	// auto-mark-on-open posts).
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/read", map[string]any{"id": id}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	n, _ := db.CountUnreadHumanMessages()
+	require.Equal(t, 0, n, "marked read")
+
+	// Now flag it back to unread with {"read": false}.
+	rec = testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/human-messages/read", map[string]any{"id": id, "read": false}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	n, _ = db.CountUnreadHumanMessages()
+	assert.Equal(t, 1, n, "the read message is unread again")
+
+	msgs, _ := db.ListHumanMessages()
+	require.Len(t, msgs, 1)
+	assert.False(t, msgs[0].IsRead(), "read_at is cleared")
+}
+
 // Scenario: the dashboard clear endpoint deletes read messages and
 // leaves unread ones intact.
 func TestHumanMessages_DashboardClear(t *testing.T) {

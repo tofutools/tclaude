@@ -1338,6 +1338,21 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'msg-mark-unread': {
+          // The opt-out for the auto-mark-on-open: flag a read notification
+          // back to unread, like a mail client. Same endpoint as mark-read,
+          // with read:false.
+          const id = btn.getAttribute('data-id');
+          const r = await fetch('/api/human-messages/read', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(id, 10), read: false }),
+          });
+          if (!r.ok) { toast(`Mark unread failed: ${await r.text()}`, true); return; }
+          toast('message marked unread');
+          refresh();
+          return;
+        }
         case 'msg-mark-all-read': {
           const r = await fetch('/api/human-messages/read', {
             method: 'POST', credentials: 'same-origin',
