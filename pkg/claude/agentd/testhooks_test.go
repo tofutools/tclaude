@@ -70,6 +70,16 @@ func SetInjectSettleDelayForTest(d time.Duration) func() {
 	return func() { injectSettleDelay = prev }
 }
 
+// SetRemoteControlConfirmDelayForTest shrinks the pause between the
+// /remote-control toggle and its disable-confirm Enter for the duration of a
+// test, the same reason as SetInjectSettleDelayForTest (the sim is
+// synchronous). Returns a restore closure for t.Cleanup.
+func SetRemoteControlConfirmDelayForTest(d time.Duration) func() {
+	prev := remoteControlConfirmDelay
+	remoteControlConfirmDelay = d
+	return func() { remoteControlConfirmDelay = prev }
+}
+
 // ResetCodexContextRefreshForTest clears the process-local Codex context
 // refresh throttle. Flow tests reset the DB between scenarios; clearing this
 // cache keeps repeated runs of the same session label deterministic.

@@ -44,6 +44,8 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// pure dead wait — every soft /exit, /rename, welcome and nudge paid
 	// ~1s of it. 1ms keeps the two send-keys ordered without the sleep.
 	t.Cleanup(agentd.SetInjectSettleDelayForTest(time.Millisecond))
+	// Likewise the remote-control disable-confirm pause (700ms in prod).
+	t.Cleanup(agentd.SetRemoteControlConfirmDelayForTest(time.Millisecond))
 
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)
