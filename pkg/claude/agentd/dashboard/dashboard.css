@@ -275,13 +275,13 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 
 /* Group expand caret: a borderless toggle in the lead column, same 13px
    width as the agent checkbox / its spacer so group and agent labels stay
-   aligned. The triangle glyph is sized up (and centered) so it reads at the
-   same scale as the row labels — the narrow glyph still fits the 13px box, so
-   the label column doesn't shift. Clicking it reveals the group's member
-   folders nested below. */
+   aligned. The triangle glyph is sized up (and centered) so it reads larger
+   than the row labels — at this size it about fills the 13px box, and any
+   slight spill is symmetric (centered) so the label column doesn't shift.
+   Clicking it reveals the group's member folders nested below. */
 .mail-group-caret {
   flex: 0 0 13px; background: none; border: none; cursor: pointer;
-  color: #7d8590; padding: 0; font-size: 14px; line-height: 1;
+  color: #7d8590; padding: 0; font-size: 20px; line-height: 1;
   text-align: center;
 }
 .mail-group-caret:hover { color: #c9d1d9; }
