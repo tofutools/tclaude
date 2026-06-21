@@ -1,11 +1,56 @@
 package common
 
 import (
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// TestShellQuoteArg_RoundTripThroughShell proves the property the spawn path
+// relies on when it inlines an agent's (arbitrary, possibly multi-line) startup
+// briefing into the launch prompt: ShellQuoteArg's output, spliced into a
+// `sh -c` command string exactly as production does, round-trips byte-for-byte
+// as a SINGLE argument — no temp file needed, no character left unescaped.
+// Single-quote wrapping makes every byte literal (newlines, $, backticks, ;,
+// globs, …); the only special case is an embedded ' which the '\'' trick
+// closes/reopens around. So we feed the genuinely nasty cases through a real
+// shell and confirm what comes back equals what went in.
+func TestShellQuoteArg_RoundTripThroughShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ShellQuoteArg targets sh -c; not used on Windows")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("sh unavailable: %v", err)
+	}
+
+	cases := []string{
+		"plain",
+		"with spaces",
+		"single ' quote",
+		"two '' adjacent quotes",
+		`double " quote`,
+		"dollar $HOME and `backtick` and $(subshell)",
+		"meta ; | & < > ( ) { } * ? [ a ] # ~ !",
+		"newline\nand\ttab",
+		"[system: spawned by the human; read inbox #7]",
+		"multi\nline\nbrief with 'quotes' and $vars and `ticks`\n- a bullet\n",
+		`trailing backslash \`,
+		"percent %s %d literal",
+		"emoji 🚀 and unicode café",
+	}
+	for _, s := range cases {
+		// Splice the quoted arg into a command string, exactly as the spawner
+		// does (`claude … <ShellQuoteArg(prompt)>`). printf '%s' echoes its one
+		// argument verbatim, so stdout must equal the original input.
+		cmd := "printf '%s' " + ShellQuoteArg(s)
+		out, err := exec.Command("sh", "-c", cmd).Output()
+		assert.NoErrorf(t, err, "sh -c failed for %q (cmd=%q)", s, cmd)
+		assert.Equalf(t, s, string(out), "round-trip mismatch (cmd=%q)", cmd)
+	}
+}
 
 func TestBuildEnvExports(t *testing.T) {
 	t.Setenv("TEST_VAR1", "value1")

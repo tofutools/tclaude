@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,8 +26,10 @@ import (
 //     proving the daemon knew it before launch rather than waiting on the hook;
 //   - the name was applied as a launch arg and resolves as the conversation
 //     title (claude --name writes a custom-title turn just like /rename);
-//   - the welcome rode in as the launch prompt and still points the agent at
-//     its inbox briefing by id — identical content, delivered more efficiently;
+//   - the welcome rode in as the launch prompt and, because this short brief
+//     fits the default inline cap, carries the briefing INLINE — the agent
+//     acts on its first turn with no `inbox read` round-trip — while still
+//     noting the inbox copy by id and keeping that copy in the inbox;
 //   - NOTHING was injected over tmux.
 func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 	f := newFlow(t)
@@ -48,11 +51,16 @@ func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 	assert.Equal(t, spawn.ConvID, s.ConvID,
 		"session row conv-id should be the daemon-preset id")
 
-	// The name + welcome rode in as launch args, not tmux injection.
+	// The name + welcome rode in as launch args, not tmux injection. A short
+	// brief is inlined under the default cap: the launch prompt carries the
+	// brief verbatim AND notes the inbox copy by id.
 	f.AssertSpawnName(spawn.ConvID, "worker", 2*time.Second)
 	msg := soleInboxMessage(t, spawn.ConvID)
-	f.AssertSpawnInitialPrompt(spawn.ConvID,
-		fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 2*time.Second)
+	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); !strings.Contains(
+		prompt, fmt.Sprintf("message #%d", msg.ID)) {
+		t.Fatalf("inlined welcome should note the inbox copy by id; got %q", prompt)
+	}
 
 	// The title resolves from the .jsonl exactly as a /rename would.
 	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 2*time.Second)
