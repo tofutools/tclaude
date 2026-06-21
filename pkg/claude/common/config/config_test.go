@@ -335,3 +335,61 @@ func TestNotifyHumanMessages_RoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(none), "human_messages")
 }
+
+// ResolvedAskProfile applies the fast-by-default ask profile: a nil
+// config / absent block / blank field falls back to the DefaultAsk*
+// constants, while a set field is used verbatim — resolved per field, so
+// pinning only one keeps the fast value for the other (JOH-253).
+func TestResolvedAskProfile(t *testing.T) {
+	cases := []struct {
+		name                  string
+		cfg                   *Config
+		wantModel, wantEffort string
+	}{
+		{"nil config", nil, DefaultAskModel, DefaultAskEffort},
+		{"absent block", &Config{}, DefaultAskModel, DefaultAskEffort},
+		{"empty block", &Config{Ask: &AskConfig{}}, DefaultAskModel, DefaultAskEffort},
+		{"both pinned", &Config{Ask: &AskConfig{Model: "opus", Effort: "high"}}, "opus", "high"},
+		{"model only → fast effort", &Config{Ask: &AskConfig{Model: "sonnet"}}, "sonnet", DefaultAskEffort},
+		{"effort only → fast model", &Config{Ask: &AskConfig{Effort: "max"}}, DefaultAskModel, "max"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, e := tc.cfg.ResolvedAskProfile()
+			assert.Equal(t, tc.wantModel, m, "model")
+			assert.Equal(t, tc.wantEffort, e, "effort")
+		})
+	}
+}
+
+// The ask block round-trips through JSON and Save/Load, and an absent
+// block stays absent (omitempty) so a default config never shows it as a
+// spurious diff in the dashboard's config editor.
+func TestAskConfig_RoundTrips(t *testing.T) {
+	in := &Config{Ask: &AskConfig{Model: "opus", Effort: "high"}}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"model":"opus"`)
+	assert.Contains(t, string(data), `"effort":"high"`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	require.NotNil(t, out.Ask)
+	m, e := out.ResolvedAskProfile()
+	assert.Equal(t, "opus", m)
+	assert.Equal(t, "high", e)
+
+	// A default config marshals without an ask key at all.
+	none, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), `"ask"`)
+
+	// Full Save → Load round-trip through ~/.tclaude/config.json.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(in))
+	loaded, err := Load()
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Ask)
+	assert.Equal(t, "opus", loaded.Ask.Model)
+	assert.Equal(t, "high", loaded.Ask.Effort)
+}

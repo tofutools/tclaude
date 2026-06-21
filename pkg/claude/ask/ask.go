@@ -34,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -45,7 +46,8 @@ type Params struct {
 	Print       bool   `long:"print" short:"p" help:"Print the answer and exit. This is the default; pass it explicitly in scripts, or as the opposite of -i."`
 	Interactive bool   `long:"interactive" short:"i" help:"Open the full interactive session (TUI) instead of printing — when you want a back-and-forth or to let the agent ask you questions. Needs a real terminal."`
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
-	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Defaults to your configured model."`
+	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (fast by default)."`
+	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (low by default)."`
 }
 
 func Cmd() *cobra.Command {
@@ -91,6 +93,7 @@ type askInput struct {
 	Question         string
 	StdinPayload     string // piped stdin, "" when stdin is a terminal
 	Model            string
+	Effort           string
 	ForceInteractive bool
 	New              bool
 	StdinIsTerminal  bool
@@ -130,18 +133,49 @@ func runFromCLI(p *Params, args []string) error {
 		payload = string(b)
 	}
 
+	// Resolve the model/effort the ask runs at, applying the precedence
+	// flag > config ask profile > fast-by-default constant (JOH-253). The
+	// config file is the same ~/.tclaude/config.json the dashboard edits;
+	// a load failure degrades to the built-in fast default rather than
+	// failing the ask. runAsk stays a pure argv builder (empty = omit the
+	// flag); the defaulting lives here, in the env/config layer.
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
+	model, effort := resolveAskDefaults(p.Model, p.Effort, cfg)
+
 	in := askInput{
 		TermKey:          TerminalKey(),
 		Cwd:              cwd,
 		Question:         strings.TrimSpace(strings.Join(args, " ")),
 		StdinPayload:     payload,
-		Model:            p.Model,
+		Model:            model,
+		Effort:           effort,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		StdinIsTerminal:  stdinIsTTY,
 		StdoutIsTerminal: stdoutIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+}
+
+// resolveAskDefaults applies the ask model/effort precedence — a per-call
+// flag wins, else the persisted ask profile, else the fast-by-default
+// constant — independently per field. The returned values are raw
+// strings still to be validated against the harness catalog by runAsk;
+// the config's ResolvedAskProfile supplies the fast defaults when neither
+// a flag nor a config value is set. Kept a pure function (no I/O) so the
+// precedence is unit-testable without a config file or a terminal.
+func resolveAskDefaults(flagModel, flagEffort string, cfg *config.Config) (model, effort string) {
+	model, effort = cfg.ResolvedAskProfile()
+	if flagModel != "" {
+		model = flagModel
+	}
+	if flagEffort != "" {
+		effort = flagEffort
+	}
+	return model, effort
 }
 
 func runAsk(in askInput, aio askIO) error {
@@ -209,6 +243,13 @@ func runAsk(in askInput, aio askIO) error {
 			return fmt.Errorf("invalid --model: %w", err)
 		}
 		spec.Model = m
+	}
+	if in.Effort != "" {
+		e, err := h.Models.ValidateEffort(in.Effort)
+		if err != nil {
+			return fmt.Errorf("invalid --effort: %w", err)
+		}
+		spec.Effort = e
 	}
 
 	var convID string

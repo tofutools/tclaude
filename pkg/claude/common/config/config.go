@@ -54,6 +54,79 @@ type Config struct {
 	// Cost holds display-only cost adjustments — see CostConfig. Absent →
 	// no adjustment (the recorded figures are shown verbatim).
 	Cost *CostConfig `json:"cost,omitempty"`
+
+	// Ask holds the default model/effort profile for `tclaude ask` — see
+	// AskConfig. Absent / blank fields fall back to the fast-by-default
+	// constants (DefaultAskModel + DefaultAskEffort); see
+	// ResolvedAskProfile.
+	Ask *AskConfig `json:"ask,omitempty"`
+}
+
+// AskConfig is the persistent default profile for `tclaude ask` (project
+// tclaude-ask, JOH-253). Ad-hoc terminal answers usually want speed over
+// deep reasoning — "what's the largest file here?", "is this diff safe?"
+// — so the out-of-box default is a fast/cheap model at low effort, with
+// a per-call `-m`/`--effort` flag for the exceptions that want a stronger
+// model. This block is the persistent middle tier of that precedence
+// (flag > this profile > the fast-by-default constants).
+//
+// Both fields are optional: a blank field falls back to the matching
+// fast-default constant (per field, so pinning only a model keeps the
+// fast effort). The dashboard Config tab and the /api/ask-profile
+// endpoint edit this same block — it is the single source of truth the
+// CLI also reads, so the dashboard is a thin editor over config.json
+// rather than a second store.
+//
+// The schema is harness-neutral: model/effort are validated against the
+// conversation's harness catalog at ask time (ModelCatalog.ValidateModel
+// / ValidateEffort), not here. Only Claude ask is wired today; Codex ask
+// is a follow-up (JOH-252), so a future codex profile would validate the
+// same fields against the codex catalog.
+type AskConfig struct {
+	// Model is a model alias / full ID for ad-hoc asks, or "" to use the
+	// fast default (DefaultAskModel). Validated against the harness
+	// catalog where it is consumed.
+	Model string `json:"model,omitempty"`
+	// Effort is a reasoning-effort level for ad-hoc asks, or "" to use the
+	// fast default (DefaultAskEffort). Validated against the harness
+	// catalog where it is consumed.
+	Effort string `json:"effort,omitempty"`
+}
+
+// DefaultAskModel / DefaultAskEffort are the fast-by-default `tclaude
+// ask` profile used when config.json pins no ask model/effort. `haiku`
+// is the fast, cheap alias for snappy ad-hoc answers; `low` is its
+// natural pairing. Both are aliases (not version-pinned IDs), so they
+// track the latest model and stay valid as model names change. Kept here
+// in ONE place so the factory default is a single-line change (JOH-253);
+// they are known-good values from the Claude Code catalog, so a fresh
+// config always resolves to a valid fast profile.
+const (
+	DefaultAskModel  = "haiku"
+	DefaultAskEffort = "low"
+)
+
+// ResolvedAskProfile returns the effective (model, effort) for `tclaude
+// ask` when no per-call flag overrides them: the configured ask.model /
+// ask.effort when set, else the fast-by-default constants. Resolution is
+// per field, so pinning only a model keeps the fast effort (and vice
+// versa). Nil-safe on the receiver so callers need no guard.
+//
+// The returned values still pass through the harness catalog's validator
+// at the call site (the CLI and the /api/ask-profile endpoint) — this
+// only applies the precedence, it does not validate.
+func (c *Config) ResolvedAskProfile() (model, effort string) {
+	model, effort = DefaultAskModel, DefaultAskEffort
+	if c == nil || c.Ask == nil {
+		return model, effort
+	}
+	if c.Ask.Model != "" {
+		model = c.Ask.Model
+	}
+	if c.Ask.Effort != "" {
+		effort = c.Ask.Effort
+	}
+	return model, effort
 }
 
 // CostConfig holds display-only cost knobs.

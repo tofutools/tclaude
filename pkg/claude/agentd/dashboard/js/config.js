@@ -625,6 +625,29 @@ async function saveConfig() {
   }
 }
 
+// syncConfigBaseline refreshes the on-disk baseline (and the clone source
+// assembleConfig starts from) WITHOUT repopulating the form, so unsaved
+// widget edits in the DOM survive. Used when a sibling control writes
+// config.json out-of-band (the Ask defaults section's dedicated endpoint):
+// the big form's drift guard would otherwise 409 on a later Save because
+// its baseline went stale. A no-op until the tab has loaded once.
+async function syncConfigBaseline() {
+  if (!configLoaded) return;
+  try {
+    const r = await fetch('/api/config', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.raw) {
+      configBaseRaw = data.raw;
+      configObj = JSON.parse(configBaseRaw);
+      configFileMalformed = !!data.malformed;
+    }
+  } catch (e) {
+    // Best-effort: a failed resync just leaves the drift guard to catch
+    // it on the next Save, which is the correct fallback anyway.
+  }
+}
+
 function bindConfigTab() {
   // Lazy-load on the first activation of the Config tab.
   const navBtn = $('nav button[data-tab="config"]');
@@ -633,6 +656,9 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
+  // A sibling control (Ask defaults) wrote config.json through its own
+  // endpoint — resync our baseline so a later Save doesn't 409.
+  document.addEventListener('config-disk-changed', syncConfigBaseline);
   ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);

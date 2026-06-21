@@ -27,6 +27,12 @@ type AskSpec struct {
 	// (let the harness use the user's configured default). Validate via
 	// ModelCatalog.ValidateModel first.
 	Model string
+	// Effort is a validated, normalized reasoning-effort level, or "" to
+	// omit the flag (let the harness use its own default). Validate via
+	// ModelCatalog.ValidateEffort first. `tclaude ask` resolves it from
+	// the per-call --effort flag, the config ask profile, then the
+	// fast-by-default constant (JOH-253).
+	Effort string
 	// Print selects non-interactive capture mode (Claude Code's `-p`): the
 	// harness prints its answer to stdout and exits, taking no further input.
 	// false runs the harness interactively, attached to the caller's TTY.

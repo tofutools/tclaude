@@ -104,15 +104,17 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 // flags/words.
 //
 // The shape mirrors the spawner's resume-vs-fresh fork, but for the ask flow:
-//   - fresh:  claude [-p] --session-id <uuid> [--model m] "<prompt>"
-//   - resume: claude [-p] --resume    <id>   [--model m] "<prompt>"
+//   - fresh:  claude [-p] --session-id <uuid> [--effort e] [--model m] "<prompt>"
+//   - resume: claude [-p] --resume    <id>   [--effort e] [--model m] "<prompt>"
 //
 // --session-id pins a caller-minted conv-id for a fresh thread (so the caller
 // records the (terminal,cwd)→conv mapping); --resume continues that thread on
 // later turns. `-p` is non-interactive capture mode; without it claude runs
 // interactively, attached to the caller's TTY, so the agent can ask the human
-// back. The prompt is always the trailing positional, emitted LAST so no
-// variadic flag (e.g. --add-dir) could swallow it.
+// back. --effort / --model are appended only when set (an empty token leaves
+// claude on its own default), validated by the caller via the ModelCatalog.
+// The prompt is always the trailing positional, emitted LAST so no variadic
+// flag (e.g. --add-dir) could swallow it.
 type claudeAsker struct{}
 
 func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
@@ -125,6 +127,9 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 		argv = append(argv, "--resume", spec.ResumeID)
 	case spec.SessionID != "":
 		argv = append(argv, "--session-id", spec.SessionID)
+	}
+	if spec.Effort != "" {
+		argv = append(argv, "--effort", spec.Effort)
 	}
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
