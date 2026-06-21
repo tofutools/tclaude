@@ -581,10 +581,13 @@ function paintSidebar() {
       const members = (g.member_convs || [])
         .map(id => agentById.get(id))
         .filter(Boolean);
+      // A member can be absent from agentById because it has no mail, is
+      // retired, or doesn't match the sidebar filter — not only "no
+      // messages" — so keep the placeholder neutral about the reason.
       html += members.length
         ? members.map(mb => mailboxRowHTML(mb, true)).join('')
         : '<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span>'
-          + '<div class="mailbox-nested-empty">no members with messages</div></div>';
+          + '<div class="mailbox-nested-empty">no member folders shown</div></div>';
     }
   }
   if (agents.length) {
