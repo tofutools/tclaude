@@ -1030,6 +1030,46 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	return nil
 }
 
+// injectMenuToggle types a slash command that opens a confirm MENU, submits
+// it EXACTLY ONCE, waits confirmDelay for the menu to render, then walks the
+// menu with menuKeys — one key per send-keys, a stepDelay between each.
+//
+// It deliberately does NOT route through injectTextAndSubmit. That helper
+// sends a belt-and-suspenders SECOND Enter after the submit (paste-coalescing
+// insurance), which is harmless for a command that just submits a prompt — but
+// fatal for one that opens a menu: the stray Enter lands ON the confirm menu
+// and accepts its DEFAULT entry, tearing the menu down before menuKeys can
+// move the highlight. That is exactly what left Remote Access stuck ON when
+// the operator hit "disable" (the default entry is "keep connected", not
+// "disconnect"). So here the toggle is submitted with a single Enter, after a
+// settle gap so bracketed-paste mode can't coalesce that one Enter into the
+// paste. That toggle→Enter gap deliberately reuses the package-global
+// injectSettleDelay (it's the same paste-coalescing concern as
+// injectTextAndSubmit, so the two stay in lockstep under
+// SetInjectSettleDelayForTest); only the menu-render and per-key settles are
+// parameters, since those are remote-control-specific. Caller must have
+// verified the pane is alive and that the command opens a menu.
+func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay, stepDelay time.Duration) error {
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, toggle).Run(); err != nil {
+		return fmt.Errorf("send-keys toggle: %w", err)
+	}
+	time.Sleep(injectSettleDelay)
+	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
+		return fmt.Errorf("send-keys submit: %w", err)
+	}
+	// Let the confirm menu render before moving its highlight.
+	time.Sleep(confirmDelay)
+	for i, key := range menuKeys {
+		if i > 0 {
+			time.Sleep(stepDelay)
+		}
+		if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, key).Run(); err != nil {
+			return fmt.Errorf("send-keys menu key %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
 // injectSettleDelay is the gap injectTextAndSubmit leaves between its
 // send-keys calls (see that function for why 500 ms in production). It
 // is a package var, not a constant, so flow tests can shrink it to

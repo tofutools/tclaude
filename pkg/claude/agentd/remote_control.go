@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -60,11 +59,13 @@ func aliveSessionForConv(convID string) *db.SessionRow {
 var remoteControlConfirmDelay = 700 * time.Millisecond
 
 // remoteControlMenuStepDelay is the gap between the individual keystrokes that
-// drive CC's disable-confirm menu (remoteControlDisableMenuKeys). Short: the
-// menu has already rendered (remoteControlConfirmDelay) and only needs to
-// register each highlight move before the next key. A package var so flow
-// tests can shrink it (SetRemoteControlConfirmDelayForTest shrinks both).
-var remoteControlMenuStepDelay = 150 * time.Millisecond
+// drive CC's disable-confirm menu (remoteControlDisableMenuKeys). The menu has
+// already rendered (remoteControlConfirmDelay); this is the settle each
+// highlight move needs before the next key registers. Operator-tuned to a
+// comfortable ~quarter-second after a too-short 150ms left moves dropping on a
+// busy pane. A package var so flow tests can shrink it
+// (SetRemoteControlConfirmDelayForTest shrinks both).
+var remoteControlMenuStepDelay = 350 * time.Millisecond
 
 // remoteControlDisableMenuKeys selects CC's "disconnect" entry in the confirm
 // menu that opens when /remote-control is toggled while ON: two Ups move the
@@ -101,28 +102,26 @@ func deliverRemoteControl(convID string, h *harness.Harness, disable bool, reaso
 	// The toggle token is a compile-time constant from the harness Lifecycle
 	// (CC's "/remote-control") — never user input — so the send-keys sink
 	// carries nothing injectable.
-	if err := injectTextAndSubmit(target, h.Life.RemoteControlCommand()); err != nil {
-		slog.Warn("remote-control inject failed", "error", err, "tmux", sess.TmuxSession, "reason", reason)
-		return nil, false
-	}
+	toggle := h.Life.RemoteControlCommand()
 	if disable {
-		// CC opens a confirm menu when /remote-control is toggled while ON,
-		// and its default highlight is NOT "disconnect": pick that entry with
-		// Up, Up, Enter (a bare Enter accepts the default and leaves Remote
-		// Access ON). Let the menu render, then send one key per send-keys
-		// (the one-key-per-call convention of injectTextAndSubmit) with a
-		// short settle so each highlight move registers before the next key.
-		time.Sleep(remoteControlConfirmDelay)
-		for i, key := range remoteControlDisableMenuKeys {
-			if i > 0 {
-				time.Sleep(remoteControlMenuStepDelay)
-			}
-			if err := clcommon.TmuxCommand("send-keys", "-t", target, key).Run(); err != nil {
-				// The toggle itself was submitted; the state may already have
-				// flipped. Log and keep going — a stuck confirm menu is a
-				// best-effort residual, not a failure of the toggle.
-				slog.Warn("remote-control confirm key failed", "error", err, "key", key, "tmux", sess.TmuxSession, "reason", reason)
-			}
+		// DISABLE opens a confirm menu whose default highlight is NOT
+		// "disconnect", so the menu must be driven by hand: submit the toggle
+		// ONCE, let the menu render, then Up, Up, Enter to land on
+		// "disconnect". This must NOT go through injectTextAndSubmit — that
+		// helper's belt-and-suspenders second Enter would land on the menu and
+		// accept its default ("keep connected"), dismissing it before our
+		// Up,Up,Enter could select disconnect, which is exactly what left
+		// Remote Access stuck ON. See injectMenuToggle for the full rationale.
+		if err := injectMenuToggle(target, toggle, remoteControlDisableMenuKeys, remoteControlConfirmDelay, remoteControlMenuStepDelay); err != nil {
+			slog.Warn("remote-control disable inject failed", "error", err, "tmux", sess.TmuxSession, "reason", reason)
+			return nil, false
+		}
+	} else {
+		// ENABLE does not open a confirm menu, so the plain type-and-submit
+		// (with its paste-safe double Enter) is correct here.
+		if err := injectTextAndSubmit(target, toggle); err != nil {
+			slog.Warn("remote-control enable inject failed", "error", err, "tmux", sess.TmuxSession, "reason", reason)
+			return nil, false
 		}
 	}
 	slog.Info("remote-control injected via send-keys",
