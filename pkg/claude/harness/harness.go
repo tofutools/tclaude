@@ -143,6 +143,24 @@ func (h *Harness) SupportsSoftExit() bool {
 	return h != nil && h.Life != nil && h.Life.SoftExitCommand() != ""
 }
 
+// SupportsRemoteControl reports whether the harness has a usable in-pane
+// remote-control toggle command (Claude Code's "/remote-control"). Callers
+// must skip the toggle injection — and hide the affordance — when false
+// (e.g. Codex, which has no built-in remote access). See JOH-254.
+func (h *Harness) SupportsRemoteControl() bool {
+	return h != nil && h.Life != nil && h.Life.RemoteControlCommand() != ""
+}
+
+// CanRemoteControl reports whether a remote-control toggle is deliverable
+// for this harness. Like compaction there is no out-of-band fallback — the
+// toggle is only ever an in-pane slash command — so this is exactly
+// SupportsRemoteControl. It is the UI-side predicate a row/spawn control
+// gates on (mirrors CanCompact); the daemon's toggle endpoint refuses a
+// harness without it.
+func (h *Harness) CanRemoteControl() bool {
+	return h.SupportsRemoteControl()
+}
+
 // SupportsAsk reports whether the harness can answer a one-shot `tclaude ask`
 // turn (it provides an Asker). `tclaude ask` gates on this and fails with a
 // clear message for a harness that hasn't implemented the ask argv yet (Codex

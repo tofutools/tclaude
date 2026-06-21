@@ -15,9 +15,10 @@ import (
 // command.
 type fakeLifecycle struct{}
 
-func (fakeLifecycle) RenameCommand() string   { return "" }
-func (fakeLifecycle) CompactCommand() string  { return "" }
-func (fakeLifecycle) SoftExitCommand() string { return "" }
+func (fakeLifecycle) RenameCommand() string        { return "" }
+func (fakeLifecycle) CompactCommand() string       { return "" }
+func (fakeLifecycle) SoftExitCommand() string      { return "" }
+func (fakeLifecycle) RemoteControlCommand() string { return "" }
 
 // fakeConvStore records SetTitle calls so the test can assert the rename
 // routed to the title store rather than the (absent) injection path.

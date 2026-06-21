@@ -24,4 +24,13 @@ type Lifecycle interface {
 	// gracefully (e.g. "/exit"), as opposed to killing the tmux pane.
 	// "" = unsupported (callers fall back to a hard tmux kill).
 	SoftExitCommand() string
+	// RemoteControlCommand is the slash command that TOGGLES the harness's
+	// built-in remote-access feature (e.g. Claude Code's "/remote-control",
+	// which exposes the session to claude.ai/code + the Claude mobile app).
+	// "" = unsupported (the harness has no remote access; callers hide the
+	// affordance). Note this is a toggle, not separate enable/disable: the
+	// same command turns it on when off and off when on, so callers that
+	// drive it must track the intended direction themselves (the harness
+	// exposes no programmatic readback of the current state). See JOH-254.
+	RemoteControlCommand() string
 }

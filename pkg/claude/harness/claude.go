@@ -338,13 +338,15 @@ func (claudeModels) EffortLevels() []string {
 }
 
 // claudeLifecycle names Claude Code's in-pane control slash commands. All
-// three are supported, so CC behavior is unchanged when call sites gate
-// injections on these tokens.
+// are supported, so CC behavior is unchanged when call sites gate
+// injections on these tokens. RemoteControlCommand toggles CC's built-in
+// Remote Access (claude.ai/code + the Claude mobile app); see JOH-254.
 type claudeLifecycle struct{}
 
-func (claudeLifecycle) RenameCommand() string   { return "/rename" }
-func (claudeLifecycle) CompactCommand() string  { return "/compact" }
-func (claudeLifecycle) SoftExitCommand() string { return "/exit" }
+func (claudeLifecycle) RenameCommand() string        { return "/rename" }
+func (claudeLifecycle) CompactCommand() string       { return "/compact" }
+func (claudeLifecycle) SoftExitCommand() string      { return "/exit" }
+func (claudeLifecycle) RemoteControlCommand() string { return "/remote-control" }
 
 // claudeConvStore assembles conversations from Claude Code's storage
 // model — one cwd-indexed `.jsonl` per conv under ~/.claude/projects — by
