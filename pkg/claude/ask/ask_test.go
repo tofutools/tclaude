@@ -121,10 +121,11 @@ func setupAskTestDB(t *testing.T) {
 // it is handed and writes a canned answer to the plan's stdout, so a flow test
 // can assert on the argv/cwd/streams without launching a real `claude`.
 type fakeRun struct {
-	plans   []runPlan
-	answer  string
-	started bool
-	err     error
+	plans     []runPlan
+	answer    string
+	errOutput string // written to the plan's Stderr (models a noisy transcript)
+	started   bool
+	err       error
 }
 
 func (f *fakeRun) install(t *testing.T) {
@@ -134,6 +135,9 @@ func (f *fakeRun) install(t *testing.T) {
 		f.plans = append(f.plans, p)
 		if f.answer != "" && p.Stdout != nil {
 			_, _ = io.WriteString(p.Stdout, f.answer)
+		}
+		if f.errOutput != "" && p.Stderr != nil {
+			_, _ = io.WriteString(p.Stderr, f.errOutput)
 		}
 		return f.started, f.err
 	}
@@ -597,6 +601,69 @@ func TestAsk_CodexFreshNoConv_NoMapping(t *testing.T) {
 	got, err := db.GetAskThread("term-CN", "/repo/x")
 	require.NoError(t, err)
 	assert.Nil(t, got, "no mapping recorded when codex created no conv")
+}
+
+// TestAsk_CodexCaptureHidesStderrOnSuccess: a successful captured Codex ask
+// prints only the clean stdout answer; its noisy stderr transcript (banner,
+// hook lines, token count) is suppressed.
+func TestAsk_CodexCaptureHidesStderrOnSuccess(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	require.NoError(t, db.SetAskThread("term-CS", "/repo/x", "codex-conv-1", "codex"))
+	f := &fakeRun{answer: "Hi.\n", errOutput: "hook: SessionStart\ntokens used\n42\n", started: true}
+	f.install(t)
+
+	aio, out, errb := io2buf()
+	require.NoError(t, runAsk(ttyInput("term-CS", "/repo/x", "say hi"), aio))
+
+	assert.Contains(t, out.String(), "Hi.", "the clean answer is printed")
+	assert.NotContains(t, errb.String(), "hook: SessionStart", "the noisy transcript is hidden")
+	assert.NotContains(t, errb.String(), "tokens used")
+}
+
+// TestAsk_CodexCaptureShowsStderrOnFailure: when a captured Codex ask FAILS,
+// the suppressed transcript is flushed so the error isn't silent.
+func TestAsk_CodexCaptureShowsStderrOnFailure(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	require.NoError(t, db.SetAskThread("term-CF", "/repo/x", "codex-conv-1", "codex"))
+	f := &fakeRun{errOutput: "error: not logged in\n", started: true, err: errors.New("exit status 1")}
+	f.install(t)
+
+	aio, _, errb := io2buf()
+	err := runAsk(ttyInput("term-CF", "/repo/x", "say hi"), aio)
+	require.Error(t, err)
+	assert.Contains(t, errb.String(), "not logged in", "a failed run surfaces the suppressed transcript")
+}
+
+// TestAsk_CodexCaptureVerboseShowsStderr: --verbose keeps the transcript live
+// even on success.
+func TestAsk_CodexCaptureVerboseShowsStderr(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	require.NoError(t, db.SetAskThread("term-CV", "/repo/x", "codex-conv-1", "codex"))
+	f := &fakeRun{answer: "Hi.\n", errOutput: "hook: SessionStart\n", started: true}
+	f.install(t)
+
+	in := ttyInput("term-CV", "/repo/x", "say hi")
+	in.Verbose = true
+	aio, _, errb := io2buf()
+	require.NoError(t, runAsk(in, aio))
+	assert.Contains(t, errb.String(), "hook: SessionStart", "--verbose keeps the transcript visible")
+}
+
+// TestAsk_ClaudeCaptureStderrNotHidden: a harness that isn't noisy on stderr
+// (Claude) has its stderr passed straight through — the suppression is
+// codex-specific (Asker.NoisyCaptureStderr).
+func TestAsk_ClaudeCaptureStderrNotHidden(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "ok\n", errOutput: "claude: a warning\n", started: true}
+	f.install(t)
+
+	aio, _, errb := io2buf()
+	require.NoError(t, runAsk(ttyInput("term-CL", "/repo/x", "q"), aio)) // default harness = claude
+	assert.Contains(t, errb.String(), "claude: a warning", "claude's stderr is not suppressed")
 }
 
 // TestAssemblePrompt covers the three prompt shapes directly.

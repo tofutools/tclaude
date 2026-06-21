@@ -67,4 +67,14 @@ type Asker interface {
 	// ask flow then discovers the id post-run from the harness's ConvStore and
 	// records the mapping after the fact. See Harness.PreMintsAskConvID.
 	PreMintsConvID() bool
+
+	// NoisyCaptureStderr reports whether, in capture/print mode, this harness
+	// writes a verbose human transcript to STDERR (session banner, hook
+	// lifecycle lines, token counts) separate from the clean answer it writes
+	// to stdout. When true, `tclaude ask` hides that stderr by default so a
+	// captured answer is just the answer — surfacing it only on `--verbose` or
+	// when the run fails (so a real error is never swallowed). Claude Code's
+	// `-p` keeps stderr quiet already, so it returns false. Only consulted in
+	// print mode; an interactive turn always passes stderr through.
+	NoisyCaptureStderr() bool
 }

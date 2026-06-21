@@ -90,6 +90,13 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 // ConvStore after the turn and records the (terminal,cwd)→conv mapping then.
 func (codexAsker) PreMintsConvID() bool { return false }
 
+// NoisyCaptureStderr is true: `codex exec` prints the clean final message to
+// stdout but a verbose human transcript to stderr — the session banner, `hook:
+// …` lifecycle lines, and a token-count footer. `tclaude ask` hides that by
+// default so a captured answer is just the answer (`--verbose` keeps it; a
+// failed run still flushes it so errors aren't swallowed).
+func (codexAsker) NoisyCaptureStderr() bool { return true }
+
 // appendCodexAskModelEffort appends `--model` and the reasoning-effort `-c`
 // override when set, mirroring codexSpawner: the model passes through; the
 // effort maps onto Codex's reasoning-effort scale (codexReasoningEffort).
