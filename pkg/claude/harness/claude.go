@@ -2,6 +2,8 @@ package harness
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -154,6 +156,12 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	return argv
 }
 
+// PreMintsConvID is true: Claude Code accepts a caller-minted conv-id for a
+// fresh ask (`--session-id <uuid>`, emitted above from AskSpec.SessionID), so
+// `tclaude ask` records the (terminal,cwd)→conv mapping up front rather than
+// discovering it after the turn.
+func (claudeAsker) PreMintsConvID() bool { return true }
+
 // claudeModels delegates to the curated clcommon validators so the model
 // and effort knowledge stays in one place; the catalog is the
 // harness-agnostic dispatch point that a future codex catalog parallels.
@@ -281,6 +289,27 @@ func (claudeConvStore) Title(convID string) (string, error) {
 // be clobbered by the next .jsonl rescan (which finds no customTitle turn).
 func (claudeConvStore) SetTitle(convID, title string) error {
 	return fmt.Errorf("claude renames via the %q slash injection, not a direct title write", "/rename")
+}
+
+// Exists reports whether convID's `.jsonl` is still on disk under cwd's
+// Claude project dir — the cwd-scoped store Claude Code resumes from. A
+// present file is (true, nil); a confirmed-absent one is (false, nil); any
+// other stat error (e.g. permission) is (false, err) so the ask caller can
+// keep the thread rather than self-heal on a transient failure. This is the
+// harness-agnostic move of `tclaude ask`'s old hardcoded Claude probe.
+func (claudeConvStore) Exists(convID, cwd string) (bool, error) {
+	if convID == "" {
+		return false, nil
+	}
+	p := filepath.Join(convops.GetClaudeProjectPath(cwd), convID+".jsonl")
+	switch _, err := os.Stat(p); {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func claudeConvRef(r *db.ConvIndexRow) *ConvRef {

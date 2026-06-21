@@ -1,6 +1,7 @@
 import { $, $$, esc } from './helpers.js';
 import { toast } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
+import { loadProfiles } from './profiles.js';
 
 // ===================================================================
 // Config tab — visual editor for ~/.tclaude/config.json
@@ -47,6 +48,65 @@ function fillAskSelect(sel, values) {
   sel.innerHTML = '<option value="">Built-in default</option>' +
     (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
 }
+// populateAskProfileSelect fills the Ask-defaults Profile dropdown from the
+// saved spawn profiles (the Groups-tab profiles), selecting `selected`. A
+// chosen profile supplies the harness/model/effort a FRESH `tclaude ask` runs
+// at (JOH-252) — the harness-independent way to ask Codex as well as Claude —
+// so it overrides the Model/Effort selects, which applyAskProfileState then
+// greys out. The fetch is async + best-effort: an endpoint error leaves just
+// the "(none)" option. A hand-set profile that's since been deleted is kept as
+// a "(missing)" option so the form shows what's on disk, not a silent reset.
+async function populateAskProfileSelect(selected) {
+  const sel = $('#ask-profile');
+  if (!sel) return;
+  const selectedName = (selected || '').trim();
+
+  // Seed the selection SYNCHRONOUSLY before the async list load, so a Save that
+  // races ahead of loadProfiles() still reads the real profile name off
+  // #ask-profile rather than an empty value (which assembleConfig would persist
+  // as "delete ask.profile", silently clearing a saved profile).
+  sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>';
+  if (selectedName) {
+    const pending = document.createElement('option');
+    pending.value = selectedName;
+    pending.textContent = `${selectedName} (loading…)`;
+    sel.appendChild(pending);
+  }
+  sel.value = selectedName;
+  applyAskProfileState();
+
+  let profiles = [];
+  try { profiles = await loadProfiles(); } catch { profiles = []; }
+  sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>' +
+    profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  if (selectedName && !profiles.some(p => p.name === selectedName)) {
+    const o = document.createElement('option');
+    o.value = selectedName;
+    o.textContent = `${selectedName} (missing)`;
+    sel.appendChild(o);
+  }
+  sel.value = selectedName;
+  applyAskProfileState();
+}
+
+// applyAskProfileState greys out the Model / Effort selects while a profile is
+// chosen — the profile supplies those, so the selects are inert (their stored
+// values are kept, for when the profile is cleared) — and shows a one-line
+// note. Called on load and on every Profile change.
+function applyAskProfileState() {
+  const sel = $('#ask-profile');
+  const active = !!(sel && sel.value);
+  const model = $('#ask-model'), effort = $('#ask-effort');
+  if (model) model.disabled = active;
+  if (effort) effort.disabled = active;
+  const note = $('#ask-profile-state');
+  if (note) {
+    note.textContent = active
+      ? `Profile “${sel.value}” supplies the harness/model/effort — the Model/Effort below are ignored.`
+      : '';
+  }
+}
+
 // setAskSelectValue selects value, first adding it as an option when the
 // catalog doesn't list it (a hand-edited full model ID), so the form shows
 // what is actually on disk rather than silently snapping to another option.
@@ -253,12 +313,16 @@ function populateConfigForm(cfg) {
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
 
-  // Ask defaults — model/effort for `tclaude ask`. Options come from the
-  // harness catalog; an unset field shows "Built-in default" (empty).
+  // Ask defaults — profile + model/effort for `tclaude ask`. Options come
+  // from the harness catalog / saved spawn profiles; an unset field shows
+  // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
+  // the profile list) and applies the Model/Effort disabled state when it
+  // resolves.
   populateAskSelects();
   const ask = cfg.ask || {};
   setAskSelectValue($('#ask-model'), ask.model);
   setAskSelectValue($('#ask-effort'), ask.effort);
+  void populateAskProfileSelect(ask.profile);
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -342,8 +406,13 @@ function assembleConfig() {
   // nothing left is dropped so an all-default ask doesn't marshal as a
   // spurious "ask": {} diff.
   const ask = (cfg.ask && typeof cfg.ask === 'object') ? cfg.ask : {};
+  const askProfile = $('#ask-profile') ? $('#ask-profile').value.trim() : '';
   const askModel = $('#ask-model').value.trim();
   const askEffort = $('#ask-effort').value.trim();
+  // The profile selects the harness/model/effort a fresh ask runs at; the
+  // Model/Effort here are kept (the no-profile fallback) but ignored while a
+  // profile is set — resolveAskTarget applies that precedence server-side.
+  if (askProfile) ask.profile = askProfile; else delete ask.profile;
   if (askModel) ask.model = askModel; else delete ask.model;
   if (askEffort) ask.effort = askEffort; else delete ask.effort;
   if (Object.keys(ask).length) cfg.ask = ask; else delete cfg.ask;
@@ -689,6 +758,9 @@ function bindConfigTab() {
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
   });
+  // Toggle the Model/Effort selects live as the Ask profile changes.
+  const askProf = $('#ask-profile');
+  if (askProf) askProf.addEventListener('change', applyAskProfileState);
 }
 
 export { bindConfigTab };

@@ -12,9 +12,92 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+// scriptedConvStore is a harness.ConvStore whose ListConvs returns a scripted
+// sequence of results (one per call) so liveFreshConvResolver's before/after
+// diff can be unit-tested without real harness storage.
+type scriptedConvStore struct {
+	calls    int
+	lists    [][]convops.SessionEntry
+	errOnGet int // 1-indexed call number that returns an error (0 = never)
+}
+
+func (s *scriptedConvStore) ListConvs(string) ([]convops.SessionEntry, error) {
+	i := s.calls
+	s.calls++
+	if s.errOnGet == i+1 {
+		return nil, errors.New("scan failed")
+	}
+	if i < len(s.lists) {
+		return s.lists[i], nil
+	}
+	if len(s.lists) > 0 {
+		return s.lists[len(s.lists)-1], nil
+	}
+	return nil, nil
+}
+func (*scriptedConvStore) Resolve(string, string, bool) (*harness.ConvRef, error) { return nil, nil }
+func (*scriptedConvStore) Title(string) (string, error)                           { return "", nil }
+func (*scriptedConvStore) SetTitle(string, string) error                          { return nil }
+func (*scriptedConvStore) Exists(string, string) (bool, error)                    { return true, nil }
+
+// TestLiveFreshConvResolver covers the post-run conv-id discovery: the id that
+// appears in the "after" listing but not the "before" snapshot is returned;
+// among several new ones the newest by mtime wins; nothing new yields "".
+func TestLiveFreshConvResolver(t *testing.T) {
+	t.Run("picks the newly appeared id", func(t *testing.T) {
+		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
+			{{SessionID: "a", FileMtime: 1}},
+			{{SessionID: "a", FileMtime: 1}, {SessionID: "b", FileMtime: 2}},
+		}}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Equal(t, "b", liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("newest of several new ids wins", func(t *testing.T) {
+		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
+			{{SessionID: "a", FileMtime: 1}},
+			{{SessionID: "a", FileMtime: 1}, {SessionID: "b", FileMtime: 5}, {SessionID: "c", FileMtime: 9}},
+		}}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Equal(t, "c", liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("nothing new yields empty", func(t *testing.T) {
+		store := &scriptedConvStore{lists: [][]convops.SessionEntry{
+			{{SessionID: "a", FileMtime: 1}},
+			{{SessionID: "a", FileMtime: 1}},
+		}}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("nil convstore yields empty", func(t *testing.T) {
+		h := &harness.Harness{Name: "x"}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("failed before-snapshot yields empty (never mis-maps a pre-existing conv)", func(t *testing.T) {
+		// The first ListConvs (the before snapshot) errors; the after listing
+		// succeeds with a conv that existed all along. Without the guard that
+		// conv would look "new" and be wrongly recorded — the resolver must
+		// instead skip the mapping.
+		store := &scriptedConvStore{
+			errOnGet: 1,
+			lists:    [][]convops.SessionEntry{nil, {{SessionID: "preexisting", FileMtime: 7}}},
+		}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("failed after-listing yields empty", func(t *testing.T) {
+		store := &scriptedConvStore{
+			errOnGet: 2,
+			lists:    [][]convops.SessionEntry{{{SessionID: "a", FileMtime: 1}}, nil},
+		}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+}
 
 // forceConvExists overrides the on-disk conversation existence check (the flow
 // tests use a fake runner that writes no real .jsonl), restoring it on cleanup.
@@ -294,10 +377,11 @@ func TestAsk_ModelValidatedAndPassed(t *testing.T) {
 	assert.Contains(t, err.Error(), "--model")
 }
 
-// TestResolveAskDefaults covers the model/effort precedence: a per-call
-// flag wins, else the config ask profile, else the built-in default
-// constants — resolved independently per field (JOH-253).
-func TestResolveAskDefaults(t *testing.T) {
+// TestResolveAskTarget covers the no-profile model/effort precedence: a
+// per-call flag wins, else the config.ask block, else the built-in default
+// constants — resolved independently per field (JOH-253). With no ask
+// profile selected the harness is always the default (Claude).
+func TestResolveAskTarget(t *testing.T) {
 	pinned := &config.Config{Ask: &config.AskConfig{Model: "opus", Effort: "high"}}
 	onlyModel := &config.Config{Ask: &config.AskConfig{Model: "haiku"}}
 
@@ -311,7 +395,7 @@ func TestResolveAskDefaults(t *testing.T) {
 			config.DefaultAskModel, config.DefaultAskEffort},
 		{"nil config → built-in defaults", "", "", nil,
 			config.DefaultAskModel, config.DefaultAskEffort},
-		{"config profile used when no flag", "", "", pinned, "opus", "high"},
+		{"config block used when no flag", "", "", pinned, "opus", "high"},
 		{"flag overrides config", "fable", "low", pinned, "fable", "low"},
 		{"flag overrides built-in default", "fable", "max", &config.Config{}, "fable", "max"},
 		{"partial config: model only → default effort", "", "", onlyModel,
@@ -321,11 +405,69 @@ func TestResolveAskDefaults(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m, e := resolveAskDefaults(tc.flagModel, tc.flagEffort, tc.cfg)
+			h, m, e := resolveAskTarget(tc.flagModel, tc.flagEffort, tc.cfg)
+			assert.Equal(t, harness.DefaultName, h, "harness (no profile → default)")
 			assert.Equal(t, tc.wantModel, m, "model")
 			assert.Equal(t, tc.wantEffort, e, "effort")
 		})
 	}
+}
+
+// TestResolveAskTarget_Profile covers the JOH-252 fold-in: a selected ask
+// profile supplies the harness (+ model/effort), a per-call flag still wins,
+// a non-Claude harness leaves a blank model/effort blank (no Claude fast
+// default leaks into the Codex catalog), and a missing profile self-heals to
+// the no-profile path.
+func TestResolveAskTarget_Profile(t *testing.T) {
+	setupAskTestDB(t) // resolveAskTarget reads db.GetSpawnProfile
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-fast", Harness: "codex", Model: "gpt-5", Effort: "low",
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-bare", Harness: "codex", // no model/effort
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "claude-blank", Harness: "claude", // no model/effort → Claude fast defaults
+	})
+	require.NoError(t, err)
+
+	cfg := func(profile string) *config.Config {
+		return &config.Config{Ask: &config.AskConfig{Profile: profile}}
+	}
+
+	t.Run("codex profile supplies harness+model+effort", func(t *testing.T) {
+		h, m, e := resolveAskTarget("", "", cfg("codex-fast"))
+		assert.Equal(t, "codex", h)
+		assert.Equal(t, "gpt-5", m)
+		assert.Equal(t, "low", e)
+	})
+	t.Run("flag overrides the codex profile model", func(t *testing.T) {
+		h, m, e := resolveAskTarget("gpt-5-codex", "high", cfg("codex-fast"))
+		assert.Equal(t, "codex", h)
+		assert.Equal(t, "gpt-5-codex", m)
+		assert.Equal(t, "high", e)
+	})
+	t.Run("blank codex profile leaves model/effort empty (no Claude default)", func(t *testing.T) {
+		h, m, e := resolveAskTarget("", "", cfg("codex-bare"))
+		assert.Equal(t, "codex", h)
+		assert.Empty(t, m, "no haiku leaks into the Codex catalog")
+		assert.Empty(t, e)
+	})
+	t.Run("blank claude profile still gets the Claude fast defaults", func(t *testing.T) {
+		h, m, e := resolveAskTarget("", "", cfg("claude-blank"))
+		assert.Equal(t, harness.DefaultName, h)
+		assert.Equal(t, config.DefaultAskModel, m)
+		assert.Equal(t, config.DefaultAskEffort, e)
+	})
+	t.Run("missing profile self-heals to no-profile defaults", func(t *testing.T) {
+		h, m, e := resolveAskTarget("", "", cfg("does-not-exist"))
+		assert.Equal(t, harness.DefaultName, h)
+		assert.Equal(t, config.DefaultAskModel, m)
+		assert.Equal(t, config.DefaultAskEffort, e)
+	})
 }
 
 // TestAsk_EffortValidatedAndPassed checks a valid effort reaches the argv
@@ -370,6 +512,91 @@ func TestAsk_NotStarted_NoMapping(t *testing.T) {
 	got, err := db.GetAskThread("term-Z", "/repo/x")
 	require.NoError(t, err)
 	assert.Nil(t, got, "no mapping recorded when the harness never started")
+}
+
+// stubFreshConvResolver replaces the post-run conv-id discovery (the flow
+// tests have no real ~/.codex storage) so a fresh non-pre-minting ask resolves
+// to a canned id, restoring it on cleanup. An empty id models "codex created
+// no conv".
+func stubFreshConvResolver(t *testing.T, id string) {
+	t.Helper()
+	prev := newFreshConvResolver
+	newFreshConvResolver = func(*harness.Harness, string) func() string {
+		return func() string { return id }
+	}
+	t.Cleanup(func() { newFreshConvResolver = prev })
+}
+
+// TestAsk_CodexFreshDiscoversConvID is the Codex headline (JOH-252): a fresh
+// ask on a Codex thread routes to `codex exec` (NOT pre-minting a
+// --session-id), runs read-only, and the conv-id Codex created is discovered
+// post-run and recorded as a codex-harness mapping.
+func TestAsk_CodexFreshDiscoversConvID(t *testing.T) {
+	setupAskTestDB(t)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+	stubFreshConvResolver(t, "codex-conv-1")
+
+	in := ttyInput("term-CX", "/repo/x", "what is up?")
+	in.Harness = "codex"
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	p := f.last()
+	assert.Equal(t, "codex", p.Argv[0], "execs the codex binary")
+	assert.Equal(t, "exec", p.Argv[1], "fresh capture uses `codex exec`")
+	assert.False(t, argvHas(p.Argv, "--session-id"), "codex does not pre-mint a conv-id")
+	assert.False(t, argvHas(p.Argv, "resume"), "a fresh ask does not resume")
+	sb, ok := argvValue(p.Argv, "--sandbox")
+	require.True(t, ok, "capture pins a sandbox")
+	assert.Equal(t, "read-only", sb, "captured codex ask is read-only")
+	assert.True(t, argvHas(p.Argv, "--skip-git-repo-check"), "ask works from any directory")
+
+	thread, err := db.GetAskThread("term-CX", "/repo/x")
+	require.NoError(t, err)
+	require.NotNil(t, thread, "mapping persisted from the discovered id")
+	assert.Equal(t, "codex-conv-1", thread.ConvID, "records the discovered conv-id")
+	assert.Equal(t, "codex", thread.Harness, "mapping is tagged codex")
+}
+
+// TestAsk_CodexResumeRouting: a second question on a Codex-recorded thread
+// resumes via `codex exec resume <id>` (the subcommand form), keeps the conv's
+// recorded harness, and never pre-mints.
+func TestAsk_CodexResumeRouting(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+	require.NoError(t, db.SetAskThread("term-CR", "/repo/x", "codex-conv-9", "codex"))
+
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(ttyInput("term-CR", "/repo/x", "follow up"), aio))
+
+	p := f.last()
+	require.GreaterOrEqual(t, len(p.Argv), 4)
+	assert.Equal(t, []string{"codex", "exec", "resume", "codex-conv-9"}, p.Argv[:4],
+		"resume uses the `codex exec resume <id>` subcommand")
+	assert.False(t, argvHas(p.Argv, "--session-id"))
+	assert.Equal(t, "follow up", p.Argv[len(p.Argv)-1], "question is the trailing positional")
+}
+
+// TestAsk_CodexFreshNoConv_NoMapping: if a fresh Codex ask creates no
+// conversation (e.g. the run errored before writing one), discovery returns
+// "" and no dangling mapping is recorded — the next ask starts fresh.
+func TestAsk_CodexFreshNoConv_NoMapping(t *testing.T) {
+	setupAskTestDB(t)
+	f := &fakeRun{answer: "", started: true}
+	f.install(t)
+	stubFreshConvResolver(t, "") // codex wrote no rollout
+
+	in := ttyInput("term-CN", "/repo/x", "q")
+	in.Harness = "codex"
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	got, err := db.GetAskThread("term-CN", "/repo/x")
+	require.NoError(t, err)
+	assert.Nil(t, got, "no mapping recorded when codex created no conv")
 }
 
 // TestAssemblePrompt covers the three prompt shapes directly.

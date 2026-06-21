@@ -240,13 +240,18 @@
     <div class="cfg-section">
       <h3>Ask defaults</h3>
       <div class="cfg-field">
+        <span class="cfg-label">Profile</span>
+        <select id="ask-profile" aria-label="Ask default profile" style="min-width:160px"></select>
+        <span class="cfg-hint">Optional. Pick a saved <strong>spawn profile</strong> (from the Groups tab) to run fresh <code>tclaude ask</code> questions on its harness — the harness-independent way to ask <strong>Codex</strong> as well as Claude. When set, the profile's harness / model / effort are used and the Model / Effort below are ignored. Leave as <em>(none)</em> to use Claude with the Model / Effort below. <span id="ask-profile-state" class="cfg-hint" style="display:block"></span></span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Model</span>
         <select id="ask-model" aria-label="Ask default model" style="min-width:160px"></select>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Effort</span>
         <select id="ask-effort" aria-label="Ask default effort" style="min-width:160px"></select>
-        <span class="cfg-hint">The model and reasoning effort <code>tclaude ask</code> uses for ad-hoc questions when you don't pass <code>-m</code>/<code>--effort</code>. Defaults to <code>sonnet</code> at <code>medium</code> — a balanced, capable default for ad-hoc terminal answers. <em>Built-in default</em> leaves the field unpinned so it tracks that default. Stored in the <code>ask</code> block of config.json (the same file the CLI reads); a per-call flag always overrides it. Saved with <strong>Save changes</strong> below, like the rest of this page.</span>
+        <span class="cfg-hint">The model and reasoning effort <code>tclaude ask</code> uses for ad-hoc questions when you don't pass <code>-m</code>/<code>--effort</code> <em>and no Profile above is selected</em>. Defaults to <code>sonnet</code> at <code>medium</code> — a balanced, capable default for ad-hoc terminal answers. <em>Built-in default</em> leaves the field unpinned so it tracks that default. Stored in the <code>ask</code> block of config.json (the same file the CLI reads); a per-call flag always overrides it. Saved with <strong>Save changes</strong> below, like the rest of this page.</span>
       </div>
     </div>
 

@@ -152,6 +152,16 @@ func (h *Harness) SupportsAsk() bool {
 	return h != nil && h.Ask != nil
 }
 
+// PreMintsAskConvID reports whether a FRESH `tclaude ask` can pin its conv-id
+// before the turn runs (Claude Code's `--session-id`) so the mapping is
+// recorded up front, vs. having to discover the id from the harness's
+// ConvStore after the turn (Codex — JOH-205). Nil-safe; false for a harness
+// with no Asker. Callers must have checked SupportsAsk first. See
+// Asker.PreMintsConvID.
+func (h *Harness) PreMintsAskConvID() bool {
+	return h != nil && h.Ask != nil && h.Ask.PreMintsConvID()
+}
+
 // SupportsConvs reports whether the harness exposes a ConvStore. Callers
 // that fall back to ConvStore (e.g. a rename for a harness without an
 // in-pane rename command) must check this first — a descriptor may leave

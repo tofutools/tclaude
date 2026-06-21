@@ -26,7 +26,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -89,9 +88,14 @@ func Cmd() *cobra.Command {
 // of this struct (plus the swappable runner) is what makes the flow testable
 // without a real terminal or a real harness.
 type askInput struct {
-	TermKey          string
-	Cwd              string
-	Question         string
+	TermKey  string
+	Cwd      string
+	Question string
+	// Harness is the resolved harness for a FRESH thread (from the ask config
+	// profile, else the default). It is ignored for an existing thread, which
+	// keeps its own recorded harness — you can't switch a conversation's
+	// harness mid-thread. Empty falls back to harness.DefaultName.
+	Harness          string
 	StdinPayload     string // piped stdin, "" when stdin is a terminal
 	Model            string
 	Effort           string
@@ -140,22 +144,25 @@ func runFromCLI(p *Params, args []string) error {
 		payload = string(b)
 	}
 
-	// Resolve the model/effort the ask runs at, applying the precedence
-	// flag > config ask profile > built-in default constant (JOH-253). The
-	// config file is the same ~/.tclaude/config.json the dashboard edits;
-	// a load failure degrades to the built-in default rather than
-	// failing the ask. runAsk stays a pure argv builder (empty = omit the
-	// flag); the defaulting lives here, in the env/config layer.
+	// Resolve the harness + model/effort a FRESH ask runs at, applying the
+	// precedence flag > selected ask profile > config.ask > built-in default
+	// (JOH-253 / JOH-252). The config file is the same ~/.tclaude/config.json
+	// the dashboard edits; a load failure degrades to the built-in default
+	// rather than failing the ask. runAsk stays a pure argv builder (empty =
+	// omit the flag); the defaulting lives here, in the env/config layer. The
+	// harness only applies to a fresh thread — an existing one keeps its
+	// recorded harness inside runAsk.
 	cfg, err := config.Load()
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
-	model, effort := resolveAskDefaults(p.Model, p.Effort, cfg)
+	harnessName, model, effort := resolveAskTarget(p.Model, p.Effort, cfg)
 
 	in := askInput{
 		TermKey:          TerminalKey(),
 		Cwd:              cwd,
 		Question:         strings.TrimSpace(strings.Join(args, " ")),
+		Harness:          harnessName,
 		StdinPayload:     payload,
 		Model:            model,
 		Effort:           effort,
@@ -194,22 +201,62 @@ func printWhere(cwd string, w io.Writer) error {
 	return nil
 }
 
-// resolveAskDefaults applies the ask model/effort precedence — a per-call
-// flag wins, else the persisted ask profile, else the built-in default
-// constant — independently per field. The returned values are raw
-// strings still to be validated against the harness catalog by runAsk;
-// the config's ResolvedAskProfile supplies the built-in defaults when neither
-// a flag nor a config value is set. Kept a pure function (no I/O) so the
-// precedence is unit-testable without a config file or a terminal.
-func resolveAskDefaults(flagModel, flagEffort string, cfg *config.Config) (model, effort string) {
-	model, effort = cfg.ResolvedAskProfile()
+// resolveAskTarget resolves the harness + model + effort a FRESH `tclaude ask`
+// runs at, applying precedence per field: a per-call flag wins, else the
+// selected ask profile, else the dedicated config.ask block, else the
+// built-in default constants. The harness comes from the selected ask profile
+// (JOH-252 fold-in, Option A) — a spawn profile from the groups tab, reused
+// here for its harness/model/effort subset — else the default (Claude Code).
+//
+// A named-but-missing profile self-heals to the no-profile path (a deleted or
+// renamed profile must not hard-error every ask). Spawn-profile fields
+// irrelevant to a one-shot ask (agent name, role, sandbox, …) are ignored;
+// only harness/model/effort are read. The built-in default constants
+// (DefaultAskModel/DefaultAskEffort) are Claude-catalog values, so they are
+// applied only when the resolved harness is Claude — a non-Claude harness with
+// no pinned model/effort leaves them blank, and the asker omits the flags so
+// Codex uses its own configured defaults.
+//
+// The returned values are raw strings still validated against the resolved
+// harness's catalog by runAsk. db.GetSpawnProfile is the only I/O; a load
+// error degrades to the no-profile path rather than failing the ask.
+func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string) {
+	harnessName = harness.DefaultName
+
+	if name := cfg.AskProfileName(); name != "" {
+		if prof, err := db.GetSpawnProfile(name); err == nil && prof != nil {
+			if prof.Harness != "" {
+				harnessName = prof.Harness
+			}
+			model, effort = prof.Model, prof.Effort
+		} else {
+			// Missing / unreadable profile → fall back to config.ask defaults.
+			model, effort = cfg.ResolvedAskProfile()
+		}
+	} else {
+		model, effort = cfg.ResolvedAskProfile()
+	}
+
+	// The built-in defaults only make sense for the Claude catalog.
+	// ResolvedAskProfile already applied them on the no-profile path; for a
+	// Claude profile with blank fields, apply them here too. A non-Claude
+	// harness keeps blanks (→ the asker omits the flags).
+	if harnessName == harness.DefaultName {
+		if model == "" {
+			model = config.DefaultAskModel
+		}
+		if effort == "" {
+			effort = config.DefaultAskEffort
+		}
+	}
+
 	if flagModel != "" {
 		model = flagModel
 	}
 	if flagEffort != "" {
 		effort = flagEffort
 	}
-	return model, effort
+	return harnessName, model, effort
 }
 
 func runAsk(in askInput, aio askIO) error {
@@ -247,11 +294,16 @@ func runAsk(in askInput, aio askIO) error {
 		return fmt.Errorf("look up ask thread: %w", err)
 	}
 
-	// Fresh thread → mint a conv-id and pin it with --session-id so we can
-	// record the mapping; existing thread → resume its conv-id.
+	// Pick the harness: a FRESH thread uses the config-resolved harness
+	// (in.Harness); an EXISTING thread keeps its own recorded harness — you
+	// can't switch a conversation's harness mid-thread. Both fall back to the
+	// default.
 	fresh := thread == nil
 	harnessName := harness.DefaultName
-	if !fresh && thread.Harness != "" {
+	switch {
+	case fresh && in.Harness != "":
+		harnessName = in.Harness
+	case !fresh && thread.Harness != "":
 		harnessName = thread.Harness
 	}
 	h, err := harness.Resolve(harnessName)
@@ -286,17 +338,27 @@ func runAsk(in askInput, aio askIO) error {
 		spec.Effort = e
 	}
 
+	// Decide the conv-id. Three cases:
+	//   - resume: the id is already known (thread.ConvID).
+	//   - fresh + pre-minting harness (Claude): mint an id and pin it with
+	//     --session-id, so the mapping is recorded up front.
+	//   - fresh + non-pre-minting harness (Codex): no preset id — Codex makes
+	//     its id at the first turn (JOH-205). Snapshot the harness's convs now;
+	//     after the run, resolveFresh() returns the id that newly appeared.
 	var convID string
-	if fresh {
-		// A caller-minted id pins the fresh conversation (claude --session-id),
-		// so we can record the mapping. (Two concurrent asks from the same
-		// terminal+cwd would each mint their own and the last write wins,
-		// orphaning one empty conv — an accepted MVP corner, not corruption.)
-		convID = uuid.NewString()
-		spec.SessionID = convID
-	} else {
+	var resolveFresh func() string
+	switch {
+	case !fresh:
 		convID = thread.ConvID
 		spec.ResumeID = convID
+	case h.PreMintsAskConvID():
+		// (Two concurrent asks from the same terminal+cwd would each mint their
+		// own and the last write wins, orphaning one empty conv — an accepted
+		// MVP corner, not corruption.)
+		convID = uuid.NewString()
+		spec.SessionID = convID
+	default:
+		resolveFresh = newFreshConvResolver(h, in.Cwd)
 	}
 
 	plan := runPlan{
@@ -311,17 +373,83 @@ func runAsk(in askInput, aio askIO) error {
 
 	started, runErr := runner(plan)
 	if started {
+		// For a non-pre-minting fresh ask, discover the id Codex just created.
+		// An empty result (no new conv — e.g. the run errored before writing
+		// one) simply skips the mapping, so the next ask starts fresh.
+		if resolveFresh != nil {
+			convID = resolveFresh()
+		}
 		// Record / refresh the (terminal,cwd)→conv mapping. We persist whenever
 		// the process started (incl. a Ctrl-C'd interactive turn, whose conv was
 		// already created), and rely on the self-heal check above to fall back to
 		// fresh next time if this conv turns out never to have been written. A
 		// persist failure is non-fatal — the answer already happened; we only
 		// lose continuity for the next question.
-		if err := db.SetAskThread(in.TermKey, in.Cwd, convID, h.Name); err != nil {
-			fmt.Fprintf(aio.Stderr, "ask: warning: could not persist conversation mapping: %v\n", err)
+		if convID != "" {
+			if err := db.SetAskThread(in.TermKey, in.Cwd, convID, h.Name); err != nil {
+				fmt.Fprintf(aio.Stderr, "ask: warning: could not persist conversation mapping: %v\n", err)
+			}
 		}
 	}
 	return runErr
+}
+
+// newFreshConvResolver snapshots a non-pre-minting harness's conversations in
+// cwd and returns a closure that, called AFTER a fresh ask runs, returns the
+// conv-id that newly appeared (Codex mints its id at the first turn — JOH-205,
+// then exposes it via the rollout/threads store). Swapped in tests. The
+// before/after diff (rather than "newest conv in cwd") is what distinguishes
+// the conv this ask created from one an unrelated turn merely touched;
+// concurrent asks in the same cwd are an accepted corner — the newest new id
+// wins, mirroring the pre-minting last-write-wins note above.
+var newFreshConvResolver = liveFreshConvResolver
+
+func liveFreshConvResolver(h *harness.Harness, cwd string) func() string {
+	before, beforeErr := listAskConvs(h, cwd)
+	beforeIDs := convIDSet(before)
+	return func() string {
+		// If the "before" snapshot itself failed, we can't tell which conv is
+		// new — every pre-existing one would look new and we'd risk mapping the
+		// wrong thread. Skip the mapping instead; the next ask starts fresh,
+		// which beats resuming someone else's conversation.
+		if beforeErr != nil {
+			return ""
+		}
+		after, err := listAskConvs(h, cwd)
+		if err != nil {
+			return ""
+		}
+		var newestID string
+		var newestMtime int64
+		for _, e := range after {
+			if e.SessionID == "" || beforeIDs[e.SessionID] {
+				continue
+			}
+			if newestID == "" || e.FileMtime >= newestMtime {
+				newestID, newestMtime = e.SessionID, e.FileMtime
+			}
+		}
+		return newestID
+	}
+}
+
+// convIDSet is the set of non-empty conv-ids in entries — the "before"
+// snapshot the fresh-conv resolver diffs the post-run listing against.
+func convIDSet(entries []convops.SessionEntry) map[string]bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if e.SessionID != "" {
+			set[e.SessionID] = true
+		}
+	}
+	return set
+}
+
+func listAskConvs(h *harness.Harness, cwd string) ([]convops.SessionEntry, error) {
+	if h.Convs == nil {
+		return nil, nil
+	}
+	return h.Convs.ListConvs(cwd)
 }
 
 // convExists reports whether a recorded ask conversation is still on disk, so a
@@ -330,17 +458,20 @@ func runAsk(in askInput, aio askIO) error {
 // real conversation files). See liveConvExists.
 var convExists = liveConvExists
 
-// liveConvExists checks the harness's on-disk conversation store. Claude keeps
-// one <convID>.jsonl per cwd-project dir; other harnesses can't be probed here
-// yet, so they're assumed present (only claude supports ask today). A future
-// harness ConvStore "exists" method would make this fully harness-agnostic.
+// liveConvExists checks the harness's conversation store via ConvStore.Exists
+// (Claude's per-cwd `.jsonl`, Codex's ~/.codex rollouts). A confirmed-absent
+// conv self-heals to fresh; a harness with no ConvStore, or a store that
+// can't be read (a transient error), is treated as present so a flaky read
+// never silently drops a valid thread's continuity.
 func liveConvExists(h *harness.Harness, convID, cwd string) bool {
-	if h.Name != harness.DefaultName {
+	if h.Convs == nil {
 		return true
 	}
-	p := filepath.Join(convops.GetClaudeProjectPath(cwd), convID+".jsonl")
-	_, err := os.Stat(p)
-	return err == nil
+	ok, err := h.Convs.Exists(convID, cwd)
+	if err != nil {
+		return true
+	}
+	return ok
 }
 
 // assemblePrompt builds the single prompt string from the typed question and
