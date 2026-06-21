@@ -686,7 +686,7 @@ function notifyMenuItem(m) {
 // the ⚙ options cog so the row stays uncluttered. The cog is always
 // present and enabled.
 function memberActions(g, m) {
-  const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
     + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m) + removeMemberButton(g, m)
     + retireMemberButton(m);
@@ -730,6 +730,15 @@ function cronMemberButton(m) {
     owner: m.conv_id,
   });
   return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">⏰</button>`;
+}
+
+// viewMessagesButton renders the ⚙-menu "view messages" item — a deep
+// link that opens the Messages tab filtered to this agent's mailbox (its
+// existing per-agent folder). Dispatched by row-actions.js
+// (view-agent-messages → openMailbox(conv)).
+function viewMessagesButton(m) {
+  const label = m.title || m.conv_id;
+  return `<button data-act="view-agent-messages" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open this agent's messages in the Messages tab">🗂 view messages</button>`;
 }
 
 // termButton renders the "open a terminal in this agent's working
@@ -860,7 +869,7 @@ function retireMemberButton(m) {
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m) {
-  const menu = termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + cronMemberButton(m)
     + retireMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;

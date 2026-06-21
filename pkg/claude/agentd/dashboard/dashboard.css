@@ -241,6 +241,15 @@ body:has(#tab-messages.active) #tab-messages.active {
 .mail-dot.online { color: #3fb950; font-size: 9px; }
 .mail-dot.offline { color: #484f58; font-size: 9px; }
 
+/* Sidebar section divider: separates the aggregate group folders from the
+   per-agent folders below them. A small uppercase label, no own row chrome. */
+.mailbox-section {
+  margin: 8px 2px 3px; padding: 0 6px;
+  color: #6e7681; font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.mailbox-section:first-child { margin-top: 0; }
+
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
    the row and tag it so it reads as demoted, not a live agent. Empty-mailbox
    folders (shown only when their own toggle is on) get the same dim — their

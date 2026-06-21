@@ -20,6 +20,9 @@ import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
 } from './modal-spawn.js';
+// openMailbox brings the Messages tab forward + selects a folder; mail.js
+// doesn't import row-actions.js, so this is a one-way edge (no cycle).
+import { openMailbox } from './mail.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
 // lastSnapshot is dashboard.js's shared state, written here (rename
 // rollback) via setLastSnapshot. Deliberate benign cycles (see
@@ -1241,6 +1244,21 @@ function bindRowActions() {
             try { prefill = JSON.parse(raw); } catch (_) {}
           }
           openMessageCreateModal(prefill);
+          return;
+        }
+        case 'view-agent-messages': {
+          // Deep link from a member-row ⚙ menu: jump to the Messages tab
+          // and open this agent's mailbox folder. Read-only navigation —
+          // no daemon round-trip, no refresh.
+          openMailbox(conv);
+          return;
+        }
+        case 'view-group-messages': {
+          // Deep link from a group ⚙ menu: jump to the Messages tab and
+          // open this group's folder (all member traffic + the group's
+          // multicasts). The "group:<name>" id matches the server's
+          // groupMailboxPrefix.
+          openMailbox('group:' + group);
           return;
         }
         case 'link-new': {
