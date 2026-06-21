@@ -1356,7 +1356,7 @@
         <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
       </div>
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
+    <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
       <input id="agent-spawn-trust-dir" type="checkbox" /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)
     </label>
     <label class="cron-create-row">
@@ -1376,7 +1376,7 @@
       <span class="cron-create-label">Worktree</span>
       <select id="agent-spawn-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-wt-sync-row" title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
+    <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-wt-sync-row" title="Spawn the agent in a fresh git worktree whose branch is named after the name above. Needs a CWD inside a git repo.">
       <input id="agent-spawn-wt-sync" type="checkbox" checked /> Sync worktree branch with name
     </label>
     <label class="cron-create-row" id="agent-spawn-wt-new-row" style="display:none">
@@ -1393,6 +1393,10 @@
       bootstrapping a fresh repo — once you make the first commit, later
       worktrees branch off it normally.
     </p>
+    <!-- Divider: everything below is a per-spawn option toggle, not a form
+         field, so these checkboxes sit at the modal's left edge rather than in
+         the input column. -->
+    <div class="cron-create-sep" aria-hidden="true"></div>
     <label class="cron-create-enabled" id="agent-spawn-focus-row" title="After the agent spawns, open a terminal window attached to its tclaude session. A detached spawn has no window of its own — this lets you watch and talk to the new agent right away.">
       <input id="agent-spawn-focus" type="checkbox" checked /> Auto focus — open a terminal attached to the new agent
     </label>
