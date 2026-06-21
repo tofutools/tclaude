@@ -360,6 +360,13 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 .mail-state-unread { color: #58a6ff; }
 .mail-state-pending { color: #d29922; }
 .mail-reader-body { color: #c9d1d9; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.5; }
+/* Linkified URLs in a message body (helpers.js linkify) — the dashboard
+   has no global <a> style, so without this they'd fall back to the
+   browser's default blue, unreadable on the dark theme. Use the accent
+   blue, underline on hover, and break-anywhere so a long URL wraps inside
+   the reader instead of forcing a horizontal scroll. */
+.mail-reader-body a { color: #58a6ff; text-decoration: none; overflow-wrap: anywhere; }
+.mail-reader-body a:hover { text-decoration: underline; }
 .mail-reader-actions { margin-top: 14px; display: flex; gap: 6px; }
 .mail-reader-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 

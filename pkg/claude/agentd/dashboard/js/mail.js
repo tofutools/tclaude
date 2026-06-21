@@ -55,7 +55,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
-import { $, $$, esc, relTime, shortId, withPreservedFocus } from './helpers.js';
+import { $, $$, esc, linkify, relTime, shortId, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
@@ -907,7 +907,7 @@ function paintReader() {
         ${readerHeaderRow('Status', stateBits.join(' · '))}
       </div>
     </div>
-    <div class="mail-reader-body">${esc(m.body || '')}</div>
+    <div class="mail-reader-body">${linkify(m.body || '')}</div>
     ${actions}`;
 }
 

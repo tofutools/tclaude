@@ -17,6 +17,65 @@ function esc(s) {
 }
 function shortId(id) { return (id || '').slice(0, 8); }
 
+// linkify turns bare http(s) URLs in a plain-text string into clickable
+// <a> links and escapes everything else, so the result is safe to drop
+// straight into innerHTML. Used by the Messages-tab reader so a URL an
+// agent pasted into a message — e.g. a GitHub PR link — renders as a real
+// link instead of dead text.
+//
+// XSS-safe by construction: the non-URL runs go through esc(), and each
+// URL's href AND visible text are esc()'d too. (The URL pattern already
+// excludes <, >, ", ' and whitespace, so a matched URL can't break out of
+// the attribute; escaping is belt-and-suspenders and keeps & correct.)
+// Links open in a new tab with rel="noopener noreferrer", matching the
+// branch / PR link convention elsewhere in this module.
+//
+// Only the http:// and https:// schemes are linkified — a deliberate
+// allowlist, so a "javascript:" / "data:" string can never become a live
+// link, and bare words like "github.com" aren't falsely linked. Trailing
+// characters that belong to the surrounding prose rather than the URL are
+// peeled back out: sentence punctuation (.,;:!?'") and an unbalanced
+// closing ) or ] (the markdown "(url)" wrapper). The peel loops until
+// stable so any order — "url.", "url)", "url)." — is handled.
+function linkify(text) {
+  const s = String(text == null ? '' : text);
+  const urlRe = /https?:\/\/[^\s<>"']+/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = urlRe.exec(s)) !== null) {
+    out += esc(s.slice(last, m.index));
+    let url = m[0];
+    let trail = '';
+    for (;;) {
+      const ch = url[url.length - 1];
+      if ('.,;:!?\'"'.includes(ch)) {
+        trail = ch + trail;
+        url = url.slice(0, -1);
+        continue;
+      }
+      if (ch === ')' || ch === ']') {
+        const open = ch === ')' ? '(' : '[';
+        const opens = url.split(open).length - 1;
+        const closes = url.split(ch).length - 1;
+        if (closes > opens) {
+          trail = ch + trail;
+          url = url.slice(0, -1);
+          continue;
+        }
+      }
+      break;
+    }
+    if (url) {
+      out += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
+    }
+    out += esc(trail);
+    last = m.index + m[0].length;
+  }
+  out += esc(s.slice(last));
+  return out;
+}
+
 // syncSelectTitle mirrors a <select>'s currently-selected option text
 // into its `title` attribute. The modal form controls shrink to the
 // available width (min-width:0 in dashboard.css), so a long option label
@@ -1165,7 +1224,7 @@ function withPreservedFocus(fn) {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
+  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
