@@ -46,8 +46,8 @@ type Params struct {
 	Print       bool   `long:"print" short:"p" help:"Print the answer and exit. This is the default; pass it explicitly in scripts, or as the opposite of -i."`
 	Interactive bool   `long:"interactive" short:"i" help:"Open the full interactive session (TUI) instead of printing — when you want a back-and-forth or to let the agent ask you questions. Needs a real terminal."`
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
-	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (fast by default)."`
-	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (low by default)."`
+	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (sonnet by default)."`
+	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (medium by default)."`
 	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 }
 
@@ -141,9 +141,9 @@ func runFromCLI(p *Params, args []string) error {
 	}
 
 	// Resolve the model/effort the ask runs at, applying the precedence
-	// flag > config ask profile > fast-by-default constant (JOH-253). The
+	// flag > config ask profile > built-in default constant (JOH-253). The
 	// config file is the same ~/.tclaude/config.json the dashboard edits;
-	// a load failure degrades to the built-in fast default rather than
+	// a load failure degrades to the built-in default rather than
 	// failing the ask. runAsk stays a pure argv builder (empty = omit the
 	// flag); the defaulting lives here, in the env/config layer.
 	cfg, err := config.Load()
@@ -195,10 +195,10 @@ func printWhere(cwd string, w io.Writer) error {
 }
 
 // resolveAskDefaults applies the ask model/effort precedence — a per-call
-// flag wins, else the persisted ask profile, else the fast-by-default
+// flag wins, else the persisted ask profile, else the built-in default
 // constant — independently per field. The returned values are raw
 // strings still to be validated against the harness catalog by runAsk;
-// the config's ResolvedAskProfile supplies the fast defaults when neither
+// the config's ResolvedAskProfile supplies the built-in defaults when neither
 // a flag nor a config value is set. Kept a pure function (no I/O) so the
 // precedence is unit-testable without a config file or a terminal.
 func resolveAskDefaults(flagModel, flagEffort string, cfg *config.Config) (model, effort string) {
