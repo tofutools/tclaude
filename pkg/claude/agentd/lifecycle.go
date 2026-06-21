@@ -1220,9 +1220,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		inlineCap := spawnInlineMaxChars()
 		// Capture the inline decision from the SAME inputs (and cap) the prompt
 		// build uses, so the post-launch read-marking matches what actually went
-		// into the launch turn. spawnBriefingFitsLaunch mirrors
-		// buildSpawnLaunchPrompt's own inline-vs-pointer choice.
-		briefingInlined = spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
+		// into the launch turn. spawnBriefingFitsLaunch is ALSO true for an empty
+		// briefing — its welcome-skip meaning, where a "wait" welcome rides the
+		// seed — but an empty briefing is never inlined, so AND in a non-empty
+		// check to make briefingInlined mean strictly "a briefing exists and rode
+		// inline". (markBriefingConsumed also no-ops on msgID 0, so this is
+		// belt-and-braces — but it keeps the flag honest at the call site.)
+		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv), inlineCap)
@@ -1628,7 +1632,7 @@ func spawnInlineMaxChars() int {
 // too long to inline) is left unread, because the agent still has to open it
 // from the inbox.
 //
-// A msgID of 0 (no briefing was inserted) is a no-op. Both writes are
+// A msgID of 0 or less (no briefing was inserted) is a no-op. Both writes are
 // best-effort and only log on failure — the spawn has already succeeded.
 func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 	if msgID <= 0 {
