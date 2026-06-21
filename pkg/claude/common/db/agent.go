@@ -1658,13 +1658,22 @@ func CountAgentMessages() (int, error) {
 //   - GroupIDs: groups whose name contained the query, folded in as
 //     group_id IN (…).
 //
+// ExcludeConvs drops any row whose sender OR recipient is one of the
+// listed convs — folded in as `from_conv NOT IN (…) AND to_conv NOT IN
+// (…)`. The dashboard's "all" firehose uses it to omit retired agents'
+// traffic unless the operator opts in; a 1:1 to/from a retired agent
+// disappears, while a group broadcast (empty to_conv) survives unless
+// its own sender is retired. It is an AND constraint independent of the
+// (OR-ed) search predicate, so it narrows whatever the search matched.
+//
 // A filter with empty Text and nil id-sets matches the whole scope (the
 // unfiltered total).
 type MailboxFilter struct {
-	ForConv    string
-	Text       string
-	TitleConvs []string
-	GroupIDs   []int64
+	ForConv      string
+	Text         string
+	TitleConvs   []string
+	GroupIDs     []int64
+	ExcludeConvs []string
 }
 
 // HasSearch reports whether f carries any search predicate (free text or
@@ -1720,6 +1729,17 @@ func (f MailboxFilter) where() (string, []any) {
 		}
 		if len(ors) > 0 {
 			clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
+		}
+	}
+	if len(f.ExcludeConvs) > 0 {
+		ph := sqlPlaceholders(len(f.ExcludeConvs))
+		// AND, not OR: a row survives only when NEITHER party is excluded.
+		clauses = append(clauses, "from_conv NOT IN ("+ph+")", "to_conv NOT IN ("+ph+")")
+		for _, c := range f.ExcludeConvs {
+			args = append(args, c)
+		}
+		for _, c := range f.ExcludeConvs {
+			args = append(args, c)
 		}
 	}
 	if len(clauses) == 0 {

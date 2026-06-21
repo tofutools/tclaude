@@ -47,6 +47,7 @@ type Params struct {
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
 	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (fast by default)."`
 	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (low by default)."`
+	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 }
 
 func Cmd() *cobra.Command {
@@ -120,6 +121,12 @@ func runFromCLI(p *Params, args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
+	// --where is a read-only debug probe: report the resolved bucket and exit
+	// without reading stdin, loading config, or running a harness.
+	if p.Where {
+		return printWhere(cwd, os.Stdout)
+	}
+
 	if p.Print && p.Interactive {
 		return errors.New("--print and --interactive are mutually exclusive")
 	}
@@ -165,6 +172,33 @@ func runFromCLI(p *Params, args []string) error {
 		StdoutIsTerminal: stdoutIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+}
+
+// printWhere implements `tclaude ask --where`: it prints the bucket an ask from
+// here would land in — the resolved terminal key and which source identified
+// the terminal, the cwd, and the conversation currently mapped to that
+// (terminal, cwd) pair (or a note that the next ask starts fresh). It's purely
+// observational, so a DB lookup failure is reported inline rather than failing.
+func printWhere(cwd string, w io.Writer) error {
+	id, source := resolveTerminalID()
+	boot := bootID()
+	termKey := id + "." + boot
+
+	fmt.Fprintf(w, "term-key:  %s\n", termKey)
+	fmt.Fprintf(w, "term-id:   %s  (source: %s)\n", id, source)
+	fmt.Fprintf(w, "boot-id:   %s\n", boot)
+	fmt.Fprintf(w, "cwd:       %s\n", cwd)
+
+	thread, err := db.GetAskThread(termKey, cwd)
+	switch {
+	case err != nil:
+		fmt.Fprintf(w, "conv-id:   (lookup failed: %v)\n", err)
+	case thread == nil:
+		fmt.Fprintln(w, "conv-id:   (none yet — the next ask here starts a fresh conversation)")
+	default:
+		fmt.Fprintf(w, "conv-id:   %s  (harness: %s)\n", thread.ConvID, thread.Harness)
+	}
+	return nil
 }
 
 // resolveAskTarget resolves the harness + model + effort a FRESH `tclaude ask`
@@ -371,8 +405,16 @@ func runAsk(in askInput, aio askIO) error {
 var newFreshConvResolver = liveFreshConvResolver
 
 func liveFreshConvResolver(h *harness.Harness, cwd string) func() string {
-	before := askConvIDSet(h, cwd)
+	before, beforeErr := listAskConvs(h, cwd)
+	beforeIDs := convIDSet(before)
 	return func() string {
+		// If the "before" snapshot itself failed, we can't tell which conv is
+		// new — every pre-existing one would look new and we'd risk mapping the
+		// wrong thread. Skip the mapping instead; the next ask starts fresh,
+		// which beats resuming someone else's conversation.
+		if beforeErr != nil {
+			return ""
+		}
 		after, err := listAskConvs(h, cwd)
 		if err != nil {
 			return ""
@@ -380,7 +422,7 @@ func liveFreshConvResolver(h *harness.Harness, cwd string) func() string {
 		var newestID string
 		var newestMtime int64
 		for _, e := range after {
-			if e.SessionID == "" || before[e.SessionID] {
+			if e.SessionID == "" || beforeIDs[e.SessionID] {
 				continue
 			}
 			if newestID == "" || e.FileMtime >= newestMtime {
@@ -391,11 +433,11 @@ func liveFreshConvResolver(h *harness.Harness, cwd string) func() string {
 	}
 }
 
-// askConvIDSet is the set of conv-ids the harness already has in cwd — the
-// "before" snapshot the fresh-conv resolver diffs against.
-func askConvIDSet(h *harness.Harness, cwd string) map[string]bool {
-	set := map[string]bool{}
-	for _, e := range listConvsOrNil(h, cwd) {
+// convIDSet is the set of non-empty conv-ids in entries — the "before"
+// snapshot the fresh-conv resolver diffs the post-run listing against.
+func convIDSet(entries []convops.SessionEntry) map[string]bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
 		if e.SessionID != "" {
 			set[e.SessionID] = true
 		}
@@ -408,14 +450,6 @@ func listAskConvs(h *harness.Harness, cwd string) ([]convops.SessionEntry, error
 		return nil, nil
 	}
 	return h.Convs.ListConvs(cwd)
-}
-
-func listConvsOrNil(h *harness.Harness, cwd string) []convops.SessionEntry {
-	entries, err := listAskConvs(h, cwd)
-	if err != nil {
-		return nil
-	}
-	return entries
 }
 
 // convExists reports whether a recorded ask conversation is still on disk, so a

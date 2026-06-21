@@ -21,13 +21,17 @@ import (
 // sequence of results (one per call) so liveFreshConvResolver's before/after
 // diff can be unit-tested without real harness storage.
 type scriptedConvStore struct {
-	calls int
-	lists [][]convops.SessionEntry
+	calls    int
+	lists    [][]convops.SessionEntry
+	errOnGet int // 1-indexed call number that returns an error (0 = never)
 }
 
 func (s *scriptedConvStore) ListConvs(string) ([]convops.SessionEntry, error) {
 	i := s.calls
 	s.calls++
+	if s.errOnGet == i+1 {
+		return nil, errors.New("scan failed")
+	}
 	if i < len(s.lists) {
 		return s.lists[i], nil
 	}
@@ -71,6 +75,26 @@ func TestLiveFreshConvResolver(t *testing.T) {
 	})
 	t.Run("nil convstore yields empty", func(t *testing.T) {
 		h := &harness.Harness{Name: "x"}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("failed before-snapshot yields empty (never mis-maps a pre-existing conv)", func(t *testing.T) {
+		// The first ListConvs (the before snapshot) errors; the after listing
+		// succeeds with a conv that existed all along. Without the guard that
+		// conv would look "new" and be wrongly recorded — the resolver must
+		// instead skip the mapping.
+		store := &scriptedConvStore{
+			errOnGet: 1,
+			lists:    [][]convops.SessionEntry{nil, {{SessionID: "preexisting", FileMtime: 7}}},
+		}
+		h := &harness.Harness{Name: "codex", Convs: store}
+		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
+	})
+	t.Run("failed after-listing yields empty", func(t *testing.T) {
+		store := &scriptedConvStore{
+			errOnGet: 2,
+			lists:    [][]convops.SessionEntry{{{SessionID: "a", FileMtime: 1}}, nil},
+		}
+		h := &harness.Harness{Name: "codex", Convs: store}
 		assert.Empty(t, liveFreshConvResolver(h, "/repo/x")())
 	})
 }
