@@ -282,6 +282,14 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 	return n, nil
 }
 
+// ReincarnationHandoffSubject is the subject the reincarnate path stamps
+// on the handoff message it queues from a retiring predecessor to its live
+// successor. It is a single source of truth shared by the writer
+// (agentd.reincarnate) and the firehose filter (MailboxFilter.where), which
+// carves these rows out of the retired-agent exclusion so the handoff still
+// shows in "All agent messages" even though its sender is now retired.
+const ReincarnationHandoffSubject = "reincarnation handoff"
+
 // AgentMessage is a row in agent_messages. Body is stored inline.
 // ParentID is the message this one is a reply to, or 0 for top-of-thread.
 //
@@ -1693,11 +1701,15 @@ func GroupMessageParticipants(groupID int64) ([]string, error) {
 //     group_id IN (…).
 //
 // ExcludeConvs drops any row whose sender OR recipient is one of the
-// listed convs — folded in as `from_conv NOT IN (…) AND to_conv NOT IN
-// (…)`. The dashboard's "all" firehose uses it to omit retired agents'
-// traffic unless the operator opts in; a 1:1 to/from a retired agent
-// disappears, while a group broadcast (empty to_conv) survives unless
-// its own sender is retired. It is an AND constraint independent of the
+// listed convs — folded in as `(from_conv NOT IN (…) OR subject =
+// 'reincarnation handoff') AND to_conv NOT IN (…)`. The dashboard's "all"
+// firehose uses it to omit retired agents' traffic unless the operator opts
+// in; a 1:1 to/from a retired agent disappears, while a group broadcast
+// (empty to_conv) survives unless its own sender is retired. The lone
+// carve-out is the reincarnation handoff: its sender is the retired
+// predecessor by construction, so the sender side relaxes to "live OR a
+// handoff" to keep the live successor's birth record visible (the recipient
+// side still must be live). It is an AND constraint independent of the
 // (OR-ed) search predicate, so it narrows whatever the search matched.
 //
 // A filter with empty Text and nil id-sets matches the whole scope (the
@@ -1801,11 +1813,23 @@ func (f MailboxFilter) where() (string, []any) {
 	}
 	if len(f.ExcludeConvs) > 0 {
 		ph := sqlPlaceholders(len(f.ExcludeConvs))
-		// AND, not OR: a row survives only when NEITHER party is excluded.
-		clauses = append(clauses, "from_conv NOT IN ("+ph+")", "to_conv NOT IN ("+ph+")")
+		// AND, not OR: a row survives only when NEITHER party is excluded —
+		// with one carve-out. A reincarnation handoff is the bridge record
+		// from a retiring predecessor to its live successor, so its SENDER is
+		// always retired (and thus excluded). Dropping it would hide the
+		// successor's own birth certificate from the firehose / group folder
+		// even though those rows belong to a live agent (the per-agent folder
+		// already shows them, having no exclude). So the sender side relaxes
+		// to "live OR a handoff", while the recipient side still must be live
+		// — a handoff whose successor has itself since retired is fully
+		// historical and stays hidden, and a live→retired DM still drops.
+		clauses = append(clauses,
+			"(from_conv NOT IN ("+ph+") OR subject = ?)",
+			"to_conv NOT IN ("+ph+")")
 		for _, c := range f.ExcludeConvs {
 			args = append(args, c)
 		}
+		args = append(args, ReincarnationHandoffSubject)
 		for _, c := range f.ExcludeConvs {
 			args = append(args, c)
 		}

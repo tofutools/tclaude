@@ -1021,6 +1021,93 @@ func TestDashboardMailbox_RetiredFolderReadableDirectly(t *testing.T) {
 	assert.Len(t, p.Messages, 2)
 }
 
+// seedHandoffMailboxes models a reincarnation: carol (the retired
+// predecessor) handed off to bob (the live successor), and dave (an even
+// older, also-retired incarnation) had earlier handed off to carol. Rows:
+//
+//	alice→bob   "active only"   active↔active                    — shown
+//	carol→bob   <handoff>       retired predecessor → live succ  — shown (carve-out)
+//	carol→bob   "stale chatter" retired → live, NOT a handoff    — hidden
+//	dave→carol  <handoff>       retired → retired (both dead)    — hidden (recipient retired)
+//
+// So the default firehose holds two of the four rows: the active pair and
+// the handoff that birthed the live agent.
+func seedHandoffMailboxes(t *testing.T, f *testharness.Flow) http.Handler {
+	t.Helper()
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	f.HaveConvWithTitle(mbDave, "dave")
+	f.HaveRetiredAgent(mbCarol)
+	f.HaveRetiredAgent(mbDave)
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "active only", base)
+	mustMsg(mbCarol, mbBob, db.ReincarnationHandoffSubject, base.Add(time.Minute))
+	mustMsg(mbCarol, mbBob, "stale chatter", base.Add(2*time.Minute))
+	mustMsg(mbDave, mbCarol, db.ReincarnationHandoffSubject, base.Add(3*time.Minute))
+
+	return dashHandlerForTest(t)
+}
+
+// Scenario: a reincarnation handoff from a now-retired predecessor to its
+// live successor stays in the "all" firehose by default — it is the
+// successor's birth record, and the per-agent folder already shows it. The
+// carve-out is narrow: a retired sender's NON-handoff DM still drops, and a
+// handoff whose recipient has itself since retired (a fully-historical chain
+// link) stays hidden. Opting into retired surfaces all four rows.
+func TestDashboardMailbox_AllFirehoseKeepsReincarnationHandoff(t *testing.T) {
+	f := newFlow(t)
+	dash := seedHandoffMailboxes(t, f)
+
+	p := getMailboxPageRetired(t, dash, "all", false)
+	assert.Equal(t, 2, p.Total, "active row + the handoff to the live successor")
+	subjects := subjectsOf(p.Messages)
+	assert.Contains(t, subjects, db.ReincarnationHandoffSubject,
+		"the handoff bridging the retired predecessor to the live successor shows")
+	assert.Contains(t, subjects, "active only")
+	assert.NotContains(t, subjects, "stale chatter",
+		"a retired sender's ordinary DM still drops — the carve-out is handoff-only")
+
+	// Opting into retired restores the full set, including the dave→carol
+	// handoff between two dead incarnations.
+	pAll := getMailboxPageRetired(t, dash, "all", true)
+	assert.Equal(t, 4, pAll.Total, "every row when retired are shown")
+
+	// The live successor's own folder is unchanged by the carve-out: it
+	// shows everything addressed to it, handoff and stale chatter alike.
+	bob := getMailbox(t, dash, mbBob)
+	assert.Len(t, bob, 3, "bob sees the active row, the handoff, and the stale DM")
+}
+
+// Scenario: the same carve-out applies to a group folder, which shares the
+// exclude path with the firehose. carol (a retired ex-member) handed off to
+// bob (a live member), so the handoff is in the group's scope via bob; it
+// must survive the group folder's retired-member exclude just as it does the
+// firehose's, while carol's ordinary DM still drops.
+func TestDashboardMailbox_GroupFolderKeepsReincarnationHandoff(t *testing.T) {
+	f := newFlow(t)
+	dash := seedHandoffMailboxes(t, f)
+
+	p := getMailboxPageRetired(t, dash, "group:team", false)
+	subjects := subjectsOf(p.Messages)
+	assert.Contains(t, subjects, db.ReincarnationHandoffSubject,
+		"the handoff to the live member survives the group folder's retired exclude")
+	assert.Contains(t, subjects, "active only")
+	assert.NotContains(t, subjects, "stale chatter",
+		"the retired ex-member's ordinary DM still drops from the group folder")
+}
+
 // --- group folders ------------------------------------------------------
 //
 // A group folder ("group:<name>") is the "view this group's messages"

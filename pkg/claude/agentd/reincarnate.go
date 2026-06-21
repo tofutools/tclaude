@@ -439,7 +439,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		GroupID:  handoffGroupID,
 		FromConv: caller,
 		ToConv:   newConv,
-		Subject:  "reincarnation handoff",
+		Subject:  db.ReincarnationHandoffSubject,
 		Body:     followUp,
 	}); err != nil {
 		slog.Warn("reincarnate: insert handoff message failed", "error", err)
