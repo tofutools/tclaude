@@ -36,6 +36,10 @@ type SpawnProfile struct {
 	// AutoReview / TrustDir are launch toggles; nil = unset.
 	AutoReview *bool
 	TrustDir   *bool
+	// RemoteControl is the profile's "start with Claude Code Remote Access on"
+	// default — tri-state: nil = unset, false = off, true = on. Resolved at
+	// spawn under a group's remote-control policy, which overrides it (JOH-262).
+	RemoteControl *bool
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
 	AgentName      string // the dialog's "Name" field (the spawned agent's display name)
@@ -87,14 +91,14 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		`INSERT INTO spawn_profiles
 		   (name, harness, model, effort, sandbox, approval, auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
-		    sync_worktree, auto_focus, include_group_default_context,
+		    sync_worktree, auto_focus, include_group_default_context, remote_control,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
-		boolPtrToNull(p.IncludeGroupDefaultContext),
+		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -118,14 +122,14 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   name = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
-		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?,
+		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
-		boolPtrToNull(p.IncludeGroupDefaultContext),
+		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -200,16 +204,16 @@ func DeleteSpawnProfile(name string) (int64, error) {
 
 const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
-	sync_worktree, auto_focus, include_group_default_context, created_at, updated_at
+	sync_worktree, auto_focus, include_group_default_context, remote_control, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
-	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx sql.NullInt64
+	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl sql.NullInt64
 	var createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
-		&syncWorktree, &autoFocus, &includeCtx, &createdAt, &updatedAt); err != nil {
+		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	p.AutoReview = nullToBoolPtr(autoReview)
@@ -217,6 +221,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.SyncWorktree = nullToBoolPtr(syncWorktree)
 	p.AutoFocus = nullToBoolPtr(autoFocus)
 	p.IncludeGroupDefaultContext = nullToBoolPtr(includeCtx)
+	p.RemoteControl = nullToBoolPtr(remoteControl)
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
 	return &p, nil

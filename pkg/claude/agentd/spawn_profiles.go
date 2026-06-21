@@ -52,6 +52,10 @@ type spawnProfileJSON struct {
 	Approval   string `json:"approval,omitempty"`
 	AutoReview *bool  `json:"auto_review,omitempty"`
 	TrustDir   *bool  `json:"trust_dir,omitempty"`
+	// RemoteControl is the profile's "start with Claude Code Remote Access on"
+	// default — tri-state (null = unset, false = off, true = on). A group's
+	// remote-control policy overrides it at spawn (JOH-262).
+	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// Identity / enrollment fields (dialog-side).
 	AgentName      string `json:"agent_name,omitempty"`
@@ -79,6 +83,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Approval:                   p.Approval,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
+		RemoteControl:              p.RemoteControl,
 		AgentName:                  p.AgentName,
 		Role:                       p.Role,
 		Descr:                      p.Descr,
@@ -153,6 +158,14 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", err.Error()}
 		}
 	}
+	// A profile may default Remote Access on only for a harness that has it: a
+	// remote_control=true on a Codex profile is a 400, the same gate the spawn
+	// path applies (JOH-258/JOH-262). false / unset is always fine.
+	if body.RemoteControl != nil {
+		if _, err := harness.ResolveRemoteControl(h, *body.RemoteControl); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
+		}
+	}
 
 	// The agent_name becomes the spawned agent's display name (a /rename title
 	// at spawn) — same slash/control-char rules a template agent name follows.
@@ -184,6 +197,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Approval:                   approval,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
+		RemoteControl:              body.RemoteControl,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
 		Descr:                      strings.TrimSpace(body.Descr),

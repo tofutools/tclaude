@@ -19,6 +19,7 @@ type AgentGroup struct {
 	DefaultProfile string // name of the spawn profile whose launch fields fill blank spawn fields server-side (JOH-210); "" = none
 	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
+	RemoteControl  *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
 	CreatedAt      time.Time
 	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
 }
@@ -353,10 +354,11 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile,
-			 max_members, notify_enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			 max_members, notify_enabled, remote_control, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile,
-		src.MaxMembers, src.NotifyEnabled, time.Now().Format(time.RFC3339Nano))
+		src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
+		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
@@ -469,6 +471,26 @@ func SetAgentGroupNotifyEnabled(name string, enabled bool) (int64, error) {
 	return res.RowsAffected()
 }
 
+// SetAgentGroupRemoteControl sets the group's remote-control policy — the
+// tri-state knob that OVERRIDES a spawn profile's remote-control default
+// (JOH-262). policy is nil = inherit (clear the override, defer to the profile),
+// false = actively deny (force Remote Access off for the group's agents), true =
+// actively opt-in (force it on). Stored as a nullable INTEGER so "inherit" is a
+// real state distinct from "off". Returns the number of rows affected — 0 means
+// no group by that name, so the caller can answer 404.
+func SetAgentGroupRemoteControl(name string, policy *bool) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET remote_control = ? WHERE name = ?`,
+		boolPtrToNull(policy), name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteAgentGroup removes a group by name. Cascades to membership +
 // ownership rows (ON DELETE CASCADE in schema) and, within the same
 // transaction, rewrites the group's messages to group_id = 0 so the
@@ -512,7 +534,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -527,7 +549,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -541,7 +563,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +612,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -932,7 +954,7 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.conv_id = ?
@@ -989,7 +1011,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
@@ -2027,7 +2049,7 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 }
 
 // MarkAgentMailboxRead marks every still-unread message a conv has RECEIVED
-// (to_conv = conv, read_at == '') as read, stamping read_at=now. It backs the
+// (to_conv = conv, read_at == ”) as read, stamping read_at=now. It backs the
 // dashboard's per-agent-folder "mark all read" — the operator clearing a
 // stuck agent's whole inbox in one click. Only the received side is touched:
 // read_at on a row the conv SENT belongs to the other party, so a folder-level
@@ -2141,9 +2163,11 @@ type rowScanner interface {
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &createdAt, &archivedAt); err != nil {
+	var remoteControl sql.NullInt64
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
+	g.RemoteControl = nullToBoolPtr(remoteControl)
 	g.CreatedAt = parseTimeOrZero(createdAt)
 	g.ArchivedAt = parseTimeOrZero(archivedAt)
 	return &g, nil

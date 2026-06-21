@@ -53,6 +53,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetDescrCmd(),
 			groupsSetDefaultDirCmd(),
 			groupsSetDefaultProfileCmd(),
+			groupsSetRemoteControlCmd(),
 			groupsSetContextCmd(),
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
@@ -98,7 +99,8 @@ type groupSummary struct {
 	MaxMembers     int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
 	DefaultProfile string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
 	Archived       bool   `json:"archived,omitempty"`
-	NotifyMuted    bool   `json:"notify_muted,omitempty"` // OS notifications switched off for this group's agents
+	NotifyMuted    bool   `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
+	RemoteControl  string `json:"remote_control_policy,omitempty"` // group remote-control policy: inherit | optin | deny (JOH-262)
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -183,15 +185,15 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 // creates the group first, then spawns one fresh CC session per member
 // (via the existing `groups.spawn` daemon endpoint).
 type GroupsCreateParams struct {
-	Name        string   `pos:"true" help:"Group name"`
-	Descr       string   `long:"descr" short:"d" optional:"true" help:"Optional description"`
-	Context     string   `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
-	ContextFile string   `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
+	Name        string `pos:"true" help:"Group name"`
+	Descr       string `long:"descr" short:"d" optional:"true" help:"Optional description"`
+	Context     string `long:"context" optional:"true" help:"Shared startup context delivered to the inbox of agents spawned into this group. For multi-line context use --context-file."`
+	ContextFile string `long:"context-file" optional:"true" help:"Read the group startup context from this file (alternative to --context)."`
 	// Members is registered manually as a non-splitting StringArray in
 	// groupsCreateCmd's InitFuncCtx — see there for the boa/StringSlice why.
-	Members     []string `long:"member" optional:"true"`
-	MaxMembers  int      `long:"max-members" optional:"true" help:"Hard cap on the group's member count (0 = unlimited, the default). A spawn that would exceed it is refused. Change later with 'groups set-max-members'."`
-	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+	Members    []string `long:"member" optional:"true"`
+	MaxMembers int      `long:"max-members" optional:"true" help:"Hard cap on the group's member count (0 = unlimited, the default). A spawn that would exceed it is refused. Change later with 'groups set-max-members'."`
+	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 // memberFlagHelp documents the repeatable `--member` flag. It lives here (not
@@ -1392,6 +1394,75 @@ func runGroupsSetDefaultProfile(p *groupsSetDefaultProfileParams, stdout, stderr
 	} else {
 		fmt.Fprintf(stdout, "%s: default profile set to %s\n", resp.Group, resp.DefaultProfile)
 	}
+	return rcOK
+}
+
+// --- groups set-remote-control ---
+
+type groupsSetRemoteControlParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Policy   string `pos:"true" optional:"true" help:"Remote-control policy: 'optin' (force Claude Code Remote Access on for this group's agents), 'deny' (force it off, overriding the profile), or 'inherit' (defer to the spawn profile's default). Omit to clear the override (inherit)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetRemoteControlCmd() *cobra.Command {
+	return boa.CmdT[groupsSetRemoteControlParams]{
+		Use:   "set-remote-control",
+		Short: "Set (or clear) a group's remote-control policy",
+		Long: "Set the group's remote-control policy, which OVERRIDES a spawn profile's " +
+			"remote-control default at spawn (JOH-262): 'optin' arms Claude Code's built-in " +
+			"Remote Access for every agent spawned into the group, 'deny' force-disables it " +
+			"(even when the profile defaults it on — the 'actively deny' case), and 'inherit' " +
+			"(the default) defers to the profile. Omit <policy> to clear the override back to " +
+			"inherit. Codex agents have no Remote Access, so a force-on is silently a no-op " +
+			"for them. Gated on the `groups.rename` permission (default human-only).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetRemoteControlParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Policy).SetAlternatives([]string{"inherit", "optin", "deny"})
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetRemoteControlParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetRemoteControl(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	// Omitting the policy clears the override (inherit), mirroring the
+	// set-default-profile "omit to clear" convention. The daemon validates the
+	// token (inherit|optin|deny).
+	policy := strings.TrimSpace(p.Policy)
+	if policy == "" {
+		policy = "inherit"
+	}
+	var resp struct {
+		Group               string `json:"group"`
+		RemoteControlPolicy string `json:"remote_control_policy"`
+	}
+	body := map[string]string{"remote_control_policy": policy}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s: remote-control policy set to %s\n", resp.Group, resp.RemoteControlPolicy)
 	return rcOK
 }
 

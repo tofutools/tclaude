@@ -541,15 +541,19 @@ type snapshotPermissionsView struct {
 }
 
 type dashboardGroup struct {
-	Name           string            `json:"name"`
-	Descr          string            `json:"descr"`
-	DefaultCwd     string            `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext string            `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile string            `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	MaxMembers     int               `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
-	NotifyEnabled  bool              `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
-	Members        []dashboardMember `json:"members"`
-	Online         int               `json:"online"`
+	Name           string `json:"name"`
+	Descr          string `json:"descr"`
+	DefaultCwd     string `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
+	DefaultContext string `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultProfile string `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	MaxMembers     int    `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled  bool   `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
+	// RemoteControlPolicy is the group's remote-control policy that overrides a
+	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
+	// profile), "optin" (force Remote Access on) or "deny" (force it off).
+	RemoteControlPolicy string            `json:"remote_control_policy"`
+	Members             []dashboardMember `json:"members"`
+	Online              int               `json:"online"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -954,7 +958,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Members: []dashboardMember{}}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.

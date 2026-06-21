@@ -95,9 +95,8 @@ func TestMigrateV64toV65_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v64 test —
-	// the next migration's author moves it into their own v66 test.
-	require.Equal(t, 65, currentVersion, "currentVersion is 65")
+	// The literal currentVersion tripwire moved forward into the v66 test
+	// (TestMigrateV65toV66_FreshSchema) when JOH-262 added v66.
 
 	var haveCol int
 	require.NoError(t, d.QueryRow(
