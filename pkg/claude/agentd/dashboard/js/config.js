@@ -59,17 +59,33 @@ function fillAskSelect(sel, values) {
 async function populateAskProfileSelect(selected) {
   const sel = $('#ask-profile');
   if (!sel) return;
+  const selectedName = (selected || '').trim();
+
+  // Seed the selection SYNCHRONOUSLY before the async list load, so a Save that
+  // races ahead of loadProfiles() still reads the real profile name off
+  // #ask-profile rather than an empty value (which assembleConfig would persist
+  // as "delete ask.profile", silently clearing a saved profile).
+  sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>';
+  if (selectedName) {
+    const pending = document.createElement('option');
+    pending.value = selectedName;
+    pending.textContent = `${selectedName} (loading…)`;
+    sel.appendChild(pending);
+  }
+  sel.value = selectedName;
+  applyAskProfileState();
+
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
   sel.innerHTML = '<option value="">(none — use Model/Effort below)</option>' +
     profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
-  if (selected && !profiles.some(p => p.name === selected)) {
+  if (selectedName && !profiles.some(p => p.name === selectedName)) {
     const o = document.createElement('option');
-    o.value = selected;
-    o.textContent = `${selected} (missing)`;
+    o.value = selectedName;
+    o.textContent = `${selectedName} (missing)`;
     sel.appendChild(o);
   }
-  sel.value = selected || '';
+  sel.value = selectedName;
   applyAskProfileState();
 }
 
