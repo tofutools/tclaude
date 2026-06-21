@@ -31,16 +31,17 @@ const (
 
 // mailboxEntry mirrors the dashboardMailbox wire shape.
 type mailboxEntry struct {
-	ID     string   `json:"id"`
-	Kind   string   `json:"kind"`
-	Title  string   `json:"title"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups"`
-	In     int      `json:"in"`
-	Out    int      `json:"out"`
-	Total  int      `json:"total"`
-	Unread int      `json:"unread"`
-	LastAt string   `json:"last_at"`
+	ID      string   `json:"id"`
+	Kind    string   `json:"kind"`
+	Title   string   `json:"title"`
+	Online  bool     `json:"online"`
+	Retired bool     `json:"retired"`
+	Groups  []string `json:"groups"`
+	In      int      `json:"in"`
+	Out     int      `json:"out"`
+	Total   int      `json:"total"`
+	Unread  int      `json:"unread"`
+	LastAt  string   `json:"last_at"`
 }
 
 // mailboxMsg mirrors the mailboxMessage wire shape (subset the tests
@@ -873,4 +874,140 @@ func TestDashboardMailboxDelete_BatchedSequentialCalls(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &resp)
 	assert.Equal(t, 0, resp.Deleted, "already-deleted ids delete nothing on retry")
+}
+
+// --- retired-agent filtering --------------------------------------------
+//
+// The Messages tab hides retired agents from the sidebar — and drops their
+// traffic from the "all" firehose — unless the operator ticks "show retired
+// agents" (the include_retired param). These tests pin both halves through
+// the real handlers, plus the escape hatches: opening a retired folder
+// directly still works, and the roster's "all" badge tracks the same scope
+// the firehose serves.
+
+// seedRetiredMailboxes stands up two active agents (alice, bob) and one
+// retired agent (carol), with three messages: alice→bob (both active),
+// alice→carol and carol→alice (each touches the retired agent). So one row
+// survives the default filter and two are hidden.
+func seedRetiredMailboxes(t *testing.T, f *testharness.Flow) http.Handler {
+	t.Helper()
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	f.HaveRetiredAgent(mbCarol)
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "active only", base)
+	mustMsg(mbAlice, mbCarol, "to retired", base.Add(time.Minute))
+	mustMsg(mbCarol, mbAlice, "from retired", base.Add(2*time.Minute))
+
+	return dashHandlerForTest(t)
+}
+
+// getMailboxesOpt fetches the roster, optionally opting into retired agents.
+func getMailboxesOpt(t *testing.T, dash http.Handler, includeRetired bool) []mailboxEntry {
+	t.Helper()
+	url := "/api/mailboxes"
+	if includeRetired {
+		url += "?include_retired=1"
+	}
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, url, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var payload struct {
+		Mailboxes []mailboxEntry `json:"mailboxes"`
+	}
+	testharness.DecodeJSON(t, rec, &payload)
+	return payload.Mailboxes
+}
+
+// getMailboxPageRetired fetches one folder page, optionally opting into
+// retired agents. Twin of getMailboxPage but for the include_retired flag.
+func getMailboxPageRetired(t *testing.T, dash http.Handler, id string, includeRetired bool) mailboxPageResp {
+	t.Helper()
+	params := url.Values{}
+	params.Set("id", id)
+	if includeRetired {
+		params.Set("include_retired", "1")
+	}
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?"+params.Encode(), nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var p mailboxPageResp
+	testharness.DecodeJSON(t, rec, &p)
+	return p
+}
+
+// Scenario: by default the roster omits a retired agent's folder, keeps the
+// active agents, and the "all" badge counts only non-retired traffic.
+func TestDashboardMailboxes_HidesRetiredAgentsByDefault(t *testing.T) {
+	f := newFlow(t)
+	dash := seedRetiredMailboxes(t, f)
+
+	boxes := getMailboxesOpt(t, dash, false)
+	assert.Nil(t, findMailbox(boxes, mbCarol), "retired agent's folder is hidden by default")
+	require.NotNil(t, findMailbox(boxes, mbAlice), "active agent stays listed")
+	require.NotNil(t, findMailbox(boxes, mbBob), "active agent stays listed")
+
+	all := findMailbox(boxes, "all")
+	require.NotNil(t, all)
+	assert.Equal(t, 1, all.Total, "the all badge counts only the active↔active row")
+}
+
+// Scenario: with include_retired the retired folder appears, flagged
+// Retired, and the "all" badge counts every row again.
+func TestDashboardMailboxes_ShowsRetiredAgentsWhenOptedIn(t *testing.T) {
+	f := newFlow(t)
+	dash := seedRetiredMailboxes(t, f)
+
+	boxes := getMailboxesOpt(t, dash, true)
+	carol := findMailbox(boxes, mbCarol)
+	require.NotNil(t, carol, "retired folder appears with include_retired")
+	assert.True(t, carol.Retired, "and is flagged retired")
+	assert.Equal(t, "carol", carol.Title)
+
+	alice := findMailbox(boxes, mbAlice)
+	require.NotNil(t, alice)
+	assert.False(t, alice.Retired, "an active agent is never flagged retired")
+
+	all := findMailbox(boxes, "all")
+	require.NotNil(t, all)
+	assert.Equal(t, 3, all.Total, "the all badge counts every row when retired are shown")
+}
+
+// Scenario: the "all" firehose drops rows touching a retired agent by
+// default (page + total), and serves the full set with include_retired.
+func TestDashboardMailbox_AllFirehoseExcludesRetiredByDefault(t *testing.T) {
+	f := newFlow(t)
+	dash := seedRetiredMailboxes(t, f)
+
+	p := getMailboxPageRetired(t, dash, "all", false)
+	assert.Equal(t, 1, p.Total, "only the active↔active row is in scope")
+	require.Len(t, p.Messages, 1)
+	assert.Equal(t, "active only", p.Messages[0].Subject)
+
+	p = getMailboxPageRetired(t, dash, "all", true)
+	assert.Equal(t, 3, p.Total, "every row when opted in")
+	assert.Len(t, p.Messages, 3)
+}
+
+// Scenario: opening a retired agent's folder directly still returns all of
+// its mail — the exclude is firehose-only, so the operator who ticked "show
+// retired" and clicked the folder sees everything in it.
+func TestDashboardMailbox_RetiredFolderReadableDirectly(t *testing.T) {
+	f := newFlow(t)
+	dash := seedRetiredMailboxes(t, f)
+
+	p := getMailboxPageRetired(t, dash, mbCarol, false)
+	assert.Equal(t, 2, p.Total, "carol's two messages (to + from) regardless of include_retired")
+	assert.Len(t, p.Messages, 2)
 }

@@ -75,6 +75,40 @@ const (
 	allMailboxID   = "all"
 )
 
+// mailboxIncludeRetired reports whether the request opted into retired
+// agents (the Messages-tab "show retired agents" toggle). Default off:
+// the roster hides retired-agent folders and the "all" firehose omits
+// their traffic until the operator ticks the box.
+func mailboxIncludeRetired(r *http.Request) bool {
+	switch r.URL.Query().Get("include_retired") {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// retiredAgentConvs returns the set of conv-ids whose agent enrollment
+// has been retired, both as a membership set (for the roster's skip /
+// mark decision) and as a slice (for MailboxFilter.ExcludeConvs). A nil
+// error with empty results is the common case (no retired agents).
+func retiredAgentConvs() (map[string]struct{}, []string, error) {
+	rows, err := db.ListRetiredAgents()
+	if err != nil {
+		return nil, nil, err
+	}
+	set := make(map[string]struct{}, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		if e.ConvID == "" {
+			continue
+		}
+		set[e.ConvID] = struct{}{}
+		ids = append(ids, e.ConvID)
+	}
+	return set, ids, nil
+}
+
 func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mailboxes", handleDashboardMailboxes)
 	mux.HandleFunc("/api/mailbox", handleDashboardMailbox)
@@ -84,18 +118,22 @@ func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 }
 
 // dashboardMailbox is one sidebar entry. Kind is "human" or "agent".
+// Retired marks an agent folder whose enrollment has been retired — the
+// roster only carries these when the operator opted in (include_retired),
+// so the frontend can flag them visually.
 type dashboardMailbox struct {
-	ID     string   `json:"id"`
-	Kind   string   `json:"kind"`
-	Title  string   `json:"title"`
-	Short  string   `json:"short,omitempty"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups,omitempty"`
-	In     int      `json:"in"`
-	Out    int      `json:"out"`
-	Total  int      `json:"total"`
-	Unread int      `json:"unread"`
-	LastAt string   `json:"last_at,omitempty"`
+	ID      string   `json:"id"`
+	Kind    string   `json:"kind"`
+	Title   string   `json:"title"`
+	Short   string   `json:"short,omitempty"`
+	Online  bool     `json:"online"`
+	Retired bool     `json:"retired,omitempty"`
+	Groups  []string `json:"groups,omitempty"`
+	In      int      `json:"in"`
+	Out     int      `json:"out"`
+	Total   int      `json:"total"`
+	Unread  int      `json:"unread"`
+	LastAt  string   `json:"last_at,omitempty"`
 }
 
 // handleDashboardMailboxes serves GET /api/mailboxes — the sidebar
@@ -106,6 +144,13 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	includeRetired := mailboxIncludeRetired(r)
+	retiredSet, retiredIDs, err := retiredAgentConvs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
 
@@ -138,8 +183,15 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// operator can read traffic across convs in one place. Its total is
 	// the distinct row count (not the In+Out sum the per-conv tallies
 	// produce). Unread is left 0: "unread" is a per-recipient notion that
-	// has no meaning for an aggregate view.
-	allTotal, _ := db.CountAgentMessages()
+	// has no meaning for an aggregate view. When retired agents are hidden
+	// the count must match the filtered firehose, so it counts the same
+	// excluded scope rather than the raw row total.
+	allTotal := 0
+	if includeRetired || len(retiredIDs) == 0 {
+		allTotal, _ = db.CountAgentMessages()
+	} else {
+		allTotal, _ = db.CountMailbox(db.MailboxFilter{ExcludeConvs: retiredIDs})
+	}
 	mailboxes = append(mailboxes, dashboardMailbox{
 		ID:    allMailboxID,
 		Kind:  "all",
@@ -161,22 +213,29 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	})
 
 	for conv := range convSet {
+		_, retired := retiredSet[conv]
+		// Retired agents are hidden unless the operator opted in; when
+		// shown they carry the Retired flag so the frontend can mark them.
+		if retired && !includeRetired {
+			continue
+		}
 		c := counts[conv]
 		title := agent.CachedTitle(conv)
 		if title == agent.UnknownTitle {
 			title = ""
 		}
 		mb := dashboardMailbox{
-			ID:     conv,
-			Kind:   "agent",
-			Title:  title,
-			Short:  agent.ShortID(conv),
-			Online: isConvOnlineIn(conv, aliveSessions),
-			Groups: groupsByConv[conv],
-			In:     c.In,
-			Out:    c.Out,
-			Total:  c.In + c.Out,
-			Unread: c.Unread,
+			ID:      conv,
+			Kind:    "agent",
+			Title:   title,
+			Short:   agent.ShortID(conv),
+			Online:  isConvOnlineIn(conv, aliveSessions),
+			Retired: retired,
+			Groups:  groupsByConv[conv],
+			In:      c.In,
+			Out:     c.Out,
+			Total:   c.In + c.Out,
+			Unread:  c.Unread,
 		}
 		if !c.Last.IsZero() {
 			mb.LastAt = c.Last.Format(time.RFC3339)
@@ -320,7 +379,16 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if id == allMailboxID {
-		p, err := agentMailboxPage("", q, page, pageSize)
+		// The firehose drops retired agents' traffic unless the operator
+		// opted in. A specific agent folder (below) never excludes — the
+		// operator opened it on purpose, so they see all of its mail.
+		var exclude []string
+		if !mailboxIncludeRetired(r) {
+			if _, ids, err := retiredAgentConvs(); err == nil {
+				exclude = ids
+			}
+		}
+		p, err := agentMailboxPage("", q, page, pageSize, exclude)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -333,7 +401,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := agentMailboxPage(id, q, page, pageSize)
+	p, err := agentMailboxPage(id, q, page, pageSize, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -507,11 +575,14 @@ func directionFor(forConv string, m *db.AgentMessage) string {
 // the "all" firehose when forConv == ""), server-filtered by q. The scope
 // predicate `(to_conv = ? OR from_conv = ?)` returns each row once, so the
 // self-addressed row that the old two-query merge had to dedup is handled
-// for free. Counts: total = rows matching q, totalUnfiltered = rows in
-// the folder regardless of q (cheap when q is empty — the two queries are
-// identical, so we run a single count).
-func agentMailboxPage(forConv, q string, page, pageSize int) (mailboxPage, error) {
-	scope := db.MailboxFilter{ForConv: forConv}
+// for free. excludeConvs drops rows touching those convs (the "all"
+// firehose passes retired agents here when the operator hasn't opted in;
+// a specific folder passes nil). Counts: total = rows matching q within
+// that scope, totalUnfiltered = rows in the (still exclude-scoped) folder
+// regardless of q — so the pager and the search count both reflect the
+// same hidden-retired view.
+func agentMailboxPage(forConv, q string, page, pageSize int, excludeConvs []string) (mailboxPage, error) {
+	scope := db.MailboxFilter{ForConv: forConv, ExcludeConvs: excludeConvs}
 	totalUnfiltered, err := db.CountMailbox(scope)
 	if err != nil {
 		return mailboxPage{}, err
