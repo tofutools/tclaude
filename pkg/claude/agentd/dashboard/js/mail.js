@@ -195,9 +195,11 @@ async function loadMessages() {
     page: String(mail.page),
     page_size: String(mail.pageSize),
   });
-  // Only the "all" firehose honours include_retired server-side; sending
-  // it for a specific folder is harmless (a retired folder the operator
-  // opened explicitly still shows all of its mail).
+  // The "all" firehose and group folders honour include_retired
+  // server-side — a group folder hides retired members' traffic by
+  // default, like the firehose. Sending it for a specific agent folder is
+  // harmless (a retired folder the operator opened explicitly still shows
+  // all of its mail).
   if (mail.showRetired) params.set('include_retired', '1');
   try {
     const r = await fetch(`/api/mailbox?${params.toString()}`,

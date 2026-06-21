@@ -1189,6 +1189,94 @@ func TestDashboardMailboxes_ArchivedGroupHasNoFolder(t *testing.T) {
 	assert.Equal(t, 4, p.Total, "but the archived group's folder is still readable by id")
 }
 
+// --- group folders + retired filtering ----------------------------------
+//
+// A group folder hides retired members' traffic by default — exactly the
+// exclude the "all" firehose applies — and reveals it with include_retired.
+// These tests pin both the folder page and the roster badge through the
+// real handlers.
+
+// seedGroupMailboxRetired stands up group "team" with current members
+// alice + bob and a retired carol (never a member), then four messages
+// spanning the retired-exclude edges:
+//
+//	alice→bob     member↔member          — in scope, neither retired   → kept
+//	bob→team      member's channel post  — in scope via group_id       → kept
+//	alice→carol   member→retired DM      — in scope (alice is member)   → hidden
+//	carol→team    retired sender's post  — in scope via group_id        → hidden
+//
+// So the scope holds two rows by default and all four with include_retired.
+// The two hidden rows mirror the all-firehose exclude: a member's DM to a
+// retired agent drops on the recipient side, a channel multicast drops only
+// when its own sender is retired (the member's broadcast survives).
+func seedGroupMailboxRetired(t *testing.T, f *testharness.Flow) (http.Handler, *db.AgentGroup) {
+	t.Helper()
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	f.HaveRetiredAgent(mbCarol)
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "active dm", base)
+	mustMsg(mbBob, "", "member broadcast", base.Add(time.Minute))
+	mustMsg(mbAlice, mbCarol, "member to retired", base.Add(2*time.Minute))
+	mustMsg(mbCarol, "", "retired broadcast", base.Add(3*time.Minute))
+
+	return dashHandlerForTest(t), g
+}
+
+// Scenario: a group folder drops rows touching a retired agent by default
+// (page + total), and serves the full set with include_retired.
+func TestDashboardMailbox_GroupFolderExcludesRetiredByDefault(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailboxRetired(t, f)
+
+	p := getMailboxPageRetired(t, dash, "group:team", false)
+	assert.Equal(t, "group", p.Kind)
+	assert.Equal(t, 2, p.Total, "retired-touching rows are hidden by default")
+	assert.Equal(t, 2, p.TotalUnfiltered)
+	require.Len(t, p.Messages, 2)
+	subjects := map[string]bool{}
+	for _, m := range p.Messages {
+		subjects[m.Subject] = true
+	}
+	assert.True(t, subjects["active dm"], "member↔member DM survives")
+	assert.True(t, subjects["member broadcast"], "a current member's channel post survives")
+	assert.False(t, subjects["member to retired"], "a member's DM to a retired agent is hidden")
+	assert.False(t, subjects["retired broadcast"], "a retired sender's channel post is hidden")
+
+	p = getMailboxPageRetired(t, dash, "group:team", true)
+	assert.Equal(t, 4, p.Total, "every row when opted in")
+	assert.Len(t, p.Messages, 4)
+}
+
+// Scenario: the roster's group badge tracks the same exclude scope the
+// folder serves — two by default, four with include_retired — so the badge
+// never disagrees with the folder it labels.
+func TestDashboardMailboxes_GroupBadgeExcludesRetiredByDefault(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailboxRetired(t, f)
+
+	grp := findMailbox(getMailboxesOpt(t, dash, false), "group:team")
+	require.NotNil(t, grp)
+	assert.Equal(t, 2, grp.Total, "the group badge counts only non-retired traffic by default")
+	assert.Equal(t, 2, grp.Members, "alice + bob are the current members")
+
+	grp = findMailbox(getMailboxesOpt(t, dash, true), "group:team")
+	require.NotNil(t, grp)
+	assert.Equal(t, 4, grp.Total, "the group badge counts every row with include_retired")
+}
+
 // --- empty-mailbox filtering --------------------------------------------
 //
 // The Messages tab hides agents whose mailbox is empty — never sent or
