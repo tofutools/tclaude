@@ -221,21 +221,35 @@ func resumeOneConv(convID string) memberOpResult {
 		res.Detail = "no resumable session metadata for this agent (no sessions row, conversation index row, or harness-native conversation); delete/recreate the orphaned agent or restore it from a real conversation"
 		return res
 	}
+	// Re-arm Remote Access if the conv's own persisted best-known state was on
+	// (JOH-261). Read BEFORE relaunch: resume keeps the conv-id but mints a NEW
+	// session row defaulting remote_control=0, so the freshest row reads OFF the
+	// moment the new pane reports in — the armed flag lives on the old/dead row,
+	// which is still the most-recent until then.
+	remoteControl := remoteControlForRelaunch(convID, harnessName)
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:   convID,
-		Cwd:      cwd,
-		Effort:   effort,
-		Model:    model,
-		Harness:  harnessName,
-		Sandbox:  sandboxForHarness(harnessName),
-		Approval: approvalForHarness(harnessName),
+		ConvID:        convID,
+		Cwd:           cwd,
+		Effort:        effort,
+		Model:         model,
+		Harness:       harnessName,
+		Sandbox:       sandboxForHarness(harnessName),
+		Approval:      approvalForHarness(harnessName),
+		RemoteControl: remoteControl,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 	} else {
 		res.Action = "resumed"
+		// Tag the fresh row's best-known state ON once it comes online. The
+		// --remote-control launch flag (threaded above) already re-armed CC;
+		// this only re-records tclaude's best-known state. Backgrounded so the
+		// bulk groups-resume loop isn't serialised on the online-wait.
+		if remoteControl {
+			goBackground(func() { armRemoteControlAfterResume(convID) })
+		}
 	}
 	return res
 }
@@ -552,6 +566,50 @@ func pickAliveSession(convID string) *db.SessionRow {
 		}
 	}
 	return nil
+}
+
+// armRemoteControlOnNewRow tags a freshly-relaunched session row's best-known
+// remote-control state ON, out-of-band (db.SetSessionRemoteControl) — the same
+// discipline executeSpawn uses after a --remote-control spawn (JOH-258): a
+// targeted UPDATE the hook callback's SaveSession UPSERT never writes, so a
+// status tick can't clobber it. label is the NEW row's tclaude session id; the
+// --remote-control launch flag already armed Claude Code's Remote Access, so a
+// write failure here is only a best-known-state drift the human can re-toggle —
+// logged, never fatal, never a broken relaunch. See JOH-261.
+func armRemoteControlOnNewRow(label string) {
+	if err := db.SetSessionRemoteControl(label, true); err != nil {
+		slog.Warn("relaunch: failed to arm remote-control on new session row",
+			"label", label, "error", err)
+	}
+}
+
+// armRemoteControlAfterResume waits for a resumed pane's FRESH session row to
+// come online, then tags its best-known remote-control state ON. Resume mints a
+// new session row (new label) for the SAME conv-id, so its remote_control
+// defaults to 0 even when the source was armed; without this re-tag the
+// dashboard indicator + the toggle's direction logic would read OFF after every
+// resume, even though the --remote-control launch flag already re-armed CC's
+// Remote Access.
+//
+// Unlike reincarnate / clone — whose handlers already poll for the new row
+// synchronously, so they tag inline — resume is fire-and-forget with no known
+// label, so this runs in the background (goBackground) and the bulk
+// groups-resume loop is never serialised on each member's online-wait.
+//
+// pickAliveSession is unambiguous here: resumeOneConv only relaunches a conv
+// that is OFFLINE (it gates on !isConvOnline), so the resumed pane is the only
+// ALIVE row for the conv-id — the dead predecessor row is skipped. See JOH-261.
+func armRemoteControlAfterResume(convID string) {
+	deadline := time.Now().Add(reincarnateSpawnTimeout)
+	for time.Now().Before(deadline) {
+		if s := pickAliveSession(convID); s != nil {
+			armRemoteControlOnNewRow(s.ID)
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	slog.Warn("resume: remote-control re-arm timed out; resumed pane never came online",
+		"conv", convID)
 }
 
 // handleGroupSpawn starts a fresh CC session and registers it in
@@ -2179,6 +2237,13 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendAutoReviewFlag(args, a.AutoReview)
+	// Re-arm Claude Code's built-in Remote Access on the relaunched pane when
+	// the SOURCE conv was armed (JOH-261). claudeSpawner.BuildCommand emits
+	// `--remote-control` LAST on the resume (--resume) path too, so its optional
+	// [name] stays empty and the flag is unambiguous. Omitted when false; a
+	// non-CC harness never sets it (remoteControlForRelaunch gates on the
+	// harness capability), so the forked `session new -r` never rejects it.
+	args = appendRemoteControlFlag(args, a.RemoteControl)
 	return args
 }
 

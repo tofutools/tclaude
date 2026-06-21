@@ -112,6 +112,36 @@ func approvalForHarness(name string) string {
 	return ""
 }
 
+// remoteControlForRelaunch resolves whether a relaunch (resume / reincarnate /
+// clone) should re-arm Claude Code's built-in Remote Access on the new pane,
+// carried from the SOURCE conversation's persisted best-known state (JOH-256).
+// Unlike sandboxForHarness / approvalForHarness — which re-default a launch
+// property the harness owns — remote-control IS persisted per-conv, so this
+// carries the source's actual flag rather than a harness default: an agent the
+// operator armed for phone access must survive the handoff, the operator-decided
+// carry-over semantics for all three paths (JOH-261).
+//
+// True only when the source was armed AND the harness can honour it. The
+// persisted flag is itself the gate — only a Claude Code conv can ever record
+// remote_control=1, since the toggle/spawn that set it is gated on
+// CanRemoteControl — so a Codex source is false by construction; the explicit
+// capability check is defence in depth so a stale flag could never thread
+// `--remote-control` onto a harness that would reject it. A lookup error
+// degrades to false (no re-arm), logged, never fatal.
+func remoteControlForRelaunch(sourceConv, harnessName string) bool {
+	on, err := db.RemoteControlForConv(sourceConv)
+	if err != nil {
+		slog.Warn("relaunch: remote-control lookup failed; not re-arming",
+			"conv", sourceConv, "error", err)
+		return false
+	}
+	if !on {
+		return false
+	}
+	h, _ := harness.Resolve(strings.TrimSpace(harnessName))
+	return h.CanRemoteControl()
+}
+
 // deliverRename renames a conversation the way its harness dictates and
 // reports whether delivery succeeded. A harness with an in-pane rename
 // command (Claude Code's /rename) gets it injected into the live pane; one

@@ -300,6 +300,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// with no --model, claude's own default — the historical behaviour.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
 	label := generateSpawnLabel()
+	// Carry the predecessor's armed Remote Access to the successor (JOH-261):
+	// a reincarnation is a directed handoff of the same identity, so an agent
+	// the operator armed for phone access stays phone-reachable across it.
+	// False (and so omitted) for an unarmed source or a Codex predecessor.
+	remoteControl := remoteControlForRelaunch(target, oldSess.Harness)
 	// Reincarnate under the same harness the predecessor ran on — a Codex
 	// agent must come back as Codex, not Claude Code. oldSess.Harness is ""
 	// for an untagged/claude row, which omits the flag (the default).
@@ -308,13 +313,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		Label:    label,
-		Cwd:      cwd,
-		Effort:   effort,
-		Model:    model,
-		Harness:  oldSess.Harness,
-		Sandbox:  sandboxForHarness(oldSess.Harness),
-		Approval: approvalForHarness(oldSess.Harness),
+		Label:         label,
+		Cwd:           cwd,
+		Effort:        effort,
+		Model:         model,
+		Harness:       oldSess.Harness,
+		Sandbox:       sandboxForHarness(oldSess.Harness),
+		Approval:      approvalForHarness(oldSess.Harness),
+		RemoteControl: remoteControl,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
@@ -342,6 +348,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 				reincarnateSpawnTimeout.String()+
 				" — the session may still come up; check `tclaude session attach "+label+"`")
 		return
+	}
+	// Tag the successor row's best-known remote-control state ON (JOH-261). The
+	// --remote-control launch flag already armed the new pane's Remote Access;
+	// this records tclaude's best-known state so the dashboard indicator + the
+	// toggle direction start armed. The row exists (the poll above read it), so
+	// the out-of-band UPDATE lands; keyed by the daemon-chosen label.
+	if remoteControl {
+		armRemoteControlOnNewRow(label)
 	}
 
 	// 4. Migrate identity old → new — group memberships, ownerships,
