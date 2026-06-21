@@ -154,6 +154,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// Remote (mTLS + passphrase) requests are authenticated at the remote
+	// listener's boundary; serve the page directly without the loopback
+	// init-token / cookie exchange (which is the loopback path's concern).
+	if dashboardPreAuthed(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(dashboardIndexHTML)
+		return
+	}
 	if dashboardSessionToken == "" {
 		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
 		return
@@ -286,6 +295,14 @@ func autoLaunchDashboard(slop bool) {
 // /api/* call when the dashboard token isn't set (cryptographic
 // randomness failed at startup).
 func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
+	// The remote (mTLS + passphrase) listener authenticates at its own
+	// boundary (remoteAuthMiddleware) and tags the request; such requests
+	// have already cleared a STRONGER bar than the loopback cookie, so accept
+	// them without the loopback cookie/Origin checks (which pin to the
+	// loopback base URL and would never match a remote origin).
+	if dashboardPreAuthed(r) {
+		return true
+	}
 	ok, code, msg := dashboardAuthResult(r)
 	if !ok {
 		http.Error(w, msg, code)
