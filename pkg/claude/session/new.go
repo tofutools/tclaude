@@ -99,6 +99,16 @@ type NewParams struct {
 	// atomic + idempotent (harness.EnsureCodexDirTrusted).
 	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory for Codex by writing [projects.\"<cwd>\"] trust_level=\"trusted\" into ~/.codex/config.toml, so a detached pane doesn't freeze on the trust-folder modal. Off by default; edits your Codex config, so opt-in only. Not applicable to claude"`
 
+	// RemoteControl arms Claude Code's built-in Remote Access at launch
+	// (`claude --remote-control`), so the session is reachable from
+	// claude.ai/code + the Claude mobile app from its first turn (JOH-258). Off
+	// by default. Gated on the harness having Remote Access (Claude Code); set
+	// for Codex is an error. The daemon spawn path sets it from the dashboard /
+	// `agent spawn` opt-in; a direct human `session new` may set it too. Needs
+	// the operator logged into claude.ai (OAuth) for the session to actually
+	// pair — outside tclaude's control.
+	RemoteControl bool `long:"remote-control" help:"Start with Claude Code Remote Access ON (claude --remote-control), so the session is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -338,6 +348,17 @@ func runNew(params *NewParams) error {
 		return err
 	}
 
+	// Gate --remote-control: arming built-in Remote Access at launch is a
+	// Claude Code feature (the --remote-control flag), so setting it for a
+	// harness without Remote Access (Codex) errors here. Off unless opted into,
+	// so one ResolveRemoteControl serves both this direct path and the daemon
+	// path. See JOH-258.
+	remoteControl, err := harness.ResolveRemoteControl(h, params.RemoteControl)
+	if err != nil {
+		return err
+	}
+	params.RemoteControl = remoteControl
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -523,6 +544,7 @@ func runNew(params *NewParams) error {
 		PermissionProfile: params.PermissionProfile,
 		ApprovalPolicy:    approvalPolicy,
 		AutoReview:        autoReview,
+		RemoteControl:     remoteControl,
 		InitialPrompt:     params.InitialPrompt,
 	})
 

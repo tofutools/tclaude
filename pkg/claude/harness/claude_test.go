@@ -63,6 +63,62 @@ func TestClaudeSpawner_Model(t *testing.T) {
 	}
 }
 
+// TestClaudeSpawner_RemoteControl pins the JOH-258 launch flag: an unset
+// RemoteControl omits --remote-control entirely; a set one emits it LAST, after
+// the trailing positional [prompt]. The ordering is load-bearing: `claude
+// --remote-control` takes an OPTIONAL [name], which commander fills from the
+// NEXT token unless it starts with '-'. Emitting the flag last means nothing
+// follows it, so its [name] is always empty and the positional prompt is never
+// swallowed — on every path, including the direct CLI where no other flag
+// happens to separate the flag from a bare prompt.
+func TestClaudeSpawner_RemoteControl(t *testing.T) {
+	// Unset → no --remote-control anywhere in the command.
+	plain := claudeSpawner{}.BuildCommand(SpawnSpec{
+		SessionID:     "11111111-1111-1111-1111-111111111111",
+		InitialPrompt: "hello world",
+	})
+	if strings.Contains(plain, "--remote-control") {
+		t.Fatalf("unset RemoteControl must omit --remote-control, got %q", plain)
+	}
+
+	// Set on a fresh launch → present, emitted LAST (after the prompt), with
+	// nothing after it that its optional [name] could consume.
+	got := claudeSpawner{}.BuildCommand(SpawnSpec{
+		RemoteControl: true,
+		SessionID:     "11111111-1111-1111-1111-111111111111",
+		InitialPrompt: "hello world",
+	})
+	if !strings.HasSuffix(got, " --remote-control") {
+		t.Fatalf("--remote-control must be emitted last (nothing after it), got %q", got)
+	}
+	rcIdx := strings.Index(got, "--remote-control")
+	promptIdx := strings.Index(got, "hello world")
+	if rcIdx < promptIdx {
+		t.Fatalf("--remote-control must come AFTER the positional prompt, got %q", got)
+	}
+
+	// The previously-broken direct-CLI case: --remote-control + a bare prompt and
+	// NO other flag to separate them. Emitting last keeps the prompt the trailing
+	// positional (quoted) with --remote-control after it, so the prompt is never
+	// consumed as the flag's [name].
+	bare := claudeSpawner{}.BuildCommand(SpawnSpec{RemoteControl: true, InitialPrompt: "do X"})
+	if !strings.HasSuffix(bare, "--remote-control") {
+		t.Fatalf("--remote-control must trail even a bare prompt, got %q", bare)
+	}
+	if !strings.Contains(bare, "'do X'") && !strings.Contains(bare, `"do X"`) {
+		t.Fatalf("the prompt must survive as a quoted positional, not be eaten as the flag's [name], got %q", bare)
+	}
+	if strings.Index(bare, "do X") > strings.Index(bare, "--remote-control") {
+		t.Fatalf("the prompt must precede --remote-control, got %q", bare)
+	}
+
+	// On a resume (no launch prompt) it still trails, after --resume.
+	res := claudeSpawner{}.BuildCommand(SpawnSpec{RemoteControl: true, ResumeID: "conv-9"})
+	if !strings.Contains(res, "--resume conv-9") || !strings.HasSuffix(res, " --remote-control") {
+		t.Fatalf("on resume, --remote-control must trail after --resume, got %q", res)
+	}
+}
+
 // TestClaudeSpawner_Effort is the acceptance check for the regular
 // `tclaude session new` surface: an unset effort must NOT add --effort to
 // the claude invocation (claude keeps its own default), and an explicit

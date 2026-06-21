@@ -191,6 +191,16 @@ function applySpawnHarness(harnessName) {
   $('#agent-spawn-trust-dir-row').style.display = isCodexHarness ? '' : 'none';
   if (!isCodexHarness) $('#agent-spawn-trust-dir').checked = false;
 
+  // Remote-control opt-in (JOH-258): "start with Remote Access on", gated on the
+  // harness having built-in Remote Access (Claude Code's can_remote_control) —
+  // hidden for a harness without it (Codex). Fail-open to shown when no catalog
+  // entry yet (snapshot not loaded), matching the default Claude-Code layout
+  // above. Off by default; hiding it for an unsupported harness also clears it
+  // so the choice can't leak across a harness switch.
+  const canRemoteControl = h ? !!h.can_remote_control : true;
+  $('#agent-spawn-remote-control-row').style.display = canRemoteControl ? '' : 'none';
+  if (!canRemoteControl) $('#agent-spawn-remote-control').checked = false;
+
   // Rebuild the Effort menu for this harness (data-driven off the catalog),
   // then re-apply the effort remembered for the now-active model control.
   populateSpawnEffortSelect(h);
@@ -531,6 +541,11 @@ function openAgentSpawnModal(opts) {
   // Restore the auto-focus checkbox from the human's last choice
   // (defaults on — see spawnAutoFocusPref).
   $('#agent-spawn-focus').checked = spawnAutoFocusPref();
+  // Remote control defaults OFF on every open: arming phone access is a
+  // deliberate per-spawn choice, not a sticky pref (JOH-258). The
+  // "always-on via profile/group default" path is JOH-262. applySpawnHarness
+  // (below) additionally hides + clears it for a harness without Remote Access.
+  $('#agent-spawn-remote-control').checked = false;
   // Prefill the cwd from the selected group's default spawn dir.
   // force=true: the modal just opened fresh, so there's no
   // user-typed value to protect.
@@ -648,6 +663,14 @@ async function submitAgentSpawn() {
     // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
     // ticked the checkbox — never defaulted.
     if (harness === 'codex' && $('#agent-spawn-trust-dir').checked) body.trust_dir = true;
+    // Opt-in remote-control (Claude Code only): arm built-in Remote Access at
+    // launch so the agent is reachable from the Claude app from turn one. Sent
+    // ONLY for a harness that supports it AND when the human ticked the box —
+    // applySpawnHarness hides + clears the checkbox for a harness without Remote
+    // Access (Codex), and the daemon re-gates (400) as defence in depth (JOH-258).
+    if (harnessEntry && harnessEntry.can_remote_control && $('#agent-spawn-remote-control').checked) {
+      body.remote_control = true;
+    }
     if (sel.path && wtRepo && wtRepo !== cwd) {
       body.cwd = cwd;
       body.worktree_path = sel.path;

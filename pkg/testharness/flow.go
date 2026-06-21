@@ -157,6 +157,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(cc.ConvID, args.Approval)
 	s.w.RecordSpawnAutoReview(cc.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
+	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
 	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
@@ -266,6 +267,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(cx.ConvID, args.Approval)
 	s.w.RecordSpawnAutoReview(cx.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
+	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt

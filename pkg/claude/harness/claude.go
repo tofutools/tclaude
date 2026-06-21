@@ -102,6 +102,20 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.InitialPrompt != "" && spec.ResumeID == "" {
 		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
+	// --remote-control arms Claude Code's built-in Remote Access at launch
+	// (claude.ai/code + the mobile app), for an agent spawned phone-reachable
+	// (JOH-258). Emitted LAST — after the positional [prompt] — on purpose: the
+	// flag takes an OPTIONAL [name], which commander fills from the NEXT token
+	// unless it starts with '-'. Putting it first would make it swallow a bare
+	// trailing prompt on the direct-CLI path (`claude --remote-control 'do X'` →
+	// name="do X", prompt lost), and only a following --flag (which the daemon's
+	// --session-id happens to provide, but the direct CLI may not) prevents that.
+	// Emitting it last means nothing follows it, so its [name] is always empty
+	// and the prompt is parsed as the positional on EVERY path. Bare boolean
+	// flag, no value. Codex has no equivalent; its spawner ignores RemoteControl.
+	if spec.RemoteControl {
+		cmd += " --remote-control"
+	}
 	return cmd
 }
 

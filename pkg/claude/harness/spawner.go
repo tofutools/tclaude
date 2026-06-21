@@ -94,6 +94,16 @@ type SpawnSpec struct {
 	// opt-in, so callers enable it explicitly. Gate via Harness.Approval /
 	// ResolveAutoReview before building the spec. See JOH-200 part 2.
 	AutoReview bool
+	// RemoteControl, when true, asks the harness to launch with its built-in
+	// Remote Access already ON — Claude Code's `--remote-control` flag, which
+	// exposes the session to claude.ai/code + the Claude mobile app from the
+	// first turn (JOH-258). Zero-value (false) omits the flag, leaving the
+	// session local. Harnesses with no built-in remote access (Codex) ignore
+	// it. Gate via Harness.CanRemoteControl() before setting it. The daemon
+	// spawn path also tags sessions.remote_control=1 out-of-band after the
+	// row materialises (JOH-256), so the toggle's direction logic + the
+	// dashboard indicator start from the armed state.
+	RemoteControl bool
 	// InitialPrompt is an optional first-turn prompt the harness submits
 	// ITSELF at launch (the harness's own positional [PROMPT] arg) — not a
 	// tclaude send-keys injection. It exists for a harness whose conv-id is

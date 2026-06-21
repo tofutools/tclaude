@@ -122,6 +122,16 @@ type SpawnRequest struct {
 	// for Claude Code is a 400. Forwarded to `tclaude session new --trust-dir`.
 	TrustDir bool `json:"trust_dir,omitempty"`
 
+	// RemoteControl arms the spawned agent's built-in Remote Access at launch
+	// (Claude Code's --remote-control), so it is reachable from the Claude app
+	// from its first turn (JOH-258). false (the default) leaves it local. The
+	// daemon gates it on the chosen harness having Remote Access (Claude Code);
+	// requesting it for Codex is a 400. Forwarded to `tclaude session new
+	// --remote-control`, and the daemon tags sessions.remote_control=1 once the
+	// row materialises. Every spawn surface (`agent spawn`, the dashboard spawn
+	// modal) sets this same field, single-sourcing the wire contract.
+	RemoteControl bool `json:"remote_control,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -206,6 +216,8 @@ type SpawnParams struct {
 	// reason as the fields above — boa's short-flag enricher must not steal a
 	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
 	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
+
+	RemoteControl bool `long:"remote-control" help:"Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -356,6 +368,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Gate --remote-control: arming Remote Access at launch is a Claude Code
+	// feature, so requesting it for a harness without it (Codex) fails fast here
+	// with a clear message. The daemon re-gates server-side. See JOH-258.
+	remoteControl, err := harness.ResolveRemoteControl(h, p.RemoteControl)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	cwd := p.Cwd
 	if cwd == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -378,6 +398,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
 		AutoReview:     autoReview,
+		RemoteControl:  remoteControl,
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the
