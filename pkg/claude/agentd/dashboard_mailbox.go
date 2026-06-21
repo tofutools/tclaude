@@ -156,12 +156,19 @@ type dashboardMailbox struct {
 	Groups  []string `json:"groups,omitempty"`
 	// Members is the current member count of a group folder (kind="group")
 	// — drives the sidebar tooltip. Omitted (0) for agent/human/all.
-	Members int    `json:"members,omitempty"`
-	In      int    `json:"in"`
-	Out     int    `json:"out"`
-	Total   int    `json:"total"`
-	Unread  int    `json:"unread"`
-	LastAt  string `json:"last_at,omitempty"`
+	Members int `json:"members,omitempty"`
+	// MemberConvs lists the conv-ids of a group folder's current members
+	// (kind="group" only) so the sidebar can nest the matching agent
+	// folders beneath the group row when it is expanded. The nested rows
+	// reuse the flat agent entries the roster already carries — a member
+	// hidden by the retired / empty filters simply doesn't nest. Omitted
+	// for agent/human/all.
+	MemberConvs []string `json:"member_convs,omitempty"`
+	In          int      `json:"in"`
+	Out         int      `json:"out"`
+	Total       int      `json:"total"`
+	Unread      int      `json:"unread"`
+	LastAt      string   `json:"last_at,omitempty"`
 }
 
 // handleDashboardMailboxes serves GET /api/mailboxes — the sidebar
@@ -289,8 +296,15 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// traffic + the group's multicasts); In/Out/Unread are left 0 the way
 	// the "all" aggregate leaves them — those are per-recipient notions
 	// with no meaning for a group view. ListAgentGroups is name-ordered, so
-	// the group section reads alphabetically.
-	groupBoxes := buildGroupMailboxes()
+	// the group section reads alphabetically. Like the "all" badge, a group
+	// folder hides retired members' traffic by default — its badge counts
+	// the same exclude-scoped total its folder serves — so the operator
+	// must opt in (include_retired) to count retired traffic in either place.
+	var groupExclude []string
+	if !includeRetired {
+		groupExclude = retiredIDs
+	}
+	groupBoxes := buildGroupMailboxes(groupExclude)
 
 	// Sort agent mailboxes by recency — newest mail on top, the way a mail
 	// client lists folders by last activity — then by title, then conv-id
@@ -472,7 +486,22 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		p, err := groupMailboxPage(members, g.ID, q, page, pageSize)
+		// Hide retired members' traffic unless the operator opted in — the
+		// same exclude the "all" firehose applies, so a member's DM to a
+		// retired agent (and a retired sender's channel post) drops while a
+		// current member's traffic and channel posts survive. A lookup error
+		// fails the request (matches the all branch) rather than silently
+		// falling open to the unfiltered group scope.
+		var exclude []string
+		if !mailboxIncludeRetired(r) {
+			_, ids, err := retiredAgentConvs()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
+			}
+			exclude = ids
+		}
+		p, err := groupMailboxPage(members, g.ID, q, page, pageSize, exclude)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -674,12 +703,14 @@ func agentMailboxPage(forConv, q string, page, pageSize int, excludeConvs []stri
 // traffic touching any current member (sender or recipient) plus the
 // group's own multicasts (see MailboxFilter.ScopeConvs / ScopeGroupID).
 // Like the "all" firehose it has no single self to be relative to, so
-// every row renders from→to (forConv == ""). The group folder is NOT
-// retired-filtered: its member set is already current-members-only (a
-// retired agent loses its membership), and its channel history is shown
-// in full regardless of the "show retired" toggle.
-func groupMailboxPage(members []string, groupID int64, q string, page, pageSize int) (mailboxPage, error) {
-	scope := db.MailboxFilter{ScopeConvs: members, ScopeGroupID: groupID}
+// every row renders from→to (forConv == ""). excludeConvs drops retired
+// members' traffic exactly as the "all" firehose does (the caller passes
+// the retired conv-ids unless the operator opted into "show retired"): a
+// member's DM to a retired agent disappears, and a channel multicast
+// survives unless its own sender is retired. Passing nil shows the whole
+// scope (the opted-in case).
+func groupMailboxPage(members []string, groupID int64, q string, page, pageSize int, excludeConvs []string) (mailboxPage, error) {
+	scope := db.MailboxFilter{ScopeConvs: members, ScopeGroupID: groupID, ExcludeConvs: excludeConvs}
 	return mailboxPageForScope(scope, "", q, page, pageSize)
 }
 
@@ -745,7 +776,12 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 // count in the group scope as its Total; a per-group CountMailbox is cheap
 // (groups are few and human-curated). A lookup failure for one group skips
 // just that group rather than failing the whole roster.
-func buildGroupMailboxes() []dashboardMailbox {
+//
+// excludeConvs drops retired members' traffic from the badge total unless
+// the operator opted into retired agents — the roster twin of the group
+// folder's own exclude (groupMailboxPage), so the badge matches the folder
+// it labels. nil (the opted-in case) counts the whole scope.
+func buildGroupMailboxes(excludeConvs []string) []dashboardMailbox {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil
@@ -765,16 +801,17 @@ func buildGroupMailboxes() []dashboardMailbox {
 		if err != nil {
 			continue
 		}
-		total, err := db.CountMailbox(db.MailboxFilter{ScopeConvs: members, ScopeGroupID: g.ID})
+		total, err := db.CountMailbox(db.MailboxFilter{ScopeConvs: members, ScopeGroupID: g.ID, ExcludeConvs: excludeConvs})
 		if err != nil {
 			continue
 		}
 		out = append(out, dashboardMailbox{
-			ID:      groupMailboxPrefix + g.Name,
-			Kind:    "group",
-			Title:   g.Name,
-			Total:   total,
-			Members: len(members),
+			ID:          groupMailboxPrefix + g.Name,
+			Kind:        "group",
+			Title:       g.Name,
+			Total:       total,
+			Members:     len(members),
+			MemberConvs: members,
 		})
 	}
 	return out
