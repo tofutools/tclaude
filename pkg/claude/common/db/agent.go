@@ -1634,6 +1634,40 @@ func CountAgentMessages() (int, error) {
 	return n, nil
 }
 
+// GroupMessageParticipants returns the distinct conv-ids that ever sent or
+// received a group-routed message for groupID — any agent_messages row with
+// group_id = groupID, taking both from_conv and to_conv (blank ids, e.g. a
+// multicast's empty to_conv, are dropped). It is the durable record of who
+// communicated *through* a group: unlike the agent_group_members rows, which
+// retire hard-deletes (retireAgentConv unjoins every group before flipping
+// the enrollment bit), a message's group_id survives the membership's
+// removal. The dashboard uses it to reconstruct a retired ex-member so its
+// folder can still nest under the group it used to belong to.
+func GroupMessageParticipants(groupID int64) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`
+		SELECT from_conv FROM agent_messages WHERE group_id = ? AND from_conv != ''
+		UNION
+		SELECT to_conv   FROM agent_messages WHERE group_id = ? AND to_conv   != ''`,
+		groupID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var conv string
+		if err := rows.Scan(&conv); err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, rows.Err()
+}
+
 // MailboxFilter selects which agent_messages rows a dashboard mailbox
 // read returns — the backing query for the Messages tab's paginated,
 // searchable folder view.

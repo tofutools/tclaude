@@ -1298,6 +1298,71 @@ func TestDashboardMailboxes_GroupBadgeExcludesRetiredByDefault(t *testing.T) {
 	assert.Equal(t, 4, grp.Total, "the group badge counts every row with include_retired")
 }
 
+// Scenario: a retired ex-member nests back under its former group once the
+// operator opts into retired agents. Retire unjoins the agent from every
+// group, so its live membership row is gone — but its group_id-stamped
+// messages persist, so buildGroupMailboxes reconstructs the nesting from
+// message history. By default the retired ex-member is absent everywhere;
+// with include_retired it reappears in member_convs (so the sidebar can nest
+// it) AND in the flat agent list flagged Retired (the folder the nested row
+// reuses). The Members count stays the current-member count throughout.
+//
+// Regression: before the fix member_convs was the live membership only, so a
+// retired ex-member could never nest even with "show retired agents" on,
+// despite its flat folder being shown right there in the Agents section.
+func TestDashboardMailboxes_GroupNestsRetiredExMemberWhenOptedIn(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveMember("team", mbCarol)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	// Each member posts to the group channel — carol's post is the
+	// group_id-stamped trace that survives her retirement.
+	mustMsg(mbAlice, "", "alice broadcast", base)
+	mustMsg(mbBob, "", "bob broadcast", base.Add(time.Minute))
+	mustMsg(mbCarol, "", "carol broadcast", base.Add(2*time.Minute))
+
+	// Retire carol the way production does — this unjoins her from "team",
+	// leaving only her message history to tie her to the group.
+	f.HaveRetiredAgent(mbCarol)
+	dash := dashHandlerForTest(t)
+
+	// Default: carol is gone from the group's nested members and the flat list.
+	def := getMailboxesOpt(t, dash, false)
+	grp := findMailbox(def, "group:team")
+	require.NotNil(t, grp)
+	assert.Equal(t, 2, grp.Members, "alice + bob are the current members")
+	assert.ElementsMatch(t, []string{mbAlice, mbBob}, grp.MemberConvs,
+		"a retired ex-member is absent from the nested list by default")
+	assert.Nil(t, findMailbox(def, mbCarol),
+		"the retired ex-member's flat folder is hidden by default")
+
+	// Opted in: carol nests back under the group (recovered from her group
+	// post) and shows in the flat list flagged retired.
+	boxes := getMailboxesOpt(t, dash, true)
+	grp = findMailbox(boxes, "group:team")
+	require.NotNil(t, grp)
+	assert.Equal(t, 2, grp.Members,
+		"Members stays the current count — the retired ex-member is not a member")
+	assert.ElementsMatch(t, []string{mbAlice, mbBob, mbCarol}, grp.MemberConvs,
+		"the retired ex-member nests back under its former group when opted in")
+	carol := findMailbox(boxes, mbCarol)
+	require.NotNil(t, carol, "the nested folder reuses the flat agent entry")
+	assert.True(t, carol.Retired, "and it is flagged retired")
+}
+
 // --- empty-mailbox filtering --------------------------------------------
 //
 // The Messages tab hides agents whose mailbox is empty — never sent or

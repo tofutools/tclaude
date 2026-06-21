@@ -390,12 +390,21 @@ func (f *Flow) HaveEnrolledAgent(convID string) {
 	}
 }
 
-// HaveRetiredAgent enrolls convID and then retires it, leaving a
-// retired enrollment row — the demoted-agent state.
+// HaveRetiredAgent enrolls convID and then retires it the way production
+// does — unjoining every group membership before flipping the enrollment
+// bit — leaving a retired enrollment row with no group ties. Mirroring the
+// real retire path (retireAgentConv unjoins all groups, then RetireAgent)
+// matters: a retired ex-member must drop out of the live membership
+// (ListAgentGroupMembers), so a test that retires a current member
+// exercises the same "membership row is gone" state the dashboard's
+// retired-aware nesting has to reconstruct from message history.
 func (f *Flow) HaveRetiredAgent(convID string) {
 	f.T.Helper()
 	if err := db.EnrollAgent(convID, "test"); err != nil {
 		f.T.Fatalf("HaveRetiredAgent enroll(%q): %v", convID, err)
+	}
+	if _, err := db.RemoveAllAgentGroupMembershipsForConv(convID); err != nil {
+		f.T.Fatalf("HaveRetiredAgent unjoin(%q): %v", convID, err)
 	}
 	if _, err := db.RetireAgent(convID, "test", "test retire"); err != nil {
 		f.T.Fatalf("HaveRetiredAgent retire(%q): %v", convID, err)

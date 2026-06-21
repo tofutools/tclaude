@@ -157,12 +157,14 @@ type dashboardMailbox struct {
 	// Members is the current member count of a group folder (kind="group")
 	// — drives the sidebar tooltip. Omitted (0) for agent/human/all.
 	Members int `json:"members,omitempty"`
-	// MemberConvs lists the conv-ids of a group folder's current members
-	// (kind="group" only) so the sidebar can nest the matching agent
-	// folders beneath the group row when it is expanded. The nested rows
-	// reuse the flat agent entries the roster already carries — a member
-	// hidden by the retired / empty filters simply doesn't nest. Omitted
-	// for agent/human/all.
+	// MemberConvs lists the conv-ids a group folder (kind="group" only)
+	// nests beneath itself when expanded: its current members, plus — when
+	// the operator opted into retired agents (include_retired) — its retired
+	// ex-members recovered from message history (retire unjoined them from
+	// the live membership). The nested rows reuse the flat agent entries the
+	// roster already carries — a member kept off that flat list by the empty
+	// / text filter simply doesn't nest. Members (above) stays the current
+	// member count. Omitted for agent/human/all.
 	MemberConvs []string `json:"member_convs,omitempty"`
 	In          int      `json:"in"`
 	Out         int      `json:"out"`
@@ -300,11 +302,10 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	// folder hides retired members' traffic by default — its badge counts
 	// the same exclude-scoped total its folder serves — so the operator
 	// must opt in (include_retired) to count retired traffic in either place.
-	var groupExclude []string
-	if !includeRetired {
-		groupExclude = retiredIDs
-	}
-	groupBoxes := buildGroupMailboxes(groupExclude)
+	// When opted in, buildGroupMailboxes also nests retired ex-members back
+	// under their former group (retire unjoined them, so they're gone from the
+	// live membership) using each group's message history.
+	groupBoxes := buildGroupMailboxes(retiredSet, retiredIDs, includeRetired)
 
 	// Sort agent mailboxes by recency — newest mail on top, the way a mail
 	// client lists folders by last activity — then by title, then conv-id
@@ -777,14 +778,27 @@ func groupMemberConvs(groupID int64) ([]string, error) {
 // (groups are few and human-curated). A lookup failure for one group skips
 // just that group rather than failing the whole roster.
 //
-// excludeConvs drops retired members' traffic from the badge total unless
-// the operator opted into retired agents — the roster twin of the group
-// folder's own exclude (groupMailboxPage), so the badge matches the folder
-// it labels. nil (the opted-in case) counts the whole scope.
-func buildGroupMailboxes(excludeConvs []string) []dashboardMailbox {
+// retiredIDs (the retired-agent conv-ids) and includeRetired together
+// govern two retired-aware adjustments:
+//   - The badge total: when the operator hasn't opted in, retiredIDs scopes
+//     out retired members' traffic — the roster twin of the group folder's
+//     own exclude (groupMailboxPage), so the badge matches the folder it
+//     labels. When opted in nothing is excluded and the whole scope counts.
+//   - The nested member list: when the operator HAS opted in, MemberConvs is
+//     augmented with the group's retired ex-members (recovered from message
+//     history via retiredGroupParticipants) so the sidebar can nest them
+//     under the group they used to belong to. Retire unjoins a member from
+//     every group, so a retired ex-member is gone from the live membership
+//     (groupMemberConvs) and would otherwise never nest even though its flat
+//     agent folder is shown. Members stays the *current* member count.
+func buildGroupMailboxes(retiredSet map[string]struct{}, retiredIDs []string, includeRetired bool) []dashboardMailbox {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil
+	}
+	var excludeConvs []string
+	if !includeRetired {
+		excludeConvs = retiredIDs
 	}
 	out := make([]dashboardMailbox, 0, len(groups))
 	for _, g := range groups {
@@ -805,16 +819,50 @@ func buildGroupMailboxes(excludeConvs []string) []dashboardMailbox {
 		if err != nil {
 			continue
 		}
+		memberConvs := members
+		if includeRetired && len(retiredSet) > 0 {
+			memberConvs = retiredGroupParticipants(members, g.ID, retiredSet)
+		}
 		out = append(out, dashboardMailbox{
 			ID:          groupMailboxPrefix + g.Name,
 			Kind:        "group",
 			Title:       g.Name,
 			Total:       total,
 			Members:     len(members),
-			MemberConvs: members,
+			MemberConvs: memberConvs,
 		})
 	}
 	return out
+}
+
+// retiredGroupParticipants returns members with the group's retired
+// ex-members appended — the conv-ids that have group-routed traffic for
+// groupID (GroupMessageParticipants) and are in retiredSet, minus any
+// already present. It is how a retired ex-member nests back under its former
+// group on the Messages tab once the operator opts into retired agents:
+// retire deletes the membership row, but the agent's group_id-stamped
+// messages persist, so the association is recoverable. The order is current
+// members first (their joined_at order), retired ex-members after.
+func retiredGroupParticipants(members []string, groupID int64, retiredSet map[string]struct{}) []string {
+	parts, err := db.GroupMessageParticipants(groupID)
+	if err != nil {
+		return members
+	}
+	have := make(map[string]struct{}, len(members))
+	for _, m := range members {
+		have[m] = struct{}{}
+	}
+	for _, p := range parts {
+		if _, retired := retiredSet[p]; !retired {
+			continue
+		}
+		if _, dup := have[p]; dup {
+			continue
+		}
+		have[p] = struct{}{}
+		members = append(members, p)
+	}
+	return members
 }
 
 // humanMailboxPage paginates the human_messages folder. The snapshot is
