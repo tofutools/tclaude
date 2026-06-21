@@ -15,7 +15,10 @@
 //                             hidden (and their traffic dropped from the
 //                             "all" firehose) until the #mail-show-retired
 //                             footer toggle opts them back in
-//                             (include_retired, server-side).
+//                             (include_retired, server-side). Agents with
+//                             an empty mailbox are likewise hidden until
+//                             the #mail-show-empty toggle opts them in
+//                             (include_empty, server-side, roster only).
 //   list    (#mail-list)    → the selected folder's messages, newest
 //                             first, filtered by #filter-messages. Each
 //                             row has a select checkbox and a delete
@@ -66,6 +69,11 @@ const PAGE_SIZE_KEY = 'tclaude.dash.mail.pagesize';
 // counts their traffic). Off by default — a retired agent is demoted, so
 // its folder is clutter until the operator asks for it.
 const SHOW_RETIRED_KEY = 'tclaude.dash.mail.showretired';
+// Whether the sidebar lists agent folders with an empty mailbox (no sent
+// or received mail). Off by default — a never-messaged agent's folder is
+// clutter until the operator asks for it. Roster-only: an empty mailbox
+// has no messages, so unlike retired it never touches the firehose.
+const SHOW_EMPTY_KEY = 'tclaude.dash.mail.showempty';
 
 // Page sizes the selector offers. The default (50) is what a fresh
 // dashboard uses until the operator picks one; every value stays at or
@@ -111,6 +119,9 @@ const mail = {
   // showRetired drives the include_retired param on both fetches. Sticky
   // (persisted) so the operator's choice survives a reload.
   showRetired: dashPrefs.getItem(SHOW_RETIRED_KEY) === '1',
+  // showEmpty drives the include_empty param on the roster fetch only.
+  // Sticky so the operator's choice survives a reload.
+  showEmpty: dashPrefs.getItem(SHOW_EMPTY_KEY) === '1',
   messages: [],
   selectedMsgId: null,
   selectedMsgs: new Set(),
@@ -163,8 +174,11 @@ function onlineConvs() {
 
 async function loadMailboxes() {
   try {
-    const qs = mail.showRetired ? '?include_retired=1' : '';
-    const r = await fetch(`/api/mailboxes${qs}`, { credentials: 'same-origin' });
+    const params = new URLSearchParams();
+    if (mail.showRetired) params.set('include_retired', '1');
+    if (mail.showEmpty) params.set('include_empty', '1');
+    const qs = params.toString();
+    const r = await fetch(`/api/mailboxes${qs ? '?' + qs : ''}`, { credentials: 'same-origin' });
     if (!r.ok) return;
     const data = await r.json();
     mail.mailboxes = data.mailboxes || [];
@@ -402,6 +416,35 @@ function isGroupFolder() {
   return (mail.selected || '').startsWith(GROUP_PREFIX);
 }
 
+// isSelectedEmpty reports whether the open folder is an empty-mailbox
+// agent folder (total 0), per the current roster. Used to decide whether
+// hiding empty folders would strand the selection.
+function isSelectedEmpty() {
+  const mb = mail.mailboxes.find(x => x.id === mail.selected);
+  return !!(mb && mb.kind === 'agent' && !mb.total);
+}
+
+// setShowEmpty flips the "show agents without messages" toggle, persists
+// it, and re-fetches so the roster reflects the new scope. When hiding
+// empty folders with one currently open, it snaps the selection back to
+// the firehose first — same stranding guard as setShowRetired. (Only the
+// roster narrows; the firehose is unaffected, since an empty mailbox has
+// no messages.)
+function setShowEmpty(on) {
+  if (on === mail.showEmpty || mail.busy) return;
+  mail.showEmpty = on;
+  if (on) dashPrefs.setItem(SHOW_EMPTY_KEY, '1');
+  else dashPrefs.removeItem(SHOW_EMPTY_KEY);
+  if (!on && isSelectedEmpty()) {
+    mail.selected = ALL_ID;
+    mail.selectedMsgId = null;
+    mail.selectedMsgs.clear();
+    mail.page = 1;
+    dashPrefs.setItem(SELECTED_KEY, ALL_ID);
+  }
+  reloadMail();
+}
+
 function mailboxLabel(mb) {
   if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
@@ -471,7 +514,13 @@ function paintSidebar() {
     const lead = mb.kind === 'agent'
       ? `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`
       : '<span class="mail-box-check-spacer"></span>';
-    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}">${lead}${btn}</div>`;
+    // Empty-mailbox agent folders only appear when the toggle is on; dim
+    // them (like retired) so they read as low-priority opt-in clutter. The
+    // "0" count is their tag, so no extra label. Retired and empty are
+    // disjoint in practice (a retired folder always has the mail that put
+    // it in the roster), so the two row classes never both apply.
+    const empty = mb.kind === 'agent' && !mb.total;
+    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty' : ''}">${lead}${btn}</div>`;
   }).join('');
 }
 
@@ -1152,6 +1201,16 @@ function initMail() {
     showRetired.addEventListener('change', () => {
       if (mail.busy) { showRetired.checked = mail.showRetired; return; }
       setShowRetired(showRetired.checked);
+    });
+  }
+  // "Show agents without messages" sidebar toggle — the empty-mailbox twin
+  // of the retired toggle above; same mid-bulk-op resync rationale.
+  const showEmpty = $('#mail-show-empty');
+  if (showEmpty) {
+    showEmpty.checked = mail.showEmpty;
+    showEmpty.addEventListener('change', () => {
+      if (mail.busy) { showEmpty.checked = mail.showEmpty; return; }
+      setShowEmpty(showEmpty.checked);
     });
   }
   // Load immediately when the human switches TO the Messages tab, rather

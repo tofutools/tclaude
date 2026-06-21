@@ -295,11 +295,11 @@ func TestAsk_ModelValidatedAndPassed(t *testing.T) {
 }
 
 // TestResolveAskDefaults covers the model/effort precedence: a per-call
-// flag wins, else the config ask profile, else the fast-by-default
+// flag wins, else the config ask profile, else the built-in default
 // constants — resolved independently per field (JOH-253).
 func TestResolveAskDefaults(t *testing.T) {
 	pinned := &config.Config{Ask: &config.AskConfig{Model: "opus", Effort: "high"}}
-	onlyModel := &config.Config{Ask: &config.AskConfig{Model: "sonnet"}}
+	onlyModel := &config.Config{Ask: &config.AskConfig{Model: "haiku"}}
 
 	cases := []struct {
 		name                  string
@@ -307,15 +307,15 @@ func TestResolveAskDefaults(t *testing.T) {
 		cfg                   *config.Config
 		wantModel, wantEffort string
 	}{
-		{"empty config → fast defaults", "", "", &config.Config{},
+		{"empty config → built-in defaults", "", "", &config.Config{},
 			config.DefaultAskModel, config.DefaultAskEffort},
-		{"nil config → fast defaults", "", "", nil,
+		{"nil config → built-in defaults", "", "", nil,
 			config.DefaultAskModel, config.DefaultAskEffort},
 		{"config profile used when no flag", "", "", pinned, "opus", "high"},
 		{"flag overrides config", "fable", "low", pinned, "fable", "low"},
-		{"flag overrides fast default", "fable", "max", &config.Config{}, "fable", "max"},
-		{"partial config: model only → fast effort", "", "", onlyModel,
-			"sonnet", config.DefaultAskEffort},
+		{"flag overrides built-in default", "fable", "max", &config.Config{}, "fable", "max"},
+		{"partial config: model only → default effort", "", "", onlyModel,
+			"haiku", config.DefaultAskEffort},
 		{"flag model only, effort falls through config", "fable", "", pinned,
 			"fable", "high"},
 	}

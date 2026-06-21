@@ -44,6 +44,26 @@ nav button:hover { color: #d4d4d4; }
    the message filter heads the list — DOM-adjacent so Tab moves between
    them directly); row 2 holds each column's scrolling body; the reader
    spans both rows in column 3. */
+/* App-shell height lock — ONLY while the Messages tab is active. The mail
+   client is the one tab that must fill the viewport exactly (its three
+   panes scroll internally); every other tab scrolls the page normally. So
+   rather than subtract a magic header+nav offset from 100vh — fragile: the
+   header grows with the slop marquee / extra buttons, and the old
+   `- 108px` also forgot main's 16px bottom padding, which left a permanent
+   ~15px global scrollbar on this tab regardless of content — pin
+   body → main → section into a flex column at 100vh and let the mail
+   client flex into whatever height is left. Keyed off the .active toggle
+   bindTabs() already applies (same :has() trick as the slop lever), so it
+   needs no JS and self-corrects when the chrome height changes. */
+body:has(#tab-messages.active) {
+  height: 100vh;
+  display: flex; flex-direction: column;
+}
+body:has(#tab-messages.active) main,
+body:has(#tab-messages.active) #tab-messages.active {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
 .mail-client {
   display: grid;
   grid-template-columns: 240px minmax(260px, 1fr) minmax(320px, 1.4fr);
@@ -51,11 +71,10 @@ nav button:hover { color: #d4d4d4; }
   /* row-gap (6px) matches the old in-column filter→body spacing;
      column-gap (10px) is the inter-pane gutter. */
   gap: 6px 10px;
-  /* Fill the viewport below the nav; each pane scrolls itself. The filter
-     bar that used to sit above this grid is now row 1 inside it, so this
-     reclaims that ~42px of height. */
-  height: calc(100vh - 108px);
-  min-height: 320px;
+  /* Fill the height handed down by the flex chain above; min-height:0 lets
+     the grid shrink so the panes' own overflow:auto engages instead of the
+     grid growing past the viewport (which is what produced the scrollbar). */
+  flex: 1 1 auto; min-height: 0;
 }
 /* Map each grid child to its cell: the two filters head columns 1 + 2 on
    row 1, the scrolling bodies fill row 2, and the reader spans both rows
@@ -232,16 +251,20 @@ nav button:hover { color: #d4d4d4; }
 .mailbox-section:first-child { margin-top: 0; }
 
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
-   the row and tag it so it reads as demoted, not a live agent. */
-.mailbox-row.retired .mailbox { opacity: .6; }
+   the row and tag it so it reads as demoted, not a live agent. Empty-mailbox
+   folders (shown only when their own toggle is on) get the same dim — their
+   "0" count is the only tag they need. */
+.mailbox-row.retired .mailbox,
+.mailbox-row.empty .mailbox { opacity: .6; }
 .mailbox-tag {
   flex: 0 0 auto; color: #8b949e; font-size: 9px; text-transform: uppercase;
   letter-spacing: .04em; border: 1px solid #2a3340; border-radius: 4px;
   padding: 1px 4px;
 }
 
-/* Sidebar footer toggle ("show retired agents") — pinned below the
-   scrolling roster, same muted chrome as the bulk bars. */
+/* Sidebar footer toggles ("show retired agents" / "show agents without
+   messages") — pinned below the scrolling roster, same muted chrome as the
+   bulk bars; they stack as separate rows. */
 .mail-sidebar-foot {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
   padding: 4px 2px; font-size: 12px; color: #8b949e; cursor: pointer;
