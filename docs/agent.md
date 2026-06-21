@@ -315,11 +315,18 @@ custom-title turn, exactly as `/rename` does) and the welcome — an
 `[system: …]` line orienting the agent (who it is, the group, the
 `tclaude agent` commands) — is the agent's first turn. No `/rename` or
 welcome keystrokes are injected over tmux, so there is no post-connect
-delay. (Codex, which generates its own conv-id at first turn, keeps the
-inject-after-connect flow.) To revert Claude Code to that older flow —
-launch a bare `claude`, poll for its conv-id, then inject `/rename` + the
-welcome over tmux — set `agent.spawn_legacy_injection: true` in
-`~/.tclaude/config.json`.
+delay. To revert Claude Code to the older flow — launch a bare `claude`,
+poll for its conv-id, then inject `/rename` + the welcome over tmux — set
+`agent.spawn_legacy_injection: true` in `~/.tclaude/config.json`.
+
+For a **Codex** spawn the daemon can't preset the conv-id (Codex generates
+it at its first turn), but Codex must self-submit *some* first-turn prompt
+for that id — and its on-disk history — to materialise at all. So that
+required seed *is* the `[system: …]` welcome: the same greeting, delivered
+as Codex's launch prompt rather than a separate post-connect injection. The
+name is applied out-of-band (Codex has no `/rename`; the daemon writes
+`threads.title`). The result is a single greeting turn that mirrors Claude
+Code's — no inert placeholder seed, no second welcome message.
 
 **Inlined briefings.** The startup briefing (group context + task brief)
 is always saved to the new agent's inbox as its first message. When it's
@@ -328,12 +335,20 @@ short, it's *also* inlined into the launch prompt right after the welcome
 unescaped and intact (unlike the legacy send-keys path, where a newline
 would submit early) — so the agent acts on its first turn without a
 `tclaude agent inbox read <id>` round-trip. A longer briefing keeps the
-single-line welcome that points at the inbox copy by id, so it stays
-scrollable there and doesn't balloon the launch command. The cutoff is
+welcome that points at the inbox copy, so it stays scrollable there and
+doesn't balloon the launch command. The cutoff is
 `agent.spawn_inline_max_chars` (runes; default 2000, `0` disables inlining
-so every spawn uses the inbox pointer). Only the launch-enrollment path
-inlines; the legacy / Codex inject-after-connect path always points at the
-inbox.
+so every spawn uses the inbox pointer).
+
+This works for both harnesses, with one wrinkle from the conv-id timing.
+Claude Code presets the conv-id, so its inbox briefing exists before launch
+and the welcome can reference it by message id either way (inline + id note,
+or pointer-with-id). Codex creates the inbox briefing only *after* it
+connects, so at launch there is no message id yet: a short briefing inlines
+into the seed in full (the agent needs nothing more), while a long one gets
+a stand-by seed and its inbox-pointer welcome is injected post-connect, once
+the inbox row exists. The legacy Claude-Code `spawn_legacy_injection` revert
+always uses the post-connect inbox pointer.
 
 **Spawn guardrails.** `groups.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.

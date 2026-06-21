@@ -36,6 +36,12 @@ func init() {
 		// reach history (Claude Code, which owns its scrollback, leaves this
 		// off). See JOH-213 + session.ConfigureTmuxScrollback.
 		TmuxScrollback: true,
+		// Codex only persists+exposes its conv-id once a turn runs (JOH-205), so
+		// a daemon-spawned Codex pane needs a positional first-turn prompt — and
+		// that prompt carries the [system: ...] welcome (see executeSpawn /
+		// buildSpawnSeedPrompt). Claude Code reports its id via the SessionStart
+		// hook and leaves this false.
+		SeedsFirstTurn: true,
 	})
 }
 

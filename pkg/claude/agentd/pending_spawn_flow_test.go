@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -39,8 +41,22 @@ import (
 // finds nothing) and no first turn (so no hook writes the conv-id) — exactly
 // the unattended-pane-behind-a-modal condition. firstTurn() then Starts it
 // and writes the conv-id, the way clearing the gate would.
+//
+// The briefing here is deliberately OVER the inline cap (set tiny), so the
+// launch seed is only a stand-by welcome and the real inbox-pointer welcome is
+// the post-connect injection the back-fill delivers — the send-keys surface
+// this test asserts. (A short briefing rides inline in the seed instead, so it
+// has no post-connect send-keys to observe; that path is covered by the
+// non-gated Codex inline flow tests + the buildSpawnSeedPrompt unit table.)
 func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	f := newFlow(t)
+
+	// Force the over-cap (stand-by seed + post-connect pointer) path with a tiny
+	// inline cap, so the back-fill still injects a welcome over tmux.
+	tiny := 10
+	require.NoError(t, config.Save(&config.Config{
+		Agent: &config.AgentConfig{SpawnInlineMaxChars: &tiny},
+	}))
 
 	// Drive the pending path without a real multi-second wait: a genuinely
 	// gated Codex blows the production grace; the test shrinks it.
@@ -64,8 +80,9 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	// so the endpoint returns PENDING — 200 with an EMPTY conv_id — instead
 	// of hanging until a timeout (the freeze) or erroring.
 	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":    "codex-worker",
-		"harness": "codex",
+		"name":            "codex-worker",
+		"harness":         "codex",
+		"initial_message": "Audit the auth module for timing-safe comparison bugs",
 	})
 	require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
 	require.Empty(t, resp.ConvID, "pending spawn returns an empty conv_id")
@@ -109,9 +126,13 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	require.NoError(t, err, "FindMemberInGroup")
 	require.NotNil(t, m, "sweeper enrolled the conv into the group")
 
-	// End-to-end: the post-init welcome injection now lands on the pane —
-	// only after the conv-id materialised, completing the back-fill.
-	f.AssertSentContains(target, "codex-worker", 2*time.Second)
+	// The over-cap briefing landed in the inbox during back-fill.
+	msg := soleInboxMessage(t, convID)
+
+	// End-to-end: the post-init inbox-pointer welcome now lands on the pane —
+	// only after the conv-id materialised, completing the back-fill. It points
+	// the (now un-gated) agent at the briefing it can finally read.
+	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
 }
 
 // gatedCodexSpawner is a SpawnerLike whose codex SpawnNew models a Codex

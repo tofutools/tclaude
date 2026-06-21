@@ -68,18 +68,16 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	// resolves to the intended --name either way.
 	f.AssertGroupMember("codex-crew", spawn.ConvID, "codex-worker", 5*time.Second)
 
-	// Drain the post-spawn welcome injection BEFORE anything else types
-	// into this pane. runSpawnPostInit fires asynchronously (goBackground)
-	// and injects a [system: …] welcome via injectTextAndSubmit — the
-	// bracket text, then a trailing Enter. The CodexSim accumulates
-	// keystrokes into ONE buffer until an Enter flushes it, so if the
-	// welcome's Enter is still in flight when the soft-stop below injects
-	// `/quit`, the two interleave: the welcome's Enter flushes a line that
-	// no longer starts with `/quit`, the quit handler's MarkDead never
-	// runs, and the pane stays alive — the rare macOS-CI flake this test
-	// hit. Waiting for the background goroutine guarantees the welcome has
-	// fully landed (turn written, buffer drained) so the message nudge and
-	// `/quit` below — both synchronous — can't race it.
+	// Let the post-spawn background goroutine settle BEFORE anything else
+	// types into this pane. This spawn carries no briefing, so its [system: …]
+	// welcome rides in the launch SEED (Codex's first-turn prompt), not a
+	// post-connect send-keys — runSpawnPostInit therefore injects no welcome
+	// here. But it still fires asynchronously (goBackground) to persist the
+	// out-of-band Codex title, and historically (when the welcome WAS injected
+	// here) a still-in-flight Enter could interleave with the `/quit` below and
+	// wedge the quit handler — the rare macOS-CI flake. Waiting for the
+	// background goroutine keeps that ordering guarantee regardless: the message
+	// nudge and `/quit` below — both synchronous — can't race the post-init work.
 	agentd.WaitForBackgroundForTest()
 
 	// Message it: a grouped peer sends; the message lands in the Codex

@@ -246,3 +246,63 @@ func TestBuildSpawnLaunchPrompt(t *testing.T) {
 		assert.NotContains(t, got, "message #", "no inbox id → no message-number reference")
 	})
 }
+
+// TestSpawnBriefingFitsLaunch covers the predicate that decides whether a
+// briefing can be delivered in full by the launch prompt (so no post-connect
+// welcome is needed): empty, or short enough to inline.
+func TestSpawnBriefingFitsLaunch(t *testing.T) {
+	assert.True(t, spawnBriefingFitsLaunch("", 2000), "empty briefing fits (just 'wait')")
+	assert.True(t, spawnBriefingFitsLaunch("   \n  ", 2000), "whitespace-only briefing fits")
+	assert.True(t, spawnBriefingFitsLaunch("short brief", 2000), "short briefing fits")
+	assert.True(t, spawnBriefingFitsLaunch(strings.Repeat("x", 2000), 2000), "exactly at the cap fits")
+	assert.False(t, spawnBriefingFitsLaunch(strings.Repeat("x", 2001), 2000), "over the cap does not fit")
+	// Disabling inlining (<=0) makes a non-empty briefing not fit, but an empty
+	// one still fits (the welcome is just "wait" — no inlining involved).
+	assert.False(t, spawnBriefingFitsLaunch("short brief", 0), "cap 0 → non-empty doesn't fit")
+	assert.True(t, spawnBriefingFitsLaunch("", 0), "cap 0 → empty still fits (just 'wait')")
+}
+
+// TestBuildSpawnSeedPrompt covers the Codex launch-seed builder: a short/empty
+// briefing rides in the seed in full (looking like the CC launch prompt, but
+// with NO inbox-message id — the row doesn't exist at launch); a long briefing
+// gets a stand-by seed whose real pointer welcome is injected post-connect.
+func TestBuildSpawnSeedPrompt(t *testing.T) {
+	const (
+		name      = "codex-worker"
+		role      = "reviewer"
+		descr     = "reviews PRs"
+		groupName = "crew"
+	)
+
+	t.Run("short briefing inlines in the seed without an inbox id", func(t *testing.T) {
+		body := "Your task brief:\n\nAudit the auth module."
+		got := buildSpawnSeedPrompt(name, role, descr, groupName, true,
+			body, "", "", "", 2000)
+		assert.Contains(t, got, body, "the short briefing rides inline in the seed")
+		assert.Contains(t, got, "[system:", "seed opens with the system welcome")
+		assert.Contains(t, got, "tclaude agent", "seed keeps the coordination pointer")
+		assert.Contains(t, got, "act on the brief", "a task brief tells the agent to act")
+		// No conv-id at launch → no inbox-message id, and no `inbox read`.
+		assert.NotContains(t, got, "message #", "Codex seed has no inbox-message id at launch")
+		assert.NotContains(t, got, "inbox read", "an inlined seed needs no inbox round-trip")
+	})
+
+	t.Run("empty briefing seeds a clean wait welcome (no [tclaude])", func(t *testing.T) {
+		got := buildSpawnSeedPrompt(name, role, descr, groupName, false,
+			"", "", "", "", 2000)
+		assert.Contains(t, got, "[system:", "seed is a clean system welcome")
+		assert.Contains(t, got, "Wait for the first instruction")
+		assert.NotContains(t, got, "[tclaude]", "the old inert placeholder is gone")
+	})
+
+	t.Run("long briefing seeds a stand-by welcome, not the brief", func(t *testing.T) {
+		body := "Your task brief:\n\n" + strings.Repeat("x", 5000)
+		got := buildSpawnSeedPrompt(name, role, descr, groupName, true,
+			body, "", "", "", 2000)
+		assert.Contains(t, got, "[system:", "stand-by seed is a system welcome")
+		assert.Contains(t, got, "stand by", "stand-by seed tells the agent to wait for the inbox briefing")
+		assert.Contains(t, got, "tclaude agent inbox", "points the agent at its inbox")
+		assert.NotContains(t, got, "xxxxx", "the long brief is NOT inlined into the seed")
+		assert.NotContains(t, got, "[tclaude]", "the old inert placeholder is gone")
+	})
+}

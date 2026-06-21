@@ -108,6 +108,21 @@ type Harness struct {
 	// false (it generates its own conv-id at first turn and renames out of
 	// band), so a Codex spawn keeps the inject-after-connect flow.
 	LaunchEnrollment bool
+
+	// SeedsFirstTurn marks a harness that needs a positional first-turn prompt
+	// at launch to materialise its conversation id / on-disk history: Codex
+	// generates the id at launch but only persists+exposes it (rollout file,
+	// threads row, hooks) once a turn actually runs (JOH-205), and an unattended
+	// pane has no human to type that first message. The daemon spawn path always
+	// supplies such a harness a launch prompt — and, rather than an inert
+	// placeholder, that prompt IS the [system: ...] welcome (so the seed doubles
+	// as the greeting; a short briefing rides in inline, matching the Claude
+	// Code launch prompt). Claude Code reports its id at launch via the
+	// SessionStart hook and needs no seed, so it leaves this false. Distinct
+	// from LaunchEnrollment: that is "id can be PRESET" (Claude Code); this is
+	// "id only appears after a seeded first turn" (Codex) — the two are mutually
+	// exclusive in practice.
+	SeedsFirstTurn bool
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -177,6 +192,15 @@ func (h *Harness) CanCompact() bool {
 // See Harness.LaunchEnrollment.
 func (h *Harness) SupportsLaunchEnrollment() bool {
 	return h != nil && h.LaunchEnrollment && h.Spawn != nil
+}
+
+// NeedsSpawnSeed reports whether a daemon-spawned pane of this harness needs a
+// positional first-turn prompt to materialise its conv-id (Codex does; Claude
+// Code reports its id at launch). When true, the spawn path always supplies a
+// launch prompt and uses it to deliver the [system: ...] welcome. See
+// Harness.SeedsFirstTurn.
+func (h *Harness) NeedsSpawnSeed() bool {
+	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
 }
 
 // SupportsSandbox reports whether the harness takes a launch-time sandbox
