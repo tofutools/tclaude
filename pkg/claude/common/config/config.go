@@ -351,11 +351,14 @@ type AgentConfig struct {
 }
 
 // DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)
-// used when AgentConfig.SpawnInlineMaxChars is unset. Roughly a few paragraphs
-// — long enough to inline a typical short task brief on the first turn, short
-// enough that a genuinely large brief still routes to the inbox rather than
-// ballooning the launch command. See agentd.spawnInlineMaxChars.
-const DefaultSpawnInlineMaxChars = 2000
+// used when AgentConfig.SpawnInlineMaxChars is unset. The briefing measured
+// against it is the WHOLE contextBody (group context + task brief), so the
+// budget has to cover a group's shared boilerplate before any task text — a
+// context-heavy group can spend ~300+ runes on the group section alone. 800 is
+// sized to still inline that boilerplate plus a short paragraph of task brief on
+// the first turn, while a genuinely large multi-paragraph brief routes to the
+// inbox rather than ballooning the launch command. See agentd.spawnInlineMaxChars.
+const DefaultSpawnInlineMaxChars = 800
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
 // nudge that fires as a long-running agent's context fills. Off by
