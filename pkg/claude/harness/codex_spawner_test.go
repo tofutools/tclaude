@@ -204,6 +204,12 @@ func TestCodexHarness_Registered(t *testing.T) {
 	if got := h.Life.SoftExitCommand(); got != "/quit" {
 		t.Fatalf("codex soft-exit command = %q, want /quit", got)
 	}
+	if h.SupportsRemoteControl() || h.CanRemoteControl() {
+		t.Fatalf("codex must NOT support remote control (no built-in remote access)")
+	}
+	if got := h.Life.RemoteControlCommand(); got != "" {
+		t.Fatalf("codex remote-control command = %q, want empty", got)
+	}
 	if h.Spawn.Binary() != "codex" {
 		t.Fatalf("codex binary = %q", h.Spawn.Binary())
 	}

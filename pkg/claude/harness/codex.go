@@ -51,14 +51,16 @@ func init() {
 // codexLifecycle names Codex CLI's in-pane control slash commands. Codex
 // exposes `/compact` for context summarisation and `/quit` for soft-exit.
 // RenameCommand is empty because Codex has no in-pane rename; titles live in
-// its threads state DB, reached via ConvStore.SetTitle.
-// The token is a compile-time constant — never interpolate user input into
-// it (the tmux pane is an injection sink).
+// its threads state DB, reached via ConvStore.SetTitle. RemoteControlCommand
+// is empty because Codex has no built-in remote-access feature (JOH-254).
+// The tokens are compile-time constants — never interpolate user input into
+// them (the tmux pane is an injection sink).
 type codexLifecycle struct{}
 
-func (codexLifecycle) RenameCommand() string   { return "" }
-func (codexLifecycle) CompactCommand() string  { return "/compact" }
-func (codexLifecycle) SoftExitCommand() string { return "/quit" }
+func (codexLifecycle) RenameCommand() string        { return "" }
+func (codexLifecycle) CompactCommand() string       { return "/compact" }
+func (codexLifecycle) SoftExitCommand() string      { return "/quit" }
+func (codexLifecycle) RemoteControlCommand() string { return "" }
 
 // codexConvStore assembles conversations from Codex's split storage model.
 // The methods are thin wrappers that resolve HOME and delegate to the

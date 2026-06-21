@@ -449,7 +449,13 @@ func TestClaudeLifecycle_Tokens(t *testing.T) {
 	if h.Life.SoftExitCommand() != "/exit" {
 		t.Fatalf("soft-exit token = %q, want /exit", h.Life.SoftExitCommand())
 	}
+	if h.Life.RemoteControlCommand() != "/remote-control" {
+		t.Fatalf("remote-control token = %q, want /remote-control", h.Life.RemoteControlCommand())
+	}
 	if !h.SupportsRename() || !h.SupportsCompact() || !h.SupportsSoftExit() {
 		t.Fatalf("claude must support rename/compact/soft-exit")
+	}
+	if !h.SupportsRemoteControl() || !h.CanRemoteControl() {
+		t.Fatalf("claude must support remote control (/remote-control)")
 	}
 }
