@@ -1136,9 +1136,12 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 // checkbox / CLI flag) decides the spawn state, overriding BOTH the group policy
 // and the profile default. The group's remote-control policy and the group
 // default profile only PRE-FILL the dashboard form (client-side) and serve as
-// the SERVER fallback for callers that send no explicit value (CLI without the
-// flag, group-template instantiation): with requested nil, the group policy wins,
-// then the profile default, then off.
+// the SERVER fallback for callers that reach handleGroupSpawn with no explicit
+// value (CLI `tclaude agent spawn` without the flag, or `tclaude --join-group`):
+// with requested nil, the group policy wins, then the profile default, then off.
+// (The group-template instantiator does NOT route through here — it builds its
+// spawnParams directly and leaves remote-control off; see instantiate in
+// templates.go.)
 //
 // requested is the already-validated explicit per-spawn value, tri-state (*bool):
 // non-nil = the form/flag stated an intent (true OR false); nil = unspecified, so

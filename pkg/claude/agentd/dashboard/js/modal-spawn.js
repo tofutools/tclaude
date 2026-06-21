@@ -764,6 +764,13 @@ function bindAgentSpawnModal() {
     updateSpawnModelDefaultLabel(e.target.value);
     if (!spawnWtRepoEdited) $('#agent-spawn-wt-repo').value = $('#agent-spawn-cwd').value;
     spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
+    // Re-derive the Remote Access checkbox from the new group's policy. Unlike
+    // the profile pre-fill below, this IS safe to re-run on group change: it's a
+    // single field with no user-typed content to clobber, and the checkbox is the
+    // authoritative per-spawn intent — leaving it on the old group's policy would
+    // submit the new group's spawn with the wrong state. Pass null: the group's
+    // default profile is not re-applied here, so seed from the group policy alone.
+    applyRemoteControlPrefill(e.target.value, null);
     // Deliberately NOT re-running the profile pre-fill here: it's a one-shot
     // on open. Re-applying the new group's default profile mid-dialog would
     // clobber any name / role / model / init-msg the human already typed (the
@@ -777,6 +784,13 @@ function bindAgentSpawnModal() {
   // control becomes active).
   $('#agent-spawn-harness').addEventListener('change', (e) => {
     applySpawnHarness(e.target.value);
+    // applySpawnHarness only CLEARS the Remote Access box for a harness with no
+    // Remote Access; it doesn't re-fill when switching back to one. Re-derive
+    // from the group policy so a Codex→Claude toggle restores the prefill instead
+    // of leaving the box stuck off. No-op for a non-capable harness (the helper
+    // re-checks the capability). Pass null: a loaded profile is not re-applied on
+    // a manual harness toggle, so seed from the group policy alone.
+    applyRemoteControlPrefill($('#agent-spawn-group').value, null);
   });
   // Picking a different sandbox mode refreshes the live help line (its
   // agentd-reachability caveat changes per mode).
