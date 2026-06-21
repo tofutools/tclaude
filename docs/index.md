@@ -26,6 +26,7 @@ Powerful session and conversation management for agentic coding CLIs. tclaude is
 - ⚙️ **Task Management** - Run multiple tasks automatically
 - 🤝 **Agent Coordination** - Cross-session messaging, groups, agent spawn/clone/reincarnate, and scheduled nudges via `tclaude agent` + `agentd` (experimental)
 - 📊 **Agent Dashboard** - Browser operations console for groups, agents, permissions, and cron jobs (experimental)
+- 📱 **Remote Control** - Arm Claude Code's built-in Remote Access from the dashboard/CLI, default it per profile or group, and keep it across relaunches ([details](remote-control.md), Claude Code only)
 
 ## Installation
 
@@ -174,6 +175,7 @@ Session watch also supports:
 - [Conversation Management](conversations.md) - Detailed conversation commands
 - [Agent Coordination](agent.md) - Cross-session messaging, groups, lifecycle, and scheduling via `tclaude agent` + `agentd` (**experimental**)
 - [Agent Dashboard](dashboard.md) - Browser operations console for the agent system (**experimental**)
+- [Remote Control](remote-control.md) - Drive agents from your phone via Claude Code's built-in Remote Access; arm at spawn, default per profile/group (**Claude Code only**)
 - [Sandboxing Agents](sandbox-hardening.md) - Operator guide: lock down the Claude Code sandbox so `agentd`'s coordination guardrail holds
 - [Git Worktrees](worktrees.md) - Parallel development with multiple branches
 - [OS Notifications](notifications.md) - Get notified when sessions need attention

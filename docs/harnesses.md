@@ -77,7 +77,7 @@ instead of slash-command injection).
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) |
 | **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
 | **Graceful stop** | ✅ `/exit` | ✅ `/quit` |
-| **Remote control** | ✅ in-pane `/remote-control` toggle (Claude's built-in Remote Access → claude.ai/code + mobile app) | ❌ no built-in remote access |
+| **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
 | **OS sandbox at spawn** | ⚙️ configured in `settings.json` | ✅ managed profile (default) or raw `--sandbox` flag |
