@@ -1068,9 +1068,10 @@ function bindRowActions() {
           // The group remote-control-policy chip: cycle the group's
           // remote_control_policy inherit → optin → deny → inherit. The chip's
           // data-next carries the value one click sends (computed at render
-          // time, mirroring the per-agent notify bell). The policy OVERRIDES
-          // each spawn profile's own remote_control default at spawn — inherit
-          // defers to the profile, optin/deny force it on/off (JOH-262).
+          // time, mirroring the per-agent notify bell). The policy is a spawn
+          // DEFAULT that overrides each spawn profile's own remote_control default
+          // — inherit defers to the profile, optin/deny default it on/off — but a
+          // per-spawn checkbox / flag still wins over it (JOH-262 revised).
           // PATCH /api/groups/{name} {remote_control_policy}, the same endpoint
           // + method the default_profile / notify_enabled chips use.
           const next = btn.getAttribute('data-next') || 'inherit';
@@ -1080,7 +1081,7 @@ function bindRowActions() {
             body: JSON.stringify({ remote_control_policy: next }),
           });
           if (!r.ok) { toast(`set remote-control policy failed: ${await r.text()}`, true); return; }
-          const pretty = next === 'optin' ? 'opt-in (force on)' : next === 'deny' ? 'deny (force off)' : 'inherit (defer to profile)';
+          const pretty = next === 'optin' ? 'opt-in (default on)' : next === 'deny' ? 'deny (default off)' : 'inherit (defer to profile)';
           toast(`${group}: remote-control policy → ${pretty}`);
           refresh();
           return;

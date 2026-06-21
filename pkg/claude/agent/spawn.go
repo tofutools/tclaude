@@ -124,13 +124,19 @@ type SpawnRequest struct {
 
 	// RemoteControl arms the spawned agent's built-in Remote Access at launch
 	// (Claude Code's --remote-control), so it is reachable from the Claude app
-	// from its first turn (JOH-258). false (the default) leaves it local. The
-	// daemon gates it on the chosen harness having Remote Access (Claude Code);
+	// from its first turn (JOH-258). It is tri-state (*bool): a non-nil value is
+	// the AUTHORITATIVE per-spawn intent — it overrides the group's remote-control
+	// policy AND the group default profile's remote-control default, so "whatever
+	// the spawn form shows decides" (JOH-262 revised). nil = unspecified, so the
+	// daemon's policy stack (group policy → profile default → off) fills it; this
+	// is the CLI's opt-in-only path (the `--remote-control` flag sets &true, its
+	// absence leaves nil). The dashboard spawn modal always sends the checkbox
+	// state (true OR false) for a Remote-Access-capable harness. The daemon gates a
+	// non-nil true on the chosen harness having Remote Access (Claude Code);
 	// requesting it for Codex is a 400. Forwarded to `tclaude session new
 	// --remote-control`, and the daemon tags sessions.remote_control=1 once the
-	// row materialises. Every spawn surface (`agent spawn`, the dashboard spawn
-	// modal) sets this same field, single-sourcing the wire contract.
-	RemoteControl bool `json:"remote_control,omitempty"`
+	// row materialises.
+	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -398,7 +404,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
 		AutoReview:     autoReview,
-		RemoteControl:  remoteControl,
+	}
+	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
+	// and leave the pointer nil otherwise so the daemon's group/profile
+	// remote-control policy fills it (the dashboard form is the surface that sends
+	// an explicit false to override an inherited default). See SpawnRequest.RemoteControl.
+	if remoteControl {
+		on := true
+		req.RemoteControl = &on
 	}
 	// --no-group-context maps to an explicit `false` on the wire; an
 	// omitted pointer means opt-in, so the default (no flag) lets the
