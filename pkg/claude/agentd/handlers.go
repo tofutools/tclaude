@@ -977,17 +977,7 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // context-info and submit the follow-up themselves once compact has
 // resolved.
 func injectSlashCommand(convID, line, followUp, reason string) bool {
-	candidates, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return false
-	}
-	var sess *db.SessionRow
-	for _, c := range candidates {
-		if c.TmuxSession != "" && session.IsTmuxSessionAlive(c.TmuxSession) {
-			sess = c
-			break
-		}
-	}
+	sess := aliveSessionForConv(convID)
 	if sess == nil {
 		return false
 	}

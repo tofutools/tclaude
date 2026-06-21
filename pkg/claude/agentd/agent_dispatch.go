@@ -76,6 +76,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentCompact(w, r, convID)
 	case "rename":
 		handleAgentRename(w, r, convID)
+	case "remote-control":
+		handleAgentRemoteControl(w, r, convID)
 	case "clone":
 		handleAgentClone(w, r, convID)
 	case "stop":

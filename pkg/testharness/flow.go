@@ -784,6 +784,32 @@ func (f *Flow) Compact(convID string) CompactResp {
 	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
 }
 
+// RemoteControlResp parses POST /v1/agent/{conv}/remote-control. Code/Raw
+// carry the daemon's response so a test can assert the harness-unsupported
+// 409 (a harness with no RemoteControlCommand, e.g. Codex) as readily as the
+// CC success path.
+type RemoteControlResp struct {
+	ConvID        string `json:"conv_id"`
+	RemoteControl bool   `json:"remote_control"`
+	Action        string `json:"action"`
+	Note          string `json:"note"`
+	Code          int    `json:"-"`
+	Raw           []byte `json:"-"`
+}
+
+// RemoteControl drives POST /v1/agent/{conv}/remote-control with the given
+// intent ("on" | "off" | "toggle" | "status") WITHOUT fatal-on-error.
+func (f *Flow) RemoteControl(convID, intent string) RemoteControlResp {
+	f.T.Helper()
+	body := map[string]any{"intent": intent}
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/remote-control", body)
+	var resp RemoteControlResp
+	resp.Code = rec.Code
+	resp.Raw = rec.Body.Bytes()
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	return resp
+}
+
 // CloneResp parses POST /v1/agent/{target}/clone. Note: clone has no
 // `new_title` field — the clone's title is computed (`<base>-c-<N>`)
 // and injected via /rename asynchronously; tests assert it via

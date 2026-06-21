@@ -383,6 +383,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
 	mux.HandleFunc("/v1/whoami/compact", handleWhoamiCompact)
+	mux.HandleFunc("/v1/whoami/remote-control", handleWhoamiRemoteControl)
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
