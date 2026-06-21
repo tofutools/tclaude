@@ -66,6 +66,11 @@ type Config struct {
 	// absent keys fall back to the built-in default — see
 	// ResolvedAuditRetentionDays.
 	Audit *AuditConfig `json:"audit,omitempty"`
+
+	// RemoteAccess configures the optional network-exposed dashboard
+	// listener — see RemoteAccessConfig. Absent / disabled (the default)
+	// keeps agentd loopback-only.
+	RemoteAccess *RemoteAccessConfig `json:"remote_access,omitempty"`
 }
 
 // AuditConfig configures the agentd audit log — the persistent trail of
@@ -95,6 +100,55 @@ func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
 		return 0, false // keep forever
 	}
 	return c.Audit.RetentionDays, true
+}
+
+// RemoteAccessConfig configures the optional, separately-bound HTTPS listener
+// that exposes the agentd dashboard to the network (LAN / mesh / tunnel). It
+// is OFF by default and entirely independent of the loopback dashboard, which
+// keeps its init-token → session-cookie flow unchanged.
+//
+// When enabled, agentd starts a SECOND listener on Bind that enforces, before
+// any dashboard/API request is served:
+//   - mTLS — a client certificate issued by the tclaude remote-access CA
+//     (RequireAndVerifyClientCert at the TLS layer; no valid cert ⇒ the
+//     connection is refused before any handler runs), AND
+//   - a passphrase login (`/login`) that mints a signed, restart-surviving
+//     session cookie.
+//
+// This is a network-exposed agent control plane (it can spawn/kill agents and
+// is a send-keys injection sink), so the auth is deliberately built to the
+// public-internet bar; LAN is just the zero-infra preset of that hardened
+// build. All secret material — the CA/server/client certs, the passphrase
+// hash, and the cookie-signing key — lives as 0600 files under
+// RemoteAccessDir (~/.tclaude/remote-access/), never in this config file.
+// Generate it with `tclaude remote-access setup`.
+type RemoteAccessConfig struct {
+	// Enabled starts the remote HTTPS listener. Default false: tclaude never
+	// exposes the control plane to the network without an explicit opt-in.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Bind is the listen address for the remote listener — e.g.
+	// "0.0.0.0:8443" (LAN), a tailnet interface IP (mesh), or
+	// "127.0.0.1:8443" (behind a tunnel that terminates a real cert). Empty
+	// leaves the listener off even when Enabled is true (there is nothing to
+	// bind to), and Validate flags that combination.
+	Bind string `json:"bind,omitempty"`
+}
+
+// RemoteAccessEnabled reports whether the remote listener should start: the
+// block is present, Enabled, and has a non-empty Bind. Nil-safe so callers
+// need no guard.
+func (c *Config) RemoteAccessEnabled() bool {
+	return c != nil && c.RemoteAccess != nil && c.RemoteAccess.Enabled && c.RemoteAccess.Bind != ""
+}
+
+// RemoteAccessBind returns the configured remote listen address, or "" when no
+// remote-access block is set. Nil-safe.
+func (c *Config) RemoteAccessBind() string {
+	if c == nil || c.RemoteAccess == nil {
+		return ""
+	}
+	return c.RemoteAccess.Bind
 }
 
 // AskConfig is the persistent default profile for `tclaude ask` (project
