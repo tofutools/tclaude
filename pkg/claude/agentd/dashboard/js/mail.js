@@ -48,6 +48,7 @@
 
 import { $, $$, esc, relTime, shortId, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+import { initMailResize } from './mail-resize.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
 // refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
 // nothing here reads them at module top level — only inside handlers —
@@ -1113,6 +1114,8 @@ async function markAllAgentRead() {
 // --- wiring ---------------------------------------------------------
 
 function initMail() {
+  // Restore + wire the draggable column layout (sidebar / list / reader).
+  initMailResize();
   const sec = $('#tab-messages');
   if (sec) {
     // Delegated click handler scoped to the Messages tab. The human-
