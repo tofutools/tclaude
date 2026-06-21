@@ -67,12 +67,15 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 	}
 
 	// CSS: the mail client is a 2-row grid and each child is placed into its
-	// cell — the message filter on row 1 (column 2), the bodies on row 2.
+	// cell — the message filter on row 1, the bodies on row 2. The column
+	// tracks are sidebar(1) | gutter(2) | list(3) | gutter(4) | reader(5)
+	// after the draggable-column work (#458) inserted the two 10px gutter
+	// tracks, so the list/filter sit in column 3 and the reader in column 5.
 	for _, needle := range []string{
 		"grid-template-rows: auto 1fr;",
-		".mail-list-filter { grid-column: 2; grid-row: 1; }",
-		".mail-list-col    { grid-column: 2; grid-row: 2; }",
-		".mail-reader      { grid-column: 3; grid-row: 1 / span 2; }",
+		".mail-list-filter { grid-column: 3; grid-row: 1; }",
+		".mail-list-col    { grid-column: 3; grid-row: 2; }",
+		".mail-reader      { grid-column: 5; grid-row: 1 / span 2; }",
 		".mail-list-filter {", // the relocated row is styled
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
