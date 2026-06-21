@@ -329,7 +329,15 @@ func runAsk(in askInput, aio askIO) error {
 		fresh = true
 	}
 
-	spec := harness.AskSpec{Print: printMode, Prompt: prompt}
+	// Stream the answer live only when a human is actually watching it arrive:
+	// print mode, stdout is a real terminal, and the harness can emit an
+	// incremental event stream (StreamAsker). A piped/redirected stdout reads
+	// the answer whole regardless of whether we streamed, so it keeps the
+	// simpler, exact buffered path — which also leaves `x=$(tclaude ask …)`
+	// capture semantics untouched. Interactive mode already streams natively.
+	streamRender := printMode && in.StdoutIsTerminal && h.SupportsAskStream()
+
+	spec := harness.AskSpec{Print: printMode, Stream: streamRender, Prompt: prompt}
 	if in.Model != "" {
 		m, err := h.Models.ValidateModel(in.Model)
 		if err != nil {
@@ -378,6 +386,23 @@ func runAsk(in askInput, aio askIO) error {
 		plan.Stdin = aio.Stdin
 	}
 
+	// In streaming mode the harness's stdout is its raw event stream, not the
+	// answer — route it through the harness's StreamFilter, which writes the
+	// clean incremental text to the real stdout. The flusher (if any) is called
+	// once after the process exits to surface a buffered final answer/error and
+	// end the line cleanly. spec.Stream is only ever set for a SupportsAskStream
+	// harness, so the type-assert always holds here.
+	var streamFlush harness.AskStreamFlusher
+	if spec.Stream {
+		if sa, ok := h.Ask.(harness.StreamAsker); ok {
+			filtered := sa.StreamFilter(aio.Stdout)
+			plan.Stdout = filtered
+			if fl, ok := filtered.(harness.AskStreamFlusher); ok {
+				streamFlush = fl
+			}
+		}
+	}
+
 	// In capture mode some harnesses (Codex) write a verbose human transcript to
 	// stderr — banner, `hook: …` lines, token counts — separate from the clean
 	// answer on stdout. Buffer that so a printed answer is just the answer;
@@ -390,6 +415,14 @@ func runAsk(in askInput, aio askIO) error {
 	}
 
 	started, runErr := runner(plan)
+	if streamFlush != nil {
+		// Surface any trailing answer/error the stream implied and end the line,
+		// whether or not the run succeeded. A flush write error is non-fatal —
+		// the answer already streamed; don't mask the run's own outcome with it.
+		if flushErr := streamFlush.Flush(); flushErr != nil && runErr == nil {
+			fmt.Fprintf(aio.Stderr, "ask: warning: could not finish streaming output: %v\n", flushErr)
+		}
+	}
 	if hideStderr && runErr != nil {
 		// The run failed — surface the suppressed transcript so the failure
 		// isn't silent (an auth error, a bad model, a sandbox denial, …).

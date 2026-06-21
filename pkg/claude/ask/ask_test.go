@@ -2,6 +2,7 @@ package ask
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
@@ -134,7 +135,16 @@ func (f *fakeRun) install(t *testing.T) {
 	runner = func(p runPlan) (bool, error) {
 		f.plans = append(f.plans, p)
 		if f.answer != "" && p.Stdout != nil {
-			_, _ = io.WriteString(p.Stdout, f.answer)
+			// When the ask flow asked for the streaming output format, the real
+			// claude writes JSONL events, not the bare answer — and p.Stdout is
+			// the harness's StreamFilter, which only extracts text from those
+			// events. Emit a realistic event stream so the filter is exercised
+			// end to end and the assertions still see the answer text.
+			if argvHas(p.Argv, "stream-json") {
+				_, _ = io.WriteString(p.Stdout, fakeClaudeStreamJSON(f.answer))
+			} else {
+				_, _ = io.WriteString(p.Stdout, f.answer)
+			}
 		}
 		if f.errOutput != "" && p.Stderr != nil {
 			_, _ = io.WriteString(p.Stderr, f.errOutput)
@@ -142,6 +152,32 @@ func (f *fakeRun) install(t *testing.T) {
 		return f.started, f.err
 	}
 	t.Cleanup(func() { runner = prev })
+}
+
+// fakeClaudeStreamJSON renders answer as the JSONL event stream Claude Code's
+// `--output-format stream-json --include-partial-messages` emits: an init
+// event, the answer split across two text_delta chunks (so the test proves the
+// filter concatenates deltas, not just forwards one), some ignored noise
+// (thinking + a per-message assistant snapshot, which must NOT be echoed), then
+// the terminal result event. The trailing answer newline is dropped from the
+// deltas — real text deltas carry none; the filter re-adds one on Flush.
+func fakeClaudeStreamJSON(answer string) string {
+	text := strings.TrimRight(answer, "\n")
+	mid := len(text) / 2
+	delta := func(s string) string {
+		b, _ := json.Marshal(s)
+		return `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":` + string(b) + `}}}`
+	}
+	resB, _ := json.Marshal(text)
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hmm"}}}`,
+		delta(text[:mid]),
+		delta(text[mid:]),
+		`{"type":"assistant","message":{"content":[{"type":"text","text":` + string(resB) + `}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":` + string(resB) + `}`,
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func (f *fakeRun) last() runPlan {
@@ -664,6 +700,72 @@ func TestAsk_ClaudeCaptureStderrNotHidden(t *testing.T) {
 	aio, _, errb := io2buf()
 	require.NoError(t, runAsk(ttyInput("term-CL", "/repo/x", "q"), aio)) // default harness = claude
 	assert.Contains(t, errb.String(), "claude: a warning", "claude's stderr is not suppressed")
+}
+
+// TestAsk_ClaudeTTYStreamsAnswer: a print-mode Claude ask to a real terminal
+// asks for the streaming output format and renders the answer through the
+// harness's StreamFilter (which reassembles the text_delta chunks), so a human
+// sees it build up live. The clean answer still reaches stdout.
+func TestAsk_ClaudeTTYStreamsAnswer(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "the answer\n", started: true}
+	f.install(t)
+
+	aio, out, _ := io2buf()
+	require.NoError(t, runAsk(ttyInput("term-S", "/repo/x", "what is up?"), aio))
+
+	argv := f.last().Argv
+	assert.True(t, argvHas(argv, "-p"), "still print mode")
+	assert.True(t, argvHas(argv, "stream-json"), "TTY print mode requests the streaming output format")
+	assert.True(t, argvHas(argv, "--include-partial-messages"), "token-level deltas are requested")
+	if v, ok := argvValue(argv, "--output-format"); assert.True(t, ok) {
+		assert.Equal(t, "stream-json", v)
+	}
+	// The two text_delta chunks the fake stream split the answer into are
+	// reassembled into the whole answer; the thinking/assistant noise is not.
+	assert.Equal(t, "the answer\n", out.String(), "answer is streamed clean (with a single trailing newline)")
+	assert.NotContains(t, out.String(), "hmm", "reasoning/thinking is never echoed to stdout")
+}
+
+// TestAsk_ClaudePipedStaysBuffered: when stdout is NOT a terminal (piped /
+// captured, e.g. `x=$(tclaude ask …)`), the ask keeps the plain buffered path —
+// no stream-json flags — because a pipe reads the answer whole regardless, and
+// this keeps capture output exact and unchanged.
+func TestAsk_ClaudePipedStaysBuffered(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "captured answer\n", started: true}
+	f.install(t)
+
+	in := askInput{
+		TermKey: "term-P", Cwd: "/repo/x", Question: "q",
+		StdinIsTerminal: true, StdoutIsTerminal: false, // stdout redirected
+	}
+	aio, out, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	assert.False(t, argvHas(f.last().Argv, "stream-json"), "a piped/captured stdout keeps the buffered path")
+	assert.Equal(t, "captured answer\n", out.String(), "captured answer is byte-for-byte the harness output")
+}
+
+// TestAsk_InteractiveDoesNotStreamJSON: interactive mode (-i, the full TUI)
+// streams natively and must never get the print-only stream-json flags.
+func TestAsk_InteractiveDoesNotStreamJSON(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "", started: true}
+	f.install(t)
+
+	in := askInput{
+		TermKey: "term-I", Cwd: "/repo/x", Question: "refactor this",
+		ForceInteractive: true, StdinIsTerminal: true, StdoutIsTerminal: true,
+	}
+	require.NoError(t, runAsk(in, askIO{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}))
+
+	argv := f.last().Argv
+	assert.False(t, argvHas(argv, "-p"), "interactive is not print mode")
+	assert.False(t, argvHas(argv, "stream-json"), "interactive never gets the print-only streaming flags")
 }
 
 // TestAssemblePrompt covers the three prompt shapes directly.

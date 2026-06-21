@@ -162,6 +162,19 @@ func (h *Harness) PreMintsAskConvID() bool {
 	return h != nil && h.Ask != nil && h.Ask.PreMintsConvID()
 }
 
+// SupportsAskStream reports whether the harness's Asker can emit an incremental
+// event stream in print mode (it implements StreamAsker), so `tclaude ask` can
+// render the answer live to a TTY instead of waiting for the whole buffered
+// turn. Nil-safe; false for a harness with no Asker or a buffer-only one.
+// Callers must have checked SupportsAsk first. See Asker / StreamAsker.
+func (h *Harness) SupportsAskStream() bool {
+	if h == nil || h.Ask == nil {
+		return false
+	}
+	_, ok := h.Ask.(StreamAsker)
+	return ok
+}
+
 // SupportsConvs reports whether the harness exposes a ConvStore. Callers
 // that fall back to ConvStore (e.g. a rename for a harness without an
 // in-pane rename command) must check this first — a descriptor may leave

@@ -1,7 +1,10 @@
 package harness
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -124,6 +127,17 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Print {
 		argv = append(argv, "-p")
 	}
+	// Streaming is a print-mode-only refinement: swap the default `text` output
+	// (which buffers the whole turn and prints the answer only at the end) for
+	// the JSONL event stream, so claudeStreamFilter can render the answer token
+	// by token. `--verbose` is mandatory — `claude -p --output-format
+	// stream-json` errors without it — and `--include-partial-messages` is what
+	// promotes the stream from one-event-per-complete-message up to the
+	// token-level `text_delta` chunks the filter reads. Guarded on Print so a
+	// stray Stream on an interactive spec can't emit a capture-only flag.
+	if spec.Stream && spec.Print {
+		argv = append(argv, "--output-format", "stream-json", "--verbose", "--include-partial-messages")
+	}
 	switch {
 	case spec.ResumeID != "":
 		argv = append(argv, "--resume", spec.ResumeID)
@@ -165,6 +179,134 @@ func (claudeAsker) PreMintsConvID() bool { return true }
 // NoisyCaptureStderr is false: `claude -p` prints just the answer to stdout and
 // keeps stderr quiet, so `tclaude ask` has no transcript to hide.
 func (claudeAsker) NoisyCaptureStderr() bool { return false }
+
+// StreamFilter wraps the caller's stdout with a filter that reads Claude Code's
+// `--output-format stream-json` output — newline-delimited JSON events — and
+// forwards only the assistant's visible text, token by token, as it streams.
+// It is the read half of the streaming contract whose write half is the
+// stream-json flags BuildAskArgv emits for a Stream spec. Implementing it is
+// what makes claudeAsker a StreamAsker (so Harness.SupportsAskStream is true).
+func (claudeAsker) StreamFilter(w io.Writer) io.Writer {
+	return &claudeStreamFilter{out: w}
+}
+
+// claudeStreamEvent is the slice of Claude Code's stream-json event schema this
+// filter cares about. Each stdout line is one such JSON object. The visible
+// answer arrives as `text_delta` chunks:
+//
+//	{"type":"stream_event","event":{"type":"content_block_delta",
+//	 "delta":{"type":"text_delta","text":"…"}}}
+//
+// and the terminal `{"type":"result","result":"…"}` event carries the full
+// final answer (or, on failure, the error message) — used only as a fallback
+// when no deltas streamed. Every other event type (system/init, message_start,
+// thinking_delta, the per-message `assistant` snapshots, …) is ignored, so
+// reasoning and tool-use chatter never reach the user's stdout.
+type claudeStreamEvent struct {
+	Type   string `json:"type"`
+	Result string `json:"result"`
+	Event  struct {
+		Type  string `json:"type"`
+		Delta struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"delta"`
+	} `json:"event"`
+}
+
+// claudeStreamFilter implements io.Writer (+ Flush, the AskStreamFlusher half):
+// claude's stdout is written into it, and it writes the extracted visible text
+// to out. It buffers a partial trailing line across Write calls (the pipe can
+// split a write mid-line) and only ever acts on complete, newline-terminated
+// events. A failure writing to out is stashed and surfaced from Flush so a
+// short write never propagates back to claude's pipe (which would abort it).
+type claudeStreamFilter struct {
+	out         io.Writer
+	buf         []byte // incomplete trailing line carried between Write calls
+	wroteText   bool   // at least one text_delta has been forwarded
+	endedNL     bool   // the last bytes forwarded ended in a newline
+	finalResult string // result-event text, emitted by Flush only if nothing streamed
+	writeErr    error  // first error writing to out; returned by Flush
+}
+
+func (f *claudeStreamFilter) Write(p []byte) (int, error) {
+	f.buf = append(f.buf, p...)
+	for {
+		i := bytes.IndexByte(f.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := f.buf[:i]
+		f.buf = f.buf[i+1:]
+		f.consume(line)
+	}
+	// Always report the full length consumed: a short write would make claude's
+	// stdout pipe think the reader failed and tear the turn down. Real write
+	// errors are stashed in writeErr and reported by Flush instead.
+	return len(p), nil
+}
+
+// consume parses one complete event line and forwards its visible text. A line
+// that isn't valid JSON, or is an event type we don't render, is silently
+// dropped — the stream legitimately carries many such lines.
+func (f *claudeStreamFilter) consume(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return
+	}
+	var ev claudeStreamEvent
+	if err := json.Unmarshal(line, &ev); err != nil {
+		return
+	}
+	switch ev.Type {
+	case "stream_event":
+		if ev.Event.Type == "content_block_delta" && ev.Event.Delta.Type == "text_delta" {
+			f.emit(ev.Event.Delta.Text)
+		}
+	case "result":
+		// The final answer (or, on failure, the error message). Kept only as a
+		// fallback: on a normal turn the same text already streamed as deltas,
+		// so Flush ignores it; it's surfaced only when nothing streamed, so an
+		// error or a delta-less stream is never silent.
+		f.finalResult = ev.Result
+	}
+}
+
+func (f *claudeStreamFilter) emit(s string) {
+	if s == "" || f.writeErr != nil {
+		return
+	}
+	if _, err := io.WriteString(f.out, s); err != nil {
+		f.writeErr = err
+		return
+	}
+	f.wroteText = true
+	f.endedNL = strings.HasSuffix(s, "\n")
+}
+
+// Flush is called once after the claude process exits. It surfaces a buffered
+// final answer/error when nothing streamed, and leaves the cursor on a fresh
+// line — text_delta chunks carry no trailing newline, so without this the
+// shell prompt would resume mid-answer.
+func (f *claudeStreamFilter) Flush() error {
+	// Process any final line the stream didn't newline-terminate. claude's
+	// stream-json terminates every event (including the last) with a newline, so
+	// this is belt-and-suspenders — but it keeps a result event without a
+	// trailing newline from being silently dropped.
+	if len(bytes.TrimSpace(f.buf)) > 0 {
+		f.consume(f.buf)
+		f.buf = nil
+	}
+	if !f.wroteText && f.finalResult != "" {
+		f.emit(f.finalResult)
+	}
+	if f.wroteText && !f.endedNL && f.writeErr == nil {
+		if _, err := io.WriteString(f.out, "\n"); err != nil {
+			f.writeErr = err
+		}
+	}
+	return f.writeErr
+}
 
 // claudeModels delegates to the curated clcommon validators so the model
 // and effort knowledge stays in one place; the catalog is the

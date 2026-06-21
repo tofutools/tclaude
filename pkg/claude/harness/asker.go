@@ -1,5 +1,7 @@
 package harness
 
+import "io"
+
 // AskSpec is a harness-agnostic description of a one-shot "ask" turn — the
 // primitive behind `tclaude ask` (project tclaude-ask, JOH-250). Unlike a
 // SpawnSpec (which describes a long-lived tmux-pane session), an ask runs a
@@ -37,6 +39,17 @@ type AskSpec struct {
 	// harness prints its answer to stdout and exits, taking no further input.
 	// false runs the harness interactively, attached to the caller's TTY.
 	Print bool
+	// Stream asks a print-mode turn to emit a machine-readable event stream
+	// instead of one buffered answer, so a human watching a TTY sees the answer
+	// build up live rather than appearing all at once at the end (Claude Code's
+	// `--output-format stream-json` buffers nothing; the default `text` format
+	// waits for the whole turn). Only meaningful with Print; a streaming Asker
+	// (StreamAsker) builds the right flags and provides the StreamFilter that
+	// turns that event stream back into clean incremental text. `tclaude ask`
+	// sets it only when stdout is a real terminal (a pipe/capture reads the
+	// answer whole regardless, so it keeps the simpler buffered path). Harnesses
+	// that don't implement StreamAsker ignore it.
+	Stream bool
 	// Prompt is the question, already assembled by the caller (it folds in
 	// any piped stdin payload). The Asker emits it as the harness's single
 	// positional prompt argument, shell-quoted, so it is never split into
@@ -77,4 +90,43 @@ type Asker interface {
 	// `-p` keeps stderr quiet already, so it returns false. Only consulted in
 	// print mode; an interactive turn always passes stderr through.
 	NoisyCaptureStderr() bool
+}
+
+// StreamAsker is an optional Asker capability: a harness that can emit a
+// machine-readable EVENT STREAM in print mode (rather than one buffered answer)
+// implements it so `tclaude ask` can render the answer incrementally to a TTY.
+// Harnesses whose print mode already streams plain text — or that only buffer —
+// leave it unimplemented; callers gate on Harness.SupportsAskStream and fall
+// back to the plain buffered path.
+//
+// The two halves are deliberately coupled in one contract because they must
+// agree: BuildAskArgv (given an AskSpec with Stream=true) emits the flags that
+// turn on the event stream, and StreamFilter knows how to read exactly that
+// stream back. Keeping both behind the harness means the generic ask flow never
+// learns a harness's event-stream wire format.
+type StreamAsker interface {
+	Asker
+
+	// StreamFilter wraps the caller's real stdout w and returns a writer that
+	// `tclaude ask` makes the harness process's stdout. As the harness writes
+	// its raw event stream into the returned writer, the filter parses it and
+	// writes only the assistant's clean, incremental VISIBLE text to w — no
+	// JSON, no reasoning/thinking, no tool-use chatter — so a captured answer
+	// (`x=$(tclaude ask …)`) would still be just the answer, and a human
+	// watching sees it stream.
+	//
+	// The returned writer may also implement AskStreamFlusher; `tclaude ask`
+	// calls Flush once after the process exits so the filter can emit any
+	// trailing text the stream implied but never streamed as deltas (a final
+	// result or an error message) and a terminating newline.
+	StreamFilter(w io.Writer) io.Writer
+}
+
+// AskStreamFlusher is the optional flush half of a StreamFilter's returned
+// writer. `tclaude ask` type-asserts for it and calls Flush exactly once, after
+// the harness process exits, regardless of whether the run succeeded — so the
+// filter gets a chance to surface a buffered final answer/error and end the
+// line cleanly. A filter that needs no end-of-stream work simply omits it.
+type AskStreamFlusher interface {
+	Flush() error
 }
