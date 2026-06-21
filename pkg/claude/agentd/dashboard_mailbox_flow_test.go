@@ -389,6 +389,127 @@ func TestDashboardMailboxMutations_RequireAuth(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, wipe.Code, "uncookied wipe refused")
 }
 
+// findMsg returns the message with the given subject from a folder page, or
+// fails the test — a small helper for the mark-read scenarios.
+func findMsg(t *testing.T, msgs []mailboxMsg, subject string) mailboxMsg {
+	t.Helper()
+	for _, m := range msgs {
+		if m.Subject == subject {
+			return m
+		}
+	}
+	t.Fatalf("no message with subject %q in folder", subject)
+	return mailboxMsg{}
+}
+
+// markRead POSTs to /api/mailbox/mark-read and returns the marked count.
+func markRead(t *testing.T, dash http.Handler, body map[string]any) int {
+	t.Helper()
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/mark-read", body))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp struct {
+		Marked int `json:"marked"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	return resp.Marked
+}
+
+// Scenario: POST /api/mailbox/mark-read {ids,read} flips a single row's
+// read-state both ways, and the change is visible at the read surface in BOTH
+// the recipient's and the sender's folder (it is one shared row). This is the
+// operator marking a stuck agent's received message read on its behalf.
+func TestDashboardMailboxMarkRead_TogglesByID(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	// alice→bob "hi bob" starts unread in bob's inbox.
+	opener := findMsg(t, getMailbox(t, dash, mbBob), "hi bob")
+	require.False(t, opener.Read, "alice's opener starts unread")
+
+	// Mark it read on bob's behalf.
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{
+		"ids": []int64{opener.ID}, "read": true}))
+	assert.True(t, findMsg(t, getMailbox(t, dash, mbBob), "hi bob").Read,
+		"now read in bob's (recipient) folder")
+	assert.True(t, findMsg(t, getMailbox(t, dash, mbAlice), "hi bob").Read,
+		"same shared row reads as read in alice's (sender) folder too")
+
+	// Re-marking read is an idempotent no-op (count 0, state unchanged).
+	assert.Equal(t, 0, markRead(t, dash, map[string]any{
+		"ids": []int64{opener.ID}, "read": true}), "already-read row doesn't re-transition")
+
+	// Mark it back to unread.
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{
+		"ids": []int64{opener.ID}, "read": false}))
+	assert.False(t, findMsg(t, getMailbox(t, dash, mbBob), "hi bob").Read,
+		"back to unread in bob's folder")
+}
+
+// Scenario: POST /api/mailbox/mark-read {conv,read:true} marks every message
+// the conv has RECEIVED read, and does NOT touch rows it SENT (read_at there
+// belongs to the other party). The per-folder "mark all read" for a stuck
+// agent.
+func TestDashboardMailboxMarkRead_MarkAllForConv(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	// Add an unread message bob SENT (bob→alice) so we can prove the sent
+	// side is left alone. Seed already has bob receiving one unread (hi bob)
+	// and having sent one read (re: hi bob).
+	g, err := db.GetAgentGroupByName("team")
+	require.NoError(t, err)
+	_, err = db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbBob, ToConv: mbAlice,
+		Subject: "bob outbound unread", Body: "x", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	// Mark all of bob's RECEIVED messages read — only "hi bob" qualifies.
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{
+		"conv": mbBob, "read": true}), "only the one received-unread row flips")
+
+	bob := getMailbox(t, dash, mbBob)
+	assert.True(t, findMsg(t, bob, "hi bob").Read, "received message now read")
+	assert.False(t, findMsg(t, bob, "bob outbound unread").Read,
+		"bob's SENT row is untouched — its read-state belongs to alice")
+
+	// Idempotent: a second mark-all flips nothing.
+	assert.Equal(t, 0, markRead(t, dash, map[string]any{
+		"conv": mbBob, "read": true}))
+}
+
+// Scenario: conv mode supports read=true only — marking a whole inbox unread
+// is a footgun the endpoint refuses.
+func TestDashboardMailboxMarkRead_ConvUnreadRejected(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/mark-read", map[string]any{"conv": mbBob, "read": false}))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: a body naming neither ids nor conv is a 400 — the client must say
+// what to mark.
+func TestDashboardMailboxMarkRead_RequiresTarget(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/mark-read", map[string]any{"read": true}))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// Scenario: mark-read refuses an uncookied request, same human-consent gate
+// as the delete/wipe mutations.
+func TestDashboardMailboxMarkRead_RequiresAuth(t *testing.T) {
+	newFlow(t)
+	mux := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(mux)
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+		"/api/mailbox/mark-read", map[string]any{"ids": []int64{1}, "read": true}))
+	assert.Equal(t, http.StatusForbidden, rec.Code, "uncookied mark-read refused")
+}
+
 // --- pagination + server-side search --------------------------------
 
 // mailboxPageResp mirrors the paginated /api/mailbox wire shape: a page

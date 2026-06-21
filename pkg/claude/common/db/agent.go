@@ -1859,6 +1859,75 @@ func DeleteAgentMessagesByIDs(ids []int64) (int64, error) {
 	return n, nil
 }
 
+// SetAgentMessagesRead marks the listed agent_messages rows read
+// (read=true, stamping read_at=now on the currently-unread ones) or unread
+// (read=false, clearing read_at on the currently-read ones). It is the
+// dashboard operator's authority to repair a stuck agent's inbox read-state
+// — the cookie + Origin gate stands in for the per-conv party check, same as
+// DeleteAgentMessagesByIDs. Only rows that actually change state are touched,
+// so marking-read leaves an already-read row's read_at timestamp intact and
+// the returned count reflects real transitions (mirroring the idempotent
+// no-op the batched UI relies on). A non-existent id is a silent skip.
+// Returns how many rows changed.
+func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	// When marking read the timestamp is the first bound parameter (it
+	// precedes the IN-list in the UPDATE); marking unread binds the ids only.
+	if read {
+		args = append(args, time.Now().Format(time.RFC3339Nano))
+	}
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	in := strings.Join(placeholders, ",")
+	var q string
+	if read {
+		q = `UPDATE agent_messages SET read_at = ? WHERE read_at = '' AND id IN (` + in + `)`
+	} else {
+		q = `UPDATE agent_messages SET read_at = '' WHERE read_at != '' AND id IN (` + in + `)`
+	}
+	res, err := d.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// MarkAgentMailboxRead marks every still-unread message a conv has RECEIVED
+// (to_conv = conv, read_at == '') as read, stamping read_at=now. It backs the
+// dashboard's per-agent-folder "mark all read" — the operator clearing a
+// stuck agent's whole inbox in one click. Only the received side is touched:
+// read_at on a row the conv SENT belongs to the other party, so a folder-level
+// "mark all read" must not flip the recipient's read-state. Returns how many
+// rows changed.
+func MarkAgentMailboxRead(conv string) (int64, error) {
+	if conv == "" {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`UPDATE agent_messages SET read_at = ? WHERE to_conv = ? AND read_at = ''`,
+		time.Now().Format(time.RFC3339Nano), conv)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // WipeAgentMessagesForConvs hard-deletes every agent_messages row where
 // any of the listed convs is a party (sender or recipient) — the
 // dashboard's "wipe selected mailboxes" bulk action. Because a 1:1

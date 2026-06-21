@@ -19,14 +19,18 @@
 //                             "delete selected".
 //   reader  (#mail-reader)  → the selected message's headers + body,
 //                             plus per-folder actions (human folder:
-//                             mark-read / focus; every folder: delete).
+//                             mark-read / focus; agent + "all" folders:
+//                             mark-read/unread toggle; every folder:
+//                             delete).
 //
 // Read data comes from two cookie-authed GETs (dashboard_mailbox.go):
 // /api/mailboxes for the sidebar roster and /api/mailbox?id=<all|human|
 // conv> for a folder's messages. Mutations are the operator's authority
 // (cookie + Origin): agent + "all" folders delete agent_messages via
-// /api/mailbox/delete (by id) and /api/mailbox/wipe (by conv); the human
-// folder keeps its /api/human-messages/* path (delete accepts an ids
+// /api/mailbox/delete (by id) and /api/mailbox/wipe (by conv), and set
+// their read-state via /api/mailbox/mark-read (by id, or whole-folder by
+// conv) — the operator repairing a stuck agent's inbox on its behalf; the
+// human folder keeps its /api/human-messages/* path (delete accepts an ids
 // array for multi-select). The reader's human-only mark-read / focus
 // actions still flow through row-actions.js's document handler.
 //
@@ -522,11 +526,20 @@ function paintListBulkBar() {
   bar.hidden = false;
   const n = mail.selectedMsgs.size;
   const allChecked = filtered.every(m => mail.selectedMsgs.has(m.id));
+  // Agent + "all" folders gain a read/unread toggle over the selection (the
+  // operator clearing several of a stuck agent's messages at once); the human
+  // folder keeps its own mark-read path (the filter-bar "mark all read"), so
+  // its bulk bar stays delete-only.
+  const readBtns = mail.selected !== HUMAN_ID
+    ? `<button data-act="mail-mark-read-selected" title="Mark the selected messages read"${n ? '' : ' disabled'}>✓ read</button>
+       <button data-act="mail-mark-unread-selected" title="Mark the selected messages unread"${n ? '' : ' disabled'}>○ unread</button>`
+    : '';
   bar.innerHTML = `
     <label title="Select / deselect every message on this page">
       <input type="checkbox" class="mail-select-all"${allChecked ? ' checked' : ''} /> all
     </label>
     <span class="grow">${n ? `${n} selected` : ''}</span>
+    ${readBtns}
     <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`;
 }
 
@@ -619,8 +632,14 @@ function paintReader() {
     const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
     actions = `<div class="mail-reader-actions">${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
   } else {
+    // Agent + "all" folders: an explicit operator toggle of the row's
+    // read-state (set on the recipient's behalf — repairing a stuck agent's
+    // inbox), plus delete.
+    const readBtn = m.read
+      ? `<button data-act="mail-msg-mark-read" data-id="${m.id}" data-read="0" title="Mark this message unread for the recipient">mark unread</button>`
+      : `<button data-act="mail-msg-mark-read" data-id="${m.id}" data-read="1" title="Mark this message read on the recipient’s behalf">mark read</button>`;
     const delBtn = `<button class="danger" data-act="mail-msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    actions = `<div class="mail-reader-actions">${delBtn}</div>`;
+    actions = `<div class="mail-reader-actions">${readBtn}${delBtn}</div>`;
   }
 
   el.innerHTML = `
@@ -639,15 +658,21 @@ function paintReader() {
     ${actions}`;
 }
 
-// paintBulkActions shows the message-filter row's "mark all read" /
-// "clear read" buttons only on the human folder — they act on
-// human_messages, which is the only folder with read-state semantics.
+// paintBulkActions shows the message-filter row's bulk read actions. The
+// human folder gets "mark all read" / "clear read" (over human_messages); a
+// single agent folder gets its own "mark all read" (marks every message that
+// agent has RECEIVED read, on its behalf — clearing a stuck agent's inbox).
+// The "all" firehose gets neither: "mark all read" across every conv's
+// traffic is not a meaningful operator action.
 function paintBulkActions() {
   const human = mail.selected === HUMAN_ID;
+  const agentFolder = !human && mail.selected !== ALL_ID;
   const markAll = $('#mail-mark-all');
   const clearRead = $('#mail-clear-read');
+  const agentMarkAll = $('#mail-agent-mark-all');
   if (markAll) markAll.hidden = !human;
   if (clearRead) clearRead.hidden = !human;
+  if (agentMarkAll) agentMarkAll.hidden = !agentFolder;
 }
 
 // --- selection ------------------------------------------------------
@@ -854,6 +879,52 @@ async function wipeSelectedMailboxes() {
   await reloadMail();
 }
 
+// setMessagesRead marks the given message ids read (read=true) or unread
+// (read=false) on the recipient's behalf — the operator repairing a stuck
+// agent's inbox read-state. Non-destructive and reversible, so no confirm.
+// Reloads so the unread dots + the sidebar badge update.
+async function setMessagesRead(ids, read) {
+  ids = ids.filter(Number.isFinite);
+  if (mail.busy || !ids.length) return;
+  const verb = read ? 'read' : 'unread';
+  try {
+    const r = await fetch('/api/mailbox/mark-read', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, read }),
+    });
+    if (!r.ok) { toast(`mark ${verb} failed: ${await r.text()}`, true); return; }
+    const res = await r.json().catch(() => ({}));
+    const n = res.marked || 0;
+    toast(`marked ${n} message${n === 1 ? '' : 's'} ${verb}`);
+    await reloadMail();
+  } catch (err) {
+    toast(`mark ${verb} failed: ${(err && err.message) || err}`, true);
+  }
+}
+
+// markAllAgentRead marks every still-unread message the selected agent has
+// RECEIVED as read — the per-folder "mark all read" for a stuck agent. Only
+// valid for a single agent folder (not the human or "all" virtual folders).
+async function markAllAgentRead() {
+  const conv = mail.selected;
+  if (mail.busy || conv === HUMAN_ID || conv === ALL_ID) return;
+  try {
+    const r = await fetch('/api/mailbox/mark-read', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conv, read: true }),
+    });
+    if (!r.ok) { toast(`mark all read failed: ${await r.text()}`, true); return; }
+    const res = await r.json().catch(() => ({}));
+    const n = res.marked || 0;
+    toast(`marked ${n} message${n === 1 ? '' : 's'} read`);
+    await reloadMail();
+  } catch (err) {
+    toast(`mark all read failed: ${(err && err.message) || err}`, true);
+  }
+}
+
 // --- wiring ---------------------------------------------------------
 
 function initMail() {
@@ -877,6 +948,15 @@ function initMail() {
         selectMessage(btn.getAttribute('data-id'));
       } else if (act === 'mail-msg-delete') {
         deleteOneMessage(Number(btn.getAttribute('data-id')));
+      } else if (act === 'mail-msg-mark-read') {
+        setMessagesRead([Number(btn.getAttribute('data-id'))],
+          btn.getAttribute('data-read') === '1');
+      } else if (act === 'mail-mark-read-selected') {
+        setMessagesRead([...mail.selectedMsgs], true);
+      } else if (act === 'mail-mark-unread-selected') {
+        setMessagesRead([...mail.selectedMsgs], false);
+      } else if (act === 'mail-agent-mark-all') {
+        markAllAgentRead();
       } else if (act === 'mail-del-selected') {
         deleteSelectedMessages();
       } else if (act === 'mail-wipe-selected') {
