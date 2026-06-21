@@ -45,8 +45,8 @@ type Params struct {
 	Print       bool   `long:"print" short:"p" help:"Print the answer and exit. This is the default; pass it explicitly in scripts, or as the opposite of -i."`
 	Interactive bool   `long:"interactive" short:"i" help:"Open the full interactive session (TUI) instead of printing — when you want a back-and-forth or to let the agent ask you questions. Needs a real terminal."`
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
-	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (fast by default)."`
-	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (low by default)."`
+	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Overrides the configured ask default; unset uses it (sonnet by default)."`
+	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (medium by default)."`
 	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 }
 
@@ -145,9 +145,9 @@ func runFromCLI(p *Params, args []string) error {
 	}
 
 	// Resolve the harness + model/effort a FRESH ask runs at, applying the
-	// precedence flag > selected ask profile > config.ask > fast-by-default
+	// precedence flag > selected ask profile > config.ask > built-in default
 	// (JOH-253 / JOH-252). The config file is the same ~/.tclaude/config.json
-	// the dashboard edits; a load failure degrades to the built-in fast default
+	// the dashboard edits; a load failure degrades to the built-in default
 	// rather than failing the ask. runAsk stays a pure argv builder (empty =
 	// omit the flag); the defaulting lives here, in the env/config layer. The
 	// harness only applies to a fresh thread — an existing one keeps its
@@ -204,18 +204,18 @@ func printWhere(cwd string, w io.Writer) error {
 // resolveAskTarget resolves the harness + model + effort a FRESH `tclaude ask`
 // runs at, applying precedence per field: a per-call flag wins, else the
 // selected ask profile, else the dedicated config.ask block, else the
-// fast-by-default constants. The harness comes from the selected ask profile
+// built-in default constants. The harness comes from the selected ask profile
 // (JOH-252 fold-in, Option A) — a spawn profile from the groups tab, reused
 // here for its harness/model/effort subset — else the default (Claude Code).
 //
 // A named-but-missing profile self-heals to the no-profile path (a deleted or
 // renamed profile must not hard-error every ask). Spawn-profile fields
 // irrelevant to a one-shot ask (agent name, role, sandbox, …) are ignored;
-// only harness/model/effort are read. The fast-by-default constants
-// (haiku/low) are Claude-catalog values, so they are applied only when the
-// resolved harness is Claude — a non-Claude harness with no pinned model/
-// effort leaves them blank, and the asker omits the flags so Codex uses its
-// own configured defaults.
+// only harness/model/effort are read. The built-in default constants
+// (DefaultAskModel/DefaultAskEffort) are Claude-catalog values, so they are
+// applied only when the resolved harness is Claude — a non-Claude harness with
+// no pinned model/effort leaves them blank, and the asker omits the flags so
+// Codex uses its own configured defaults.
 //
 // The returned values are raw strings still validated against the resolved
 // harness's catalog by runAsk. db.GetSpawnProfile is the only I/O; a load
@@ -237,7 +237,7 @@ func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harness
 		model, effort = cfg.ResolvedAskProfile()
 	}
 
-	// The fast defaults only make sense for the Claude catalog (haiku/low).
+	// The built-in defaults only make sense for the Claude catalog.
 	// ResolvedAskProfile already applied them on the no-profile path; for a
 	// Claude profile with blank fields, apply them here too. A non-Claude
 	// harness keeps blanks (→ the asker omits the flags).

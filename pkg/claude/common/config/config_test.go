@@ -336,10 +336,10 @@ func TestNotifyHumanMessages_RoundTrips(t *testing.T) {
 	assert.NotContains(t, string(none), "human_messages")
 }
 
-// ResolvedAskProfile applies the fast-by-default ask profile: a nil
+// ResolvedAskProfile applies the built-in default ask profile: a nil
 // config / absent block / blank field falls back to the DefaultAsk*
 // constants, while a set field is used verbatim — resolved per field, so
-// pinning only one keeps the fast value for the other (JOH-253).
+// pinning only one keeps the default value for the other (JOH-253).
 func TestResolvedAskProfile(t *testing.T) {
 	cases := []struct {
 		name                  string
@@ -350,8 +350,8 @@ func TestResolvedAskProfile(t *testing.T) {
 		{"absent block", &Config{}, DefaultAskModel, DefaultAskEffort},
 		{"empty block", &Config{Ask: &AskConfig{}}, DefaultAskModel, DefaultAskEffort},
 		{"both pinned", &Config{Ask: &AskConfig{Model: "opus", Effort: "high"}}, "opus", "high"},
-		{"model only → fast effort", &Config{Ask: &AskConfig{Model: "sonnet"}}, "sonnet", DefaultAskEffort},
-		{"effort only → fast model", &Config{Ask: &AskConfig{Effort: "max"}}, DefaultAskModel, "max"},
+		{"model only → default effort", &Config{Ask: &AskConfig{Model: "haiku"}}, "haiku", DefaultAskEffort},
+		{"effort only → default model", &Config{Ask: &AskConfig{Effort: "max"}}, DefaultAskModel, "max"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
