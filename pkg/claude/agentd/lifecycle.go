@@ -1215,6 +1215,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
+	} else if spawnHarness.NeedsSpawnSeed() {
+		// Seed-needing harness (Codex): the conv-id can't be preset, so
+		// enrollment + the inbox briefing happen post-connect. But the pane still
+		// needs a positional first-turn prompt to materialise its conv-id
+		// (JOH-205) — and that prompt IS the [system: ...] welcome, replacing the
+		// old inert "[tclaude] …" placeholder. A short/empty briefing rides in
+		// full (inline brief, or "wait"), so the agent gets a single greeting
+		// turn that looks like the Claude Code launch prompt and the post-connect
+		// welcome is skipped (finishSpawnEnrollment gates that on the same
+		// spawnBriefingFitsLaunch predicate). A long briefing's seed is a
+		// stand-by welcome; its inbox-pointer welcome is injected post-connect,
+		// once the inbox row + id exist. No conv-id is known here, so the welcome
+		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
+		// revert reports its id via hook and needs no seed, so it is excluded.)
+		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, g.Name,
+			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
+			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
 	}
 
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
@@ -1414,6 +1432,25 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 		return fail
 	}
 
+	// Decide whether the welcome was already delivered as the launch seed.
+	// A seed-needing harness (Codex) whose briefing fits the launch prompt
+	// (short/empty) got the FULL welcome inline at launch, so re-injecting it
+	// post-connect would double the greeting — skip it. A long briefing's seed
+	// was only a stand-by, so its inbox-pointer welcome is delivered below. For
+	// Claude Code on the legacy-injection revert (NeedsSpawnSeed false) this is
+	// always false, so the welcome is injected over tmux exactly as before.
+	//
+	// Recomputed from the same inputs executeSpawn used to build the seed
+	// (harness + briefing + inline cap), so the two agree — except if the inline
+	// cap is reconfigured between launch and a gated Codex's eventual conv-id
+	// (pathological): a raised cap would skip a now-"short" briefing's pointer
+	// (the stand-by seed still tells the agent to read its inbox), a lowered cap
+	// would inject a redundant pointer after an already-inlined seed. Neither
+	// loses the briefing.
+	h := harnessForConv(convID)
+	contextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
+
 	// Post-spawn injection: rename the new pane to the agent's name and
 	// drop a [system: ...] welcome describing the agent's identity. It
 	// also materialises the .jsonl (CC only writes the file once it has
@@ -1423,7 +1460,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	goBackground(func() {
 		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
 			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
-			p.SpawnedByConv)
+			p.SpawnedByConv, welcomeInSeed)
 	})
 
 	return nil
@@ -1545,10 +1582,11 @@ func spawnUsesLegacyInjection() bool {
 	return *cfg.Agent.SpawnLegacyInjection
 }
 
-// spawnInlineMaxChars returns the launch-enrollment briefing-inline threshold
-// (in runes): when a spawned agent's startup briefing fits within it, the whole
-// briefing is baked into the launch prompt instead of pointing at the inbox
-// copy (see buildSpawnLaunchPrompt). An unset config knob yields
+// spawnInlineMaxChars returns the briefing-inline threshold (in runes): when a
+// spawned agent's startup briefing fits within it, the whole briefing is baked
+// into the launch prompt instead of pointing at the inbox copy — for both Claude
+// Code's launch-enrollment prompt (buildSpawnLaunchPrompt) and Codex's conv-id
+// seed (buildSpawnSeedPrompt). An unset config knob yields
 // config.DefaultSpawnInlineMaxChars; a configured <= 0 disables inlining
 // (always pointer). A config read error falls back to the default so a
 // malformed config never silently changes the spawn UX without a log
@@ -1578,6 +1616,12 @@ func spawnInlineMaxChars() int {
 // names that message id; once the welcome lands we mark the message
 // delivered, since the welcome doubles as its inbox nudge.
 //
+// welcomeInSeed says the welcome was ALREADY delivered as the launch seed
+// (a seed-needing harness like Codex whose briefing fit the launch prompt):
+// the seed self-submitted the [system: ...] welcome at launch, so injecting
+// it again here would double the greeting — the welcome step is skipped. The
+// rename (out-of-band for Codex) and the mark-delivered still run.
+//
 // Why /rename first: it's a slash command CC processes immediately,
 // landing a write on the .jsonl before any other turn happens. Even
 // if a later injection fails, the file exists and `agent resume` can
@@ -1586,7 +1630,7 @@ func spawnInlineMaxChars() int {
 // spawnedByConv is the conv-id of the agent that requested the spawn
 // ("" for a human-initiated one); it is resolved to a display name
 // here so the welcome's attribution line names the real spawner.
-func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv string) {
+func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv string, welcomeInSeed bool) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -1629,28 +1673,36 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 
 	// Welcome: a single-line [system: ...] turn orienting the agent
 	// (identity, role, descr, group, where its startup briefing waits,
-	// and — for a sub-repo worktree — where to make code edits).
-	welcome := buildSpawnWelcome(name, role, descr, groupName,
-		spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
-		resolveSpawnerTitle(spawnedByConv))
-	if err := injectTextAndSubmit(target, welcome); err != nil {
-		slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
-		return
+	// and — for a sub-repo worktree — where to make code edits). Skipped
+	// when the welcome already rode in as the launch seed (Codex with a
+	// briefing that fit the launch prompt); re-injecting it would double the
+	// greeting. The out-of-band rename below still runs (and, for the seed
+	// case, the seed already materialised the conversation row it lands on).
+	if !welcomeInSeed {
+		welcome := buildSpawnWelcome(name, role, descr, groupName,
+			spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
+			resolveSpawnerTitle(spawnedByConv))
+		if err := injectTextAndSubmit(target, welcome); err != nil {
+			slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
+			return
+		}
 	}
 
-	// Out-of-band title harness (Codex): now that the welcome has been
-	// submitted, persist the name into the title store, retrying until the
-	// harness has created the conversation's row (JOH-216). Runs in its own
-	// goroutine so the bounded retry never delays the rest of post-init.
+	// Out-of-band title harness (Codex): now that the first turn has run —
+	// the post-connect welcome above, or the launch seed when welcomeInSeed —
+	// persist the name into the title store, retrying until the harness has
+	// created the conversation's row (JOH-216). Runs in its own goroutine so
+	// the bounded retry never delays the rest of post-init.
 	if renameWanted && !h.SupportsRename() && h.SupportsConvs() {
 		goBackground(func() { persistSpawnTitle(convID, name) })
 	}
 
 	// The startup briefing (group context + task brief) already sits in
 	// the agent's inbox — the handler inserted the agent_messages row
-	// before this goroutine fired. The welcome line above named its
-	// message id, so the welcome itself is the inbox nudge: mark the
-	// message delivered now that it has landed in the pane.
+	// before this goroutine fired. It reached the agent either as the
+	// post-connect welcome above (which named its message id) or, for a
+	// seed-delivered welcome, inline in the launch turn — so mark it
+	// delivered now that the greeting has landed.
 	if spawnContextMsgID > 0 {
 		if err := db.MarkAgentMessageDelivered(spawnContextMsgID); err != nil {
 			slog.Warn("spawn: failed to mark startup context delivered",
@@ -1851,6 +1903,56 @@ func buildSpawnLaunchPrompt(name, role, descr, groupName string, spawnContextMsg
 			"; read it, then wait for the first instruction."
 	}
 	return "[system: " + welcome + "]\n\n" + body
+}
+
+// spawnBriefingFitsLaunch reports whether a spawn's startup briefing can be
+// delivered IN FULL by the launch positional prompt — so no post-connect
+// welcome is needed. True for an empty briefing (the welcome is just "wait")
+// and for one short enough to inline; false for a long briefing that must keep
+// its inbox copy and a pointer welcome. It mirrors buildSpawnLaunchPrompt's own
+// inline-vs-pointer decision so a caller can predict, before connection,
+// whether the launch prompt already carried the whole welcome.
+func spawnBriefingFitsLaunch(contextBody string, inlineMaxChars int) bool {
+	body := strings.TrimSpace(contextBody)
+	return body == "" || (inlineMaxChars > 0 && utf8.RuneCountInString(body) <= inlineMaxChars)
+}
+
+// buildSpawnSeedPrompt builds the positional first-turn prompt for a
+// seed-needing harness (Codex). Codex must self-submit a turn to materialise
+// its conv-id (JOH-205), and the conv-id doesn't exist until then — so unlike
+// the Claude Code launch-enrollment path, there is no inbox-message id to
+// reference at launch (the briefing row is inserted post-connect). The prompt
+// therefore carries the welcome built with spawnContextMsgID 0:
+//
+//   - short / empty briefing (spawnBriefingFitsLaunch) → the FULL welcome rides
+//     in the seed (the brief inlined, or a "wait" line), looking like the Claude
+//     Code launch prompt; the post-connect welcome is then skipped (the caller
+//     gates that on the same predicate). Single [system: ...] turn.
+//   - long briefing → the seed is a stand-by welcome (buildSpawnStandbySeed):
+//     the briefing stays in the inbox and its pointer welcome is injected
+//     post-connect, once the inbox row + its id exist (race-safe).
+//
+// The inbox copy is created post-connect regardless, so an inlined Codex
+// briefing is still also in `tclaude agent inbox` — same as Claude Code.
+func buildSpawnSeedPrompt(name, role, descr, groupName string, hasInitialMessage bool, contextBody, worktreePath, worktreeBranch, spawnedBy string, inlineMaxChars int) string {
+	if spawnBriefingFitsLaunch(contextBody, inlineMaxChars) {
+		return buildSpawnLaunchPrompt(name, role, descr, groupName, 0, hasInitialMessage,
+			contextBody, worktreePath, worktreeBranch, spawnedBy, inlineMaxChars)
+	}
+	return buildSpawnStandbySeed(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy)
+}
+
+// buildSpawnStandbySeed is the launch seed for a seed-needing harness (Codex)
+// whose briefing is too long to inline at launch. It materialises the conv-id
+// (the turn runs) and orients the agent with the same [system: ...] welcome
+// metadata, then tells it the detailed briefing is being delivered to its inbox
+// — so it stands by rather than acting blindly. The real inbox-pointer welcome
+// (with the message id) is injected post-connect, once that row exists.
+func buildSpawnStandbySeed(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy string) string {
+	welcome := spawnWelcomePrefix(name, role, descr, groupName, worktreePath, worktreeBranch, spawnedBy)
+	welcome += " Your detailed startup briefing is being delivered to your inbox now —" +
+		" stand by for it (a `tclaude agent inbox` message), then act on the brief."
+	return "[system: " + welcome + "]"
 }
 
 // resolveSpawnerTitle turns the spawning agent's conv-id into the

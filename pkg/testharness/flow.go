@@ -266,6 +266,11 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(cx.ConvID, args.Approval)
 	s.w.RecordSpawnAutoReview(cx.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
+	// A daemon-spawned Codex pane carries a positional first-turn seed (its
+	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
+	// it keyed by conv-id so a flow test can assert what the launch prompt
+	// delivered — the Codex analogue of the CCSim path's RecordSpawnInitialPrompt.
+	s.w.RecordSpawnInitialPrompt(cx.ConvID, args.InitialPrompt)
 	if err := db.SaveSession(&db.SessionRow{
 		ID:          label,
 		TmuxSession: label,

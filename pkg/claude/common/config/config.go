@@ -328,20 +328,25 @@ type AgentConfig struct {
 	// flow). See agentd.spawnUsesLegacyInjection.
 	SpawnLegacyInjection *bool `json:"spawn_legacy_injection,omitempty"`
 
-	// SpawnInlineMaxChars bounds the launch-enrollment "inline the briefing"
-	// optimisation (Claude Code only). When a freshly-spawned agent's startup
-	// briefing (group context + task brief) fits within this many runes, the
-	// whole briefing is baked into the launch prompt right after the [system:
-	// ...] welcome — so the agent acts on its first turn instead of running a
-	// `tclaude agent inbox read <id>` round-trip first. A longer briefing keeps
-	// the single-line pointer welcome and stays in the inbox (scrollable,
-	// doesn't bloat the launch command / first turn). The briefing is ALWAYS
-	// also saved to the inbox either way; inlining only changes whether the
-	// first turn carries it. nil → DefaultSpawnInlineMaxChars; <= 0 disables
-	// inlining (always pointer). Has no effect on the legacy send-keys path,
-	// where the welcome must stay a single line (a newline = an early submit),
-	// nor on harnesses without launch enrollment (Codex). See
-	// agentd.spawnInlineMaxChars.
+	// SpawnInlineMaxChars bounds the "inline the briefing into the first turn"
+	// optimisation. When a freshly-spawned agent's startup briefing (group
+	// context + task brief) fits within this many runes, the whole briefing is
+	// baked into the launch prompt right after the [system: ...] welcome — so the
+	// agent acts on its first turn instead of running a `tclaude agent inbox read
+	// <id>` round-trip first. A longer briefing keeps the pointer welcome and
+	// stays in the inbox (scrollable, doesn't bloat the launch command / first
+	// turn). The briefing is ALWAYS also saved to the inbox either way; inlining
+	// only changes whether the first turn carries it. nil →
+	// DefaultSpawnInlineMaxChars; <= 0 disables inlining (always pointer).
+	//
+	// Governs both harnesses: Claude Code's launch-enrollment prompt and Codex's
+	// conv-id seed (see agentd.buildSpawnSeedPrompt) both honour it. The Codex
+	// wrinkle: Codex has no conv-id — and so no inbox-message id — at launch, so
+	// an inlined Codex seed omits the "(also saved to inbox #N)" note and a long
+	// Codex briefing's pointer welcome is injected post-connect rather than at
+	// launch. Has no effect on the legacy send-keys path (CC's
+	// spawn_legacy_injection revert), where the welcome must stay a single line
+	// (a newline = an early submit). See agentd.spawnInlineMaxChars.
 	SpawnInlineMaxChars *int `json:"spawn_inline_max_chars,omitempty"`
 }
 
