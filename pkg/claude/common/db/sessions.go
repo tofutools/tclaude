@@ -32,6 +32,15 @@ type SessionRow struct {
 	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
 	// — never coalesced.
 	SandboxMode string
+	// RemoteControl is tclaude's best-known state of whether the harness's
+	// built-in remote access (Claude Code's /remote-control) is ON for this
+	// live session. CC exposes no programmatic readback, so tclaude tracks
+	// it: the recorded flag decides whether the next toggle injection
+	// enables or disables. Written out-of-band (SetSessionRemoteControl),
+	// NOT by SaveSession's UPSERT, so a hook tick that builds a SessionRow
+	// without setting this can't clobber it back to false — the same
+	// discipline the context-window columns use (schema v65, JOH-256).
+	RemoteControl bool
 }
 
 // SaveSession inserts or updates a session, setting updated_at to now.
@@ -99,7 +108,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -120,7 +129,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +147,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -163,7 +172,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -181,7 +190,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -233,14 +242,15 @@ func MaxUpdatedAt() (time.Time, error) {
 // scanSession scans a single session row.
 func scanSession(row *sql.Row) (*SessionRow, error) {
 	var s SessionRow
-	var autoReg int
+	var autoReg, remoteCtl int
 	var createdStr, updatedStr, lastHookStr string
 	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode)
+		&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
 	if err != nil {
 		return nil, err
 	}
 	s.AutoRegistered = autoReg != 0
+	s.RemoteControl = remoteCtl != 0
 	s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
 	s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
 	if lastHookStr != "" {
@@ -254,14 +264,15 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 	var result []*SessionRow
 	for rows.Next() {
 		var s SessionRow
-		var autoReg int
+		var autoReg, remoteCtl int
 		var createdStr, updatedStr, lastHookStr string
 		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode)
+			&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
 		s.AutoRegistered = autoReg != 0
+		s.RemoteControl = remoteCtl != 0
 		s.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdStr)
 		s.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
 		if lastHookStr != "" {
@@ -511,6 +522,36 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
 	return err
+}
+
+// SetSessionRemoteControl records tclaude's best-known remote-control state
+// for a session, keyed by session id — the same out-of-band discipline as
+// UpdateContextPct: a targeted UPDATE that SaveSession's UPSERT never writes,
+// so a state-tracking hook tick can't reset it to its column default. The
+// agentd toggle path sets this only AFTER a successful /remote-control
+// injection, so the recorded flag stays in step with what was actually typed
+// into the pane. See JOH-256 / JOH-257.
+func SetSessionRemoteControl(sessionID string, on bool) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
+	return err
+}
+
+// RemoteControlForConv reports tclaude's best-known remote-control state for
+// a conversation: the flag on its most-recently-updated session row (the row
+// FindSessionByConvID resolves). false (no error) when the conv has no
+// session row. The toggle direction logic reads SessionRow.RemoteControl off
+// the resolved ALIVE row directly; this is the convenience reader for the CLI
+// `status` verb and the dashboard payload. See JOH-256.
+func RemoteControlForConv(convID string) (bool, error) {
+	s, err := FindSessionByConvID(convID)
+	if err != nil || s == nil {
+		return false, err
+	}
+	return s.RemoteControl, nil
 }
 
 // UpdateSessionModel stores the LLM model display name ("Opus 4.8",

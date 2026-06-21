@@ -80,9 +80,9 @@ func TestMigrateV63toV64_HealsOnReRun(t *testing.T) {
 }
 
 // TestMigrateV63toV64_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts ask_threads exists. v64 is head, so this is where the
-// literal currentVersion pin lives — the tripwire the next migration's author
-// moves forward into their own v65 test.
+// chain and asserts ask_threads exists. The literal currentVersion tripwire
+// moved forward into the v65 test (which is now head); this test only checks
+// the table its own migration introduced.
 func TestMigrateV63toV64_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -91,9 +91,6 @@ func TestMigrateV63toV64_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v63 test —
-	// the next migration's author moves it into their own v65 test.
-	require.Equal(t, 64, currentVersion, "currentVersion is 64")
 
 	var haveTable int
 	require.NoError(t, d.QueryRow(
