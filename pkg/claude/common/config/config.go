@@ -72,10 +72,11 @@ type Config struct {
 //
 // Both fields are optional: a blank field falls back to the matching
 // fast-default constant (per field, so pinning only a model keeps the
-// fast effort). The dashboard Config tab and the /api/ask-profile
-// endpoint edit this same block — it is the single source of truth the
-// CLI also reads, so the dashboard is a thin editor over config.json
-// rather than a second store.
+// fast effort). The dashboard's Config tab edits this same block through
+// its usual /api/config save flow (the Model/Effort selectors are plain
+// fields of that form) — it is the single source of truth the CLI also
+// reads, so the dashboard is a thin editor over config.json rather than a
+// second store.
 //
 // The schema is harness-neutral: model/effort are validated against the
 // conversation's harness catalog at ask time (ModelCatalog.ValidateModel
@@ -113,8 +114,8 @@ const (
 // versa). Nil-safe on the receiver so callers need no guard.
 //
 // The returned values still pass through the harness catalog's validator
-// at the call site (the CLI and the /api/ask-profile endpoint) — this
-// only applies the precedence, it does not validate.
+// at the call site (the `tclaude ask` CLI) — this only applies the
+// precedence, it does not validate.
 func (c *Config) ResolvedAskProfile() (model, effort string) {
 	model, effort = DefaultAskModel, DefaultAskEffort
 	if c == nil || c.Ask == nil {
