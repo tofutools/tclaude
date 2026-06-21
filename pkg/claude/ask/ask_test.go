@@ -73,7 +73,7 @@ func argvHas(argv []string, tok string) bool {
 	return slices.Contains(argv, tok)
 }
 
-func interactiveInput(termKey, cwd, q string) askInput {
+func ttyInput(termKey, cwd, q string) askInput {
 	return askInput{
 		TermKey:          termKey,
 		Cwd:              cwd,
@@ -101,19 +101,19 @@ func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 
 	// 1) fresh
 	aio, out, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-A", "/repo/x", "what is up?"), aio))
+	require.NoError(t, runAsk(ttyInput("term-A", "/repo/x", "what is up?"), aio))
 
 	first := f.last()
 	assert.Equal(t, "/repo/x", first.Cwd, "runs in the caller's cwd")
 	assert.Equal(t, "claude", first.Argv[0], "execs the claude binary")
-	assert.False(t, argvHas(first.Argv, "-p"), "interactive turn is not -p")
+	assert.True(t, argvHas(first.Argv, "-p"), "default is print mode")
 	conv, ok := argvValue(first.Argv, "--session-id")
 	require.True(t, ok, "fresh turn pins a conv-id with --session-id")
 	assert.NotEmpty(t, conv)
 	assert.Equal(t, "what is up?", first.Argv[len(first.Argv)-1], "question is the trailing positional")
-	assert.Equal(t, "--", first.Argv[len(first.Argv)-2], "prompt is guarded by an end-of-options --")
-	assert.NotNil(t, first.Stdin, "interactive turn wires real stdin so the agent can ask back")
-	assert.Contains(t, out.String(), "the answer", "answer is streamed to stdout")
+	assert.Equal(t, "--", first.Argv[len(first.Argv)-2], "print-mode prompt is guarded by an end-of-options --")
+	assert.Nil(t, first.Stdin, "print mode wires no interactive stdin")
+	assert.Contains(t, out.String(), "the answer", "answer is printed to stdout")
 
 	thread, err := db.GetAskThread("term-A", "/repo/x")
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 
 	// 2) resume — same terminal + cwd continues the same conversation
 	aio2, _, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-A", "/repo/x", "follow up?"), aio2))
+	require.NoError(t, runAsk(ttyInput("term-A", "/repo/x", "follow up?"), aio2))
 
 	second := f.last()
 	assert.False(t, argvHas(second.Argv, "--session-id"), "resume does not re-pin a fresh id")
@@ -132,11 +132,31 @@ func TestAsk_FreshThenResumeContinuity(t *testing.T) {
 
 	// 3) different cwd in the same terminal → its own thread
 	aio3, _, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-A", "/repo/y", "in another dir"), aio3))
+	require.NoError(t, runAsk(ttyInput("term-A", "/repo/y", "in another dir"), aio3))
 	third := f.last()
 	otherConv, ok := argvValue(third.Argv, "--session-id")
 	require.True(t, ok, "a new cwd starts fresh")
 	assert.NotEqual(t, conv, otherConv, "different cwd → different conversation")
+}
+
+// TestAsk_InteractiveMode covers the -i opt-in: the full TUI, attached to the
+// caller's terminal. No -p, no `--` (which would suppress claude's submit-at-
+// launch), and the caller's real stdin is wired so the agent can prompt back.
+func TestAsk_InteractiveMode(t *testing.T) {
+	setupAskTestDB(t)
+	f := &fakeRun{answer: "", started: true}
+	f.install(t)
+
+	in := ttyInput("term-I", "/repo/x", "let's pair on this")
+	in.ForceInteractive = true
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	p := f.last()
+	assert.False(t, argvHas(p.Argv, "-p"), "interactive is not print mode")
+	assert.False(t, argvHas(p.Argv, "--"), "interactive omits -- so the prompt submits at launch")
+	assert.Equal(t, "let's pair on this", p.Argv[len(p.Argv)-1], "question is the trailing positional")
+	assert.NotNil(t, p.Stdin, "interactive wires the real terminal stdin")
 }
 
 // TestAsk_SelfHealsGhostConversation covers the robustness fix: if a recorded
@@ -150,14 +170,14 @@ func TestAsk_SelfHealsGhostConversation(t *testing.T) {
 
 	// seed a thread (fresh turn records a conv-id)
 	aio, _, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-G", "/repo/x", "first"), aio))
+	require.NoError(t, runAsk(ttyInput("term-G", "/repo/x", "first"), aio))
 	seeded, ok := argvValue(f.last().Argv, "--session-id")
 	require.True(t, ok)
 
 	// the recorded conversation is now gone on disk
 	forceConvExists(t, false)
 	aio2, _, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-G", "/repo/x", "second"), aio2))
+	require.NoError(t, runAsk(ttyInput("term-G", "/repo/x", "second"), aio2))
 
 	healed, ok := argvValue(f.last().Argv, "--session-id")
 	require.True(t, ok, "a ghost conversation self-heals to a fresh --session-id")
@@ -204,11 +224,11 @@ func TestAsk_NewResets(t *testing.T) {
 
 	// seed a thread
 	aio, _, _ := io2buf()
-	require.NoError(t, runAsk(interactiveInput("term-N", "/repo/x", "first"), aio))
+	require.NoError(t, runAsk(ttyInput("term-N", "/repo/x", "first"), aio))
 	orig, _ := argvValue(f.last().Argv, "--session-id")
 
 	// --new + question → fresh conversation
-	in := interactiveInput("term-N", "/repo/x", "start over")
+	in := ttyInput("term-N", "/repo/x", "start over")
 	in.New = true
 	aio2, _, _ := io2buf()
 	require.NoError(t, runAsk(in, aio2))
@@ -234,11 +254,11 @@ func TestAsk_Validation(t *testing.T) {
 
 	// no question, no payload
 	aio, _, _ := io2buf()
-	err := runAsk(interactiveInput("term-V", "/repo/x", ""), aio)
+	err := runAsk(ttyInput("term-V", "/repo/x", ""), aio)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no question")
 
-	// --interactive with piped stdin is contradictory
+	// --interactive with piped stdin is contradictory (no terminal for the TUI)
 	in := askInput{
 		TermKey: "term-V", Cwd: "/repo/x", Question: "hi",
 		ForceInteractive: true, StdinIsTerminal: false, StdoutIsTerminal: true,
@@ -246,7 +266,7 @@ func TestAsk_Validation(t *testing.T) {
 	aio2, _, _ := io2buf()
 	err = runAsk(in, aio2)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stdin is piped")
+	assert.Contains(t, err.Error(), "real terminal")
 }
 
 // TestAsk_ModelValidatedAndPassed checks a valid --model reaches the argv.
@@ -255,7 +275,7 @@ func TestAsk_ModelValidatedAndPassed(t *testing.T) {
 	f := &fakeRun{answer: "ok\n", started: true}
 	f.install(t)
 
-	in := interactiveInput("term-M", "/repo/x", "quick one")
+	in := ttyInput("term-M", "/repo/x", "quick one")
 	in.Model = "haiku"
 	aio, _, _ := io2buf()
 	require.NoError(t, runAsk(in, aio))
@@ -265,7 +285,7 @@ func TestAsk_ModelValidatedAndPassed(t *testing.T) {
 	assert.NotEmpty(t, m)
 
 	// an invalid model is rejected before running anything
-	bad := interactiveInput("term-M", "/repo/x", "quick one")
+	bad := ttyInput("term-M", "/repo/x", "quick one")
 	bad.Model = "definitely-not-a-real-model-xyz"
 	aio2, _, _ := io2buf()
 	err := runAsk(bad, aio2)
@@ -282,7 +302,7 @@ func TestAsk_NotStarted_NoMapping(t *testing.T) {
 	f.install(t)
 
 	aio, _, _ := io2buf()
-	err := runAsk(interactiveInput("term-Z", "/repo/x", "hello"), aio)
+	err := runAsk(ttyInput("term-Z", "/repo/x", "hello"), aio)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 

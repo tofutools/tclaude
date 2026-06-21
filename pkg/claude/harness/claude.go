@@ -129,14 +129,22 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
 	}
-	// The question is the trailing positional, behind a `--` end-of-options
-	// marker. The prompt is fully untrusted (a typed question, or piped data
-	// like a `git diff` whose lines start with `-`), so `--` stops claude from
-	// parsing a leading-dash prompt as a flag. It is still its own argv element,
-	// so it is never word-split either. (Verified: `claude -p -- "--version"`
-	// answers as the model instead of printing the version.)
+	// The question is the trailing positional. In PRINT mode it goes behind a
+	// `--` end-of-options marker: the prompt is fully untrusted (a typed
+	// question, or piped data like a `git diff` whose lines start with `-`), so
+	// `--` stops claude parsing a leading-dash prompt as a flag (verified:
+	// `claude -p -- "--version"` answers as the model instead of printing the
+	// version). In INTERACTIVE mode we must NOT emit `--`: it suppresses claude's
+	// "submit the positional prompt at launch" behavior (the same launch-arg
+	// path the spawn flow relies on, which carries no `--`), leaving the TUI open
+	// with no question submitted. Interactive prompts are typed questions that
+	// rarely start with `-`, and it's still a single argv element (no shell), so
+	// the residual flag-parse risk is acceptable there.
 	if spec.Prompt != "" {
-		argv = append(argv, "--", spec.Prompt)
+		if spec.Print {
+			argv = append(argv, "--")
+		}
+		argv = append(argv, spec.Prompt)
 	}
 	return argv
 }

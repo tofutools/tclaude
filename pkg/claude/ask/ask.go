@@ -42,8 +42,8 @@ import (
 
 // Params are the `tclaude ask` flags. The question itself is positional args.
 type Params struct {
-	Print       bool   `long:"print" short:"p" help:"Print the answer and exit (non-interactive). Implied when stdin/stdout is piped."`
-	Interactive bool   `long:"interactive" short:"i" help:"Force an interactive session even when output is redirected (needs a terminal on stdin)."`
+	Print       bool   `long:"print" short:"p" help:"Print the answer and exit. This is the default; pass it explicitly in scripts, or as the opposite of -i."`
+	Interactive bool   `long:"interactive" short:"i" help:"Open the full interactive session (TUI) instead of printing — when you want a back-and-forth or to let the agent ask you questions. Needs a real terminal."`
 	New         bool   `long:"new" help:"Start a fresh conversation for this terminal+directory before asking (forgets prior context)."`
 	Model       string `long:"model" short:"m" optional:"true" help:"Model for this question (e.g. haiku for snappy answers). Defaults to your configured model."`
 }
@@ -53,14 +53,15 @@ func Cmd() *cobra.Command {
 		Use:   "ask [question]",
 		Short: "Ask a harness an ad-hoc question without taking over your terminal",
 		Long: "Ask a coding harness a question from your shell.\n\n" +
-			"Runs the harness in the foreground attached to your terminal, holding\n" +
-			"focus until the answer is done — then your shell is yours again. No tmux\n" +
-			"session to attach to or babysit.\n\n" +
+			"By default it prints the answer and returns — you keep your shell, no tmux\n" +
+			"session to attach to or babysit. Use -i when you want the full interactive\n" +
+			"session instead (a back-and-forth, or to let the agent ask you questions).\n\n" +
 			"Questions from the same terminal+directory continue one conversation\n" +
 			"(use --new to start fresh). Pipe input to fold it into the question:\n\n" +
 			"  tclaude ask \"what is the largest file here and why?\"\n" +
 			"  git diff | tclaude ask \"is this change safe to push?\"\n" +
-			"  big=$(tclaude ask -p \"one-word: is main.go too big?\")\n",
+			"  big=$(tclaude ask \"one-word: is main.go too big?\")\n" +
+			"  tclaude ask -i \"refactor utils.go — ask me if anything's unclear\"\n",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runFromCLI(params, args); err != nil {
@@ -90,7 +91,6 @@ type askInput struct {
 	Question         string
 	StdinPayload     string // piped stdin, "" when stdin is a terminal
 	Model            string
-	ForcePrint       bool
 	ForceInteractive bool
 	New              bool
 	StdinIsTerminal  bool
@@ -113,6 +113,10 @@ func runFromCLI(p *Params, args []string) error {
 		return fmt.Errorf("resolve working directory: %w", err)
 	}
 
+	if p.Print && p.Interactive {
+		return errors.New("--print and --interactive are mutually exclusive")
+	}
+
 	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
 
@@ -132,7 +136,6 @@ func runFromCLI(p *Params, args []string) error {
 		Question:         strings.TrimSpace(strings.Join(args, " ")),
 		StdinPayload:     payload,
 		Model:            p.Model,
-		ForcePrint:       p.Print,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		StdinIsTerminal:  stdinIsTTY,
@@ -157,14 +160,16 @@ func runAsk(in askInput, aio askIO) error {
 		return errors.New("no question given — pass a question or pipe input (e.g. `git diff | tclaude ask \"safe?\"`)")
 	}
 
-	// Capture mode is forced by --print, or whenever a stream is redirected:
-	// piped stdin has no terminal to read interactive replies from, and a
-	// redirected stdout means the caller wants the answer as data. --interactive
-	// overrides, but only when stdin is still a real terminal.
-	printMode := in.ForcePrint || !in.StdinIsTerminal || !in.StdoutIsTerminal
+	// Print is the default: the common case is "ask a question, get the answer
+	// back, keep your shell" (and it sidesteps the interactive workspace-trust
+	// dialog in a fresh dir). Interactive — the full TUI, where the agent can
+	// ask you back and you drive a session — is opt-in via -i, and only when a
+	// real terminal is on both ends (a piped stdin has no keyboard for the TUI;
+	// a redirected stdout has nowhere to render it).
+	printMode := true
 	if in.ForceInteractive {
-		if !in.StdinIsTerminal {
-			return errors.New("--interactive needs a terminal on stdin, but stdin is piped")
+		if !in.StdinIsTerminal || !in.StdoutIsTerminal {
+			return errors.New("--interactive needs a real terminal (stdin/stdout is piped or redirected)")
 		}
 		printMode = false
 	}
