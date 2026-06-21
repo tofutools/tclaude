@@ -32,23 +32,101 @@
 import { isSlopActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
 
-// The station. SomaFM is listener-supported and genuinely commercial-
-// free; "Illinois Street Lounge" is its vintage cocktail / Rat-Pack
-// channel — the closest thing to a Vegas-lounge soundtrack. Swapping the
-// vibe is a one-object edit here: e.g. secretagent (spy-jazz) or
-// groovesalad (downtempo) on the same host, or any other ICE/MP3 stream.
+// The station catalog. SomaFM is listener-supported and genuinely
+// commercial-free; each entry is one of its channels. The first
+// (illstreet — "Illinois Street Lounge", the vintage cocktail / Rat-Pack
+// channel) is the default and the original Vegas-lounge soundtrack, so a
+// fresh dashboard keeps playing what it always did.
 //
-// Browsers gate autoplay-WITH-SOUND on a recent user gesture: the
-// header-icon click that turns slop on satisfies that (startMusic runs
-// inside that click's call stack). A bare ?slop=1 page load — e.g.
-// `tclaude agentd serve --slop` — has no gesture yet, so we start muted
-// and unmute on the first interaction (see playWithSound). The custom
-// play button also gives the user a manual way to start it.
-const VEGAS_STREAM = {
-  src: 'https://ice1.somafm.com/illstreet-128-mp3',
-  label: 'SomaFM — Illinois Street Lounge',
-  home: 'https://somafm.com/illstreet/',
-};
+// Only {id, label, desc} is stored here: every URL (the ICE/MP3 stream,
+// the station home, the now-playing feed) derives from the id by SomaFM's
+// fixed URL shape (streamFor/homeFor below + the server's somaSongsURL), so
+// adding a channel is a one-line entry. The id set MUST match the server's
+// allowlist (config.SlopChannels) — TestSlopNowPlaying_ChannelMatchesVegasJS
+// pins them so a channel added on one side but not the other fails CI.
+const CHANNELS = [
+  { id: 'illstreet',   label: 'Illinois Street Lounge', desc: 'Vintage cocktail & exotica' },
+  { id: 'secretagent', label: 'Secret Agent',           desc: 'Spy-jazz & surf for your espionage' },
+  { id: 'groovesalad', label: 'Groove Salad',           desc: 'Ambient & downtempo chill' },
+  { id: 'lush',        label: 'Lush',                   desc: 'Mostly vocal, mostly chilled' },
+  { id: 'bootliquor',  label: 'Boot Liquor',            desc: 'Americana roots for cowboys' },
+  { id: 'u80s',        label: 'Underground 80s',        desc: 'Early alternative & new wave' },
+  { id: 'defcon',      label: 'DEF CON Radio',          desc: 'Music for hacking' },
+];
+
+const DEFAULT_CHANNEL = 'illstreet';
+
+// URL builders for a SomaFM channel id (the fixed shape SomaFM uses).
+const streamFor = (id) => 'https://ice1.somafm.com/' + id + '-128-mp3';
+const homeFor   = (id) => 'https://somafm.com/' + id + '/';
+
+// channelById resolves an id to its catalog entry, falling back to the
+// first (default) channel for an unknown id so callers always get a valid
+// {id,label,desc}.
+function channelById(id) {
+  return CHANNELS.find((c) => c.id === id) || CHANNELS[0];
+}
+
+// activeChannelId is the channel the live player is (or will be) built on.
+// It starts at the default and is corrected to the persisted choice by
+// loadChannel() on the first slop activation; the picker updates it on a
+// user change. startMusic and the now-playing poll both read it, so a
+// channel switch is "set this + rebuild".
+let activeChannelId = DEFAULT_CHANNEL;
+let channelLoaded = false; // GET /api/slop/channel done (or in flight)
+
+// loadChannel fetches the persisted channel once, lazily on the first slop
+// activation — like slop-volume.js's loadVolumes, the plain dashboard never
+// pays for it. If the saved channel differs from what's playing, it
+// switches the live player to it (best-effort: a failed GET just leaves the
+// default playing). The catalog the server returns is ignored here — the
+// client renders from CHANNELS above; the pin test keeps the two in step.
+async function loadChannel() {
+  if (channelLoaded) return;
+  channelLoaded = true;
+  try {
+    const r = await fetch('/api/slop/channel', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const id = (d && d.channel) || '';
+    if (id && CHANNELS.some((c) => c.id === id)) applyChannel(id);
+  } catch {
+    // Offline / blip — the default channel is already in place.
+  }
+}
+
+// applyChannel points the player at a channel WITHOUT persisting (used by
+// loadChannel for the saved value). Rebuilds a live player so the switch is
+// audible; a no-op when the channel is unchanged or no player exists.
+function applyChannel(id) {
+  if (id === activeChannelId) return;
+  activeChannelId = id;
+  if (document.getElementById('vegas-player') && document.querySelector('#vegas-player audio')) {
+    stopMusic();
+    startMusic();
+  }
+}
+
+// switchChannel is the user-driven change from the picker: persist the
+// choice to the backend (config.json's slop block) then apply it. Runs
+// inside the <select> change gesture, so the rebuilt player's
+// autoplay-with-sound is granted.
+function switchChannel(id) {
+  if (!CHANNELS.some((c) => c.id === id)) return;
+  persistChannel(id);
+  applyChannel(id);
+}
+
+// persistChannel POSTs the chosen channel to the backend. Best-effort: the
+// channel still plays locally if the save fails (mirrors slop-volume.js's
+// fire-and-forget persistence).
+function persistChannel(id) {
+  fetch('/api/slop/channel', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: id }),
+  }).catch(() => { /* the channel already applied locally */ });
+}
 
 // musicVolume is the persisted radio volume in percent (0–100), owned
 // by slop-volume.js (loaded from /api/slop/volumes). Applied to the
@@ -95,9 +173,30 @@ function startMusic() {
   songLine.className = 'vegas-song';
   songLine.id = 'vegas-song';
 
+  const chan = channelById(activeChannelId);
+
+  // The station line doubles as the channel picker: a 📻 then a <select>
+  // listing every channel in the catalog. Switching is a one-click change;
+  // the choice persists to the backend and the now-playing feed follows.
   const stationLine = document.createElement('div');
   stationLine.className = 'vegas-station';
-  stationLine.textContent = '📻 ' + VEGAS_STREAM.label;
+  stationLine.append('📻 ');
+
+  const select = document.createElement('select');
+  select.className = 'vegas-channel';
+  select.id = 'vegas-channel';
+  select.setAttribute('aria-label', 'Radio channel');
+  for (const c of CHANNELS) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.label;
+    if (c.desc) opt.title = c.desc;
+    select.appendChild(opt);
+  }
+  select.value = chan.id;
+  select.title = chan.desc || ('SomaFM — ' + chan.label);
+  select.addEventListener('change', () => switchChannel(select.value));
+  stationLine.appendChild(select);
 
   label.appendChild(songLine);
   label.appendChild(stationLine);
@@ -107,10 +206,10 @@ function startMusic() {
   // and with the (meaningless live-stream) seek bar hidden it rendered as
   // a big empty white pill.
   const audio = document.createElement('audio');
-  audio.src = VEGAS_STREAM.src;
+  audio.src = streamFor(chan.id);
   audio.autoplay = true;
   audio.preload = 'auto';
-  audio.setAttribute('aria-label', VEGAS_STREAM.label);
+  audio.setAttribute('aria-label', 'SomaFM — ' + chan.label);
   audio.volume = musicVolume / 100;
   // A dead/unreachable stream should explain itself rather than sit as a
   // silent broken control.
@@ -202,7 +301,10 @@ async function refreshNowPlaying() {
   const el = document.getElementById('vegas-song');
   if (!el) return; // player torn down between polls
   try {
-    const r = await fetch('/api/slop/nowplaying', { credentials: 'same-origin' });
+    // Tag the poll with the active channel so the proxy reads the matching
+    // feed (the URL is validated server-side against the allowlist).
+    const r = await fetch('/api/slop/nowplaying?channel=' + encodeURIComponent(activeChannelId),
+      { credentials: 'same-origin' });
     if (!r.ok) return; // transient — keep the last song shown
     renderNowPlaying(el, await r.json());
   } catch { /* offline / blip — keep the last song shown */ }
@@ -350,7 +452,7 @@ function showStreamError(host) {
   msg.className = 'vegas-error';
   msg.append('🎲 Couldn’t reach the stream — ');
   const a = document.createElement('a');
-  a.href = VEGAS_STREAM.home;
+  a.href = homeFor(activeChannelId);
   a.target = '_blank';
   a.rel = 'noopener';
   a.textContent = 'open it on SomaFM ↗';
@@ -376,6 +478,10 @@ export function bindVegasMusic() {
   document.addEventListener('tclaude:slop', (e) => {
     const active = !!(e.detail && e.detail.active);
     if (active) {
+      // Load the persisted channel once (lazily, on first activation) so a
+      // later unmute starts on the saved station. If sound is already on,
+      // startMusic runs first on the default and loadChannel switches it.
+      loadChannel();
       // Reached from a toggle click → we're inside that gesture's call
       // stack, so autoplay-with-sound is granted. Only start when the
       // master sound switch is on — a muted user entering slop shouldn't
@@ -399,8 +505,11 @@ export function bindVegasMusic() {
   });
   // Page loaded already in slop mode (e.g. `--slop` → ?slop=1). The
   // initial tclaude:slop fired from applySlopThemeIfRequested() before
-  // this binder existed, so kick the player off here — unless sound is
-  // muted. startMusic handles the gestureless autoplay block by starting
-  // muted and unmuting on the first interaction.
-  if (isSlopActive() && isSlopSoundEnabled()) startMusic();
+  // this binder existed, so load the saved channel and kick the player off
+  // here — unless sound is muted. startMusic handles the gestureless
+  // autoplay block by starting muted and unmuting on the first interaction.
+  if (isSlopActive()) {
+    loadChannel();
+    if (isSlopSoundEnabled()) startMusic();
+  }
 }

@@ -22,10 +22,22 @@ func TestDashboardHTML_NowPlaying(t *testing.T) {
 	// (always-empty) song line.
 	must("/api/slop/nowplaying", "vegas.js polls the now-playing proxy")
 
-	// The element the poller paints into, plus the static station line it
-	// sits above.
+	// The element the poller paints into, plus the station line (now the
+	// channel picker's home) it sits above.
 	must("'vegas-song'", "vegas.js targets the #vegas-song line")
-	must("vegas-station", "vegas.js renders the static station line")
+	must("vegas-station", "vegas.js renders the station line")
+
+	// The poll is tagged with the active channel so the proxy reads the
+	// matching feed.
+	must("/api/slop/nowplaying?channel=", "the poll names the active channel")
+
+	// The channel picker: a <select> built from the catalog, persisted to
+	// the backend on change. A typo here ships a dead dropdown.
+	must("'vegas-channel'", "vegas.js builds the channel <select>")
+	must("/api/slop/channel", "vegas.js persists the channel choice to the backend")
+	must("function switchChannel", "the channel-change handler exists")
+	must("function loadChannel", "the saved channel is loaded on activation")
+	must(".vegas-channel {", "the channel select is styled")
 
 	// The stereo-display readout the poller paints into #vegas-song: an
 	// artist line above the title (the focal point). These fill the player

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/text/encoding/charmap"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // dashboard_slop_nowplaying.go backs the "now playing" song line in the
@@ -28,24 +30,43 @@ import (
 //     send Access-Control-Allow-Origin; this path doesn't care.
 //   - The feed is ISO-8859-1; Go decodes it correctly (CharsetReader
 //     below) instead of us fighting charset quirks in JS.
-//   - The channel id stays pinned to one constant, next to the rest of the
-//     slop server config (/api/slop/volumes).
+//   - The channel id flows in from the dashboard as a query param, so it
+//     must be validated against a fixed allowlist (config.SlopChannels)
+//     before it ever reaches a URL — see the SSRF note on resolveSomaChannel.
 //
 // This is the ONLY outbound HTTP agentd makes. It is best-effort and
 // fail-soft: any error returns an empty payload and the UI simply hides
 // the song line (the music itself is unaffected — it plays from the
 // browser). The browser polls this every ~30s while music plays; a short
-// server-side cache keeps multiple dashboard tabs from each hitting SomaFM.
+// per-channel server-side cache keeps multiple dashboard tabs (and tabs on
+// different channels) from each hitting SomaFM.
 
-// somaChannel is the SomaFM channel id whose recent-songs feed we read. It
-// MUST match the station js/vegas.js streams (VEGAS_STREAM there); a test
-// (TestSlopNowPlaying_ChannelMatchesVegasJS) pins both so they can't
-// drift. Swapping the station is a two-line edit: here and in vegas.js.
-const somaChannel = "illstreet"
+// The channel allowlist is the SECURITY boundary for this proxy, not just
+// config. The channel id arrives from the browser as a ?channel= query
+// param and is the only caller-influenced part of the one outbound request
+// agentd makes. resolveSomaChannel rejects anything outside the allowlist
+// (falling back to the default), so a crafted ?channel= can never steer the
+// fetch off somafm.com/songs/<known-id>.xml — it is not a fetch-anything
+// SSRF. The allowlist itself (config.SlopChannels) is the single source of
+// truth shared with config validation and the browser's channel catalog.
 
-// somaSongsURL is SomaFM's recent-songs feed for the channel — a small XML
-// document whose FIRST <song> is the track currently on air.
-var somaSongsURL = "https://somafm.com/songs/" + somaChannel + ".xml"
+// resolveSomaChannel maps an incoming ?channel= value onto a valid channel
+// id, falling back to the default for empty/unknown input. This is the
+// gate that keeps the fetch URL inside the allowlist.
+func resolveSomaChannel(id string) string {
+	id = strings.TrimSpace(id)
+	if config.IsKnownSlopChannel(id) {
+		return id
+	}
+	return config.DefaultSlopChannel
+}
+
+// somaSongsURL builds SomaFM's recent-songs feed URL for a channel — a
+// small XML document whose FIRST <song> is the track currently on air.
+// Callers MUST pass an allowlisted id (via resolveSomaChannel).
+func somaSongsURL(channel string) string {
+	return "https://somafm.com/songs/" + channel + ".xml"
+}
 
 const (
 	nowPlayingTimeout  = 5 * time.Second
@@ -82,13 +103,21 @@ type somaSongsDoc struct {
 	} `xml:"song"`
 }
 
+// cachedNowPlaying is one channel's last-fetched track plus its freshness
+// deadline. Held per channel in nowPlayingCache so a tab on Groove Salad
+// doesn't serve another tab's Illinois Street track.
+type cachedNowPlaying struct {
+	np     *nowPlaying
+	expiry time.Time
+}
+
 var (
-	nowPlayingMu     sync.Mutex
-	nowPlayingCache  *nowPlaying
-	nowPlayingExpiry time.Time
+	nowPlayingMu    sync.Mutex
+	nowPlayingCache = map[string]cachedNowPlaying{}
 
 	// nowPlayingFetchBytes is the network boundary — swapped in tests so
-	// they never hit SomaFM. Production reads the live feed.
+	// they never hit SomaFM. Production reads the live feed for the given
+	// (already-validated) channel.
 	nowPlayingFetchBytes = fetchSomaSongsLive
 
 	// nowPlayingClient bounds the live fetch so a hung SomaFM can't pile
@@ -108,7 +137,8 @@ func handleDashboardSlopNowPlayingAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
-	if np := nowPlayingCached(); np != nil {
+	channel := resolveSomaChannel(r.URL.Query().Get("channel"))
+	if np := nowPlayingCached(channel); np != nil {
 		writeJSON(w, http.StatusOK, np)
 		return
 	}
@@ -118,12 +148,13 @@ func handleDashboardSlopNowPlayingAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-// nowPlayingCached returns the cached track when fresh, else fetches once
-// and refills. Returns nil when the feed is unreachable or empty.
-func nowPlayingCached() *nowPlaying {
+// nowPlayingCached returns the cached track for a channel when fresh, else
+// fetches once and refills that channel's slot. Returns nil when the feed
+// is unreachable or empty. channel must already be allowlisted.
+func nowPlayingCached(channel string) *nowPlaying {
 	nowPlayingMu.Lock()
-	if nowPlayingCache != nil && time.Now().Before(nowPlayingExpiry) {
-		np := nowPlayingCache
+	if c, ok := nowPlayingCache[channel]; ok && time.Now().Before(c.expiry) {
+		np := c.np
 		nowPlayingMu.Unlock()
 		return np
 	}
@@ -132,25 +163,24 @@ func nowPlayingCached() *nowPlaying {
 	// Fetch outside the lock so a slow feed doesn't block other tabs'
 	// reads of a still-valid cache. A cold-cache race may double-fetch
 	// (two tabs at once) — harmless for a personal dashboard.
-	np := fetchNowPlaying()
+	np := fetchNowPlaying(channel)
 	if np == nil {
 		return nil
 	}
 
 	nowPlayingMu.Lock()
-	nowPlayingCache = np
-	nowPlayingExpiry = time.Now().Add(nowPlayingCacheTTL)
+	nowPlayingCache[channel] = cachedNowPlaying{np: np, expiry: time.Now().Add(nowPlayingCacheTTL)}
 	nowPlayingMu.Unlock()
 	return np
 }
 
-// fetchNowPlaying pulls the feed and parses the on-air track. Bounded by
-// its own background context (not a request context) so one client
-// disconnecting mid-poll can't poison a shared cache fill.
-func fetchNowPlaying() *nowPlaying {
+// fetchNowPlaying pulls a channel's feed and parses the on-air track.
+// Bounded by its own background context (not a request context) so one
+// client disconnecting mid-poll can't poison a shared cache fill.
+func fetchNowPlaying(channel string) *nowPlaying {
 	ctx, cancel := context.WithTimeout(context.Background(), nowPlayingTimeout)
 	defer cancel()
-	raw, err := nowPlayingFetchBytes(ctx)
+	raw, err := nowPlayingFetchBytes(ctx, channel)
 	if err != nil {
 		return nil
 	}
@@ -161,9 +191,10 @@ func fetchNowPlaying() *nowPlaying {
 	return np
 }
 
-// fetchSomaSongsLive is the real network read of the SomaFM feed.
-func fetchSomaSongsLive(ctx context.Context) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, somaSongsURL, nil)
+// fetchSomaSongsLive is the real network read of a channel's SomaFM feed.
+// channel must already be allowlisted (the URL is built from it directly).
+func fetchSomaSongsLive(ctx context.Context, channel string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, somaSongsURL(channel), nil)
 	if err != nil {
 		return nil, err
 	}
