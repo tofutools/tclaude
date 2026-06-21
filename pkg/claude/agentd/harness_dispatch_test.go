@@ -26,6 +26,7 @@ type fakeConvStore struct{ lastConv, lastTitle string }
 func (f *fakeConvStore) ListConvs(string) ([]convops.SessionEntry, error)       { return nil, nil }
 func (f *fakeConvStore) Resolve(string, string, bool) (*harness.ConvRef, error) { return nil, nil }
 func (f *fakeConvStore) Title(string) (string, error)                           { return "", nil }
+func (f *fakeConvStore) Exists(string, string) (bool, error)                    { return true, nil }
 func (f *fakeConvStore) SetTitle(convID, title string) error {
 	f.lastConv, f.lastTitle = convID, title
 	return nil

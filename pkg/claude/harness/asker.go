@@ -57,4 +57,14 @@ type AskSpec struct {
 type Asker interface {
 	// BuildAskArgv returns the argv (binary + args) to exec for one ask turn.
 	BuildAskArgv(spec AskSpec) []string
+
+	// PreMintsConvID reports whether this harness lets the caller pin a
+	// FRESH ask's conv-id up front (Claude Code's `--session-id <uuid>`, fed
+	// via AskSpec.SessionID), so `tclaude ask` can record the
+	// (terminal,cwd)→conv mapping immediately. Codex generates its conv-id at
+	// the first turn and only exposes it afterwards (rollout file / threads
+	// store — JOH-205), so it returns false and ignores AskSpec.SessionID; the
+	// ask flow then discovers the id post-run from the harness's ConvStore and
+	// records the mapping after the fact. See Harness.PreMintsAskConvID.
+	PreMintsConvID() bool
 }

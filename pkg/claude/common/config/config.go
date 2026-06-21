@@ -85,14 +85,34 @@ type Config struct {
 // is a follow-up (JOH-252), so a future codex profile would validate the
 // same fields against the codex catalog.
 type AskConfig struct {
+	// Profile names a spawn profile (groups-tab profile) whose
+	// harness/model/effort a FRESH ask adopts — the harness-independent way
+	// to run `tclaude ask` on Codex as well as Claude (JOH-252). It is
+	// resolved live at ask time (db.GetSpawnProfile); a deleted/renamed
+	// profile self-heals to the no-profile path (the Model/Effort below, then
+	// the fast defaults). Only the profile's harness/model/effort are read —
+	// its agent-name/role/sandbox/… fields are irrelevant to a one-shot ask
+	// and ignored. "" means no profile: Claude Code, with Model/Effort below.
+	Profile string `json:"profile,omitempty"`
 	// Model is a model alias / full ID for ad-hoc asks, or "" to use the
 	// built-in default (DefaultAskModel). Validated against the harness
-	// catalog where it is consumed.
+	// catalog where it is consumed. Ignored when Profile is set (the
+	// profile supplies the model).
 	Model string `json:"model,omitempty"`
 	// Effort is a reasoning-effort level for ad-hoc asks, or "" to use the
 	// built-in default (DefaultAskEffort). Validated against the harness
-	// catalog where it is consumed.
+	// catalog where it is consumed. Ignored when Profile is set (the
+	// profile supplies the effort).
 	Effort string `json:"effort,omitempty"`
+}
+
+// AskProfileName returns the configured ask spawn-profile name, or "" when no
+// ask block / no profile is set. Nil-safe so callers need no guard.
+func (c *Config) AskProfileName() string {
+	if c == nil || c.Ask == nil {
+		return ""
+	}
+	return c.Ask.Profile
 }
 
 // DefaultAskModel / DefaultAskEffort are the built-in `tclaude ask`

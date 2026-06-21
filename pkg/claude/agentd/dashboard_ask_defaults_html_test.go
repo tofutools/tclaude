@@ -13,17 +13,23 @@ import (
 // pins that integration so a change to one file can't silently break it.
 func TestDashboardAssets_AskDefaultsWired(t *testing.T) {
 	for _, needle := range []string{
-		// HTML: the section heading + the two select anchors.
+		// HTML: the section heading + the select anchors (incl. the
+		// harness-independent Profile selector, JOH-252).
 		"<h3>Ask defaults</h3>",
+		`id="ask-profile"`,
 		`id="ask-model"`,
 		`id="ask-effort"`,
-		// JS: options come from the harness catalog; values populate and
-		// assemble into the cfg.ask block the big form submits.
+		// JS: options come from the harness catalog / saved spawn profiles;
+		// values populate and assemble into the cfg.ask block the big form
+		// submits.
 		"function populateAskSelects(",
+		"function populateAskProfileSelect(",
 		"setAskSelectValue($('#ask-model')",
 		"setAskSelectValue($('#ask-effort')",
+		"populateAskProfileSelect(ask.profile)",
 		"$('#ask-model').value.trim()",
 		"$('#ask-effort').value.trim()",
+		"ask.profile = askProfile;",
 		"cfg.ask = ask;",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

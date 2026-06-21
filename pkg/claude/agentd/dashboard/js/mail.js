@@ -519,8 +519,11 @@ function paintSidebar() {
     // "0" count is their tag, so no extra label. Retired and empty are
     // disjoint in practice (a retired folder always has the mail that put
     // it in the roster), so the two row classes never both apply.
+    // NB: the modifier is `empty-box`, not `empty` — a bare `.empty` is the
+    // global empty-state placeholder class (centered, 24px padding), which
+    // would otherwise hijack the row's layout.
     const empty = mb.kind === 'agent' && !mb.total;
-    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty' : ''}">${lead}${btn}</div>`;
+    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}">${lead}${btn}</div>`;
   }).join('');
 }
 

@@ -70,4 +70,17 @@ type ConvStore interface {
 	// such harnesses through the injection path instead (gated on
 	// Lifecycle.RenameCommand), so this is never reached for them.
 	SetTitle(convID, title string) error
+
+	// Exists reports whether convID's conversation is still present in the
+	// harness's storage. `tclaude ask` uses it to self-heal a stale
+	// (terminal,cwd)→conv mapping: a recorded thread whose conversation has
+	// vanished (a fresh turn that died before the harness wrote it, or one
+	// the user deleted via `tclaude conv`) starts fresh instead of trying to
+	// resume a ghost. cwd locates a cwd-scoped store (Claude Code's per-
+	// project `.jsonl`); a globally-indexed store (Codex's
+	// ~/.codex/sessions) ignores it. The three outcomes mirror Resolve:
+	// (true, nil) present, (false, nil) confirmed absent, (false, err) the
+	// store couldn't be read — the caller decides how to treat an unreadable
+	// store (ask keeps the thread rather than nuking it on a transient error).
+	Exists(convID, cwd string) (bool, error)
 }
