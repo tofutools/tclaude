@@ -27,6 +27,8 @@ const (
 	mbAlice = "mbox-alic-1111-2222-333333333301"
 	mbBob   = "mbox-bobb-1111-2222-333333333302"
 	mbCarol = "mbox-caro-1111-2222-333333333303"
+	mbDave  = "mbox-dave-1111-2222-333333333304"
+	mbEmpty = "mbox-empt-1111-2222-333333333305"
 )
 
 // mailboxEntry mirrors the dashboardMailbox wire shape.
@@ -152,9 +154,10 @@ func TestDashboardMailboxes_EnumeratesFoldersWithCounts(t *testing.T) {
 	assert.Equal(t, 1, bob.Unread, "bob has not read alice's message")
 }
 
-// Scenario: a freshly-enrolled agent with no mail still gets a folder
-// (so the human can pick it to send / inspect), with zero counts.
-func TestDashboardMailboxes_EmptyAgentStillListed(t *testing.T) {
+// Scenario: a freshly-enrolled agent with no mail is hidden from the
+// roster by default (it would be sidebar clutter), but reappears with
+// include_empty — with zero counts — so the operator can still inspect it.
+func TestDashboardMailboxes_EmptyAgentHiddenUntilOptedIn(t *testing.T) {
 	f := newFlow(t)
 	const lonely = "mbox-solo-1111-2222-333333333309"
 	f.HaveGroup("team")
@@ -163,8 +166,12 @@ func TestDashboardMailboxes_EmptyAgentStillListed(t *testing.T) {
 	dash := dashHandlerForTest(t)
 
 	boxes := getMailboxes(t, dash)
+	assert.Nil(t, findMailbox(boxes, lonely),
+		"an agent with an empty mailbox is hidden by default")
+
+	boxes = getMailboxesEmptyOpt(t, dash, true)
 	mb := findMailbox(boxes, lonely)
-	require.NotNil(t, mb, "an agent with an empty mailbox is still listed")
+	require.NotNil(t, mb, "the empty agent reappears with include_empty")
 	assert.Equal(t, 0, mb.Total)
 	assert.Equal(t, 0, mb.Unread)
 }
@@ -1010,4 +1017,179 @@ func TestDashboardMailbox_RetiredFolderReadableDirectly(t *testing.T) {
 	p := getMailboxPageRetired(t, dash, mbCarol, false)
 	assert.Equal(t, 2, p.Total, "carol's two messages (to + from) regardless of include_retired")
 	assert.Len(t, p.Messages, 2)
+}
+
+// --- empty-mailbox filtering --------------------------------------------
+//
+// The Messages tab hides agents whose mailbox is empty — never sent or
+// received any mail — from the sidebar unless the operator ticks "show
+// agents without messages" (the include_empty param). Unlike retired this
+// is a roster-only filter: an empty mailbox owns no agent_messages rows, so
+// it touches neither the "all" firehose nor its badge. These tests pin the
+// default-hide, the opt-in, the firehose-is-unaffected invariant, the
+// sent-only boundary (received nothing ≠ empty mailbox), and that the empty
+// and retired filters compose independently.
+
+// fetchRoster GETs /api/mailboxes with an arbitrary opt-in query string and
+// decodes the roster. Twin of getMailboxes for the multi-flag cases.
+func fetchRoster(t *testing.T, dash http.Handler, query string) []mailboxEntry {
+	t.Helper()
+	u := "/api/mailboxes"
+	if query != "" {
+		u += "?" + query
+	}
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet, u, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var payload struct {
+		Mailboxes []mailboxEntry `json:"mailboxes"`
+	}
+	testharness.DecodeJSON(t, rec, &payload)
+	return payload.Mailboxes
+}
+
+// getMailboxesEmptyOpt fetches the roster, optionally opting into empty
+// agents (the include_empty param).
+func getMailboxesEmptyOpt(t *testing.T, dash http.Handler, includeEmpty bool) []mailboxEntry {
+	t.Helper()
+	q := ""
+	if includeEmpty {
+		q = "include_empty=1"
+	}
+	return fetchRoster(t, dash, q)
+}
+
+// seedEmptyMailboxes stands up three agents with mail (alice↔bob both
+// directions; dave sent-only) plus one empty agent (no mail at all). So the
+// empty filter hides exactly one folder, while the sent-only agent — which
+// received nothing but has a non-empty mailbox — stays visible.
+func seedEmptyMailboxes(t *testing.T, f *testharness.Flow) http.Handler {
+	t.Helper()
+	g := f.HaveGroup("team")
+	for _, c := range []string{mbAlice, mbBob, mbDave, mbEmpty} {
+		f.HaveMember("team", c)
+	}
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbDave, "dave")
+	f.HaveConvWithTitle(mbEmpty, "empty")
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "hi bob", base)
+	mustMsg(mbBob, mbAlice, "re: hi bob", base.Add(time.Minute))
+	// dave only ever sends — received nothing, but the folder is non-empty.
+	mustMsg(mbDave, mbAlice, "from dave", base.Add(2*time.Minute))
+
+	return dashHandlerForTest(t)
+}
+
+// Scenario: by default the roster omits an agent whose mailbox is empty,
+// keeps every agent that has mail — including a sent-only agent (received
+// nothing, but its folder isn't empty) — and the "all" badge is unchanged
+// (an empty mailbox owns no rows).
+func TestDashboardMailboxes_HidesEmptyAgentsByDefault(t *testing.T) {
+	f := newFlow(t)
+	dash := seedEmptyMailboxes(t, f)
+
+	boxes := getMailboxesEmptyOpt(t, dash, false)
+	assert.Nil(t, findMailbox(boxes, mbEmpty), "empty-mailbox agent is hidden by default")
+	require.NotNil(t, findMailbox(boxes, mbAlice), "an agent with mail stays listed")
+	require.NotNil(t, findMailbox(boxes, mbBob), "an agent with mail stays listed")
+
+	dave := findMailbox(boxes, mbDave)
+	require.NotNil(t, dave, "a sent-only agent has a non-empty mailbox, so it stays listed")
+	assert.Equal(t, 0, dave.In, "dave received nothing")
+	assert.Equal(t, 1, dave.Out)
+	assert.Equal(t, 1, dave.Total)
+
+	all := findMailbox(boxes, "all")
+	require.NotNil(t, all)
+	assert.Equal(t, 3, all.Total, "the empty filter is roster-only — the firehose badge counts every row")
+}
+
+// Scenario: with include_empty the empty-mailbox agent reappears, with zero
+// counts, and the firehose badge is still unchanged (it added no rows).
+func TestDashboardMailboxes_ShowsEmptyAgentsWhenOptedIn(t *testing.T) {
+	f := newFlow(t)
+	dash := seedEmptyMailboxes(t, f)
+
+	boxes := getMailboxesEmptyOpt(t, dash, true)
+	empty := findMailbox(boxes, mbEmpty)
+	require.NotNil(t, empty, "empty folder appears with include_empty")
+	assert.Equal(t, 0, empty.Total, "and carries zero counts")
+	assert.Equal(t, "empty", empty.Title)
+
+	all := findMailbox(boxes, "all")
+	require.NotNil(t, all)
+	assert.Equal(t, 3, all.Total, "the badge is unchanged — the empty agent adds no rows")
+}
+
+// Scenario: an empty agent's folder is still readable directly (the filter
+// is roster-only), returning an empty page rather than 404 — opening it is
+// an explicit ask, same escape hatch a retired folder gets.
+func TestDashboardMailbox_EmptyFolderReadableDirectly(t *testing.T) {
+	f := newFlow(t)
+	dash := seedEmptyMailboxes(t, f)
+
+	p := getMailboxPage(t, dash, mbEmpty, "", 0, 0)
+	assert.Equal(t, 0, p.Total, "an empty folder opens to zero messages")
+	assert.Empty(t, p.Messages)
+}
+
+// Scenario: the empty and retired filters compose independently. A retired
+// agent (with mail) and an empty active agent are both hidden by default;
+// each reappears only under its own opt-in, and neither flag implies the
+// other. (Disjoint in practice: retired ⇒ has the mail that put it in the
+// roster; empty ⇒ active-only.)
+func TestDashboardMailboxes_EmptyAndRetiredFiltersCompose(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", mbBob)
+	f.HaveMember("team", mbEmpty)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HaveConvWithTitle(mbBob, "bob")
+	f.HaveConvWithTitle(mbCarol, "carol")
+	f.HaveConvWithTitle(mbEmpty, "empty")
+	f.HaveRetiredAgent(mbCarol)
+
+	base := time.Now().Add(-time.Hour)
+	mustMsg := func(from, to, subj string, at time.Time) {
+		_, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID: g.ID, FromConv: from, ToConv: to,
+			Subject: subj, Body: subj, CreatedAt: at,
+		})
+		require.NoError(t, err)
+	}
+	mustMsg(mbAlice, mbBob, "active", base)
+	mustMsg(mbAlice, mbCarol, "to retired", base.Add(time.Minute))
+
+	dash := dashHandlerForTest(t)
+
+	// Default: both the retired (carol) and empty (mbEmpty) folders are gone.
+	boxes := getMailboxes(t, dash)
+	assert.Nil(t, findMailbox(boxes, mbCarol), "retired hidden by default")
+	assert.Nil(t, findMailbox(boxes, mbEmpty), "empty hidden by default")
+	require.NotNil(t, findMailbox(boxes, mbAlice), "an active agent with mail stays listed")
+
+	// include_empty alone brings the empty folder, not the retired one.
+	boxes = getMailboxesEmptyOpt(t, dash, true)
+	require.NotNil(t, findMailbox(boxes, mbEmpty), "empty shown with include_empty")
+	assert.Nil(t, findMailbox(boxes, mbCarol), "retired still hidden — include_empty doesn't imply it")
+
+	// include_retired alone brings the retired folder, not the empty one.
+	boxes = getMailboxesOpt(t, dash, true)
+	require.NotNil(t, findMailbox(boxes, mbCarol), "retired shown with include_retired")
+	assert.Nil(t, findMailbox(boxes, mbEmpty), "empty still hidden — include_retired doesn't imply it")
+
+	// Both opt-ins: every folder is present.
+	boxes = fetchRoster(t, dash, "include_retired=1&include_empty=1")
+	require.NotNil(t, findMailbox(boxes, mbCarol), "retired shown with both opt-ins")
+	require.NotNil(t, findMailbox(boxes, mbEmpty), "empty shown with both opt-ins")
 }
