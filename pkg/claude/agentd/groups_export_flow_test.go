@@ -197,6 +197,49 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	assert.True(t, kinds["import"], "the import is in the transfer log")
 }
 
+// TestGroupImport_TildeIntoExpandsToHome pins the import target's tilde
+// handling: importing into "~/sub" must land under the human's home
+// directory, not a literal "~" segment beneath the daemon's cwd. The
+// spawn, group-default and worktree-picker paths all expand tilde, so the
+// import "into" path must match them. Before the fix, filepath.Abs("~/x")
+// produced "<daemon-cwd>/~/x" and the imported agents were stranded in an
+// unreachable directory.
+func TestGroupImport_TildeIntoExpandsToHome(t *testing.T) {
+	f := newFlow(t)
+	home := f.World.HomeDir // the testharness World points HOME at its tmp home
+	const aConv = "eeeeeeee-1111-2222-3333-444444444444"
+	const srcCwd = "/tmp/tilde-src"
+
+	f.HaveConvWithTitle(aConv, "alice")
+	f.HaveAliveSession(aConv, "lbl-a", "tmux-tilde-a", srcCwd)
+	ccA := f.World.CCs.GetByConvID(aConv)
+	require.NotNil(t, ccA)
+	require.NoError(t, ccA.WriteCustomTitle("alice"))
+	require.NoError(t, ccA.WriteUserTurn("editing things"))
+
+	f.HaveGroup("team")
+	f.HaveMember("team", aConv)
+
+	archive := exportGroup(t, f, "team")
+	require.NotEmpty(t, archive)
+	wipeForFreshImport(t, "team", []string{aConv}, srcCwd, home)
+
+	// Import into a tilde path: the daemon must expand "~" to $HOME.
+	res := importArchiveOK(t, f, archive, "~/imported-tilde", "")
+
+	wantDir := filepath.Join(home, "imported-tilde")
+	assert.Equal(t, wantDir, res.TargetDir,
+		"import target must expand ~ to the home directory")
+	assert.NotContains(t, res.TargetDir, "~",
+		"no literal tilde may survive into the resolved target dir")
+
+	// The imported .jsonl actually lands at the expanded location, and its
+	// rewritten cwd points there rather than at any literal "~".
+	restored, err := os.ReadFile(convJSONLPath(home, res.TargetDir, aConv))
+	require.NoError(t, err, "imported .jsonl should exist under the expanded home path")
+	assert.Contains(t, string(restored), wantDir, "cwd rewritten to the expanded target")
+}
+
 // TestGroupExportImport_SameMachineReimportRemaps imports a group that
 // still exists locally. Every conv-id collides, so each is minted fresh
 // and its agent retitled "-i-N"; every foreign key is remapped; and the

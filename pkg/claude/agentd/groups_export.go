@@ -448,7 +448,11 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		return nil, http.StatusBadRequest, fmt.Errorf("import: invalid group name %q: %w", targetName, err)
 	}
 
-	targetCwd, err := filepath.Abs(into)
+	// expandTilde first so a human-typed "~/git/imported" resolves to the
+	// home directory rather than a literal "~" segment under the daemon's
+	// cwd — matching the spawn / group-default / worktree-picker paths,
+	// which all expand tilde before use.
+	targetCwd, err := filepath.Abs(expandTilde(into))
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: resolve target dir %q: %w", into, err)
 	}
