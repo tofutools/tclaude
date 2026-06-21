@@ -401,6 +401,13 @@ function applyProfileToSpawnForm(p) {
   // hidden is harmless (submit reads it only for Codex).
   if (p.trust_dir != null) $('#agent-spawn-trust-dir').checked = !!p.trust_dir;
 
+  // remote_control is a *bool too (JOH-262): pre-check the spawn dialog's
+  // Remote Access box from a picked profile's default. The row is Claude-Code-
+  // only (gated on can_remote_control) and hidden otherwise; submit reads the
+  // box only when the harness can_remote_control, so setting it while hidden is
+  // harmless. A group remote-control policy still overrides this server-side.
+  if (p.remote_control != null) $('#agent-spawn-remote-control').checked = !!p.remote_control;
+
   if (p.agent_name) $('#agent-spawn-name').value = p.agent_name;
   if (p.role) $('#agent-spawn-role').value = p.role;
   if (p.descr) $('#agent-spawn-descr').value = p.descr;

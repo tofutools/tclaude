@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 65
+const currentVersion = 66
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -421,6 +421,91 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 66 {
+		if err := migrateV65toV66(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV65toV66 adds the tri-state remote-control DEFAULT/POLICY columns that
+// let an operator arm Claude Code's built-in Remote Access at spawn without
+// toggling each agent by hand (JOH-262):
+//
+//   - spawn_profiles.remote_control — a profile's "start with remote control"
+//     default (NULL = unset, 0 = off, 1 = on), the tri-state *bool sibling of
+//     the profile's auto_review / trust_dir toggles.
+//   - agent_groups.remote_control — a group's remote-control policy that
+//     OVERRIDES the profile default (NULL = inherit/unset, 0 = actively deny,
+//     1 = actively opt-in).
+//
+// Both are NULLABLE (no NOT NULL / DEFAULT) so "unset" is a first-class state
+// distinct from "off" — the precedence model needs all three. Resolution at
+// spawn: group policy (if set) > profile default (if set) > off; the resolved
+// intent feeds SpawnSpec.RemoteControl (JOH-258) and is what the relaunch
+// re-arm (JOH-261) carries.
+//
+// One transaction; each ADD COLUMN is guarded by a pragma_table_info probe (the
+// migrateV56toV57 convention) since SQLite has no ADD COLUMN IF NOT EXISTS, so a
+// half-applied run converges on re-run instead of wedging on "duplicate column".
+func migrateV65toV66(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v65→v66 (add remote-control defaults): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// table-name literals (never user input) so the pragma probe and ALTER use
+	// the same string-literal convention as every prior column-add migration —
+	// a bound `?` inside the table-valued pragma_table_info is version-fragile.
+	// Each ALTER is guarded by BOTH a sqlite_master table-existence probe (the
+	// migrateV61toV62 convention — a minimally-seeded migration-heal DB advancing
+	// to head may not have created agent_groups / spawn_profiles, since a real DB
+	// created them in earlier migrations) AND a pragma_table_info column probe (so
+	// a half-applied run that already added the column converges instead of
+	// wedging on "duplicate column"). A missing table means nothing to migrate.
+	for _, probe := range []struct{ table, existsSQL, countSQL, alterSQL string }{
+		{
+			"spawn_profiles",
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'spawn_profiles'`,
+			`SELECT COUNT(*) FROM pragma_table_info('spawn_profiles') WHERE name = 'remote_control'`,
+			`ALTER TABLE spawn_profiles ADD COLUMN remote_control INTEGER`,
+		},
+		{
+			"agent_groups",
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`,
+			`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = 'remote_control'`,
+			`ALTER TABLE agent_groups ADD COLUMN remote_control INTEGER`,
+		},
+	} {
+		var haveTable int
+		if err := tx.QueryRow(probe.existsSQL).Scan(&haveTable); err != nil {
+			return fmt.Errorf("migrate v65→v66 (probe %s): %w", probe.table, err)
+		}
+		if haveTable == 0 {
+			continue
+		}
+		var haveCol int
+		if err := tx.QueryRow(probe.countSQL).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v65→v66 (add %s.remote_control): probe column: %w", probe.table, err)
+		}
+		if haveCol == 0 {
+			// Nullable INTEGER (no NOT NULL / DEFAULT) so NULL means "unset",
+			// distinct from 0 ("off") — the tri-state the policy needs.
+			if _, err := tx.Exec(probe.alterSQL); err != nil {
+				return fmt.Errorf("migrate v65→v66 (add %s.remote_control): add column: %w", probe.table, err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 66`); err != nil {
+		return fmt.Errorf("migrate v65→v66 (add remote-control defaults): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v65→v66 (add remote-control defaults): commit: %w", err)
+	}
 	return nil
 }
 

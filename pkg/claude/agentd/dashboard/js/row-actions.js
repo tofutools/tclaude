@@ -1064,6 +1064,27 @@ function bindRowActions() {
           });
           return; // openProfilePicker owns the refresh.
         }
+        case 'set-group-remote-control': {
+          // The group remote-control-policy chip: cycle the group's
+          // remote_control_policy inherit → optin → deny → inherit. The chip's
+          // data-next carries the value one click sends (computed at render
+          // time, mirroring the per-agent notify bell). The policy OVERRIDES
+          // each spawn profile's own remote_control default at spawn — inherit
+          // defers to the profile, optin/deny force it on/off (JOH-262).
+          // PATCH /api/groups/{name} {remote_control_policy}, the same endpoint
+          // + method the default_profile / notify_enabled chips use.
+          const next = btn.getAttribute('data-next') || 'inherit';
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remote_control_policy: next }),
+          });
+          if (!r.ok) { toast(`set remote-control policy failed: ${await r.text()}`, true); return; }
+          const pretty = next === 'optin' ? 'opt-in (force on)' : next === 'deny' ? 'deny (force off)' : 'inherit (defer to profile)';
+          toast(`${group}: remote-control policy → ${pretty}`);
+          refresh();
+          return;
+        }
         // 'set-group-model' was retired with the per-group default_model
         // (JOH-210): the group 🧠 chip is now a clickable spawn-profile picker
         // (set-group-profile, above), not a model editor. No data-act emits

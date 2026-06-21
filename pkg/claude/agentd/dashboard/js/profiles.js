@@ -131,6 +131,7 @@ function profileSummary(p) {
   // The *bool toggles read as on/off only when explicitly set (an absent
   // toggle leaves the dialog's own default, so it isn't worth a chip).
   if (p.trust_dir != null) parts.push(`trust-dir ${p.trust_dir ? 'on' : 'off'}`);
+  if (p.remote_control != null) parts.push(`remote-control ${p.remote_control ? 'on' : 'off'}`);
   if (p.sync_worktree != null) parts.push(`sync-wt ${p.sync_worktree ? 'on' : 'off'}`);
   if (p.auto_focus != null) parts.push(`focus ${p.auto_focus ? 'on' : 'off'}`);
   if (p.include_group_default_context != null) {

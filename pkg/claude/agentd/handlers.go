@@ -2024,6 +2024,11 @@ type groupSummary struct {
 	// off (agent_groups.notify_enabled = false). omitempty: only the
 	// exceptional muted state is serialized.
 	NotifyMuted bool `json:"notify_muted,omitempty"`
+	// RemoteControlPolicy is the group's remote-control policy (JOH-262):
+	// "inherit" (defer to the spawn profile), "optin" (force Remote Access on)
+	// or "deny" (force it off). Always serialized (the canonical token) so a
+	// consumer never has to guess between "absent" and "inherit".
+	RemoteControlPolicy string `json:"remote_control_policy"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -2099,14 +2104,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			out = append(out, groupSummary{
-				Name:           g.Name,
-				Descr:          g.Descr,
-				Members:        len(members),
-				Online:         online,
-				MaxMembers:     g.MaxMembers,
-				DefaultProfile: g.DefaultProfile,
-				Archived:       g.IsArchived(),
-				NotifyMuted:    !g.NotifyEnabled,
+				Name:                g.Name,
+				Descr:               g.Descr,
+				Members:             len(members),
+				Online:              online,
+				MaxMembers:          g.MaxMembers,
+				DefaultProfile:      g.DefaultProfile,
+				Archived:            g.IsArchived(),
+				NotifyMuted:         !g.NotifyEnabled,
+				RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -2126,6 +2132,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			// MaxMembers is the group's hard member cap; 0 = unlimited.
 			// A negative value is clamped to 0 by db.SetAgentGroupMaxMembers.
 			MaxMembers int `json:"max_members,omitempty"`
+			// RemoteControlPolicy is the group's remote-control policy that
+			// overrides a spawn profile's remote-control default (JOH-262):
+			// "" / "inherit" (defer to the profile), "optin" (force on), "deny"
+			// (force off).
+			RemoteControlPolicy string `json:"remote_control_policy,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2163,6 +2174,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		groupProfile, err := resolveGroupDefaultProfileName(body.DefaultProfile)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_profile", err.Error())
+			return
+		}
+		// Validate the optional remote-control policy up front (JOH-262); a bad
+		// token fails cleanly before any DB write. "" / "inherit" → nil (no
+		// override, the column default).
+		groupRemoteControl, err := parseRemoteControlPolicy(body.RemoteControlPolicy)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_remote_control_policy", err.Error())
 			return
 		}
 		// Fold newlines out of the description on the create path too,
@@ -2204,6 +2223,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if body.MaxMembers != 0 {
 			if _, err := db.SetAgentGroupMaxMembers(body.Name, body.MaxMembers); err != nil {
 				slog.Warn("groups create: failed to set max members",
+					"group", body.Name, "error", err)
+			}
+		}
+		// Only write a non-inherit policy; "inherit" (nil) is the column default,
+		// so a create that didn't ask for a policy leaves the group deferring to
+		// the profile (JOH-262).
+		if groupRemoteControl != nil {
+			if _, err := db.SetAgentGroupRemoteControl(body.Name, groupRemoteControl); err != nil {
+				slog.Warn("groups create: failed to set remote-control policy",
 					"group", body.Name, "error", err)
 			}
 		}
@@ -2446,14 +2474,20 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// mutes state-transition notifications for every member agent
 		// (a per-agent 'on' pref still overrides).
 		NotifyEnabled *bool `json:"notify_enabled,omitempty"`
+		// RemoteControlPolicy is the group's remote-control policy that overrides
+		// a spawn profile's remote-control default (JOH-262): "inherit" (defer to
+		// the profile), "optin" (force on) or "deny" (force off). *string so a
+		// caller can change it without touching the other fields; omitting it
+		// leaves the policy unchanged.
+		RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members and/or notify_enabled)")
+			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled and/or remote_control_policy)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -2579,7 +2613,60 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		resp["notify_enabled"] = *body.NotifyEnabled
 	}
 
+	if body.RemoteControlPolicy != nil {
+		policy, err := parseRemoteControlPolicy(*body.RemoteControlPolicy)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_remote_control_policy", err.Error())
+			return
+		}
+		n, err := db.SetAgentGroupRemoteControl(g.Name, policy)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["remote_control_policy"] = remoteControlPolicyToWire(policy)
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// parseRemoteControlPolicy maps a group remote-control policy wire token to the
+// tri-state *bool stored on the group (JOH-262): "" / "inherit" → nil (defer to
+// the spawn profile's default), "optin" / "on" → true (force Remote Access on),
+// "deny" / "off" → false (force it off). Any other token is an error so a typo
+// can't silently land as "inherit". Tolerant of a few synonyms so the CLI and
+// dashboard can speak the operator's words.
+func parseRemoteControlPolicy(s string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "inherit", "unset", "default":
+		return nil, nil
+	case "optin", "opt-in", "on", "enable", "enabled", "true":
+		v := true
+		return &v, nil
+	case "deny", "off", "disable", "disabled", "false":
+		v := false
+		return &v, nil
+	default:
+		return nil, fmt.Errorf("invalid remote_control_policy %q (want inherit, optin, or deny)", s)
+	}
+}
+
+// remoteControlPolicyToWire is the inverse of parseRemoteControlPolicy: it maps
+// the stored tri-state *bool back to its canonical wire token for read surfaces
+// (group GET, dashboard payload). nil → "inherit", true → "optin", false → "deny".
+func remoteControlPolicyToWire(p *bool) string {
+	switch {
+	case p == nil:
+		return "inherit"
+	case *p:
+		return "optin"
+	default:
+		return "deny"
+	}
 }
 
 type memberJSON struct {

@@ -973,6 +973,14 @@
         <option value="0">off</option>
       </select>
     </label>
+    <label class="cron-create-row" id="profile-editor-remote-control-row" style="display:none" title="Start the spawned agent with Claude Code Remote Access on (reachable from the Claude app). A group's remote-control policy overrides this. Default leaves it unset.">
+      <span class="cron-create-label">Remote control (Claude Code)</span>
+      <select id="profile-editor-remote-control">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
     <label class="cron-create-row" title="Sets the spawned agent's name (a /rename at spawn). Blank leaves it unset.">
       <span class="cron-create-label">Agent name</span>
       <input id="profile-editor-agent-name" type="text" placeholder="optional — names the spawned agent" autocomplete="off" spellcheck="false" />

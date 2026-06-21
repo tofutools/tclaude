@@ -335,6 +335,28 @@ function groupActionsHTML(g, members) {
     + `</span>`;
 }
 
+// remoteControlPolicyChip renders the group's remote-control policy as a
+// click-to-cycle chip (JOH-262). The group policy OVERRIDES the spawn profile's
+// own remote_control default: "inherit" defers to the profile, "optin" forces
+// Remote Access on at spawn, "deny" forces it off. One click cycles
+// inherit → opt-in → deny → inherit (the same cycle pattern as the per-agent
+// notify bell); data-policy is the current value and data-next is the value one
+// click sends. The wire tokens (inherit/optin/deny) match the group PATCH's
+// remote_control_policy field exactly. The chip carries `.unset` for "inherit"
+// so it visually recedes like the other defaulted group chips.
+function remoteControlPolicyChip(g) {
+  const policy = g.remote_control_policy || 'inherit';
+  const next = policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit';
+  const label = policy === 'optin' ? 'opt-in' : policy === 'deny' ? 'deny' : 'inherit';
+  const ico = policy === 'optin' ? '📱' : policy === 'deny' ? '🚫' : '📱';
+  const tip = policy === 'inherit'
+    ? "Remote-control policy: inherit — defers to each spawn profile's own default. Click to OVERRIDE: opt-in forces Remote Access on, deny forces it off, for every agent spawned into this group."
+    : policy === 'optin'
+    ? 'Remote-control policy: opt-in — OVERRIDES the profile default and forces Claude Code Remote Access ON for agents spawned into this group. Click to cycle to deny.'
+    : 'Remote-control policy: deny — OVERRIDES the profile default and forces Remote Access OFF for agents spawned into this group. Click to cycle back to inherit.';
+  return `<span class="group-remote-policy${policy === 'inherit' ? ' unset' : ''}" data-act="set-group-remote-control" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-policy="${esc(policy)}" data-next="${esc(next)}" title="${esc(tip)}">${ico} remote: ${esc(label)}</span>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
@@ -384,6 +406,7 @@ function renderGroups(groups) {
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click to edit' : 'No default spawn directory — click to set one'}">📁 ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
         <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span>
+        ${remoteControlPolicyChip(g)}
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">

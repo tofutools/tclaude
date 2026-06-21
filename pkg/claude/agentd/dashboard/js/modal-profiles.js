@@ -104,6 +104,13 @@ function applyProfileEditorHarness(harnessName) {
   const isCodex = !!(h && h.name === 'codex');
   $('#profile-editor-trust-dir-row').style.display = isCodex ? '' : 'none';
 
+  // remote-control is the inverse: a Claude-Code feature, gated on the harness
+  // having built-in Remote Access (can_remote_control) — shown for Claude,
+  // hidden for a harness without it (Codex). Fail-open to shown when the
+  // catalog hasn't loaded yet, matching the spawn dialog's applySpawnHarness.
+  const canRemoteControl = h ? !!h.can_remote_control : true;
+  $('#profile-editor-remote-control-row').style.display = canRemoteControl ? '' : 'none';
+
   populateProfileEffortSelect(h);
 }
 
@@ -234,6 +241,7 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
 
   setTri($('#profile-editor-trust-dir'), seed ? seed.trust_dir : null);
+  setTri($('#profile-editor-remote-control'), seed ? seed.remote_control : null);
   setTri($('#profile-editor-sync-worktree'), seed ? seed.sync_worktree : null);
   setTri($('#profile-editor-auto-focus'), seed ? seed.auto_focus : null);
   setTri($('#profile-editor-group-context'), seed ? seed.include_group_default_context : null);
@@ -281,6 +289,14 @@ function buildProfilePayload(name) {
   // trust-dir: Codex-only (the backend rejects a true on any other harness).
   const trustDir = (harness === 'codex') ? readTri($('#profile-editor-trust-dir')) : null;
   if (trustDir != null) body.trust_dir = trustDir;
+
+  // remote-control: the inverse — a Claude-Code feature the backend rejects
+  // (remote_control=true) on a harness with no built-in Remote Access (Codex),
+  // the same gate the spawn dialog applies. Gated on the harness capability so
+  // we never post a value it would 400.
+  const canRemoteControl = hEntry ? !!hEntry.can_remote_control : true;
+  const remoteControl = canRemoteControl ? readTri($('#profile-editor-remote-control')) : null;
+  if (remoteControl != null) body.remote_control = remoteControl;
 
   const syncWt = readTri($('#profile-editor-sync-worktree'));
   if (syncWt != null) body.sync_worktree = syncWt;
