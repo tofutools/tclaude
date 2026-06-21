@@ -40,6 +40,10 @@ func TestDashboardHTML_SpawnRemoteControlWired(t *testing.T) {
 	must("applyRemoteControlPrefill(select.value, null)", "the modal pre-fills the checkbox on open")
 	must("applyRemoteControlPrefill($('#agent-spawn-group').value, p)",
 		"applying a profile re-derives the checkbox from group policy + profile")
+	// The checkbox must re-derive when the group is switched mid-dialog (else it
+	// stays on the prior group's policy and the authoritative submit is wrong).
+	must("applyRemoteControlPrefill(e.target.value, null)",
+		"switching the group re-derives the checkbox from the new group's policy")
 
 	// modal-spawn.js: the checkbox is authoritative — the body carries its state
 	// (true OR false) whenever the harness supports Remote Access, so an explicit
