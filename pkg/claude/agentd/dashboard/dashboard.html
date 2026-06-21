@@ -1359,9 +1359,6 @@
     <label class="cron-create-enabled" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">
       <input id="agent-spawn-trust-dir" type="checkbox" /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)
     </label>
-    <label class="cron-create-enabled" id="agent-spawn-remote-control-row" style="display:none" title="Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it's reachable from claude.ai/code and the Claude mobile app from its first turn. Off by default. Requires you to be logged into claude.ai (OAuth) for the session to pair. Only shown for Claude Code — Codex has no built-in remote access.">
-      <input id="agent-spawn-remote-control" type="checkbox" /> Start with remote control — reachable from the Claude app (claude --remote-control)
-    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" placeholder="optional — the new agent's task brief; delivered to its inbox, newlines preserved (≤16384 chars)" spellcheck="false"></textarea>
@@ -1401,6 +1398,9 @@
     </label>
     <label class="cron-create-enabled" id="agent-spawn-group-context-row" style="display:none" title="Include this group's shared startup context in the new agent's inbox briefing, alongside the initial message. Shown only when the group has a startup context set.">
       <input id="agent-spawn-group-context" type="checkbox" checked /> Include group default context
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-remote-control-row" style="display:none" title="Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it's reachable from claude.ai/code and the Claude mobile app from its first turn. Off by default. Requires you to be logged into claude.ai (OAuth) for the session to pair. Only shown for Claude Code — Codex has no built-in remote access.">
+      <input id="agent-spawn-remote-control" type="checkbox" /> Start with remote control — reachable from the Claude app (claude --remote-control)
     </label>
     <div class="cron-create-error" id="agent-spawn-error"></div>
     <div class="modal-buttons">
