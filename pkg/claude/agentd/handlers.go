@@ -1043,8 +1043,12 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 // the operator hit "disable" (the default entry is "keep connected", not
 // "disconnect"). So here the toggle is submitted with a single Enter, after a
 // settle gap so bracketed-paste mode can't coalesce that one Enter into the
-// paste. Caller must have verified the pane is alive and that the command
-// opens a menu.
+// paste. That toggle→Enter gap deliberately reuses the package-global
+// injectSettleDelay (it's the same paste-coalescing concern as
+// injectTextAndSubmit, so the two stay in lockstep under
+// SetInjectSettleDelayForTest); only the menu-render and per-key settles are
+// parameters, since those are remote-control-specific. Caller must have
+// verified the pane is alive and that the command opens a menu.
 func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay, stepDelay time.Duration) error {
 	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, toggle).Run(); err != nil {
 		return fmt.Errorf("send-keys toggle: %w", err)
