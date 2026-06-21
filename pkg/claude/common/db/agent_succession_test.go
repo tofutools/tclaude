@@ -118,3 +118,71 @@ func TestListAgentConvSuccessions_OrderedByRecency(t *testing.T) {
 	// guarantees deterministic ordering regardless of clock granularity.
 	assert.Equal(t, "b1", rows[0].OldConvID, "rows[0].OldConvID")
 }
+
+func TestGetConvPredecessor_BackwardEdge(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, RecordConvSuccession("old", "new", "reincarnate"), "record edge")
+
+	// Backward: new's predecessor is old.
+	pred, err := GetConvPredecessor("new")
+	require.NoError(t, err, "GetConvPredecessor")
+	assert.Equal(t, "old", pred, "new <- old")
+
+	// A conv that succeeded nothing has no predecessor.
+	pred, err = GetConvPredecessor("old")
+	require.NoError(t, err, "GetConvPredecessor(old)")
+	assert.Equal(t, "", pred, "old has no predecessor")
+
+	// Empty input is a benign empty result, not an error.
+	pred, err = GetConvPredecessor("")
+	require.NoError(t, err, "GetConvPredecessor(\"\")")
+	assert.Equal(t, "", pred, "empty in -> empty out")
+}
+
+func TestResolvePredecessorN_WalksBack(t *testing.T) {
+	setupTestDB(t)
+	// Chain: a -> b -> c -> d (oldest to newest).
+	require.NoError(t, RecordConvSuccession("a", "b", "reincarnate"), "a->b")
+	require.NoError(t, RecordConvSuccession("b", "c", "reincarnate"), "b->c")
+	require.NoError(t, RecordConvSuccession("c", "d", "reincarnate"), "c->d")
+
+	// One hop back from d is c.
+	got, hops, err := ResolvePredecessorN("d", 1)
+	require.NoError(t, err, "back 1")
+	assert.Equal(t, "c", got, "d back 1 -> c")
+	assert.Equal(t, 1, hops, "hops")
+
+	// Two hops back from d is b.
+	got, hops, err = ResolvePredecessorN("d", 2)
+	require.NoError(t, err, "back 2")
+	assert.Equal(t, "b", got, "d back 2 -> b")
+	assert.Equal(t, 2, hops, "hops")
+
+	// Asking to walk further than the chain is deep lands on the root
+	// (a) with hops < requested — best-effort, not an error.
+	got, hops, err = ResolvePredecessorN("d", 99)
+	require.NoError(t, err, "back 99")
+	assert.Equal(t, "a", got, "d back 99 -> a (root)")
+	assert.Equal(t, 3, hops, "hops capped at chain depth")
+}
+
+func TestResolvePredecessorN_NoPredecessor(t *testing.T) {
+	setupTestDB(t)
+	got, hops, err := ResolvePredecessorN("lonely", 1)
+	require.NoError(t, err, "no predecessor")
+	assert.Equal(t, "", got, "no ancestor")
+	assert.Equal(t, 0, hops, "no hops")
+}
+
+func TestResolvePredecessorN_CycleProtection(t *testing.T) {
+	setupTestDB(t)
+	// A malformed pair of edges that loop (x's predecessor is y, y's is
+	// x). The walk must terminate rather than spin.
+	require.NoError(t, RecordConvSuccession("y", "x", "reincarnate"), "y->x")
+	require.NoError(t, RecordConvSuccession("x", "y", "reincarnate"), "x->y")
+	got, hops, err := ResolvePredecessorN("x", 99)
+	require.NoError(t, err, "cycle")
+	// First hop x<-y is fine; second would revisit x, so we stop.
+	assert.Equal(t, "y", got, "stops at first repeat")
+	assert.Equal(t, 1, hops, "single hop before cycle detected")
+}

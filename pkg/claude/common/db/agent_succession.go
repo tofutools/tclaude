@@ -102,6 +102,79 @@ func ResolveLatestConv(convID string) string {
 	return current
 }
 
+// GetConvPredecessor returns the conv that was directly replaced by
+// convID (the old←new edge), or "" if convID is not recorded as the
+// successor of anything (it was never born from a reincarnate/clone).
+// This is the backward twin of GetConvSuccessor — the séance feature
+// (JOH-25) walks it to find "the agent I succeeded" so a fresh
+// incarnation can consult its predecessor's session.
+//
+// new_conv_id is not the table's primary key (old_conv_id is), so in
+// principle two edges could point at the same successor; in practice
+// reincarnate/clone mint a brand-new conv per succession, so a
+// successor has at most one predecessor. We take the most recent edge
+// defensively (ORDER BY succeeded_at DESC) rather than assume
+// uniqueness.
+func GetConvPredecessor(convID string) (string, error) {
+	if convID == "" {
+		return "", nil
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var oldID string
+	err = d.QueryRow(`SELECT old_conv_id FROM agent_conv_succession
+		WHERE new_conv_id = ?
+		ORDER BY succeeded_at DESC, rowid DESC
+		LIMIT 1`, convID).Scan(&oldID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return oldID, nil
+}
+
+// ResolvePredecessorN walks the succession chain BACKWARD from convID by
+// up to n generations and returns the ancestor conv-id reached, plus the
+// number of hops actually taken. n must be >= 1.
+//
+//   - n == 1 returns the immediate predecessor.
+//   - If the chain runs out before n hops (we reach the oldest ancestor),
+//     the oldest reached ancestor is returned with hops < n — best-effort,
+//     so "go back 5" on a 2-deep chain lands on the root rather than
+//     erroring.
+//   - If convID has no predecessor at all, returns ("", 0, nil) — the
+//     caller surfaces "you have no predecessor to consult".
+//
+// Cycle protection mirrors ResolveLatestConv: a malformed back-edge that
+// loops stops at the first repeat rather than spinning.
+func ResolvePredecessorN(convID string, n int) (ancestor string, hops int, err error) {
+	if convID == "" || n < 1 {
+		return "", 0, nil
+	}
+	seen := map[string]bool{convID: true}
+	current := convID
+	for hops < n {
+		prev, perr := GetConvPredecessor(current)
+		if perr != nil {
+			return "", hops, perr
+		}
+		if prev == "" || seen[prev] {
+			break // reached the chain root (or a cycle) — stop, return what we have
+		}
+		seen[prev] = true
+		current = prev
+		hops++
+	}
+	if hops == 0 {
+		return "", 0, nil
+	}
+	return current, hops, nil
+}
+
 // ListAgentConvSuccessions returns every recorded succession row
 // (most recent first). Used by the dashboard / audit views; not
 // performance-critical.
