@@ -429,14 +429,24 @@ function harnessLine(m) {
   const harness = (m && m.state && m.state.harness) || '';
   const labels = harnessLabels(harness);
   const model = (m && m.state && m.state.model) || '';
+  // Remote-access indicator — a bare 📱 glyph appended to the END of the
+  // harness line when Remote Access is armed (best-known, JOH-256). Trails
+  // the effort/cost tokens so the line reads "CC · O4.8 1M high 📱"; empty
+  // when off. Computed up front so every return path can append it,
+  // including the pre-first-tick (no-model) rows below — an armed agent
+  // shouldn't be invisible just because its model hasn't landed yet.
+  const remoteEl = remoteControlBadge(m);
   if (!model) {
     // No model reported yet. Keep Claude Code (the default) rows clean —
     // a freshly-spawned CC agent shows no line until its first tick — but
     // still flag a non-default harness (Codex) right away so a mixed group
     // is legible the moment an agent appears, not only after a model lands.
-    if (isDefaultHarness(harness)) return '';
+    // An armed remote indicator still earns a (minimal) line either way.
+    if (isDefaultHarness(harness)) {
+      return remoteEl ? `<div class="agent-harness">${remoteEl}</div>` : '';
+    }
     return `<div class="agent-harness" title="Harness: ${esc(labels.long)}">`
-      + `<span class="harness-name">${esc(labels.short)}</span></div>`;
+      + `<span class="harness-name">${esc(labels.short)}</span>${remoteEl}</div>`;
   }
   // Reasoning-effort level (low…max), recorded by the statusline hook on
   // the same row as the model. Trails the model — "CC · O4.8 1M high" —
@@ -470,7 +480,7 @@ function harnessLine(m) {
     + `<span class="harness-name">${esc(labels.short)}</span>`
     + `<span class="harness-sep">·</span>`
     + `<span class="harness-model">${esc(shortModel(model))}</span>`
-    + effortEl + costEl + `</div>`;
+    + effortEl + costEl + remoteEl + `</div>`;
 }
 
 // sandboxBadge renders the per-agent launch-sandbox chip — "🔒 workspace-
@@ -493,19 +503,22 @@ function sandboxBadge(m) {
   return `<span class="${cls}" title="${esc(tip)}">${glyph} ${esc(mode)}</span>`;
 }
 
-// remoteControlBadge renders the at-a-glance "remote on" chip — "📱 remote"
-// — from state.remote_control (tclaude's best-known Remote Access flag,
-// JOH-256). It is shown ONLY when remote control is on, mirroring
-// sandboxBadge: a clean row carries no chip, so an armed agent stands out
-// as reachable from the Claude app/phone. There is no "off" badge — off is
-// the silent default. Best-known: the harness has no readback, so this
-// reflects the last recorded intent and reconciles on the next refresh.
+// remoteControlBadge renders the at-a-glance "remote on" indicator — a bare
+// 📱 glyph (no text label) — from state.remote_control (tclaude's best-known
+// Remote Access flag, JOH-256). harnessLine appends it to the END of the
+// harness line ("CC · O4.8 1M high 📱"), so the glyph alone carries the
+// signal and the explanation rides in the title on hover. It is shown ONLY
+// when remote control is on, mirroring sandboxBadge: a clean row carries no
+// indicator, so an armed agent stands out as reachable from the Claude
+// app/phone. There is no "off" indicator — off is the silent default.
+// Best-known: the harness has no readback, so this reflects the last
+// recorded intent and reconciles on the next refresh.
 function remoteControlBadge(m) {
   const on = !!(m && m.state && m.state.remote_control);
   if (!on) return '';
   const tip = 'Remote Access is ON — this agent is reachable from the Claude app/phone. '
     + 'Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
-  return `<span class="remote-badge" title="${esc(tip)}">📱 remote</span>`;
+  return `<span class="remote-badge" title="${esc(tip)}">📱</span>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
