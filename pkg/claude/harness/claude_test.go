@@ -532,25 +532,30 @@ func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 }
 
 // recordingStatus is a fake StreamStatus that records the filter's BeforeOutput
-// announcements. firstAtLen captures how many bytes had reached out when the
-// FIRST one fired, proving the indicator is erased BEFORE the first visible char.
+// announcements. firstAtLen / lastAtLen capture how many bytes had reached out
+// when the FIRST / most-recent one fired — the first proves the indicator is
+// erased before the first visible char, the last that it's erased before the
+// closing newline too.
 type recordingStatus struct {
 	out        *strings.Builder
 	calls      int
 	firstAtLen int // bytes already on stdout at the FIRST BeforeOutput call
+	lastAtLen  int // bytes already on stdout at the MOST RECENT BeforeOutput call
 }
 
 func (r *recordingStatus) BeforeOutput() {
 	if r.calls == 0 {
 		r.firstAtLen = r.out.Len()
 	}
+	r.lastAtLen = r.out.Len()
 	r.calls++
 }
 
 // TestClaudeStreamFilter_DrivesStatus proves the filter announces every visible
-// write to the indicator, and that the FIRST announcement lands immediately
-// BEFORE the first character reaches stdout — so the indicator is always erased
-// before the answer could overlap it.
+// write to the indicator: the FIRST announcement lands immediately BEFORE the
+// first character reaches stdout (so the indicator is erased before the answer
+// could overlap it), and the LAST lands before the closing newline (so the
+// indicator is stopped before the final byte too, not just the answer text).
 func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
 	var out strings.Builder
 	st := &recordingStatus{out: &out}
@@ -574,12 +579,15 @@ func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
 	if st.firstAtLen != 0 {
 		t.Fatalf("first BeforeOutput fired after %d bytes already on stdout, want 0 (erase must precede the first char)", st.firstAtLen)
 	}
+	if st.lastAtLen != len("Hello, world") {
+		t.Fatalf("last BeforeOutput fired at len=%d, want %d (it must precede the closing newline)", st.lastAtLen, len("Hello, world"))
+	}
 }
 
 // TestClaudeStreamFilter_StatusStopsOnDeltalessTurn proves a turn that streams no
-// deltas (only a result event, e.g. an error) still announces its single write:
-// the fallback write in Flush funnels through the same BeforeOutput trigger,
-// before the fallback text reaches stdout.
+// deltas (only a result event, e.g. an error) still announces its writes: the
+// fallback text AND the closing newline each funnel through BeforeOutput, before
+// their bytes reach stdout.
 func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
 	var out strings.Builder
 	st := &recordingStatus{out: &out}
@@ -596,8 +604,10 @@ func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
 	if got := out.String(); got != "boom\n" {
 		t.Fatalf("answer = %q, want %q", got, "boom\n")
 	}
-	if st.calls != 1 || st.firstAtLen != 0 {
-		t.Fatalf("BeforeOutput should fire once before the fallback text, got calls=%d firstAtLen=%d", st.calls, st.firstAtLen)
+	// Two announcements: the fallback "boom" (before any byte) then the closing
+	// newline (after "boom", before the "\n").
+	if st.calls != 2 || st.firstAtLen != 0 || st.lastAtLen != len("boom") {
+		t.Fatalf("want BeforeOutput before the fallback text (len 0) and before the closing newline (len 4); got calls=%d firstAtLen=%d lastAtLen=%d", st.calls, st.firstAtLen, st.lastAtLen)
 	}
 }
 
