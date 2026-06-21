@@ -337,9 +337,11 @@ function groupActionsHTML(g, members) {
 }
 
 // remoteControlPolicyMenuItem renders the group's remote-control policy as a
-// click-to-cycle item in the group ⚙ menu (JOH-262). The group policy
-// OVERRIDES the spawn profile's own remote_control default: "inherit" defers to
-// the profile, "optin" forces Remote Access on at spawn, "deny" forces it off.
+// click-to-cycle item in the group ⚙ menu (JOH-262). The group policy is a spawn
+// DEFAULT that overrides the spawn profile's own remote_control default: "inherit"
+// defers to the profile, "optin" defaults Remote Access on at spawn, "deny"
+// defaults it off. It is a default, not a lock — it pre-fills the spawn modal's
+// checkbox, and an explicit per-spawn value (the checkbox / CLI flag) still wins.
 // One click cycles inherit → opt-in → deny → inherit (the same cycle pattern as
 // the per-agent notify bell); data-policy is the current value and data-next is
 // the value one click sends. The wire tokens (inherit/optin/deny) match the
@@ -352,10 +354,10 @@ function remoteControlPolicyMenuItem(g) {
   const label = policy === 'optin' ? 'opt-in' : policy === 'deny' ? 'deny' : 'inherit';
   const ico = policy === 'deny' ? '🚫' : '📱';
   const tip = policy === 'inherit'
-    ? "Remote-control policy: inherit — defers to each spawn profile's own default. Click to OVERRIDE: opt-in forces Remote Access on, deny forces it off, for every agent spawned into this group."
+    ? "Remote-control policy: inherit — defers to each spawn profile's own default. Click to set a group default: opt-in pre-checks Remote Access on, deny pre-checks it off, for agents spawned into this group (a per-spawn checkbox / flag still wins)."
     : policy === 'optin'
-    ? 'Remote-control policy: opt-in — OVERRIDES the profile default and forces Claude Code Remote Access ON for agents spawned into this group. Click to cycle to deny.'
-    : 'Remote-control policy: deny — OVERRIDES the profile default and forces Remote Access OFF for agents spawned into this group. Click to cycle back to inherit.';
+    ? 'Remote-control policy: opt-in — defaults Claude Code Remote Access ON for agents spawned into this group (overrides the profile default; a per-spawn checkbox / flag still wins). Click to cycle to deny.'
+    : 'Remote-control policy: deny — defaults Remote Access OFF for agents spawned into this group (overrides the profile default; a per-spawn checkbox / flag still wins). Click to cycle back to inherit.';
   return `<button data-act="set-group-remote-control" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-policy="${esc(policy)}" data-next="${esc(next)}" title="${esc(tip)}">${ico} remote policy: ${esc(label)}</button>`;
 }
 

@@ -356,6 +356,36 @@ function groupDefaultProfileName(groupName) {
   return (g && g.default_profile) || '';
 }
 
+// groupRemoteControlPolicy reads a group's remote-control policy from the latest
+// snapshot — 'optin' | 'deny' | 'inherit'. "" when the group is unknown.
+function groupRemoteControlPolicy(groupName) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const g = groups.find(x => x.name === groupName);
+  return (g && g.remote_control_policy) || '';
+}
+
+// applyRemoteControlPrefill (JOH-262 revised) pre-fills the "start with Remote
+// Access on" checkbox from the spawn defaults, highest-priority first:
+//   group policy (optin → on, deny → off)  >  picked profile's default  >  off
+// The checkbox is then the AUTHORITATIVE per-spawn intent — submit always sends
+// its state for a Remote-Access-capable harness, and the daemon honours it over
+// the group/profile default. So this only seeds the form; the human can still
+// toggle it and whatever they leave decides the spawn. Mirrors applySpawnHarness:
+// for a harness with no Remote Access (Codex) the row is hidden and the box stays
+// cleared, so we leave it off and bail. `profile` may be null (no profile picked).
+function applyRemoteControlPrefill(groupName, profile) {
+  const h = spawnHarnessByName($('#agent-spawn-harness').value);
+  const canRemoteControl = h ? !!h.can_remote_control : true;
+  if (!canRemoteControl) { $('#agent-spawn-remote-control').checked = false; return; }
+  const policy = groupRemoteControlPolicy(groupName);
+  let on;
+  if (policy === 'optin') on = true;
+  else if (policy === 'deny') on = false;
+  else if (profile && profile.remote_control != null) on = !!profile.remote_control;
+  else on = false;
+  $('#agent-spawn-remote-control').checked = on;
+}
+
 // applyProfileToSpawnForm fills the dialog from a profile object. Every field
 // is optional: a field the profile leaves unset keeps the dialog's own blank
 // default (so a sparse profile only overrides what it actually sets). Harness
@@ -401,12 +431,13 @@ function applyProfileToSpawnForm(p) {
   // hidden is harmless (submit reads it only for Codex).
   if (p.trust_dir != null) $('#agent-spawn-trust-dir').checked = !!p.trust_dir;
 
-  // remote_control is a *bool too (JOH-262): pre-check the spawn dialog's
-  // Remote Access box from a picked profile's default. The row is Claude-Code-
-  // only (gated on can_remote_control) and hidden otherwise; submit reads the
-  // box only when the harness can_remote_control, so setting it while hidden is
-  // harmless. A group remote-control policy still overrides this server-side.
-  if (p.remote_control != null) $('#agent-spawn-remote-control').checked = !!p.remote_control;
+  // remote_control is a *bool too (JOH-262): pre-fill the spawn dialog's Remote
+  // Access box, with the group's remote-control policy (optin/deny) taking
+  // precedence over this profile's own default. applySpawnHarness ran above, so
+  // the box is already cleared+hidden for a harness with no Remote Access; the
+  // helper re-checks that and no-ops there. The box is the authoritative intent —
+  // whatever it shows after this decides the spawn (submit always sends it).
+  applyRemoteControlPrefill($('#agent-spawn-group').value, p);
 
   if (p.agent_name) $('#agent-spawn-name').value = p.agent_name;
   if (p.role) $('#agent-spawn-role').value = p.role;
@@ -437,6 +468,8 @@ function clearSpawnProfileFields() {
   applyRememberedEffort(activeSpawnModelEl().value);
   $('#agent-spawn-focus').checked = spawnAutoFocusPref();
   updateSpawnGroupContextRow($('#agent-spawn-group').value);
+  // Reset Remote Access to the group-policy default (no profile picked now).
+  applyRemoteControlPrefill($('#agent-spawn-group').value, null);
   $('#agent-spawn-load-profile').value = '';
   syncSelectTitle($('#agent-spawn-load-profile'));
   applyWtSync();
@@ -548,11 +581,13 @@ function openAgentSpawnModal(opts) {
   // Restore the auto-focus checkbox from the human's last choice
   // (defaults on — see spawnAutoFocusPref).
   $('#agent-spawn-focus').checked = spawnAutoFocusPref();
-  // Remote control defaults OFF on every open: arming phone access is a
-  // deliberate per-spawn choice, not a sticky pref (JOH-258). The
-  // "always-on via profile/group default" path is JOH-262. applySpawnHarness
-  // (below) additionally hides + clears it for a harness without Remote Access.
-  $('#agent-spawn-remote-control').checked = false;
+  // Pre-fill Remote Access from the group's remote-control policy (the picked
+  // profile's default is layered on later by initSpawnProfileSelector, which
+  // wins via applyRemoteControlPrefill when the policy is "inherit"). The box is
+  // then the authoritative per-spawn intent — whatever it shows decides the spawn
+  // (JOH-262 revised). applySpawnHarness ran above, so it's already cleared+hidden
+  // for a harness with no Remote Access. No profile loaded yet → pass null.
+  applyRemoteControlPrefill(select.value, null);
   // Prefill the cwd from the selected group's default spawn dir.
   // force=true: the modal just opened fresh, so there's no
   // user-typed value to protect.
@@ -670,13 +705,15 @@ async function submitAgentSpawn() {
     // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
     // ticked the checkbox — never defaulted.
     if (harness === 'codex' && $('#agent-spawn-trust-dir').checked) body.trust_dir = true;
-    // Opt-in remote-control (Claude Code only): arm built-in Remote Access at
-    // launch so the agent is reachable from the Claude app from turn one. Sent
-    // ONLY for a harness that supports it AND when the human ticked the box —
-    // applySpawnHarness hides + clears the checkbox for a harness without Remote
-    // Access (Codex), and the daemon re-gates (400) as defence in depth (JOH-258).
-    if (harnessEntry && harnessEntry.can_remote_control && $('#agent-spawn-remote-control').checked) {
-      body.remote_control = true;
+    // Remote-control (Claude Code only): the checkbox is the authoritative
+    // per-spawn intent (JOH-262 revised), so send its state explicitly — true OR
+    // false — and the daemon honours it over the group/profile default. Sent only
+    // for a harness with built-in Remote Access; applySpawnHarness hides + clears
+    // the box for a harness without it (Codex), so we omit it there and let the
+    // daemon's policy stack resolve+clamp. The daemon re-gates an explicit true on
+    // an unsupported harness (400) as defence in depth (JOH-258).
+    if (harnessEntry && harnessEntry.can_remote_control) {
+      body.remote_control = $('#agent-spawn-remote-control').checked;
     }
     if (sel.path && wtRepo && wtRepo !== cwd) {
       body.cwd = cwd;

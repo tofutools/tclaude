@@ -1409,12 +1409,13 @@ func groupsSetRemoteControlCmd() *cobra.Command {
 	return boa.CmdT[groupsSetRemoteControlParams]{
 		Use:   "set-remote-control",
 		Short: "Set (or clear) a group's remote-control policy",
-		Long: "Set the group's remote-control policy, which OVERRIDES a spawn profile's " +
-			"remote-control default at spawn (JOH-262): 'optin' arms Claude Code's built-in " +
-			"Remote Access for every agent spawned into the group, 'deny' force-disables it " +
-			"(even when the profile defaults it on — the 'actively deny' case), and 'inherit' " +
-			"(the default) defers to the profile. Omit <policy> to clear the override back to " +
-			"inherit. Codex agents have no Remote Access, so a force-on is silently a no-op " +
+		Long: "Set the group's remote-control DEFAULT, which overrides a spawn profile's " +
+			"remote-control default at spawn (JOH-262): 'optin' defaults Claude Code's built-in " +
+			"Remote Access on for agents spawned into the group, 'deny' defaults it off " +
+			"(even when the profile defaults it on), and 'inherit' (the default) defers to the " +
+			"profile. This is a default, not a lock — an explicit per-spawn value (the dashboard " +
+			"checkbox / `agent spawn --remote-control`) wins over it. Omit <policy> to clear back " +
+			"to inherit. Codex agents have no Remote Access, so a default-on is silently a no-op " +
 			"for them. Gated on the `groups.rename` permission (default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetRemoteControlParams, _ *cobra.Command) error {

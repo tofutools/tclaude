@@ -879,19 +879,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Gate the explicit "start with remote control" opt-in: it is a Claude Code
 	// feature (the --remote-control launch flag), so an EXPLICIT request for a
 	// harness with no built-in Remote Access (Codex) is a 400 here rather than a
-	// flag silently dropped. Off by default; only an explicit dashboard checkbox
-	// / CLI flag sets body.RemoteControl. See JOH-258.
-	requestedRemoteControl, rcErr := harness.ResolveRemoteControl(h, body.RemoteControl)
-	if rcErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_remote_control", rcErr.Error())
-		return
+	// flag silently dropped. body.RemoteControl is tri-state (*bool): only a
+	// non-nil request is validated here (the dashboard form always sends one for a
+	// Remote-Access-capable harness; the CLI sets &true on opt-in). nil = caller
+	// said nothing → the policy stack below fills it. See JOH-258.
+	if body.RemoteControl != nil {
+		if _, rcErr := harness.ResolveRemoteControl(h, *body.RemoteControl); rcErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_remote_control", rcErr.Error())
+			return
+		}
 	}
-	// Layer the spawn-time policy stack (JOH-262): a group's remote-control
-	// policy overrides the group default profile's remote-control default, which
-	// in turn the explicit opt-in above slots above. A policy-DERIVED force-on is
-	// then clamped to off for a harness with no Remote Access — a group/profile
-	// default must not fail a Codex spawn (an EXPLICIT opt-in for Codex already
-	// 400'd above). See resolveRemoteControlIntent.
+	// Layer the spawn-time policy stack (JOH-262, revised): an explicit per-spawn
+	// value (the dashboard form / CLI flag) is AUTHORITATIVE — it overrides BOTH
+	// the group's remote-control policy AND the group default profile's default,
+	// so whatever the spawn form shows decides the spawn state. With it
+	// unspecified (nil), the group policy wins, then the profile default, then off.
+	// A policy-DERIVED force-on is then clamped to off for a harness with no Remote
+	// Access — a group/profile default must not fail a Codex spawn (an EXPLICIT
+	// opt-in for Codex already 400'd above). See resolveRemoteControlIntent.
 	// The profile's remote-control default applies only when the spawn actually
 	// runs on the profile's harness — the SAME gate the launch-field overlay
 	// above uses. A spawn that pins a different harness skipped the profile's
@@ -904,7 +909,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if groupProfile != nil && harnessOrDefault(groupProfile.Harness) == harnessOrDefault(h.Name) {
 		profileRemoteControl = groupProfile.RemoteControl
 	}
-	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, requestedRemoteControl)
+	remoteControl := resolveRemoteControlIntent(g.RemoteControl, profileRemoteControl, body.RemoteControl)
 	if remoteControl && !h.CanRemoteControl() {
 		remoteControl = false
 	}
@@ -1123,29 +1128,30 @@ func groupDefaultProfile(g *db.AgentGroup) *db.SpawnProfile {
 }
 
 // resolveRemoteControlIntent computes the effective spawn-time remote-control
-// intent from the policy stack (JOH-262). Precedence, highest first:
+// intent from the policy stack (JOH-262, revised). Precedence, highest first:
 //
-//	group policy (force on/off)  >  explicit per-spawn opt-in  >  profile default  >  off
+//	explicit per-spawn value  >  group policy (force on/off)  >  profile default  >  off
 //
-// A group policy set on/off is AUTHORITATIVE — it overrides BOTH the profile
-// default AND an explicit per-spawn opt-in. So a group set to "off" (actively
-// deny) keeps a sensitive team unreachable regardless of a per-spawn tick, and a
-// group set to "on" (actively opt-in) arms the whole team. With the group policy
-// unset (nil = inherit), an explicit per-spawn opt-in wins over the profile
-// default; with both unset, the profile default applies; with all unset, off.
+// The explicit per-spawn value is AUTHORITATIVE: the spawn form (dashboard
+// checkbox / CLI flag) decides the spawn state, overriding BOTH the group policy
+// and the profile default. The group's remote-control policy and the group
+// default profile only PRE-FILL the dashboard form (client-side) and serve as
+// the SERVER fallback for callers that send no explicit value (CLI without the
+// flag, group-template instantiation): with requested nil, the group policy wins,
+// then the profile default, then off.
 //
-// requested is the already-validated explicit opt-in (false = not asked — the
-// per-spawn flag is two-state, so there is no explicit "off" to distinguish from
-// "unspecified"). The result is NOT yet harness-clamped: the caller applies
+// requested is the already-validated explicit per-spawn value, tri-state (*bool):
+// non-nil = the form/flag stated an intent (true OR false); nil = unspecified, so
+// the fallback applies. The result is NOT yet harness-clamped: the caller applies
 // CanRemoteControl so a policy-derived force-on is silently dropped for a harness
 // with no Remote Access (Codex), while an explicit opt-in for such a harness is
 // rejected upstream by harness.ResolveRemoteControl.
-func resolveRemoteControlIntent(groupPolicy, profileDefault *bool, requested bool) bool {
+func resolveRemoteControlIntent(groupPolicy, profileDefault, requested *bool) bool {
 	switch {
+	case requested != nil:
+		return *requested
 	case groupPolicy != nil:
 		return *groupPolicy
-	case requested:
-		return true
 	case profileDefault != nil:
 		return *profileDefault
 	default:

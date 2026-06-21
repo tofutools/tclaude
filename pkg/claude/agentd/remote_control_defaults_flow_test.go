@@ -11,16 +11,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Scenario (JOH-262): an operator arms Claude Code's built-in Remote Access at
-// spawn by DEFAULT, configured at two levels — a spawn profile's remote-control
-// default and a group's remote-control policy, with the group policy OVERRIDING
-// the profile. The effective intent is resolved at spawn and threaded into
-// SpawnSpec.RemoteControl (the JOH-258 primitive), so a profile/group default
-// reaches every spawn path without per-agent toggling.
+// Scenario (JOH-262, revised): an operator arms Claude Code's built-in Remote
+// Access at spawn by DEFAULT, configured at two levels — a spawn profile's
+// remote-control default and a group's remote-control policy. These DEFAULTS
+// pre-fill the spawn form and serve as the server fallback for callers that send
+// no explicit value; an EXPLICIT per-spawn value (the dashboard checkbox / CLI
+// flag) is authoritative and overrides them, so "whatever the spawn form shows
+// decides". The effective intent is resolved at spawn and threaded into
+// SpawnSpec.RemoteControl (the JOH-258 primitive), so a default reaches every
+// spawn path without per-agent toggling, while a per-spawn override always wins.
 //
 // Precedence (highest first):
 //
-//	group policy (force on/off)  >  explicit per-spawn opt-in  >  profile default  >  off
+//	explicit per-spawn value  >  group policy (force on/off)  >  profile default  >  off
 //
 // These pin the matrix at the Spawner boundary (World.SpawnRemoteControl — the
 // same surface the JOH-258/261 remote-control tests assert), the production seam
@@ -127,10 +130,11 @@ func TestRemoteControlDefaults_ExplicitOptInOverProfile(t *testing.T) {
 	assert.True(t, got, "an explicit per-spawn opt-in must arm over a profile default of off")
 }
 
-// TestRemoteControlDefaults_GroupDenyBeatsExplicitOptIn: a group "deny" is
-// authoritative — it force-disables even an explicit per-spawn opt-in, so a
-// sensitive group stays unreachable regardless of a per-spawn tick.
-func TestRemoteControlDefaults_GroupDenyBeatsExplicitOptIn(t *testing.T) {
+// TestRemoteControlDefaults_ExplicitOptInBeatsGroupDeny: an explicit per-spawn
+// remote_control:true is authoritative — it arms Remote Access even when the
+// group policy is "deny". The group policy only pre-fills the form / serves as
+// the fallback; whatever the form sends decides (JOH-262 revised).
+func TestRemoteControlDefaults_ExplicitOptInBeatsGroupDeny(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code, "set group policy")
@@ -139,7 +143,23 @@ func TestRemoteControlDefaults_GroupDenyBeatsExplicitOptIn(t *testing.T) {
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
 	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.False(t, got, "group deny must override an explicit per-spawn opt-in")
+	assert.True(t, got, "an explicit per-spawn opt-in must arm over a group policy of deny")
+}
+
+// TestRemoteControlDefaults_ExplicitOffBeatsGroupOptIn: the core fix — a group
+// "optin" pre-fills the checkbox on, but unticking it sends an explicit
+// remote_control:false, and that wins. So the spawn the form shows (off) is what
+// happens, instead of the group policy silently re-arming it.
+func TestRemoteControlDefaults_ExplicitOffBeatsGroupOptIn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": false})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+	assert.False(t, got, "an explicit per-spawn opt-out must override a group policy of optin")
 }
 
 // TestRemoteControlDefaults_CodexClampsPolicyForceOn: a group/profile force-on

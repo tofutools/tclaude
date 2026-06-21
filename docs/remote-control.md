@@ -55,34 +55,42 @@ The dashboard's spawn modal has the same opt-in as a checkbox.
 
 ## Defaults: profiles and group policy
 
-Rather than arming each agent, set a **default** at two levels. The effective
-intent is resolved once, at spawn:
+Rather than arming each agent, set a **default** at two levels. These defaults
+pre-fill the spawn form (and apply to spawn paths that send no explicit value);
+an explicit per-spawn value always wins. The effective intent is resolved once,
+at spawn:
 
 ```
-group policy (force on/off)  >  explicit per-spawn opt-in  >  profile default  >  off
+explicit per-spawn value  >  group policy (force on/off)  >  profile default  >  off
 ```
 
 **Spawn profile** — a tri-state "start with remote control" default (unset / on
 / off), set in the dashboard's profile editor. A profile that defaults it on
 arms every agent spawned from that profile.
 
-**Group policy** — overrides the profile, so a whole team can be forced on or
-kept off regardless of the profile:
+**Group policy** — overrides the profile default, so a whole team defaults on or
+off regardless of the profile:
 
 ```bash
-tclaude agent groups set-remote-control <group> optin    # force ON for the team
-tclaude agent groups set-remote-control <group> deny     # force OFF (overrides the profile)
+tclaude agent groups set-remote-control <group> optin    # default ON for the team
+tclaude agent groups set-remote-control <group> deny     # default OFF (overrides the profile)
 tclaude agent groups set-remote-control <group> inherit  # defer to the profile (the default)
 tclaude agent groups set-remote-control <group>          # omit to clear back to inherit
 ```
 
-A group set to **`deny`** is an *absolute* off — it keeps a sensitive team
-unreachable even if an agent is spawned with an explicit `--remote-control` or
-from an on-by-default profile. A group set to **`optin`** arms the whole team. A
-group left at **`inherit`** falls through to the explicit per-spawn opt-in, then
-the profile default, then off. The dashboard surfaces the policy as a
-click-to-cycle chip on the group (inherit → opt-in → deny). Group policy is also
-settable in the dashboard's group view.
+A group set to **`optin`** defaults the whole team on; **`deny`** defaults it
+off (over an on-by-default profile); **`inherit`** falls through to the profile
+default, then off. The dashboard surfaces the policy as a click-to-cycle chip on
+the group (inherit → opt-in → deny), and also settable in the dashboard's group
+view.
+
+These are **defaults**, not locks: the dashboard spawn modal pre-checks the
+"start with remote control" box from this stack (group policy, then the picked
+profile's default), but whatever the box shows at submit decides the spawn — so
+unticking it for an `optin` team, or ticking it for a `deny` team, is honoured
+for that one spawn. The CLI `--remote-control` flag is likewise an explicit
+per-spawn value that overrides the group/profile default; a CLI spawn that omits
+it falls back to the group policy, then the profile default.
 
 ## It survives a relaunch
 
