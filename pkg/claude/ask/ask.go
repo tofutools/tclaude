@@ -467,9 +467,10 @@ func runAsk(in askInput, aio askIO) error {
 		}
 	}
 	if spinner != nil {
-		// The filter already erased the indicator before the first character; this
-		// is the cleanup for a turn that printed nothing (and joins the goroutine).
-		spinner.Stop()
+		// Tear the indicator down and join its goroutine. The filter already
+		// hid it before the last character; this also covers a turn that printed
+		// nothing at all.
+		spinner.Done()
 		spinner.wait()
 	}
 	if hideStderr && runErr != nil {

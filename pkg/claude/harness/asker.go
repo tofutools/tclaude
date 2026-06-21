@@ -136,24 +136,23 @@ type StreamAsker interface {
 
 // StreamStatus is an optional sink for the transient "working…" indicator
 // `tclaude ask` shows (on stderr) while a streamed answer is still on its way —
-// so a human watching a TTY sees that the harness is alive during the model's
-// "thinking" pause before any text arrives. A StreamFilter drives the two phase
-// transitions it alone can observe; the ask layer supplies the concrete renderer
-// (a spinner) and owns its lifecycle (create, start, final stop). A nil
-// StreamStatus disables the indicator entirely.
+// so a human watching a TTY sees that the harness is alive both during the
+// model's initial "thinking" pause and during mid-stream stalls (when the agent
+// pauses to run a tool, then continues). The ask layer supplies the concrete
+// renderer (a spinner) and owns its lifecycle (create, start, final teardown). A
+// nil StreamStatus disables the indicator entirely.
 //
-// The renderer's methods may be called from the filter's stdout-parsing and
-// pacing goroutines, so an implementation must be safe for concurrent use.
+// The filter's only job is to announce each visible write; the renderer decides,
+// from the timing of those announcements, when to show or hide itself. BeforeOutput
+// may be called from the filter's stdout-parsing and pacing goroutines, so an
+// implementation must be safe for concurrent use.
 type StreamStatus interface {
-	// FirstChunk is called once, when the first visible answer text has been
-	// received but (under smoothing) not yet printed — the brief "buffering"
-	// moment between the model's first token and the first character on screen.
-	FirstChunk()
-	// Stop is called once, immediately before the first visible character is
-	// written to the real stdout — or, if the turn printed nothing, by the ask
-	// layer after the run. It must erase the indicator and halt. Idempotent:
-	// the ask layer also calls it as end-of-run cleanup.
-	Stop()
+	// BeforeOutput is called immediately before each visible character is written
+	// to the real stdout. The indicator must hide itself (erasing any on-screen
+	// frame) synchronously, so it never overlaps the answer, and note the write as
+	// activity (its idle timer drives the mid-stream re-show). Cheap and a no-op
+	// when already hidden.
+	BeforeOutput()
 }
 
 // AskStreamFlusher is the optional flush half of a StreamFilter's returned

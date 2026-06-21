@@ -219,14 +219,28 @@ func (claudeAsker) StreamFilter(w io.Writer, smooth bool, status StreamStatus) i
 //
 // and the terminal `{"type":"result","result":"…"}` event carries the full
 // final answer (or, on failure, the error message) — used only as a fallback
-// when no deltas streamed. Every other event type (system/init, message_start,
-// thinking_delta, the per-message `assistant` snapshots, …) is ignored, so
-// reasoning and tool-use chatter never reach the user's stdout.
+// when no deltas streamed.
+//
+// We also watch `content_block_start` to learn where one text SECTION ends and
+// the next begins:
+//
+//	{"type":"stream_event","event":{"type":"content_block_start",
+//	 "content_block":{"type":"text"}}}
+//
+// A turn can be several sections — the model emits text, calls a tool, then
+// emits more text in a fresh block/message — and the deltas of different
+// sections carry no separator, so without this they would run together. Every
+// other event type (system/init, message_start, message_stop, thinking_delta,
+// tool_use blocks, the per-message `assistant` snapshots, …) is still ignored,
+// so reasoning and tool-use chatter never reach the user's stdout.
 type claudeStreamEvent struct {
 	Type   string `json:"type"`
 	Result string `json:"result"`
 	Event  struct {
-		Type  string `json:"type"`
+		Type         string `json:"type"`
+		ContentBlock struct {
+			Type string `json:"type"`
+		} `json:"content_block"`
 		Delta struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -273,17 +287,17 @@ type claudeStreamFilter struct {
 
 	buf []byte // incomplete trailing line carried between Write calls (guarded by mu)
 
-	mu           sync.Mutex
-	cond         *sync.Cond
-	pending      []rune // parsed visible text awaiting paced emit (smooth mode)
-	inputDone    bool   // Flush has been called: no more text will arrive
-	started      bool   // the pacer goroutine has been launched
-	sawChunk     bool   // the first visible delta has been observed (status.FirstChunk fired)
-	paintStarted bool   // the first visible character has been written (status.Stop fired)
-	wroteText    bool   // at least one text_delta rune has been forwarded to out
-	endedNL      bool   // the last bytes forwarded ended in a newline
-	finalResult  string // result-event text, emitted by Flush only if nothing streamed
-	writeErr     error  // first error writing to out; returned by Flush
+	mu          sync.Mutex
+	cond        *sync.Cond
+	pending     []rune // parsed visible text awaiting paced emit (smooth mode)
+	inputDone   bool   // Flush has been called: no more text will arrive
+	started     bool   // the pacer goroutine has been launched
+	wroteText   bool   // at least one text_delta rune has been forwarded to out
+	endedNL     bool   // the last bytes forwarded ended in a newline
+	emittedText bool   // logical: some visible text has been emitted (across all sections)
+	emitEndsNL  bool   // logical: the last emitted text ended in a newline (drives section separators)
+	finalResult string // result-event text, emitted by Flush only if nothing streamed
+	writeErr    error  // first error writing to out; returned by Flush
 
 	// Arrival stats feeding the pacing rate estimate, updated as deltas arrive.
 	haveFirst bool      // the first delta has been seen (first is valid)
@@ -329,8 +343,15 @@ func (f *claudeStreamFilter) consumeLocked(line []byte) {
 	}
 	switch ev.Type {
 	case "stream_event":
-		if ev.Event.Type == "content_block_delta" && ev.Event.Delta.Type == "text_delta" {
-			f.emitLocked(ev.Event.Delta.Text)
+		switch ev.Event.Type {
+		case "content_block_start":
+			if ev.Event.ContentBlock.Type == "text" {
+				f.startTextSectionLocked()
+			}
+		case "content_block_delta":
+			if ev.Event.Delta.Type == "text_delta" {
+				f.emitLocked(ev.Event.Delta.Text)
+			}
 		}
 	case "result":
 		// The final answer (or, on failure, the error message). Kept only as a
@@ -349,20 +370,30 @@ func (f *claudeStreamFilter) emitLocked(s string) {
 	if s == "" {
 		return
 	}
-	// First visible text: leave the "waiting" indicator and enter "buffering"
-	// (the about-to-print moment). Under smoothing the pacer prints a tick later;
-	// unsmoothed the very next putLocked stops the indicator outright.
-	if !f.sawChunk {
-		f.sawChunk = true
-		if f.status != nil {
-			f.status.FirstChunk()
-		}
-	}
+	// Track the logical end-of-text state (in stream order, before any pacing) so
+	// startTextSectionLocked knows whether the previous section already ended in a
+	// newline.
+	f.emittedText = true
+	f.emitEndsNL = strings.HasSuffix(s, "\n")
 	if !f.smooth {
 		f.putLocked(s)
 		return
 	}
 	f.enqueueLocked(s)
+}
+
+// startTextSectionLocked is called when a new text content block begins. The
+// model splits a turn into sections — text, a tool call, then more text in a
+// fresh block/message — whose deltas carry no separator, so consecutive sections
+// would otherwise run together ("…the files.The largest is…"). When a new
+// section starts after text that didn't already end in a newline, insert one so
+// the sections read as separate lines. Guarded on emitEndsNL so a section the
+// model already terminated isn't double-spaced, and on emittedText so the very
+// first section gets no leading blank line.
+func (f *claudeStreamFilter) startTextSectionLocked() {
+	if f.emittedText && !f.emitEndsNL {
+		f.emitLocked("\n")
+	}
 }
 
 // enqueueLocked appends a delta's text to the pending queue, updates the arrival
@@ -486,15 +517,13 @@ func (f *claudeStreamFilter) putLocked(s string) {
 	if s == "" || f.writeErr != nil {
 		return
 	}
-	// The first visible character is about to hit stdout — erase the "working…"
-	// indicator first, so it never overlaps the answer. Done here (the single
-	// funnel for every stdout write: paced emit, unsmoothed passthrough, and the
-	// Flush fallback) so exactly one path stops it, just before the first byte.
-	if !f.paintStarted {
-		f.paintStarted = true
-		if f.status != nil {
-			f.status.Stop()
-		}
+	// A visible character is about to hit stdout — let the indicator erase itself
+	// (and note the write) first, so it never overlaps the answer. Called before
+	// EVERY write (this is the single funnel for all of them: paced emit,
+	// unsmoothed passthrough, Flush fallback), which is also what lets the
+	// indicator re-appear during a mid-stream stall and clear again on resume.
+	if f.status != nil {
+		f.status.BeforeOutput()
 	}
 	if _, err := io.WriteString(f.out, s); err != nil {
 		f.writeErr = err

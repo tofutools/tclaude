@@ -324,6 +324,68 @@ func streamTextDelta(s string) string {
 	return `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":` + string(b) + `}}}` + "\n"
 }
 
+// streamTextBlockStart renders a content_block_start event for a text block —
+// the boundary marker that begins each text SECTION of a turn.
+func streamTextBlockStart() string {
+	return `{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text"}}}` + "\n"
+}
+
+// TestClaudeStreamFilter_SeparatesSections proves consecutive text sections (the
+// model emits text, runs a tool, then emits more text in a fresh block) are
+// separated by a newline rather than running together — but a section the model
+// already ended with a newline is not double-spaced, and the first section gets
+// no leading blank line.
+func TestClaudeStreamFilter_SeparatesSections(t *testing.T) {
+	run := func(parts ...string) string {
+		var out strings.Builder
+		w := newTestStreamFilter(&out)
+		for _, p := range parts {
+			if _, err := io.WriteString(w, p); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		}
+		if err := w.(AskStreamFlusher).Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		return out.String()
+	}
+	bs := streamTextBlockStart()
+
+	t.Run("separates sections when the prior one didn't end in a newline", func(t *testing.T) {
+		got := run(
+			bs, streamTextDelta("Let me check the files."),
+			// a tool round happens here (ignored events) — then a new text block:
+			bs, streamTextDelta("The largest is main.go."),
+		)
+		if want := "Let me check the files.\nThe largest is main.go.\n"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("does not double-space a section that already ended in a newline", func(t *testing.T) {
+		got := run(
+			bs, streamTextDelta("Done.\n"),
+			bs, streamTextDelta("Next."),
+		)
+		if want := "Done.\nNext.\n"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no leading separator before the first section", func(t *testing.T) {
+		if got := run(bs, streamTextDelta("Hello.")); got != "Hello.\n" {
+			t.Fatalf("got %q, want %q", got, "Hello.\n")
+		}
+	})
+
+	t.Run("multiple deltas within one section are not separated", func(t *testing.T) {
+		got := run(bs, streamTextDelta("Hello, "), streamTextDelta("world."))
+		if got != "Hello, world.\n" {
+			t.Fatalf("got %q, want %q (deltas inside one block must not be split)", got, "Hello, world.\n")
+		}
+	})
+}
+
 // TestPacingCPS pins the pure pacing policy: a tiny first chunk floors at a
 // brisk rate rather than crawling, a backlog drives the rate up (drain-the-
 // backlog-over-a-horizon core), the observed average rate acts as a floor once
@@ -413,28 +475,26 @@ func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	}
 }
 
-// recordingStatus is a fake StreamStatus that records the filter's phase
-// callbacks. stopAtLen captures how many bytes had reached out when Stop fired,
-// proving the indicator is erased BEFORE the first visible character.
+// recordingStatus is a fake StreamStatus that records the filter's BeforeOutput
+// announcements. firstAtLen captures how many bytes had reached out when the
+// FIRST one fired, proving the indicator is erased BEFORE the first visible char.
 type recordingStatus struct {
-	out         *strings.Builder
-	firstChunks int
-	stops       int
-	stopAtLen   int
+	out        *strings.Builder
+	calls      int
+	firstAtLen int // bytes already on stdout at the FIRST BeforeOutput call
 }
 
-func (r *recordingStatus) FirstChunk() { r.firstChunks++ }
-func (r *recordingStatus) Stop() {
-	if r.stops == 0 {
-		r.stopAtLen = r.out.Len()
+func (r *recordingStatus) BeforeOutput() {
+	if r.calls == 0 {
+		r.firstAtLen = r.out.Len()
 	}
-	r.stops++
+	r.calls++
 }
 
-// TestClaudeStreamFilter_DrivesStatus proves the filter drives the optional
-// StreamStatus indicator: FirstChunk fires once on the first visible delta, and
-// Stop fires once immediately BEFORE the first character reaches stdout — so the
-// indicator is always erased before the answer could overlap it.
+// TestClaudeStreamFilter_DrivesStatus proves the filter announces every visible
+// write to the indicator, and that the FIRST announcement lands immediately
+// BEFORE the first character reaches stdout — so the indicator is always erased
+// before the answer could overlap it.
 func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
 	var out strings.Builder
 	st := &recordingStatus{out: &out}
@@ -452,20 +512,18 @@ func TestClaudeStreamFilter_DrivesStatus(t *testing.T) {
 	if got := out.String(); got != "Hello, world\n" {
 		t.Fatalf("answer = %q, want %q", got, "Hello, world\n")
 	}
-	if st.firstChunks != 1 {
-		t.Fatalf("FirstChunk fired %d times, want 1", st.firstChunks)
+	if st.calls == 0 {
+		t.Fatal("BeforeOutput was never called, want ≥1 (one per visible write)")
 	}
-	if st.stops != 1 {
-		t.Fatalf("Stop fired %d times, want 1", st.stops)
-	}
-	if st.stopAtLen != 0 {
-		t.Fatalf("Stop fired after %d bytes already on stdout, want 0 (erase must precede the first char)", st.stopAtLen)
+	if st.firstAtLen != 0 {
+		t.Fatalf("first BeforeOutput fired after %d bytes already on stdout, want 0 (erase must precede the first char)", st.firstAtLen)
 	}
 }
 
 // TestClaudeStreamFilter_StatusStopsOnDeltalessTurn proves a turn that streams no
-// deltas (only a result event, e.g. an error) still stops the indicator: the
-// fallback write in Flush funnels through the same Stop trigger.
+// deltas (only a result event, e.g. an error) still announces its single write:
+// the fallback write in Flush funnels through the same BeforeOutput trigger,
+// before the fallback text reaches stdout.
 func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
 	var out strings.Builder
 	st := &recordingStatus{out: &out}
@@ -482,11 +540,8 @@ func TestClaudeStreamFilter_StatusStopsOnDeltalessTurn(t *testing.T) {
 	if got := out.String(); got != "boom\n" {
 		t.Fatalf("answer = %q, want %q", got, "boom\n")
 	}
-	if st.firstChunks != 0 {
-		t.Fatalf("no delta streamed, FirstChunk should not fire, got %d", st.firstChunks)
-	}
-	if st.stops != 1 || st.stopAtLen != 0 {
-		t.Fatalf("Stop should fire once before the fallback text, got stops=%d stopAtLen=%d", st.stops, st.stopAtLen)
+	if st.calls != 1 || st.firstAtLen != 0 {
+		t.Fatalf("BeforeOutput should fire once before the fallback text, got calls=%d firstAtLen=%d", st.calls, st.firstAtLen)
 	}
 }
 
