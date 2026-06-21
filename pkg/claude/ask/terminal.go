@@ -168,16 +168,19 @@ func controllingTTY() string {
 }
 
 // ttyName renders a Linux tty_nr (the packed dev_t from /proc/.../stat) as a
-// stable id. Per `man 5 proc`: the major is bits 15–8; the minor is bits 31–20
-// (high) plus 7–0 (low). tty_nr 0 means "no controlling terminal" → "". UNIX98
-// pts slaves (major 136–143) render as "pts/N" for readability; anything else
-// (real serial/console lines) as "ttyMAJOR-MINOR". Either way the string is
-// unique per terminal line, which is all the key needs.
+// stable id. The packing is the kernel's new_encode_dev: the major is bits
+// 19–8; the minor is bits 31–20 (high) plus 7–0 (low). (`man 5 proc` describes
+// the major as bits 15–8 — the common case; we mask the full 12 bits to match
+// the kernel exactly, though no real tty major exceeds 255.) tty_nr 0 means "no
+// controlling terminal" → "". UNIX98 pts slaves (major 136–143) render as
+// "pts/N" for readability; anything else (real serial/console lines) as
+// "ttyMAJOR-MINOR". Either way the string is unique per terminal line, which is
+// all the key needs.
 func ttyName(ttyNr int) string {
 	if ttyNr == 0 {
 		return ""
 	}
-	major := (ttyNr >> 8) & 0xff
+	major := (ttyNr >> 8) & 0xfff
 	minor := (ttyNr & 0xff) | (((ttyNr >> 20) & 0xfff) << 8)
 	if major >= 136 && major <= 143 {
 		return "pts/" + strconv.Itoa((major-136)*256+minor)

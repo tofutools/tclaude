@@ -188,6 +188,9 @@ func TestTTYName(t *testing.T) {
 		{"legacy console major 4", (4 << 8) | 1, "tty4-1"},
 		// minor 0x305 = 773: low byte 0x05, high bits (773>>8)=3 packed at 31–20.
 		{"high minor bits reconstructed", (200 << 8) | 0x05 | (3 << 20), "tty200-773"},
+		// major 0x123 = 291 exercises bits 16–19 — the 12-bit (kernel) mask, not
+		// the 8-bit one from the man page. Would render "tty35-0" if masked to 0xff.
+		{"wide major bits (>255)", 0x123 << 8, "tty291-0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
