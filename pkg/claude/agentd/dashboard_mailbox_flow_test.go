@@ -33,18 +33,19 @@ const (
 
 // mailboxEntry mirrors the dashboardMailbox wire shape.
 type mailboxEntry struct {
-	ID      string   `json:"id"`
-	Kind    string   `json:"kind"`
-	Title   string   `json:"title"`
-	Online  bool     `json:"online"`
-	Retired bool     `json:"retired"`
-	Groups  []string `json:"groups"`
-	Members int      `json:"members"`
-	In      int      `json:"in"`
-	Out     int      `json:"out"`
-	Total   int      `json:"total"`
-	Unread  int      `json:"unread"`
-	LastAt  string   `json:"last_at"`
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	Title       string   `json:"title"`
+	Online      bool     `json:"online"`
+	Retired     bool     `json:"retired"`
+	Groups      []string `json:"groups"`
+	Members     int      `json:"members"`
+	MemberConvs []string `json:"member_convs"`
+	In          int      `json:"in"`
+	Out         int      `json:"out"`
+	Total       int      `json:"total"`
+	Unread      int      `json:"unread"`
+	LastAt      string   `json:"last_at"`
 }
 
 // mailboxMsg mirrors the mailboxMessage wire shape (subset the tests
@@ -1115,6 +1116,26 @@ func TestDashboardMailboxes_ListsGroupFolders(t *testing.T) {
 		"group folders follow the pinned virtual folders")
 	assert.Less(t, indexOf(boxes, "group:team"), indexOf(boxes, mbAlice),
 		"group folders precede the per-agent folders")
+}
+
+// Scenario: a group folder carries its current members' conv-ids
+// (member_convs) so the sidebar can nest the matching agent folders beneath
+// the group row when it is expanded. The list is the current member set —
+// alice + bob — and an agent / human / "all" folder carries none.
+func TestDashboardMailboxes_GroupFolderCarriesMemberConvs(t *testing.T) {
+	f := newFlow(t)
+	dash, _ := seedGroupMailbox(t, f)
+
+	boxes := getMailboxes(t, dash)
+	grp := findMailbox(boxes, "group:team")
+	require.NotNil(t, grp)
+	assert.ElementsMatch(t, []string{mbAlice, mbBob}, grp.MemberConvs,
+		"the group folder lists its current members' conv-ids")
+
+	// The nesting payload is group-only — a per-agent folder never carries it.
+	alice := findMailbox(boxes, mbAlice)
+	require.NotNil(t, alice)
+	assert.Empty(t, alice.MemberConvs, "an agent folder carries no member_convs")
 }
 
 // Scenario: GET /api/mailbox?id=group:team returns all member traffic plus

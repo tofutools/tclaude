@@ -7,11 +7,15 @@
 //
 //   sidebar (#mail-sidebar) → mailbox list: a virtual "All agent
 //                             messages" firehose, the "Human
-//                             notifications" folder, then one folder per
-//                             agent. Filtered by #filter-mailboxes (name
-//                             / id / group); each agent row carries a
-//                             checkbox for the bulk "wipe selected"
-//                             action (#mail-wipe-bar). Retired agents are
+//                             notifications" folder, a "Groups" section
+//                             (one aggregate folder per group, each
+//                             expandable to reveal its member agent
+//                             folders nested beneath it), then an "Agents"
+//                             section with one folder per agent. Filtered
+//                             by #filter-mailboxes (name / id / group);
+//                             each agent row carries a checkbox for the
+//                             bulk "wipe selected" action
+//                             (#mail-wipe-bar). Retired agents are
 //                             hidden (and their traffic dropped from the
 //                             "all" firehose) until the #mail-show-retired
 //                             footer toggle opts them back in
@@ -74,6 +78,11 @@ const SHOW_RETIRED_KEY = 'tclaude.dash.mail.showretired';
 // clutter until the operator asks for it. Roster-only: an empty mailbox
 // has no messages, so unlike retired it never touches the firehose.
 const SHOW_EMPTY_KEY = 'tclaude.dash.mail.showempty';
+// Per-group sidebar expand state: a group row can expand to reveal its
+// member agent folders nested beneath it. Keyed by group name under a
+// mail-specific prefix so it stays independent of the Groups tab's own
+// tclaude.dash.group.<name> card-expand flags. Default collapsed.
+const GROUP_EXPAND_PREFIX = 'tclaude.dash.mail.groupexp.';
 
 // Page sizes the selector offers. The default (50) is what a fresh
 // dashboard uses until the operator picks one; every value stays at or
@@ -418,6 +427,24 @@ function isGroupFolder() {
   return (mail.selected || '').startsWith(GROUP_PREFIX);
 }
 
+// isGroupExpanded reports whether a group row is expanded to show its
+// nested member folders. Keyed by group name; default collapsed.
+function isGroupExpanded(name) {
+  return dashPrefs.getItem(GROUP_EXPAND_PREFIX + name) === '1';
+}
+
+// toggleGroupExpand flips a group row's expand state, persists it (a set
+// '1' / removeItem pair, like the other sticky sidebar toggles), and
+// repaints the sidebar so the nested member folders appear / vanish. Pure
+// view state — no server round-trip; the roster already carries each
+// group's member_convs.
+function toggleGroupExpand(name) {
+  if (!name) return;
+  if (isGroupExpanded(name)) dashPrefs.removeItem(GROUP_EXPAND_PREFIX + name);
+  else dashPrefs.setItem(GROUP_EXPAND_PREFIX + name, '1');
+  paintSidebar();
+}
+
 // isSelectedEmpty reports whether the open folder is an empty-mailbox
 // agent folder (total 0), per the current roster. Used to decide whether
 // hiding empty folders would strand the selection.
@@ -467,6 +494,58 @@ function mailboxMatchesFilter(mb, q) {
     .some(s => (s || '').toLowerCase().includes(q));
 }
 
+// mailboxRowHTML renders one sidebar row — a pinned ("all"/"human"), group,
+// or agent folder. nested=true marks a member-agent row shown beneath an
+// expanded group: it indents and drops the bulk-wipe checkbox (the
+// canonical checkbox lives on the flat Agents row for that same conv).
+function mailboxRowHTML(mb, nested = false) {
+  const active = mb.id === mail.selected;
+  const unread = mb.unread
+    ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
+    : '';
+  // A group folder has no per-direction tally — show member count +
+  // message count instead of the agent folder's "received · sent".
+  const countTitle = mb.kind === 'group'
+    ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
+    : `${mb.in} received · ${mb.out} sent`;
+  const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
+  // Retired folders only appear when the toggle is on; tag them so they
+  // read as demoted rather than a live agent.
+  const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
+  const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
+    data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
+    <span class="mailbox-icon">${mailboxIcon(mb)}</span>
+    <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
+    ${tag}${count}${unread}
+  </button>`;
+  // Lead column. A flat agent row gets the bulk-wipe checkbox; a group row
+  // gets an expand caret (toggles its nested member folders); everything
+  // else — the pinned folders and the nested member rows — gets a spacer so
+  // every label stays aligned under the checkbox column. data-group (not
+  // data-name) keys the caret so focusSignature can restore focus to it
+  // across the 2s repaint.
+  let lead;
+  if (mb.kind === 'agent' && !nested) {
+    lead = `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`;
+  } else if (mb.kind === 'group') {
+    const expanded = isGroupExpanded(mb.title);
+    lead = `<button type="button" class="mail-group-caret" data-act="mailbox-toggle-group" data-group="${esc(mb.title)}" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse members' : 'Expand members'}">${expanded ? '▾' : '▸'}</button>`;
+  } else {
+    lead = '<span class="mail-box-check-spacer"></span>';
+  }
+  // Empty-mailbox agent folders only appear when the toggle is on; dim them
+  // (like retired) so they read as low-priority opt-in clutter. The "0"
+  // count is their tag, so no extra label. Retired and empty are disjoint in
+  // practice (a retired folder always has the mail that put it in the
+  // roster), so the two row classes never both apply.
+  // NB: the modifier is `empty-box`, not `empty` — a bare `.empty` is the
+  // global empty-state placeholder class (centered, 24px padding), which
+  // would otherwise hijack the row's layout.
+  const empty = mb.kind === 'agent' && !mb.total;
+  const cls = `mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}${nested ? ' nested' : ''}`;
+  return `<div class="${cls}">${lead}${btn}</div>`;
+}
+
 function paintSidebar() {
   const el = $('#mail-sidebar');
   if (!el) return;
@@ -478,55 +557,41 @@ function paintSidebar() {
       : '<div class="empty">No mailboxes.</div>';
     return;
   }
-  // A one-line divider precedes the first group folder and the first agent
-  // folder, so the aggregate group views read as a distinct section from
-  // the per-agent ones. The pinned "all" / "human" folders need no header.
-  // Order is fixed by the server roster (all, human, groups…, agents…), so
-  // tracking the kind transition is enough; a header only appears when the
-  // filtered list actually contains that kind.
-  let prevKind = null;
-  el.innerHTML = boxes.map(mb => {
-    let section = '';
-    if (mb.kind !== prevKind && (mb.kind === 'group' || mb.kind === 'agent')) {
-      section = `<div class="mailbox-section">${mb.kind === 'group' ? 'Groups' : 'Agents'}</div>`;
+  // The server orders the roster [all, human, groups…, agents…]. Render by
+  // explicit section rather than walking kind transitions, so a group can
+  // expand INLINE into its member folders without breaking the "Agents"
+  // divider that follows. A one-line divider heads the Groups and Agents
+  // sections; the pinned "all"/"human" folders need none.
+  const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
+  const groups = boxes.filter(mb => mb.kind === 'group');
+  const agents = boxes.filter(mb => mb.kind === 'agent');
+  // Index the filtered agent folders so an expanded group nests the SAME
+  // folders its members map to — selecting a nested row opens the identical
+  // conv folder as the flat Agents entry. A member hidden by the retired /
+  // empty / text filters simply doesn't nest, exactly as it's absent from
+  // the flat list.
+  const agentById = new Map(agents.map(mb => [mb.id, mb]));
+
+  let html = pinned.map(mb => mailboxRowHTML(mb)).join('');
+  if (groups.length) {
+    html += '<div class="mailbox-section">Groups</div>';
+    for (const g of groups) {
+      html += mailboxRowHTML(g);
+      if (!isGroupExpanded(g.title)) continue;
+      const members = (g.member_convs || [])
+        .map(id => agentById.get(id))
+        .filter(Boolean);
+      html += members.length
+        ? members.map(mb => mailboxRowHTML(mb, true)).join('')
+        : '<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span>'
+          + '<div class="mailbox-nested-empty">no members with messages</div></div>';
     }
-    prevKind = mb.kind;
-    const active = mb.id === mail.selected;
-    const unread = mb.unread
-      ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
-      : '';
-    // A group folder has no per-direction tally — show member count +
-    // message count instead of the agent folder's "received · sent".
-    const countTitle = mb.kind === 'group'
-      ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
-      : `${mb.in} received · ${mb.out} sent`;
-    const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
-    // Retired folders only appear when the toggle is on; tag them so they
-    // read as demoted rather than a live agent.
-    const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
-    const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
-      data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
-      <span class="mailbox-icon">${mailboxIcon(mb)}</span>
-      <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
-      ${tag}${count}${unread}
-    </button>`;
-    // Only real agent mailboxes are checkable for the bulk wipe — the
-    // virtual "all" and "human" folders are special views. A spacer
-    // keeps their labels aligned with the checkbox column.
-    const lead = mb.kind === 'agent'
-      ? `<input type="checkbox" class="mail-box-check" data-conv="${esc(mb.id)}"${mail.selectedBoxes.has(mb.id) ? ' checked' : ''} title="Select for bulk wipe" />`
-      : '<span class="mail-box-check-spacer"></span>';
-    // Empty-mailbox agent folders only appear when the toggle is on; dim
-    // them (like retired) so they read as low-priority opt-in clutter. The
-    // "0" count is their tag, so no extra label. Retired and empty are
-    // disjoint in practice (a retired folder always has the mail that put
-    // it in the roster), so the two row classes never both apply.
-    // NB: the modifier is `empty-box`, not `empty` — a bare `.empty` is the
-    // global empty-state placeholder class (centered, 24px padding), which
-    // would otherwise hijack the row's layout.
-    const empty = mb.kind === 'agent' && !mb.total;
-    return `${section}<div class="mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}">${lead}${btn}</div>`;
-  }).join('');
+  }
+  if (agents.length) {
+    html += '<div class="mailbox-section">Agents</div>';
+    html += agents.map(mb => mailboxRowHTML(mb)).join('');
+  }
+  el.innerHTML = html;
 }
 
 // paintWipeBar shows the "wipe selected mailboxes" bar when one or more
@@ -1131,6 +1196,8 @@ function initMail() {
       const act = btn.getAttribute('data-act');
       if (act === 'mailbox-select') {
         selectMailbox(btn.getAttribute('data-id'));
+      } else if (act === 'mailbox-toggle-group') {
+        toggleGroupExpand(btn.getAttribute('data-group'));
       } else if (act === 'mail-open') {
         selectMessage(btn.getAttribute('data-id'));
       } else if (act === 'mail-msg-delete') {

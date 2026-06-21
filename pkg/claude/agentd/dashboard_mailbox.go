@@ -156,12 +156,19 @@ type dashboardMailbox struct {
 	Groups  []string `json:"groups,omitempty"`
 	// Members is the current member count of a group folder (kind="group")
 	// — drives the sidebar tooltip. Omitted (0) for agent/human/all.
-	Members int    `json:"members,omitempty"`
-	In      int    `json:"in"`
-	Out     int    `json:"out"`
-	Total   int    `json:"total"`
-	Unread  int    `json:"unread"`
-	LastAt  string `json:"last_at,omitempty"`
+	Members int `json:"members,omitempty"`
+	// MemberConvs lists the conv-ids of a group folder's current members
+	// (kind="group" only) so the sidebar can nest the matching agent
+	// folders beneath the group row when it is expanded. The nested rows
+	// reuse the flat agent entries the roster already carries — a member
+	// hidden by the retired / empty filters simply doesn't nest. Omitted
+	// for agent/human/all.
+	MemberConvs []string `json:"member_convs,omitempty"`
+	In          int      `json:"in"`
+	Out         int      `json:"out"`
+	Total       int      `json:"total"`
+	Unread      int      `json:"unread"`
+	LastAt      string   `json:"last_at,omitempty"`
 }
 
 // handleDashboardMailboxes serves GET /api/mailboxes — the sidebar
@@ -799,11 +806,12 @@ func buildGroupMailboxes(excludeConvs []string) []dashboardMailbox {
 			continue
 		}
 		out = append(out, dashboardMailbox{
-			ID:      groupMailboxPrefix + g.Name,
-			Kind:    "group",
-			Title:   g.Name,
-			Total:   total,
-			Members: len(members),
+			ID:          groupMailboxPrefix + g.Name,
+			Kind:        "group",
+			Title:       g.Name,
+			Total:       total,
+			Members:     len(members),
+			MemberConvs: members,
 		})
 	}
 	return out
