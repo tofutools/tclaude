@@ -55,18 +55,6 @@ func (claudeSpawner) Binary() string { return "claude" }
 // so the "unset omits the flag" guarantee is unit-testable without tmux.
 func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	cmd := spec.EnvExports + "claude"
-	// --remote-control arms Claude Code's built-in Remote Access at launch
-	// (claude.ai/code + the mobile app), for an agent spawned phone-reachable
-	// (JOH-258). Emitted FIRST, before every other flag, on purpose: the flag
-	// takes an OPTIONAL positional [name], so commander would swallow the next
-	// token as that name unless it starts with '-'. Putting it first guarantees
-	// the following token is another --flag (--resume / --session-id, always
-	// present on a daemon spawn) or nothing — never the trailing positional
-	// [prompt]. It is a bare boolean flag (no value). Codex has no equivalent;
-	// its spawner ignores spec.RemoteControl.
-	if spec.RemoteControl {
-		cmd += " --remote-control"
-	}
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}
@@ -113,6 +101,20 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	// whole prompt is one positional, never split into stray flags/words.
 	if spec.InitialPrompt != "" && spec.ResumeID == "" {
 		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
+	}
+	// --remote-control arms Claude Code's built-in Remote Access at launch
+	// (claude.ai/code + the mobile app), for an agent spawned phone-reachable
+	// (JOH-258). Emitted LAST — after the positional [prompt] — on purpose: the
+	// flag takes an OPTIONAL [name], which commander fills from the NEXT token
+	// unless it starts with '-'. Putting it first would make it swallow a bare
+	// trailing prompt on the direct-CLI path (`claude --remote-control 'do X'` →
+	// name="do X", prompt lost), and only a following --flag (which the daemon's
+	// --session-id happens to provide, but the direct CLI may not) prevents that.
+	// Emitting it last means nothing follows it, so its [name] is always empty
+	// and the prompt is parsed as the positional on EVERY path. Bare boolean
+	// flag, no value. Codex has no equivalent; its spawner ignores RemoteControl.
+	if spec.RemoteControl {
+		cmd += " --remote-control"
 	}
 	return cmd
 }
