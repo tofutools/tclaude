@@ -1,6 +1,9 @@
 package harness
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,6 +125,22 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 		}),
 		[]string{"claude", "--session-id", "sid-2", "--effort", "high", "--model", "opus", "pair on this"})
 
+	// Streaming print turn: the stream-json trio lands right after -p (before
+	// resume/session/effort/model), the prompt still behind the `--` guard.
+	eq("streaming print",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			Print: true, Stream: true, ResumeID: "rid-2", Prompt: "go",
+		}),
+		[]string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--resume", "rid-2", "--", "go"})
+
+	// Stream is print-only: a Stream spec that isn't Print (can't happen via the
+	// ask flow, but the builder must be safe) emits no capture-only flags.
+	eq("stream ignored without print",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			Stream: true, SessionID: "sid-3", Prompt: "hi",
+		}),
+		[]string{"claude", "--session-id", "sid-3", "hi"})
+
 	// Defensive cross-check of the ordering invariant the eq() above
 	// already encodes: every flag index precedes the `--` marker.
 	argv := claudeAsker{}.BuildAskArgv(AskSpec{
@@ -140,6 +159,152 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 		t.Fatalf("prompt must be the trailing positional, got %q", argv[len(argv)-1])
 	}
 }
+
+// TestClaudeAsker_SupportsStream confirms claudeAsker is wired as a StreamAsker
+// (so Harness.SupportsAskStream is true for the Claude descriptor).
+func TestClaudeAsker_SupportsStream(t *testing.T) {
+	if _, ok := any(claudeAsker{}).(StreamAsker); !ok {
+		t.Fatal("claudeAsker must implement StreamAsker")
+	}
+	h, err := Resolve(DefaultName)
+	if err != nil {
+		t.Fatalf("resolve claude: %v", err)
+	}
+	if !h.SupportsAskStream() {
+		t.Fatal("claude harness should report SupportsAskStream")
+	}
+}
+
+// TestClaudeStreamFilter exercises the JSONL → clean-text filter: it forwards
+// only text_delta chunks (concatenated, even when claude's stdout is split at
+// arbitrary byte boundaries), ignores reasoning/system/snapshot noise, ends the
+// line on Flush, and falls back to the result event when no deltas streamed
+// (so an error or a delta-less turn is never silent).
+func TestClaudeStreamFilter(t *testing.T) {
+	run := func(chunks ...string) string {
+		var out strings.Builder
+		w := claudeAsker{}.StreamFilter(&out)
+		for _, c := range chunks {
+			if _, err := io.WriteString(w, c); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		}
+		if fl, ok := w.(AskStreamFlusher); ok {
+			if err := fl.Flush(); err != nil {
+				t.Fatalf("flush: %v", err)
+			}
+		}
+		return out.String()
+	}
+
+	textDelta := func(s string) string {
+		b, _ := json.Marshal(s)
+		return `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":` + string(b) + `}}}` + "\n"
+	}
+
+	t.Run("concatenates text deltas, drops noise, ends with a newline", func(t *testing.T) {
+		stream := `{"type":"system","subtype":"init"}` + "\n" +
+			`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"reasoning"}}}` + "\n" +
+			textDelta("Hello, ") +
+			textDelta("world") +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Hello, world"}]}}` + "\n" +
+			`{"type":"result","subtype":"success","is_error":false,"result":"Hello, world"}` + "\n"
+		got := run(stream)
+		if got != "Hello, world\n" {
+			t.Fatalf("got %q, want %q", got, "Hello, world\n")
+		}
+		if strings.Contains(got, "reasoning") {
+			t.Fatal("thinking text must not be forwarded")
+		}
+	})
+
+	t.Run("reassembles deltas across split writes", func(t *testing.T) {
+		full := textDelta("abc") + textDelta("def")
+		// Split the byte stream at an awkward mid-line boundary.
+		cut := len(full) / 3
+		got := run(full[:cut], full[cut:])
+		if got != "abcdef\n" {
+			t.Fatalf("got %q, want %q", got, "abcdef\n")
+		}
+	})
+
+	t.Run("falls back to result text when no deltas streamed", func(t *testing.T) {
+		// e.g. a failed turn: claude emits the error message only in the result
+		// event. The filter must surface it rather than print nothing.
+		stream := `{"type":"system","subtype":"init"}` + "\n" +
+			`{"type":"result","subtype":"error","is_error":true,"result":"Error: not logged in"}` + "\n"
+		got := run(stream)
+		if got != "Error: not logged in\n" {
+			t.Fatalf("got %q, want %q", got, "Error: not logged in\n")
+		}
+	})
+
+	t.Run("does not double-print when both deltas and result are present", func(t *testing.T) {
+		stream := textDelta("answer") +
+			`{"type":"result","subtype":"success","is_error":false,"result":"answer"}` + "\n"
+		got := run(stream)
+		if got != "answer\n" {
+			t.Fatalf("got %q, want %q (result must not re-print the streamed text)", got, "answer\n")
+		}
+	})
+
+	t.Run("ignores malformed lines", func(t *testing.T) {
+		stream := "not json at all\n" + textDelta("ok") + "{bad\n"
+		got := run(stream)
+		if got != "ok\n" {
+			t.Fatalf("got %q, want %q", got, "ok\n")
+		}
+	})
+
+	t.Run("empty stream yields empty output", func(t *testing.T) {
+		if got := run(""); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("final line without a trailing newline is still consumed", func(t *testing.T) {
+		// Drop the terminating newline from the (delta-less) result line; Flush
+		// must still surface it rather than leave it buffered and lost.
+		stream := `{"type":"result","subtype":"error","is_error":true,"result":"boom"}`
+		got := run(stream)
+		if got != "boom\n" {
+			t.Fatalf("got %q, want %q", got, "boom\n")
+		}
+	})
+
+	t.Run("a delta already ending in a newline gets no doubled newline", func(t *testing.T) {
+		if got := run(textDelta("line\n")); got != "line\n" {
+			t.Fatalf("got %q, want %q (Flush must not add a second newline)", got, "line\n")
+		}
+	})
+
+	// The short-write contract is the load-bearing claim: a downstream write
+	// failure must NOT propagate from Write (which would make os/exec tear the
+	// claude pipe down mid-turn) — it is stashed and reported only by Flush.
+	t.Run("write error is stashed, surfaced by Flush, never returned from Write", func(t *testing.T) {
+		fw := &errAfterWriter{err: errors.New("broken pipe")}
+		w := claudeAsker{}.StreamFilter(fw)
+		line := textDelta("hello")
+		n, err := io.WriteString(w, line)
+		if err != nil || n != len(line) {
+			t.Fatalf("Write must report full consumption with no error, got n=%d err=%v", n, err)
+		}
+		fl, ok := w.(AskStreamFlusher)
+		if !ok {
+			t.Fatal("filter should implement AskStreamFlusher")
+		}
+		if err := fl.Flush(); err == nil {
+			t.Fatal("Flush should surface the stashed write error")
+		}
+	})
+}
+
+// errAfterWriter is an io.Writer that always fails, used to prove the stream
+// filter's short-write contract (a downstream failure is stashed, not returned
+// from Write).
+type errAfterWriter struct{ err error }
+
+func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
 
 // TestClaudeConvStore_Exists covers the ask self-heal probe (JOH-252): a
 // present per-cwd `.jsonl` is true, an absent one false, an empty id false.
