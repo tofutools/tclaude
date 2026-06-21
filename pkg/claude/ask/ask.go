@@ -50,6 +50,7 @@ type Params struct {
 	Effort      string `long:"effort" short:"e" optional:"true" help:"Reasoning effort for this question (low, medium, high, xhigh, max). Overrides the configured ask default; unset uses it (medium by default)."`
 	Where       bool   `long:"where" help:"Print the resolved ask bucket — terminal key + detection source, cwd, and current conversation id — then exit without asking. Handy for checking terminal detection across emulators."`
 	Verbose     bool   `long:"verbose" short:"v" help:"Show the harness's full capture-mode transcript on stderr (the session banner, hook lifecycle, token counts). Off by default so a printed answer is just the answer; a failed run shows it regardless. No effect on -i."`
+	NoSmoothing bool   `long:"no-smoothing" help:"Print the streamed answer chunk-by-chunk as it arrives, instead of pacing it into a smooth character-by-character typewriter. Only affects a live answer on a terminal (piped/captured output is never smoothed). Also settable via TCLAUDE_ASK_SMOOTH=0."`
 }
 
 func Cmd() *cobra.Command {
@@ -106,7 +107,11 @@ type askInput struct {
 	// Verbose keeps the harness's capture-mode stderr transcript visible
 	// (otherwise hidden for harnesses that write one — see
 	// Asker.NoisyCaptureStderr). No effect in interactive mode.
-	Verbose          bool
+	Verbose bool
+	// NoSmoothing forwards the streamed answer chunk-by-chunk instead of pacing
+	// it into a typewriter. Only consulted when streaming to a TTY; see
+	// resolveSmooth for how it composes with TCLAUDE_ASK_SMOOTH.
+	NoSmoothing      bool
 	StdinIsTerminal  bool
 	StdoutIsTerminal bool
 }
@@ -175,10 +180,29 @@ func runFromCLI(p *Params, args []string) error {
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
+		NoSmoothing:      p.NoSmoothing,
 		StdinIsTerminal:  stdinIsTTY,
 		StdoutIsTerminal: stdoutIsTTY,
 	}
 	return runAsk(in, askIO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+}
+
+// resolveSmooth decides whether `tclaude ask` paces ("smooths") the streamed
+// answer into a character-by-character typewriter. Precedence: the
+// --no-smoothing flag forces it OFF; otherwise TCLAUDE_ASK_SMOOTH set to a
+// falsey value (0/false/off/no) turns it off; otherwise it is on (the default).
+// Only consulted when streaming to a real terminal — a piped/captured stdout is
+// never smoothed regardless.
+func resolveSmooth(noSmoothing bool) bool {
+	if noSmoothing {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TCLAUDE_ASK_SMOOTH"))) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // printWhere implements `tclaude ask --where`: it prints the bucket an ask from
@@ -395,7 +419,7 @@ func runAsk(in askInput, aio askIO) error {
 	var streamFlush harness.AskStreamFlusher
 	if spec.Stream {
 		if sa, ok := h.Ask.(harness.StreamAsker); ok {
-			filtered := sa.StreamFilter(aio.Stdout)
+			filtered := sa.StreamFilter(aio.Stdout, resolveSmooth(in.NoSmoothing))
 			plan.Stdout = filtered
 			if fl, ok := filtered.(harness.AskStreamFlusher); ok {
 				streamFlush = fl

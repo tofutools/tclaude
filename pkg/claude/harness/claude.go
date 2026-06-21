@@ -190,34 +190,23 @@ func (claudeAsker) NoisyCaptureStderr() bool { return false }
 // stream-json flags BuildAskArgv emits for a Stream spec. Implementing it is
 // what makes claudeAsker a StreamAsker (so Harness.SupportsAskStream is true).
 //
-// By default the filter SMOOTHS the answer: instead of dumping each text_delta
-// the instant it arrives (which lands in visible bursts — a few words, a pause,
-// then a whole paragraph), it paces the characters out at an estimated steady
-// rate so the answer "types" itself fluidly. Purely cosmetic, and only ever
-// against a real TTY — the ask flow wires this filter in only then (a piped or
-// captured stdout keeps the buffered path). Set TCLAUDE_ASK_SMOOTH to a falsey
-// value (0/false/off/no) to forward chunks the instant they arrive instead.
-func (claudeAsker) StreamFilter(w io.Writer) io.Writer {
+// When smooth is true the filter SMOOTHS the answer: instead of dumping each
+// text_delta the instant it arrives (which lands in visible bursts — a few
+// words, a pause, then a whole paragraph), it paces the characters out at an
+// estimated steady rate so the answer "types" itself fluidly. When false it
+// forwards chunks the instant they arrive (the original behavior). Smoothing is
+// purely cosmetic and only ever runs against a real TTY — the ask flow wires
+// this filter in only then (a piped or captured stdout keeps the buffered path)
+// and resolves the smooth flag from --no-smoothing / TCLAUDE_ASK_SMOOTH.
+func (claudeAsker) StreamFilter(w io.Writer, smooth bool) io.Writer {
 	f := &claudeStreamFilter{
 		out:    w,
-		smooth: smoothAskStream(),
+		smooth: smooth,
 		clock:  time.Now,
 		sleep:  time.Sleep,
 	}
 	f.cond = sync.NewCond(&f.mu)
 	return f
-}
-
-// smoothAskStream reports whether `tclaude ask` should pace ("typewriter") the
-// streamed answer. On by default; TCLAUDE_ASK_SMOOTH set to a falsey value turns
-// it off so deltas forward the instant they arrive (the original behavior).
-func smoothAskStream() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("TCLAUDE_ASK_SMOOTH"))) {
-	case "0", "false", "off", "no":
-		return false
-	default:
-		return true
-	}
 }
 
 // claudeStreamEvent is the slice of Claude Code's stream-json event schema this
@@ -251,20 +240,26 @@ type claudeStreamEvent struct {
 // events. A failure writing to out is stashed and surfaced from Flush so a
 // short write never propagates back to claude's pipe (which would abort it).
 //
-// When smooth is set (the default — see StreamFilter), the extracted text is
-// not written straight through: Write/consume only ENQUEUE it (the JSON parsing
-// stays on claude's stdout goroutine) and a background pacer goroutine drains
+// When smooth is set, the extracted text is not written straight through:
+// Write/consume only ENQUEUE it (the JSON parsing stays on claude's stdout
+// goroutine) and a background pacer goroutine drains
 // the queue character-by-character at an estimated steady rate (see pace /
 // pacingCPS), so the answer types itself fluidly instead of arriving in chunky
 // bursts. Flush signals end-of-input and waits for the queue to drain before
 // returning. With smooth unset the text is written straight through, exactly as
 // before — no goroutine, no pacing.
 //
-// Concurrency: mu guards everything the pacer and claude's stdout goroutine both
-// touch (pending, the arrival stats, wroteText/endedNL, writeErr); cond wakes
-// the pacer when text is enqueued or input completes. buf is touched only on the
-// stdout goroutine (Write) and, after that goroutine is done, by Flush — never
-// concurrently — so it needs no lock.
+// Concurrency: mu guards ALL shared state — buf, pending, the arrival stats,
+// finalResult, wroteText/endedNL, started/inputDone, writeErr — so the filter is
+// self-synchronizing and never leans on an external happens-before. Write parses
+// and enqueues entirely under mu; the pacer drains under mu; Flush consumes the
+// trailing buf and reads started/finalResult under mu, releasing it only while it
+// blocks on the pacer's doneCh. cond wakes the pacer when text is enqueued or
+// input completes. (In the real ask flow claude's stdout goroutine finishes
+// before Flush is even called, so contention is near-zero — but the locking means
+// a future caller that streamed in from several goroutines, or flushed
+// concurrently with a write, still would not race. The previous version relied on
+// that external ordering; this no longer does.)
 //
 // Memory is bounded by the largest single event line plus the un-emitted text
 // backlog — at steady state a fraction of a second of output, since the pacer
@@ -274,7 +269,7 @@ type claudeStreamFilter struct {
 	out    io.Writer
 	smooth bool
 
-	buf []byte // incomplete trailing line carried between Write calls (stdout goroutine only)
+	buf []byte // incomplete trailing line carried between Write calls (guarded by mu)
 
 	mu          sync.Mutex
 	cond        *sync.Cond
@@ -298,6 +293,7 @@ type claudeStreamFilter struct {
 }
 
 func (f *claudeStreamFilter) Write(p []byte) (int, error) {
+	f.mu.Lock()
 	f.buf = append(f.buf, p...)
 	for {
 		i := bytes.IndexByte(f.buf, '\n')
@@ -306,18 +302,19 @@ func (f *claudeStreamFilter) Write(p []byte) (int, error) {
 		}
 		line := f.buf[:i]
 		f.buf = f.buf[i+1:]
-		f.consume(line)
+		f.consumeLocked(line)
 	}
+	f.mu.Unlock()
 	// Always report the full length consumed: a short write would make claude's
 	// stdout pipe think the reader failed and tear the turn down. Real write
 	// errors are stashed in writeErr and reported by Flush instead.
 	return len(p), nil
 }
 
-// consume parses one complete event line and forwards its visible text. A line
-// that isn't valid JSON, or is an event type we don't render, is silently
-// dropped — the stream legitimately carries many such lines.
-func (f *claudeStreamFilter) consume(line []byte) {
+// consumeLocked parses one complete event line and forwards its visible text. A
+// line that isn't valid JSON, or is an event type we don't render, is silently
+// dropped — the stream legitimately carries many such lines. Caller holds mu.
+func (f *claudeStreamFilter) consumeLocked(line []byte) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
@@ -329,7 +326,7 @@ func (f *claudeStreamFilter) consume(line []byte) {
 	switch ev.Type {
 	case "stream_event":
 		if ev.Event.Type == "content_block_delta" && ev.Event.Delta.Type == "text_delta" {
-			f.emit(ev.Event.Delta.Text)
+			f.emitLocked(ev.Event.Delta.Text)
 		}
 	case "result":
 		// The final answer (or, on failure, the error message). Kept only as a
@@ -340,28 +337,26 @@ func (f *claudeStreamFilter) consume(line []byte) {
 	}
 }
 
-// emit forwards one delta's visible text. In smooth mode it ENQUEUES the text
-// for the pacer to type out; otherwise it writes straight through (the original
-// behavior). An empty string and a prior write error are no-ops either way.
-func (f *claudeStreamFilter) emit(s string) {
+// emitLocked forwards one delta's visible text. In smooth mode it ENQUEUES the
+// text for the pacer to type out; otherwise it writes straight through (the
+// original behavior). An empty string and a prior write error are no-ops either
+// way. Caller holds mu.
+func (f *claudeStreamFilter) emitLocked(s string) {
 	if s == "" {
 		return
 	}
 	if !f.smooth {
-		f.mu.Lock()
 		f.putLocked(s)
-		f.mu.Unlock()
 		return
 	}
-	f.enqueue(s)
+	f.enqueueLocked(s)
 }
 
-// enqueue appends a delta's text to the pending queue, updates the arrival stats
-// the pacer uses to estimate speed, and (on the first delta) launches the pacer
-// goroutine. Runs on claude's stdout goroutine.
-func (f *claudeStreamFilter) enqueue(s string) {
+// enqueueLocked appends a delta's text to the pending queue, updates the arrival
+// stats the pacer uses to estimate speed, and (on the first delta) launches the
+// pacer goroutine. Caller holds mu.
+func (f *claudeStreamFilter) enqueueLocked(s string) {
 	rs := []rune(s)
-	f.mu.Lock()
 	if !f.haveFirst {
 		f.first = f.clock()
 		f.haveFirst = true
@@ -375,7 +370,6 @@ func (f *claudeStreamFilter) enqueue(s string) {
 		go f.pace()
 	}
 	f.cond.Signal()
-	f.mu.Unlock()
 }
 
 const (
@@ -494,24 +488,29 @@ func (f *claudeStreamFilter) putLocked(s string) {
 // text_delta chunks carry no trailing newline, so without this the shell prompt
 // would resume mid-answer.
 func (f *claudeStreamFilter) Flush() error {
+	f.mu.Lock()
 	// Process any final line the stream didn't newline-terminate. claude's
 	// stream-json terminates every event (including the last) with a newline, so
 	// this is belt-and-suspenders — but it keeps a result event without a
 	// trailing newline from being silently dropped. Must run BEFORE we signal
 	// input-done, since it can enqueue a last delta.
 	if len(bytes.TrimSpace(f.buf)) > 0 {
-		f.consume(f.buf)
+		f.consumeLocked(f.buf)
 		f.buf = nil
 	}
-	if f.smooth && f.started {
-		f.mu.Lock()
+	smoothDrain := f.smooth && f.started
+	if smoothDrain {
 		f.inputDone = true
 		f.cond.Signal()
-		f.mu.Unlock()
+	}
+	f.mu.Unlock()
+
+	if smoothDrain {
 		<-f.doneCh // wait for the pacer to type out the remaining backlog
 	}
-	// The pacer has exited (or never ran) and claude's stdout goroutine is done,
-	// so we now have exclusive access; the lock just preserves putLocked's
+
+	// The pacer has exited (or never ran), so this bookkeeping has no concurrent
+	// writer; mu still guards it for any future caller and keeps putLocked's
 	// invariant.
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -308,16 +308,12 @@ type errAfterWriter struct{ err error }
 
 func (e *errAfterWriter) Write([]byte) (int, error) { return 0, e.err }
 
-// newTestStreamFilter builds the production smoothing stream filter but with a
-// no-op sleep, so the content-oriented tests exercise the real paced goroutine
-// path without waiting out the typewriter delays. Smoothing is forced on so an
-// ambient TCLAUDE_ASK_SMOOTH=0 in the dev's env can't quietly swap which path
-// these tests cover.
+// newTestStreamFilter builds the smoothing stream filter with a no-op sleep, so
+// the content-oriented tests exercise the real paced goroutine path without
+// waiting out the typewriter delays.
 func newTestStreamFilter(out io.Writer) io.Writer {
-	w := claudeAsker{}.StreamFilter(out)
-	cf := w.(*claudeStreamFilter)
-	cf.smooth = true
-	cf.sleep = func(time.Duration) {}
+	w := claudeAsker{}.StreamFilter(out, true)
+	w.(*claudeStreamFilter).sleep = func(time.Duration) {}
 	return w
 }
 
@@ -370,8 +366,7 @@ func TestPacingCPS(t *testing.T) {
 func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 	var out strings.Builder
 	var nowNs, sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
-	w.smooth = true
+	w := claudeAsker{}.StreamFilter(&out, true).(*claudeStreamFilter)
 	w.clock = func() time.Time { return time.Unix(0, nowNs.Load()) }
 	w.sleep = func(d time.Duration) { nowNs.Add(int64(d)); sleeps.Add(1) }
 
@@ -400,8 +395,7 @@ func TestClaudeStreamFilter_PacesAcrossTicks(t *testing.T) {
 func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	var out strings.Builder
 	var sleeps atomic.Int64
-	w := claudeAsker{}.StreamFilter(&out).(*claudeStreamFilter)
-	w.smooth = true
+	w := claudeAsker{}.StreamFilter(&out, true).(*claudeStreamFilter)
 	w.sleep = func(time.Duration) { sleeps.Add(1) }
 
 	big := strings.Repeat("x", streamDumpThreshold+500)
@@ -419,14 +413,14 @@ func TestClaudeStreamFilter_DumpsHugeBacklog(t *testing.T) {
 	}
 }
 
-// TestClaudeStreamFilter_SmoothOff proves the opt-out: TCLAUDE_ASK_SMOOTH=0
-// forwards deltas straight through (no goroutine), with identical final output.
+// TestClaudeStreamFilter_SmoothOff proves smooth=false forwards deltas straight
+// through (no pacer goroutine), with identical final output. (The flag/env that
+// resolves to this bool is covered by the ask layer's resolveSmooth tests.)
 func TestClaudeStreamFilter_SmoothOff(t *testing.T) {
-	t.Setenv("TCLAUDE_ASK_SMOOTH", "0")
 	var out strings.Builder
-	w := claudeAsker{}.StreamFilter(&out)
-	if cf, ok := w.(*claudeStreamFilter); !ok || cf.smooth {
-		t.Fatal("TCLAUDE_ASK_SMOOTH=0 should disable smoothing")
+	w := claudeAsker{}.StreamFilter(&out, false)
+	if cf := w.(*claudeStreamFilter); cf.smooth {
+		t.Fatal("StreamFilter(_, false) must not smooth")
 	}
 	if _, err := io.WriteString(w, streamTextDelta("Hello, ")+streamTextDelta("world")); err != nil {
 		t.Fatalf("write: %v", err)

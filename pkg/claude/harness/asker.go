@@ -115,11 +115,18 @@ type StreamAsker interface {
 	// (`x=$(tclaude ask …)`) would still be just the answer, and a human
 	// watching sees it stream.
 	//
+	// smooth asks the filter to PACE the visible text into a steady, character-
+	// by-character "typewriter" (a cosmetic refinement for a human watching a
+	// TTY) rather than forwarding each chunk the instant it is parsed. `tclaude
+	// ask` resolves it from the --no-smoothing flag / TCLAUDE_ASK_SMOOTH and the
+	// built-in default; a filter that doesn't pace may ignore it. Either way the
+	// emitted bytes are identical — smooth only changes their timing.
+	//
 	// The returned writer may also implement AskStreamFlusher; `tclaude ask`
 	// calls Flush once after the process exits so the filter can emit any
 	// trailing text the stream implied but never streamed as deltas (a final
 	// result or an error message) and a terminating newline.
-	StreamFilter(w io.Writer) io.Writer
+	StreamFilter(w io.Writer, smooth bool) io.Writer
 }
 
 // AskStreamFlusher is the optional flush half of a StreamFilter's returned
