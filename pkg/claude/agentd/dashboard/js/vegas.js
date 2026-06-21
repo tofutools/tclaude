@@ -74,6 +74,7 @@ function channelById(id) {
 // channel switch is "set this + rebuild".
 let activeChannelId = DEFAULT_CHANNEL;
 let channelLoaded = false; // GET /api/slop/channel done (or in flight)
+let userPicked = false;    // a user pick supersedes a still-in-flight load
 
 // loadChannel fetches the persisted channel once, lazily on the first slop
 // activation — like slop-volume.js's loadVolumes, the plain dashboard never
@@ -88,6 +89,11 @@ async function loadChannel() {
     const r = await fetch('/api/slop/channel', { credentials: 'same-origin' });
     if (!r.ok) return;
     const d = await r.json();
+    // The user picked a channel while this GET was in flight — their choice
+    // (already persisted + playing) wins; applying the stale saved value
+    // here would switch the player back under them. Mirrors slop-volume.js's
+    // `touched` guard against a late volumes GET.
+    if (userPicked) return;
     const id = (d && d.channel) || '';
     if (id && CHANNELS.some((c) => c.id === id)) applyChannel(id);
   } catch {
@@ -113,6 +119,7 @@ function applyChannel(id) {
 // autoplay-with-sound is granted.
 function switchChannel(id) {
   if (!CHANNELS.some((c) => c.id === id)) return;
+  userPicked = true; // beat a still-in-flight loadChannel (see its guard)
   persistChannel(id);
   applyChannel(id);
 }
