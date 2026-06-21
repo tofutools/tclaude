@@ -32,8 +32,8 @@ function cfgFloat(id, fallback) {
 // populateAskSelects fills the Ask-defaults Model / Effort dropdowns from
 // the snapshot's harness catalog (the same source the spawn modal uses),
 // so the lists track the server-side catalog with no hardcoded model list.
-// Each select gets a leading "Fast default" option (empty value = unpinned,
-// resolves to the built-in fast default server-side). The claude harness is
+// Each select gets a leading "Built-in default" option (empty value = unpinned,
+// resolves to the built-in default server-side). The claude harness is
 // the only one wired for `tclaude ask` today; a hand-set value absent from
 // the catalog is added back by setAskSelectValue so it still round-trips.
 function populateAskSelects() {
@@ -44,7 +44,7 @@ function populateAskSelects() {
 }
 function fillAskSelect(sel, values) {
   if (!sel) return;
-  sel.innerHTML = '<option value="">Fast default</option>' +
+  sel.innerHTML = '<option value="">Built-in default</option>' +
     (values || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
 }
 // setAskSelectValue selects value, first adding it as an option when the
@@ -254,7 +254,7 @@ function populateConfigForm(cfg) {
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
 
   // Ask defaults — model/effort for `tclaude ask`. Options come from the
-  // harness catalog; an unset field shows "Fast default" (empty).
+  // harness catalog; an unset field shows "Built-in default" (empty).
   populateAskSelects();
   const ask = cfg.ask || {};
   setAskSelectValue($('#ask-model'), ask.model);
@@ -338,7 +338,7 @@ function assembleConfig() {
 
   // ask is an optional block. Clone the existing one so a future sub-field
   // with no widget round-trips, then set the two form-owned keys. An empty
-  // value (the "Fast default" option) clears that field, and a block with
+  // value (the "Built-in default" option) clears that field, and a block with
   // nothing left is dropped so an all-default ask doesn't marshal as a
   // spurious "ask": {} diff.
   const ask = (cfg.ask && typeof cfg.ask === 'object') ? cfg.ask : {};
