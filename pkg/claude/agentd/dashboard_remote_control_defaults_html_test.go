@@ -12,14 +12,15 @@ import (
 //     (unset / off / on) that rides into the profile create/edit body as
 //     `remote_control`, gated on the chosen harness's Remote Access capability
 //     (the inverse of the Codex-only trust-dir toggle it sits beside).
-//  2. The group remote-control-policy chip — a STRING enum
+//  2. The group remote-control-policy control — a STRING enum
 //     (inherit / optin / deny) that PATCHes the group's `remote_control_policy`
 //     through the same /api/groups/{name} endpoint the default_profile /
-//     notify_enabled chips use.
+//     notify_enabled chips use. It lives as a click-to-cycle item in the group
+//     ⚙ menu (not a header chip).
 //
 // The pieces span dashboard.html (the profile row), modal-profiles.js + the
-// profiles.js summary (the profile toggle), render.js (the group chip) and
-// row-actions.js (the chip's PATCH dispatch). A rename in any of them silently
+// profiles.js summary (the profile toggle), render.js (the group cog menu item)
+// and row-actions.js (the item's PATCH dispatch). A rename in any of them silently
 // breaks the control in the browser, and the repo has no JS test runner, so
 // this asserts on the embedded asset concatenation at `go test ./...` — the
 // same guard style as TestDashboardHTML_SpawnRemoteControlWired.
@@ -57,21 +58,23 @@ func TestDashboardHTML_RemoteControlDefaultsWired(t *testing.T) {
 	must("`remote-control ${p.remote_control ? 'on' : 'off'}`",
 		"the profile card summary shows the remote-control state when set")
 
-	// ---- 2. Group remote-control-policy chip -----------------------------
+	// ---- 2. Group remote-control-policy cog-menu item --------------------
 
-	// render.js: the chip helper exists, reads the wire token off the group,
-	// and cycles inherit → optin → deny (the three wire tokens the group PATCH
-	// accepts).
-	must("function remoteControlPolicyChip(g)", "the group remote-control-policy chip helper is defined")
-	must("g.remote_control_policy || 'inherit'", "the chip reads the group's remote_control_policy")
+	// render.js: the menu-item helper exists, reads the wire token off the
+	// group, and cycles inherit → optin → deny (the three wire tokens the group
+	// PATCH accepts).
+	must("function remoteControlPolicyMenuItem(g)", "the group remote-control-policy menu-item helper is defined")
+	must("g.remote_control_policy || 'inherit'", "the item reads the group's remote_control_policy")
 	must("policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit'",
-		"the chip cycles inherit → optin → deny")
-	must(`data-act="set-group-remote-control"`, "the chip dispatches the group remote-control action")
-	must("${remoteControlPolicyChip(g)}", "the chip renders into the group header")
+		"the item cycles inherit → optin → deny")
+	must(`data-act="set-group-remote-control"`, "the item dispatches the group remote-control action")
+	// It renders as a button INTO the group ⚙ menu (groupActionsHTML), not as
+	// a header chip — the move that decluttered the group summary.
+	must("+ remoteControlPolicyMenuItem(g)", "the policy item is wired into the group cog menu")
 
 	// row-actions.js: the handler PATCHes the group endpoint with the
 	// remote_control_policy field (same endpoint + method as default_profile).
-	must("case 'set-group-remote-control':", "the chip has a dispatch case")
-	must("`/api/groups/${encodeURIComponent(group)}`", "the chip PATCHes the group endpoint")
-	must("JSON.stringify({ remote_control_policy: next })", "the chip sends the remote_control_policy body")
+	must("case 'set-group-remote-control':", "the item has a dispatch case")
+	must("`/api/groups/${encodeURIComponent(group)}`", "the item PATCHes the group endpoint")
+	must("JSON.stringify({ remote_control_policy: next })", "the item sends the remote_control_policy body")
 }
