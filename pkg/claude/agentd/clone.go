@@ -555,21 +555,16 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		copied = append(copied, fmt.Sprintf("owner:%d", gID))
 	}
 
-	// 4. Rename the clone to its computed title, materialising the
-	// .jsonl. Done regardless of group membership — the clone has a
-	// title whether or not it joined any group. Without this startup
-	// write a never-messaged clone ends up an orphan — the same trap
-	// that bit `tclaude agent spawn` before bc7ec81.
-	goBackground(func() {
-		runClonePostInit(newConv, newTitle, target, caller)
-	})
-
-	// 5. Optional follow-up. Same shape as reincarnate: enqueue an
+	// 4. Optional follow-up. Same shape as reincarnate: enqueue an
 	// agent_messages row and let the flush pipeline deliver it. A solo
 	// (groupless) clone still gets a row — group_id 0 is a direct
 	// message, the universal-inbox transport. FromConv is the caller
 	// (original for self-clone, manager for cross-clone), so the new
 	// clone sees who asked it to pick up work.
+	//
+	// Enqueued BEFORE the post-init goroutine fires (step 5) so that one
+	// goroutine can deliver it — via flush, AFTER the /rename has settled.
+	// The row must already exist when the flush runs.
 	var msgID int64
 	if followUp != "" {
 		var handoffGroupID int64
@@ -587,9 +582,26 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 			slog.Warn("clone: insert handoff message failed", "error", err)
 		} else {
 			msgID = id
-			goBackground(func() { deliverHandoffViaFlush(newConv) })
 		}
 	}
+
+	// 5. Single ordered post-init goroutine: wait-for-alive → /rename →
+	// settle gap → flush the handoff nudge. The rename and the handoff
+	// nudge MUST run in this order inside ONE goroutine. Previously they
+	// were two racing goroutines (runClonePostInit + deliverHandoffViaFlush)
+	// that both woke when the pane came alive and send-keys'd into the same
+	// pane concurrently — so the nudge text landed inside the still-
+	// unsubmitted /rename line, baking the nudge into the clone's title
+	// (e.g. "worker-c-1[system: new agent message #N for you. ...]").
+	// Mirrors reincarnate's runReincarnatePostSpawn.
+	//
+	// Renaming is done regardless of group membership — the clone has a
+	// title whether or not it joined a group; without this startup write a
+	// never-messaged clone ends up an orphan, the same trap that bit
+	// `tclaude agent spawn` before bc7ec81.
+	goBackground(func() {
+		runClonePostInit(newConv, newTitle, target, caller)
+	})
 
 	// NB: no /exit on the original — that's the whole difference vs
 	// reincarnate.
@@ -630,37 +642,54 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// runClonePostInit fires asynchronously after a successful clone. It
-// waits for the new pane to come online and injects /rename to the
-// computed clone title, materialising the .jsonl with a meaningful
-// name. Same purpose as runSpawnPostInit, just for the clone path —
-// the original used to silently leave clones unrenamed (so they
-// showed up as "(unknown)" with whatever conv-id-derived label tmux
-// picked) and unrecoverable when never used.
+// runClonePostInit fires asynchronously after a successful clone — as
+// the SINGLE post-spawn goroutine, mirroring reincarnate's
+// runReincarnatePostSpawn. It waits for the new pane to come online,
+// injects /rename to the computed clone title (materialising the .jsonl
+// with a meaningful name), then — after a settle gap — flushes any
+// pending handoff/inbox nudges. Same purpose as runSpawnPostInit, just
+// for the clone path: the original used to silently leave clones
+// unrenamed (so they showed up as "(unknown)" with whatever conv-id-
+// derived label tmux picked) and unrecoverable when never used.
 //
-// Skips when title is empty or fails the rename charset gate.
+// Why rename → gap → flush in ONE goroutine: the rename and the handoff
+// nudge are both send-keys streams into the same pane. Running them
+// concurrently (the old two-goroutine layout) let the nudge text land
+// inside the still-unsubmitted /rename line, so the clone's title became
+// "<base>-c-<N>[system: new agent message #N ...]". Serialising them
+// with a settle gap keeps the rename a clean line of its own.
+//
 // Failures log; never bubble — the clone already succeeded as far as
 // the caller is concerned.
 func runClonePostInit(newConv, title, target, caller string) {
 	if !waitForConvAlive(newConv) {
-		slog.Warn("clone: new conv never came online; rename abandoned", "conv", newConv)
+		slog.Warn("clone: new conv never came online; rename + handoff abandoned", "conv", newConv)
 		return
 	}
+	// Rename first so the clone's CC title shows the proper
+	// `<base>-c-<N>` before any handoff output streams. Skip only when
+	// the title is empty or fails the rename charset gate.
 	if title == "" || !isValidRenameTitle(title) {
 		if title != "" {
 			slog.Warn("clone: title not a valid rename title; skipping /rename",
 				"conv", newConv, "title", title)
 		}
-		return
+	} else {
+		if !deliverRename(newConv, title) {
+			slog.Warn("clone: rename delivery failed", "conv", newConv, "title", title)
+		}
+		// Settle gap so CC processes the rename before the handoff
+		// nudge's send-keys lands — without it the two keystroke streams
+		// interleave into a single /rename line (the
+		// "<base>-c-<N>[system: new agent message ...]" title bug).
+		time.Sleep(reincarnateReadyDelay)
 	}
-	// Note: no welcome message here. Reincarnate's flow already injects
-	// a handoff via the agent_messages flush path when followUp is set,
-	// and same for clone — the orchestration above wrote a clone-handoff
-	// row that the flush path will deliver. Spawn doesn't go through
-	// that path so it gets a synthetic welcome from runSpawnPostInit;
-	// clone doesn't need one. The /rename alone is enough to materialise
-	// the .jsonl.
-	if !deliverRename(newConv, title) {
-		slog.Warn("clone: rename delivery failed", "conv", newConv, "title", title)
-	}
+	// Deliver any pending handoff / inbox nudges now that the rename has
+	// settled. The orchestration enqueued the clone-handoff row (when a
+	// follow-up was given) before launching this goroutine; flush claims
+	// + delivers it through the normal nudge pipeline. No synthetic
+	// welcome (unlike spawn) — the handoff row, when present, is the
+	// clone's first prompt; the /rename alone already materialised the
+	// .jsonl.
+	flush(newConv, realFlushSender)
 }
