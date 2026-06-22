@@ -184,12 +184,34 @@ const defaultCloneCooldown = time.Minute
 //
 // Keyed by source conv, and applied only to agent-initiated clones:
 // the runaway scenario the TODO flagged is "an agent cloning the same
-// conv in a tight loop". Human-initiated clones (caller == "") are
-// exempt — a human can't loop at machine speed and clones
+// conv in a tight loop". Human-initiated clones are exempt (see
+// isHumanCloneCaller) — a human can't loop at machine speed and clones
 // deliberately. A manager agent that fans out clones of *different*
 // sources hits the limit only if it tries the *same* source twice
 // within cooldown.
 var CloneCooldown = defaultCloneCooldown
+
+// isHumanCloneCaller reports whether a clone was initiated by a human
+// rather than an agent. Humans are exempt from CloneCooldown — the gate
+// exists to bound a runaway *agent* loop, and a human can't fire clones
+// at machine speed. A human reaches runCloneOrchestration with one of
+// two caller shapes, both of which this must recognise:
+//
+//   - "": the /v1 endpoints, where requireCrossAgentPermission returns
+//     "" for a classHuman peer (CLI or cookie-auth with no agent
+//     ancestor).
+//   - dashboardGranter ("<human-dashboard>"): the dashboard endpoint
+//     (dashboardCloneAgent) records the human-dashboard sentinel as the
+//     caller so the audit trail shows the human acted — but it is still
+//     a human and must not be throttled.
+//
+// Both are empty / angle-bracketed pseudo-identities; an agent caller is
+// always a real conv-id (a UUID), which never starts with "<". Keying
+// the exemption here — rather than on a bare caller=="" — is what stops a
+// dashboard clone from being wrongly treated as a runaway agent.
+func isHumanCloneCaller(caller string) bool {
+	return caller == "" || strings.HasPrefix(caller, "<")
+}
 
 // `tclaude agent clone` — fork the calling agent into a sibling that
 // inherits its identity (groups, permissions, ownerships) but
@@ -436,13 +458,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	// granted, agent-reachable fork-doubling verb (self.clone is
 	// granted by default; reincarnate is 1-in-1-out, spawn is
 	// human-only), so an agent stuck in a tight loop could fork itself
-	// unboundedly. A human (caller == "") can't loop at machine speed
-	// and clones deliberately, so human-initiated clones — CLI or
-	// dashboard — skip the cooldown entirely and don't even record a
-	// slot. Manager *agents* cloning peers via agent.clone still have a
-	// non-empty caller and stay limited. Atomic at the DB layer so two
-	// concurrent claim attempts can't both pass.
-	if caller != "" {
+	// unboundedly. A human can't loop at machine speed and clones
+	// deliberately, so human-initiated clones — CLI (caller == "") or
+	// dashboard (caller == "<human-dashboard>") — skip the cooldown
+	// entirely and don't even record a slot; isHumanCloneCaller spans
+	// both shapes. Manager *agents* cloning peers via agent.clone still
+	// have a real conv-id as caller and stay limited. Atomic at the DB
+	// layer so two concurrent claim attempts can't both pass.
+	if !isHumanCloneCaller(caller) {
 		if err := db.ClaimCloneSlot(target, CloneCooldown, time.Now().UTC()); err != nil {
 			if errors.Is(err, db.ErrCloneRateLimited) {
 				writeError(w, http.StatusTooManyRequests, "rate_limited",
