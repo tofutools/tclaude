@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,4 +176,67 @@ func TestClone_RateLimitExemptsHuman(t *testing.T) {
 	require.NoError(t, err, "LatestCloneAt")
 	assert.True(t, last.IsZero(),
 		"human-initiated clone recorded a rate-limit slot; it should skip ClaimCloneSlot entirely")
+}
+
+// Scenario: the operator clones the same source twice in rapid
+// succession from the *dashboard* (the Ctrl-drag / clone-button path),
+// not the /v1 CLI surface. The dashboard records "<human-dashboard>" as
+// the caller so the audit trail shows who acted — but it is still a
+// human and must be exempt from CloneCooldown, exactly like the CLI
+// human path in TestClone_RateLimitExemptsHuman.
+//
+// Regression guard: before isHumanCloneCaller, the rate-limit gate keyed
+// on a bare caller=="", so the non-empty "<human-dashboard>" sentinel
+// fell through and the operator's second clone within the cooldown was
+// wrongly refused with HTTP 429 — the runaway-agent guard misfiring on a
+// human click.
+//
+// Real-surface invariant: agent_clone_history has NO row for the source
+// — the human path skips db.ClaimCloneSlot entirely even via the
+// dashboard endpoint.
+func TestDashboardClone_RateLimitExemptsHuman(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	prevCooldown := agentd.CloneCooldown
+	agentd.CloneCooldown = time.Hour
+	t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
+
+	f := newFlow(t)
+
+	const oldConv = "dash-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(oldConv, "worker")
+	f.HaveAliveSession(oldConv, "spwn-dash-001", "tclaude-spwn-dash-001", "/tmp/work")
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	dashClone := func() string {
+		t.Helper()
+		body := strings.NewReader(`{"no_copy_conv":true}`)
+		req, _ := http.NewRequest(http.MethodPost, "/api/agents/"+oldConv+"/clone", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, req)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST /api/agents/{conv}/clone body=%s", rec.Body.String())
+		var resp struct {
+			NewConv string `json:"new_conv"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode clone resp")
+		require.NotEmpty(t, resp.NewConv, "clone resp missing new_conv: %s", rec.Body.String())
+		return resp.NewConv
+	}
+
+	// Two dashboard clones back-to-back — both must land despite the 1h
+	// cooldown, since the operator is a human.
+	new1 := dashClone()
+	new2 := dashClone()
+	assert.NotEqual(t, new1, new2, "expected distinct new convs from two dashboard clones")
+
+	// The dashboard human path never claims a slot either.
+	last, err := db.LatestCloneAt(oldConv)
+	require.NoError(t, err, "LatestCloneAt")
+	assert.True(t, last.IsZero(),
+		"dashboard clone recorded a rate-limit slot; the human path should skip ClaimCloneSlot entirely")
 }
