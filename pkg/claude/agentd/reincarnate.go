@@ -550,25 +550,6 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 	flush(newConv, realFlushSender)
 }
 
-// deliverHandoffViaFlush waits for the new pane to come online, then
-// runs flush() so any pending agent_messages addressed to it are
-// delivered through the normal nudge pipeline. The flush helper
-// claims delivery atomically, so if a future request from the new
-// conv triggers maybeFlushUndelivered we don't double-deliver.
-func deliverHandoffViaFlush(newConv string) {
-	deadline := time.Now().Add(reincarnateAliveTimeout)
-	for time.Now().Before(deadline) {
-		if isConvOnline(newConv) {
-			time.Sleep(reincarnateReadyDelay)
-			flush(newConv, realFlushSender)
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	slog.Warn("reincarnate: new conv never came online; handoff message left in inbox for next agent request",
-		"conv", newConv)
-}
-
 // switchTmuxClients moves tmux clients currently attached to oldTmux
 // over to newTmux via `tmux switch-client -c <tty> -t <new>`. Returns
 // the number of clients successfully switched. Best-effort: per-client
