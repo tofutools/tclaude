@@ -540,6 +540,18 @@ type AgentConfig struct {
 	// spawn_legacy_injection revert), where the welcome must stay a single line
 	// (a newline = an early submit). See agentd.spawnInlineMaxChars.
 	SpawnInlineMaxChars *int `json:"spawn_inline_max_chars,omitempty"`
+
+	// DashboardPort pins the loopback TCP port the agentd dashboard +
+	// human-approval popup bind to. 0 / absent (the default) lets the OS
+	// pick a random free port at each `agentd serve`. A fixed port gives
+	// a stable, bookmarkable URL (and lets the dashboard's per-browser
+	// prefs persist across restarts, since localStorage is keyed by
+	// origin). The `agentd serve --dashboard-port` flag overrides this.
+	// A configured port already in use (or out of range) fails daemon
+	// startup rather than silently falling back to a random port — that
+	// would break whatever the fixed port was set up for. See
+	// agentd.resolveDashboardPort.
+	DashboardPort int `json:"dashboard_port,omitempty"`
 }
 
 // DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)
@@ -1042,6 +1054,9 @@ func Validate(c *Config) []string {
 		}
 		if a.SpawnMaxPerHour != nil && *a.SpawnMaxPerHour < 0 {
 			errs = append(errs, "agent.spawn_max_per_hour must not be negative (0 = unlimited)")
+		}
+		if a.DashboardPort < 0 || a.DashboardPort > 65535 {
+			errs = append(errs, fmt.Sprintf("agent.dashboard_port %d is out of range (1–65535, or 0/absent for a random free port)", a.DashboardPort))
 		}
 		if cn := a.ContextNudge; cn != nil {
 			// When the nudge is enabled, 0 is a footgun: Resolved()

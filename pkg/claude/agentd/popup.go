@@ -22,16 +22,27 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
-// startPopupServer binds 127.0.0.1:0 (random port) and runs a tiny
-// HTTP server that handles /approve/{id}[/{decision}]. Returns the
-// server (so the caller can Shutdown it) and the base URL ("" if
-// the listener could not be created — caller should log and continue
-// without the popup feature).
-func startPopupServer() (*http.Server, string) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// startPopupServer binds a loopback HTTP listener and runs a tiny
+// server that handles /approve/{id}[/{decision}] plus the dashboard
+// routes (both are human-only and share the one stable URL handed to
+// the tray icon / `tclaude agent dashboard`). port pins the bound TCP
+// port; 0 means an OS-chosen random free port (the historical default).
+//
+// A bind failure is returned as an error, NOT swallowed: the dashboard
+// + approval popup are essential, and a requested fixed port that is
+// already in use must surface at startup rather than silently degrade to
+// a random port — that would break the bookmark / reverse-proxy / firewall
+// rule the fixed port was set up for. The caller aborts startup on error.
+// On success returns the server (so the caller can Shutdown it) and the
+// base URL.
+func startPopupServer(port int) (*http.Server, string, error) {
+	bindAddr := "127.0.0.1:0"
+	if port > 0 {
+		bindAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	}
+	ln, err := net.Listen("tcp", bindAddr)
 	if err != nil {
-		slog.Warn("popup: failed to bind loopback listener; --ask-human will not work", "err", err)
-		return nil, ""
+		return nil, "", fmt.Errorf("bind loopback listener %s: %w", bindAddr, err)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/approve/", handlePopupApprove)
@@ -55,7 +66,7 @@ func startPopupServer() (*http.Server, string) {
 		}
 	}()
 	addr := ln.Addr().(*net.TCPAddr)
-	return srv, fmt.Sprintf("http://127.0.0.1:%d", addr.Port)
+	return srv, fmt.Sprintf("http://127.0.0.1:%d", addr.Port), nil
 }
 
 // ApprovalRequest is what the popup UI shows the human. Fields are

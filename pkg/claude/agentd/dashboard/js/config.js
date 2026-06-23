@@ -374,6 +374,10 @@ function populateConfigForm(cfg) {
 
   const a = cfg.agent || {};
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
+  // 0 and absent both mean "random free port", so show a stored 0 as
+  // blank — the form drops it on save anyway. A negative / out-of-range
+  // value is shown as-is so the human sees the value the server rejects.
+  $('#cfg-agent-dashboardport').value = (a.dashboard_port != null && a.dashboard_port !== 0) ? a.dashboard_port : '';
   $('#cfg-agent-clonecooldown').value = a.clone_cooldown || '';
   // nil / true both mean "on" (the default); only an explicit false is off.
   $('#cfg-agent-spawnrestrict').checked = a.spawn_group_restriction !== false;
@@ -510,6 +514,13 @@ function assembleConfig() {
   // block stays genuinely empty (see the empty-agent drop below).
   if ($('#cfg-agent-autolaunch').checked) a.auto_launch_dashboard = true;
   else delete a.auto_launch_dashboard;
+  // dashboard_port: 0 / blank means the built-in default (random port) —
+  // drop the key. A non-zero value (incl. an out-of-range one) is written
+  // so the server's Validate surfaces "out of range" rather than the value
+  // silently vanishing.
+  const dpRaw = $('#cfg-agent-dashboardport').value.trim();
+  const dp = cfgInt('cfg-agent-dashboardport', 0);
+  if (dpRaw !== '' && dp !== 0) a.dashboard_port = dp; else delete a.dashboard_port;
   const cc = $('#cfg-agent-clonecooldown').value.trim();
   if (cc) a.clone_cooldown = cc; else delete a.clone_cooldown;
   // Checked = "on" = also the default (nil): preserve an existing nil
