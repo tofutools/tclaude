@@ -55,6 +55,21 @@ Other entry points:
 The `--print` URL carries a single-use token that expires in ~60 seconds, so
 use it immediately.
 
+## Fixed loopback port
+
+By default the dashboard (and the approval popup it shares a listener with)
+binds a **random** free loopback port each time `agentd serve` starts. To pin a
+**fixed** port instead — for a bookmarkable URL, a reverse proxy, or a firewall
+rule — pass `tclaude agentd serve --dashboard-port <port>`, or set
+`agent.dashboard_port` in `~/.tclaude/config.json` (also editable from the
+**Config** tab). Resolution order is flag > config > random.
+
+Binding is strict: if the configured port is already in use (or out of range),
+`agentd serve` **fails to start** with an error rather than silently falling
+back to a random port — a silent fallback would break the bookmark / proxy /
+rule the fixed port was set up for. The port is loopback-only and stays
+human-gated (token + cookie) either way.
+
 ## Auth
 
 The dashboard's `/api/*` endpoints perform admin mutations that deliberately

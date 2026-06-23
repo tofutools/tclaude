@@ -29,6 +29,7 @@ type serveParams struct {
 	Slop                bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
 	Terminal            string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 	AgentCloneCooldown  string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
+	DashboardPort       int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
 }
 
 func serveCmd() *cobra.Command {
@@ -102,14 +103,30 @@ func runServe(p *serveParams) error {
 		},
 	}
 
-	// Loopback HTTP listener for the human-approval popup (Phase B of
-	// the permission story). Bind :0 so we never collide with another
-	// daemon or app; the URL is derived from ln.Addr() and only fed to
-	// xdg-open, never persisted. Failure to bind is logged but does
-	// not abort startup — the rest of the daemon still works, just
-	// without --ask-human.
-	popupSrv, popupURL := startPopupServer()
+	// Config drives the dashboard-port resolution below, the auto-launch
+	// decision, the clone cooldown, and the spawn guardrails. Load it once
+	// up front so every startup knob reads the same snapshot.
+	cfg, _ := config.Load()
+
+	// Loopback HTTP listener for the human-approval popup (Phase B of the
+	// permission story) — the dashboard rides on the same listener. The
+	// port is resolved flag > config > random (0): a fixed port gives a
+	// stable, bookmarkable URL, while the default :0 never collides with
+	// another daemon or app. The URL is derived from ln.Addr() and fed to
+	// xdg-open / `tclaude agent dashboard`, never persisted.
+	//
+	// Bind failure is FATAL: the dashboard + approval popup are essential,
+	// and a configured fixed port that is already in use must surface at
+	// startup, not silently degrade to a random port (which would break the
+	// bookmark / reverse-proxy / firewall rule the fixed port was set up
+	// for). An out-of-range port likewise fails the bind and aborts here.
+	dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
+	popupSrv, popupURL, err := startPopupServer(dashPort)
+	if err != nil {
+		return fmt.Errorf("start dashboard/approval-popup server (port source: %s): %w", dashPortSrc, err)
+	}
 	popupBaseURL = popupURL
+	slog.Info("dashboard loopback port", "resolved", dashPort, "source", dashPortSrc, "url", popupBaseURL)
 
 	// Operator token — positively authenticates the human operator on the
 	// CLI / Unix-socket path so the daemon can fail closed instead of
@@ -123,7 +140,6 @@ func runServe(p *serveParams) error {
 	// agent.auto_launch_dashboard config field. Saves a separate
 	// `tclaude agent dashboard` after every daemon start. Best-effort:
 	// a failed launch is logged, never fatal.
-	cfg, _ := config.Load()
 	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		autoLaunchDashboard(p.Slop)
 	}
@@ -417,6 +433,33 @@ func parseCloneCooldown(value, source string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
+}
+
+// resolveDashboardPort resolves the loopback port the dashboard +
+// human-approval popup bind to. Priority, highest first:
+//
+//  1. the --dashboard-port serve flag (when > 0)
+//  2. the agent.dashboard_port config.json field (when > 0)
+//  3. 0 — let the OS pick a random free port (the default)
+//
+// A non-positive value at a tier means "not set here" and resolution
+// falls through to the next tier; passing 0 on the flag therefore can't
+// force a random port over a configured one, which is the right default
+// (a fixed config port is the deliberate setting). An out-of-range
+// positive value is returned as-is and surfaces as a fatal bind error in
+// startPopupServer — an explicitly requested port that can't be honoured
+// must crash startup, not silently fall back (the config editor's
+// Validate catches the same mistake earlier, with a friendly message).
+// Returns the resolved port (0 = random) and the tier it came from, for
+// the startup log line + the bind-error message.
+func resolveDashboardPort(flagValue int, cfg *config.Config) (int, string) {
+	if flagValue > 0 {
+		return flagValue, "flag"
+	}
+	if cfg != nil && cfg.Agent != nil && cfg.Agent.DashboardPort > 0 {
+		return cfg.Agent.DashboardPort, "config"
+	}
+	return 0, "default (random)"
 }
 
 func buildMux() http.Handler {

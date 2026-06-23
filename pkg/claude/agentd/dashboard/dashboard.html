@@ -368,6 +368,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-autolaunch" /> open the dashboard when <code>agentd serve</code> starts</label>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Dashboard port</span>
+        <input type="number" id="cfg-agent-dashboardport" min="0" max="65535" placeholder="(random)" aria-label="Dashboard port" autocomplete="off" style="min-width:120px" />
+        <span class="cfg-hint">Fixed loopback port for the dashboard + approval popup. Empty / <code>0</code> = a random free port each start. A stable port gives a bookmarkable URL; takes effect on the next <code>agentd serve</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">System tray</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-notray" /> hide the tray icon (same as <code>--no-tray</code>)</label>
         <span class="cfg-hint">Skips the system tray icon <code>agentd serve</code> shows by default. Takes effect next time <code>agentd serve</code> starts.</span>

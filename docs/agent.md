@@ -88,6 +88,17 @@ e.g. `1m`, `30s`; `0` disables it). It overrides the persistent
 a runaway *agent* loop, so it applies only to agent-initiated clones —
 clones you trigger yourself (CLI or dashboard) are never rate-limited.
 
+By default the dashboard + approval popup bind a **random** free
+loopback port each start. Pass `--dashboard-port <port>` (or set
+`agent.dashboard_port` in config, also editable from the dashboard's
+Config tab) to pin a **fixed** port — handy for a bookmarkable URL, a
+reverse proxy, or a firewall rule. Resolution order is flag > config >
+random. The port is loopback-only and human-gated either way. Binding
+is strict: if the configured port is already in use (or out of range)
+`agentd serve` **fails to start** rather than silently falling back to a
+random port — a silent fallback would break whatever the fixed port was
+set up for.
+
 ## Quick start
 
 ```bash

@@ -117,6 +117,8 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		{"bad log level", func(c *Config) { c.LogLevel = "loud" }, "log_level"},
 		{"clone cooldown unparseable", func(c *Config) { c.Agent = &AgentConfig{CloneCooldown: "soon"} }, "clone_cooldown"},
 		{"negative spawn max", func(c *Config) { n := -1; c.Agent = &AgentConfig{SpawnMaxPerHour: &n} }, "spawn_max_per_hour"},
+		{"dashboard port too high", func(c *Config) { c.Agent = &AgentConfig{DashboardPort: 70000} }, "dashboard_port"},
+		{"dashboard port negative", func(c *Config) { c.Agent = &AgentConfig{DashboardPort: -1} }, "dashboard_port"},
 		{"bad sudo duration", func(c *Config) { c.Agent = &AgentConfig{Sudo: &SudoConfig{MaxDuration: "ages"}} }, "sudo.max_duration"},
 		{"transition missing to", func(c *Config) {
 			c.Notifications = &NotificationConfig{Transitions: []TransitionRule{{From: "idle"}}}
@@ -158,6 +160,18 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 			assert.Contains(t, strings.Join(errs, " | "), tc.want)
 		})
 	}
+}
+
+// A fixed dashboard port in range must validate, and 0 (the random-port
+// default) must validate too — 0 is "unset", not an out-of-range port.
+func TestValidate_DashboardPort(t *testing.T) {
+	fixed := DefaultConfig()
+	fixed.Agent = &AgentConfig{DashboardPort: 8080}
+	assert.Empty(t, Validate(fixed), "a fixed in-range port must validate")
+
+	zero := DefaultConfig()
+	zero.Agent = &AgentConfig{DashboardPort: 0}
+	assert.Empty(t, Validate(zero), "0 (random port) must validate")
 }
 
 // Remote-access bind validation only bites while the listener is ENABLED:
