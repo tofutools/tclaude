@@ -503,6 +503,7 @@ type AgentConfig struct {
 	Sudo                      *SudoConfig         `json:"sudo,omitempty"`
 	ContextNudge              *ContextNudgeConfig `json:"context_nudge,omitempty"`
 	AutoLaunchDashboard       bool                `json:"auto_launch_dashboard,omitempty"`
+	DisableTray               bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
 	BranchHistoryPREnrichment bool                `json:"branch_history_pr_enrichment,omitempty"`
 	CloneCooldown             string              `json:"clone_cooldown,omitempty"`
 	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`

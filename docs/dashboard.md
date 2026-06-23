@@ -44,6 +44,9 @@ Other entry points:
 
   The same colours match the per-agent status dots/pills on the dashboard.
   Hover the tray icon for the count behind whichever colour is showing.
+  Pass `--no-tray` (or set `agent.disable_tray: true` in
+  `~/.tclaude/config.json`, or tick **System tray → hide** in the Config tab)
+  to run the daemon without the tray icon.
 - **On startup** — `tclaude agentd serve --auto-launch-dashboard` (or
   `agent.auto_launch_dashboard: true` in `~/.tclaude/config.json`) pops the
   dashboard automatically when the daemon comes up. Off by default — a fresh

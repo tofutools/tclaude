@@ -75,7 +75,8 @@ By default `agentd serve` also adds a system tray icon (Open
 dashboard, Reinstall agent skills, Open config, pending-approvals
 submenu, Quit). On hosts without a tray host (WSL, headless servers,
 pure Wayland) the icon silently doesn't appear — the daemon still
-works. Pass `--no-tray` to skip the tray entirely. Pass
+works. Pass `--no-tray` (or set `agent.disable_tray: true` in
+`~/.tclaude/config.json`) to skip the tray entirely. Pass
 `--auto-launch-dashboard` (or set `agent.auto_launch_dashboard` in
 config) to open the dashboard on startup.
 
