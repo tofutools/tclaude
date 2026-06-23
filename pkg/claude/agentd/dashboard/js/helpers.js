@@ -729,6 +729,34 @@ function contextMeter(state) {
   return `<span class="ctx-meter${known ? '' : ' ctx-unknown'}" title="${esc(tip)}">${segs}</span>`;
 }
 
+// activityBadges renders the small "background work still running" marker
+// in an agent's state cell:
+//   🤖+N  — N sub-agents spawned by this agent are still running
+//
+// It is deliberately NOT gated on the agent being "busy". The whole point
+// is to flag work that OUTLIVES the parent's turn: an agent whose own turn
+// has ended reads as idle, but if it left a sub-agent running that should
+// be visible at a glance rather than blank. The badge carries a hover
+// tooltip naming what it is, and sits in a column-flex container so any
+// future per-agent activity markers can stack vertically beside it without
+// the row growing wide. Returns '' when there is nothing to show.
+//
+// NOTE — there is intentionally NO background-shell ("🐚+M") badge. We
+// considered counting Bash run_in_background commands, but dropped it:
+// Claude Code fires no hook when a background shell EXITS (only a
+// PreToolUse when it launches), so a hook-based count could never
+// decrement — it would show "ghost" shells (already finished) for the
+// whole idle window, which is exactly when the badge is read. Sub-agents
+// are safe because SubagentStart/SubagentStop are both real hooks, so +N
+// decrements correctly. (A process-tree liveness reconcile in agentd could
+// revive a trustworthy +M later — see the Groups section of docs/dashboard.md.)
+function activityBadges(state) {
+  const subagents = Number((state && state.subagent_count) || 0);
+  if (subagents <= 0) return '';
+  const tip = `${subagents} sub-agent${subagents === 1 ? '' : 's'} still running under this agent`;
+  return `<span class="activity-badges"><span class="activity-badge badge-subagents" title="${esc(tip)}">🤖+${subagents}</span></span>`;
+}
+
 // roleCell renders the role column for a member row. Mirrors the CLI:
 // members who are also owners get an "owner" badge; pure-owners
 // (role==="owner" set by the daemon) show the badge alone.
@@ -1293,7 +1321,7 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter,
+  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,

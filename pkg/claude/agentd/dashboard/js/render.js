@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter,
+  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline,
@@ -53,7 +53,6 @@ function renameNameCell(m, state) {
 // bell) still sits above all of it.
 function memberRowHTML(m, ctx) {
   const state = m.state || {};
-  const subagents = state.subagent_count || 0;
   const dndSource = ctx.ungrouped
     ? 'data-dnd-source-ungrouped="1"'
     : `data-dnd-source-group="${esc(ctx.group.name)}"`;
@@ -75,7 +74,7 @@ function memberRowHTML(m, ctx) {
                   ${contextMeter(state)}
                   ${statePill(state, m.online)}
                   ${slopMachine(state, m.online, m.conv_id)}
-                  ${subagents > 0 ? `<span class="state-detail">+${subagents}</span>` : ''}
+                  ${m.online ? activityBadges(state) : ''}
                 </td>
                 <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
                 <td><span class="last-hook" title="${esc(m.created_at || '')}">${esc(relTime(m.created_at))}</span></td>
