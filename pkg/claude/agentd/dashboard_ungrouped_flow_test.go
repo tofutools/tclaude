@@ -26,6 +26,15 @@ type dashSnapshot struct {
 	NotificationsEnabled bool               `json:"notifications_enabled"`
 	CostTabVisible       bool               `json:"cost_tab_visible"`
 	CostTabWhatIf        bool               `json:"cost_tab_whatif"`
+	RemoteAccess         dashRemoteAccess   `json:"remote_access"`
+}
+
+// dashRemoteAccess mirrors agentd.dashboardRemoteAccess — the Config tab's
+// remote-access runtime state (material generated? listener live?).
+type dashRemoteAccess struct {
+	MaterialExists bool   `json:"material_exists"`
+	Running        bool   `json:"running"`
+	RunningBind    string `json:"running_bind"`
 }
 
 // dashConversation mirrors agentd.dashboardConversation.

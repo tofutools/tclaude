@@ -128,6 +128,23 @@ func runServe(p *serveParams) error {
 		autoLaunchDashboard(p.Slop)
 	}
 
+	// Optional network-exposed dashboard listener (LAN / mesh / tunnel),
+	// off unless remote_access.enabled + bind are set. A SEPARATE HTTPS
+	// server with mTLS + passphrase auth; the loopback dashboard above is
+	// untouched. Best-effort: a missing material / failed bind is logged and
+	// surfaced on the banner, never fatal — the rest of the daemon runs.
+	var remoteSrv *http.Server
+	if cfg.RemoteAccessEnabled() {
+		if rs, err := startRemoteServer(cfg.RemoteAccessBind()); err != nil {
+			slog.Error("remote-access: failed to start listener", "bind", cfg.RemoteAccessBind(), "err", err)
+			fmt.Fprintf(os.Stderr, "  remote access: FAILED to start on %s: %v\n", cfg.RemoteAccessBind(), err)
+		} else {
+			remoteSrv = rs
+			slog.Info("remote-access listener started", "bind", cfg.RemoteAccessBind())
+			fmt.Printf("  remote access (mTLS+passphrase): https://%s\n", cfg.RemoteAccessBind())
+		}
+	}
+
 	// Clone cooldown (see CloneCooldown). Resolved once here at startup,
 	// tier order flag > config > default; the clone handler reads
 	// CloneCooldown per request.
@@ -297,6 +314,9 @@ func runServe(p *serveParams) error {
 	_ = srv.Shutdown(ctx)
 	if popupSrv != nil {
 		_ = popupSrv.Shutdown(ctx)
+	}
+	if remoteSrv != nil {
+		_ = remoteSrv.Shutdown(ctx)
 	}
 	return nil
 }
