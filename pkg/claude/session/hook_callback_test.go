@@ -987,3 +987,50 @@ func TestRunHookCallback_TaskRunnerStopWritesSignalAfterRotation(t *testing.T) {
 	assert.Equal(t, "conv-task2", signal.SessionID)
 	assert.Equal(t, "task 2 done", signal.Report)
 }
+
+// A task-mode conv rotation must NEVER be treated as an agent-identity
+// migration, even when the OLD conv is an active agent. The reaper's
+// online-reconcile sweep (agentd) enrolls a task session's current conv
+// each tick, so by the next task boundary the previous task's conv can be
+// EnrollmentActive — which is the trigger needsIdentityMigration looks
+// for. Without the task-mode exemption in the conv-advance switch, that
+// would fire migrateClearedIdentity (retiring the old conv AND injecting a
+// stray `/rename` into the running task pane). This pins the plain advance:
+// the row moves on, the old conv is left untouched, and no succession edge
+// is recorded.
+func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	taskSignalEnv(t, dir)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:          "tasks-mig",
+		ConvID:      "conv-task1",
+		TmuxSession: "tasks-mig", // a migration would send-keys into this pane
+		Status:      StatusWorking,
+	}))
+	// Simulate the reaper having enrolled task 1's conv as a live agent.
+	require.NoError(t, db.EnrollAgent("conv-task1", "online-reconcile"))
+
+	feedHook(t, "tasks-mig", map[string]any{
+		"session_id":      "conv-task2",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("tasks-mig")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-task2", got.ConvID, "the rotation must plain-advance the row")
+
+	oldEnr, err := db.EnrollmentState("conv-task1")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, oldEnr,
+		"a task rotation must NOT retire the old conv — it is not an identity migration")
+
+	succ, err := db.GetConvSuccessor("conv-task1")
+	require.NoError(t, err)
+	assert.Equal(t, "", succ,
+		"a task rotation must NOT record a succession edge old→new")
+}

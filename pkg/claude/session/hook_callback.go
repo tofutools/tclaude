@@ -117,27 +117,49 @@ func isConvTransitionStart(input HookCallbackInput) bool {
 	return false
 }
 
+// taskSignalPath returns the task-runner signal-file path and whether
+// this hook fired under `tclaude task run`. The runner sets
+// TCLAUDE_TASK_SIGNAL on every Claude it spawns (the Stop-hook signal
+// channel that drives the hands-free /exit between tasks); the hook
+// subprocess inherits it. The path must resolve inside CacheDir — the
+// only directory we will ever write the signal into — so an
+// inherited-but-bogus value can neither land a stray file nor relax the
+// task-mode hook exemptions below. A set-but-out-of-bounds path returns
+// ("", false); handleTaskSignal logs that case (it is the one place the
+// path is consumed for a write).
+func taskSignalPath() (string, bool) {
+	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
+	if signalPath == "" {
+		return "", false
+	}
+	allowedDir := filepath.Clean(common.CacheDir())
+	cleanPath := filepath.Clean(signalPath)
+	rel, err := filepath.Rel(allowedDir, cleanPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return cleanPath, true
+}
+
 // inTaskRunnerHook reports whether this hook fired under `tclaude task
-// run`. The task runner sets TCLAUDE_TASK_SIGNAL on every Claude it
-// spawns (the Stop-hook signal channel that drives the hands-free
-// /exit between tasks), and the hook subprocess inherits it — it is the
-// same env var handleTaskSignal already treats as "task mode".
+// run` (a valid TCLAUDE_TASK_SIGNAL is present — see taskSignalPath).
 //
-// Task mode is exempt from the foreign-process guard (and from instant
-// agent-enrollment) because the runner is, by design, a SEQUENCE of
-// independent Claude conversations under ONE env-session: one fresh conv
-// per task in TODO.md. So the tracked conv-id legitimately rotates at
-// every task boundary via a plain SessionStart(source=startup), which is
-// indistinguishable — by conv-id alone — from a foreign one-shot the
-// guard exists to drop. Left guarded, the runner's second task and
-// everything after it lose their hooks (the Stop hook that signals task
-// completion never lands) and the run wedges — the #284 regression
-// Mikael hit. The conv-id-vs-env-session ambiguity is inherent to the
-// guard (its own doc comment notes hook inputs carry no process
-// identity); exempting only task mode keeps the guard fully in force for
-// every interactive agent session, the case #284 actually protects.
+// Task mode is exempt from the foreign-process guard, the conv-advance
+// identity-migration path, and instant agent-enrollment, because the
+// runner is, by design, a SEQUENCE of independent Claude conversations
+// under ONE env-session: one fresh conv per task in TODO.md. So the
+// tracked conv-id legitimately rotates at every task boundary via a plain
+// SessionStart(source=startup), which is indistinguishable — by conv-id
+// alone — from a foreign one-shot the guard exists to drop. Left guarded,
+// the runner's second task and everything after it lose their hooks (the
+// Stop hook that signals task completion never lands) and the run wedges
+// — the #284 regression Mikael hit. The conv-id-vs-env-session ambiguity
+// is inherent to the guard (its own doc comment notes hook inputs carry
+// no process identity); exempting only task mode keeps the guard fully in
+// force for every interactive agent session, the case #284 protects.
 func inTaskRunnerHook() bool {
-	return os.Getenv("TCLAUDE_TASK_SIGNAL") != ""
+	_, ok := taskSignalPath()
+	return ok
 }
 
 // needsIdentityMigration reports whether a conv-id rotation on an
@@ -796,10 +818,19 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// handle moving the agent's identity across that rotation.
 	if input.ConvID != "" && state.ConvID != input.ConvID {
 		switch {
-		case envSessionID == "" || state.ConvID == "":
+		case envSessionID == "" || state.ConvID == "" || inTaskRunnerHook():
 			// Not an env-keyed rotation we can migrate identity across
 			// (a non-tclaude session, or the session's first conv-id
 			// record). Plain advance — the pre-/clear-fix behaviour.
+			//
+			// `tclaude task run` lands here too: its rotation is a fresh
+			// task starting, NOT an identity move. Forcing the plain
+			// advance is load-bearing, not just an optimisation — the
+			// reaper (agentd enrollOnlineSession) enrolls a task session's
+			// CURRENT conv each tick, so without this exemption the next
+			// task boundary would see the old task conv as "an active
+			// agent", fire needsIdentityMigration, and inject a stray
+			// `/rename` into the running task pane via migrateClearedIdentity.
 			slog.Info("updating conversation ID",
 				"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
 				"session_id", state.ID, "module", "hooks")
@@ -890,12 +921,13 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// retired, is left untouched (a retired conv is never un-retired).
 	//
 	// `tclaude task run` is exempt: its per-task conversations are
-	// throwaway task executions, not managed agents, and enrolling one
-	// per task would flood the agent roster (and make the conv-advance
-	// above fire a spurious identity migration at every task boundary —
-	// old task conv being "an active agent" is the migration trigger).
-	// The task runner needs only the session row + Stop-hook signal, not
-	// an enrollment. See inTaskRunnerHook.
+	// throwaway task executions, not managed agents, so skip the INSTANT
+	// path here. (The reaper's online-reconcile sweep still enrolls a task
+	// session's current conv — making the roster fully task-free is a
+	// separate agentd concern; the conv-advance exemption above is what
+	// keeps the migration machinery from firing regardless.) The task
+	// runner needs only the session row + Stop-hook signal. See
+	// inTaskRunnerHook.
 	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) &&
 		envSessionID != "" && state.ConvID != "" && !inTaskRunnerHook() {
 		if err := db.EnrollAgent(state.ConvID, "session-start"); err != nil {
@@ -988,19 +1020,17 @@ type TaskSignal struct {
 // On UserPromptSubmit, we remove the signal to cancel any pending
 // auto-exit (the user is interacting).
 func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
-	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
-	if signalPath == "" {
+	// taskSignalPath enforces the CacheDir bound (the same predicate
+	// inTaskRunnerHook gates the hook exemptions on); warn on a
+	// set-but-out-of-bounds path, since this is where the path is
+	// consumed for a write.
+	signalPath, ok := taskSignalPath()
+	if !ok {
+		if raw := os.Getenv("TCLAUDE_TASK_SIGNAL"); raw != "" {
+			slog.Warn("task signal path outside allowed directory, ignoring", "path", raw, "module", "hooks")
+		}
 		return false
 	}
-	// Validate that the signal path is within the expected cache directory.
-	allowedDir := filepath.Clean(common.CacheDir())
-	cleanPath := filepath.Clean(signalPath)
-	rel, err := filepath.Rel(allowedDir, cleanPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		slog.Warn("task signal path outside allowed directory, ignoring", "path", signalPath, "module", "hooks")
-		return false
-	}
-	signalPath = cleanPath
 	if isDone {
 		signal := TaskSignal{
 			Report:    input.LastAssistantMessage,
