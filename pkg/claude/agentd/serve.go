@@ -185,6 +185,11 @@ func runServe(p *serveParams) error {
 	// channel.
 	startSessionReaper(cronStop)
 
+	// Export-job housekeeping (JOH-265). Times out requested/running export
+	// jobs whose agent never delivered, and TTL-prunes terminal jobs + their
+	// on-disk artifacts under ~/.tclaude/exports. Shares the stop channel.
+	startExportJobsCleanup(cronStop)
+
 	// Pending-spawn sweeper. Finishes enrollment for non-blocking spawns
 	// whose conv-id materialised only after the spawn returned PENDING —
 	// the JOH-205 inc2 back-fill: a Codex held behind a startup gate
@@ -410,6 +415,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
+	// Per-agent export (JOH-265). The agent half: `tclaude agent export
+	// show` reads the brief, `… submit` uploads the artifact. Self-scoped —
+	// requireExportJobAccess gates each on owning the job.
+	mux.HandleFunc("GET /v1/export-jobs/{id}", handleExportShow)
+	mux.HandleFunc("POST /v1/export-jobs/{id}/artifact", handleExportSubmit)
 	// Group templates. The bare /v1/templates and /v1/templates/{name}
 	// patterns dispatch their own methods; the two POST-specific routes
 	// carry a literal segment ("from-group" / "instantiate") so the mux

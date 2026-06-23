@@ -169,6 +169,40 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 // with no conv yet) come back as `skipped:no_conv_id` since we
 // have no .jsonl to resume from — those are template-based
 // spawns, deferred to a future "groups create --team" pass.
+// resolveConvLaunchMetadata resolves how to (re)launch convID — its cwd, the
+// inherited effort/model, and the harness it last ran on — WITHOUT requiring a
+// live session, so an offline conv can be resumed or cloned straight from its
+// stored conversation. The cascade prefers the freshest session row (precise cwd
+// + inherited model/effort + harness; rows are updated_at DESC, [0] is freshest),
+// then conv_index metadata (older/imported convs, which carry no effort/model),
+// then the harness-native conversation store (e.g. a Codex rollout). ok=false
+// when none resolve — the conv isn't locatable to relaunch.
+//
+// Shared by resumeOneConv and the clone-based export (JOH-266): the export needs
+// the original's cwd to spawn the summary-writer clone into, and a clone works
+// offline (it resumes from the .jsonl), so it must not depend on a live session.
+func resolveConvLaunchMetadata(convID string) (cwd, effort, model, harnessName string, ok bool) {
+	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
+		effort, model = inheritedLaunchFlags(rows[0].ID)
+		// Relaunch under the harness the conv was last running on — a Codex
+		// conv must relaunch as `--harness codex` so session-new resolves its
+		// rollout id (resolveResumeConv, JOH-155) instead of looking in
+		// ~/.claude/projects. An untagged/claude row leaves it "" (flag omitted).
+		return rows[0].Cwd, effort, model, rows[0].Harness, true
+	}
+	if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+		cwd = row.ProjectPath
+		if cwd == "" {
+			cwd = row.ProjectDir
+		}
+		return cwd, "", "", row.Harness, true
+	}
+	if ref, ok := resolveResumeConvFromHarnessStores(convID); ok {
+		return ref.ProjectPath, "", "", ref.Harness, true
+	}
+	return "", "", "", "", false
+}
+
 func resumeOneConv(convID string) memberOpResult {
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
@@ -180,42 +214,14 @@ func resumeOneConv(convID string) memberOpResult {
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
 		return res
 	}
-	// Look up the recorded cwd so resume lands the agent in the
-	// directory they were last running in, and the model + effort it
-	// last reported running on, so the resumed agent comes back on its
-	// own model instead of claude's default (rows are updated_at DESC;
-	// [0] is the conv's freshest session).
-	//
-	// A session row is the best source, but not the only one: older/imported
-	// offline conversations can be resumable with only conv_index metadata.
-	// Conversely, an enrolled/grouped agent with no session row and no
-	// conv_index row is just an orphaned intent; launching a default Claude
-	// resume for that id would fail in the child process while this handler
-	// lies to the UI with "resumed".
-	cwd, effort, model, harnessName := "", "", "", ""
-	hasResumeMetadata := false
-	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
-		cwd = rows[0].Cwd
-		effort, model = inheritedLaunchFlags(rows[0].ID)
-		// Resume under the harness the conv was last running on — a Codex
-		// conv must relaunch as `tclaude session new -r --harness codex` so
-		// session-new resolves its rollout id (resolveResumeConv, JOH-155)
-		// instead of looking in ~/.claude/projects. An untagged/claude row
-		// leaves it "" so the flag is omitted.
-		harnessName = rows[0].Harness
-		hasResumeMetadata = true
-	} else if row, err := db.GetConvIndex(convID); err == nil && row != nil {
-		cwd = row.ProjectPath
-		if cwd == "" {
-			cwd = row.ProjectDir
-		}
-		harnessName = row.Harness
-		hasResumeMetadata = true
-	} else if ref, ok := resolveResumeConvFromHarnessStores(convID); ok {
-		cwd = ref.ProjectPath
-		harnessName = ref.Harness
-		hasResumeMetadata = true
-	}
+	// Look up the recorded cwd so resume lands the agent in the directory
+	// they were last running in, and the model + effort + harness it last
+	// ran on, so the resumed agent comes back on its own model instead of
+	// claude's default. An enrolled/grouped agent with no session row, no
+	// conv_index row, and no harness-native conversation is just an orphaned
+	// intent; launching a default Claude resume for that id would fail in the
+	// child process while this handler lies to the UI with "resumed".
+	cwd, effort, model, harnessName, hasResumeMetadata := resolveConvLaunchMetadata(convID)
 	if !hasResumeMetadata {
 		res.Action = "error"
 		res.Detail = "no resumable session metadata for this agent (no sessions row, conversation index row, or harness-native conversation); delete/recreate the orphaned agent or restore it from a real conversation"
@@ -681,6 +687,26 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			fmt.Sprintf("initial_message must be at most %d characters; newlines and tabs "+
 				"are allowed (it is delivered to the agent's inbox, not typed into "+
 				"its pane), but other control characters are not", agent.MaxInitialMessageBytes))
+		return
+	}
+
+	// Reject an invalid agent name at the boundary rather than silently
+	// dropping it downstream (executeSpawn only applies a name that clears
+	// isValidRenameTitle). An empty name stays valid — the agent gets an
+	// auto-generated label; a non-empty one must be a safe token. The CLI
+	// (agent.isValidSpawnName) and dashboard mirror this, but this is the
+	// authoritative gate for the user-facing spawn surfaces: `tclaude agent
+	// spawn`, `--join-group`, and the dashboard modal all POST through here.
+	// (The group-template instantiator builds names as group+template and
+	// calls executeSpawn directly, bypassing this gate; it falls back to the
+	// downstream isValidRenameTitle silent-drop — see handleTemplateInstantiate.)
+	body.Name = strings.TrimSpace(body.Name)
+	if !isValidSpawnName(body.Name) {
+		writeError(w, http.StatusBadRequest, "invalid_name",
+			fmt.Sprintf("name must be 1-%d characters from [A-Za-z0-9_-] (letters, "+
+				"digits, underscore, dash); spaces, punctuation, and unicode are not "+
+				"allowed (the name doubles as a git worktree branch name and becomes "+
+				"the conversation title)", agent.MaxSpawnNameLen))
 		return
 	}
 

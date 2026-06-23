@@ -815,7 +815,7 @@ function remoteControlMenuItem(m, canRemote) {
 // the ⚙ options cog so the row stays uncluttered. The cog is always
 // present and enabled.
 function memberActions(g, m, canRemote) {
-  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
     + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m) + removeMemberButton(g, m)
     + retireMemberButton(m);
@@ -840,6 +840,21 @@ function reincarnateAgentButton(m) {
 }
 function sudoMemberButton(m) {
   return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
+}
+// exportAgentButton renders the ⚙-menu "📋 summary…" item — opens the export
+// modal that asks the LIVE agent to consolidate a shareable artifact (a
+// summary / report, one or more files auto-zipped), which the browser then
+// downloads. Disabled while the agent is offline: the export runs in the
+// agent's own session, so it needs a running pane (the daemon fast-fails an
+// offline target anyway). The async, agent-produced twin of the group's
+// mechanical "⤓ export".
+function exportAgentButton(m) {
+  const label = m.title || m.conv_id;
+  const dis = m.online ? '' : ' disabled';
+  const why = m.online
+    ? 'Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.'
+    : 'Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.';
+  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">📋 summary…</button>`;
 }
 // permMemberButton renders the per-row "permissions" affordance —
 // opens the permanent-permission editor (grant / deny / default per
@@ -998,7 +1013,7 @@ function retireMemberButton(m) {
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m, canRemote) {
-  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
+  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m)
     + retireMemberButton(m)
     + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;

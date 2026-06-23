@@ -312,6 +312,17 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "inbox, not typed into its pane), but other control characters are not.")
 		return nil, rcInvalidArg
 	}
+	// Validate --name client-side so a bad name fails fast with a clear
+	// message instead of reaching the daemon. An empty name is fine (the
+	// agent gets an auto-generated label); a non-empty one must be a safe
+	// token. The daemon re-validates server-side (handleGroupSpawn).
+	name := strings.TrimSpace(p.Name)
+	if !isValidSpawnName(name) {
+		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
+		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
+		fmt.Fprintln(stderr, "Pick a name that uses only the allowed characters.")
+		return nil, rcInvalidArg
+	}
 	timeoutSeconds := 30
 	if p.Timeout != "" {
 		d, err := parseDurationDays(p.Timeout)
@@ -402,7 +413,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
-		Name:           p.Name,
+		Name:           name,
 		Role:           p.Role,
 		Descr:          p.Descr,
 		InitialMessage: initialMessage,

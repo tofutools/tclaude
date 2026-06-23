@@ -16,6 +16,7 @@ import {
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
+import { openExportModal } from './modal-export.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -734,6 +735,14 @@ function bindRowActions() {
           // agent. The modal enforces the required follow_up and
           // handles the POST + refresh.
           openReincarnateAgentModal(conv, label);
+          return;
+        }
+        case 'export-summary': {
+          // Open the export modal — it asks the live agent to produce a
+          // shareable artifact, then polls + downloads it. The button is
+          // disabled while the agent is offline, so a click means it was
+          // online at render; the daemon re-checks and fast-fails if not.
+          openExportModal(conv, label);
           return;
         }
         case 'rename-name': {
