@@ -1034,3 +1034,64 @@ func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) 
 	assert.Equal(t, "", succ,
 		"a task rotation must NOT record a succession edge old→new")
 }
+
+// In task mode the task runner owns its user-facing notifications, so the
+// hook callback must stay silent for EVERY task-mode event — not only the
+// Stop/ExitPlanMode ones handleTaskSignal consumes. Otherwise each task's
+// hands-free auto-/exit fires a SessionEnd "Exited" banner and a multi-task
+// run becomes a notification storm (reported by Mikael). The control half
+// pins that an identical interactive SessionEnd (no task mode) still
+// notifies — /exit is the normal lifecycle there and must not be silenced.
+func TestRunHookCallback_TaskModeSuppressesNotifications(t *testing.T) {
+	var calls int
+	prev := notifyOnStateTransition
+	notifyOnStateTransition = func(sessionID, convID, from, to, cwd, convTitle, harness string) {
+		calls++
+	}
+	t.Cleanup(func() { notifyOnStateTransition = prev })
+
+	feedExit := func(t *testing.T, sessionID, convID, dir string) {
+		feedHook(t, sessionID, map[string]any{
+			"session_id":      convID,
+			"hook_event_name": "SessionEnd",
+			"reason":          "logout",
+			"cwd":             dir,
+		})
+	}
+
+	t.Run("task mode stays silent", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		db.ResetForTest()
+		taskSignalEnv(t, dir)
+		calls = 0
+
+		require.NoError(t, SaveSessionState(&SessionState{
+			ID: "tasks-quiet", ConvID: "conv-q", Status: StatusWorking,
+		}))
+		feedExit(t, "tasks-quiet", "conv-q", dir)
+
+		got, err := LoadSessionState("tasks-quiet")
+		require.NoError(t, err)
+		assert.Equal(t, StatusExited, got.Status, "the task's exit must still be recorded")
+		assert.Equal(t, 0, calls, "a task-mode SessionEnd must not fire a notification")
+	})
+
+	t.Run("interactive still notifies", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		t.Setenv("TCLAUDE_TASK_SIGNAL", "") // explicitly NOT task mode
+		db.ResetForTest()
+		calls = 0
+
+		require.NoError(t, SaveSessionState(&SessionState{
+			ID: "plain-sess", ConvID: "conv-p", Status: StatusWorking,
+		}))
+		feedExit(t, "plain-sess", "conv-p", dir)
+
+		got, err := LoadSessionState("plain-sess")
+		require.NoError(t, err)
+		assert.Equal(t, StatusExited, got.Status)
+		assert.Equal(t, 1, calls, "a normal interactive SessionEnd must still notify (control)")
+	})
+}

@@ -227,6 +227,13 @@ func needsIdentityMigration(oldConv, newConv string) (bool, error) {
 // path described on needsIdentityMigration above.
 var migrateAgentIdentity = db.MigrateAgentIdentity
 
+// notifyOnStateTransition is the seam the hook callback notifies
+// through. Production is the direct notify.OnStateTransition (config +
+// cooldown + mute ladder all live inside it); tests swap it to assert
+// WHEN the callback notifies versus stays silent — e.g. the task-mode
+// suppression — without standing up a real notification backend.
+var notifyOnStateTransition = notify.OnStateTransition
+
 // migrateClearedIdentity migrates agent identity — group memberships,
 // ownerships, permission overrides, cron refs, the succession edge and
 // the display name — from a /clear'd conv-id onto the fresh one
@@ -984,11 +991,19 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
-	taskSignalWasHandled := handleTaskSignal(stopped, input)
+	// (writes/removes the signal file the auto-/exit watcher polls).
+	handleTaskSignal(stopped, input)
 
-	// In task mode, skip notifications — the task runner sends its own
-	// targeted notifications (e.g. "Task failed: X", "All tasks completed!").
-	if taskSignalWasHandled {
+	// In task mode the task runner owns all user-facing notifications — it
+	// sends its own targeted messages ("Task failed: X", "All tasks
+	// completed!", "plan ready", …) over its own notify path. Suppress the
+	// generic per-hook notifications for EVERY task-mode hook, not just the
+	// ones handleTaskSignal consumed (Stop / ExitPlanMode): in a task run a
+	// SessionEnd "Exited" at each task's auto-/exit, plus the idle stamps as
+	// each task finishes, are pure noise (reported by Mikael). A manual
+	// `tclaude` /exit is deliberately NOT affected here — that is not task
+	// mode, and /exit is the normal interactive/dashboard lifecycle.
+	if inTaskRunnerHook() {
 		return nil
 	}
 
@@ -1000,7 +1015,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// the cooldown + mute ladder inside OnStateTransition are
 	// harness-agnostic.
 	if input.HookEventName != "SessionStart" {
-		notify.OnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle, state.Harness)
+		notifyOnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle, state.Harness)
 	}
 
 	return nil
