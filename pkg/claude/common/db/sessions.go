@@ -724,6 +724,54 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	return tx.Commit()
 }
 
+// UpdateSessionVirtualCost stores the session's cumulative pay-per-token-
+// EQUIVALENT cost in USD — the WHAT-IF sibling of UpdateSessionCost. Claude
+// Code emits cost.total_cost_usd on every statusline render regardless of
+// billing mode; the statusbar hook records it HERE (not via UpdateSessionCost)
+// when the session runs on a SUBSCRIPTION — i.e. the statusline carries
+// rate-limit buckets, the inverse of UpdateSessionCost's gate. So a given
+// session populates virtual_cost_usd or cost_usd, never both, and the Costs
+// tab's WHAT-IF view runs the same per-day delta walk over the virtual column
+// that the real view runs over cost_usd. The recorded figure is hypothetical
+// ("what this would have cost on pay-per-token"), never a real charge — the
+// dashboard only surfaces it behind the cost.show_on_subscription opt-in.
+//
+// Byte-for-byte the same transactional shape as UpdateSessionCost (zero/
+// negative no-op; sessions column + monotonic session_cost_daily upsert in one
+// tx; INSERT…SELECT keyed to an existing row so an unknown id mints no orphan);
+// only the target column differs.
+func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
+	if costUSD <= 0 {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, costUSD, sessionID); err != nil {
+		return err
+	}
+	now := time.Now()
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at)
+		SELECT id, ?, conv_id, ?, ? FROM sessions WHERE id = ?
+		ON CONFLICT(session_id, day) DO UPDATE SET
+			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
+			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
+			virtual_cost_usd = MAX(session_cost_daily.virtual_cost_usd, excluded.virtual_cost_usd),
+			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
+			                ELSE session_cost_daily.conv_id END`,
+		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // costDayFormat is the session_cost_daily.day key — a local-time
 // calendar date. Local because the human reads the Costs chart in
 // their own day boundaries, matching the migration backfill's
@@ -739,7 +787,13 @@ type CostDailyRow struct {
 	Day       string // local "2006-01-02"
 	ConvID    string
 	CostUSD   float64 // cumulative within the session as of that day
-	UpdatedAt string  // RFC3339Nano of the day's last spend; "" if unknown
+	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the cumulative
+	// pay-per-token-equivalent cost captured on a subscription session
+	// (see UpdateSessionVirtualCost). Mutually exclusive with CostUSD per
+	// session — one is populated, the other stays 0 — so the Costs tab's
+	// WHAT-IF view runs the same delta walk over this column.
+	VirtualCostUSD float64
+	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
@@ -781,14 +835,15 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 // the rare row with no denormalised conv_id) so the per-day delta walk
 // can carry one high-water baseline across a resume; day then session
 // orders within a conversation. The table stays small (sessions × active
-// days, API-priced sessions only), so callers read it whole and
-// aggregate in Go rather than encoding the windowed delta logic in SQL.
+// days — pay-per-token sessions via cost_usd, subscription sessions via
+// virtual_cost_usd), so callers read it whole and aggregate in Go rather
+// than encoding the windowed delta logic in SQL.
 func AllCostDailyRows() ([]CostDailyRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, updated_at
+	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, session_id`)
 	if err != nil {
@@ -798,12 +853,30 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// HasAnyRealCost reports whether any REAL pay-per-token spend has ever been
+// recorded (a session_cost_daily row with cost_usd > 0). It is the dashboard's
+// "is this account on pay-per-token" signal: pay-per-token sessions populate
+// cost_usd (via UpdateSessionCost), subscription sessions populate only
+// virtual_cost_usd, so a true result means the Costs tab has real money to
+// show. Drives the Costs-tab auto-hide (a subscription-only account has no real
+// cost and hides the tab unless cost.show_on_subscription opts into the WHAT-IF
+// view). Cheap EXISTS probe — safe on the 2s snapshot tick.
+func HasAnyRealCost() (bool, error) {
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var exists int
+	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM session_cost_daily WHERE cost_usd > 0)`).Scan(&exists)
+	return exists == 1, err
 }
 
 // ContextSnapshot is the full context-window state for a session.
@@ -837,6 +910,12 @@ type ContextSnapshot struct {
 	// subscription-plan session, or a statusbar that hasn't ticked —
 	// and surfaces render nothing for it. Rides on the same row read.
 	CostUSD float64
+	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the cumulative
+	// pay-per-token-equivalent cost recorded on a SUBSCRIPTION session
+	// (UpdateSessionVirtualCost). 0 on a pay-per-token session or before
+	// the statusbar has ticked. The dashboard's Groups tab shows it as the
+	// per-agent badge when the WHAT-IF view is active, flagged hypothetical.
+	VirtualCostUSD float64
 }
 
 // GetContextSnapshot reads the full context-window state for a
@@ -848,9 +927,9 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	}
 	var s ContextSnapshot
 	err = db.QueryRow(
-		`SELECT context_pct, tokens_input, tokens_output, context_window_size, model, model_id, effort_level, cost_usd
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, model, model_id, effort_level, cost_usd, virtual_cost_usd
 		 FROM sessions WHERE id = ?`, sessionID).
-		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD)
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD, &s.VirtualCostUSD)
 	return s, err
 }
 

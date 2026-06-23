@@ -135,6 +135,77 @@ func TestUpdateSessionCost_UnknownSessionWritesNothing(t *testing.T) {
 	assert.Empty(t, rows, "no daily row for a session that doesn't exist")
 }
 
+// TestUpdateSessionVirtualCost_WritesVirtualColumnOnly is the WHAT-IF
+// sibling of TestUpdateSessionCost_WritesDailySnapshot: a subscription
+// session's virtual cost lands on virtual_cost_usd (monotonic within the
+// day, conv_id denormalised) and leaves the real cost_usd at 0, so the two
+// figures never conflate.
+func TestUpdateSessionVirtualCost_WritesVirtualColumnOnly(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-a", TmuxSession: "tmux-vc-a", ConvID: "conv-vc-a", Cwd: "/tmp/vc-a", Status: "idle",
+	}), "SaveSession")
+	require.NoError(t, UpdateSessionVirtualCost("vc-a", 1.00), "first virtual tick")
+	require.NoError(t, UpdateSessionVirtualCost("vc-a", 1.50), "higher cumulative")
+	require.NoError(t, UpdateSessionVirtualCost("vc-a", 1.25), "stale lower render must not lower the snapshot")
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	row := dailyRowFor(t, rows, "vc-a", today)
+	require.NotNil(t, row, "today's daily row exists")
+	assert.InDelta(t, 1.50, row.VirtualCostUSD, 1e-9, "daily snapshot keeps the day's maximum virtual cost")
+	assert.Zero(t, row.CostUSD, "real cost_usd stays 0 for a subscription session")
+	assert.Equal(t, "conv-vc-a", row.ConvID, "conv_id denormalised from the sessions row")
+
+	// And the real-cost surfaces ignore it: a subscription account still
+	// reads as having no real spend.
+	has, err := HasAnyRealCost()
+	require.NoError(t, err, "HasAnyRealCost")
+	assert.False(t, has, "virtual-only spend is not real cost")
+	total, err := SumCostSinceDay(today)
+	require.NoError(t, err, "SumCostSinceDay")
+	assert.Zero(t, total, "month-to-date real spend ignores virtual cost")
+}
+
+// TestUpdateSessionVirtualCost_UnknownSessionWritesNothing mirrors the
+// real-cost INSERT…SELECT guard: a virtual cost write keyed to a session id
+// with no sessions row must not mint an orphan daily row.
+func TestUpdateSessionVirtualCost_UnknownSessionWritesNothing(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, UpdateSessionVirtualCost("ghost", 1.23), "UpdateSessionVirtualCost on unknown session")
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	assert.Empty(t, rows, "no daily row for a session that doesn't exist")
+}
+
+// TestHasAnyRealCost pins the Costs-tab auto-hide signal: an empty DB and a
+// virtual-only (subscription) account both read false; any real pay-per-token
+// spend flips it true.
+func TestHasAnyRealCost(t *testing.T) {
+	setupTestDB(t)
+
+	has, err := HasAnyRealCost()
+	require.NoError(t, err, "HasAnyRealCost on empty DB")
+	assert.False(t, has, "fresh DB has no real cost")
+
+	// A subscription session records only virtual cost → still no real cost.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "sub-1", TmuxSession: "tmux-sub-1", ConvID: "conv-sub-1", Cwd: "/tmp/sub-1", Status: "idle",
+	}), "SaveSession sub")
+	require.NoError(t, UpdateSessionVirtualCost("sub-1", 5.00), "virtual spend")
+	has, err = HasAnyRealCost()
+	require.NoError(t, err)
+	assert.False(t, has, "virtual-only account reads as no real cost")
+
+	// A pay-per-token session records real cost → flips true.
+	saveCostSession(t, "ppt-1", "idle", 0.01)
+	has, err = HasAnyRealCost()
+	require.NoError(t, err)
+	assert.True(t, has, "any real pay-per-token spend flips the signal true")
+}
+
 // TestSumCostSinceDay pins the DB-side windowed aggregate (the top
 // bar's month-to-date read) to the SAME fixture and totals as agentd's
 // TestCostDeltasFromRows — the SQL closed form (windowed peak minus

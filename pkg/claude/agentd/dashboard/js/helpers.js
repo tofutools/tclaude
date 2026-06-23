@@ -463,9 +463,18 @@ function harnessLine(m) {
   // model-gate above never hides a real cost. Like the model, the cost
   // survives an agent's exit — what a dead agent cost is still useful.
   const cost = Number((m && m.state && m.state.cost_usd) || 0);
+  // WHAT-IF sibling of cost: the pay-per-token-EQUIVALENT cost of a
+  // subscription session (virtual_cost_usd). Rendered as a separate span
+  // flagged hypothetical (≈) and CSS-hidden unless body.cost-whatif — the
+  // dashboard is in WHAT-IF mode (the cost.show_on_subscription opt-in is
+  // on). Real and virtual are mutually exclusive per agent, so at most one
+  // of the two cost spans below ever carries a value. body.agent-cost-hidden
+  // (the Groups-tab 💲 toggle) suppresses both via CSS.
+  const vcost = Number((m && m.state && m.state.virtual_cost_usd) || 0);
   let tip = `Harness: ${labels.long} — Model: ${model}`;
   if (effort) tip += ` — Effort: ${effort}`;
   if (cost > 0) tip += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
+  if (vcost > 0) tip += ` — WHAT-IF cost this session: $${vcost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   // One continuous string — "CC · O4.8 1M high $0.42" — no chip/box
   // around the harness. The spans exist only for typographic emphasis
   // (the harness prefix and the middot sit a shade dimmer than the
@@ -476,11 +485,14 @@ function harnessLine(m) {
   const costEl = cost > 0
     ? `<span class="harness-cost">${esc(cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢')}</span>`
     : '';
+  const whatifEl = vcost > 0
+    ? `<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${esc(vcost >= 0.005 ? '≈$' + vcost.toFixed(2) : '≈<1¢')}</span>`
+    : '';
   return `<div class="agent-harness" title="${esc(tip)}">`
     + `<span class="harness-name">${esc(labels.short)}</span>`
     + `<span class="harness-sep">·</span>`
     + `<span class="harness-model">${esc(shortModel(model))}</span>`
-    + effortEl + costEl + remoteEl + `</div>`;
+    + effortEl + costEl + whatifEl + remoteEl + `</div>`;
 }
 
 // sandboxBadge renders the per-agent launch-sandbox chip — "🔒 workspace-

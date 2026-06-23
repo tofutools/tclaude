@@ -45,7 +45,7 @@ func TestDashboardHTML_RemoteControlWired(t *testing.T) {
 	// than a standalone chip in the control cell, so the symbol reads as part
 	// of the agent's at-a-glance line.
 	must("const remoteEl = remoteControlBadge(m);", "harnessLine builds the remote indicator")
-	must("effortEl + costEl + remoteEl", "the remote indicator trails the effort/cost tokens on the harness line")
+	must("effortEl + costEl + whatifEl + remoteEl", "the remote indicator trails the effort/cost (incl. WHAT-IF) tokens on the harness line")
 
 	// helpers.js: the ⚙-menu toggle item is gated on the capability (returns
 	// '' when the harness can't), carries the OPPOSITE intent as data-intent,
