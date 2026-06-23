@@ -58,6 +58,22 @@ function refreshSuspended() {
   // rebuild the row/group and collapse the menu out from under the
   // pointer. Closing the menu drops the .open class, lifting this.
   if (document.querySelector('.action-menu.open')) return true;
+  // A slop-mode slot machine is mid-pull. manualPull() in slop-fx.js
+  // spins a row's .slop-machine for ~900ms, then holds the settled
+  // combo for ~1.8s, tagging the cell with a sentinel data-status of
+  // 'pull-spinning' then 'pull-stopped' for the whole ~2.7s. A
+  // re-render rebuilds the Groups tab and detaches the cell mid-spin —
+  // the bug where pulling the handle gets cancelled by the next poll.
+  // Defer the tick until the pull settles; slop-fx restores the cell's
+  // real data-status at the end, which lifts this on its own. Like the
+  // checks above it's DOM-derived, so there's no flag to leak: a cell
+  // detached mid-pull keeps a stale sentinel but is no longer in the
+  // live DOM, so it can't match here. Pulls are bounded (~2.7s each),
+  // so this only ever briefly delays a refresh — it can't wedge it.
+  // (Keep these sentinel values in sync with manualPull in slop-fx.js.)
+  if (document.querySelector('.slop-machine[data-status="pull-spinning"], .slop-machine[data-status="pull-stopped"]')) {
+    return true;
+  }
   return false;
 }
 // sudoGrantBlocklist: slugs the sudo-grant modal refuses to offer.
