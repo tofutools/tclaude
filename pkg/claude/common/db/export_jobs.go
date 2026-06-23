@@ -10,16 +10,21 @@ import (
 
 // Export job statuses. The lifecycle is:
 //
-//	requested → running → ready
-//	             ↘  ↘  ↘   failed   (agent error, offline-late, or timeout)
+//	cloning → requested → running → ready
+//	   ↘  ↘  ↘  ↘  ↘  ↘  ↘  ↘  ↘  ↘   failed   (clone/agent error or timeout)
 //
-// requested: the daemon created the job and nudged the agent's pane.
-// running:   the agent fetched the brief (`tclaude agent export show`) — it has
-// the request and is working on it.
-// ready:     the agent uploaded the artifact; it is downloadable.
-// failed:    the agent reported a failure, or the cleanup sweep aged the job out
-// before an artifact arrived. The reason is in ExportJob.Error.
+// cloning:   the daemon created the job and is spawning an isolated CLONE of the
+// conversation to produce the export on (so the live original is never disturbed
+// — JOH-266). The clone's conv-id is recorded in WorkerConvID.
+// requested: the clone is alive and its pane has been nudged.
+// running:   the agent (the clone) fetched the brief (`tclaude agent export show`)
+// — it has the request and is working on it.
+// ready:     the agent uploaded the artifact; it is downloadable. The clone is
+// then auto-deleted.
+// failed:    the clone/agent reported a failure, or the cleanup sweep aged the
+// job out before an artifact arrived. The reason is in ExportJob.Error.
 const (
+	ExportStatusCloning   = "cloning"
 	ExportStatusRequested = "requested"
 	ExportStatusRunning   = "running"
 	ExportStatusReady     = "ready"
@@ -32,6 +37,14 @@ var ErrExportJobNotFound = errors.New("export job not found")
 // ExportJob is one per-agent export request — a row of the export_jobs table,
 // the store behind the dashboard's "📋 summary…" action (see migrateV66toV67).
 //
+// ConvID is the ORIGINAL conversation the export is about (the history list and
+// the download attach to it). WorkerConvID is the isolated CLONE the daemon
+// spawns to actually produce the summary (JOH-266) — it is who gets nudged, who
+// submits the artifact, and whose identity the /v1 ownership gate accepts; it is
+// blank until the clone is spawned, and the clone is auto-deleted once the job
+// is ready. Keeping the two split is what lets the summary attach to the original
+// while the live original is never disturbed.
+//
 // Title / Instructions / Preset are the human's brief, snapshotted at creation.
 // The Artifact* fields are blank until the agent uploads its result:
 // ArtifactPath is the on-disk file under ~/.tclaude/exports/<id>/, ArtifactName
@@ -39,6 +52,7 @@ var ErrExportJobNotFound = errors.New("export job not found")
 type ExportJob struct {
 	ID           int64
 	ConvID       string
+	WorkerConvID string
 	GroupName    string
 	Title        string
 	Instructions string
@@ -76,11 +90,11 @@ func InsertExportJob(j *ExportJob) (int64, error) {
 	}
 	res, err := d.Exec(`
 		INSERT INTO export_jobs
-			(conv_id, group_name, title, instructions, preset, status, error,
+			(conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
 			 artifact_path, artifact_name, artifact_size, content_type,
 			 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ConvID, j.GroupName, j.Title, j.Instructions, j.Preset, status, j.Error,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		j.ConvID, j.WorkerConvID, j.GroupName, j.Title, j.Instructions, j.Preset, status, j.Error,
 		j.ArtifactPath, j.ArtifactName, j.ArtifactSize, j.ContentType,
 		created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano))
 	if err != nil {
@@ -97,7 +111,7 @@ func GetExportJob(id int64) (*ExportJob, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT id, conv_id, group_name, title, instructions, preset, status, error,
+		SELECT id, conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
 		       artifact_path, artifact_name, artifact_size, content_type,
 		       created_at, updated_at
 		FROM export_jobs WHERE id = ?`, id)
@@ -109,6 +123,46 @@ func GetExportJob(id int64) (*ExportJob, error) {
 		return nil, err
 	}
 	return j, nil
+}
+
+// SetExportJobWorkerConv records the conv-id of the isolated clone the daemon
+// spawned to produce the export (JOH-266). Written as soon as the clone's
+// conv-id is known — before it is nudged — so the cleanup sweep can reap the
+// clone even if the daemon dies mid-flight. Leaves the status untouched (the job
+// stays 'cloning' until the clone is alive and nudged). updated_at is refreshed
+// so the stale timer measures from when the clone was actually minted.
+func SetExportJobWorkerConv(id int64, workerConvID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	if _, err := d.Exec(
+		`UPDATE export_jobs SET worker_conv_id = ?, updated_at = ? WHERE id = ?`,
+		workerConvID, time.Now().Format(time.RFC3339Nano), id); err != nil {
+		return fmt.Errorf("set export job worker conv: %w", err)
+	}
+	return nil
+}
+
+// MarkExportJobRequested flips a job from 'cloning' to 'requested' — the clone
+// is alive and its pane has been nudged. Only advances a job still in 'cloning'
+// (monotonic: a job already past it is left untouched), so a late call after the
+// agent already fetched the brief can't drag the status backwards. Returns
+// whether it moved.
+func MarkExportJobRequested(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(
+		`UPDATE export_jobs SET status = ?, updated_at = ?
+		 WHERE id = ? AND status = ?`,
+		ExportStatusRequested, time.Now().Format(time.RFC3339Nano), id, ExportStatusCloning)
+	if err != nil {
+		return false, fmt.Errorf("mark export job requested: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // MarkExportJobRunning flips a job to 'running' — the agent fetched the brief.
@@ -185,7 +239,7 @@ func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
 		return nil, err
 	}
 	query := `
-		SELECT id, conv_id, group_name, title, instructions, preset, status, error,
+		SELECT id, conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
 		       artifact_path, artifact_name, artifact_size, content_type,
 		       created_at, updated_at
 		FROM export_jobs WHERE conv_id = ? ORDER BY id DESC`
@@ -252,7 +306,7 @@ func ListStaleExportJobs(before time.Time, terminalOnly bool) ([]*ExportJob, err
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT id, conv_id, group_name, title, instructions, preset, status, error,
+		SELECT id, conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
 		       artifact_path, artifact_name, artifact_size, content_type,
 		       created_at, updated_at
 		FROM export_jobs ORDER BY id ASC`)
@@ -303,7 +357,7 @@ func DeleteExportJob(id int64) (bool, error) {
 func scanExportJob(s rowScanner) (*ExportJob, error) {
 	var j ExportJob
 	var created, updated string
-	if err := s.Scan(&j.ID, &j.ConvID, &j.GroupName, &j.Title, &j.Instructions,
+	if err := s.Scan(&j.ID, &j.ConvID, &j.WorkerConvID, &j.GroupName, &j.Title, &j.Instructions,
 		&j.Preset, &j.Status, &j.Error, &j.ArtifactPath, &j.ArtifactName,
 		&j.ArtifactSize, &j.ContentType, &created, &updated); err != nil {
 		return nil, err

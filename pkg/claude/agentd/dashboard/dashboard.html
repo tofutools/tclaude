@@ -1534,6 +1534,10 @@
         <span class="cron-create-label">Instructions</span>
         <textarea id="export-agent-instructions" rows="6" spellcheck="false" placeholder="How should the agent produce the export? Audience, focus, what to include or leave out, format. Leave blank to let the agent decide."></textarea>
       </label>
+      <label class="export-same-group" title="The export runs on an isolated, auto-deleted clone of this conversation so the live agent is never disturbed. By default the clone is standalone. Check this to put the clone in the same group(s) as the original, so the summary writer can message peers if it needs to.">
+        <input id="export-agent-same-group" type="checkbox" />
+        <span>Clone into the same group <span class="export-same-group-hint">— lets the summary writer message peers (default: isolated)</span></span>
+      </label>
     </div>
     <div id="export-agent-status" role="status" aria-live="polite" aria-atomic="true" hidden>
       <div class="export-status-row"><span class="export-spinner" id="export-agent-spinner" aria-hidden="true"></span><span id="export-agent-status-text">Waiting for the agent…</span></div>

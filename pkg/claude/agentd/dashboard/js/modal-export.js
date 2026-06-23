@@ -1,13 +1,17 @@
-// modal-export.js — the per-agent "📋 summary…" export modal (JOH-265).
+// modal-export.js — the per-agent "📋 summary…" export modal (JOH-265,
+// clone-based since JOH-266).
 //
-// Asks a LIVE agent to consolidate a shareable artifact (a summary / report,
-// one or more files auto-zipped) and downloads it here. The async, curated
-// twin of the group's mechanical "⤓ export". Flow:
+// Asks an agent to consolidate a shareable artifact (a summary / report, one or
+// more files auto-zipped) and downloads it here. The async, curated twin of the
+// group's mechanical "⤓ export". To avoid disturbing the live agent, the daemon
+// runs the export on an isolated, auto-deleted CLONE of the conversation — the
+// modal just sees an extra leading "cloning" phase. Flow:
 //
-//   1. The modal collects a format preset, an optional title, and free-text
-//      instructions, then POSTs /api/agents/{conv}/export → an export job id.
+//   1. The modal collects a format preset, an optional title, free-text
+//      instructions, and the "Clone into the same group" toggle, then POSTs
+//      /api/agents/{conv}/export → an export job id (status: cloning).
 //   2. The form is replaced by a spinner; the modal polls
-//      /api/export-jobs/{id} every 2s.
+//      /api/export-jobs/{id} every 2s (cloning → requested → running → ready).
 //   3. On `ready` it triggers a browser download of the artifact, swaps the
 //      spinner for a success line, and offers a "Download again" button.
 //      On `failed` it shows the reason. The user can Close at any point — the
@@ -54,6 +58,8 @@ function openExportModal(conv, label) {
   $('#export-agent-preset').value = 'summary';
   $('#export-agent-title-input').value = '';
   $('#export-agent-instructions').value = PRESETS.summary;
+  // Isolated clone is the default — peers/cron can't touch the throwaway.
+  $('#export-agent-same-group').checked = false;
   instructionsSeeded = true;
   $('#export-agent-error').textContent = '';
   $('#export-agent-status-note').textContent = '';
@@ -107,6 +113,7 @@ async function submitExport() {
     preset: $('#export-agent-preset').value,
     title: $('#export-agent-title-input').value.trim(),
     instructions: $('#export-agent-instructions').value.trim(),
+    same_group: $('#export-agent-same-group').checked,
   };
 
   const submitBtn = $('#export-agent-submit');
@@ -146,12 +153,24 @@ function enterWorkingPhase() {
   $('#export-agent-spinner').style.display = '';
   const row = $('#export-agent-status').querySelector('.export-status-row');
   if (row) row.classList.remove('done');
-  setStatus('Waiting for the agent to pick up the request…');
+  // The job starts in 'cloning' — the daemon is standing up the isolated clone.
+  setStatus(statusMessage('cloning'));
   $('#export-agent-status-note').textContent = '';
 }
 
 function setStatus(text) {
   $('#export-agent-status-text').textContent = text;
+}
+
+// statusMessage maps a non-terminal job status to the spinner caption. The
+// export runs on an isolated clone (JOH-266): 'cloning' is the daemon spawning
+// it, 'requested' is the clone alive and nudged, 'running' is it producing.
+function statusMessage(status) {
+  switch (status) {
+    case 'cloning': return 'Cloning the conversation to summarize it safely…';
+    case 'running': return 'The agent is producing your export…';
+    default: return 'Waiting for the agent to pick up the request…';
+  }
 }
 
 function startPoll(jobId) {
@@ -180,9 +199,7 @@ function startPoll(jobId) {
           onExportFailed(job);
           return;
         }
-        setStatus(job.status === 'running'
-          ? 'The agent is producing your export…'
-          : 'Waiting for the agent to pick up the request…');
+        setStatus(statusMessage(job.status));
         if (Date.now() - startedAt > SLOW_NOTE_AFTER_MS) {
           $('#export-agent-status-note').textContent =
             'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.';

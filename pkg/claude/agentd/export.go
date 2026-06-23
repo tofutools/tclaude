@@ -17,31 +17,46 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/conv"
 )
 
 // export.go is the daemon half of the per-agent "📋 summary…" export
-// (JOH-265). Unlike the group export (groups_export.go), which is a
-// SYNCHRONOUS mechanical dump the daemon builds from DB rows + raw .jsonl,
-// this is an ASYNCHRONOUS, agent-produced export: the daemon asks a LIVE
-// agent to consolidate a curated, shareable artifact, the agent uploads the
-// result, and the dashboard downloads it. The round-trip:
+// (JOH-265, made clone-based in JOH-266). Unlike the group export
+// (groups_export.go), which is a SYNCHRONOUS mechanical dump the daemon builds
+// from DB rows + raw .jsonl, this is an ASYNCHRONOUS, agent-produced export.
 //
-//	1. Dashboard POST /api/agents/{conv}/export {title, instructions, preset}
-//	   → createExportJob: fast-fails if the agent is offline, else inserts a
-//	   job (status=requested) and injects a one-line pointer nudge into the
-//	   agent's pane. The instructions are NOT injected — only the integer job
-//	   id is — keeping send-keys free of arbitrary text (the mail-nudge idiom).
-//	2. Agent runs `tclaude agent export show N`  → GET /v1/export-jobs/{id}:
+// To avoid disturbing the live original — interrupting its in-flight work,
+// polluting its context, or racing its turns — the export does NOT nudge the
+// original. It spawns an isolated CLONE of the conversation (a copy of the
+// .jsonl on a fresh conv-id / session), lets the CLONE produce the summary, and
+// AUTO-DELETES the clone. The summary still attaches to the ORIGINAL: the job's
+// conv_id stays the original (history list + download), while worker_conv_id is
+// the throwaway clone (who is nudged, who submits, whose identity the /v1 gate
+// accepts). The round-trip:
+//
+//	1. Dashboard POST /api/agents/{conv}/export {title, instructions, preset,
+//	   same_group} → createExportJob: validates the conversation is cloneable,
+//	   inserts a job (status=cloning, conv_id=original), and returns immediately.
+//	   A background goroutine (runExportClone) clones the original, records
+//	   worker_conv_id, waits for the clone's pane, renames it, flips the job to
+//	   requested, and injects a one-line pointer nudge into the CLONE's pane. The
+//	   instructions are NOT injected — only the integer job id is — keeping
+//	   send-keys free of arbitrary text (the mail-nudge idiom).
+//	2. The clone runs `tclaude agent export show N` → GET /v1/export-jobs/{id}:
 //	   returns the brief and flips the job to running.
-//	3. Agent runs `tclaude agent export submit N <files…>` → POST
+//	3. The clone runs `tclaude agent export submit N <files…>` → POST
 //	   /v1/export-jobs/{id}/artifact: stores the uploaded bytes under
-//	   ~/.tclaude/exports/<id>/ and flips the job to ready.
+//	   ~/.tclaude/exports/<id>/, flips the job to ready, and AUTO-DELETES the clone.
 //	4. Dashboard polls GET /api/export-jobs/{id} until ready, then downloads
 //	   GET /api/export-jobs/{id}/artifact (Content-Disposition attachment).
 //
+// By default the clone is standalone (no group) so peers / cron / multicast
+// can't touch the throwaway; "Clone into the same group" (same_group) opts into
+// normal clone identity inheritance so the summary writer can ping peers.
+//
 // The /v1 endpoints are self-scoped: a confirmed agent may only touch its OWN
-// job (conv match); the human operator may touch any. The /api endpoints are
-// the cookie-authed dashboard twin.
+// job (original conv OR the worker clone); the human operator may touch any.
+// The /api endpoints are the cookie-authed dashboard twin.
 
 // maxExportArtifactBytes caps a single uploaded export artifact. A shareable
 // summary is small; the cap is a sanity bound against a runaway upload, well
@@ -136,14 +151,20 @@ func dashboardCreateExport(w http.ResponseWriter, r *http.Request, convSelector 
 	createExportJob(w, r, res.ConvID)
 }
 
-// createExportJob inserts a new export request for convID and nudges the
-// agent's pane. Fast-fails when the agent has no live tmux session: an export
-// needs a running agent to produce it, so there is no point queuing one.
+// createExportJob inserts a new export request for convID and kicks off the
+// clone that will produce it (JOH-266). It does NOT require the original to be
+// online — a clone resumes from the .jsonl — so instead of the old offline
+// fast-fail it validates that the conversation is locatable to clone. The clone
+// is spawned + nudged asynchronously (runExportClone); this returns immediately
+// with a status=cloning job for the dashboard to poll.
 func createExportJob(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		Title        string `json:"title"`
 		Instructions string `json:"instructions"`
 		Preset       string `json:"preset"`
+		// SameGroup opts the clone into the original's group(s) so the summary
+		// writer can ping peers. Default false → a standalone, isolated throwaway.
+		SameGroup bool `json:"same_group"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -164,12 +185,14 @@ func createExportJob(w http.ResponseWriter, r *http.Request, convID string) {
 		return
 	}
 
-	// An export needs a live agent. Resolve the pane up front and fail fast
-	// with a clear message rather than creating a job nobody will service.
-	sess := aliveSessionForConv(convID)
-	if sess == nil {
-		writeError(w, http.StatusConflict, "agent_offline",
-			"this agent has no running session — start it before exporting")
+	// The export runs on an isolated clone, so the original need not be online —
+	// but we DO need to be able to locate the conversation (its cwd) to spawn the
+	// clone into. Fail fast with a clear message if it can't be resolved.
+	cwd, effort, model, _, ok := resolveConvLaunchMetadata(convID)
+	if !ok || strings.TrimSpace(cwd) == "" {
+		writeError(w, http.StatusConflict, "not_cloneable",
+			"can't locate this conversation to clone for export "+
+				"(no session, conversation index, or harness metadata with a working directory)")
 		return
 	}
 
@@ -178,37 +201,183 @@ func createExportJob(w http.ResponseWriter, r *http.Request, convID string) {
 		Title:        title,
 		Instructions: instructions,
 		Preset:       strings.TrimSpace(body.Preset),
-		Status:       db.ExportStatusRequested,
+		Status:       db.ExportStatusCloning,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create export job: "+err.Error())
 		return
 	}
 
-	// Inject only a fixed-format pointer — the agent fetches the actual brief
-	// via `export show`. Only the integer id is interpolated, so no arbitrary
-	// text rides send-keys (the mail-nudge safety property).
-	nudge := fmt.Sprintf(
-		"[system: the human requested an export of this conversation (request #%d). "+
-			"Run: tclaude agent export show %d — it explains what to produce and how to deliver it.]",
-		id, id)
-	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
-		slog.Warn("export nudge failed", "error", err, "tmux", sess.TmuxSession, "job", id)
-		if _, ferr := db.FailExportJob(id, "could not reach the agent's pane to start the export"); ferr != nil {
-			slog.Warn("export: failed to record nudge failure", "error", ferr, "job", id)
-		}
-		writeError(w, http.StatusBadGateway, "nudge_failed",
-			"could not reach the agent's pane to start the export")
-		return
-	}
+	// Clone + nudge asynchronously: copying the conversation and waiting for the
+	// clone's pane to come online takes seconds. The dashboard shows a spinner
+	// over the 'cloning' phase and polls the job (keyed on the original).
+	goBackground(func() {
+		runExportClone(id, convID, cwd, effort, model, body.SameGroup)
+	})
 
 	job, err := db.GetExportJob(id)
 	if err != nil {
-		// The job exists and the nudge landed; just echo a minimal view.
-		writeJSON(w, http.StatusOK, exportJobView{ID: id, ConvID: convID, Status: db.ExportStatusRequested})
+		// The job exists and the clone is being spawned; echo a minimal view.
+		writeJSON(w, http.StatusOK, exportJobView{ID: id, ConvID: convID, Status: db.ExportStatusCloning})
 		return
 	}
 	writeJSON(w, http.StatusOK, exportJobToView(job))
+}
+
+// exportCloneTitleSuffix is appended to the original's title to name the
+// throwaway summary writer (`<original-title>-summary-writer-clone`). The suffix
+// also makes the clone recognisable at a glance in the roster / `agent ls`.
+const exportCloneTitleSuffix = "-summary-writer-clone"
+
+// runExportClone is the async body behind a clone-based export (JOH-266). It
+// clones the original conversation, records the clone as the job's worker, waits
+// for the clone's pane, renames it, flips the job to requested, and nudges the
+// CLONE to produce the summary. Any failure flips the job to failed AND reaps the
+// clone so a throwaway never leaks. Runs under goBackground so flow tests can drain it.
+func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGroup bool) {
+	// 1. Clone the original (copy path → the clone carries the full history) and
+	// spawn it as its own session. Reuses the internal clone spawn so the race
+	// handling (poll for the new conv-id + tmux registration) is shared.
+	newConv, _, _, _, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model)
+	if spawnErr != nil {
+		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
+		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)
+		return
+	}
+	// Record the clone as the job's worker ASAP — before it is nudged — so the
+	// cleanup sweep can reap it even if the daemon dies before the export lands.
+	if err := db.SetExportJobWorkerConv(jobID, newConv); err != nil {
+		slog.Warn("export clone: record worker conv failed", "job", jobID, "conv", newConv, "error", err)
+	}
+
+	// 2. By default the clone is standalone (no group / identity) so peers, cron
+	// and multicast can't touch the throwaway. same_group opts into normal clone
+	// identity inheritance so the summary writer can ping peers if it needs to.
+	if sameGroup {
+		if err := db.EnrollAgent(newConv, "export-clone"); err != nil {
+			slog.Warn("export clone: enroll failed", "job", jobID, "conv", newConv, "error", err)
+		}
+		members, perms, owned := snapshotConvIdentity(originalConv)
+		applyClonedIdentity(newConv, "system:export-clone", members, perms, owned)
+	}
+
+	// 3. Wait for the clone's pane to come online before typing into it.
+	if !waitForConvAlive(newConv) {
+		slog.Warn("export clone: never came online", "job", jobID, "conv", newConv)
+		failExportJobAndReap(jobID, newConv, "the export clone never came online")
+		return
+	}
+
+	// 4. Rename the clone so it is identifiable as the throwaway summary writer —
+	// a clean line of its own, settled before the nudge (same ordering trap as
+	// the clone post-init). Best-effort: a rename miss doesn't block the export.
+	title := exportCloneTitle(originalConv)
+	if isValidRenameTitle(title) {
+		if !deliverRename(newConv, title) {
+			slog.Warn("export clone: rename failed", "job", jobID, "conv", newConv, "title", title)
+		}
+		time.Sleep(reincarnateReadyDelay)
+	}
+
+	// 5. Flip cloning → requested BEFORE the nudge, so the clone's `export show`
+	// (requested → running) lands on a job already past 'cloning'.
+	if _, err := db.MarkExportJobRequested(jobID); err != nil {
+		slog.Warn("export clone: mark requested failed", "job", jobID, "error", err)
+	}
+
+	// 6. Inject the fixed-format pointer nudge into the CLONE's pane — only the
+	// integer job id is interpolated, so no arbitrary text rides send-keys.
+	sess := pickAliveSession(newConv)
+	if sess == nil {
+		slog.Warn("export clone: pane vanished before nudge", "job", jobID, "conv", newConv)
+		failExportJobAndReap(jobID, newConv, "the export clone's pane was not reachable to start the export")
+		return
+	}
+	nudge := fmt.Sprintf(
+		"[system: the human requested an export of this conversation (request #%d). "+
+			"Run: tclaude agent export show %d — it explains what to produce and how to deliver it.]",
+		jobID, jobID)
+	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
+		slog.Warn("export clone: nudge failed", "job", jobID, "tmux", sess.TmuxSession, "error", err)
+		failExportJobAndReap(jobID, newConv, "could not reach the export clone's pane to start the export")
+		return
+	}
+	slog.Info("export clone ready to summarize", "job", jobID, "orig", originalConv,
+		"clone", newConv, "tmux", sess.TmuxSession)
+}
+
+// exportCloneTitle is the clone's title: `<original-title>-summary-writer-clone`,
+// or a bare `summary-writer-clone` when the original has no resolvable title.
+// Resolved through the harness-native store first (Codex titles), then the
+// conv_index path (CC) — the same precedence the clone handler uses.
+func exportCloneTitle(originalConv string) string {
+	base := ""
+	if t, ok := harnessNativeTitle(originalConv); ok {
+		base = t
+	} else if row := agent.FreshConvRowResolved(originalConv); row != nil {
+		base = agent.DisplayTitle(row)
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return strings.TrimPrefix(exportCloneTitleSuffix, "-")
+	}
+	return base + exportCloneTitleSuffix
+}
+
+// snapshotConvIdentity reads a conversation's group memberships, permission
+// overrides and group ownerships — the identity an export clone inherits when
+// same_group is set. Best-effort: a read error logs and yields an empty slice
+// for that facet rather than failing the export (the background goroutine has no
+// HTTP response to fail to). The clone handler does the equivalent snapshot
+// inline with fatal HTTP errors; the export path is best-effort.
+func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms map[string]string, owned []int64) {
+	groups, err := db.ListGroupsForConv(convID)
+	if err != nil {
+		slog.Warn("export clone: snapshot groups failed", "conv", convID, "error", err)
+	}
+	for _, g := range groups {
+		m, err := db.FindMemberInGroup(g.ID, convID)
+		if err != nil {
+			slog.Warn("export clone: snapshot membership failed", "group", g.ID, "conv", convID, "error", err)
+			continue
+		}
+		if m != nil {
+			members = append(members, m)
+		}
+	}
+	if perms, err = db.ListAgentPermissionOverridesForConv(convID); err != nil {
+		slog.Warn("export clone: snapshot perms failed", "conv", convID, "error", err)
+	}
+	if owned, err = db.ListGroupsOwnedBy(convID); err != nil {
+		slog.Warn("export clone: snapshot ownerships failed", "conv", convID, "error", err)
+	}
+	return members, perms, owned
+}
+
+// failExportJobAndReap flips a job to failed with reason AND tears down its clone
+// (when known) so a throwaway never leaks. The shared failure path for every
+// runExportClone bail-out.
+func failExportJobAndReap(jobID int64, cloneConv, reason string) {
+	if _, err := db.FailExportJob(jobID, reason); err != nil {
+		slog.Warn("export clone: record failure failed", "job", jobID, "error", err)
+	}
+	deleteSummaryWriterClone(cloneConv)
+}
+
+// deleteSummaryWriterClone tears down an export's throwaway summary-writer clone:
+// force-kill its tmux session, then purge its conversation (DB rows + .jsonl).
+// Best-effort and idempotent — an empty id or an already-gone session/conv is a
+// no-op — so the submit-success path, a failure reap, and the cleanup sweep can
+// all call it without coordinating. NEVER call with the original conv-id: callers
+// guard worker_conv_id != conv_id so the original is never deleted.
+func deleteSummaryWriterClone(cloneConv string) {
+	if cloneConv == "" {
+		return
+	}
+	stopOneConv(cloneConv, true /* force kill */)
+	if _, err := conv.DeleteConvByID(cloneConv); err != nil {
+		slog.Warn("export clone: delete conv failed", "conv", cloneConv, "error", err)
+	}
 }
 
 // --- show (agent, /v1) ---
@@ -315,13 +484,21 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("export artifact received", "job", job.ID, "conv", job.ConvID,
-		"name", name, "bytes", len(data))
+		"worker", job.WorkerConvID, "name", name, "bytes", len(data))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":     job.ID,
 		"status": db.ExportStatusReady,
 		"name":   name,
 		"size":   len(data),
 	})
+	// The export is delivered — auto-delete the throwaway clone that produced it
+	// (JOH-266). Done AFTER the response (in the background) so the clone's
+	// `export submit` sees its 200 before its pane is killed. The worker != conv
+	// guard makes it impossible to ever delete the ORIGINAL conversation.
+	if job.WorkerConvID != "" && job.WorkerConvID != job.ConvID {
+		clone := job.WorkerConvID
+		goBackground(func() { deleteSummaryWriterClone(clone) })
+	}
 }
 
 // --- poll + download (dashboard, /api) ---
@@ -467,15 +644,19 @@ func exportJobFromPath(w http.ResponseWriter, r *http.Request) (*db.ExportJob, b
 }
 
 // requireExportJobAccess authorizes a /v1 export endpoint. The human operator
-// always passes; a confirmed agent passes only for its OWN job (conv match).
-// Anything else fails closed. Mirrors requirePermissionEx's class handling.
+// always passes; a confirmed agent passes for its OWN job — either as the
+// ORIGINAL conversation (conv_id) or as the worker CLONE that actually produces
+// the export (worker_conv_id, JOH-266). Anything else fails closed. Mirrors
+// requirePermissionEx's class handling.
 func requireExportJobAccess(w http.ResponseWriter, r *http.Request, job *db.ExportJob) bool {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classHuman:
 		return true
 	case classAgent:
-		if p.ConvID == job.ConvID {
+		// The clone is the normal caller (it was nudged to run show/submit); the
+		// original conv is allowed too (harmless — the export is about it).
+		if p.ConvID == job.ConvID || (job.WorkerConvID != "" && p.ConvID == job.WorkerConvID) {
 			return true
 		}
 		writeError(w, http.StatusForbidden, "auth",
@@ -552,12 +733,26 @@ func runExportJobsCleanup(now time.Time) {
 		slog.Warn("export cleanup: list stale failed", "error", err)
 	}
 	for _, j := range stale {
-		if j.Status != db.ExportStatusRequested && j.Status != db.ExportStatusRunning {
+		// A job stuck mid-flight — cloning (clone never came up), requested or
+		// running (the clone never delivered) — is timed out so the state stops
+		// lying and the TTL sweep can reclaim it.
+		if j.Status != db.ExportStatusCloning &&
+			j.Status != db.ExportStatusRequested &&
+			j.Status != db.ExportStatusRunning {
 			continue
 		}
-		if _, err := db.FailExportJob(j.ID,
-			fmt.Sprintf("the agent did not deliver an export within %s", exportJobStaleTimeout)); err != nil {
+		moved, err := db.FailExportJob(j.ID,
+			fmt.Sprintf("the agent did not deliver an export within %s", exportJobStaleTimeout))
+		if err != nil {
 			slog.Warn("export cleanup: timeout fail failed", "error", err, "job", j.ID)
+			continue
+		}
+		// Reap the throwaway clone we spawned for this job so it never leaks
+		// (JOH-266) — only when we actually transitioned it to failed (a job that
+		// raced to ready meanwhile keeps its clone reaped by the submit path). The
+		// worker != conv guard makes deleting the original impossible.
+		if moved && j.WorkerConvID != "" && j.WorkerConvID != j.ConvID {
+			deleteSummaryWriterClone(j.WorkerConvID)
 		}
 	}
 
