@@ -127,6 +127,12 @@ func isConvTransitionStart(input HookCallbackInput) bool {
 // task-mode hook exemptions below. A set-but-out-of-bounds path returns
 // ("", false); handleTaskSignal logs that case (it is the one place the
 // path is consumed for a write).
+//
+// The bound holds even in the degenerate no-HOME case where CacheDir()
+// resolves to the relative "tclaude": the producer (session.TaskSignalPath)
+// builds the path from the SAME CacheDir(), so filepath.Rel still contains
+// correctly — and a cross-process anchor mismatch just makes Rel error,
+// failing closed.
 func taskSignalPath() (string, bool) {
 	signalPath := os.Getenv("TCLAUDE_TASK_SIGNAL")
 	if signalPath == "" {
