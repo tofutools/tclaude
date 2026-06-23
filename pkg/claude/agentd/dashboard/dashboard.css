@@ -1,5 +1,17 @@
 
 * { box-sizing: border-box; }
+/* Always reserve the document scrollbar gutter so switching tabs never
+   reflows the page sideways. Every tab except Messages scrolls the page,
+   so a tall tab shows the ~15px vertical scrollbar; the Messages tab pins
+   body to 100vh (see the app-shell height lock below) and scrolls its three
+   panes internally, so it has no page scrollbar at all. Without this, opening
+   Messages reclaims that ~15px and the whole chrome (header + nav/tabs bar)
+   jumps over — the "the UI shifts when I view Messages" bug. overflow-y:scroll
+   keeps the gutter present on every tab, so the switch is a no-op. It only
+   reserves space where the scrollbar is classic (Windows/Linux); overlay
+   scrollbars (macOS) float and never caused the reflow, so this is harmless
+   there. */
+html { overflow-y: scroll; }
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
