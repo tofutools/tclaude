@@ -117,6 +117,29 @@ func isConvTransitionStart(input HookCallbackInput) bool {
 	return false
 }
 
+// inTaskRunnerHook reports whether this hook fired under `tclaude task
+// run`. The task runner sets TCLAUDE_TASK_SIGNAL on every Claude it
+// spawns (the Stop-hook signal channel that drives the hands-free
+// /exit between tasks), and the hook subprocess inherits it — it is the
+// same env var handleTaskSignal already treats as "task mode".
+//
+// Task mode is exempt from the foreign-process guard (and from instant
+// agent-enrollment) because the runner is, by design, a SEQUENCE of
+// independent Claude conversations under ONE env-session: one fresh conv
+// per task in TODO.md. So the tracked conv-id legitimately rotates at
+// every task boundary via a plain SessionStart(source=startup), which is
+// indistinguishable — by conv-id alone — from a foreign one-shot the
+// guard exists to drop. Left guarded, the runner's second task and
+// everything after it lose their hooks (the Stop hook that signals task
+// completion never lands) and the run wedges — the #284 regression
+// Mikael hit. The conv-id-vs-env-session ambiguity is inherent to the
+// guard (its own doc comment notes hook inputs carry no process
+// identity); exempting only task mode keeps the guard fully in force for
+// every interactive agent session, the case #284 actually protects.
+func inTaskRunnerHook() bool {
+	return os.Getenv("TCLAUDE_TASK_SIGNAL") != ""
+}
+
 // needsIdentityMigration reports whether a conv-id rotation on an
 // env-keyed session is a /clear whose agent identity still has to be
 // migrated old → new.
@@ -477,7 +500,13 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// only resets per-env-session compact state and returns before any
 	// status or conv mutation, and it may legitimately arrive carrying
 	// a rotated conv-id.
-	if envSessionID != "" && state.ConvID != "" && input.ConvID != "" &&
+	//
+	// `tclaude task run` is exempt too (inTaskRunnerHook): it drives a
+	// sequence of independent conversations under one env-session — one
+	// fresh conv per task — so its conv-id rotations are legitimate, not
+	// foreign. See inTaskRunnerHook for the full rationale.
+	if !inTaskRunnerHook() &&
+		envSessionID != "" && state.ConvID != "" && input.ConvID != "" &&
 		input.ConvID != state.ConvID &&
 		input.HookEventName != "PostCompact" {
 		if isConvTransitionStart(input) {
@@ -859,8 +888,16 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// INSERT OR IGNORE makes this idempotent and retirement-safe: a conv
 	// the migration above already enrolled, or one the human deliberately
 	// retired, is left untouched (a retired conv is never un-retired).
+	//
+	// `tclaude task run` is exempt: its per-task conversations are
+	// throwaway task executions, not managed agents, and enrolling one
+	// per task would flood the agent roster (and make the conv-advance
+	// above fire a spurious identity migration at every task boundary —
+	// old task conv being "an active agent" is the migration trigger).
+	// The task runner needs only the session row + Stop-hook signal, not
+	// an enrollment. See inTaskRunnerHook.
 	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) &&
-		envSessionID != "" && state.ConvID != "" {
+		envSessionID != "" && state.ConvID != "" && !inTaskRunnerHook() {
 		if err := db.EnrollAgent(state.ConvID, "session-start"); err != nil {
 			slog.Warn("failed to enroll launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")

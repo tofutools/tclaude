@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // TestIsValidRenameTitle pins the session-side mirror of agentd's
@@ -864,4 +866,124 @@ func TestRunHookCallback_NonSessionStartDoesNotEnroll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.EnrollmentNone, post,
 		"only SessionStart instant-enrolls; a mid-turn hook must not")
+}
+
+// taskSignalEnv points TCLAUDE_TASK_SIGNAL at a writable path under
+// CacheDir (the only directory handleTaskSignal accepts) so a test can
+// run hooks "in task mode". It returns the signal-file path. XDG_CACHE_HOME
+// is redirected under the test's temp dir so the run stays hermetic.
+func taskSignalEnv(t *testing.T, tmp string) string {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmp, "cache"))
+	require.NoError(t, os.MkdirAll(common.CacheDir(), 0o755))
+	sig := filepath.Join(common.CacheDir(), "task-signal.json")
+	t.Setenv("TCLAUDE_TASK_SIGNAL", sig)
+	return sig
+}
+
+// The task-runner exemption: `tclaude task run` reuses ONE env-session
+// across a sequence of independent conversations (one per task in
+// TODO.md), so the tracked conv-id legitimately rotates at every task
+// boundary via a plain SessionStart(source=startup). The foreign-process
+// guard would otherwise read that rotation as a foreign one-shot and drop
+// it — wedging the runner on its second task (the #284 regression Mikael
+// reported). With TCLAUDE_TASK_SIGNAL set, the rotation must advance the
+// row instead. This is the exact inverse of
+// TestRunHookCallback_ForeignProcessHooksIgnored, which uses the same
+// setup WITHOUT task mode and asserts the drop.
+func TestRunHookCallback_TaskRunnerConvRotationAdvances(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	taskSignalEnv(t, dir)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "tasks-abc",
+		ConvID: "conv-task1",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "tasks-abc", map[string]any{
+		"session_id":      "conv-task2",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("tasks-abc")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-task2", got.ConvID,
+		"in task mode a fresh-conv SessionStart must advance the tracked conv-id, not be dropped as foreign")
+}
+
+// In task mode the per-task conversations are throwaway task executions,
+// not managed agents: instant enrollment must be skipped so the runner
+// does not flood the agent roster with one enrollment per task (and so the
+// conv-advance above stays a plain advance rather than firing an identity
+// migration every task boundary).
+func TestRunHookCallback_TaskRunnerSessionStartDoesNotEnroll(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	taskSignalEnv(t, dir)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "tasks-xyz",
+		ConvID: "conv-task1",
+		Status: StatusWorking,
+	}))
+
+	feedHook(t, "tasks-xyz", map[string]any{
+		"session_id":      "conv-task2",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	post, err := db.EnrollmentState("conv-task2")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentNone, post,
+		"a task-runner per-task conv must not be instant-enrolled as an agent")
+}
+
+// End-to-end regression for Mikael's symptom: the runner waits on the Stop
+// hook to write the signal file that drives the hands-free /exit between
+// tasks. Pre-fix, task 2's hooks (a fresh conv under the same env-session)
+// were all dropped as foreign, so the Stop signal never landed and the run
+// hung. Here task 2 boots (SessionStart rotates the row) and finishes
+// (Stop) — the signal file must be written with task 2's report.
+func TestRunHookCallback_TaskRunnerStopWritesSignalAfterRotation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	sig := taskSignalEnv(t, dir)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "tasks-run",
+		ConvID: "conv-task1",
+		Status: StatusWorking,
+	}))
+
+	// Task 2 boots under the same env-session with a fresh conv-id.
+	feedHook(t, "tasks-run", map[string]any{
+		"session_id":      "conv-task2",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+	// Task 2 finishes — the Stop hook the runner is waiting on.
+	feedHook(t, "tasks-run", map[string]any{
+		"session_id":             "conv-task2",
+		"hook_event_name":        "Stop",
+		"last_assistant_message": "task 2 done",
+		"cwd":                    dir,
+	})
+
+	data, err := os.ReadFile(sig)
+	require.NoError(t, err, "the Stop hook must write the task signal file")
+	var signal TaskSignal
+	require.NoError(t, json.Unmarshal(data, &signal))
+	assert.Equal(t, "Stop", signal.Event)
+	assert.Equal(t, "conv-task2", signal.SessionID)
+	assert.Equal(t, "task 2 done", signal.Report)
 }
