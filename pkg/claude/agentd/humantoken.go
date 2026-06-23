@@ -74,7 +74,18 @@ func currentOperatorToken() string {
 // humanTokenHeader. Constant-time compare. False when the header is
 // absent, when no token has been generated, or on any mismatch.
 func verifyHumanToken(r *http.Request) bool {
-	got := strings.TrimSpace(r.Header.Get(humanTokenHeader))
+	return operatorTokenMatches(r.Header.Get(humanTokenHeader))
+}
+
+// operatorTokenMatches reports whether got equals the current operator
+// token. Fails closed — false when got is blank (after trimming) or
+// when no token has been generated yet (e.g. tests, or a startup that
+// could not mint one). Constant-time compare so a caller cannot probe
+// the token byte-by-byte through timing. This is the shared predicate
+// behind both the CLI header path (verifyHumanToken) and the dashboard
+// browser-login path (handleDashboardLogin).
+func operatorTokenMatches(got string) bool {
+	got = strings.TrimSpace(got)
 	if got == "" {
 		return false
 	}

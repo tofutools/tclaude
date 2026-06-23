@@ -126,6 +126,22 @@ func AsAgentPeer(r *http.Request, convID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// SetOperatorTokenForTest installs a known operator token so flow tests
+// can exercise the dashboard browser-login path (handleDashboardLogin)
+// without scraping the random startup banner. Returns a restore
+// function tests schedule via t.Cleanup.
+func SetOperatorTokenForTest(tok string) func() {
+	operatorTokenMu.Lock()
+	prev := operatorToken
+	operatorToken = tok
+	operatorTokenMu.Unlock()
+	return func() {
+		operatorTokenMu.Lock()
+		operatorToken = prev
+		operatorTokenMu.Unlock()
+	}
+}
+
 // SetPopupBaseURLForTest overrides the popup base URL so flow tests
 // can reach the X-Tclaude-Ask-Human escalation branch without binding
 // a real loopback HTTP server. Returns a restore function tests can

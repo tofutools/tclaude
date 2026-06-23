@@ -97,6 +97,7 @@ func initDashboardToken() {
 // the human only ever wants one process serving them.
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
+	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
@@ -164,16 +165,16 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// drops out of the URL.
 	if tok := r.URL.Query().Get("init_token"); tok != "" {
 		if !consumeInitToken(tok, initScopeDashboard) {
-			http.Error(w, "invalid or expired init token — reopen the dashboard with `tclaude agent dashboard`", http.StatusForbidden)
+			// Expired/replayed token (e.g. a stale bookmark, or a
+			// browser that lost the race after a daemon restart).
+			// Don't dead-end on plain text — render the sign-in page
+			// so the human can re-authenticate in place.
+			renderDashboardLoginPage(w, http.StatusForbidden,
+				"That dashboard link has expired or was already used.",
+				r.URL.Query().Get("slop") == "1")
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     dashboardCookieName,
-			Value:    dashboardSessionToken,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-		})
+		setDashboardSessionCookie(w)
 		// Preserve the slop param across the redirect — it's purely a
 		// client-side theme switch the dashboard JS reads from the URL,
 		// so it needs to survive the bare-path bounce. Anything else
@@ -195,10 +196,99 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No token, no cookie — refuse. The dashboard is reachable only
-	// through `tclaude agent dashboard` or the agentd tray icon, both
-	// of which mint an init token over a human-authenticated channel.
-	http.Error(w, "dashboard requires an auth token — open it with `tclaude agent dashboard` or the agentd tray icon", http.StatusForbidden)
+	// No token, no (valid) cookie — the common case is a stale cookie
+	// after a daemon restart minted a fresh session token. Instead of a
+	// dead plain-text 403, serve the sign-in page: it points the human
+	// at `tclaude agent dashboard` (the zero-friction, no-secret path)
+	// and also offers an operator-token field so they can sign in from
+	// the browser without switching back to a terminal.
+	renderDashboardLoginPage(w, http.StatusForbidden, "", r.URL.Query().Get("slop") == "1")
+}
+
+// setDashboardSessionCookie writes the long-lived dashboard session
+// cookie. HttpOnly keeps it out of page JS; SameSite=Strict keeps a
+// cross-site navigation from carrying it. Shared by the init-token
+// exchange (handleDashboardRoot) and the operator-token browser login
+// (handleDashboardLogin) so both mint byte-identical cookies.
+func setDashboardSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     dashboardCookieName,
+		Value:    dashboardSessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// handleDashboardLogin is the browser-side operator-token login. It is
+// the POST target of the sign-in page's "paste your operator token"
+// form (renderDashboardLoginPage) and the one place the dashboard
+// session cookie can be minted WITHOUT a single-use init token.
+//
+// SECURITY — why this doesn't widen the agent boundary. The operator
+// token (TCLAUDE_HUMAN_TOKEN, printed only on the agentd startup
+// banner) is the human's credential: a sandboxed agent cannot read the
+// human's environment, so it cannot supply a valid one here, and a
+// NON-sandboxed same-uid process can already read ~/.tclaude directly —
+// so against neither is this a new boundary. It is exactly as strong as
+// the existing operator-token gate (see humantoken.go's threat model).
+// The compare is constant-time and fails closed when no operator token
+// was ever minted (operatorTokenMatches), so an agentd that could not
+// mint one never accepts a login.
+//
+// CSRF: a cross-site page cannot read the operator token, so it cannot
+// forge a valid POST; we additionally pin Origin/Referer to our own
+// loopback base URL (same check as /api/*) as defense-in-depth.
+func handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if dashboardSessionToken == "" {
+		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
+		return
+	}
+	slop := r.URL.Query().Get("slop") == "1"
+	if !checkLoginOrigin(r) {
+		renderDashboardLoginPage(w, http.StatusForbidden,
+			"Request blocked: it didn't come from the dashboard page.", slop)
+		return
+	}
+	if !operatorTokenMatches(r.FormValue("token")) {
+		// Uniform message for "blank", "wrong", and "no token was ever
+		// minted" — never disclose which, and never echo the input back.
+		renderDashboardLoginPage(w, http.StatusForbidden,
+			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).", slop)
+		return
+	}
+	setDashboardSessionCookie(w)
+	// 303 to the bare path: a refresh now rides the cookie, and the
+	// posted token never lingers in history or an access log.
+	redirectTarget := "/"
+	if slop {
+		redirectTarget += "?slop=1"
+	}
+	http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
+}
+
+// checkLoginOrigin pins the login POST to our own loopback origin. A
+// browser sends Origin on a same-origin POST and Referer on the form
+// navigation; we accept the request when either matches popupBaseURL.
+// When popupBaseURL is unset (some test setups) the pin is a no-op —
+// the operator-token compare is the real gate, this is belt-and-braces.
+func checkLoginOrigin(r *http.Request) bool {
+	if popupBaseURL == "" {
+		return true
+	}
+	if o := r.Header.Get("Origin"); o != "" {
+		return strings.HasPrefix(o, popupBaseURL)
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return strings.HasPrefix(ref, popupBaseURL)
+	}
+	// Neither header present: a real same-origin browser form POST
+	// always sends at least one, so treat the absence as suspicious.
+	return false
 }
 
 // handleDashboardOpen mints a fresh dashboard init token and returns
