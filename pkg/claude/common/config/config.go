@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1084,11 +1085,15 @@ func Validate(c *Config) []string {
 		} else if _, port, err := net.SplitHostPort(r.Bind); err != nil {
 			// A non-empty bind must be a host:port the listener can actually
 			// bind to — net.Listen("tcp", …) needs the port. Catch a missing
-			// or non-numeric port here (as a clean save-time error) rather
-			// than letting startRemoteServer fail at boot and only log it.
+			// port here (as a clean save-time error) rather than letting
+			// startRemoteServer fail at boot and only log it.
 			errs = append(errs, fmt.Sprintf("remote_access.bind %q is not a valid host:port (e.g. 0.0.0.0:8443): %v", r.Bind, err))
-		} else if _, perr := net.LookupPort("tcp", port); perr != nil {
-			errs = append(errs, fmt.Sprintf("remote_access.bind %q has an invalid port %q; use a number 1–65535", r.Bind, port))
+		} else if n, perr := strconv.Atoi(port); perr != nil || n < 1 || n > 65535 {
+			// Require an explicit numeric port the operator can dial. A named
+			// service ("https") or 0 would technically listen — but 0 binds a
+			// random OS-assigned port nobody can reach by URL, and a name is a
+			// surprise; reject both so the configured port is the one served.
+			errs = append(errs, fmt.Sprintf("remote_access.bind %q needs a numeric port 1–65535 (got %q)", r.Bind, port))
 		}
 	}
 

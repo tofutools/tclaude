@@ -141,7 +141,13 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		}, "not a valid host:port"},
 		{"remote access bind out-of-range port", func(c *Config) {
 			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:99999"}
-		}, "invalid port"},
+		}, "numeric port"},
+		{"remote access bind zero port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:0"}
+		}, "numeric port"},
+		{"remote access bind named port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:https"}
+		}, "numeric port"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
