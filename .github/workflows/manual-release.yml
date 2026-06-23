@@ -62,8 +62,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Cap package-level parallelism at 2 (-p 2) to match ci.yml; see the rationale there.
       - name: Run tests
-        run: go test ./...
+        run: go test -p 2 ./...
 
   # Version generation only computes the next number (read-only); it runs in
   # parallel with test/lint/build. The git tag is pushed later, by the release
