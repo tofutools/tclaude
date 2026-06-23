@@ -42,7 +42,10 @@ func startPopupServer() (*http.Server, string) {
 	initDashboardToken()
 	registerDashboardRoutes(mux)
 	srv := &http.Server{
-		Handler:           mux,
+		// auditRequests records dashboard commands (spawn, message,
+		// lifecycle, …) to the audit log; non-command routes (/, /static,
+		// /approve, the snapshot poll) fall through unmatched. See audit.go.
+		Handler:           auditRequests(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

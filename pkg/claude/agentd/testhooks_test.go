@@ -19,6 +19,13 @@ func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }
 
+// RunAuditLogCleanupForTest runs one audit-log retention sweep
+// synchronously (the same work startAuditLogCleanup does on its timer),
+// so a flow test can drive the prune without starting the goroutine or
+// waiting its interval. It reads the retention from the test HOME's
+// config.json, defaulting to DefaultAuditRetentionDays.
+func RunAuditLogCleanupForTest(now time.Time) { runAuditLogCleanup(now) }
+
 // SetBranchHistoryPREnrichmentForTest flips the conv_branch_history PR
 // enrichment gate, which production leaves off by default. A test that
 // wants refreshBranchLink to stamp resolved PRs onto the history table
@@ -166,7 +173,9 @@ func BuildDashboardHandlerForTest() http.Handler {
 	initDashboardToken()
 	mux := http.NewServeMux()
 	registerDashboardRoutes(mux)
-	return &dashTestHandler{inner: mux}
+	// Wrap with auditRequests exactly as the production popup server does,
+	// so flow tests exercise the dashboard audit-capture path too.
+	return &dashTestHandler{inner: auditRequests(mux)}
 }
 
 // RegisterDashboardRoutesForTest exposes registerDashboardRoutes

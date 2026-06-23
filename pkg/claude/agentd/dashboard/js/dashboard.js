@@ -39,6 +39,7 @@ import {
 import { bindConfigTab } from './config.js';
 import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab } from './costs.js';
+import { bindAuditTab } from './audit.js';
 import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
@@ -113,6 +114,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindConfigTab();
   bindPluginsUI();
   bindCostsTab();
+  bindAuditTab();
   initMail();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the

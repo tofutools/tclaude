@@ -61,6 +61,40 @@ type Config struct {
 	// constants (DefaultAskModel + DefaultAskEffort); see
 	// ResolvedAskProfile.
 	Ask *AskConfig `json:"ask,omitempty"`
+
+	// Audit holds the audit-log retention policy (JOH-268). Absent block /
+	// absent keys fall back to the built-in default — see
+	// ResolvedAuditRetentionDays.
+	Audit *AuditConfig `json:"audit,omitempty"`
+}
+
+// AuditConfig configures the agentd audit log — the persistent trail of
+// daemon-proxied tclaude commands surfaced on the dashboard's Audit tab.
+type AuditConfig struct {
+	// RetentionDays is how many days of audit rows to keep; the daemon's
+	// periodic cleanup prunes anything older. 0 / absent means the
+	// built-in default (DefaultAuditRetentionDays). A negative value
+	// disables pruning (keep forever) — see ResolvedAuditRetentionDays.
+	RetentionDays int `json:"retention_days,omitempty"`
+}
+
+// DefaultAuditRetentionDays is the out-of-box audit-log retention window
+// when config.json pins none — 30 days of command history is a useful
+// trail without letting the table grow without bound.
+const DefaultAuditRetentionDays = 30
+
+// ResolvedAuditRetentionDays returns the effective audit-log retention in
+// days, and whether pruning is enabled. A configured negative value means
+// "keep forever" (enabled=false); 0 / absent means the built-in default.
+// Nil-safe so callers need no guard.
+func (c *Config) ResolvedAuditRetentionDays() (days int, prune bool) {
+	if c == nil || c.Audit == nil || c.Audit.RetentionDays == 0 {
+		return DefaultAuditRetentionDays, true
+	}
+	if c.Audit.RetentionDays < 0 {
+		return 0, false // keep forever
+	}
+	return c.Audit.RetentionDays, true
 }
 
 // AskConfig is the persistent default profile for `tclaude ask` (project

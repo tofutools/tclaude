@@ -581,6 +581,34 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 }
 .tag.default { border-color: #1f6feb; color: #58a6ff; }
 .tag.slug.deny { border-color: #da3633; color: #ff7b72; }
+
+/* Audit tab — the command trail. The verb is a monospace chip coloured
+   by family (create / destructive / elevation); the "operator" chip
+   marks a human-run command. */
+.audit-verb {
+  display: inline-block; padding: 2px 8px; border-radius: 12px;
+  font-size: 11px; font-family: ui-monospace, monospace;
+  background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
+}
+.audit-verb.create { border-color: #238636; color: #3fb950; }
+.audit-verb.danger { border-color: #da3633; color: #ff7b72; }
+.audit-verb.elevate { border-color: #9e6a03; color: #d29922; }
+.audit-actor.human {
+  display: inline-block; padding: 1px 8px; border-radius: 12px;
+  font-size: 11px; border: 1px solid #1f6feb; color: #58a6ff;
+}
+.audit-table td { vertical-align: top; }
+/* Keep a long detail string on one line — the full text is on the title
+   tooltip, so the table stays scannable. */
+.audit-table td .muted {
+  display: inline-block; max-width: 48ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  vertical-align: bottom;
+}
+.filter-bar label.filter-toggle select {
+  background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
+}
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
