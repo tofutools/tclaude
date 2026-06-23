@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -1069,8 +1069,9 @@ function bindAgentSpawnModal() {
   });
   // Attachments: the "📎 Attach files" button opens the hidden native picker;
   // its change event adds the chosen files (then resets value so re-picking the
-  // same file fires change again). Pasting an image anywhere in the dialog
-  // captures it as a PNG. The list's × buttons remove entries (delegated).
+  // same file fires change again). Pasting a file/screenshot or dragging files
+  // from Finder/Explorer onto the dialog adds them too. The list's × buttons
+  // remove entries (delegated).
   $('#agent-spawn-attach-btn').addEventListener('click', () => $('#agent-spawn-attach-input').click());
   $('#agent-spawn-attach-input').addEventListener('change', (e) => {
     addSpawnAttachments(e.target.files);
@@ -1082,6 +1083,34 @@ function bindAgentSpawnModal() {
     const btn = e.target.closest('.att-remove');
     if (btn) removeSpawnAttachment(Number(btn.dataset.attId));
   });
+  // "Browse…" buttons beside CWD and Worktree-repo open the daemon's
+  // native directory picker. We set the value then dispatch a synthetic
+  // `input` event so the field's own listeners above run exactly as if
+  // the human had typed — CWD still mirrors into Worktree-repo, and
+  // both still re-list worktrees.
+  const wireSpawnBrowse = (btnId, inputId, title) => {
+    const btn = $('#' + btnId);
+    const input = $('#' + inputId);
+    if (!btn || !input) return;
+    btn.addEventListener('click', async () => {
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Opening…';
+      try {
+        const res = await pickDirectory({ startDir: input.value.trim(), title });
+        if (res.error) { toast(res.error, true); return; }
+        if (res.canceled) return;
+        input.value = res.path;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    });
+  };
+  wireSpawnBrowse('agent-spawn-cwd-browse', 'agent-spawn-cwd', 'Select the working directory');
+  wireSpawnBrowse('agent-spawn-wt-repo-browse', 'agent-spawn-wt-repo', 'Select the git repo to worktree');
   bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);
 }
 

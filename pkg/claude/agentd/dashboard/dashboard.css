@@ -988,6 +988,11 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-default-cwd:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-default-cwd.unset { color: #484f58; font-style: italic; }
 .group-default-cwd.unset:hover { color: #d4d4d4; }
+/* The 📁 icon is its own click target inside the chip: clicking it opens
+   the native directory picker, while clicking the text beside it still
+   inline-edits the path. A subtle hover highlight signals it's separate. */
+.group-default-cwd .gdc-pick { cursor: pointer; border-radius: 3px; padding: 0 2px; }
+.group-default-cwd .gdc-pick:hover { background: rgba(88, 166, 255, 0.22); }
 .group-default-cwd-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
@@ -1625,6 +1630,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   min-height: 80px; max-height: 220px; resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* "Browse…" button that sits beside a path input and asks the daemon to
+   open a native directory picker. align-self:stretch makes it match the
+   adjacent input's height in the flex row. */
+.cron-create-row .dir-browse-btn {
+  flex: 0 0 auto; align-self: stretch;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; font-family: inherit; font-size: 12px;
+  padding: 0 12px; cursor: pointer; white-space: nowrap;
+}
+.cron-create-row .dir-browse-btn:hover { background: #2d333b; }
+.cron-create-row .dir-browse-btn:disabled { opacity: 0.5; cursor: default; }
 /* Live per-option help under a spawn-dialog control (e.g. the Sandbox
    selector): a muted one-liner that updates with the selection. The "warn"
    variant flags an option with a caveat the operator should notice — for the

@@ -4,7 +4,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. Owns
 // renameEditing — the inline-rename-open flag refreshSuspended consults.
 
-import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
+import { $, $$, shortId, groupOfflineOverride, pickDirectory } from './helpers.js';
 import { renderGroupsTab, renderSudoTab } from './tabs.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, setDashDefaultProfile } from './profiles.js';
@@ -839,6 +839,25 @@ function bindRowActions() {
             if (renameEditing) restore();
           });
           return; // Skip the default refresh; commit() / restore() handle it.
+        }
+        case 'pick-group-dir': {
+          // Click the 📁 icon → open the daemon's native directory
+          // picker and save the choice as the group's default spawn dir
+          // (PATCH /api/groups/{name}). The text beside it stays a
+          // click-to-edit text field via set-group-dir below.
+          const startDir = btn.getAttribute('data-cwd') || '';
+          const res = await pickDirectory({ startDir, title: `Default spawn directory for "${group}"` });
+          if (res.canceled) return;
+          if (res.error) { toast(`pick dir failed: ${res.error}`, true); return; }
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ default_cwd: res.path }),
+          });
+          if (!r.ok) { toast(`set dir failed: ${await r.text()}`, true); return; }
+          toast(`${group}: default dir → ${res.path}`);
+          refresh();
+          return;
         }
         case 'set-group-dir': {
           // Inline edit of the group's default spawn directory.

@@ -832,6 +832,7 @@
     <label class="cron-create-row">
       <span class="cron-create-label">Default cwd</span>
       <input id="group-create-cwd" type="text" placeholder="optional — absolute path (~ OK) pre-filled when spawning agents into this group" autocomplete="off" spellcheck="false" />
+      <button id="group-create-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
@@ -1390,11 +1391,13 @@
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>
       <input id="agent-spawn-cwd" type="text" placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
+      <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree repo</span>
       <input id="agent-spawn-wt-repo" type="text" list="agent-spawn-subrepo-list" placeholder="git repo to worktree — defaults to CWD; for a monorepo, pick a sub-repo" autocomplete="off" spellcheck="false" />
       <datalist id="agent-spawn-subrepo-list"></datalist>
+      <button id="agent-spawn-wt-repo-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree</span>
