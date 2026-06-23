@@ -2025,8 +2025,7 @@ func buildSpawnAttachmentsSection(attachments []string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "Attached files (uploaded with this spawn — read them with your file tools):\n\n" +
-		strings.Join(lines, "\n")
+	return "Attached files:\n\n" + strings.Join(lines, "\n")
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
