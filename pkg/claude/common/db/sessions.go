@@ -730,8 +730,12 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 // billing mode; the statusbar hook records it HERE (not via UpdateSessionCost)
 // when the session runs on a SUBSCRIPTION — i.e. the statusline carries
 // rate-limit buckets, the inverse of UpdateSessionCost's gate. So a given
-// session populates virtual_cost_usd or cost_usd, never both, and the Costs
-// tab's WHAT-IF view runs the same per-day delta walk over the virtual column
+// session normally populates virtual_cost_usd or cost_usd, not both (billing
+// mode is stable per account); the rare exception is an account whose
+// rate-limit state flips mid-session, which could leave both columns
+// non-zero — harmless, since the two delta walks read one column each and
+// HasAnyRealCost lets real spend win for tab visibility. The Costs tab's
+// WHAT-IF view runs the same per-day delta walk over the virtual column
 // that the real view runs over cost_usd. The recorded figure is hypothetical
 // ("what this would have cost on pay-per-token"), never a real charge — the
 // dashboard only surfaces it behind the cost.show_on_subscription opt-in.
@@ -789,9 +793,10 @@ type CostDailyRow struct {
 	CostUSD   float64 // cumulative within the session as of that day
 	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the cumulative
 	// pay-per-token-equivalent cost captured on a subscription session
-	// (see UpdateSessionVirtualCost). Mutually exclusive with CostUSD per
-	// session — one is populated, the other stays 0 — so the Costs tab's
-	// WHAT-IF view runs the same delta walk over this column.
+	// (see UpdateSessionVirtualCost). Normally exclusive with CostUSD per
+	// session — one is populated, the other 0 — so the Costs tab's WHAT-IF
+	// view runs the same delta walk over this column. (See
+	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
 	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
 }

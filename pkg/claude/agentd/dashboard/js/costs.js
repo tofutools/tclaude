@@ -45,6 +45,10 @@ const SPANS = [
 
 let currentSpan = 'month';
 let lastFetchedAt = 0;
+// The WHAT-IF mode the last load fetched under. A flip (the opt-in toggled,
+// or real spend appearing) must reload immediately so the chart/table/banner
+// match the new mode rather than waiting out the slow re-poll.
+let lastLoadedWhatIf = false;
 // Monotonic fetch counter: rapid span flips (or a tab click racing a
 // span change) can land responses out of order, and a stale response
 // must never repaint the UI for a span the user has already left.
@@ -337,6 +341,7 @@ async function loadCosts() {
   // — the server flags it on the snapshot. Source the hypothetical
   // pay-per-token-equivalent figures (virtual_cost_usd) and show the banner.
   const whatif = !!(lastSnapshot && lastSnapshot.cost_tab_whatif);
+  lastLoadedWhatIf = whatif;
   const banner = $('#costs-whatif-banner');
   if (banner) banner.hidden = !whatif;
   try {
@@ -492,7 +497,12 @@ function bindCostsTab() {
   }
   syncFillToggle();
   document.addEventListener('tclaude:snapshot', () => {
-    if (costsTabActive() && Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
+    if (!costsTabActive()) return;
+    // Reload immediately when the WHAT-IF mode flips (so the chart/table/banner
+    // never lag the body.cost-whatif class applyCostTabVisibility just set);
+    // otherwise honour the slow re-poll.
+    const whatif = !!(lastSnapshot && lastSnapshot.cost_tab_whatif);
+    if (whatif !== lastLoadedWhatIf || Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
   });
   // The top-bar "api" cost token (render.js) carries data-goto-tab=
   // "costs". Clicking it opens this tab exactly as the nav button does:

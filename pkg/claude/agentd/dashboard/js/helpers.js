@@ -467,8 +467,8 @@ function harnessLine(m) {
   // subscription session (virtual_cost_usd). Rendered as a separate span
   // flagged hypothetical (≈) and CSS-hidden unless body.cost-whatif — the
   // dashboard is in WHAT-IF mode (the cost.show_on_subscription opt-in is
-  // on). Real and virtual are mutually exclusive per agent, so at most one
-  // of the two cost spans below ever carries a value. body.agent-cost-hidden
+  // on). Real and virtual are normally exclusive per agent, so at most one
+  // of the two cost spans below carries a value. body.agent-cost-hidden
   // (the Groups-tab 💲 toggle) suppresses both via CSS.
   const vcost = Number((m && m.state && m.state.virtual_cost_usd) || 0);
   let tip = `Harness: ${labels.long} — Model: ${model}`;

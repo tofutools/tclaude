@@ -444,9 +444,10 @@ func migrate(db *sql.DB) error {
 //     statusline render regardless of billing mode; on a subscription the
 //     statusbar discarded it before (the display gate is the subscription's
 //     rate-limit buckets), so this column captures it instead — "what this
-//     session WOULD have cost on pay-per-token". Real and virtual are mutually
-//     exclusive per render (a session is either pay-per-token or subscription),
-//     so a given session populates one column, never both.
+//     session WOULD have cost on pay-per-token". A session normally writes
+//     just one of the two columns (billing mode is stable per account); only
+//     a mid-session billing-state flip could touch both, which the two
+//     independent delta walks tolerate.
 //   - session_cost_daily.virtual_cost_usd — the same value snapshotted onto the
 //     per-(session, day) row, so the Costs tab's WHAT-IF view recovers per-day
 //     deltas exactly as the real-cost view does over cost_usd.
