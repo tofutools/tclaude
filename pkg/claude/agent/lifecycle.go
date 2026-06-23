@@ -145,6 +145,41 @@ func isValidInitialMessage(s string) bool {
 	return true
 }
 
+// MaxSpawnNameLen caps an agent's spawn name. It matches the rename
+// title's 64-char display cap (a spawn name becomes the conversation
+// title via the post-spawn /rename injection), so a name that clears
+// this also clears the daemon's downstream isValidRenameTitle gate.
+// Both the client-side validator here and the daemon-side one
+// (agentd/handlers.go) share this constant so their caps stay identical.
+const MaxSpawnNameLen = 64
+
+// isValidSpawnName mirrors the daemon-side isValidSpawnName check
+// (agentd/handlers.go). It enforces the agent-name charset at the spawn
+// boundary: ASCII letters, digits, '_' and '-' only — no spaces,
+// punctuation, or unicode. An empty name is valid (the name is optional;
+// the agent gets an auto-generated label). This is intentionally
+// stricter than isValidRenameTitle: a spawn name doubles as a git
+// worktree branch name (the dashboard's name→branch sync), so it must be
+// a safe branch token, and the strict set is a clean subset of the
+// rename charset so a non-empty validated name always clears the
+// downstream /rename gate.
+func isValidSpawnName(name string) bool {
+	if len(name) > MaxSpawnNameLen {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // runSlashWithOptionalTarget dispatches to either the self endpoint
 // (/v1/whoami/{verb}) or the cross-agent endpoint (/v1/agent/{target}/{verb})
 // based on whether target is set. The cross-agent path doesn't honour

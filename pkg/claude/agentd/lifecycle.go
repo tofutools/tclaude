@@ -684,6 +684,22 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Reject an invalid agent name at the boundary rather than silently
+	// dropping it downstream (executeSpawn only applies a name that clears
+	// isValidRenameTitle). An empty name stays valid — the agent gets an
+	// auto-generated label; a non-empty one must be a safe token. The CLI
+	// (agent.isValidSpawnName) and dashboard mirror this, but this is the
+	// authoritative gate every spawn surface ultimately passes through.
+	body.Name = strings.TrimSpace(body.Name)
+	if !isValidSpawnName(body.Name) {
+		writeError(w, http.StatusBadRequest, "invalid_name",
+			fmt.Sprintf("name must be 1-%d characters from [A-Za-z0-9_-] (letters, "+
+				"digits, underscore, dash); spaces, punctuation, and unicode are not "+
+				"allowed (the name doubles as a git worktree branch name and becomes "+
+				"the conversation title)", agent.MaxSpawnNameLen))
+		return
+	}
+
 	// Attachment paths (uploaded files / pasted screenshots from the dashboard's
 	// /api/spawn-attachments endpoint) are folded into the startup briefing as an
 	// "Attached files" section. Clean + bound them the same way as the initial

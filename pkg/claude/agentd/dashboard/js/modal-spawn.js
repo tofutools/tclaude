@@ -849,6 +849,16 @@ async function submitAgentSpawn() {
     errEl.textContent = 'group is required';
     return;
   }
+  // Reject an invalid name client-side so the human gets an inline error
+  // instead of a round-trip 400. An empty name is fine (the agent gets an
+  // auto-generated label); a non-empty one must be a safe token. Mirrors
+  // the daemon's isValidSpawnName gate (agentd/handlers.go) — the name
+  // doubles as a git worktree branch name and becomes the conversation
+  // title, so only [A-Za-z0-9_-], 1–64 chars, are allowed.
+  if (name && !/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+    errEl.textContent = 'name may use only letters, digits, underscore and dash (max 64 chars)';
+    return;
+  }
   // Persist the checkbox so the human's choice sticks across spawns.
   try { dashPrefs.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
   // Remember this model's effort so re-selecting the model in a later
