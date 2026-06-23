@@ -11,8 +11,8 @@
 //   3. On `ready` it triggers a browser download of the artifact, swaps the
 //      spinner for a success line, and offers a "Download again" button.
 //      On `failed` it shows the reason. The user can Close at any point — the
-//      job keeps running server-side and the artifact persists (TTL) for a
-//      later re-download via the row's menu.
+//      job keeps running server-side. Re-opening the action starts a FRESH
+//      export, so a conversation that has gained context exports the new state.
 
 import { $, shortId, bindModalSubmitHotkey } from './helpers.js';
 import { toast, bindBackdropDiscard } from './refresh.js';
@@ -179,7 +179,7 @@ function startPoll(jobId) {
           : 'Waiting for the agent to pick up the request…');
         if (Date.now() - startedAt > SLOW_NOTE_AFTER_MS) {
           $('#export-agent-status-note').textContent =
-            'Still working — the agent may be busy with another task. You can close this; the file will be ready to download from the agent’s menu when it lands.';
+            'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.';
         }
       } else if (r.status === 404) {
         onExportFailed({ error: 'the export job is no longer available' });

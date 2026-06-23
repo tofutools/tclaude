@@ -73,27 +73,6 @@ func TestExportJobFailFromRequested(t *testing.T) {
 	assert.Equal(t, "the agent did not respond", got.Error)
 }
 
-func TestLatestExportJobForConv(t *testing.T) {
-	setupTestDB(t)
-	assertNil, err := LatestExportJobForConv("nobody")
-	require.NoError(t, err)
-	assert.Nil(t, assertNil)
-
-	_, err = InsertExportJob(&ExportJob{ConvID: "c1", Title: "first"})
-	require.NoError(t, err)
-	id2, err := InsertExportJob(&ExportJob{ConvID: "c1", Title: "second"})
-	require.NoError(t, err)
-	// A job for a different conv must not be picked.
-	_, err = InsertExportJob(&ExportJob{ConvID: "c2", Title: "other"})
-	require.NoError(t, err)
-
-	latest, err := LatestExportJobForConv("c1")
-	require.NoError(t, err)
-	require.NotNil(t, latest)
-	assert.Equal(t, id2, latest.ID, "latest by id, not created_at")
-	assert.Equal(t, "second", latest.Title)
-}
-
 func TestListStaleExportJobs(t *testing.T) {
 	setupTestDB(t)
 

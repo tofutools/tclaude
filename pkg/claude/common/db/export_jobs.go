@@ -172,30 +172,6 @@ func FailExportJob(id int64, reason string) (bool, error) {
 	return n > 0, nil
 }
 
-// LatestExportJobForConv returns the most recent job for a conversation (by id,
-// = insertion order), or nil when the conv has none. Used by the snapshot to
-// render a per-row export badge. Never orders by created_at — the RFC3339Nano
-// lexical-sort hazard (see ListHumanMessages).
-func LatestExportJobForConv(convID string) (*ExportJob, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	row := d.QueryRow(`
-		SELECT id, conv_id, group_name, title, instructions, preset, status, error,
-		       artifact_path, artifact_name, artifact_size, content_type,
-		       created_at, updated_at
-		FROM export_jobs WHERE conv_id = ? ORDER BY id DESC LIMIT 1`, convID)
-	j, err := scanExportJob(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return j, nil
-}
-
 // ListStaleExportJobs returns jobs whose updated_at is older than `before` —
 // the cleanup sweep's input. `terminalOnly` selects only ready/failed jobs
 // (TTL prune of finished work + its artifacts); when false it returns every

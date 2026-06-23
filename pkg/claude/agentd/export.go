@@ -427,8 +427,10 @@ func sanitizeExportFilename(name string) string {
 	name = strings.TrimSpace(name)
 	// Take the base only — kill any directory components (incl. Windows "\").
 	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	// Drop path separators, NUL, control chars, and the quote/semicolon that
+	// would break the Content-Disposition header this name is interpolated into.
 	name = strings.Map(func(r rune) rune {
-		if r == '/' || r == 0 || unicode.IsControl(r) {
+		if r == '/' || r == 0 || r == '"' || r == ';' || unicode.IsControl(r) {
 			return -1
 		}
 		return r
@@ -438,8 +440,10 @@ func sanitizeExportFilename(name string) string {
 	if name == "" || name == "." || name == ".." {
 		return "export.zip"
 	}
-	if len(name) > 200 {
-		name = name[:200]
+	// Bound the length on rune boundaries so truncation never splits a
+	// multi-byte character into invalid UTF-8.
+	if r := []rune(name); len(r) > 200 {
+		name = string(r[:200])
 	}
 	return name
 }

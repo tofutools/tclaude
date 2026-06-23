@@ -41,6 +41,8 @@ func TestSanitizeExportFilename(t *testing.T) {
 		{"..", "export.zip"},
 		{"a/b/c.md", "c.md"},
 		{"with\nnewline.md", "withnewline.md"},
+		{`foo".zip`, "foo.zip"},      // quote would break Content-Disposition
+		{"a;b.md", "ab.md"},          // semicolon too
 	}
 	for _, c := range cases {
 		if got := sanitizeExportFilename(c.in); got != c.want {
