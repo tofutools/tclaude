@@ -416,6 +416,49 @@
       </div>
     </div>
 
+    <div class="cfg-section">
+      <h3>Remote access</h3>
+      <p class="cfg-hint" style="padding-left:0">
+        Expose this <strong>dashboard</strong> to your phone or another machine over the
+        network (LAN / mesh VPN / tunnel), behind <strong>mTLS (a client certificate) +
+        a passphrase</strong>. A <em>separate</em> HTTPS listener — the loopback dashboard
+        you're using now is never weakened. See <a href="https://github.com/tofutools/tclaude/blob/main/docs/remote-access.md" target="_blank" rel="noopener">docs/remote-access.md</a>.
+      </p>
+      <div class="cfg-field">
+        <span class="cfg-label">Prerequisite</span>
+        <span class="cfg-hint" style="padding-left:0">
+          First generate the certificates + passphrase on the host (one time) — this also
+          writes the first device's <code>.p12</code> to install on your phone:
+          <br><code>tclaude remote-access setup --bind 0.0.0.0:8443</code><br>
+          The toggle below only takes effect once that material exists; enabling without it
+          is a no-op. Add more devices later with <code>tclaude remote-access add-client &lt;name&gt;</code>.
+        </span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Remote dashboard</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-remote-enabled" /> enabled</label>
+        <span class="cfg-hint">Off by default. Starting / stopping the listener takes effect after an <strong>agentd restart</strong>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Listen interface</span>
+        <input type="text" id="cfg-remote-host" list="cfg-remote-host-list" placeholder="0.0.0.0" aria-label="Remote access listen interface" autocomplete="off" spellcheck="false" style="min-width:160px" />
+        <datalist id="cfg-remote-host-list">
+          <option value="0.0.0.0">all interfaces — LAN</option>
+          <option value="127.0.0.1">loopback only — behind a tunnel</option>
+        </datalist>
+        <span class="cfg-hint"><code>0.0.0.0</code> = reachable on the LAN; a tailnet interface IP for a mesh VPN; <code>127.0.0.1</code> when a tunnel (Cloudflare / ngrok) terminates the cert. Empty = <code>0.0.0.0</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">HTTPS port</span>
+        <input type="number" id="cfg-remote-port" min="1" max="65535" placeholder="8443" aria-label="Remote access HTTPS port" style="min-width:120px" />
+        <span class="cfg-hint">The port the remote dashboard listens on. Dial <code>https://&lt;host&gt;:&lt;port&gt;</code> from the device.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Status</span>
+        <span class="cfg-remote-status" id="cfg-remote-status"></span>
+      </div>
+    </div>
+
     <datalist id="cfg-slug-list"></datalist>
     <datalist id="cfg-group-list"></datalist>
     <datalist id="cfg-state-list">

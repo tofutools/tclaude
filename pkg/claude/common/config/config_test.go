@@ -135,6 +135,21 @@ func TestValidate_RejectsBadValues(t *testing.T) {
 		{"negative log rotation keep", func(c *Config) {
 			c.LogRotation = &LogRotationConfig{Keep: -3}
 		}, "log_rotation.keep"},
+		{"remote access enabled without bind", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true}
+		}, "remote_access.bind is empty"},
+		{"remote access bind without port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0"}
+		}, "not a valid host:port"},
+		{"remote access bind out-of-range port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:99999"}
+		}, "numeric port"},
+		{"remote access bind zero port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:0"}
+		}, "numeric port"},
+		{"remote access bind named port", func(c *Config) {
+			c.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:https"}
+		}, "numeric port"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,6 +172,26 @@ func TestValidate_DashboardPort(t *testing.T) {
 	zero := DefaultConfig()
 	zero.Agent = &AgentConfig{DashboardPort: 0}
 	assert.Empty(t, Validate(zero), "0 (random port) must validate")
+}
+
+// Remote-access bind validation only bites while the listener is ENABLED:
+// a complete host:port passes, and a half-typed bind left behind on a
+// DISABLED block is tolerated (nothing starts, so it can't block an
+// unrelated save) — mirroring the context-nudge "validate-only-when-enabled"
+// rule.
+func TestValidate_RemoteAccessBind(t *testing.T) {
+	valid := DefaultConfig()
+	valid.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "0.0.0.0:8443"}
+	assert.Empty(t, Validate(valid), "enabled + a valid host:port must validate")
+
+	ipv6 := DefaultConfig()
+	ipv6.RemoteAccess = &RemoteAccessConfig{Enabled: true, Bind: "[::]:8443"}
+	assert.Empty(t, Validate(ipv6), "an IPv6 host:port must validate")
+
+	disabledMalformed := DefaultConfig()
+	disabledMalformed.RemoteAccess = &RemoteAccessConfig{Enabled: false, Bind: "0.0.0.0"}
+	assert.Empty(t, Validate(disabledMalformed),
+		"a malformed bind while disabled is harmless and must not block a save")
 }
 
 // A clone cooldown of "0" disables the cooldown and must validate — it

@@ -176,6 +176,7 @@ Session watch also supports:
 - [Agent Coordination](agent.md) - Cross-session messaging, groups, lifecycle, and scheduling via `tclaude agent` + `agentd` (**experimental**)
 - [Agent Dashboard](dashboard.md) - Browser operations console for the agent system (**experimental**)
 - [Remote Control](remote-control.md) - Drive agents from your phone via Claude Code's built-in Remote Access; arm at spawn, default per profile/group (**Claude Code only**)
+- [Remote Access](remote-access.md) - Reach the fleet dashboard over the network (LAN/mesh/tunnel) behind mTLS + a passphrase (**experimental**)
 - [Sandboxing Agents](sandbox-hardening.md) - Operator guide: lock down the Claude Code sandbox so `agentd`'s coordination guardrail holds
 - [Git Worktrees](worktrees.md) - Parallel development with multiple branches
 - [OS Notifications](notifications.md) - Get notified when sessions need attention

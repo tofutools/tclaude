@@ -18,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -153,6 +154,15 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	// Remote (mTLS + passphrase) requests are authenticated at the remote
+	// listener's boundary; serve the page directly without the loopback
+	// init-token / cookie exchange (which is the loopback path's concern).
+	if dashboardPreAuthed(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(dashboardIndexHTML)
 		return
 	}
 	if dashboardSessionToken == "" {
@@ -376,6 +386,14 @@ func autoLaunchDashboard(slop bool) {
 // /api/* call when the dashboard token isn't set (cryptographic
 // randomness failed at startup).
 func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
+	// The remote (mTLS + passphrase) listener authenticates at its own
+	// boundary (remoteAuthMiddleware) and tags the request; such requests
+	// have already cleared a STRONGER bar than the loopback cookie, so accept
+	// them without the loopback cookie/Origin checks (which pin to the
+	// loopback base URL and would never match a remote origin).
+	if dashboardPreAuthed(r) {
+		return true
+	}
 	ok, code, msg := dashboardAuthResult(r)
 	if !ok {
 		http.Error(w, msg, code)
@@ -517,6 +535,32 @@ type snapshotPayload struct {
 	// than real spend — the front-end renders the WHAT-IF banner and fetches
 	// /api/costs?whatif=1. Implies CostTabVisible.
 	CostTabWhatIf bool `json:"cost_tab_whatif"`
+	// RemoteAccess surfaces the optional network-exposed dashboard listener's
+	// live state so the Config tab can guide setup: whether the cert/passphrase
+	// material has been generated (run `tclaude remote-access setup` first) and
+	// whether THIS agentd already has the listener running. config.json carries
+	// the saved intent; this carries the live reality so the UI can flag a
+	// "no material yet" foot-gun and a "restart agentd to apply" pending state.
+	RemoteAccess dashboardRemoteAccess `json:"remote_access"`
+}
+
+// dashboardRemoteAccess is the snapshot view of the remote-access feature's
+// runtime state — distinct from the config.json `remote_access` block the
+// Config tab edits (delivered via /api/config). The dashboard reads this to
+// render accurate status next to the toggle without a second round-trip.
+type dashboardRemoteAccess struct {
+	// MaterialExists is remoteaccess.Exists(): whether `tclaude remote-access
+	// setup` has generated the CA/cert/passphrase material. Enabling the
+	// listener without it is a no-op (agentd logs + skips), so the UI warns.
+	MaterialExists bool `json:"material_exists"`
+	// Running reports whether THIS agentd process started the remote listener
+	// (true only after a successful startRemoteServer at boot). Lets the UI
+	// distinguish "enabled & live" from "enabled but a restart is pending".
+	Running bool `json:"running"`
+	// RunningBind is the address the live listener is actually serving on,
+	// "" when Running is false. The UI compares it to the edited bind to spot
+	// an unsaved/pending bind change.
+	RunningBind string `json:"running_bind"`
 }
 
 // dashboardHarness is the snapshot view of one spawnable harness — its
@@ -1073,6 +1117,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
+
+	// Remote-access runtime state for the Config tab's guidance (JOH-227): has
+	// setup generated the material, and is the listener live in this process.
+	raRunning, raBind := remoteListenerStatus()
+	out.RemoteAccess = dashboardRemoteAccess{
+		MaterialExists: remoteaccess.Exists(),
+		Running:        raRunning,
+		RunningBind:    raBind,
+	}
 
 	// Initialise slices empty (not nil) so JSON serializes [] instead
 	// of null — the dashboard's JS does .length on members directly,

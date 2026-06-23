@@ -320,6 +320,74 @@ function syncCfgEnables() {
   $('#cfg-nudge-interval').disabled = !nudge;
 }
 
+// REMOTE_DEFAULT_PORT is the conventional tclaude HTTPS port — what
+// `tclaude remote-access setup --bind 0.0.0.0:8443` and the docs use. The
+// Config tab falls back to it when the listener is enabled without an explicit
+// port, so a one-click enable yields a complete bind.
+const REMOTE_DEFAULT_PORT = '8443';
+
+// splitBind / joinBind decompose the single config.json `remote_access.bind`
+// (a host:port string) into the two form fields and back. The Config tab edits
+// interface + port separately for clarity, but the stored key stays one bind
+// string so there is no second source of truth. Split on the LAST colon so an
+// IPv6 host ("[::]:8443") survives; an empty join is "" (block dropped).
+function splitBind(bind) {
+  bind = (bind || '').trim();
+  if (!bind) return { host: '', port: '' };
+  const i = bind.lastIndexOf(':');
+  if (i < 0) return { host: bind, port: '' };
+  return { host: bind.slice(0, i), port: bind.slice(i + 1) };
+}
+function joinBind(host, port) {
+  host = (host || '').trim();
+  port = (port || '').trim();
+  if (!host && !port) return '';
+  // An empty host defaults to 0.0.0.0 (all interfaces); an empty port leaves a
+  // trailing ":" so the server's Validate flags "set a port" rather than the
+  // listener silently grabbing a random one.
+  return (host || '0.0.0.0') + ':' + port;
+}
+
+// syncCfgRemoteStatus renders the live remote-access status line from the latest
+// snapshot (material generated? listener running?) combined with the unsaved
+// form state. It is the foot-gun guard: enabling without running
+// `tclaude remote-access setup` first is a silent no-op, so the UI says so.
+function syncCfgRemoteStatus() {
+  const el = $('#cfg-remote-status');
+  if (!el) return;
+  const ra = (lastSnapshot && lastSnapshot.remote_access) || {};
+  const enabled = $('#cfg-remote-enabled').checked;
+  // Mirror assembleConfig's effective port so the "live on …" comparison and
+  // the saved bind agree (a blank port while enabled resolves to 8443).
+  let port = $('#cfg-remote-port').value.trim();
+  if (enabled && !port) port = REMOTE_DEFAULT_PORT;
+  const bind = joinBind($('#cfg-remote-host').value, port);
+  el.classList.remove('ok', 'warn');
+
+  if (enabled && !ra.material_exists) {
+    el.classList.add('warn');
+    el.textContent = '⚠ No certificates yet — run `tclaude remote-access setup` on the host first. ' +
+      'Enabling without it does nothing.';
+    return;
+  }
+  if (!enabled) {
+    el.textContent = ra.running
+      ? 'Listener is currently running — save (disabled) and restart agentd to take it down.'
+      : 'Off — the dashboard stays loopback-only.';
+    return;
+  }
+  // Enabled, with material present.
+  if (ra.running && ra.running_bind === bind) {
+    el.classList.add('ok');
+    el.textContent = '✓ Listener live on https://' + bind + ' (mTLS + passphrase).';
+    return;
+  }
+  el.classList.add('warn');
+  el.textContent = ra.running
+    ? 'Listener running on ' + ra.running_bind + ' — restart agentd to apply the new address.'
+    : 'Ready — restart agentd to start the listener on ' + (bind || '(set an interface + port)') + '.';
+}
+
 function populateConfigForm(cfg) {
   cfg = cfg || {};
   $('#cfg-log-level').value = cfg.log_level || 'info';
@@ -395,6 +463,16 @@ function populateConfigForm(cfg) {
   renderCfgStringList('cfg-agent-allowedgroups', a.spawn_allowed_groups || [], 'cfg-group-list', 'group name');
 
   $('#cfg-sudo-json').value = a.sudo ? JSON.stringify(a.sudo, null, 2) : '';
+
+  // Remote access — the single `bind` string splits into the interface + port
+  // fields; status is rendered live from the snapshot (material/running state).
+  const ra = cfg.remote_access || {};
+  $('#cfg-remote-enabled').checked = !!ra.enabled;
+  const rb = splitBind(ra.bind);
+  $('#cfg-remote-host').value = rb.host;
+  $('#cfg-remote-port').value = rb.port;
+  syncCfgRemoteStatus();
+
   syncCfgEnables();
 }
 
@@ -580,6 +658,25 @@ function assembleConfig() {
   // had no agent key. Drop it when nothing is set.
   if (Object.keys(a).length) cfg.agent = a;
   else delete cfg.agent;
+
+  // remote_access is an optional block. Clone the existing one so a future
+  // sub-field with no widget round-trips, then set the two form-owned keys:
+  // `enabled` (only when checked — false is the omitempty default) and the
+  // `bind` reassembled from the interface + port fields. The bind is kept even
+  // while disabled so toggling off→on round-trips; the whole block is dropped
+  // only when nothing is left (no enable, no bind), so an all-default block
+  // doesn't marshal as a spurious "remote_access": {} diff.
+  const raCfg = (cfg.remote_access && typeof cfg.remote_access === 'object') ? cfg.remote_access : {};
+  const raEnabled = $('#cfg-remote-enabled').checked;
+  if (raEnabled) raCfg.enabled = true; else delete raCfg.enabled;
+  // Enabling without an explicit port falls back to the conventional 8443 so
+  // the bind is complete (host defaults to 0.0.0.0 inside joinBind).
+  let raPort = $('#cfg-remote-port').value.trim();
+  if (raEnabled && !raPort) raPort = REMOTE_DEFAULT_PORT;
+  const raBind = joinBind($('#cfg-remote-host').value, raPort);
+  if (raBind) raCfg.bind = raBind; else delete raCfg.bind;
+  if (Object.keys(raCfg).length) cfg.remote_access = raCfg; else delete cfg.remote_access;
+
   return cfg;
 }
 
@@ -832,6 +929,24 @@ function bindConfigTab() {
   // Toggle the Model/Effort selects live as the Ask profile changes.
   const askProf = $('#ask-profile');
   if (askProf) askProf.addEventListener('change', applyAskProfileState);
+
+  // Re-render the remote-access status line as the interface / port change, so
+  // the "run setup first" / "restart to apply" guidance stays honest.
+  ['cfg-remote-host', 'cfg-remote-port'].forEach(id => {
+    const elx = $('#' + id);
+    if (elx) {
+      elx.addEventListener('change', syncCfgRemoteStatus);
+      elx.addEventListener('input', syncCfgRemoteStatus);
+    }
+  });
+  // Enabling with an empty port pre-fills the conventional 8443 so the operator
+  // sees the bind it will use, then refreshes the status line.
+  const remoteEn = $('#cfg-remote-enabled');
+  if (remoteEn) remoteEn.addEventListener('change', () => {
+    const portEl = $('#cfg-remote-port');
+    if (remoteEn.checked && portEl && !portEl.value.trim()) portEl.value = REMOTE_DEFAULT_PORT;
+    syncCfgRemoteStatus();
+  });
 }
 
 export { bindConfigTab };
