@@ -66,6 +66,28 @@ function statusPill(status) {
   return `<span class="state-pill" title="${s}">${s || '—'}</span>`;
 }
 
+// fmtAbsTime renders an audit row's recorded time as a stable local
+// "YYYY-MM-DD HH:MM:SS" stamp. It anchors the When column so it never
+// reads stale — the table only re-renders on activation / filter / sort /
+// page / a slow re-poll, so a bare "5m ago" would freeze between fetches.
+function fmtAbsTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso || '—';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} `
+    + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// whenCellHTML renders the When column: the stable absolute stamp plus a
+// dimmed "(5m ago)" relative hint for quick scanning. The relative part
+// may drift slightly between re-polls, but the absolute stamp beside it
+// is always correct, so the staleness never misleads.
+function whenCellHTML(e) {
+  const rel = relTime(e.at);
+  return `<span class="last-hook" title="${esc(e.at)}">${esc(fmtAbsTime(e.at))}</span>`
+    + (rel ? ` <span class="muted">(${esc(rel)})</span>` : '');
+}
+
 function actorCell(e) {
   if (e.actor_kind === 'human') {
     return `<span class="audit-actor human" title="the human operator">operator</span>`;
@@ -117,7 +139,7 @@ function renderAudit() {
       <tbody>
         ${rows.map(e => `
           <tr>
-            <td><span class="last-hook" title="${esc(e.at)}">${esc(relTime(e.at) || '—')}</span></td>
+            <td>${whenCellHTML(e)}</td>
             <td>${actorCell(e)}</td>
             <td><span class="${verbClass(e.verb)}">${esc(e.verb)}</span>${e.source === 'dashboard' ? ' <span class="id" title="run from the dashboard">⊞</span>' : ''}</td>
             <td>${targetCell(e)}</td>
