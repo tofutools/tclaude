@@ -1391,6 +1391,44 @@ func isValidInitialMessage(s string) bool {
 	return true
 }
 
+// maxSpawnAttachments caps how many attachment paths a single spawn may carry.
+// The dashboard upload endpoint enforces its own per-batch caps; this is the
+// daemon-side backstop on the spawn request itself so a hand-rolled caller
+// can't balloon the briefing.
+const maxSpawnAttachments = 50
+
+// sanitizeSpawnAttachments cleans the spawn request's attachment paths for the
+// startup briefing: trims each, drops blanks, and rejects any path containing a
+// control character (newline included — each path is a single briefing line) or
+// exceeding a sane length, since the list is rendered by `inbox read` and may
+// ride inline in the launch prompt. The paths are NOT access-checked: the
+// daemon never opens the files — the spawned agent reads them itself, as the
+// same user — so an arbitrary path only ever tells the new agent "look here".
+// Returns the cleaned list, or a non-empty error message describing the first
+// rejection.
+func sanitizeSpawnAttachments(paths []string) ([]string, string) {
+	if len(paths) > maxSpawnAttachments {
+		return nil, fmt.Sprintf("too many attachments: %d (max %d)", len(paths), maxSpawnAttachments)
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if len(p) > 4096 {
+			return nil, fmt.Sprintf("attachment path too long: %d bytes (max 4096)", len(p))
+		}
+		for _, r := range p {
+			if r < 0x20 || r == 0x7f {
+				return nil, "attachment path contains a control character"
+			}
+		}
+		out = append(out, p)
+	}
+	return out, ""
+}
+
 // handleWhoamiContext returns the caller's own context-window state.
 // Read-only and self-targeted, so no permission gate — any agent can
 // introspect its own session. Returns 0/0 if the row hasn't been

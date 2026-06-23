@@ -684,6 +684,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Attachment paths (uploaded files / pasted screenshots from the dashboard's
+	// /api/spawn-attachments endpoint) are folded into the startup briefing as an
+	// "Attached files" section. Clean + bound them the same way as the initial
+	// message — they share its inbox render and inline-launch path.
+	attachments, attErr := sanitizeSpawnAttachments(body.Attachments)
+	if attErr != "" {
+		writeError(w, http.StatusBadRequest, "invalid_attachments", attErr)
+		return
+	}
+
 	// Resolve the startup briefing's sender. Default: the spawn
 	// requester (an agent → its conv-id; a human → ""). An explicit
 	// reply_to selector overrides it — the knob a coordinator uses to
@@ -924,6 +934,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Role:           body.Role,
 		Descr:          body.Descr,
 		InitialMessage: body.InitialMessage,
+		Attachments:    attachments,
 		Cwd:            cwd,
 		WorktreePath:   worktreePath,
 		WorktreeBranch: worktreeBranch,
@@ -982,6 +993,12 @@ type spawnParams struct {
 	Role           string
 	Descr          string
 	InitialMessage string
+	// Attachments are absolute file paths (uploaded screenshots / files the
+	// dashboard wrote to a temp dir) to surface in the startup briefing as an
+	// "Attached files" section, so the agent can Read them on its first turn.
+	// Already sanitised at the spawn boundary (handleGroupSpawn); empty for a
+	// spawn with no attachments.
+	Attachments    []string
 	Cwd            string // resolved absolute directory
 	WorktreePath   string // resolved absolute directory, or ""
 	WorktreeBranch string
@@ -1361,7 +1378,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
 		// (a cheap pure function of the same inputs) so the inlined copy is
 		// byte-identical to the inbox row — no shared mutable state to drift.
-		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
 		// Capture the inline decision from the SAME inputs (and cap) the prompt
 		// build uses, so the post-launch read-marking matches what actually went
@@ -1389,7 +1406,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// once the inbox row + id exist. No conv-id is known here, so the welcome
 		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
 		// revert reports its id via hook and needs no seed, so it is excluded.)
-		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, g.Name,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
@@ -1631,7 +1648,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// decision on the pending_spawns row; deliberately skipped as disproportionate
 	// to an operator-induced, recoverable, cosmetic window.
 	h := harnessForConv(convID)
-	contextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+	contextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
 
 	// Post-spawn injection: rename the new pane to the agent's name and
@@ -1701,7 +1718,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	// overflowing its input-size limit, and the inbox keeps newlines
 	// verbatim regardless. The welcome line points the agent at the
 	// message; the spawn path marks it delivered once the welcome lands.
-	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage)
+	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
 		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
@@ -1972,7 +1989,7 @@ func persistSpawnTitle(convID, name string) {
 // Either input may be empty (or whitespace-only); when both are, the
 // result is "" and the caller skips the inbox insert entirely, so an
 // agent with nothing to brief never gets an empty message.
-func buildSpawnContextBody(groupName, groupContext, initialMessage string) string {
+func buildSpawnContextBody(groupName, groupContext, initialMessage string, attachments []string) string {
 	groupContext = strings.TrimSpace(groupContext)
 	initialMessage = strings.TrimSpace(initialMessage)
 
@@ -1985,7 +2002,30 @@ func buildSpawnContextBody(groupName, groupContext, initialMessage string) strin
 	if initialMessage != "" {
 		sections = append(sections, "Your task brief:\n\n"+initialMessage)
 	}
+	if s := buildSpawnAttachmentsSection(attachments); s != "" {
+		sections = append(sections, s)
+	}
 	return strings.Join(sections, "\n\n---\n\n")
+}
+
+// buildSpawnAttachmentsSection renders the briefing's "Attached files" block
+// from a list of file paths, or "" when there are none. The paths were written
+// to a temp dir by the dashboard's upload endpoint (screenshots pasted from the
+// clipboard, or files chosen with the native picker) and are listed here so the
+// new agent can open them with its own Read tool on the first turn — the daemon
+// never reads them itself. Rendered as a markdown bullet list so it stays
+// readable both inline in the launch prompt and in `tclaude agent inbox read`.
+func buildSpawnAttachmentsSection(attachments []string) string {
+	var lines []string
+	for _, a := range attachments {
+		if a = strings.TrimSpace(a); a != "" {
+			lines = append(lines, "- "+a)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Attached files:\n\n" + strings.Join(lines, "\n")
 }
 
 // buildSpawnWelcome composes the [system: ...] welcome text. Brackets
