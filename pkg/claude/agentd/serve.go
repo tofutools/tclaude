@@ -24,7 +24,7 @@ import (
 
 type serveParams struct {
 	Socket              string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
-	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts."`
+	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
 	Terminal            string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
@@ -290,7 +290,7 @@ func runServe(p *serveParams) error {
 		quit.signal()
 	}()
 
-	if p.NoTray {
+	if shouldDisableTray(p.NoTray, cfg) {
 		// Legacy / headless path: just block on shutdown.
 		<-quit.ch
 	} else {
@@ -315,6 +315,18 @@ func runServe(p *serveParams) error {
 		_ = popupSrv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// shouldDisableTray reports whether `tclaude agentd serve` should skip
+// the system tray icon. The --no-tray flag (flagSet) and the persistent
+// agent.disable_tray config field OR together — either one suppresses
+// the tray — so a service/autostart launch can stay tray-less without
+// carrying the flag. Mirrors shouldAutoLaunchDashboard (inverted polarity).
+func shouldDisableTray(flagSet bool, cfg *config.Config) bool {
+	if flagSet {
+		return true
+	}
+	return cfg != nil && cfg.Agent != nil && cfg.Agent.DisableTray
 }
 
 // quitter funnels multiple shutdown sources (signal, tray, server

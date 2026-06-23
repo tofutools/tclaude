@@ -374,6 +374,7 @@ function populateConfigForm(cfg) {
 
   const a = cfg.agent || {};
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
+  $('#cfg-agent-notray').checked = !!a.disable_tray;
   // 0 and absent both mean "random free port", so show a stored 0 as
   // blank — the form drops it on save anyway. A negative / out-of-range
   // value is shown as-is so the human sees the value the server rejects.
@@ -514,6 +515,8 @@ function assembleConfig() {
   // block stays genuinely empty (see the empty-agent drop below).
   if ($('#cfg-agent-autolaunch').checked) a.auto_launch_dashboard = true;
   else delete a.auto_launch_dashboard;
+  if ($('#cfg-agent-notray').checked) a.disable_tray = true;
+  else delete a.disable_tray;
   // dashboard_port: 0 / blank means the built-in default (random port) —
   // drop the key. A non-zero value (incl. an out-of-range one) is written
   // so the server's Validate surfaces "out of range" rather than the value
