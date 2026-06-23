@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 )
 
-// SetupOptions drives a first-time (or --force re-) initialisation of the
-// remote-access material.
+// SetupOptions drives a first-time (or --regenerate-certs re-) initialisation
+// of the remote-access material.
 type SetupOptions struct {
-	Bind        string   // listen address the server cert must be valid for
-	ExtraHosts  []string // additional SANs (tailnet name, tunnel hostname)
-	Passphrase  string   // the login passphrase (hashed, never stored plain)
-	ClientName  string   // name for the first device's client cert
-	P12Password string   // password protecting the exported .p12
-	P12Out      string   // where to write the .p12 (default: clients/<name>.p12)
-	Force       bool     // regenerate even if material already exists
+	Bind            string   // listen address the server cert must be valid for
+	ExtraHosts      []string // additional SANs (tailnet name, tunnel hostname)
+	Passphrase      string   // the login passphrase (hashed, never stored plain)
+	ClientName      string   // name for the first device's client cert
+	P12Password     string   // password protecting the exported .p12
+	P12Out          string   // where to write the .p12 (default: clients/<name>.p12)
+	RegenerateCerts bool     // regenerate (clobber) even if material already exists
 }
 
 // SetupResult reports what Setup produced, for the CLI to print.
@@ -33,10 +33,11 @@ type SetupResult struct {
 // cert valid for the resolved host set, a random cookie-signing key, store the
 // passphrase hash, and issue the first device's client cert + .p12.
 //
-// It refuses to clobber existing material unless Force is set, because
-// regenerating the CA invalidates every client cert already installed on a
-// device — to add another device without that, use AddClient. Material is
-// written under Dir() with 0700 dir / 0600 secrets.
+// By default it REFUSES to clobber existing material — regenerating the CA
+// invalidates every client cert already installed on a device — and returns a
+// clear error unless RegenerateCerts is set. To add another device without
+// rotating the CA, use AddClient. Material is written under Dir() with 0700
+// dir / 0600 secrets.
 func Setup(o SetupOptions) (*SetupResult, error) {
 	if o.Passphrase == "" {
 		return nil, fmt.Errorf("a passphrase is required")
@@ -44,8 +45,8 @@ func Setup(o SetupOptions) (*SetupResult, error) {
 	if o.ClientName == "" {
 		o.ClientName = "phone"
 	}
-	if Exists() && !o.Force {
-		return nil, fmt.Errorf("remote-access already configured in %s — use --force to regenerate (invalidates installed client certs) or `tclaude remote-access add-client` to add a device", Dir())
+	if Exists() && !o.RegenerateCerts {
+		return nil, fmt.Errorf("remote-access already configured in %s — pass --regenerate-certs to rotate everything (this INVALIDATES installed client certs), or `tclaude remote-access add-client` to add a device", Dir())
 	}
 	if err := ensureDirs(); err != nil {
 		return nil, err

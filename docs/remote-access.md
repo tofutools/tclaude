@@ -87,9 +87,10 @@ tclaude remote-access status
      Profile Downloaded), then enter the `.p12` password.
    - **Android:** Settings → Security → *Install a certificate* → *VPN & app user
      certificate*.
-2. Browse to `https://<machine-host-or-ip>:8443`. Accept the self-signed warning
-   (LAN preset), pick the installed client certificate when prompted, then enter
-   the passphrase.
+2. Browse to `https://<machine-host-or-ip>:<port>` — the `<port>` is whatever you
+   passed to `--bind` (the examples here use `8443`). Accept the self-signed
+   warning (LAN preset), pick the installed client certificate when prompted,
+   then enter the passphrase.
 
 Once unlocked you get the full dashboard. Delete the transferred `.p12` from the
 phone's Downloads after install — the identity now lives in the OS keychain.

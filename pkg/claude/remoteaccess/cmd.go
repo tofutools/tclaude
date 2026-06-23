@@ -2,7 +2,9 @@ package remoteaccess
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -41,7 +43,12 @@ type setupParams struct {
 	Client string `long:"client" default:"phone" help:"Name for the first device's client certificate."`
 	Out    string `long:"out" optional:"true" help:"Where to write the device .p12 (default: ~/.tclaude/remote-access/clients/<name>.p12)."`
 	Enable bool   `long:"enable" default:"true" help:"Also set remote_access.enabled + bind in config.json so agentd starts the listener (restart agentd to apply)."`
-	Force  bool   `long:"force" help:"Regenerate even if already configured. WARNING: rotates the CA and INVALIDATES every client cert already installed on a device."`
+
+	// RegenerateCerts is required to re-run setup once material already
+	// exists: by default setup REFUSES to clobber an existing CA (which would
+	// invalidate every device's installed client cert). Pass it for a
+	// deliberate fresh start; use `add-client` to add a device without it.
+	RegenerateCerts bool `long:"regenerate-certs" help:"Regenerate ALL material (CA, server/client certs, cookie key, passphrase) even if already configured. WARNING: rotates the CA and INVALIDATES every client cert already installed on a device — you must re-issue and reinstall each device's .p12 afterward. To just add a device, use 'add-client' instead."`
 }
 
 func setupCmd() *cobra.Command {
@@ -69,13 +76,13 @@ func runSetup(p *setupParams) error {
 	}
 
 	res, err := Setup(SetupOptions{
-		Bind:        p.Bind,
-		ExtraHosts:  splitHosts(p.Hosts),
-		Passphrase:  pass,
-		ClientName:  p.Client,
-		P12Password: p12pw,
-		P12Out:      p.Out,
-		Force:       p.Force,
+		Bind:            p.Bind,
+		ExtraHosts:      splitHosts(p.Hosts),
+		Passphrase:      pass,
+		ClientName:      p.Client,
+		P12Password:     p12pw,
+		P12Out:          p.Out,
+		RegenerateCerts: p.RegenerateCerts,
 	})
 	if err != nil {
 		return err
@@ -141,7 +148,12 @@ func statusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show remote-access config and issued devices",
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			cfg, _ := config.Load()
+			cfg, err := config.Load()
+			if err != nil {
+				// Load degrades to defaults on a parse error; warn so status
+				// doesn't silently report misleading defaults as the truth.
+				fmt.Fprintf(os.Stderr, "Warning: failed to load config.json (showing defaults): %v\n", err)
+			}
 			fmt.Printf("Material:  %s (configured: %v)\n", Dir(), Exists())
 			fmt.Printf("Enabled:   %v\n", cfg.RemoteAccessEnabled())
 			fmt.Printf("Bind:      %s\n", orNone(cfg.RemoteAccessBind()))
@@ -202,7 +214,15 @@ func promptSecret(label string) (string, error) {
 		stdinReader = bufio.NewReader(os.Stdin)
 	}
 	line, err := stdinReader.ReadString('\n')
-	return strings.TrimSpace(line), err
+	trimmed := strings.TrimSpace(line)
+	// A final piped line without a trailing newline returns the line AND
+	// io.EOF — that's a successful read, not a failure. Only a non-EOF error
+	// (or EOF with nothing read) is a real failure. This keeps scripted
+	// `printf 'pass\npass\np12\np12'` (no trailing newline) working.
+	if err != nil && (!errors.Is(err, io.EOF) || trimmed == "") {
+		return "", err
+	}
+	return trimmed, nil
 }
 
 func splitHosts(s string) []string {

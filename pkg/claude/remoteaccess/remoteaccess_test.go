@@ -135,6 +135,34 @@ func TestSignedCookie(t *testing.T) {
 	}
 }
 
+// TestSetupRefusesOverwrite: once material exists, Setup must REFUSE to clobber
+// the CA (which would invalidate installed client certs) unless
+// RegenerateCerts is set — so a stray re-run can't silently rotate everything.
+func TestSetupRefusesOverwrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	opts := remoteaccess.SetupOptions{
+		Bind: "0.0.0.0:8443", Passphrase: "passphrase-1", ClientName: "phone", P12Password: "p12pw",
+	}
+	if _, err := remoteaccess.Setup(opts); err != nil {
+		t.Fatalf("first Setup: %v", err)
+	}
+
+	// Re-run without the flag: refused.
+	if _, err := remoteaccess.Setup(opts); err == nil {
+		t.Fatal("second Setup without RegenerateCerts should refuse to overwrite existing material")
+	}
+
+	// Re-run with the flag: allowed.
+	regen := opts
+	regen.RegenerateCerts = true
+	if _, err := remoteaccess.Setup(regen); err != nil {
+		t.Fatalf("Setup with RegenerateCerts should succeed: %v", err)
+	}
+}
+
 // TestSetupLoadAndMTLS is the end-to-end check: Setup writes material into a
 // temp home, Load reads it, and the resulting mTLS TLSConfig accepts the issued
 // client identity while refusing a connection that presents no client cert.
