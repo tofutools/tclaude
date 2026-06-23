@@ -132,8 +132,11 @@ func MarkExportJobRunning(id int64) (bool, error) {
 
 // SetExportJobReady records a successful upload: the artifact's on-disk path,
 // download name, size and MIME type, flipping the job to 'ready' and clearing
-// any prior error. Accepts a job in any non-ready state (a late artifact can
-// still revive a timed-out 'failed' job). Returns whether a row was updated.
+// any prior error. Accepts a job in any NON-ready state (a late artifact can
+// still revive a timed-out 'failed' job) but refuses to overwrite a job that is
+// already 'ready' — a second/duplicate submit must not clobber the delivered
+// artifact's metadata. Returns whether a row was updated (false = the job is
+// gone or already ready); the caller decides what that means.
 func SetExportJobReady(id int64, path, name string, size int64, contentType string) (bool, error) {
 	d, err := Open()
 	if err != nil {
@@ -143,9 +146,9 @@ func SetExportJobReady(id int64, path, name string, size int64, contentType stri
 		UPDATE export_jobs
 		SET status = ?, error = '', artifact_path = ?, artifact_name = ?,
 		    artifact_size = ?, content_type = ?, updated_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status != ?`,
 		ExportStatusReady, path, name, size, contentType,
-		time.Now().Format(time.RFC3339Nano), id)
+		time.Now().Format(time.RFC3339Nano), id, ExportStatusReady)
 	if err != nil {
 		return false, fmt.Errorf("set export job ready: %w", err)
 	}

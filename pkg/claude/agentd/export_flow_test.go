@@ -89,6 +89,14 @@ func TestExportFlow_HappyPath(t *testing.T) {
 	subRec := testharness.Serve(f.Mux, agentd.AsAgentPeer(subReq, "conv-exp"))
 	require.Equal(t, http.StatusOK, subRec.Code, subRec.Body.String())
 
+	// 4b. A duplicate submit is refused — the delivered artifact is not clobbered.
+	dupReq := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/v1/export-jobs/%d/artifact?name=other.md", created.ID),
+		bytes.NewReader([]byte("different")))
+	dupReq.Header.Set("Content-Type", "text/markdown")
+	dupRec := testharness.Serve(f.Mux, agentd.AsAgentPeer(dupReq, "conv-exp"))
+	assert.Equal(t, http.StatusConflict, dupRec.Code, dupRec.Body.String())
+
 	// 5. Dashboard poll sees it ready.
 	pollRec := testharness.Serve(dash, dashReq(t, http.MethodGet,
 		fmt.Sprintf("/api/export-jobs/%d", created.ID), nil))

@@ -24,6 +24,11 @@ import (
 // them with `export submit`. Both are thin clients over the daemon's
 // /v1/export-jobs endpoints, which gate each call on owning the job.
 
+// maxExportArtifactBytes mirrors the daemon's per-artifact cap (see
+// agentd/export.go) so `submit` can reject an oversize payload locally instead
+// of streaming it only to be 413'd. Keep the two in sync.
+const maxExportArtifactBytes = 256 << 20 // 256 MiB
+
 func exportCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "export",
@@ -156,13 +161,22 @@ func runExportSubmit(p *exportSubmitParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error: at least one file is required")
 		return rcInvalidArg
 	}
+	// Check the daemon is reachable before doing the (potentially large) read
+	// + zip — no point building an artifact we can't deliver.
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
 
 	data, name, contentType, rc := buildExportArtifact(p.Files, p.Name, stderr)
 	if rc != rcOK {
 		return rc
 	}
-	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
-		return rc
+	// Reject oversize artifacts locally rather than streaming the whole thing
+	// only for the daemon to 413 it. Mirrors the daemon's cap (export.go).
+	if len(data) > maxExportArtifactBytes {
+		fmt.Fprintf(stderr, "Error: artifact is %s, over the %d MiB limit\n",
+			humanBytes(len(data)), maxExportArtifactBytes>>20)
+		return rcInvalidArg
 	}
 
 	path := "/v1/export-jobs/" + strconv.FormatInt(id, 10) + "/artifact?name=" + url.QueryEscape(name)

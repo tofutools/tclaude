@@ -51,8 +51,19 @@ func TestExportJobLifecycle(t *testing.T) {
 	failed, err := FailExportJob(id, "timed out")
 	require.NoError(t, err)
 	assert.False(t, failed, "ready job is authoritative")
-	got, _ = GetExportJob(id)
+	got, err = GetExportJob(id)
+	require.NoError(t, err)
 	assert.Equal(t, ExportStatusReady, got.Status)
+
+	// A second SetExportJobReady must NOT overwrite an already-ready job —
+	// a duplicate submit can't clobber the delivered artifact's metadata.
+	again, err := SetExportJobReady(id, "/tmp/x/other.zip", "other.zip", 99, "application/zip")
+	require.NoError(t, err)
+	assert.False(t, again, "ready job is not overwritten")
+	got, err = GetExportJob(id)
+	require.NoError(t, err)
+	assert.Equal(t, "export.zip", got.ArtifactName, "original artifact preserved")
+	assert.Equal(t, int64(1234), got.ArtifactSize)
 }
 
 func TestExportJobNotFound(t *testing.T) {

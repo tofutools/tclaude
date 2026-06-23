@@ -255,6 +255,15 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 	if !requireExportJobAccess(w, r, job) {
 		return
 	}
+	// A job that has already delivered an artifact is done — refuse a
+	// duplicate submit up front (before reading/writing the body) rather than
+	// clobbering the delivered artifact. A late submit on a requested/running/
+	// failed job is still accepted (it can revive a timed-out export).
+	if job.Status == db.ExportStatusReady {
+		writeError(w, http.StatusConflict, "already_delivered",
+			"this export has already been delivered")
+		return
+	}
 
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxExportArtifactBytes))
 	if err != nil {
@@ -289,8 +298,20 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := db.SetExportJobReady(job.ID, path, name, int64(len(data)), contentType); err != nil {
+	updated, err := db.SetExportJobReady(job.ID, path, name, int64(len(data)), contentType)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "record artifact: "+err.Error())
+		return
+	}
+	if !updated {
+		// The job vanished (deleted / cleared) between our fetch and this
+		// write, so nothing owns the bytes we just wrote — drop them and
+		// report it rather than claiming a success the dashboard can't poll.
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			slog.Warn("export: cleanup after lost job failed", "error", rerr, "job", job.ID)
+		}
+		writeError(w, http.StatusGone, "job_gone",
+			"the export job no longer exists — nothing to deliver to")
 		return
 	}
 	slog.Info("export artifact received", "job", job.ID, "conv", job.ConvID,

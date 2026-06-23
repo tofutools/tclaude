@@ -157,16 +157,21 @@ function setStatus(text) {
 function startPoll(jobId) {
   clearPoll();
   const startedAt = Date.now();
+  // True only while THIS job's modal is still open — guards every UI mutation,
+  // including after the awaits, so a stale in-flight response can't act on (or
+  // auto-download) a job the modal has since been closed or reused away from.
+  const isCurrentJob = () => {
+    const m = $('#export-agent-modal');
+    return m.classList.contains('show') && m.dataset.jobId === String(jobId);
+  };
   const tick = async () => {
-    const modal = $('#export-agent-modal');
-    // Bail if the modal was closed or reused for another job.
-    if (!modal.classList.contains('show') || modal.dataset.jobId !== String(jobId)) {
-      return;
-    }
+    if (!isCurrentJob()) return;
     try {
       const r = await fetch(`/api/export-jobs/${encodeURIComponent(jobId)}`, { credentials: 'same-origin' });
+      if (!isCurrentJob()) return; // modal closed/reused while the fetch was in flight
       if (r.ok) {
         const job = await r.json();
+        if (!isCurrentJob()) return;
         if (job.status === 'ready') {
           onExportReady(jobId, job);
           return;
@@ -262,14 +267,14 @@ function renderHistoryItem(j) {
   const size = j.artifact_size ? ` · ${fmtBytes(j.artifact_size)}` : '';
   const status = esc(j.status || '');
   const dl = j.ready
-    ? `<button data-export-act="download" data-job="${j.id}" title="Download this export">⤓</button>`
+    ? `<button data-export-act="download" data-job="${j.id}" title="Download this export" aria-label="Download this export">⤓</button>`
     : '';
   return `<div class="export-history-item">`
     + `<div class="ehi-main"><div class="ehi-title">${title}</div>`
     + `<div class="ehi-sub">${when}${size}</div></div>`
     + `<span class="ehi-status ${status}">${status}</span>`
     + dl
-    + `<button class="ehi-del" data-export-act="delete" data-job="${j.id}" title="Delete this export">🗑</button>`
+    + `<button class="ehi-del" data-export-act="delete" data-job="${j.id}" title="Delete this export" aria-label="Delete this export">🗑</button>`
     + `</div>`;
 }
 
