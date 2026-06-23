@@ -2310,6 +2310,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cfg-footer button:not(:disabled):hover { border-color: #58a6ff; }
 .cfg-footer button.primary:not(:disabled):hover { border-color: #58a6ff; }
 .cfg-status { font-size: 11px; color: #7d8590; }
+/* Remote-access live status line (Config tab) — colour tracks the state:
+   info (neutral), ok (listener live), warn (setup missing / restart pending). */
+.cfg-remote-status { font-size: 12px; color: #7d8590; }
+.cfg-remote-status.ok { color: #3fb950; }
+.cfg-remote-status.warn { color: #e3b341; }
 .cfg-errors {
   border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
   color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;

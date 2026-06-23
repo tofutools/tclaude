@@ -94,7 +94,36 @@ func startRemoteServer(bind string) (*http.Server, error) {
 			slog.Warn("remote-access: server exited", "err", err)
 		}
 	}()
+	setRemoteListenerRunning(bind)
 	return srv, nil
+}
+
+// Running-listener state — recorded when startRemoteServer succeeds so the
+// dashboard snapshot can tell the Config tab whether THIS agentd process
+// actually has the remote listener up (and on which bind). config.json reflects
+// the saved intent; this reflects the live reality, so the UI can distinguish
+// "enabled & live on X" from "enabled but a restart is still pending". It is
+// never cleared at runtime: the listener is started once at daemon startup and
+// only stops when the whole process exits, after which no snapshot is served.
+var (
+	remoteListenerMu      sync.Mutex
+	remoteListenerRunning bool
+	remoteListenerBind    string
+)
+
+func setRemoteListenerRunning(bind string) {
+	remoteListenerMu.Lock()
+	defer remoteListenerMu.Unlock()
+	remoteListenerRunning = true
+	remoteListenerBind = bind
+}
+
+// remoteListenerStatus reports whether the remote listener is live in this
+// process and the bind it is serving on. Used by the dashboard snapshot.
+func remoteListenerStatus() (running bool, bind string) {
+	remoteListenerMu.Lock()
+	defer remoteListenerMu.Unlock()
+	return remoteListenerRunning, remoteListenerBind
 }
 
 // remoteAuthMiddleware enforces the second factor (the passphrase session

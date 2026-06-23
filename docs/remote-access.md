@@ -109,6 +109,18 @@ phone's Downloads after install — the identity now lives in the OS keychain.
 Set `enabled` to `false` (or remove the block) and restart agentd to take the
 listener down; the loopback dashboard is unaffected either way.
 
+### From the dashboard
+
+The dashboard's **Config tab** has a **Remote access** section that edits the
+same `remote_access` block: an **enabled** toggle, a **listen interface** field,
+and an **HTTPS port** (default `8443`). It shows a live status line — warning
+when the toggle is on but no material has been generated yet (run
+`tclaude remote-access setup` first), and reminding you that starting or stopping
+the listener takes effect after an **agentd restart**. The certificates and
+passphrase are *not* editable from the dashboard — they need host filesystem
+access and interactive prompts, so they stay with the `tclaude remote-access`
+CLI.
+
 ## Caveats
 
 - Very old devices may not import the modern `.p12` encryption profile; a legacy

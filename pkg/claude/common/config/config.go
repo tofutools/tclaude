@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1074,8 +1075,21 @@ func Validate(c *Config) []string {
 		}
 	}
 
-	if r := c.RemoteAccess; r != nil && r.Enabled && r.Bind == "" {
-		errs = append(errs, "remote_access.enabled is set but remote_access.bind is empty; set a bind address (e.g. 0.0.0.0:8443)")
+	// Only validate the bind when the listener is actually enabled: a
+	// half-typed bind left behind while disabled is harmless (nothing starts),
+	// so it must not block an unrelated save.
+	if r := c.RemoteAccess; r != nil && r.Enabled {
+		if r.Bind == "" {
+			errs = append(errs, "remote_access.enabled is set but remote_access.bind is empty; set a bind address (e.g. 0.0.0.0:8443)")
+		} else if _, port, err := net.SplitHostPort(r.Bind); err != nil {
+			// A non-empty bind must be a host:port the listener can actually
+			// bind to — net.Listen("tcp", …) needs the port. Catch a missing
+			// or non-numeric port here (as a clean save-time error) rather
+			// than letting startRemoteServer fail at boot and only log it.
+			errs = append(errs, fmt.Sprintf("remote_access.bind %q is not a valid host:port (e.g. 0.0.0.0:8443): %v", r.Bind, err))
+		} else if _, perr := net.LookupPort("tcp", port); perr != nil {
+			errs = append(errs, fmt.Sprintf("remote_access.bind %q has an invalid port %q; use a number 1–65535", r.Bind, port))
+		}
 	}
 
 	if c.Notifications != nil {
