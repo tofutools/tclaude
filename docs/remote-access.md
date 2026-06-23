@@ -112,5 +112,7 @@ listener down; the loopback dashboard is unaffected either way.
 
 - Very old devices may not import the modern `.p12` encryption profile; a legacy
   profile would be a follow-up.
-- A mobile-optimized dashboard rendering, PWA install, and Web Push are deferred
-  (the dashboard renders responsively but is desktop-first today).
+- The **regular (desktop) dashboard** is served in full over the remote listener
+  — every tab and API works from another computer. It is **desktop-first**,
+  though: a mobile-optimized rendering, PWA install, and Web Push are deferred
+  follow-ups.

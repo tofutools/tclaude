@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -17,6 +18,19 @@ import (
 // production builds; only test binaries see it.
 func BuildHandlerForTest() http.Handler {
 	return buildMux()
+}
+
+// BuildRemoteDashboardHandlerForTest exposes the REAL remote-listener handler
+// (the production remoteAuthMiddleware wrapping the full dashboard route set)
+// to flow tests in `package agentd_test`, so they can prove the regular
+// dashboard renders over the remote (mTLS + passphrase) path with live data —
+// not a stub. The TLS/mTLS layer is the listener's job (proven separately); a
+// direct handler call exercises the cookie gate + the shared dashboard routes.
+func BuildRemoteDashboardHandlerForTest(m *remoteaccess.Material) http.Handler {
+	initDashboardToken()
+	mux := http.NewServeMux()
+	registerDashboardRoutes(mux)
+	return remoteAuthMiddleware(m, mux)
 }
 
 // RunAuditLogCleanupForTest runs one audit-log retention sweep
