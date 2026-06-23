@@ -5,7 +5,7 @@
 // modal reuses modal-cron's target picker; bindSudoModal wires the
 // sudo-grant modal (defined in modal-cron) to its DOM controls.
 
-import { $, $$, esc, shortId } from './helpers.js';
+import { $, $$, esc, shortId, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
@@ -522,8 +522,37 @@ async function submitGroupCreate() {
   }
 }
 
+// Ask the daemon to open a native directory picker and drop the chosen
+// path into the Default cwd field. The browser can't pop an OS folder
+// chooser itself, so agentd — running on the human's desktop — does it
+// and reports the path back (POST /api/pick-directory). The fetch stays
+// pending while the dialog is open; a cancel leaves the field untouched.
+async function browseGroupCreateCwd() {
+  const input = $('#group-create-cwd');
+  const btn = $('#group-create-cwd-browse');
+  const errEl = $('#group-create-error');
+  errEl.textContent = '';
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const res = await pickDirectory({
+      startDir: input.value.trim(),
+      title: 'Select the group default working directory',
+    });
+    if (res.error) { errEl.textContent = res.error; return; }
+    if (res.canceled) return; // dialog dismissed — leave the field as-is
+    input.value = res.path;
+    input.focus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+
 function bindGroupCreateModal() {
   $('#group-create-open').addEventListener('click', openGroupCreateModal);
+  $('#group-create-cwd-browse').addEventListener('click', browseGroupCreateCwd);
   // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
   // multi-category cleanup modal — bulk unjoin / retire / delete /
   // reinstate spanning active agents, retired agents and plain

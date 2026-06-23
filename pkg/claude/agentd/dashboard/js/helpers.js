@@ -1231,6 +1231,35 @@ function withPreservedFocus(fn) {
   restoreFocus(token);
 }
 
+// pickDirectory asks the daemon to open a NATIVE OS directory picker (the
+// browser can't pop one itself) and resolves to the human's choice. The
+// daemon runs on the desktop, outside any agent sandbox, so it can show
+// the dialog and report the path back over POST /api/pick-directory; the
+// fetch stays pending while the dialog is open. Returns one of:
+//   { path }            — a directory was chosen
+//   { canceled: true }  — the human dismissed the dialog (no change)
+//   { error: <message> } — no picker available / busy / failed
+// Callers branch on these without having to know the wire shape. Shared
+// by the group-create modal, the spawn modal and the group dir chip.
+async function pickDirectory({ startDir = '', title = 'Select a directory' } = {}) {
+  let r;
+  try {
+    r = await fetch('/api/pick-directory', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_dir: startDir, title }),
+    });
+  } catch (err) {
+    return { error: (err && err.message) || String(err) };
+  }
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  if (!r.ok) return { error: data.error || `HTTP ${r.status}` };
+  if (data.canceled) return { canceled: true };
+  if (data.path) return { path: data.path };
+  return { canceled: true }; // empty result — treat as a no-op cancel
+}
+
 // Public API — the helpers used outside this module. actionCog is
 // exported because render.js builds the group header's ⚙ menu with it.
 // The rest (statusPillClass, fmtTokens, contextMeterTooltip, the
@@ -1249,4 +1278,7 @@ export {
   // slop-fx.js re-uses these for the manual-pull animation and the
   // 7-7-7 win detection — single source of truth.
   SLOP_SYMBOLS, SLOP_STOPPED,
+  // Native OS directory picker bridge — used by the group-create / spawn
+  // modals and the group dir chip (all call the same /api/pick-directory).
+  pickDirectory,
 };
