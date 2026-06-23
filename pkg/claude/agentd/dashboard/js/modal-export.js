@@ -241,6 +241,10 @@ async function loadExportHistory(conv) {
   const list = $('#export-agent-history-list');
   try {
     const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/exports`, { credentials: 'same-origin' });
+    // The modal may have been closed or reused for a different agent while
+    // this request was in flight — never render conv A's exports under conv
+    // B's modal (a stale render could mis-target a later delete).
+    if ($('#export-agent-modal').dataset.conv !== conv) return;
     if (!r.ok) { section.hidden = true; return; }
     const data = await r.json();
     const jobs = (data && data.exports) || [];

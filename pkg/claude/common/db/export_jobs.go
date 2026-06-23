@@ -211,36 +211,29 @@ func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
 // DeleteExportJobsForConv hard-deletes every export job for a conversation and
 // returns their ids so the caller can remove the on-disk artifact dirs. The
 // "clear all" control behind the history panel.
+//
+// A single `DELETE … RETURNING id` (SQLite 3.35+, supported by the driver)
+// deletes and reports the affected ids atomically — so a job that becomes ready
+// concurrently can't be deleted-but-missed, which would orphan its artifact dir.
 func DeleteExportJobsForConv(convID string) ([]int64, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id FROM export_jobs WHERE conv_id = ?`, convID)
+	rows, err := d.Query(`DELETE FROM export_jobs WHERE conv_id = ? RETURNING id`, convID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("delete export jobs for conv: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	if _, err := d.Exec(`DELETE FROM export_jobs WHERE conv_id = ?`, convID); err != nil {
-		return nil, fmt.Errorf("delete export jobs for conv: %w", err)
-	}
-	return ids, nil
+	return ids, rows.Err()
 }
 
 // ListStaleExportJobs returns jobs whose updated_at is older than `before` —
