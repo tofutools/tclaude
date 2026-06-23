@@ -12,8 +12,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// These tests exercise the audit-capture middleware (audit.go): every
-// daemon-proxied command run through the /v1 (CLI) mux must leave a
+// These tests exercise the audit-capture middleware (audit.go, JOH-268):
+// every daemon-proxied command run through the /v1 (CLI) mux must leave a
 // symbolic audit_log row naming WHO ran WHAT against WHICH target — and
 // denials/errors are recorded too, not only successes.
 

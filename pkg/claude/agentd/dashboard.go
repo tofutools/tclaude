@@ -301,7 +301,7 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 // ask "is this the authenticated operator?" without writing a response —
 // attribution keys on a *valid session*, never on the response status (a
 // post-auth policy 403, e.g. a blocklisted sudo grant, is still the
-// operator and must not be downgraded to "unauthenticated").
+// operator and must not be downgraded to "unauthenticated"). See JOH-268.
 func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	if dashboardSessionToken == "" {
 		return false, http.StatusServiceUnavailable, "dashboard not initialised"

@@ -172,9 +172,9 @@ func runServe(p *serveParams) error {
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
 
-	// audit_log retention sweep. Hard-deletes audit rows older than the
-	// configured retention window (default 30 days) so the command trail
-	// stays bounded. Shares the daemon-wide stop channel. See
+	// audit_log retention sweep (JOH-268). Hard-deletes audit rows older
+	// than the configured retention window (default 30 days) so the command
+	// trail stays bounded. Shares the daemon-wide stop channel. See
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
 

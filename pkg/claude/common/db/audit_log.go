@@ -25,10 +25,10 @@ const (
 )
 
 // AuditLogEntry is one row of audit_log — the persistent trail of
-// daemon-proxied tclaude commands. It records WHO ran WHAT against WHICH
-// target, with both a symbolic representation (actor/verb/target/detail)
-// and the raw HTTP (method/path/status) for debugging and for the
-// generic case where no symbolic describer exists.
+// daemon-proxied tclaude commands (JOH-268). It records WHO ran WHAT
+// against WHICH target, with both a symbolic representation
+// (actor/verb/target/detail) and the raw HTTP (method/path/status) for
+// debugging and for the generic case where no symbolic describer exists.
 //
 // Actor and target *labels* are denormalized snapshots taken at record
 // time so a row stays readable after the agent it names is renamed,

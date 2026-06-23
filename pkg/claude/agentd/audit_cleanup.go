@@ -9,9 +9,10 @@ import (
 )
 
 // auditLogCleanupInterval is how often the audit-log retention sweep
-// runs. Audit rows accumulate slowly (one per command), so an hourly
-// sweep keeps the table bounded without busy-work. The first sweep fires
-// immediately at startup so a restart catches up without waiting an hour.
+// runs (JOH-268). Audit rows accumulate slowly (one per command), so an
+// hourly sweep keeps the table bounded without busy-work. The first sweep
+// fires immediately at startup so a restart catches up without waiting an
+// hour.
 const auditLogCleanupInterval = 1 * time.Hour
 
 // startAuditLogCleanup runs the audit-log retention sweep in its own
@@ -37,7 +38,16 @@ func startAuditLogCleanup(stop <-chan struct{}) {
 }
 
 func runAuditLogCleanup(now time.Time) {
-	cfg, _ := config.Load()
+	// A genuine config-load failure (corrupt / unreadable config.json —
+	// NOT a missing file, which Load returns as defaults with no error)
+	// must not fall back to the default retention and prune: the operator
+	// may have configured a longer window or "keep forever", and deleting
+	// against a guessed policy is unrecoverable. Skip this sweep instead.
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("audit cleanup: skipping prune; config load failed", "error", err)
+		return
+	}
 	days, prune := cfg.ResolvedAuditRetentionDays()
 	if !prune {
 		return // retention disabled — keep forever

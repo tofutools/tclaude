@@ -261,11 +261,16 @@ func bufferAuditBody(r *http.Request) []byte {
 		return nil
 	}
 	buf, err := io.ReadAll(r.Body)
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(buf))
 	if err != nil {
+		// On a failed/partial read, do NOT hand the handler a silently
+		// truncated body (it could decode to a partial command). Close the
+		// original and leave it: the handler hits the same read error and
+		// rejects the request. We record no body for audit.
+		_ = r.Body.Close()
 		return nil
 	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(buf))
 	return buf
 }
 

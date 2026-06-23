@@ -6,8 +6,8 @@ import (
 )
 
 // TestDashboardHTML_AuditTabWired guards the Audit tab's wiring across
-// dashboard.html + audit.js + dashboard.js. The repo has no JS test
-// runner, so this asserts on the embedded asset concatenation at
+// dashboard.html + audit.js + dashboard.js (JOH-268). The repo has no JS
+// test runner, so this asserts on the embedded asset concatenation at
 // `go test ./...`: a renamed mount, a dropped binder, or a changed
 // endpoint path surfaces here instead of as a blank tab at runtime.
 func TestDashboardHTML_AuditTabWired(t *testing.T) {
