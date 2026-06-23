@@ -545,38 +545,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	}
 	newTitle := uniqueCloneTitle(originalTitle)
 
-	copied := []string{}
-	for _, m := range oldMembers {
-		// Membership rows carry no name of their own — the clone's
-		// single name is its title, set by the /rename below.
-		newMember := &db.AgentGroupMember{
-			GroupID: m.GroupID,
-			ConvID:  newConv,
-			Role:    m.Role,
-			Descr:   m.Descr,
-		}
-		if err := db.AddAgentGroupMember(newMember); err != nil {
-			slog.Warn("clone: add new member failed", "group", m.GroupID, "error", err)
-			continue
-		}
-		copied = append(copied, fmt.Sprintf("group:%d", m.GroupID))
-	}
-
-	for slug, effect := range oldPerms {
-		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
-			slog.Warn("clone: copy new perm failed", "slug", slug, "effect", effect, "error", err)
-			continue
-		}
-		copied = append(copied, "perm:"+slug)
-	}
-
-	for _, gID := range oldOwnedIDs {
-		if err := db.AddAgentGroupOwner(gID, newConv, granter); err != nil {
-			slog.Warn("clone: add new owner failed", "group", gID, "error", err)
-			continue
-		}
-		copied = append(copied, fmt.Sprintf("owner:%d", gID))
-	}
+	copied := applyClonedIdentity(newConv, granter, oldMembers, oldPerms, oldOwnedIDs)
 
 	// 4. Optional follow-up. Same shape as reincarnate: enqueue an
 	// agent_messages row and let the flush pipeline deliver it. A solo
@@ -663,6 +632,48 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 		resp["warning"] = warn
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// applyClonedIdentity copies a source agent's identity onto newConv: its group
+// memberships, permission overrides (grants AND denies), and group ownerships.
+// ADD-only — the source keeps everything it had. Best-effort per row (a failure
+// is logged, not fatal); returns the descriptors copied (for the response /
+// audit). Shared by the human/agent clone orchestration and the same-group
+// export clone (JOH-266), which snapshot the source's identity and pass it here.
+func applyClonedIdentity(newConv, granter string, members []*db.AgentGroupMember, perms map[string]string, ownedIDs []int64) []string {
+	copied := []string{}
+	for _, m := range members {
+		// Membership rows carry no name of their own — the clone's single name
+		// is its title, set by the caller's /rename.
+		newMember := &db.AgentGroupMember{
+			GroupID: m.GroupID,
+			ConvID:  newConv,
+			Role:    m.Role,
+			Descr:   m.Descr,
+		}
+		if err := db.AddAgentGroupMember(newMember); err != nil {
+			slog.Warn("clone: add new member failed", "group", m.GroupID, "error", err)
+			continue
+		}
+		copied = append(copied, fmt.Sprintf("group:%d", m.GroupID))
+	}
+
+	for slug, effect := range perms {
+		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
+			slog.Warn("clone: copy new perm failed", "slug", slug, "effect", effect, "error", err)
+			continue
+		}
+		copied = append(copied, "perm:"+slug)
+	}
+
+	for _, gID := range ownedIDs {
+		if err := db.AddAgentGroupOwner(gID, newConv, granter); err != nil {
+			slog.Warn("clone: add new owner failed", "group", gID, "error", err)
+			continue
+		}
+		copied = append(copied, fmt.Sprintf("owner:%d", gID))
+	}
+	return copied
 }
 
 // runClonePostInit fires asynchronously after a successful clone — as

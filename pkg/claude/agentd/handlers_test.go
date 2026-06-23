@@ -314,3 +314,60 @@ func TestIsValidRenameSink(t *testing.T) {
 	assert.False(t, isValidRenameTitle(overCap), "precondition: title should exceed the 64-char cap")
 	assert.True(t, isValidRenameSink(overCap), "length-exempt sink must accept a charset-clean over-cap title")
 }
+
+// TestIsValidSpawnName locks down the spawn-name charset rules. The
+// daemon side is the actual boundary (handleGroupSpawn), so this test is
+// the authoritative spec — the CLI mirror in pkg/claude/agent/lifecycle.go
+// and the dashboard regex in dashboard/js/modal-spawn.js must stay in
+// sync with these expectations. The charset is intentionally STRICTER
+// than the rename title (no spaces / brackets / parens): a spawn name
+// doubles as a git worktree branch name and must be a safe token.
+func TestIsValidSpawnName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted ---
+		{"empty (optional name)", "", true},
+		{"plain alphanumeric", "abc123", true},
+		{"hyphen", "code-reviewer", true},
+		{"underscore", "code_reviewer", true},
+		{"leading digit", "1reviewer", true},
+		{"all dashes/underscores", "_-_-_", true},
+		{"max length 64", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB", true},
+
+		// --- rejected: oversize (exactly MaxSpawnNameLen+1 == 65) ---
+		{"too long 65", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789ABC", false},
+
+		// --- rejected: stricter-than-rename punctuation ---
+		{"single space", "code reviewer", false},
+		{"brackets", "[reviewer]", false},
+		{"braces", "{reviewer}", false},
+		{"parens", "(reviewer)", false},
+		{"dot", "code.reviewer", false},
+
+		// --- rejected: whitespace / control ---
+		{"leading space", " reviewer", false},
+		{"trailing space", "reviewer ", false},
+		{"tab", "code\treviewer", false},
+		{"newline", "code\nreviewer", false},
+
+		// --- rejected: keystroke-injection vectors ---
+		{"slash command", "foo/bash", false},
+		{"single quote", "code'reviewer", false},
+		{"semicolon", "code;reviewer", false},
+		{"pipe", "code|reviewer", false},
+		{"backslash", "code\\reviewer", false},
+
+		// --- rejected: unicode / non-ASCII ---
+		{"emoji", "reviewer😀", false},
+		{"unicode dash", "reviewer–frontend", false},
+		{"latin extended", "café", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isValidSpawnName(tt.in), "isValidSpawnName(%q)", tt.in)
+		})
+	}
+}

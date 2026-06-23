@@ -100,7 +100,7 @@ func TestMigrateV65toV66_HealsHalfAppliedRun(t *testing.T) {
 
 // TestMigrateV65toV66_FreshSchema builds a fresh DB through the full migrate()
 // chain and asserts both remote_control columns exist. The literal
-// currentVersion tripwire moved forward to the v67 test when v67 became head.
+// currentVersion pin moved forward into the v67 test (the tripwire convention).
 func TestMigrateV65toV66_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

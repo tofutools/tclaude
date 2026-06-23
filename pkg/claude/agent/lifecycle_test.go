@@ -145,3 +145,37 @@ func TestIsValidInitialMessage(t *testing.T) {
 		})
 	}
 }
+
+// TestIsValidSpawnName mirrors the daemon-side spec
+// (agentd.TestIsValidSpawnName). The daemon gate is authoritative; this
+// CLI copy must agree with it so a name accepted here isn't rejected by
+// the daemon (or vice versa).
+func TestIsValidSpawnName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		// --- accepted ---
+		{"empty (optional name)", "", true},
+		{"plain alphanumeric", "abc123", true},
+		{"hyphen", "code-reviewer", true},
+		{"underscore", "code_reviewer", true},
+		{"max length", strings.Repeat("a", MaxSpawnNameLen), true},
+
+		// --- rejected ---
+		{"oversize", strings.Repeat("a", MaxSpawnNameLen+1), false},
+		{"space", "code reviewer", false},
+		{"brackets", "[reviewer]", false},
+		{"dot", "code.reviewer", false},
+		{"slash", "code/reviewer", false},
+		{"tab", "code\treviewer", false},
+		{"emoji", "reviewer😀", false},
+		{"latin extended", "café", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isValidSpawnName(tt.in), "isValidSpawnName(%q)", tt.in)
+		})
+	}
+}

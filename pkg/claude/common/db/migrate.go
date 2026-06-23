@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 67
+const currentVersion = 69
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -433,10 +433,22 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 68 {
+		if err := migrateV67toV68(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 69 {
+		if err := migrateV68toV69(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV66toV67 adds the WHAT-IF cost column to the two cost-bearing tables:
+// migrateV68toV69 adds the WHAT-IF cost column to the two cost-bearing tables:
 //
 //   - sessions.virtual_cost_usd — the cumulative pay-per-token-EQUIVALENT cost
 //     of a subscription session, the sibling of sessions.cost_usd (the real
@@ -458,10 +470,10 @@ func migrate(db *sql.DB) error {
 // sqlite_master table-existence probe (the migrateV61toV62 convention) AND a
 // pragma_table_info column probe (the migrateV56toV57 convention), so a
 // half-applied run converges on re-run instead of wedging on "duplicate column".
-func migrateV66toV67(db *sql.DB) error {
+func migrateV68toV69(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v66→v67 (add virtual_cost_usd): begin: %w", err)
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -484,27 +496,125 @@ func migrateV66toV67(db *sql.DB) error {
 	} {
 		var haveTable int
 		if err := tx.QueryRow(probe.existsSQL).Scan(&haveTable); err != nil {
-			return fmt.Errorf("migrate v66→v67 (probe %s): %w", probe.table, err)
+			return fmt.Errorf("migrate v68→v69 (probe %s): %w", probe.table, err)
 		}
 		if haveTable == 0 {
 			continue
 		}
 		var haveCol int
 		if err := tx.QueryRow(probe.countSQL).Scan(&haveCol); err != nil {
-			return fmt.Errorf("migrate v66→v67 (add %s.virtual_cost_usd): probe column: %w", probe.table, err)
+			return fmt.Errorf("migrate v68→v69 (add %s.virtual_cost_usd): probe column: %w", probe.table, err)
 		}
 		if haveCol == 0 {
 			if _, err := tx.Exec(probe.alterSQL); err != nil {
-				return fmt.Errorf("migrate v66→v67 (add %s.virtual_cost_usd): add column: %w", probe.table, err)
+				return fmt.Errorf("migrate v68→v69 (add %s.virtual_cost_usd): add column: %w", probe.table, err)
 			}
 		}
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 67`); err != nil {
-		return fmt.Errorf("migrate v66→v67 (add virtual_cost_usd): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 69`); err != nil {
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v66→v67 (add virtual_cost_usd): commit: %w", err)
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): commit: %w", err)
+	}
+	return nil
+}
+
+// migrateV67toV68 adds export_jobs.worker_conv_id — the conv-id of the isolated
+// CLONE the daemon spawns to produce a per-agent export on, so the live original
+// is never disturbed (JOH-266, the clone-based-export follow-up to JOH-265).
+//
+// conv_id stays the ORIGINAL (the export's history list + download attach to it);
+// worker_conv_id is the throwaway clone that is nudged, submits the artifact, and
+// is auto-deleted once the job is ready. The new 'cloning' status (a string in
+// the existing status column — no schema change) is the leading lifecycle phase
+// while the clone is being spawned.
+//
+// One transaction; the ADD COLUMN is guarded by BOTH a sqlite_master
+// table-existence probe AND a pragma_table_info column probe (the migrateV65toV66
+// convention) so a half-applied run converges on re-run instead of wedging on
+// "duplicate column". export_jobs is created in v67, so the table probe always
+// passes on a real DB — it is defence for a minimally-seeded migration-heal DB.
+func migrateV67toV68(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v67→v68 (add export_jobs.worker_conv_id): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'export_jobs'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v67→v68 (probe export_jobs): %w", err)
+	}
+	if haveTable > 0 {
+		var haveCol int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('export_jobs') WHERE name = 'worker_conv_id'`,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v67→v68 (probe export_jobs.worker_conv_id): %w", err)
+		}
+		if haveCol == 0 {
+			if _, err := tx.Exec(
+				`ALTER TABLE export_jobs ADD COLUMN worker_conv_id TEXT NOT NULL DEFAULT ''`,
+			); err != nil {
+				return fmt.Errorf("migrate v67→v68 (add export_jobs.worker_conv_id): %w", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 68`); err != nil {
+		return fmt.Errorf("migrate v67→v68 (add export_jobs.worker_conv_id): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v67→v68 (add export_jobs.worker_conv_id): commit: %w", err)
+	}
+	return nil
+}
+
+// migrateV66toV67 adds export_jobs — the store behind the dashboard's
+// per-agent "📋 summary…" export (JOH-265). A row is one request for a
+// live agent to consolidate a shareable artifact: the daemon creates it
+// (status='requested') and nudges the agent's pane; the agent fetches the
+// brief (status flips to 'running'), produces its file(s), and uploads the
+// result (status='ready'), or the job fails / times out (status='failed',
+// with the reason in `error`).
+//
+// conv_id is the target agent's conversation; title / instructions / preset
+// are the human's brief snapshotted at creation. The artifact_* columns are
+// blank until upload: artifact_path is the on-disk file under
+// ~/.tclaude/exports/<id>/, artifact_name the download filename, content_type
+// its MIME type. created_at / updated_at are RFC3339Nano — ORDER on id, never
+// these strings (the RFC3339Nano lexical-sort hazard, see ListHumanMessages).
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier run
+// converges on re-run; the whole thing rides one transaction with the bump.
+func migrateV66toV67(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS export_jobs (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			conv_id       TEXT NOT NULL,
+			group_name    TEXT NOT NULL DEFAULT '',
+			title         TEXT NOT NULL DEFAULT '',
+			instructions  TEXT NOT NULL DEFAULT '',
+			preset        TEXT NOT NULL DEFAULT '',
+			status        TEXT NOT NULL,
+			error         TEXT NOT NULL DEFAULT '',
+			artifact_path TEXT NOT NULL DEFAULT '',
+			artifact_name TEXT NOT NULL DEFAULT '',
+			artifact_size INTEGER NOT NULL DEFAULT 0,
+			content_type  TEXT NOT NULL DEFAULT '',
+			created_at    TEXT NOT NULL,
+			updated_at    TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_export_jobs_conv
+			ON export_jobs(conv_id);
+
+		UPDATE schema_version SET version = 67;
+	`); err != nil {
+		return fmt.Errorf("migrate v66→v67 (add export_jobs): %w", err)
 	}
 	return nil
 }
