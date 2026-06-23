@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -300,6 +302,32 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	off := postState(map[string]any{"human_messages": false})
 	assert.Equal(t, false, off["human_messages"], "human messages off echoed")
 	assert.Equal(t, false, getState()["human_messages"], "and persisted")
+}
+
+// A corrupt config.json must NOT be silently overwritten with defaults by
+// a notification write — the popover refuses with a 409, leaving the
+// Config tab to own recovery (mirrors handleDashboardSlopVolumesPost).
+func TestNotificationsAPI_RefusesCorruptConfig(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t) // points HOME at an isolated temp dir
+	const corrupt = "{ not valid json"
+	require.NoError(t, os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o755))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(corrupt), 0o600))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"enabled": false})
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusConflict, rec.Code,
+		"corrupt config → 409, not a silent default-overwrite; body=%s", rec.Body.String())
+
+	// The corrupt file is left untouched — the write refused rather than
+	// clobbering it with defaults-plus-the-toggle.
+	data, err := os.ReadFile(config.ConfigPath())
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, string(data), "corrupt config left as-is")
 }
 
 // Scenario: the per-agent / per-group filters also gate the

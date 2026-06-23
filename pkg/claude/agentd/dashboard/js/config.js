@@ -804,6 +804,17 @@ function bindConfigTab() {
   $$('#cfg-notif-types [data-cfg-notify-type]').forEach(cb => {
     cb.addEventListener('change', () => setCfgNotifyType(cb.getAttribute('data-cfg-notify-type'), cb.checked));
   });
+  // Keep the checklist honest when the Advanced raw editor is edited
+  // directly: typing in a from/to input (input) or removing a row (the ×
+  // delete fires a click that bubbles here; defer so the row is gone
+  // first) re-derives which type boxes are lit. The container element
+  // survives renderCfgTransitionList's innerHTML rebuilds, so this one
+  // listener outlives the rows.
+  const transList = $('#cfg-notif-transitions');
+  if (transList) {
+    transList.addEventListener('input', syncCfgNotifyTypes);
+    transList.addEventListener('click', () => setTimeout(syncCfgNotifyTypes, 0));
+  }
   // Toggle the Model/Effort selects live as the Ask profile changes.
   const askProf = $('#ask-profile');
   if (askProf) askProf.addEventListener('change', applyAskProfileState);

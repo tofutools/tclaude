@@ -1175,7 +1175,15 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 		// Serialized read-modify-write so a concurrent config writer
 		// (another dashboard action, the Config tab save) can't drop this
 		// change — and vice versa.
-		saved, err := config.Update(func(cfg *config.Config, _ error) error {
+		saved, err := config.Update(func(cfg *config.Config, loadErr error) error {
+			if loadErr != nil {
+				// Load fell back to defaults, so a save here would replace
+				// the corrupt file with defaults-plus-this-toggle — silently
+				// discarding whatever it held (custom transitions, cooldown,
+				// command, rate-limit, slop volumes…). Refuse; the Config
+				// tab owns that recovery. Mirrors handleDashboardSlopVolumesPost.
+				return errNotifConfigMalformed
+			}
 			if cfg.Notifications == nil {
 				cfg.Notifications = config.DefaultConfig().Notifications
 			}
@@ -1198,6 +1206,10 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
+		if errors.Is(err, errNotifConfigMalformed) {
+			http.Error(w, "config.json on disk is corrupt — fix or replace it via the Config tab before changing notifications", http.StatusConflict)
+			return
+		}
 		if err != nil {
 			http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1207,6 +1219,13 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 	}
 }
+
+// errNotifConfigMalformed signals that the bell popover's notification
+// write refused because config.json failed to load — Update fell back to
+// defaults and a blind save would discard the user's real config. The
+// caller maps it to a 409 (the Config tab owns corrupt-file recovery).
+// Mirrors errSlopConfigMalformed.
+var errNotifConfigMalformed = errors.New("notifications config.json is malformed")
 
 // dashboardAddMember is the cookie-auth twin of POST
 // /v1/groups/{name}/members. Body: `{conv, role?, descr?}`.
