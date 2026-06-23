@@ -536,6 +536,128 @@ function spawnFormAsProfileSeed() {
   return seed;
 }
 
+// ---- File / screenshot attachments --------------------------------------
+//
+// The spawn dialog can carry files for the new agent: chosen with the native
+// picker, or pasted as screenshots from the clipboard (⌘/Ctrl-V anywhere in
+// the modal — an image item is packaged as a PNG File). They're held client-
+// side until submit, then uploaded to /api/spawn-attachments (which writes
+// them to a temp dir) and the returned paths ride along in the spawn body as
+// `attachments`; the daemon lists them in the new agent's startup briefing.
+//
+// Each entry is { id, file (Blob), name, size, url } where url is an object
+// URL for an image preview (revoked on remove/clear), or '' for a non-image.
+let spawnAttachments = [];
+let spawnAttachSeq = 0;
+
+// fmtAttachSize renders a byte count as a short human string for the list.
+function fmtAttachSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 1 : 0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// addSpawnAttachments appends Files/Blobs to the pending list and re-renders.
+// A blob with no name (a raw pasted image) is given a generated PNG name.
+function addSpawnAttachments(files) {
+  for (const f of files) {
+    if (!f) continue;
+    let name = f.name;
+    if (!name) {
+      const ext = (f.type && f.type.split('/')[1]) || 'png';
+      name = `pasted-${++spawnAttachSeq}.${ext}`;
+    }
+    const isImage = (f.type || '').startsWith('image/');
+    spawnAttachments.push({
+      id: ++spawnAttachSeq,
+      file: f,
+      name,
+      size: f.size,
+      url: isImage ? URL.createObjectURL(f) : '',
+    });
+  }
+  renderSpawnAttachments();
+}
+
+// removeSpawnAttachment drops one entry by id, revoking its preview URL.
+function removeSpawnAttachment(id) {
+  const i = spawnAttachments.findIndex(a => a.id === id);
+  if (i < 0) return;
+  if (spawnAttachments[i].url) URL.revokeObjectURL(spawnAttachments[i].url);
+  spawnAttachments.splice(i, 1);
+  renderSpawnAttachments();
+}
+
+// clearSpawnAttachments empties the list and revokes every preview URL. Called
+// on modal open and close so attachments never leak across spawns.
+function clearSpawnAttachments() {
+  for (const a of spawnAttachments) {
+    if (a.url) URL.revokeObjectURL(a.url);
+  }
+  spawnAttachments = [];
+  renderSpawnAttachments();
+}
+
+// renderSpawnAttachments repaints the list. Each row: thumbnail (image) or a
+// 📄 icon, the name, the size, and a × remove button (id on the dataset; a
+// delegated listener bound in bindAgentSpawnModal handles the click).
+function renderSpawnAttachments() {
+  const list = $('#agent-spawn-attachments-list');
+  if (!list) return;
+  list.innerHTML = spawnAttachments.map(a => {
+    const thumb = a.url
+      ? `<img class="att-thumb" src="${esc(a.url)}" alt="" />`
+      : `<span class="att-icon">📄</span>`;
+    return `<li>${thumb}`
+      + `<span class="att-name" title="${esc(a.name)}">${esc(a.name)}</span>`
+      + `<span class="att-size">${esc(fmtAttachSize(a.size))}</span>`
+      + `<button type="button" class="att-remove" data-att-id="${a.id}" title="Remove" aria-label="Remove ${esc(a.name)}">✕</button>`
+      + `</li>`;
+  }).join('');
+}
+
+// handleSpawnPaste captures image items pasted anywhere in the dialog (the
+// common "screenshot to clipboard, ⌘V" flow) as PNG attachments. Non-image
+// pastes (text into the init-message textarea) are left untouched.
+function handleSpawnPaste(e) {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const imgs = [];
+  // DataTransferItemList isn't reliably for...of-iterable across browsers —
+  // index into it.
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (f) imgs.push(f);
+    }
+  }
+  if (!imgs.length) return;
+  // We consumed image data — stop the default so a contenteditable / textarea
+  // doesn't also try to handle it.
+  e.preventDefault();
+  addSpawnAttachments(imgs);
+}
+
+// uploadSpawnAttachments POSTs the pending files to /api/spawn-attachments and
+// returns the stored absolute paths. Returns [] when there are none. Throws on
+// a non-OK response so submit can surface the error and abort the spawn.
+async function uploadSpawnAttachments() {
+  if (!spawnAttachments.length) return [];
+  const fd = new FormData();
+  for (const a of spawnAttachments) {
+    fd.append('file', a.file, a.name);
+  }
+  const r = await fetch('/api/spawn-attachments', {
+    method: 'POST', credentials: 'same-origin', body: fd,
+  });
+  if (!r.ok) {
+    throw new Error('attachment upload failed: ' + ((await r.text()) || `HTTP ${r.status}`));
+  }
+  const payload = await r.json();
+  return (payload.files || []).map(f => f.path);
+}
+
 function openAgentSpawnModal(opts) {
   const groupName = (opts && opts.groupName) || '';
   const groupRow = $('#agent-spawn-group-row');
@@ -567,6 +689,10 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-init-msg').value = '';
   $('#agent-spawn-model').value = '';
   $('#agent-spawn-model-codex').value = '';
+  // Attachments are per-spawn (like cwd/worktree, not a profile field) — start
+  // every open with an empty list and any prior preview URLs revoked.
+  clearSpawnAttachments();
+  $('#agent-spawn-attach-input').value = '';
   // Populate the harness selector from the catalog and reshape the Model /
   // Sandbox rows for the chosen harness (default Claude Code). This also
   // re-applies the remembered effort for the now-active Model control, so
@@ -632,6 +758,9 @@ function openAgentSpawnModal(opts) {
 
 function closeAgentSpawnModal() {
   $('#agent-spawn-modal').classList.remove('show');
+  // Drop any pending attachments + revoke their preview URLs so a cancelled
+  // dialog doesn't leak object URLs or carry files into the next open.
+  clearSpawnAttachments();
 }
 
 async function submitAgentSpawn() {
@@ -691,7 +820,14 @@ async function submitAgentSpawn() {
     //     still launches in CWD; the worktree path + branch ride
     //     along so the daemon's welcome points the agent at it.
     const sel = await wtResolve('agent-spawn', wtRepo);
+    // Upload any attached files / pasted screenshots before the spawn POST.
+    // uploadSpawnAttachments writes them to a temp dir and returns the stored
+    // paths; a failure throws and lands in the catch below (error line + button
+    // re-enabled), so a botched upload never silently spawns an agent that's
+    // told about files that aren't there.
+    const attachmentPaths = await uploadSpawnAttachments();
     const body = { name, role, descr, initial_message: initMsg, auto_focus: autoFocus, include_group_context: includeGroupContext };
+    if (attachmentPaths.length) body.attachments = attachmentPaths;
     if (effort) body.effort = effort;
     if (model) body.model = model;
     // Send the harness only when it's not the default (Claude Code), so a
@@ -876,6 +1012,20 @@ function bindAgentSpawnModal() {
     spawnWtRepoTimer = setTimeout(() => {
       spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
     }, 350);
+  });
+  // Attachments: the "📎 Attach files" button opens the hidden native picker;
+  // its change event adds the chosen files (then resets value so re-picking the
+  // same file fires change again). Pasting an image anywhere in the dialog
+  // captures it as a PNG. The list's × buttons remove entries (delegated).
+  $('#agent-spawn-attach-btn').addEventListener('click', () => $('#agent-spawn-attach-input').click());
+  $('#agent-spawn-attach-input').addEventListener('change', (e) => {
+    addSpawnAttachments(e.target.files);
+    e.target.value = '';
+  });
+  $('#agent-spawn-modal').addEventListener('paste', handleSpawnPaste);
+  $('#agent-spawn-attachments-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('.att-remove');
+    if (btn) removeSpawnAttachment(Number(btn.dataset.attId));
   });
   bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);
 }

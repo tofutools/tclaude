@@ -167,6 +167,18 @@ type SpawnRequest struct {
 	// sender defaults to the spawn requester (the calling agent, or ""
 	// for a human-initiated spawn).
 	ReplyTo string `json:"reply_to,omitempty"`
+
+	// Attachments is an optional list of absolute file paths to surface in
+	// the new agent's startup briefing — the dashboard spawn modal uploads
+	// files / pasted screenshots to /api/spawn-attachments (which writes them
+	// to a temp dir) and passes the resulting paths here. They are purely
+	// informational: the daemon folds them into the briefing as an "Attached
+	// files" section so the agent can `Read` them on its first turn. No file
+	// is read by the daemon — the spawned agent runs as the same user and
+	// opens the paths itself — so the paths are only sanitised (control chars
+	// rejected, count/length capped), not access-checked. Empty for a spawn
+	// with no attachments.
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
