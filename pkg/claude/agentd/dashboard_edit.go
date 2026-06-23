@@ -1106,40 +1106,103 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
 }
 
-// handleDashboardNotificationsAPI is the master OS-notification switch:
-// GET returns {enabled}, POST {enabled} flips config.notifications.enabled
-// in ~/.tclaude/config.json — the same key the Config tab edits, exposed
-// as a one-click bell in the top bar. Sits above the per-group and
-// per-agent filters: off means nothing notifies, anywhere.
+// notificationsStateJSON is the shared GET/POST response shape for the
+// top-bar bell popover: the master switch, the per-type checklist (each
+// canonical destination state → on/off, derived from the wildcard
+// transition rules) and the human-messages intent. The Config tab edits
+// the same underlying config.notifications block through the full-config
+// save path; both views agree because both read these helpers.
+func notificationsStateJSON(n *config.NotificationConfig) map[string]any {
+	types := make(map[string]bool, len(config.NotifyTypes))
+	for _, ty := range config.NotifyTypes {
+		types[ty] = n.NotifyTypeEnabled(ty)
+	}
+	return map[string]any{
+		"enabled":        n != nil && n.Enabled,
+		"types":          types,
+		"human_messages": n.HumanMessagesIntent(),
+	}
+}
+
+// handleDashboardNotificationsAPI backs the top-bar bell popover (and is
+// the lightweight twin of the Config tab's full-config editor for the
+// notifications block in ~/.tclaude/config.json).
+//
+//	GET  → {enabled, types{state:bool…}, human_messages}
+//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?};
+//	       only the provided fields change, response echoes the new state.
+//
+// The master `enabled` sits ABOVE the per-group/per-agent filters — off
+// means nothing notifies, anywhere. The per-type `types` map toggles the
+// wildcard transition rules ({from:"*", to:state}); from-specific or
+// non-canonical "advanced" rules are preserved untouched (see
+// config.SetNotifyType). `human_messages` is the notify-human OS-banner
+// knob, default-on within an enabled block.
 func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"enabled": cfg.Notifications != nil && cfg.Notifications.Enabled})
-	case http.MethodPost:
-		var body struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Enabled == nil {
-			http.Error(w, "expected body {enabled: bool}", http.StatusBadRequest)
+		cfg, err := config.Load()
+		if err != nil {
+			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if cfg.Notifications == nil {
-			cfg.Notifications = config.DefaultConfig().Notifications
+		writeJSON(w, http.StatusOK, notificationsStateJSON(cfg.Notifications))
+	case http.MethodPost:
+		var body struct {
+			Enabled       *bool           `json:"enabled"`
+			Types         map[string]bool `json:"types"`
+			HumanMessages *bool           `json:"human_messages"`
 		}
-		cfg.Notifications.Enabled = *body.Enabled
-		if err := config.Save(cfg); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "expected body {enabled?, types?, human_messages?}", http.StatusBadRequest)
+			return
+		}
+		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil {
+			http.Error(w, "no recognised field; expected one of enabled, types, human_messages", http.StatusBadRequest)
+			return
+		}
+		// Validate every type key up front so a typo is a clean 400 rather
+		// than a silently-ignored no-op write.
+		for k := range body.Types {
+			if !config.IsNotifyType(k) {
+				http.Error(w, "unknown notification type: "+k, http.StatusBadRequest)
+				return
+			}
+		}
+		// Serialized read-modify-write so a concurrent config writer
+		// (another dashboard action, the Config tab save) can't drop this
+		// change — and vice versa.
+		saved, err := config.Update(func(cfg *config.Config, _ error) error {
+			if cfg.Notifications == nil {
+				cfg.Notifications = config.DefaultConfig().Notifications
+			}
+			n := cfg.Notifications
+			if body.Enabled != nil {
+				n.Enabled = *body.Enabled
+			}
+			for ty, on := range body.Types {
+				n.SetNotifyType(ty, on)
+			}
+			if body.HumanMessages != nil {
+				if *body.HumanMessages {
+					// Absence is the default-on state — keep the config
+					// minimal rather than persisting an explicit `true`.
+					n.HumanMessages = nil
+				} else {
+					off := false
+					n.HumanMessages = &off
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"enabled": *body.Enabled})
+		writeJSON(w, http.StatusOK, notificationsStateJSON(saved.Notifications))
 	default:
 		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 	}

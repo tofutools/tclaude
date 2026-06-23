@@ -38,6 +38,7 @@ import {
   bindReincarnateAgentModal,
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
+import { bindNotifyMenu } from './notify-menu.js';
 import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
 import { bindAuditTab } from './audit.js';
@@ -114,6 +115,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindCloneAgentModal();
   bindReincarnateAgentModal();
   bindConfigTab();
+  // The top-bar bell's notification-settings popover (master on/off +
+  // per-type checklist + human-message knob), backed by /api/notifications.
+  bindNotifyMenu();
   bindPluginsUI();
   bindCostsTab();
   bindCostDisplayToggle();

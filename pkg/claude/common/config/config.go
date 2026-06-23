@@ -860,14 +860,20 @@ func Normalize(c *Config) {
 		c.LogLevel = "info"
 	}
 	if c.Notifications == nil {
+		// No notifications block at all → seed the full defaults
+		// (enabled=false, the five default transition rules, cooldown 5).
 		c.Notifications = DefaultConfig().Notifications
 	} else {
 		if c.Notifications.CooldownSeconds == 0 {
 			c.Notifications.CooldownSeconds = 5
 		}
-		if len(c.Notifications.Transitions) == 0 {
-			c.Notifications.Transitions = DefaultConfig().Notifications.Transitions
-		}
+		// NB: an *existing* notifications block with an empty Transitions
+		// list is left empty on purpose — it means "notify on no state
+		// transition" (e.g. the per-type checklist with every box
+		// unchecked, leaving only human-message notifications). Re-seeding
+		// the defaults here would make unchecking the last type silently
+		// snap back to all-on. Only an absent block (the nil branch above)
+		// gets the default rules.
 	}
 	if c.RateLimit != nil {
 		if v := c.RateLimit.FiveHourPercentMaxUsed; v <= 0 || v > 100 {
@@ -1139,4 +1145,83 @@ func (c *NotificationConfig) MatchesTransition(from, to string) bool {
 		}
 	}
 	return false
+}
+
+// NotifyTypes is the canonical set of destination states the friendly
+// per-type notification selector (the top-bar bell popover and the Config
+// tab checklist) toggles. Each "type" the human checks/unchecks maps to a
+// wildcard transition rule {from:"*", to:<state>} — so the selector is a
+// human-readable view over the lower-level Transitions list, not a second
+// storage model. The order here is the order the UI renders. It mirrors
+// the default DefaultConfig().Notifications.Transitions destinations.
+var NotifyTypes = []string{
+	"idle",
+	"awaiting_permission",
+	"awaiting_input",
+	"error",
+	"exited",
+}
+
+// IsNotifyType reports whether to is one of the canonical NotifyTypes the
+// per-type selector manages. Transitions to any other state (or with a
+// non-wildcard From) are "advanced" rules the selector leaves untouched.
+func IsNotifyType(to string) bool {
+	return slices.Contains(NotifyTypes, to)
+}
+
+// NotifyTypeEnabled reports whether the friendly per-type checkbox for the
+// destination state `to` is on — i.e. whether a wildcard rule {from:"*",
+// to:to} is present in Transitions. A from-specific rule (e.g.
+// {from:"working", to:"idle"}) is an advanced rule and does NOT light the
+// checkbox; it is preserved untouched by SetNotifyType.
+func (c *NotificationConfig) NotifyTypeEnabled(to string) bool {
+	if c == nil {
+		return false
+	}
+	for _, r := range c.Transitions {
+		if r.From == "*" && r.To == to {
+			return true
+		}
+	}
+	return false
+}
+
+// SetNotifyType turns the friendly per-type notification on/off for the
+// destination state `to` by adding or removing the single wildcard rule
+// {from:"*", to:to}. Every other rule — from-specific rules and rules to
+// non-canonical destinations — round-trips untouched, so the checklist and
+// the raw "Advanced" transitions editor never clobber each other. on=true
+// is idempotent (a duplicate wildcard rule is never added); on=false drops
+// every wildcard rule for that destination.
+func (c *NotificationConfig) SetNotifyType(to string, on bool) {
+	if c == nil {
+		return
+	}
+	// Rebuild without any wildcard rule for this destination; fresh
+	// backing array (cap 0) so we never mutate a slice the caller may
+	// still be aliasing.
+	kept := make([]TransitionRule, 0, len(c.Transitions)+1)
+	for _, r := range c.Transitions {
+		if r.From == "*" && r.To == to {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if on {
+		kept = append(kept, TransitionRule{From: "*", To: to})
+	}
+	c.Transitions = kept
+}
+
+// HumanMessagesIntent reports the human-messages preference independent of
+// the master Enabled switch: it is the value the per-type "Sends me a
+// message" checkbox should show. Unset (nil) defaults ON, matching
+// NotifyHumanMessages's within-enabled default; only an explicit false is
+// off. Distinct from NotifyHumanMessages, which additionally ANDs Enabled
+// (the effective "should this banner fire" decision).
+func (c *NotificationConfig) HumanMessagesIntent() bool {
+	if c == nil {
+		return true
+	}
+	return c.HumanMessages == nil || *c.HumanMessages
 }

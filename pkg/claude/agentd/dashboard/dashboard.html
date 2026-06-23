@@ -15,11 +15,35 @@
   <h1>🤝 tclaude agent dashboard</h1>
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
-  <!-- Master OS-notification bell — mirrors config.notifications.enabled
-       (the switch ABOVE the per-group / per-agent filters). Painted from
-       snapshot.notifications_enabled on every poll; click toggles via
-       POST /api/notifications. -->
-  <button class="notify-bell" id="notify-global" type="button" data-act="toggle-global-notify" data-enabled="0" hidden title="OS notifications"></button>
+  <!-- Master OS-notification bell + per-type popover. The bell glyph
+       mirrors config.notifications.enabled (the switch ABOVE the
+       per-group / per-agent filters), painted from
+       snapshot.notifications_enabled on every poll. Clicking it opens the
+       popover (notify-menu.js): a master on/off plus the per-type
+       checklist (which state transitions fire a banner) and the
+       human-message knob — all backed by GET/POST /api/notifications. The
+       same notifications block is editable in full on the Config tab. -->
+  <span class="notify-bell-wrap">
+    <button class="notify-bell" id="notify-global" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="notify-pop" data-enabled="0" hidden title="OS notifications"></button>
+    <div id="notify-pop" role="group" aria-label="Notification settings">
+      <label class="notify-pop-master" title="The master switch — off means nothing notifies, regardless of the per-type or per-group/agent settings.">
+        <input type="checkbox" id="notify-pop-enabled"> <b>All notifications</b>
+      </label>
+      <div class="notify-pop-sep"></div>
+      <div class="notify-pop-hint" id="notify-pop-types-hint">Notify me when an agent…</div>
+      <label class="notify-pop-row"><input type="checkbox" data-notify-type="idle"> Goes idle / finishes</label>
+      <label class="notify-pop-row"><input type="checkbox" data-notify-type="awaiting_permission"> Needs permission</label>
+      <label class="notify-pop-row"><input type="checkbox" data-notify-type="awaiting_input"> Awaits input</label>
+      <label class="notify-pop-row"><input type="checkbox" data-notify-type="error"> Errors</label>
+      <label class="notify-pop-row"><input type="checkbox" data-notify-type="exited"> Exits</label>
+      <div class="notify-pop-sep"></div>
+      <label class="notify-pop-row" title="A `tclaude agent notify-human` message also raises a desktop banner (it always lands in the Messages tab regardless).">
+        <input type="checkbox" id="notify-pop-human"> Sends me a message
+      </label>
+      <div class="notify-pop-sep"></div>
+      <button class="notify-pop-config" id="notify-pop-config" type="button" title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules).">Config tab ↗</button>
+    </div>
+  </span>
   <span class="meta" id="status"></span>
   <!-- Slop-mode HUD — a running credits counter + the casino sound-FX
        toggle. CSS-hidden unless body.slop (see dashboard.css); fed by
@@ -289,9 +313,27 @@
         <span>seconds between notifications</span>
       </div>
       <div class="cfg-field">
-        <span class="cfg-label">Transitions</span>
-        <span class="cfg-hint" style="padding-left:0">State changes that fire a notification. Use <code>*</code> as a wildcard for any state.</span>
-        <div class="cfg-list" id="cfg-notif-transitions"></div>
+        <span class="cfg-label">Notify me when an agent…</span>
+        <div class="cfg-notif-types" id="cfg-notif-types">
+          <label class="cfg-inline"><input type="checkbox" data-cfg-notify-type="idle" /> goes idle / finishes</label>
+          <label class="cfg-inline"><input type="checkbox" data-cfg-notify-type="awaiting_permission" /> needs permission</label>
+          <label class="cfg-inline"><input type="checkbox" data-cfg-notify-type="awaiting_input" /> awaits input</label>
+          <label class="cfg-inline"><input type="checkbox" data-cfg-notify-type="error" /> errors</label>
+          <label class="cfg-inline"><input type="checkbox" data-cfg-notify-type="exited" /> exits</label>
+        </div>
+        <span class="cfg-hint" style="padding-left:0">Which state changes raise a desktop banner. tclaude still records every transition — this only controls whether you get a notification.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Human messages</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-notif-human" /> a <code>notify-human</code> message also raises a desktop banner</label>
+        <span class="cfg-hint">It always lands in the dashboard Messages tab regardless.</span>
+      </div>
+      <div class="cfg-field">
+        <details class="cfg-advanced">
+          <summary>Advanced: raw transition rules</summary>
+          <span class="cfg-hint" style="padding-left:0">The checklist above toggles <code>*&nbsp;→&nbsp;state</code> rules. Add from-specific or extra rules here (use <code>*</code> as a wildcard for any state). The checklist and this list edit the same setting; an empty list means no state change notifies.</span>
+          <div class="cfg-list" id="cfg-notif-transitions"></div>
+        </details>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Notification command</span>

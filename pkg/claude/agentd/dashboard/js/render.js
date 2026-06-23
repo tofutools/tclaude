@@ -754,8 +754,10 @@ function renderUsage(u) {
 // renderNotifyGlobal paints the top-bar master notification bell from
 // snapshot.notifications_enabled (config.notifications.enabled). The
 // button stays hidden until the first snapshot so it never flashes a
-// wrong state; data-enabled carries the current value for the
-// toggle-global-notify click handler.
+// wrong state. Clicking the bell opens the per-type popover
+// (notify-menu.js), which fetches its own fresh state — the master on/off
+// lives inside it now, not on the bell itself. data-enabled is kept in
+// sync as a plain reflection of the snapshot for any external reader.
 function renderNotifyGlobal(enabled) {
   const el = $('#notify-global');
   if (!el) return;
@@ -764,8 +766,8 @@ function renderNotifyGlobal(enabled) {
   el.setAttribute('data-enabled', enabled ? '1' : '0');
   el.textContent = enabled ? '🔔' : '🔕';
   el.title = enabled
-    ? 'OS notifications on (config.notifications.enabled) — click to turn ALL tclaude notifications off'
-    : 'OS notifications OFF (config.notifications.enabled) — nothing notifies, regardless of group/agent bells. Click to turn on.';
+    ? 'OS notifications ON — click to choose which notifications you want'
+    : 'OS notifications OFF — nothing notifies, regardless of group/agent bells. Click to configure.';
 }
 
 // renderDashDefaultProfile paints the groups-tab 🧠 chip showing the
