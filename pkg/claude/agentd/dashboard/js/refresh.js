@@ -815,9 +815,11 @@ async function powerOnScope(scope, groupName) {
 // trigger per scope — a group-level button and the top-bar button —
 // opens this modal. Inside it the human picks the DIRECTION (focus
 // vs unfocus) and the agent SELECTION: every running agent in scope
-// is listed and ticked by default, and can be narrowed by role chip,
-// by individual checkbox, or by the text filter. Submit POSTs the
-// explicit conv-id list to /api/agent-windows.
+// is listed and ticked by default, and can be narrowed by group chip,
+// by role chip, by individual checkbox, or by the text filter. Submit
+// POSTs the explicit conv-id list to /api/agent-windows. The group
+// chips only show in the all-scope modal — a group-scoped modal is
+// already one group, so its single bucket stays hidden.
 //
 // It is window-only: focus opens/raises terminal windows, unfocus
 // detaches them. Neither touches an agent process — the agents keep
@@ -826,13 +828,20 @@ function openWindowModal(scope, groupName) {
   const snap = lastSnapshot || {};
   const where = scope === 'group' ? `group "${groupName}"` : 'the dashboard';
   const NO_ROLE = '(no role)';
+  const NO_GROUP = '(no group)';
 
   // An agent's roles come from its group memberships — a top-level
   // agent row carries no role of its own, so the all-scope modal
   // collects them across every group.
   const rolesByConv = {};
+  // The groups each agent belongs to — the all-scope modal's group
+  // chips bucket by these. Like roles, an agent can be a member of more
+  // than one group, so this is a list per conv.
+  const groupsByConv = {};
   for (const g of (snap.groups || [])) {
     for (const m of (g.members || [])) {
+      const gs = groupsByConv[m.conv_id] || (groupsByConv[m.conv_id] = []);
+      if (!gs.includes(g.name)) gs.push(g.name);
       if (!m.role) continue;
       const rs = rolesByConv[m.conv_id] || (rolesByConv[m.conv_id] = []);
       if (!rs.includes(m.role)) rs.push(m.role);
@@ -846,14 +855,18 @@ function openWindowModal(scope, groupName) {
     const g = (snap.groups || []).find(x => x.name === groupName);
     for (const m of (g && g.members || [])) {
       if (!m.online) continue;
+      // A group-scoped modal is already one group, so the candidate
+      // carries only that group — its group-chip row stays hidden
+      // (one bucket), the same way the role row hides below 2 buckets.
       candidates.push({ conv_id: m.conv_id, title: m.title || '',
-        roles: m.role ? [m.role] : [], checked: true });
+        roles: m.role ? [m.role] : [], groups: [groupName], checked: true });
     }
   } else {
     for (const a of (snap.agents || [])) {
       if (!a.online) continue;
       candidates.push({ conv_id: a.conv_id, title: a.title || '',
-        roles: rolesByConv[a.conv_id] || [], checked: true });
+        roles: rolesByConv[a.conv_id] || [], groups: groupsByConv[a.conv_id] || [],
+        checked: true });
     }
   }
   if (candidates.length === 0) {
@@ -872,8 +885,21 @@ function openWindowModal(scope, groupName) {
   }
   allRoleKeys.sort((a, b) => (a === NO_ROLE) - (b === NO_ROLE) || a.localeCompare(b));
 
+  // groupKeys(c) — the group buckets a candidate belongs to (for the
+  // group chips). An ungrouped agent lands in the synthetic NO_GROUP
+  // bucket so it stays reachable by a chip, mirroring NO_ROLE.
+  const groupKeys = (c) => c.groups.length ? c.groups : [NO_GROUP];
+  const allGroupKeys = [];
+  for (const c of candidates) {
+    for (const k of groupKeys(c)) {
+      if (!allGroupKeys.includes(k)) allGroupKeys.push(k);
+    }
+  }
+  allGroupKeys.sort((a, b) => (a === NO_GROUP) - (b === NO_GROUP) || a.localeCompare(b));
+
   const overlay = $('#window-modal');
   const hintEl = $('#window-hint');
+  const groupsEl = $('#window-groups');
   const rolesEl = $('#window-roles');
   const listEl = $('#window-list');
   const countEl = $('#window-count');
@@ -907,6 +933,20 @@ function openWindowModal(scope, groupName) {
       ? `Open or raise a terminal window for each selected running agent in ${where}.`
       : `Detach the terminal windows of the selected running agents in ${where} so the `
         + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+  }
+  function renderGroups() {
+    // Chips only earn their space when there is more than one bucket —
+    // so a group-scoped modal (one bucket) shows no group row at all.
+    if (allGroupKeys.length < 2) { groupsEl.innerHTML = ''; return; }
+    let html = '<span class="roles-label">groups</span>';
+    for (const k of allGroupKeys) {
+      const inK = candidates.filter(c => groupKeys(c).includes(k));
+      const on = inK.filter(c => c.checked).length;
+      const cls = on === 0 ? '' : (on === inK.length ? ' on' : ' partial');
+      html += `<button type="button" class="window-role-chip${cls}" data-group-chip="${esc(k)}">`
+        + `${esc(k)} (${on}/${inK.length})</button>`;
+    }
+    groupsEl.innerHTML = html;
   }
   function renderRoles() {
     // Chips only earn their space when there is more than one bucket.
@@ -943,7 +983,7 @@ function openWindowModal(scope, groupName) {
     submitBtn.textContent = n === 1 ? `${verb} 1 agent` : `${verb} ${n} agents`;
     submitBtn.disabled = n === 0;
   }
-  function render() { renderHint(); renderRoles(); renderList(); renderFooter(); }
+  function render() { renderHint(); renderGroups(); renderRoles(); renderList(); renderFooter(); }
 
   const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
 
@@ -952,7 +992,18 @@ function openWindowModal(scope, groupName) {
     if (!cb) return;
     const c = findCandidate(cb.getAttribute('data-conv'));
     if (c) c.checked = cb.checked;
-    renderRoles(); renderFooter();
+    renderGroups(); renderRoles(); renderFooter();
+  };
+  const onGroupsClick = (e) => {
+    const chip = e.target.closest('.window-role-chip');
+    if (!chip) return;
+    const k = chip.getAttribute('data-group-chip');
+    const inK = candidates.filter(c => groupKeys(c).includes(k));
+    // Toggle: if every agent in this group is already selected, clear
+    // them; otherwise select them all.
+    const allOn = inK.every(c => c.checked);
+    for (const c of inK) c.checked = !allOn;
+    render();
   };
   const onRolesClick = (e) => {
     const chip = e.target.closest('.window-role-chip');
@@ -973,6 +1024,7 @@ function openWindowModal(scope, groupName) {
   const cleanup = () => {
     overlay.classList.remove('show');
     listEl.removeEventListener('change', onListChange);
+    groupsEl.removeEventListener('click', onGroupsClick);
     rolesEl.removeEventListener('click', onRolesClick);
     for (const r of dirRadios) r.removeEventListener('change', onDirChange);
     searchEl.removeEventListener('input', onSearch);
@@ -1026,6 +1078,7 @@ function openWindowModal(scope, groupName) {
   }
 
   listEl.addEventListener('change', onListChange);
+  groupsEl.addEventListener('click', onGroupsClick);
   rolesEl.addEventListener('click', onRolesClick);
   for (const r of dirRadios) r.addEventListener('change', onDirChange);
   searchEl.addEventListener('input', onSearch);
