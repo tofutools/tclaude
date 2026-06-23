@@ -9,9 +9,8 @@ import (
 )
 
 // TestMigrateV66toV67_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts the export_jobs table landed. v67 is head, so this is where
-// the literal currentVersion pin now lives — the tripwire the next migration's
-// author moves forward into their own v68 test.
+// chain and asserts the export_jobs table landed. (The literal currentVersion
+// pin moved forward into the v68 test — the tripwire convention.)
 func TestMigrateV66toV67_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -20,8 +19,6 @@ func TestMigrateV66toV67_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v66 test.
-	require.Equal(t, 67, currentVersion, "currentVersion is 67")
 
 	var haveTable int
 	require.NoError(t, d.QueryRow(
