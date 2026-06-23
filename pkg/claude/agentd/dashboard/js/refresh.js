@@ -817,9 +817,10 @@ async function powerOnScope(scope, groupName) {
 // vs unfocus) and the agent SELECTION: every running agent in scope
 // is listed and ticked by default, and can be narrowed by group chip,
 // by role chip, by individual checkbox, or by the text filter. Submit
-// POSTs the explicit conv-id list to /api/agent-windows. The group
-// chips only show in the all-scope modal — a group-scoped modal is
-// already one group, so its single bucket stays hidden.
+// POSTs the explicit conv-id list to /api/agent-windows. The group and
+// role filter rows are always present — a single group (or role) still
+// earns its chip, so the common one-group dashboard can bulk-toggle by
+// group.
 //
 // It is window-only: focus opens/raises terminal windows, unfocus
 // detaches them. Neither touches an agent process — the agents keep
@@ -856,8 +857,8 @@ function openWindowModal(scope, groupName) {
     for (const m of (g && g.members || [])) {
       if (!m.online) continue;
       // A group-scoped modal is already one group, so the candidate
-      // carries only that group — its group-chip row stays hidden
-      // (one bucket), the same way the role row hides below 2 buckets.
+      // carries only that group — its group filter row shows a single
+      // chip for it (a redundant-but-consistent twin of select-all).
       candidates.push({ conv_id: m.conv_id, title: m.title || '',
         roles: m.role ? [m.role] : [], groups: [groupName], checked: true });
     }
@@ -935,9 +936,11 @@ function openWindowModal(scope, groupName) {
         + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
   }
   function renderGroups() {
-    // Chips only earn their space when there is more than one bucket —
-    // so a group-scoped modal (one bucket) shows no group row at all.
-    if (allGroupKeys.length < 2) { groupsEl.innerHTML = ''; return; }
+    // The group filter is always shown when there's at least one agent
+    // in scope — even a single group earns its chip, so a one-group
+    // dashboard (the common case) can still bulk-toggle by group. The
+    // synthetic NO_GROUP bucket appears whenever an ungrouped agent is
+    // in scope, sorted last.
     let html = '<span class="roles-label">groups</span>';
     for (const k of allGroupKeys) {
       const inK = candidates.filter(c => groupKeys(c).includes(k));
@@ -949,8 +952,9 @@ function openWindowModal(scope, groupName) {
     groupsEl.innerHTML = html;
   }
   function renderRoles() {
-    // Chips only earn their space when there is more than one bucket.
-    if (allRoleKeys.length < 2) { rolesEl.innerHTML = ''; return; }
+    // Like the group filter, the role filter is always shown — even a
+    // single role (or the synthetic NO_ROLE bucket alone) earns its
+    // chip, so the two filter rows are consistently present.
     let html = '<span class="roles-label">roles</span>';
     for (const k of allRoleKeys) {
       const inK = candidates.filter(c => roleKeys(c).includes(k));

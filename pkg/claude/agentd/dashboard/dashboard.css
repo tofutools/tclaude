@@ -2208,11 +2208,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 11px; color: #7d8590; min-height: 18px;
 }
-/* A bucket row with a single bucket renders empty (one role/group earns
-   no chips). Drop it from the modal's flex column entirely so it claims
-   neither its min-height nor a gap slot — e.g. a group-scoped modal,
-   which is one group, shows no group row at all. */
-.window-roles:empty, .window-groups:empty { display: none; }
 .window-roles .roles-label,
 .window-groups .roles-label { text-transform: uppercase; letter-spacing: 0.04em; }
 .window-role-chip {
