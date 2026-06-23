@@ -32,6 +32,7 @@ import {
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
 import { bindLinkModal } from './modal-link-wt.js';
+import { bindExportModal } from './modal-export.js';
 import {
   bindAgentSpawnModal, bindCloneAgentModal,
   bindReincarnateAgentModal,
@@ -107,6 +108,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindGroupContextModal();
   bindGroupCloneModal();
   bindLinkModal();
+  bindExportModal();
   bindAgentSpawnModal();
   bindCloneAgentModal();
   bindReincarnateAgentModal();

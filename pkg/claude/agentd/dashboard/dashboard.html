@@ -1512,6 +1512,42 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="export-agent-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="export-agent-title">
+    <h3 id="export-agent-title">Export conversation</h3>
+    <div class="modal-meta" id="export-agent-meta"></div>
+    <div id="export-agent-form">
+      <p style="margin:4px 0; font-size:12px; color:#7d8590">Ask this agent to consolidate a shareable export of the conversation — a summary or report for others to read. It runs in the agent's own session; the file downloads here when it's ready. Multiple files are zipped automatically.</p>
+      <label class="cron-create-row">
+        <span class="cron-create-label">Format</span>
+        <select id="export-agent-preset">
+          <option value="summary">Summary report (Markdown)</option>
+          <option value="detailed">Full detailed report</option>
+          <option value="custom">Custom — see instructions</option>
+        </select>
+      </label>
+      <label class="cron-create-row">
+        <span class="cron-create-label">Title</span>
+        <input id="export-agent-title-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional — names the download, e.g. 'Auth research summary'" />
+      </label>
+      <label class="cron-create-row">
+        <span class="cron-create-label">Instructions</span>
+        <textarea id="export-agent-instructions" rows="6" spellcheck="false" placeholder="How should the agent produce the export? Audience, focus, what to include or leave out, format. Leave blank to let the agent decide."></textarea>
+      </label>
+    </div>
+    <div id="export-agent-status" hidden>
+      <div class="export-status-row"><span class="export-spinner" id="export-agent-spinner" aria-hidden="true"></span><span id="export-agent-status-text">Waiting for the agent…</span></div>
+      <div class="export-status-note" id="export-agent-status-note"></div>
+    </div>
+    <div class="cron-create-error" id="export-agent-error"></div>
+    <div class="modal-buttons">
+      <button id="export-agent-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="export-agent-download" class="primary" type="button" hidden>Download</button>
+      <button id="export-agent-submit" class="primary" type="button">Export</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="config-diff-modal">
   <div class="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-title">
     <h3 id="config-diff-title">Confirm config changes</h3>
