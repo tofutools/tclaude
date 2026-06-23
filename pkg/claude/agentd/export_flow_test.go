@@ -165,23 +165,23 @@ func TestExportFlow_HappyPath(t *testing.T) {
 
 // assertCloneRetired polls until the worker clone is retired — the teardown
 // (kill session + retire conv) runs in the background after submit. It asserts
-// the conversation is KEPT (the session row carrying the cost survives) and the
-// agent is demoted to retired, rather than purged: the cost-preservation
-// guarantee of JOH-267. The contrast with the old delete behaviour is exactly
-// the surviving session row.
+// the clone is DEMOTED to retired with its conversation KEPT (session + conv_index
+// rows survive), not purged. The surviving conv_index is the point of JOH-267:
+// it's what keeps the clone's Costs line labelled with its title instead of the
+// `(unknown)` placeholder. (The dollar figure itself lives in session_cost_daily
+// and survives a delete either way, so this isn't about rescuing lost cost.) The
+// surviving rows are exactly the contrast with the old delete behaviour.
 func assertCloneRetired(t *testing.T, workerConv string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if st, _ := db.EnrollmentState(workerConv); st == db.EnrollmentRetired {
-			// The session row (which carries cost_usd, and keys session_cost_daily)
-			// must NOT have been purged — that is what keeps the cost attributed.
+			// Kept, not purged: the session row and the conv_index row (which
+			// supplies the cost line's title) both survive the teardown.
 			rows, _ := db.FindSessionsByConvID(workerConv)
-			require.NotEmpty(t, rows,
-				"retired clone %s must keep its session row so its cost is preserved", workerConv)
-			// And the conversation index row survives too (the cost's label/context).
+			require.NotEmpty(t, rows, "retired clone %s must keep its session row", workerConv)
 			row, _ := db.GetConvIndex(workerConv)
-			require.NotNil(t, row, "retired clone %s must keep its conv_index row", workerConv)
+			require.NotNil(t, row, "retired clone %s must keep its conv_index row (the cost line's label)", workerConv)
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

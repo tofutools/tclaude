@@ -29,10 +29,14 @@ import (
 // polluting its context, or racing its turns — the export does NOT nudge the
 // original. It spawns an isolated CLONE of the conversation (a copy of the
 // .jsonl on a fresh conv-id / session), lets the CLONE produce the summary, then
-// RETIRES the clone (JOH-267): the clone spent tokens on the summary, so its
-// conversation is kept and demoted to a retired agent rather than deleted, which
-// keeps that cost attributed in the Costs view. The summary still attaches to the
-// ORIGINAL: the job's conv_id stays the original (history list + download), while
+// RETIRES the clone (JOH-267) rather than deleting it. The clone's dollar spend
+// is recorded in session_cost_daily, whose conv_id is denormalised at write time
+// so it survives the conversation being deleted either way — so retire does NOT
+// rescue an otherwise-lost cost. What it preserves is the clone's conv_index
+// row, so its cost line keeps a real title (`…-summary-writer-clone`) instead of
+// rendering under the `(unknown)` placeholder, and it surfaces the clone in the
+// dashboard's Retired group. The summary still attaches to the ORIGINAL: the
+// job's conv_id stays the original (history list + download), while
 // worker_conv_id is the throwaway clone (who is nudged, who submits, whose
 // identity the /v1 gate accepts). The round-trip:
 //
@@ -389,17 +393,22 @@ func failExportJobAndReap(jobID int64, cloneConv, reason string) {
 }
 
 // retireSummaryWriterClone tears down a summary-writer clone that did real work
-// (it produced — or was given the full window to produce — an export, so it
-// spent tokens) WITHOUT erasing its cost. It force-kills the pane, then RETIRES
-// the conversation instead of deleting it: retireAgentConv keeps conv_index +
-// sessions + the .jsonl and only demotes the agent (unjoin groups, revoke perms,
-// flip enrollment → retired), so the clone's spend stays attributed in the Costs
-// view and the clone lands in the dashboard's "Retired" group (JOH-267).
+// (it ran a summary turn, so it has a cost line) by force-killing the pane and
+// then RETIRING the conversation instead of deleting it (JOH-267): retireAgentConv
+// keeps conv_index + sessions + the .jsonl and only demotes the agent (unjoin
+// groups, revoke perms, flip enrollment → retired).
+//
+// The point is NOT to rescue the cost — the dollar figure lives in
+// session_cost_daily (conv_id denormalised there precisely so it survives a
+// delete), so the spend stays in the Costs totals either way. Keeping conv_index
+// is what lets the Costs line show the clone's title instead of the `(unknown)`
+// placeholder, and the clone shows up in the dashboard's "Retired" group.
 //
 // EnrollAgent first (INSERT OR IGNORE — a same_group clone is already enrolled;
-// a standalone one is not) so RetireAgent has an active row to flip. Cost capture
-// is not lost to the kill: Claude Code stamps cumulative cost live via the
-// statusline hook, so the summary turn's spend is already recorded by submit time.
+// a standalone one is not) so RetireAgent has an active row to flip. Retire is
+// non-destructive, so a same_group clone's peer agent_messages / history rows are
+// left behind (delete would have purged them) — harmless residue, and the reason
+// a retired same_group clone can appear as a Retired mailbox folder.
 //
 // Best-effort and idempotent. NEVER call with the original conv-id: callers guard
 // worker_conv_id != conv_id so the original is never touched.
@@ -547,11 +556,12 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 		"size":   len(data),
 	})
 	// The export is delivered — tear down the throwaway clone that produced it.
-	// RETIRE it rather than delete (JOH-267): it spent tokens on the summary, so
-	// keeping the conversation preserves that cost in the Costs view. Done AFTER
-	// the response (in the background) so the clone's `export submit` sees its 200
-	// before its pane is killed. The worker != conv guard makes it impossible to
-	// ever touch the ORIGINAL conversation.
+	// RETIRE it rather than delete (JOH-267): it ran a summary turn, so keeping
+	// its conv_index keeps that cost line labelled with the clone's title (instead
+	// of `(unknown)`) and surfaces it as a retired agent. Done AFTER the response
+	// (in the background) so the clone's `export submit` sees its 200 before its
+	// pane is killed. The worker != conv guard makes it impossible to ever touch
+	// the ORIGINAL conversation.
 	if job.WorkerConvID != "" && job.WorkerConvID != job.ConvID {
 		clone := job.WorkerConvID
 		goBackground(func() { retireSummaryWriterClone(clone) })
@@ -809,11 +819,13 @@ func runExportJobsCleanup(now time.Time) {
 		// ready meanwhile keeps its clone reaped by the submit path). The
 		// worker != conv guard makes touching the original impossible.
 		//
-		// A requested/running clone was nudged and may have spent tokens → RETIRE
-		// it to keep that cost (JOH-267). A clone still in 'cloning' was never
-		// nudged (a daemon-crash orphan, since a live waitForConvAlive failure
-		// would already have failed+deleted it) → DELETE; there is no billable
-		// work to preserve.
+		// A requested/running clone was nudged and most likely ran a summary turn,
+		// so it has a labelled cost line worth keeping → RETIRE (JOH-267). A clone
+		// still in 'cloning' was never nudged (a daemon-crash orphan, since a live
+		// waitForConvAlive failure would already have failed+deleted it inline), so
+		// it ran no summary turn → DELETE; nothing to label. (A requested clone
+		// that crashed between the requested-flip and the nudge is the imperfect
+		// edge — it gets retired with no cost line; rare and harmless.)
 		if moved && j.WorkerConvID != "" && j.WorkerConvID != j.ConvID {
 			if j.Status == db.ExportStatusRequested || j.Status == db.ExportStatusRunning {
 				retireSummaryWriterClone(j.WorkerConvID)
