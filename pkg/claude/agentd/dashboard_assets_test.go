@@ -79,17 +79,45 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 		}
 	}
 	// CSS: widget class, the working-state spin animation, and the
-	// pill-hide rule that swaps slot in for pill in slop mode.
+	// pill-hide rule that swaps slot in for pill in slop mode. The rule
+	// is scoped to .state-cell — see TestDashboardCSS_SlopPillHideScopedToStateCell.
 	for _, needle := range []string{
 		".slop-machine",
 		".slop-reel",
 		".slop-strip",
 		"@keyframes slop-spin",
-		"body.slop .state-pill { display: none; }",
+		"body.slop .state-cell .state-pill { display: none; }",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard CSS missing %q — slot machine styling broken", needle)
 		}
+	}
+}
+
+// TestDashboardCSS_SlopPillHideScopedToStateCell guards the fix for the
+// slop-mode bug where reused .state-pill cells went blank — the Audit
+// tab's Outcome column showed nothing in slop mode. The slot machine
+// only replaces the pill in the agent-row status cell (.state-cell,
+// render.js), so the pill-hide rule MUST be scoped there. An unscoped
+// `body.slop .state-pill { display: none; }` hides every .state-pill on
+// the page — Audit Outcome, Plugins status/step pills — none of which
+// have a slot machine to take their place. Pin the scoped form and
+// reject the unscoped one so the bug can't silently return.
+func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	if !strings.Contains(css, "body.slop .state-cell .state-pill { display: none; }") {
+		t.Error("dashboard.css missing the .state-cell-scoped slop pill-hide rule — " +
+			"reused .state-pill cells (Audit Outcome, Plugins status) go blank in slop mode")
+	}
+	// The unscoped global rule is the regression — it blanks every
+	// .state-pill, not just the agent-row pill the slot machine replaces.
+	if strings.Contains(css, "body.slop .state-pill {") {
+		t.Error("dashboard.css carries the unscoped `body.slop .state-pill` rule — " +
+			"it blanks the Audit/Plugins pills; scope it to .state-cell")
 	}
 }
 

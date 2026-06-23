@@ -2354,8 +2354,13 @@ body.slop .slop-machine {
               0 0 4px rgba(255, 215, 0, 0.25);
 }
 /* Hide the regular state pill in slop mode — the slot machine
-   takes its place. The +N subagent detail still shows alongside. */
-body.slop .state-pill { display: none; }
+   takes its place. The +N subagent detail still shows alongside.
+   Scoped to .state-cell (the agent-row status cell) on purpose: that
+   is the ONLY place a .slop-machine is emitted to replace the pill
+   (render.js). Other tabs reuse .state-pill with no slot machine —
+   the Audit tab's Outcome column, the Plugins status/step pills — so
+   an unscoped rule would blank those cells in slop mode. */
+body.slop .state-cell .state-pill { display: none; }
 
 .slop-reel {
   display: inline-block; width: 1.3em; height: 1.3em;
