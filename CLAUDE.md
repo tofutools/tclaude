@@ -144,5 +144,7 @@ setup, and keep the board current as work ships.
 
 Design intent, research, and roadmaps live in Linear (e.g. the
 `tclaude-harness-independence` project), not in-repo — this repo carries code,
-the user docs under `docs/`, and the inline rationale in code comments (which
-cite the relevant Linear issue IDs).
+the user docs under `docs/`, and inline rationale in code comments. Referencing a
+Linear issue ID in a comment is welcome when a relevant one happens to exist, but
+it is **optional** — not a requirement, and never a review blocker. (This is a
+personal project; don't treat occasional Linear references as a coding guideline.)
