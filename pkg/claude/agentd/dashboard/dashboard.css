@@ -476,11 +476,17 @@ table tr:hover { background: #161b22; }
    reads as "needs a look": louder than the calm grey of a clean
    offline, but not the red of a live error. */
 .state-crashed   { background: #3a2a05; color: #e3b341; border-color: #5c4611; }
-.state-detail { color: #7d8590; font-size: 11px; margin-left: 6px; }
+/* Background-work indicator (render.js activityBadges): currently just the
+   🤖+N sub-agent marker. The container is a COLUMN flex so any future
+   per-agent activity markers can stack vertically beside it without the row
+   growing wide; vertical-align:middle centres the stack against the taller
+   state pill. The badge carries a hover tooltip (title=) naming what it is. */
+.activity-badges { display: inline-flex; flex-direction: column; gap: 1px; vertical-align: middle; margin-left: 6px; }
+.activity-badge { color: #7d8590; font-size: 11px; line-height: 1.25; white-space: nowrap; cursor: default; }
 /* The STATE column cell. The context meter leads the cell (fixed
    horizontal position, independent of how long the state string is),
-   then the state pill, then the subagent detail. nowrap keeps all
-   three on one line — the cell widens rather than wrapping the meter
+   then the state pill, then the stacked activity badges. nowrap keeps the
+   row on one line — the cell widens rather than wrapping the meter
    under the pill. */
 .state-cell { white-space: nowrap; }
 /* Context-window meter: a vertical 5-segment gauge that fills

@@ -127,6 +127,26 @@ dot to turn the agent off — a confirm offers **Soft exit** (inject
 (grey) dot to resume it. There are no separate per-row wake/shutdown
 buttons; the dot does both.
 
+The **state cell** also carries an **activity badge** — `🤖+N`, shown when
+the agent has *N* sub-agents (Task-tool children) still running. It appears
+even when the agent's own turn has ended (status `idle` / `main_agent_idle`),
+and that is exactly the point: a sub-agent launched in the background
+outlives the parent's turn, so the badge flags that an idle-looking agent
+is not actually finished. Hover it for the exact count. The badge is shown
+only for a live agent — an offline agent's sub-agents died with its process.
+
+> **No background-shell count.** tclaude deliberately does *not* show an
+> equivalent badge for background shell commands (`Bash` with
+> `run_in_background: true`). Claude Code fires a hook when such a shell
+> *launches* but none when it *exits*, so any count tclaude tried to keep
+> could only ever grow — it would display long-finished "ghost" shells for
+> the whole idle window, which is precisely when the badge would be read.
+> Sub-agents are safe because `SubagentStart` and `SubagentStop` are both
+> real hooks, so `🤖+N` decrements correctly. (A future process-tree
+> liveness reconcile in `agentd` — counting an agent's live shell
+> descendants instead of relying on hooks — could make a trustworthy
+> background-shell badge feasible.)
+
 The **working-directory** cell is clickable — clicking a path opens a terminal
 window there (the same out-of-sandbox spawn the **term** button does, minus the
 dir picker). The **branch** cell links to the branch's GitHub compare view, and
