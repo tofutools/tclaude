@@ -15,6 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// isolateSpawnAttachmentsBase repoints the per-batch upload base at a fresh
+// t.TempDir() for the duration of one test and restores it on cleanup. This is
+// cross-platform (unlike a $TMPDIR override, which Windows os.TempDir() ignores)
+// so each test gets its own empty base dir — sibling tests can't leave batches
+// that would trip the "no litter left behind" assertions.
+func isolateSpawnAttachmentsBase(t *testing.T) {
+	t.Helper()
+	prev := spawnAttachmentsBase
+	spawnAttachmentsBase = t.TempDir()
+	t.Cleanup(func() { spawnAttachmentsBase = prev })
+}
+
 // uploadPart is one file in a synthetic multipart spawn-attachment upload.
 type uploadPart struct {
 	field    string // form field name; "" defaults to "file"
@@ -49,7 +61,7 @@ func newSpawnAttachUpload(t *testing.T, parts []uploadPart) *http.Request {
 
 func TestSpawnAttachments_UploadHappyPath(t *testing.T) {
 	withDashboardAuth(t)
-	t.Setenv("TMPDIR", t.TempDir()) // isolate spawnAttachmentsBaseDir()
+	isolateSpawnAttachmentsBase(t)
 
 	w := httptest.NewRecorder()
 	r := newSpawnAttachUpload(t, []uploadPart{
@@ -76,7 +88,7 @@ func TestSpawnAttachments_UploadHappyPath(t *testing.T) {
 
 func TestSpawnAttachments_PathTraversalNameIsContained(t *testing.T) {
 	withDashboardAuth(t)
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateSpawnAttachmentsBase(t)
 
 	w := httptest.NewRecorder()
 	r := newSpawnAttachUpload(t, []uploadPart{
@@ -96,7 +108,7 @@ func TestSpawnAttachments_PathTraversalNameIsContained(t *testing.T) {
 
 func TestSpawnAttachments_DedupesCollidingNames(t *testing.T) {
 	withDashboardAuth(t)
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateSpawnAttachmentsBase(t)
 
 	w := httptest.NewRecorder()
 	r := newSpawnAttachUpload(t, []uploadPart{
@@ -116,7 +128,7 @@ func TestSpawnAttachments_DedupesCollidingNames(t *testing.T) {
 
 func TestSpawnAttachments_RejectsEmptyUpload(t *testing.T) {
 	withDashboardAuth(t)
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateSpawnAttachmentsBase(t)
 
 	w := httptest.NewRecorder()
 	r := newSpawnAttachUpload(t, nil) // no parts
@@ -126,7 +138,7 @@ func TestSpawnAttachments_RejectsEmptyUpload(t *testing.T) {
 
 func TestSpawnAttachments_RejectsTooManyFiles(t *testing.T) {
 	withDashboardAuth(t)
-	t.Setenv("TMPDIR", t.TempDir())
+	isolateSpawnAttachmentsBase(t)
 
 	parts := make([]uploadPart, spawnAttachmentMaxFiles+1)
 	for i := range parts {

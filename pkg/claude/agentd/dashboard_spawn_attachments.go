@@ -46,12 +46,14 @@ const (
 	spawnAttachmentBatchTTL = 24 * time.Hour
 )
 
-// spawnAttachmentsBaseDir is the parent of all per-batch upload dirs. Kept
-// under the OS temp dir (per-user on macOS) so uploads never touch the user's
-// repo and the OS reclaims them eventually even if the sweep never runs.
-func spawnAttachmentsBaseDir() string {
-	return filepath.Join(os.TempDir(), "tclaude-spawn-attachments")
-}
+// spawnAttachmentsBase is the parent of all per-batch upload dirs. Kept under
+// the OS temp dir (per-user on macOS) so uploads never touch the user's repo
+// and the OS reclaims them eventually even if the sweep never runs. A var (not
+// a const) so tests can repoint it at a t.TempDir() — cross-platform isolation
+// that an env override can't give (Windows os.TempDir() ignores $TMPDIR).
+var spawnAttachmentsBase = filepath.Join(os.TempDir(), "tclaude-spawn-attachments")
+
+func spawnAttachmentsBaseDir() string { return spawnAttachmentsBase }
 
 // spawnAttachmentFile is one stored upload in the JSON response.
 type spawnAttachmentFile struct {
