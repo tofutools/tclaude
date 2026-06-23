@@ -48,5 +48,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Cap package-level parallelism at 2 (-p 2). The default is GOMAXPROCS, which
+      # runs every package's test binary at once: the flow tests contend on shared
+      # resources (tmux sim, SQLite) and the interleaved output is hard to read on a
+      # failure. Two-at-a-time keeps output legible without serializing the whole run.
+      # (No tests use t.Parallel(), so -parallel is irrelevant here.)
       - name: Run tests
-        run: go test ./...
+        run: go test -p 2 ./...
