@@ -414,15 +414,32 @@ function bindCopy() {
 //
 // Capturing listener so preventDefault lands before the browser's default
 // toggle. Keyboard activation (Enter/Space on a focused summary) arrives
-// as a synthetic click with detail === 0 — left alone so the header stays
-// keyboard-foldable.
+// as a synthetic click with detail === 0 — normally left alone so the header
+// stays keyboard-foldable.
+//
+// The exception: an inline-edit field (📝 descr / 📁 dir / 👥 cap / 🧠 profile)
+// is swapped in *inside* the <summary>, so while you type in it a Space press
+// fires that same detail===0 summary activation and would fold/unfold the
+// group on every space — most visible in the free-text description. So when an
+// edit field within this summary holds focus, suppress the keyboard toggle (the
+// space still lands in the input; only the fold is cancelled). Verified in
+// Chromium: the Space activation is a synthetic click on the <summary>, and a
+// capture-phase preventDefault cancels the fold without eating the character.
 function bindGroupTitleToggle() {
   document.addEventListener('click', e => {
-    if (e.detail === 0) return; // keyboard activation — keep native toggle
     const summary = e.target.closest('summary');
     if (!summary) return;
     const details = summary.parentElement;
     if (!details || !details.hasAttribute('data-group-key')) return;
+    if (e.detail === 0) {
+      // Keyboard activation. Keep native folding when the summary itself is
+      // focused, but block it while typing in an inline-edit field it hosts.
+      const ae = document.activeElement;
+      if (ae && summary.contains(ae) && ae.matches('input, textarea, select')) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.target.closest('.group-name')) return; // the title — allow toggle
     e.preventDefault();
   }, true);
