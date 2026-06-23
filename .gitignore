@@ -51,7 +51,8 @@ excalidraw.log
 # config (~/.bashrc, ~/.gitconfig, …) from sandboxed sub-agents.
 # Harmless (not real files); ignored so they cannot be staged by
 # accident. NOTE: .mcp.json / .vscode / .gitmodules / .claude/agents /
-# .claude/commands / .claude/hooks could be legitimate project files
+# .claude/commands / .claude/hooks / .claude/launch.json /
+# .claude/routines / .claude/workflows could be legitimate project files
 # someday — drop the matching line here if tclaude ever gains a real one.
 /.bash_profile
 /.bashrc
@@ -67,3 +68,6 @@ excalidraw.log
 /.claude/agents
 /.claude/commands
 /.claude/hooks
+/.claude/launch.json
+/.claude/routines
+/.claude/workflows
