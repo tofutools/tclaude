@@ -3048,3 +3048,56 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .plugin-step-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
+
+/* --- per-agent export ("📋 summary…") modal (JOH-265) --- */
+#export-agent-status { margin: 8px 0; }
+.export-status-row {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: #c9d1d9;
+}
+.export-status-note {
+  margin-top: 6px; font-size: 12px; color: #7d8590; min-height: 1em;
+}
+.export-spinner {
+  width: 16px; height: 16px; flex: 0 0 auto;
+  border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%;
+  animation: export-spin 0.8s linear infinite;
+}
+.export-status-row.done .export-spinner {
+  border: 2px solid transparent; animation: none;
+}
+@keyframes export-spin { to { transform: rotate(360deg); } }
+
+/* --- export "Previous exports" history panel (JOH-265) --- */
+.export-history { margin: 10px 0 4px; border-top: 1px solid #21262d; padding-top: 8px; }
+.export-history-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.export-history-title { font-size: 12px; color: #7d8590; text-transform: uppercase; letter-spacing: 0.04em; }
+.export-history-clear {
+  font-size: 11px; padding: 2px 8px; background: transparent;
+  border: 1px solid #30363d; color: #8b949e; border-radius: 5px; cursor: pointer;
+}
+.export-history-clear:hover { color: #f85149; border-color: #f85149; }
+.export-history-list { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow-y: auto; }
+.export-history-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+  font-size: 12px;
+}
+.export-history-item .ehi-main { flex: 1 1 auto; min-width: 0; }
+.export-history-item .ehi-title { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.export-history-item .ehi-sub { color: #6e7681; font-size: 11px; }
+.export-history-item .ehi-status { flex: 0 0 auto; font-size: 11px; padding: 1px 6px; border-radius: 4px; }
+.export-history-item .ehi-status.ready { color: #3fb950; }
+.export-history-item .ehi-status.failed { color: #f85149; }
+.export-history-item .ehi-status.running,
+.export-history-item .ehi-status.requested { color: #d29922; }
+.export-history-item button {
+  flex: 0 0 auto; font-size: 12px; padding: 2px 7px;
+  background: transparent; border: 1px solid #30363d; color: #c9d1d9; border-radius: 5px; cursor: pointer;
+}
+.export-history-item button:hover { border-color: #58a6ff; }
+.export-history-item button.ehi-del:hover { border-color: #f85149; color: #f85149; }
+.export-history-empty { font-size: 12px; color: #6e7681; padding: 4px 2px; }

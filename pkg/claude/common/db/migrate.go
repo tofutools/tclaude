@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 66
+const currentVersion = 67
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -427,6 +427,57 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 67 {
+		if err := migrateV66toV67(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV66toV67 adds export_jobs — the store behind the dashboard's
+// per-agent "📋 summary…" export (JOH-265). A row is one request for a
+// live agent to consolidate a shareable artifact: the daemon creates it
+// (status='requested') and nudges the agent's pane; the agent fetches the
+// brief (status flips to 'running'), produces its file(s), and uploads the
+// result (status='ready'), or the job fails / times out (status='failed',
+// with the reason in `error`).
+//
+// conv_id is the target agent's conversation; title / instructions / preset
+// are the human's brief snapshotted at creation. The artifact_* columns are
+// blank until upload: artifact_path is the on-disk file under
+// ~/.tclaude/exports/<id>/, artifact_name the download filename, content_type
+// its MIME type. created_at / updated_at are RFC3339Nano — ORDER on id, never
+// these strings (the RFC3339Nano lexical-sort hazard, see ListHumanMessages).
+//
+// CREATE TABLE IF NOT EXISTS is idempotent, so a half-applied earlier run
+// converges on re-run; the whole thing rides one transaction with the bump.
+func migrateV66toV67(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS export_jobs (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			conv_id       TEXT NOT NULL,
+			group_name    TEXT NOT NULL DEFAULT '',
+			title         TEXT NOT NULL DEFAULT '',
+			instructions  TEXT NOT NULL DEFAULT '',
+			preset        TEXT NOT NULL DEFAULT '',
+			status        TEXT NOT NULL,
+			error         TEXT NOT NULL DEFAULT '',
+			artifact_path TEXT NOT NULL DEFAULT '',
+			artifact_name TEXT NOT NULL DEFAULT '',
+			artifact_size INTEGER NOT NULL DEFAULT 0,
+			content_type  TEXT NOT NULL DEFAULT '',
+			created_at    TEXT NOT NULL,
+			updated_at    TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_export_jobs_conv
+			ON export_jobs(conv_id);
+
+		UPDATE schema_version SET version = 67;
+	`); err != nil {
+		return fmt.Errorf("migrate v66→v67 (add export_jobs): %w", err)
+	}
 	return nil
 }
 

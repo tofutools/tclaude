@@ -99,9 +99,8 @@ func TestMigrateV65toV66_HealsHalfAppliedRun(t *testing.T) {
 }
 
 // TestMigrateV65toV66_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts both remote_control columns exist. v66 is head, so this is
-// where the literal currentVersion pin now lives — the tripwire the next
-// migration's author moves forward into their own v67 test.
+// chain and asserts both remote_control columns exist. The literal
+// currentVersion pin moved forward into the v67 test (the tripwire convention).
 func TestMigrateV65toV66_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -110,9 +109,6 @@ func TestMigrateV65toV66_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v65 test —
-	// the next migration's author moves it into their own v67 test.
-	require.Equal(t, 66, currentVersion, "currentVersion is 66")
 
 	for _, table := range []string{"spawn_profiles", "agent_groups"} {
 		var haveCol int

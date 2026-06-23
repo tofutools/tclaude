@@ -72,6 +72,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/api/power-on", handlePowerOn)
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
+	mux.HandleFunc("/api/export-jobs/", handleDashboardExportJobsAPI)
 	mux.HandleFunc("/api/human-messages/read", handleDashboardHumanMessagesRead)
 	mux.HandleFunc("/api/human-messages/clear", handleDashboardHumanMessagesClear)
 	mux.HandleFunc("/api/human-messages/delete", handleDashboardHumanMessagesDelete)
@@ -338,6 +339,23 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dashboardRemoteControlAgent(w, r, convSelector)
+			return
+		case "export":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardCreateExport(w, r, convSelector)
+			return
+		case "exports":
+			switch r.Method {
+			case http.MethodGet:
+				dashboardListExports(w, convSelector)
+			case http.MethodDelete:
+				dashboardClearExports(w, convSelector)
+			default:
+				http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
+			}
 			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
