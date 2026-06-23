@@ -51,8 +51,9 @@ import (
 //	   GET /api/export-jobs/{id}/artifact (Content-Disposition attachment).
 //
 // By default the clone is standalone (no group) so peers / cron / multicast
-// can't touch the throwaway; "Clone into the same group" (same_group) opts into
-// normal clone identity inheritance so the summary writer can ping peers.
+// can't touch the throwaway; "Clone into the same group" (same_group) joins the
+// original's group(s) and permission posture (but never its group ownership) so
+// the summary writer can ping peers.
 //
 // The /v1 endpoints are self-scoped: a confirmed agent may only touch its OWN
 // job (original conv OR the worker clone); the human operator may touch any.
@@ -238,34 +239,47 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// 1. Clone the original (copy path → the clone carries the full history) and
 	// spawn it as its own session. Reuses the internal clone spawn so the race
 	// handling (poll for the new conv-id + tmux registration) is shared.
-	newConv, _, _, _, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model)
+	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model)
 	if spawnErr != nil {
 		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)
 		return
 	}
+	if warn != "" {
+		// The conv-id + .jsonl exist but the clone's tmux session registered
+		// slowly; waitForConvAlive below decides whether it actually came up.
+		slog.Warn("export clone: spawn registered slowly", "job", jobID, "conv", newConv, "warning", warn)
+	}
 	// Record the clone as the job's worker ASAP — before it is nudged — so the
-	// cleanup sweep can reap it even if the daemon dies before the export lands.
+	// cleanup sweep can reap it on failure/timeout. NOTE: there is an irreducible
+	// narrow window between the clone spawning (above) and this write; if the
+	// daemon dies inside it, the job is left in 'cloning' with no worker_conv_id,
+	// so the sweep can't reap by id and the (never-nudged, un-renamed) clone
+	// leaks as an idle session the operator must clean up by hand. Best-effort.
 	if err := db.SetExportJobWorkerConv(jobID, newConv); err != nil {
-		slog.Warn("export clone: record worker conv failed", "job", jobID, "conv", newConv, "error", err)
+		slog.Warn("export clone: record worker conv failed — clone may leak if it never gets nudged",
+			"job", jobID, "conv", newConv, "error", err)
 	}
 
-	// 2. By default the clone is standalone (no group / identity) so peers, cron
-	// and multicast can't touch the throwaway. same_group opts into normal clone
-	// identity inheritance so the summary writer can ping peers if it needs to.
-	if sameGroup {
-		if err := db.EnrollAgent(newConv, "export-clone"); err != nil {
-			slog.Warn("export clone: enroll failed", "job", jobID, "conv", newConv, "error", err)
-		}
-		members, perms, owned := snapshotConvIdentity(originalConv)
-		applyClonedIdentity(newConv, "system:export-clone", members, perms, owned)
-	}
-
-	// 3. Wait for the clone's pane to come online before typing into it.
+	// 2. Wait for the clone's pane to come online before touching it.
 	if !waitForConvAlive(newConv) {
 		slog.Warn("export clone: never came online", "job", jobID, "conv", newConv)
 		failExportJobAndReap(jobID, newConv, "the export clone never came online")
 		return
+	}
+
+	// 3. By default the clone is standalone (no group / identity) so peers, cron
+	// and multicast can't touch the throwaway. same_group joins the original's
+	// group(s) and inherits its permission posture so the summary writer can ping
+	// peers — but NOT group OWNERSHIP: a throwaway summary writer needs no
+	// administrative control over the group. Done only after the pane is alive so
+	// a clone that never comes up is never briefly a (dead) group member.
+	if sameGroup {
+		if err := db.EnrollAgent(newConv, "export-clone"); err != nil {
+			slog.Warn("export clone: enroll failed", "job", jobID, "conv", newConv, "error", err)
+		}
+		members, perms := snapshotConvIdentity(originalConv)
+		applyClonedIdentity(newConv, "system:export-clone", members, perms, nil /* never inherit ownership */)
 	}
 
 	// 4. Rename the clone so it is identifiable as the throwaway summary writer —
@@ -324,13 +338,15 @@ func exportCloneTitle(originalConv string) string {
 	return base + exportCloneTitleSuffix
 }
 
-// snapshotConvIdentity reads a conversation's group memberships, permission
-// overrides and group ownerships — the identity an export clone inherits when
-// same_group is set. Best-effort: a read error logs and yields an empty slice
-// for that facet rather than failing the export (the background goroutine has no
-// HTTP response to fail to). The clone handler does the equivalent snapshot
-// inline with fatal HTTP errors; the export path is best-effort.
-func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms map[string]string, owned []int64) {
+// snapshotConvIdentity reads a conversation's group memberships and permission
+// overrides — the identity a same_group export clone inherits. Group OWNERSHIP
+// is deliberately NOT snapshotted: a throwaway summary writer should be able to
+// message peers (membership) and act with the original's permission posture, but
+// never administer the group. Best-effort: a read error logs and yields an empty
+// slice for that facet rather than failing the export (the background goroutine
+// has no HTTP response to fail to). The clone handler does the equivalent
+// snapshot inline with fatal HTTP errors; the export path is best-effort.
+func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms map[string]string) {
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {
 		slog.Warn("export clone: snapshot groups failed", "conv", convID, "error", err)
@@ -348,10 +364,7 @@ func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms 
 	if perms, err = db.ListAgentPermissionOverridesForConv(convID); err != nil {
 		slog.Warn("export clone: snapshot perms failed", "conv", convID, "error", err)
 	}
-	if owned, err = db.ListGroupsOwnedBy(convID); err != nil {
-		slog.Warn("export clone: snapshot ownerships failed", "conv", convID, "error", err)
-	}
-	return members, perms, owned
+	return members, perms
 }
 
 // failExportJobAndReap flips a job to failed with reason AND tears down its clone

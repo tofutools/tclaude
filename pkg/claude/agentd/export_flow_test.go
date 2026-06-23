@@ -233,11 +233,16 @@ func TestExportFlow_SameGroupCloneJoinsGroup(t *testing.T) {
 	f := newFlow(t)
 	dash := agentd.BuildDashboardHandlerForTest()
 
-	f.HaveGroup("g")
-	f.HaveAliveSession("sg000000-0000-4000-8000-000000000004", "sgagent", "tmux-sg-1", "/tmp/sg")
-	f.HaveMember("g", "sg000000-0000-4000-8000-000000000004")
+	const orig = "sg000000-0000-4000-8000-000000000004"
+	g := f.HaveGroup("g")
+	f.HaveAliveSession(orig, "sgagent", "tmux-sg-1", "/tmp/sg")
+	f.HaveMember("g", orig)
+	// Make the ORIGINAL a group owner, so we can prove the clone inherits
+	// membership but NOT ownership (a throwaway summary writer must never get
+	// administrative control over the group).
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, orig, "test"))
 
-	jobID := requestExport(t, dash, "sg000000-0000-4000-8000-000000000004", map[string]any{
+	jobID := requestExport(t, dash, orig, map[string]any{
 		"preset":     "summary",
 		"same_group": true,
 	})
@@ -257,7 +262,12 @@ func TestExportFlow_SameGroupCloneJoinsGroup(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	assert.True(t, joined, "same_group clone %s should join group g", workerConv)
+	require.True(t, joined, "same_group clone %s should join group g", workerConv)
+
+	// …but it is NEVER a group owner — ownership is deliberately not inherited.
+	owned, err := db.ListGroupsOwnedBy(workerConv)
+	require.NoError(t, err)
+	assert.Empty(t, owned, "same_group clone must not inherit group ownership")
 }
 
 // TestExportFlow_History drives the "Previous exports" panel surfaces: list,
