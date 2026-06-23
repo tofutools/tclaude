@@ -51,13 +51,13 @@ func registerRemoteAccessAdminRoutes(mux *http.ServeMux) {
 // remoteAccessInfo is the cert/admin view for the Config tab: enough to render
 // device management without putting cert reads on the 2s snapshot.
 type remoteAccessInfo struct {
-	MaterialExists bool                     `json:"material_exists"`
-	Running        bool                     `json:"running"`
-	RunningBind    string                   `json:"running_bind"`
-	Enabled        bool                     `json:"enabled"`
-	Bind           string                   `json:"bind"`
-	CAPresent      bool                     `json:"ca_present"`
-	SANs           []string                 `json:"sans"`
+	MaterialExists bool                      `json:"material_exists"`
+	Running        bool                      `json:"running"`
+	RunningBind    string                    `json:"running_bind"`
+	Enabled        bool                      `json:"enabled"`
+	Bind           string                    `json:"bind"`
+	CAPresent      bool                      `json:"ca_present"`
+	SANs           []string                  `json:"sans"`
 	Clients        []remoteaccess.ClientInfo `json:"clients"`
 }
 
@@ -191,6 +191,10 @@ func handleRemoteAccessAddHosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no host names given", http.StatusBadRequest)
 		return
 	}
+	if bad := invalidSANHosts(hosts); len(bad) > 0 {
+		http.Error(w, "not valid host names / IPs: "+strings.Join(bad, ", "), http.StatusBadRequest)
+		return
+	}
 	cfg, _ := config.Load()
 	sans, err := remoteaccess.ReissueServerCert(cfg.RemoteAccessBind(), hosts)
 	if err != nil {
@@ -230,9 +234,14 @@ func handleRemoteAccessSetup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a bind address is required (e.g. 0.0.0.0:8443)", http.StatusBadRequest)
 		return
 	}
+	extraHosts := splitSANHosts(req.Hosts)
+	if bad := invalidSANHosts(extraHosts); len(bad) > 0 {
+		http.Error(w, "not valid host names / IPs: "+strings.Join(bad, ", "), http.StatusBadRequest)
+		return
+	}
 	res, err := remoteaccess.Setup(remoteaccess.SetupOptions{
 		Bind:            req.Bind,
-		ExtraHosts:      splitSANHosts(req.Hosts),
+		ExtraHosts:      extraHosts,
 		Passphrase:      req.Passphrase,
 		ClientName:      strings.TrimSpace(req.ClientName),
 		P12Password:     req.P12Password,
@@ -258,6 +267,19 @@ func handleRemoteAccessSetup(w http.ResponseWriter, r *http.Request) {
 		"hosts":       res.Hosts,
 		"enabled":     req.Enable,
 	})
+}
+
+// invalidSANHosts returns the entries that are not a valid DNS name or IP, so
+// the handler can reject an operator-entered host list with a clear message
+// rather than writing junk SANs into the cert.
+func invalidSANHosts(hosts []string) []string {
+	var bad []string
+	for _, h := range hosts {
+		if !remoteaccess.ValidHost(h) {
+			bad = append(bad, h)
+		}
+	}
+	return bad
 }
 
 // splitSANHosts splits a comma/space/newline-separated host list into trimmed,

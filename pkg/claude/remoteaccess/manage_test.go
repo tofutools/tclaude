@@ -36,6 +36,43 @@ func TestValidClientName(t *testing.T) {
 	}
 }
 
+func TestValidHost(t *testing.T) {
+	for _, ok := range []string{"example.com", "myhost.tailnet.ts.net", "localhost", "10.0.0.5", "::1", "a-b.c-d.org", "host."} {
+		if !remoteaccess.ValidHost(ok) {
+			t.Errorf("ValidHost(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "bad host", "-leading.com", "under_score.com", "a..b", "exa mple", "http://x", string(make([]byte, 254))} {
+		if remoteaccess.ValidHost(bad) {
+			t.Errorf("ValidHost(%q) = true, want false", bad)
+		}
+	}
+}
+
+// A regenerate rotates the CA, so old device certs can never verify again — the
+// stale clients dir must be cleared, leaving only the freshly-issued device.
+func TestSetupRegenerateClearsStaleClients(t *testing.T) {
+	setupTempMaterial(t) // issues "phone"
+	if _, err := remoteaccess.AddClient("tablet", "p12pw2", ""); err != nil {
+		t.Fatalf("AddClient: %v", err)
+	}
+	if clients, _ := remoteaccess.ListClients(); len(clients) != 2 {
+		t.Fatalf("precondition: want 2 devices, got %d", len(clients))
+	}
+
+	if _, err := remoteaccess.Setup(remoteaccess.SetupOptions{
+		Bind: "0.0.0.0:8443", Passphrase: "passphrase-12", ClientName: "phone",
+		P12Password: "p12pw", RegenerateCerts: true,
+	}); err != nil {
+		t.Fatalf("regenerate Setup: %v", err)
+	}
+
+	clients, _ := remoteaccess.ListClients()
+	if len(clients) != 1 || clients[0].Name != "phone" {
+		t.Fatalf("after regenerate, want only the re-issued [phone], got %+v", clients)
+	}
+}
+
 func TestServerCertSANs(t *testing.T) {
 	setupTempMaterial(t)
 	sans, err := remoteaccess.ServerCertSANs()
