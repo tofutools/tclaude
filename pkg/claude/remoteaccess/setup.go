@@ -48,6 +48,16 @@ func Setup(o SetupOptions) (*SetupResult, error) {
 	if Exists() && !o.RegenerateCerts {
 		return nil, fmt.Errorf("remote-access already configured in %s — pass --regenerate-certs to rotate everything (this INVALIDATES installed client certs), or `tclaude remote-access add-client` to add a device", Dir())
 	}
+	// A regenerate rotates the CA, so every previously-issued device cert is now
+	// signed by a CA that no longer exists and can never verify again. Clear the
+	// old clients dir so the stale .crt/.p12 don't linger in the device list (and
+	// get offered as downloads that would fail mTLS). The fresh first device is
+	// re-issued below.
+	if o.RegenerateCerts {
+		if err := os.RemoveAll(clientsDir()); err != nil {
+			return nil, fmt.Errorf("clear old client material: %w", err)
+		}
+	}
 	if err := ensureDirs(); err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package remoteaccess
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,28 @@ var clientNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // ValidClientName reports whether name is a safe client-cert filename token.
 func ValidClientName(name string) bool { return clientNameRe.MatchString(name) }
+
+// dnsNameRe matches a syntactically valid DNS name (one or more labels of
+// alphanumerics with internal hyphens, an optional trailing dot). The stdlib
+// has no EXPORTED domain-name validator — the equivalent logic lives only as the
+// unexported net.isDomainName — and the only library that does (x/net/idna) is
+// overkill for this, so a small local regex is the right call rather than a new
+// dependency.
+var dnsNameRe = regexp.MustCompile(`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$`)
+
+// ValidHost reports whether h is a usable server-cert SAN: an IP address
+// (net.ParseIP, stdlib) or a syntactically valid DNS name (dnsNameRe). Guards an
+// operator-entered host list so a junk token can't land in the cert as a bogus
+// SAN or fail x509 issuance opaquely.
+func ValidHost(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	if net.ParseIP(h) != nil {
+		return true
+	}
+	return dnsNameRe.MatchString(h)
+}
 
 // ServerCertSANs returns the host names + IPs the issued server certificate is
 // valid for (its SAN list) — the exact set a client can dial without a name
@@ -83,9 +106,11 @@ func ListClients() ([]ClientInfo, error) {
 }
 
 // ClientP12 returns the password-protected .p12 bytes for a device, for the
-// localhost dashboard to offer as a download. The name is validated (path
-// guard) and the file must exist. Never call this for a request that arrived
-// over the remote listener — the .p12 carries the device's private key.
+// dashboard to offer as a download. The name is validated (path guard) and the
+// file must exist. The .p12 is served to any authenticated dashboard caller
+// (loopback cookie OR a remote mTLS + passphrase session) — a remote session is
+// already a full control-plane operator, so handing out a (password-protected)
+// device bundle sits at the same privilege tier (operator decision, JOH-278).
 func ClientP12(name string) ([]byte, error) {
 	if !ValidClientName(name) {
 		return nil, fmt.Errorf("invalid client name %q", name)

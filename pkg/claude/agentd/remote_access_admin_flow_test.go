@@ -168,3 +168,46 @@ func TestRemoteAccessAdmin_ServedOverRemoteListener(t *testing.T) {
 	handler.ServeHTTP(recNo, noSession)
 	assert.NotEqual(t, http.StatusOK, recNo.Code, "without a remote session the endpoint is refused")
 }
+
+// Scenario: a device's .p12 (its private key) is downloadable over the REMOTE
+// listener too — the operator's deliberate "serve everything over both" call
+// (JOH-278). Pins that decision so a future change can't silently flip it.
+func TestRemoteAccessAdmin_ClientP12OverRemoteListener(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	setupTestMaterial(t) // issues "phone"
+	m, err := remoteaccess.Load()
+	require.NoError(t, err, "remoteaccess.Load")
+
+	handler := agentd.BuildRemoteDashboardHandlerForTest(m)
+	req := httptest.NewRequest(http.MethodGet, "/api/remote-access/client?name=phone", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  remoteSessionCookieName,
+		Value: remoteaccess.SignCookie(m.CookieKey(), "human", time.Hour),
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, ".p12 over remote listener body=%s", rec.Body.String())
+	assert.Equal(t, "application/x-pkcs12", rec.Header().Get("Content-Type"))
+	assert.NotEmpty(t, rec.Body.Bytes(), ".p12 download is non-empty over remote")
+}
+
+// Scenario: an operator-entered host list is validated before it reaches the
+// cert — a junk token is rejected with a 400, not written as a bogus SAN.
+func TestRemoteAccessAdmin_AddHostsRejectsInvalid(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_ = newFlow(t)
+	setupTestMaterial(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/remote-access/add-hosts",
+		map[string]string{"hosts": "good.example.com, bad!!host"}))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "an invalid host must be rejected")
+	assert.Contains(t, rec.Body.String(), "bad!!host", "the error names the offending token")
+
+	// The valid host was NOT applied (all-or-nothing) — SANs unchanged.
+	info := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/remote-access/info", nil))
+	var got raInfo
+	testharness.DecodeJSON(t, info, &got)
+	assert.NotContains(t, got.SANs, "good.example.com", "a rejected batch applies nothing")
+}
