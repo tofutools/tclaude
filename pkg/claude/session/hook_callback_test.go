@@ -987,3 +987,111 @@ func TestRunHookCallback_TaskRunnerStopWritesSignalAfterRotation(t *testing.T) {
 	assert.Equal(t, "conv-task2", signal.SessionID)
 	assert.Equal(t, "task 2 done", signal.Report)
 }
+
+// A task-mode conv rotation must NEVER be treated as an agent-identity
+// migration, even when the OLD conv is an active agent. The reaper's
+// online-reconcile sweep (agentd) enrolls a task session's current conv
+// each tick, so by the next task boundary the previous task's conv can be
+// EnrollmentActive — which is the trigger needsIdentityMigration looks
+// for. Without the task-mode exemption in the conv-advance switch, that
+// would fire migrateClearedIdentity (retiring the old conv AND injecting a
+// stray `/rename` into the running task pane). This pins the plain advance:
+// the row moves on, the old conv is left untouched, and no succession edge
+// is recorded.
+func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	taskSignalEnv(t, dir)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:          "tasks-mig",
+		ConvID:      "conv-task1",
+		TmuxSession: "tasks-mig", // a migration would send-keys into this pane
+		Status:      StatusWorking,
+	}))
+	// Simulate the reaper having enrolled task 1's conv as a live agent.
+	require.NoError(t, db.EnrollAgent("conv-task1", "online-reconcile"))
+
+	feedHook(t, "tasks-mig", map[string]any{
+		"session_id":      "conv-task2",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("tasks-mig")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-task2", got.ConvID, "the rotation must plain-advance the row")
+
+	oldEnr, err := db.EnrollmentState("conv-task1")
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, oldEnr,
+		"a task rotation must NOT retire the old conv — it is not an identity migration")
+
+	succ, err := db.GetConvSuccessor("conv-task1")
+	require.NoError(t, err)
+	assert.Equal(t, "", succ,
+		"a task rotation must NOT record a succession edge old→new")
+}
+
+// In task mode the task runner owns its user-facing notifications, so the
+// hook callback must stay silent for EVERY task-mode event — not only the
+// Stop/ExitPlanMode ones handleTaskSignal consumes. Otherwise each task's
+// hands-free auto-/exit fires a SessionEnd "Exited" banner and a multi-task
+// run becomes a notification storm (reported by Mikael). The control half
+// pins that an identical interactive SessionEnd (no task mode) still
+// notifies — /exit is the normal lifecycle there and must not be silenced.
+func TestRunHookCallback_TaskModeSuppressesNotifications(t *testing.T) {
+	var calls int
+	prev := notifyOnStateTransition
+	notifyOnStateTransition = func(sessionID, convID, from, to, cwd, convTitle, harness string) {
+		calls++
+	}
+	t.Cleanup(func() { notifyOnStateTransition = prev })
+
+	feedExit := func(t *testing.T, sessionID, convID, dir string) {
+		feedHook(t, sessionID, map[string]any{
+			"session_id":      convID,
+			"hook_event_name": "SessionEnd",
+			"reason":          "logout",
+			"cwd":             dir,
+		})
+	}
+
+	t.Run("task mode stays silent", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		db.ResetForTest()
+		taskSignalEnv(t, dir)
+		calls = 0
+
+		require.NoError(t, SaveSessionState(&SessionState{
+			ID: "tasks-quiet", ConvID: "conv-q", Status: StatusWorking,
+		}))
+		feedExit(t, "tasks-quiet", "conv-q", dir)
+
+		got, err := LoadSessionState("tasks-quiet")
+		require.NoError(t, err)
+		assert.Equal(t, StatusExited, got.Status, "the task's exit must still be recorded")
+		assert.Equal(t, 0, calls, "a task-mode SessionEnd must not fire a notification")
+	})
+
+	t.Run("interactive still notifies", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("HOME", dir)
+		t.Setenv("TCLAUDE_TASK_SIGNAL", "") // explicitly NOT task mode
+		db.ResetForTest()
+		calls = 0
+
+		require.NoError(t, SaveSessionState(&SessionState{
+			ID: "plain-sess", ConvID: "conv-p", Status: StatusWorking,
+		}))
+		feedExit(t, "plain-sess", "conv-p", dir)
+
+		got, err := LoadSessionState("plain-sess")
+		require.NoError(t, err)
+		assert.Equal(t, StatusExited, got.Status)
+		assert.Equal(t, 1, calls, "a normal interactive SessionEnd must still notify (control)")
+	})
+}
