@@ -145,6 +145,28 @@ func TestDashboardLogin_ForeignOriginRejected(t *testing.T) {
 	assert.Nil(t, operatorLoginCookie(rec), "foreign-origin login must not set the cookie")
 }
 
+// Scenario: a hostile same-user process binds a loopback port whose
+// number is a string-superstring of the daemon's port (e.g. 6553 vs
+// 655) and serves a page that POSTs a guessed token. The origin pin
+// must reject it — a bare strings.HasPrefix would not. Even with the
+// *correct* token in the body, the wrong origin is refused before the
+// cookie is minted.
+func TestDashboardLogin_PortSuperstringOriginRejected(t *testing.T) {
+	const base = "http://127.0.0.1:655"
+	t.Cleanup(agentd.SetPopupBaseURLForTest(base))
+	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_the_real_one"))
+
+	dash := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(dash)
+
+	req := loginPOST(base, "tclo_the_real_one")
+	req.Header.Set("Origin", "http://127.0.0.1:6553") // superstring port, different origin
+	rec := serveLogin(dash, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"port-superstring origin must be refused; body=%s", rec.Body.String())
+	assert.Nil(t, operatorLoginCookie(rec), "port-superstring origin must not set the cookie")
+}
+
 // Scenario: GET /dashboard/login is method-not-allowed (it is a POST
 // target only).
 func TestDashboardLogin_GetNotAllowed(t *testing.T) {

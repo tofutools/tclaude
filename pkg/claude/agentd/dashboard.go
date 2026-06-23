@@ -281,20 +281,44 @@ func handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 }
 
+// originMatchesBase reports whether an Origin or Referer header value
+// belongs to base — the loopback popup base URL, e.g.
+// "http://127.0.0.1:54321", with no trailing slash and no path.
+//
+// It anchors on the origin boundary instead of a bare prefix: an Origin
+// header is exactly scheme://host:port (no path), so it must equal base;
+// a Referer adds a path, so it must be base followed by "/". A plain
+// strings.HasPrefix(value, base) would wrongly accept a port-superstring
+// origin — e.g. base "http://127.0.0.1:655" is a string prefix of
+// "http://127.0.0.1:6553", a different (valid) port a hostile same-user
+// process could bind. Same-site cookies do not scope by port, so the
+// origin pin is the real cross-port defense here; keep it exact.
+func originMatchesBase(value, base string) bool {
+	if base == "" {
+		return false
+	}
+	return value == base || strings.HasPrefix(value, base+"/")
+}
+
 // checkLoginOrigin pins the login POST to our own loopback origin. A
 // browser sends Origin on a same-origin POST and Referer on the form
 // navigation; we accept the request when either matches popupBaseURL.
-// When popupBaseURL is unset (some test setups) the pin is a no-op —
-// the operator-token compare is the real gate, this is belt-and-braces.
+//
+// When popupBaseURL is unset the pin is a no-op, but that case is
+// unreachable in production: startPopupServer returns an empty URL only
+// when it failed to bind a listener, and then registerDashboardRoutes is
+// never called — so this handler does not exist. The no-op only matters
+// to tests that register the mux directly; there the operator-token
+// compare is still the real gate, so this stays belt-and-braces.
 func checkLoginOrigin(r *http.Request) bool {
 	if popupBaseURL == "" {
 		return true
 	}
 	if o := r.Header.Get("Origin"); o != "" {
-		return strings.HasPrefix(o, popupBaseURL)
+		return originMatchesBase(o, popupBaseURL)
 	}
 	if ref := r.Header.Get("Referer"); ref != "" {
-		return strings.HasPrefix(ref, popupBaseURL)
+		return originMatchesBase(ref, popupBaseURL)
 	}
 	// Neither header present: a real same-origin browser form POST
 	// always sends at least one, so treat the absence as suspicious.
@@ -423,11 +447,17 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	if origin == "" && referer == "" {
 		return false, http.StatusForbidden, "missing Origin and Referer"
 	}
-	if origin != "" && !strings.HasPrefix(origin, popupBaseURL) {
-		return false, http.StatusForbidden, "Origin mismatch"
-	}
-	if origin == "" && !strings.HasPrefix(referer, popupBaseURL) {
-		return false, http.StatusForbidden, "Referer mismatch"
+	// popupBaseURL is always bound in production when these routes are
+	// registered; it is empty only in tests that register the mux without
+	// a loopback listener, where the session cookie is the gate and the
+	// origin pin is disabled (mirrors checkLoginOrigin's early return).
+	if popupBaseURL != "" {
+		if origin != "" && !originMatchesBase(origin, popupBaseURL) {
+			return false, http.StatusForbidden, "Origin mismatch"
+		}
+		if origin == "" && !originMatchesBase(referer, popupBaseURL) {
+			return false, http.StatusForbidden, "Referer mismatch"
+		}
 	}
 	return true, http.StatusOK, ""
 }
