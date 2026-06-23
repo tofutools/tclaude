@@ -17,8 +17,9 @@ import (
 )
 
 // dashReq builds a dashboard (/api) request. The dashTestHandler injects the
-// session cookie; checkDashboardAuth also needs an Origin (any value passes
-// while the test popupBaseURL is empty — every string has the "" prefix).
+// session cookie; checkDashboardAuth still wants at least one of Origin/Referer
+// present (any value passes while the test popupBaseURL is empty, since the
+// origin pin is disabled when no loopback listener is bound).
 func dashReq(t *testing.T, method, path string, body any) *http.Request {
 	t.Helper()
 	r := testharness.JSONRequest(t, method, path, body)

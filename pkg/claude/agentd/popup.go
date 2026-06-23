@@ -528,13 +528,18 @@ func checkPopupAuth(w http.ResponseWriter, r *http.Request, req *approvalRequest
 		http.Error(w, "missing Origin and Referer", http.StatusForbidden)
 		return false
 	}
-	if origin != "" && !strings.HasPrefix(origin, popupBaseURL) {
-		http.Error(w, "Origin mismatch", http.StatusForbidden)
-		return false
-	}
-	if origin == "" && !strings.HasPrefix(referer, popupBaseURL) {
-		http.Error(w, "Referer mismatch", http.StatusForbidden)
-		return false
+	// popupBaseURL is empty only in tests that stand up the mux without a
+	// bound listener; the per-approval session cookie is the gate there
+	// and the origin pin is disabled (mirrors checkDashboardAuth).
+	if popupBaseURL != "" {
+		if origin != "" && !originMatchesBase(origin, popupBaseURL) {
+			http.Error(w, "Origin mismatch", http.StatusForbidden)
+			return false
+		}
+		if origin == "" && !originMatchesBase(referer, popupBaseURL) {
+			http.Error(w, "Referer mismatch", http.StatusForbidden)
+			return false
+		}
 	}
 	return true
 }
