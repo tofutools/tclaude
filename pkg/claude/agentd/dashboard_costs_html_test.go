@@ -142,8 +142,8 @@ func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
 	// costs.js: the toggle is persisted server-side via dashPrefs and
 	// passed into the projection.
 	must("tclaude.dash.costs.fillEmptyWeekdays", "toggle persisted under its own pref key")
-	must("monthProjection(data, fillEmptyWeekdays)", "projection receives the fill flag")
-	must("function monthProjection(data, fillEmpty)", "projection takes the fill flag")
+	must("monthProjection(data, fillEmptyWeekdays, includeWeekends)", "projection receives the fill flag")
+	must("function monthProjection(data, fillEmpty, weekendsIncl)", "projection takes the fill flag")
 
 	// costs.js: the projection builds the leading-weekday fill and the
 	// chart renders those columns as projected bars; the summary label
@@ -157,6 +157,45 @@ func TestDashboardHTML_CostsFillEmptyWeekdaysWired(t *testing.T) {
 
 	// dashboard.css: a disabled toggle is visibly dimmed.
 	must(".filter-bar label.filter-toggle.disabled", "disabled toggle styled")
+}
+
+// TestDashboardHTML_CostsIncludeWeekendsWired guards the Costs tab's
+// "include weekends" toggle across dashboard.html (the checkbox) and
+// costs.js (the persisted flag, the per-day estimation basis it switches
+// the month projection to, and the summary's unit wording). The toggle
+// flips the projection from per-elapsed-weekday (weekends projected at
+// zero) to per-elapsed-day (weekends projected at the per-day average) in
+// the future projection and the leading fill alike. Pieces span two files
+// with no JS test runner, so this asserts on the embedded concatenation
+// at `go test ./...`.
+func TestDashboardHTML_CostsIncludeWeekendsWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// dashboard.html: the checkbox + its label live in the span bar,
+	// next to the fill-empty-weekdays toggle.
+	must(`id="costs-include-weekends"`, "include-weekends checkbox present")
+	must(`id="costs-include-weekends-label"`, "checkbox label present (toggled disabled off the month span)")
+	must("include weekends", "checkbox label text present")
+
+	// costs.js: persisted server-side via dashPrefs under its own key and
+	// passed into the projection alongside the fill flag.
+	must("tclaude.dash.costs.includeWeekends", "toggle persisted under its own pref key")
+	must("monthProjection(data, fillEmptyWeekdays, includeWeekends)", "projection receives the include-weekends flag")
+
+	// costs.js: the single weekend switch — every day counts when on,
+	// weekdays only otherwise — drives the denominator, the future
+	// projection and the leading fill consistently.
+	must("weekendsIncl || !isWeekendKey(key)", "weekend switch generalises the estimation unit")
+	must("weekendsIncluded", "projection reports whether weekends were included")
+
+	// costs.js: the summary's per-unit figure switches between /weekday
+	// and /day with the flag.
+	must("proj.weekendsIncluded ? 'day' : 'weekday'", "summary unit label tracks the flag")
 }
 
 // The cost display multiplier is editable in two places — live on the

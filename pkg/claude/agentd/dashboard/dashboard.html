@@ -395,11 +395,11 @@
       <button type="button" id="cfg-save" class="primary">Save changes…</button>
     </div>
   </section>
-  <!-- Costs tab — per-day API cost bar chart (with a weekday-based
-       month projection on the "This month" span) followed by a
-       per-agent breakdown. Rendered by costs.js from /api/costs,
-       fetched on tab activation / span change rather than the 2s
-       snapshot tick. -->
+  <!-- Costs tab — per-day API cost bar chart (with a month projection
+       on the "This month" span, weekday-based by default or per-day when
+       "include weekends" is on) followed by a per-agent breakdown.
+       Rendered by costs.js from /api/costs, fetched on tab activation /
+       span change rather than the 2s snapshot tick. -->
   <section id="tab-costs">
     <div class="filter-bar" id="costs-spans">
       <button class="tool active" data-span="month" title="Calendar month to date — the only span with a projection">This month</button>
@@ -407,6 +407,7 @@
       <button class="tool" data-span="30d" title="Trailing 30 days">Last 30d</button>
       <button class="tool" data-span="90d" title="Trailing 90 days">Last 90d</button>
       <label class="filter-toggle" id="costs-fill-weekdays-label" title="Fill the empty weekdays before your first run this month with the per-weekday average, so the projection reflects a representative full month (&quot;projected average month cost&quot;) rather than one skewed low by starting mid-month. Only affects the This month projection."><input id="costs-fill-weekdays" type="checkbox" /><span>fill empty weekdays</span></label>
+      <label class="filter-toggle" id="costs-include-weekends-label" title="Count weekends in the month projection instead of projecting them at zero. The estimate's basis switches from per-weekday to per-day: every elapsed day divides the spend so far, and the remaining (and leading, when filled) weekend days are projected at that per-day average. Only affects the This month projection."><input id="costs-include-weekends" type="checkbox" /><span>include weekends</span></label>
       <label class="filter-toggle" id="costs-factor-label" title="Display multiplier applied to every cost figure here, on the per-agent badges, and in the top bar. Claude Code's cost is a client-side estimate that runs a little under the actual bill — set e.g. 1.1 to nudge it up ~10%. Display-only: recorded data is never changed; 1 = no adjustment. Persisted to config and shared with the Config tab.">
         <span>×</span><input id="costs-factor" type="number" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="width:5em" />
         <span id="costs-factor-status" class="muted"></span>

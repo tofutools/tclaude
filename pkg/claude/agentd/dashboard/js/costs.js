@@ -26,6 +26,17 @@ import { lastSnapshot } from './dashboard.js';
 const FILL_WEEKDAYS_KEY = 'tclaude.dash.costs.fillEmptyWeekdays';
 let fillEmptyWeekdays = false;
 
+// Sticky toggle: when on, weekends count toward the month projection
+// instead of being projected at zero. The estimation basis switches
+// from per-elapsed-weekday to per-elapsed-day — the denominator counts
+// every elapsed calendar day, and the remaining (and leading, when
+// filled) weekend days are projected at that per-day average rather
+// than zero. Off by default (the historical weekday-only behaviour).
+// Only the "This month" span has a projection, so it's the only span
+// affected. Persisted server-side via dashPrefs (see prefs.js).
+const INCLUDE_WEEKENDS_KEY = 'tclaude.dash.costs.includeWeekends';
+let includeWeekends = false;
+
 // Sticky toggle for the per-agent cost badge on the Groups/Agents rows
 // (the 💲 button in the Groups filter bar). Default shown ('0' = not
 // hidden) so pay-per-token behaviour is unchanged; the human can hide the
@@ -126,44 +137,54 @@ function isWeekendKey(key) {
 }
 
 // monthProjection estimates the calendar month's total from the spend
-// so far, excluding weekends from the estimation: the average is
-// taken per elapsed WEEKDAY (weekend spend still counts in the
-// numerator — money spent is money spent — it's the remaining
-// weekend days that are projected at zero). Returns null when the
-// month has no elapsed weekdays yet (a month starting on a weekend)
-// or nothing has been spent — no basis to extrapolate from.
+// so far. The estimation unit is the elapsed WEEKDAY by default, or the
+// elapsed calendar DAY when `weekendsIncl` is on — the `counts` predicate
+// below is the single switch. With weekends excluded (the default) the
+// average is taken per elapsed weekday and the remaining weekend days are
+// projected at zero (weekend spend still counts in the numerator — money
+// spent is money spent — it's only the *projected* weekend days that go to
+// zero). With weekends included every elapsed day divides the total and
+// every remaining day is projected at that per-day average. Returns null
+// when no qualifying day has elapsed yet (e.g. weekends-excluded and the
+// month started on a weekend) or nothing has been spent — no basis to
+// extrapolate from.
 //
-// The weekday denominator starts at the later of the month's first day
+// The denominator starts at the later of the month's first day
 // (data.from) and tclaude's first-ever costed day (data.first_day):
 // when the very first use was this month, the empty days before it
 // would drag the average toward zero and project far too low, so they
 // are excluded; when earlier-month history exists those leading zeros
-// are genuine idle weekdays and stay in the denominator (start = the
+// are genuine idle days and stay in the denominator (start = the
 // 1st). The numerator (total_usd) is unaffected — there is by
 // definition no spend before the first-ever costed day.
 //
-// When `fillEmpty` is on, those excluded leading weekdays (the ones in
+// When `fillEmpty` is on, those excluded leading days (the ones in
 // [data.from, startKey) — empty by definition, since nothing was spent
-// before the first costed day) are projected at the per-weekday average
+// before the first costed day) are projected at the per-unit average
 // too. The figure then represents a representative *full* month
-// (perWeekday × every weekday in the month) — "projected average month
-// cost" — rather than the current month skewed low by a mid-month start.
-// Only the leading empties are filled: idle weekdays after the first run
-// are already in the denominator, so projecting them again would double
-// count and overshoot perWeekday × total weekdays. The returned `total`
-// switches with the flag; `leadingFill` (day → projected usd) lets the
-// chart render those columns as projected bars.
-function monthProjection(data, fillEmpty) {
+// (perDay × every qualifying day in the month) — "projected average
+// month cost" — rather than the current month skewed low by a mid-month
+// start. Only the leading empties are filled: idle days after the first
+// run are already in the denominator, so projecting them again would
+// double count and overshoot perDay × total qualifying days. Which days
+// qualify follows the same weekend switch. The returned `total` switches
+// with the flag; `leadingFill` (day → projected usd) lets the chart
+// render those columns as projected bars.
+function monthProjection(data, fillEmpty, weekendsIncl) {
   const now = new Date();
   const todayKey = dayKey(now);
   const startKey = data.first_day && data.first_day > data.from
     ? data.first_day : data.from;
-  let weekdaysElapsed = 0;
+  // The estimation-unit predicate: every day when weekends are included,
+  // weekdays only otherwise. Drives the denominator, the future
+  // projection and the leading fill alike, so the basis stays consistent.
+  const counts = key => weekendsIncl || !isWeekendKey(key);
+  let daysElapsed = 0;
   for (const d of data.days) {
-    if (d.day >= startKey && d.day <= todayKey && !isWeekendKey(d.day)) weekdaysElapsed++;
+    if (d.day >= startKey && d.day <= todayKey && counts(d.day)) daysElapsed++;
   }
-  if (!weekdaysElapsed || !(data.total_usd > 0)) return null;
-  const perWeekday = data.total_usd / weekdaysElapsed;
+  if (!daysElapsed || !(data.total_usd > 0)) return null;
+  const perDay = data.total_usd / daysElapsed;
 
   const lastOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const future = [];
@@ -172,30 +193,32 @@ function monthProjection(data, fillEmpty) {
   cursor.setDate(cursor.getDate() + 1);
   for (; cursor <= lastOfMonth; cursor.setDate(cursor.getDate() + 1)) {
     const key = dayKey(cursor);
-    const usd = isWeekendKey(key) ? 0 : perWeekday;
+    const usd = counts(key) ? perDay : 0;
     projectedRemaining += usd;
     future.push({ day: key, cost_usd: usd });
   }
 
-  // Leading empty weekdays: the calendar weekdays before the first
-  // costed day this month (data.from .. startKey, exclusive). Only
-  // populated when the first run was this month (startKey > data.from);
-  // with earlier-month history startKey is the 1st and there is no
-  // leading region. data.days is ascending from data.from.
+  // Leading empty days: the calendar days before the first costed day
+  // this month (data.from .. startKey, exclusive) that qualify under the
+  // weekend switch. Only populated when the first run was this month
+  // (startKey > data.from); with earlier-month history startKey is the
+  // 1st and there is no leading region. data.days is ascending from
+  // data.from.
   const leadingFill = {};
   let leadingTotal = 0;
   for (const d of data.days) {
     if (d.day >= startKey) break;
-    if (!isWeekendKey(d.day)) {
-      leadingFill[d.day] = perWeekday;
-      leadingTotal += perWeekday;
+    if (counts(d.day)) {
+      leadingFill[d.day] = perDay;
+      leadingTotal += perDay;
     }
   }
 
   const totalNoFill = data.total_usd + projectedRemaining;
   return {
-    perWeekday,
-    weekdaysElapsed,
+    perDay,
+    daysElapsed,
+    weekendsIncluded: !!weekendsIncl,
     future,
     fillEmpty: !!fillEmpty,
     leadingFill,
@@ -283,13 +306,15 @@ function renderSummary(data, proj) {
     `<span class="muted">${esc(data.from)} → ${esc(data.to)}</span>`];
   if (proj) {
     const label = proj.fillEmpty ? 'Projected avg month total' : 'Projected month total';
-    const tip = `Spend so far divided by elapsed weekdays (${proj.weekdaysElapsed}), extrapolated over the month's remaining weekdays — weekends excluded from the estimate.`
+    const unit = proj.weekendsIncluded ? 'day' : 'weekday';
+    const tip = `Spend so far divided by elapsed ${unit}s (${proj.daysElapsed}), extrapolated over the month's remaining ${unit}s — `
+      + (proj.weekendsIncluded ? 'weekends included in the estimate.' : 'weekends excluded from the estimate.')
       + (proj.fillEmpty
-        ? ' The empty weekdays before the first run this month are also filled at the per-weekday average, so this reflects a representative full month.'
+        ? ` The empty ${unit}s before the first run this month are also filled at the per-${unit} average, so this reflects a representative full month.`
         : '');
     bits.push(`<span class="cost-proj" title="${esc(tip)}">`
       + `${label}: <strong>~${esc(fmtUSD(proj.total))}</strong>`
-      + ` <span class="muted">(${esc(fmtUSD(proj.perWeekday))}/weekday)</span></span>`);
+      + ` <span class="muted">(${esc(fmtUSD(proj.perDay))}/${unit})</span></span>`);
   }
   $('#costs-summary').innerHTML = bits.join('<span class="cost-sep">·</span>');
 }
@@ -351,7 +376,7 @@ async function loadCosts() {
     if (!r.ok) throw new Error(await r.text() || r.status);
     const data = await r.json();
     if (seq !== loadSeq) return; // superseded by a newer load
-    const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays) : null;
+    const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
     renderSummary(data, proj);
     renderChart(data, proj);
     renderTable(data);
@@ -441,17 +466,20 @@ async function saveCostFactor() {
   }
 }
 
-// syncFillToggle enables the "fill empty weekdays" checkbox only on the
-// month span (the only span with a projection) and dims it otherwise, so
-// toggling it on a trailing-window span — where it would do nothing —
-// reads as inert rather than broken.
+// syncFillToggle enables the projection-only checkboxes ("fill empty
+// weekdays" and "include weekends") only on the month span (the only span
+// with a projection) and dims them otherwise, so toggling one on a
+// trailing-window span — where it would do nothing — reads as inert
+// rather than broken.
 function syncFillToggle() {
-  const cb = $('#costs-fill-weekdays');
-  const label = $('#costs-fill-weekdays-label');
-  if (!cb || !label) return;
   const active = currentSpan === 'month';
-  cb.disabled = !active;
-  label.classList.toggle('disabled', !active);
+  for (const id of ['fill-weekdays', 'include-weekends']) {
+    const cb = $('#costs-' + id);
+    const label = $('#costs-' + id + '-label');
+    if (!cb || !label) continue;
+    cb.disabled = !active;
+    label.classList.toggle('disabled', !active);
+  }
 }
 
 // bindCostsTab wires the tab: load on activation, reload on span
@@ -492,6 +520,20 @@ function bindCostsTab() {
     fillToggle.addEventListener('change', () => {
       fillEmptyWeekdays = fillToggle.checked;
       dashPrefs.setItem(FILL_WEEKDAYS_KEY, fillEmptyWeekdays ? '1' : '0');
+      loadCosts();
+    });
+  }
+  // "Include weekends" toggle — same persisted-pref + reload-on-change
+  // pattern. Switches the month projection's basis from per-weekday to
+  // per-day (see monthProjection). dashPrefs is warm here (boot awaits
+  // initDashPrefs before this binder runs).
+  const weekendsToggle = $('#costs-include-weekends');
+  if (weekendsToggle) {
+    includeWeekends = dashPrefs.getItem(INCLUDE_WEEKENDS_KEY) === '1';
+    weekendsToggle.checked = includeWeekends;
+    weekendsToggle.addEventListener('change', () => {
+      includeWeekends = weekendsToggle.checked;
+      dashPrefs.setItem(INCLUDE_WEEKENDS_KEY, includeWeekends ? '1' : '0');
       loadCosts();
     });
   }
