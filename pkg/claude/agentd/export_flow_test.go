@@ -352,7 +352,13 @@ func TestExportFlow_CrossAgentSubmitDenied(t *testing.T) {
 
 	jobID := requestExport(t, dash, "own00000-0000-4000-8000-000000000006", map[string]any{"preset": "summary"})
 
-	// A different agent (neither original nor worker) tries to submit.
-	subRec := submitAsWorker(t, f.Mux, jobID, "conv-intruder", "x.md", []byte("nope"))
+	// Wait until the worker clone is recorded, so the gate has BOTH a real
+	// conv_id and a real worker_conv_id to reject against — otherwise the test
+	// could pass trivially while worker_conv_id is still empty.
+	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+	require.NotEqual(t, "intruder0-0000-4000-8000-000000000007", workerConv)
+
+	// A third agent — neither the original nor the worker clone — tries to submit.
+	subRec := submitAsWorker(t, f.Mux, jobID, "intruder0-0000-4000-8000-000000000007", "x.md", []byte("nope"))
 	assert.Equal(t, http.StatusForbidden, subRec.Code, subRec.Body.String())
 }

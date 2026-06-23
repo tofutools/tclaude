@@ -131,17 +131,25 @@ func GetExportJob(id int64) (*ExportJob, error) {
 // clone even if the daemon dies mid-flight. Leaves the status untouched (the job
 // stays 'cloning' until the clone is alive and nudged). updated_at is refreshed
 // so the stale timer measures from when the clone was actually minted.
-func SetExportJobWorkerConv(id int64, workerConvID string) error {
+//
+// Returns whether a row was updated (false = the job was deleted / cleared
+// between insert and this write). The caller MUST treat false as "the worker
+// identity was not persisted" and reap the clone rather than nudge it: an
+// un-recorded clone is rejected by the /v1 ownership gate and is invisible to
+// the cleanup sweep, so continuing would both fail the export and leak the clone.
+func SetExportJobWorkerConv(id int64, workerConvID string) (bool, error) {
 	d, err := Open()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if _, err := d.Exec(
+	res, err := d.Exec(
 		`UPDATE export_jobs SET worker_conv_id = ?, updated_at = ? WHERE id = ?`,
-		workerConvID, time.Now().Format(time.RFC3339Nano), id); err != nil {
-		return fmt.Errorf("set export job worker conv: %w", err)
+		workerConvID, time.Now().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return false, fmt.Errorf("set export job worker conv: %w", err)
 	}
-	return nil
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // MarkExportJobRequested flips a job from 'cloning' to 'requested' — the clone

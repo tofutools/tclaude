@@ -250,15 +250,24 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 		// slowly; waitForConvAlive below decides whether it actually came up.
 		slog.Warn("export clone: spawn registered slowly", "job", jobID, "conv", newConv, "warning", warn)
 	}
-	// Record the clone as the job's worker ASAP — before it is nudged — so the
-	// cleanup sweep can reap it on failure/timeout. NOTE: there is an irreducible
-	// narrow window between the clone spawning (above) and this write; if the
-	// daemon dies inside it, the job is left in 'cloning' with no worker_conv_id,
-	// so the sweep can't reap by id and the (never-nudged, un-renamed) clone
-	// leaks as an idle session the operator must clean up by hand. Best-effort.
-	if err := db.SetExportJobWorkerConv(jobID, newConv); err != nil {
-		slog.Warn("export clone: record worker conv failed — clone may leak if it never gets nudged",
-			"job", jobID, "conv", newConv, "error", err)
+	// Record the clone as the job's worker ASAP — before it is nudged. This is
+	// MANDATORY, not best-effort: an unrecorded clone is rejected by the /v1
+	// ownership gate (it matches neither conv_id nor worker_conv_id) AND is
+	// invisible to the cleanup sweep, so nudging it would both doom the export
+	// and leak the clone. On a write error, or if the job was deleted/cleared
+	// out from under us (zero rows updated), reap the clone instead of nudging.
+	// (There remains an irreducible narrow window between the spawn above and
+	// this write where a daemon crash leaves a never-recorded clone to reap by
+	// hand — but a live daemon never proceeds past an unconfirmed assignment.)
+	if updated, err := db.SetExportJobWorkerConv(jobID, newConv); err != nil {
+		slog.Warn("export clone: record worker conv failed", "job", jobID, "conv", newConv, "error", err)
+		failExportJobAndReap(jobID, newConv, "could not record the export clone for this job")
+		return
+	} else if !updated {
+		slog.Warn("export clone: job vanished before worker conv recorded; reaping clone",
+			"job", jobID, "conv", newConv)
+		deleteSummaryWriterClone(newConv)
+		return
 	}
 
 	// 2. Wait for the clone's pane to come online before touching it.
