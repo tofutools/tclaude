@@ -51,11 +51,20 @@ type costDelta struct {
 // pre-existing history lands on the migration day). The high-water
 // baseline clamps a dip-and-recover: only the rise above the previous
 // maximum counts, never a negative day.
-func costDeltasFromRows(rows []db.CostDailyRow) []costDelta {
+//
+// whatif selects which cumulative column the walk reads: false → cost_usd
+// (real pay-per-token spend), true → virtual_cost_usd (the subscription
+// WHAT-IF estimate). The delta logic is identical — virtual cost is the same
+// cumulative total_cost_usd, just captured on the subscription path.
+func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 	var out []costDelta
 	prevKey := ""
 	baseline := 0.0
 	for _, r := range rows {
+		val := r.CostUSD
+		if whatif {
+			val = r.VirtualCostUSD
+		}
 		key := r.ConvID
 		if key == "" {
 			key = r.SessionID
@@ -64,9 +73,9 @@ func costDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 			prevKey = key
 			baseline = 0
 		}
-		if d := r.CostUSD - baseline; d > 0 {
+		if d := val - baseline; d > 0 {
 			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d, updatedAt: r.UpdatedAt})
-			baseline = r.CostUSD
+			baseline = val
 		}
 	}
 	return out
@@ -170,7 +179,11 @@ const maxCostSpanDays = 366
 // compensation factor nudges the whole tab in lockstep while the
 // underlying session_cost_daily rows stay raw. factor 1 (the default)
 // is a no-op.
-func collectCosts(from time.Time, factor float64) (costsResponse, error) {
+//
+// whatif selects the column: false → real pay-per-token spend (cost_usd),
+// true → the subscription WHAT-IF estimate (virtual_cost_usd). The response
+// shape is identical either way; only the source column differs.
+func collectCosts(from time.Time, factor float64, whatif bool) (costsResponse, error) {
 	now := time.Now()
 	if min := now.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
@@ -182,7 +195,7 @@ func collectCosts(from time.Time, factor float64) (costsResponse, error) {
 	if err != nil {
 		return costsResponse{}, err
 	}
-	deltas := costDeltasFromRows(rows)
+	deltas := costDeltasFromRows(rows, whatif)
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
@@ -308,11 +321,13 @@ func costRowRecencyKey(a costAgentRow) string {
 	return ""
 }
 
-// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD — the
-// Costs tab's data source. from defaults to the first of the current
-// month (the tab's default span); to is always today. Fetched on tab
-// activation and span change, not on the 2s snapshot tick — history
-// doesn't move that fast.
+// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&whatif=1] —
+// the Costs tab's data source. from defaults to the first of the current
+// month (the tab's default span); to is always today. whatif=1 sources the
+// WHAT-IF (subscription pay-per-token-equivalent) figures from
+// virtual_cost_usd instead of the real cost_usd; the response shape is
+// identical. Fetched on tab activation and span change, not on the 2s
+// snapshot tick — history doesn't move that fast.
 func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -331,8 +346,9 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		}
 		from = t
 	}
+	whatif := r.URL.Query().Get("whatif") == "1"
 	cfg, _ := config.Load()
-	out, err := collectCosts(from, cfg.ResolvedCostFactor())
+	out, err := collectCosts(from, cfg.ResolvedCostFactor(), whatif)
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return

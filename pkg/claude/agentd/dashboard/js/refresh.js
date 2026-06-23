@@ -276,6 +276,7 @@ export async function refresh() {
     renderUsage(data.usage);
     renderDashDefaultProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
+    applyCostTabVisibility(data);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.
@@ -302,6 +303,32 @@ function bindTabs() {
       });
     });
   });
+}
+
+// applyCostTabVisibility drives the Costs tab's auto-hide and WHAT-IF mode
+// off the snapshot's server-computed flags:
+//   - cost_tab_visible false → hide the Costs nav button + section entirely
+//     (a subscription account with no real spend and no WHAT-IF opt-in: the
+//     tab would only show an empty chart). The 💲 cost toggle hides too (CSS).
+//   - cost_tab_whatif true → body.cost-whatif lets the per-agent cost badge
+//     (helpers.js harnessLine) and the Costs tab render the hypothetical
+//     pay-per-token-equivalent figures, with a banner.
+// If the Costs tab is the active one when it gets hidden (e.g. the human just
+// turned the opt-in off in the Config tab), fall back to Groups so they
+// aren't stranded on a now-invisible section — mirrors leaveVegasTabIfActive
+// in vegas.js (kept local to avoid a circular import).
+function applyCostTabVisibility(data) {
+  const visible = !!(data && data.cost_tab_visible);
+  const whatif = !!(data && data.cost_tab_whatif);
+  document.body.classList.toggle('hide-costs', !visible);
+  document.body.classList.toggle('cost-whatif', whatif);
+  if (!visible) {
+    const sec = document.getElementById('tab-costs');
+    if (sec && sec.classList.contains('active')) {
+      $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+    }
+  }
 }
 
 // The "Access" tab merges three former tabs — Permissions, Slug

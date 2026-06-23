@@ -39,7 +39,7 @@ import {
 } from './modal-spawn.js';
 import { bindConfigTab } from './config.js';
 import { bindPluginsUI } from './plugins.js';
-import { bindCostsTab } from './costs.js';
+import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
 import { bindAuditTab } from './audit.js';
 import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
@@ -116,6 +116,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindConfigTab();
   bindPluginsUI();
   bindCostsTab();
+  bindCostDisplayToggle();
   bindAuditTab();
   initMail();
   // Slop-mode flair — each binder installs a delegated listener (or

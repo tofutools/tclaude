@@ -10,6 +10,12 @@
 
 import { $, $$, esc, shortId } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+// lastSnapshot lives in dashboard.js — imported back for its cost_tab_whatif
+// flag (whether the tab is in WHAT-IF mode). Same deliberate, benign cycle
+// tabs.js documents: this is a read-only live binding, touched only inside
+// loadCosts()/bindCostDisplayToggle() long after both modules finish
+// evaluating, never at module top level.
+import { lastSnapshot } from './dashboard.js';
 
 // Sticky toggle: when on, the month projection fills the empty weekdays
 // before tclaude's first run this month at the per-weekday average, so
@@ -19,6 +25,13 @@ import { dashPrefs } from './prefs.js';
 // toggle affects. Persisted server-side via dashPrefs (see prefs.js).
 const FILL_WEEKDAYS_KEY = 'tclaude.dash.costs.fillEmptyWeekdays';
 let fillEmptyWeekdays = false;
+
+// Sticky toggle for the per-agent cost badge on the Groups/Agents rows
+// (the 💲 button in the Groups filter bar). Default shown ('0' = not
+// hidden) so pay-per-token behaviour is unchanged; the human can hide the
+// badges — handy for the hypothetical WHAT-IF figures on a subscription.
+// Drives body.agent-cost-hidden, which CSS uses to suppress .harness-cost.
+const COST_HIDDEN_KEY = 'tclaude.dash.agentCost.hidden';
 
 // The selectable date spans. "month" is the calendar month to date
 // (the only span that gets a projection); the rest are trailing
@@ -32,6 +45,10 @@ const SPANS = [
 
 let currentSpan = 'month';
 let lastFetchedAt = 0;
+// The WHAT-IF mode the last load fetched under. A flip (the opt-in toggled,
+// or real spend appearing) must reload immediately so the chart/table/banner
+// match the new mode rather than waiting out the slow re-poll.
+let lastLoadedWhatIf = false;
 // Monotonic fetch counter: rapid span flips (or a tab click racing a
 // span change) can land responses out of order, and a stale response
 // must never repaint the UI for a span the user has already left.
@@ -320,9 +337,16 @@ async function loadCosts() {
   // failure, so a broken endpoint is retried at the slow re-poll
   // cadence rather than on every 2s snapshot tick.
   lastFetchedAt = Date.now();
+  // WHAT-IF mode: a subscription account that opted in (cost.show_on_subscription)
+  // — the server flags it on the snapshot. Source the hypothetical
+  // pay-per-token-equivalent figures (virtual_cost_usd) and show the banner.
+  const whatif = !!(lastSnapshot && lastSnapshot.cost_tab_whatif);
+  lastLoadedWhatIf = whatif;
+  const banner = $('#costs-whatif-banner');
+  if (banner) banner.hidden = !whatif;
   try {
     const from = dayKey(spanFromDate(span));
-    const r = await fetch('/api/costs?from=' + encodeURIComponent(from),
+    const r = await fetch('/api/costs?from=' + encodeURIComponent(from) + (whatif ? '&whatif=1' : ''),
       { credentials: 'same-origin' });
     if (!r.ok) throw new Error(await r.text() || r.status);
     const data = await r.json();
@@ -473,7 +497,12 @@ function bindCostsTab() {
   }
   syncFillToggle();
   document.addEventListener('tclaude:snapshot', () => {
-    if (costsTabActive() && Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
+    if (!costsTabActive()) return;
+    // Reload immediately when the WHAT-IF mode flips (so the chart/table/banner
+    // never lag the body.cost-whatif class applyCostTabVisibility just set);
+    // otherwise honour the slow re-poll.
+    const whatif = !!(lastSnapshot && lastSnapshot.cost_tab_whatif);
+    if (whatif !== lastLoadedWhatIf || Date.now() - lastFetchedAt > REPOLL_MS) loadCosts();
   });
   // The top-bar "api" cost token (render.js) carries data-goto-tab=
   // "costs". Clicking it opens this tab exactly as the nav button does:
@@ -487,4 +516,26 @@ function bindCostsTab() {
   });
 }
 
-export { bindCostsTab };
+// bindCostDisplayToggle wires the 💲 button in the Groups filter bar: a
+// sticky show/hide for the per-agent cost badge. Restores the persisted
+// state at boot (default shown), flips body.agent-cost-hidden on click, and
+// keeps aria-pressed in sync. The badge itself (helpers.js harnessLine)
+// renders unconditionally; this class is what CSS uses to hide it, so the
+// toggle takes effect on the live DOM without a re-render.
+function bindCostDisplayToggle() {
+  const btn = $('#groups-cost-toggle');
+  if (!btn) return;
+  const apply = hidden => {
+    document.body.classList.toggle('agent-cost-hidden', hidden);
+    btn.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+    btn.classList.toggle('off', hidden);
+  };
+  apply(dashPrefs.getItem(COST_HIDDEN_KEY) === '1');
+  btn.addEventListener('click', () => {
+    const hidden = !document.body.classList.contains('agent-cost-hidden');
+    apply(hidden);
+    dashPrefs.setItem(COST_HIDDEN_KEY, hidden ? '1' : '0');
+  });
+}
+
+export { bindCostsTab, bindCostDisplayToggle };

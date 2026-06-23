@@ -87,6 +87,7 @@
           <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent."><input id="filter-groups-conversations" type="checkbox" /><span>show conversations</span></label>
         </div>
       </div>
+      <button id="groups-cost-toggle" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">💲</button>
       <span class="spacer"></span>
       <span id="dashboard-default-profile" class="user-default-model unset" data-act="set-dash-profile" data-profile="" title="Dashboard default spawn profile — pre-fills the spawn dialog when a group has no default of its own. Click to set.">🧠 …</span>
       <button id="group-create-open" class="primary" title="Create a new agent group">+ new group</button>
@@ -235,6 +236,11 @@
         <span class="cfg-label">Cost display multiplier</span>
         <input type="number" id="cfg-cost-factor" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="min-width:120px" />
         <span class="cfg-hint">Scales every <em>displayed</em> cost estimate — the per-agent badge, the Costs tab, and the top-bar month-to-date / today figures. Claude Code estimates cost client-side and it tends to run a little under the actual bill, so <code>1.1</code> nudges the numbers up ~10% to match. Display-only: recorded data is never changed, so resetting to <code>1</code> restores the raw figures. Empty or <code>1</code> = no adjustment. Also editable live on the Costs tab.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Show cost on subscription</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-cost-show-on-subscription" /> show the Costs tab + per-agent cost on a subscription (WHAT-IF)</label>
+        <span class="cfg-hint">On a subscription there's no pay-per-token charge, so the Costs tab and per-agent cost badge are hidden by default. Enable this to show them in <strong>WHAT-IF</strong> mode — the estimated equivalent cost <em>if</em> you were billed pay-per-token (Claude Code's client-side <code>total_cost_usd</code>), clearly flagged as hypothetical. On pay-per-token the Costs tab always shows real spend regardless of this setting.</span>
       </div>
     </div>
 
@@ -407,6 +413,13 @@
       </label>
       <span class="spacer"></span>
       <span id="costs-summary"></span>
+    </div>
+    <!-- WHAT-IF banner — shown (by costs.js) only when the tab is in
+         WHAT-IF mode: a subscription account that opted in via
+         cost.show_on_subscription. The figures below are then the estimated
+         pay-per-token-equivalent cost, not a real charge. -->
+    <div id="costs-whatif-banner" class="cost-whatif-banner" hidden>
+      <strong>⚠ WHAT-IF</strong> — you're on a subscription, so these figures are an <em>estimate</em> of what this would cost on pay-per-token billing (Claude Code's client-side <code>total_cost_usd</code>). They are <strong>not a real charge</strong>.
     </div>
     <div id="costs-chart"></div>
     <div id="costs-table"></div>

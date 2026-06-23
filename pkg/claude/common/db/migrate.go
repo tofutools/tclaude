@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 69
+const currentVersion = 70
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -445,10 +445,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 70 {
+		if err := migrateV69toV70(db); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// migrateV68toV69 adds audit_log — the persistent trail of daemon-proxied
+// migrateV69toV70 adds audit_log — the persistent trail of daemon-proxied
 // tclaude commands (JOH-268): who ran what against which target, recorded
 // from agentd's request middleware. Mirrors the agent_transfer_log shape
 // (migrateV39toV40): a denormalized append-only log with an index on `at`
@@ -457,7 +463,7 @@ func migrate(db *sql.DB) error {
 // agent it names is renamed/retired/deleted. Rows are read newest-first
 // by id, never by `at` (RFC3339Nano TEXT lexical order misorders rows
 // inside the same whole second — a known hazard in this DB).
-func migrateV68toV69(db *sql.DB) error {
+func migrateV69toV70(db *sql.DB) error {
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS audit_log (
 			id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -478,9 +484,82 @@ func migrateV68toV69(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_audit_log_at
 			ON audit_log(at);
 
-		UPDATE schema_version SET version = 69;
+		UPDATE schema_version SET version = 70;
 	`); err != nil {
-		return fmt.Errorf("migrate v68→v69 (add audit_log): %w", err)
+		return fmt.Errorf("migrate v69→v70 (add audit_log): %w", err)
+	}
+	return nil
+}
+
+// migrateV68toV69 adds the WHAT-IF cost column to the two cost-bearing tables:
+//
+//   - sessions.virtual_cost_usd — the cumulative pay-per-token-EQUIVALENT cost
+//     of a subscription session, the sibling of sessions.cost_usd (the real
+//     pay-per-token spend). Claude Code emits cost.total_cost_usd on every
+//     statusline render regardless of billing mode; on a subscription the
+//     statusbar discarded it before (the display gate is the subscription's
+//     rate-limit buckets), so this column captures it instead — "what this
+//     session WOULD have cost on pay-per-token". A session normally writes
+//     just one of the two columns (billing mode is stable per account); only
+//     a mid-session billing-state flip could touch both, which the two
+//     independent delta walks tolerate.
+//   - session_cost_daily.virtual_cost_usd — the same value snapshotted onto the
+//     per-(session, day) row, so the Costs tab's WHAT-IF view recovers per-day
+//     deltas exactly as the real-cost view does over cost_usd.
+//
+// Both are REAL NOT NULL DEFAULT 0 (mirroring cost_usd, added in v49→v50 /
+// v50→v51), so a pre-existing row reads as zero virtual cost — correct, since
+// nothing captured it yet. One transaction; each ADD COLUMN is guarded by a
+// sqlite_master table-existence probe (the migrateV61toV62 convention) AND a
+// pragma_table_info column probe (the migrateV56toV57 convention), so a
+// half-applied run converges on re-run instead of wedging on "duplicate column".
+func migrateV68toV69(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// table-name literals (never user input) so the pragma probe and ALTER share
+	// the string-literal convention every prior column-add migration uses — a
+	// bound `?` inside the table-valued pragma_table_info is version-fragile.
+	for _, probe := range []struct{ table, existsSQL, countSQL, alterSQL string }{
+		{
+			"sessions",
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+			`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'virtual_cost_usd'`,
+			`ALTER TABLE sessions ADD COLUMN virtual_cost_usd REAL NOT NULL DEFAULT 0`,
+		},
+		{
+			"session_cost_daily",
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_cost_daily'`,
+			`SELECT COUNT(*) FROM pragma_table_info('session_cost_daily') WHERE name = 'virtual_cost_usd'`,
+			`ALTER TABLE session_cost_daily ADD COLUMN virtual_cost_usd REAL NOT NULL DEFAULT 0`,
+		},
+	} {
+		var haveTable int
+		if err := tx.QueryRow(probe.existsSQL).Scan(&haveTable); err != nil {
+			return fmt.Errorf("migrate v68→v69 (probe %s): %w", probe.table, err)
+		}
+		if haveTable == 0 {
+			continue
+		}
+		var haveCol int
+		if err := tx.QueryRow(probe.countSQL).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v68→v69 (add %s.virtual_cost_usd): probe column: %w", probe.table, err)
+		}
+		if haveCol == 0 {
+			if _, err := tx.Exec(probe.alterSQL); err != nil {
+				return fmt.Errorf("migrate v68→v69 (add %s.virtual_cost_usd): add column: %w", probe.table, err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 69`); err != nil {
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v68→v69 (add virtual_cost_usd): commit: %w", err)
 	}
 	return nil
 }

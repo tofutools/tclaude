@@ -312,6 +312,9 @@ function populateConfigForm(cfg) {
   // value shows as-is so the human sees exactly what's on disk.
   const cf = cfg.cost && cfg.cost.estimate_factor;
   $('#cfg-cost-factor').value = (cf != null && cf !== '') ? cf : '';
+  // Show the Costs tab + per-agent cost on a subscription (WHAT-IF mode).
+  // Default off (auto-hide on subscription).
+  $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
 
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
@@ -398,6 +401,9 @@ function assembleConfig() {
   const cfRaw = $('#cfg-cost-factor').value.trim();
   const cf = cfgFloat('cfg-cost-factor', 1);
   if (cfRaw !== '' && cf !== 1) cost.estimate_factor = cf; else delete cost.estimate_factor;
+  // show_on_subscription: false is the default — drop it (matches the Go
+  // `omitempty`) so an all-default cost block doesn't marshal a spurious key.
+  if ($('#cfg-cost-show-on-subscription').checked) cost.show_on_subscription = true; else delete cost.show_on_subscription;
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
 
   // ask is an optional block. Clone the existing one so a future sub-field

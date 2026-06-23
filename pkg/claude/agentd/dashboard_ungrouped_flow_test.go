@@ -24,6 +24,8 @@ type dashSnapshot struct {
 	Usage                dashUsage          `json:"usage"`
 	Harnesses            []dashHarness      `json:"harnesses"`
 	NotificationsEnabled bool               `json:"notifications_enabled"`
+	CostTabVisible       bool               `json:"cost_tab_visible"`
+	CostTabWhatIf        bool               `json:"cost_tab_whatif"`
 }
 
 // dashConversation mirrors agentd.dashboardConversation.
@@ -127,6 +129,7 @@ type dashState struct {
 	Model             string  `json:"model,omitempty"`
 	EffortLevel       string  `json:"effort_level,omitempty"`
 	CostUSD           float64 `json:"cost_usd,omitempty"`
+	VirtualCostUSD    float64 `json:"virtual_cost_usd,omitempty"`
 	ExitReason        string  `json:"exit_reason,omitempty"`
 	Harness           string  `json:"harness,omitempty"`
 	SandboxMode       string  `json:"sandbox_mode,omitempty"`

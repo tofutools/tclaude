@@ -49,7 +49,7 @@ func TestCostDeltasFromRows(t *testing.T) {
 		{SessionID: "sess-c1", Day: "2026-06-03", ConvID: "conv-3", CostUSD: 3.50}, // only the rise above 3.00 counts
 	}
 
-	deltas := costDeltasFromRows(rows)
+	deltas := costDeltasFromRows(rows, false)
 
 	got := map[string]map[string]float64{} // day -> conv -> usd
 	for _, d := range deltas {
@@ -82,9 +82,30 @@ func TestCostDeltasFromRows_EmptyConvFallback(t *testing.T) {
 		{SessionID: "s1", Day: "2026-06-01", ConvID: "", CostUSD: 5.00},
 		{SessionID: "s2", Day: "2026-06-01", ConvID: "", CostUSD: 2.00},
 	}
-	deltas := costDeltasFromRows(rows)
+	deltas := costDeltasFromRows(rows, false)
 	assert.InDelta(t, 7.00, sumCostDeltas(deltas, "", ""), 1e-9,
 		"empty-conv rows baseline per session, so both count (5.00 + 2.00)")
+}
+
+// TestCostDeltasFromRows_WhatIf pins the WHAT-IF column selection: with
+// whatif=true the walk reads virtual_cost_usd and ignores cost_usd entirely,
+// so a subscription account's hypothetical spend aggregates exactly as real
+// spend would — and the real walk over the same rows sees nothing (these are
+// subscription rows, real cost is 0).
+func TestCostDeltasFromRows_WhatIf(t *testing.T) {
+	rows := []db.CostDailyRow{
+		// One subscription conversation: virtual cost grows, real stays 0.
+		{SessionID: "s1", Day: "2026-06-01", ConvID: "conv-w", VirtualCostUSD: 1.00},
+		{SessionID: "s1", Day: "2026-06-02", ConvID: "conv-w", VirtualCostUSD: 2.50},
+		{SessionID: "s2", Day: "2026-06-03", ConvID: "conv-w", VirtualCostUSD: 4.00}, // resume — cumulative continues
+	}
+
+	whatif := costDeltasFromRows(rows, true)
+	assert.InDelta(t, 4.00, sumCostDeltas(whatif, "", ""), 1e-9,
+		"virtual deltas telescope like real ones: 1.00 + 1.50 + 1.50")
+
+	real := costDeltasFromRows(rows, false)
+	assert.Empty(t, real, "the real-cost walk sees nothing — these are subscription rows (cost_usd 0)")
 }
 
 // TestFirstCostDay covers the first-ever-costed-day helper the Costs

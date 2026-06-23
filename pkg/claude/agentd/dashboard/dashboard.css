@@ -864,6 +864,17 @@ tr:hover .row-actions { opacity: 1; }
    otherwise), so subscription rows never carry it. Muted money-green,
    a shade brighter than the harness text, like the effort token. */
 .agent-harness .harness-cost { color: #6e9c7d; margin-left: 5px; }
+/* WHAT-IF per-agent cost (≈$x.xx): the hypothetical pay-per-token-equivalent
+   for a subscription session. Dimmed + italic so it never reads as a real
+   charge, and hidden unless the dashboard is in WHAT-IF mode (body.cost-whatif
+   — the cost.show_on_subscription opt-in). Real and virtual are mutually
+   exclusive per agent, so this only ever shows on subscription rows. */
+.agent-harness .harness-cost-whatif { color: #8a8f6e; font-style: italic; display: none; }
+body.cost-whatif .agent-harness .harness-cost-whatif { display: inline; }
+/* The 💲 Groups-filter-bar toggle hides every per-agent cost badge (real or
+   WHAT-IF) without a re-render — the badge is always in the DOM; this just
+   suppresses it. */
+body.agent-cost-hidden .agent-harness .harness-cost { display: none; }
 tr:hover .agent-harness { color: #c9d1d9; }
 /* Per-agent launch-sandbox chip ("🔒 workspace-write") under the controls,
    below the harness line. Rendered only for a harness that takes a launch
@@ -2496,6 +2507,35 @@ body.slop .slop-machine[data-status="exited"] {
    #vegas-player on slop-enable and removes it on disable. */
 nav button[data-tab="vegas"] { display: none; }
 body.slop nav button[data-tab="vegas"] { display: block; }
+
+/* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
+   cost_tab_visible is false — a subscription account with no real spend that
+   hasn't opted into the WHAT-IF view. The nav button AND the section are
+   hidden so the tab vanishes entirely (refresh.js also falls the active tab
+   back to Groups if Costs was showing). The 💲 cost toggle hides too — there's
+   nothing to toggle when no cost data exists. */
+body.hide-costs nav button[data-tab="costs"],
+body.hide-costs #tab-costs { display: none; }
+body.hide-costs #groups-cost-toggle { display: none; }
+
+/* The 💲 per-agent-cost toggle in the Groups filter bar. Dims when off so the
+   pressed/unpressed state reads at a glance. */
+.cost-toggle {
+  background: none; border: none; cursor: pointer; font-size: 14px;
+  padding: 2px 4px; line-height: 1; opacity: 0.9;
+}
+.cost-toggle:hover { opacity: 1; }
+.cost-toggle.off { opacity: 0.35; filter: grayscale(1); }
+
+/* WHAT-IF banner above the Costs chart — shown by costs.js only in WHAT-IF
+   mode (a subscription account that opted in). Amber so it reads as a caveat:
+   the figures below are hypothetical, not a real charge. */
+.cost-whatif-banner {
+  margin: 8px 0; padding: 8px 12px; border-radius: 6px;
+  background: rgba(210, 153, 34, 0.12); border: 1px solid rgba(210, 153, 34, 0.4);
+  color: #d6b25a; font-size: 12px; line-height: 1.5;
+}
+.cost-whatif-banner code { color: #e6c878; }
 /* The card holds the welcome intro (its header) above the dynamic player
    content (song/station/audio, injected into #vegas-player by vegas.js). */
 .vegas-card {

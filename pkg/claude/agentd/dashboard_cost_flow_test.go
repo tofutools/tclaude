@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -102,4 +103,67 @@ func TestDashboardSnapshot_CostSurvivesStateHookWrite(t *testing.T) {
 	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
 	assert.Equal(t, 0.42, agentRow.State.CostUSD,
 		"cost_usd must survive a state-tracking hook's SaveSession")
+}
+
+// Scenario: a SUBSCRIPTION agent — the statusline carries rate-limit
+// buckets, so the hook records cost.total_cost_usd as the hypothetical
+// pay-per-token-equivalent via UpdateSessionVirtualCost. It must surface on
+// /api/snapshot as virtual_cost_usd (the Groups-tab WHAT-IF badge), with the
+// real cost_usd left clean at 0 so the two never conflate.
+func TestDashboardSnapshot_VirtualCostSurfaced(t *testing.T) {
+	const conv = "virt-1111-2222-3333-4444"
+	const label = "spwn-virt"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSession(conv, label, "tmux-virt", "/tmp/virt")
+	f.HaveMember("squad", conv)
+
+	require.NoError(t, db.UpdateSessionVirtualCost(label, 2.50), "UpdateSessionVirtualCost")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.Equal(t, 2.50, agentRow.State.VirtualCostUSD, "Agents[] virtual_cost_usd")
+	assert.Zero(t, agentRow.State.CostUSD, "real cost_usd stays 0 for a subscription agent")
+
+	memberRow := findDashMember(snap, "squad", conv)
+	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
+	assert.Equal(t, 2.50, memberRow.State.VirtualCostUSD, "Members[] virtual_cost_usd")
+}
+
+// TestDashboardSnapshot_CostTabVisibilityRule pins the Costs-tab auto-hide /
+// WHAT-IF flags the front-end keys off:
+//   - no cost at all + no opt-in → hidden (a subscription-only account).
+//   - real pay-per-token spend → visible, real mode (not WHAT-IF).
+//   - no real spend + cost.show_on_subscription opt-in → visible, WHAT-IF mode.
+func TestDashboardSnapshot_CostTabVisibilityRule(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+
+	// 1. Fresh, nothing spent, no opt-in → tab hidden.
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.False(t, snap.CostTabVisible, "no cost + no opt-in hides the Costs tab")
+	assert.False(t, snap.CostTabWhatIf, "not in WHAT-IF mode when hidden")
+
+	// 2. Opt in on a subscription (no real cost) → visible, WHAT-IF mode.
+	require.NoError(t, config.Save(&config.Config{
+		Cost: &config.CostConfig{ShowOnSubscription: true},
+	}), "save config with show_on_subscription")
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.True(t, snap.CostTabVisible, "opt-in shows the Costs tab on a subscription")
+	assert.True(t, snap.CostTabWhatIf, "subscription opt-in with no real spend is WHAT-IF mode")
+
+	// 3. Real pay-per-token spend → visible, real mode — even with the opt-in
+	//    still on, real spend wins (there's real money to show).
+	const label = "spwn-vis"
+	f.HaveAliveSession("visi-1111-2222-3333-4444", label, "tmux-vis", "/tmp/vis")
+	require.NoError(t, db.UpdateSessionCost(label, 1.00), "UpdateSessionCost")
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.True(t, snap.CostTabVisible, "real spend shows the Costs tab")
+	assert.False(t, snap.CostTabWhatIf, "real spend is real mode, not WHAT-IF")
 }

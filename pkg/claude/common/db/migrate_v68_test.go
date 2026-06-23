@@ -12,8 +12,7 @@ import (
 
 // TestMigrateV67toV68_FreshSchema builds a fresh DB through the full migrate()
 // chain and asserts export_jobs.worker_conv_id landed. The literal
-// currentVersion tripwire has moved forward to migrate_v69_test.go (v69 is now
-// head); this test keeps the looser currentVersion check.
+// currentVersion tripwire moved forward to the v69 test when v69 became head.
 func TestMigrateV67toV68_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

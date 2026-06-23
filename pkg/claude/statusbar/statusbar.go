@@ -406,6 +406,20 @@ func run() error {
 				slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
 			}
 		}
+	} else if hasLimits && input.Cost.TotalCostUSD > 0 {
+		// Subscription plan: Claude Code still computes cost.total_cost_usd
+		// (token counts × model list prices) even though it isn't a real
+		// charge — the dashboard's WHAT-IF view shows it as "what this would
+		// have cost on pay-per-token". Capture it into the virtual_cost_usd
+		// column (never displayed in the statusline — the sub line shows rate
+		// limits, not cost), so the data is already there the moment the human
+		// opts into the WHAT-IF view via cost.show_on_subscription. Keyed by
+		// the same stable tclaude session id as the real-cost write above.
+		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+			if err := db.UpdateSessionVirtualCost(sessionID, input.Cost.TotalCostUSD); err != nil {
+				slog.Warn("status-bar: failed to update session virtual cost", "error", err, "module", "hooks")
+			}
+		}
 	}
 
 	// Reasoning-effort level (🧠 high) trails the first line, far right.
