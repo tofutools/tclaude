@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,69 +66,81 @@ func assertSpawnArmed(t *testing.T, f *testharness.Flow, group string, want bool
 // Remote Access on even though the profile default is off — the group is the
 // override level.
 func TestRemoteControlDefaults_GroupOptInOverridesProfileOff(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	makeProfileWithRC(t, f, "alpha", "p-off", false)
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		makeProfileWithRC(t, f, "alpha", "p-off", false)
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
 
-	assertSpawnArmed(t, f, "alpha", true, "group optin must force remote-control on over a profile default of off")
+		assertSpawnArmed(t, f, "alpha", true, "group optin must force remote-control on over a profile default of off")
+	})
 }
 
 // TestRemoteControlDefaults_GroupDenyOverridesProfileOn: group "deny" forces
 // Remote Access OFF even though the profile default is on — the "actively deny"
 // case the override level exists for.
 func TestRemoteControlDefaults_GroupDenyOverridesProfileOn(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	makeProfileWithRC(t, f, "alpha", "p-on", true)
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		makeProfileWithRC(t, f, "alpha", "p-on", true)
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code, "set group policy")
 
-	assertSpawnArmed(t, f, "alpha", false, "group deny must force remote-control off over a profile default of on")
+		assertSpawnArmed(t, f, "alpha", false, "group deny must force remote-control off over a profile default of on")
+	})
 }
 
 // TestRemoteControlDefaults_ProfileOnInherited: group policy unset (inherit) —
 // the profile default of on applies.
 func TestRemoteControlDefaults_ProfileOnInherited(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	makeProfileWithRC(t, f, "alpha", "p-on", true)
-	// No group policy set → inherit (the column default).
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		makeProfileWithRC(t, f, "alpha", "p-on", true)
+		// No group policy set → inherit (the column default).
 
-	assertSpawnArmed(t, f, "alpha", true, "an unset group policy must defer to the profile's on default")
+		assertSpawnArmed(t, f, "alpha", true, "an unset group policy must defer to the profile's on default")
+	})
 }
 
 // TestRemoteControlDefaults_AllUnsetIsOff: no profile default, no group policy —
 // Remote Access stays off.
 func TestRemoteControlDefaults_AllUnsetIsOff(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	assertSpawnArmed(t, f, "alpha", false, "with nothing set, remote-control must default off")
+		assertSpawnArmed(t, f, "alpha", false, "with nothing set, remote-control must default off")
+	})
 }
 
 // TestRemoteControlDefaults_GroupOptInNoProfile: group "optin" with no default
 // profile at all — the group policy alone arms it.
 func TestRemoteControlDefaults_GroupOptInNoProfile(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
 
-	assertSpawnArmed(t, f, "alpha", true, "group optin must arm remote-control even with no default profile")
+		assertSpawnArmed(t, f, "alpha", true, "group optin must arm remote-control even with no default profile")
+	})
 }
 
 // TestRemoteControlDefaults_ExplicitOptInOverProfile: with the group policy
 // unset, an explicit per-spawn remote_control:true arms even when the profile
 // default is off — the explicit opt-in outranks the profile.
 func TestRemoteControlDefaults_ExplicitOptInOverProfile(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	makeProfileWithRC(t, f, "alpha", "p-off", false)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		makeProfileWithRC(t, f, "alpha", "p-off", false)
 
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": true})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.True(t, got, "an explicit per-spawn opt-in must arm over a profile default of off")
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": true})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+		assert.True(t, got, "an explicit per-spawn opt-in must arm over a profile default of off")
+	})
 }
 
 // TestRemoteControlDefaults_ExplicitOptInBeatsGroupDeny: an explicit per-spawn
@@ -135,15 +148,17 @@ func TestRemoteControlDefaults_ExplicitOptInOverProfile(t *testing.T) {
 // group policy is "deny". The group policy only pre-fills the form / serves as
 // the fallback; whatever the form sends decides (JOH-262 revised).
 func TestRemoteControlDefaults_ExplicitOptInBeatsGroupDeny(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "deny").Code, "set group policy")
 
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": true})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.True(t, got, "an explicit per-spawn opt-in must arm over a group policy of deny")
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": true})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+		assert.True(t, got, "an explicit per-spawn opt-in must arm over a group policy of deny")
+	})
 }
 
 // TestRemoteControlDefaults_ExplicitOffBeatsGroupOptIn: the core fix — a group
@@ -151,15 +166,17 @@ func TestRemoteControlDefaults_ExplicitOptInBeatsGroupDeny(t *testing.T) {
 // remote_control:false, and that wins. So the spawn the form shows (off) is what
 // happens, instead of the group policy silently re-arming it.
 func TestRemoteControlDefaults_ExplicitOffBeatsGroupOptIn(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "alpha", "optin").Code, "set group policy")
 
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": false})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.False(t, got, "an explicit per-spawn opt-out must override a group policy of optin")
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "remote_control": false})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+		got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+		assert.False(t, got, "an explicit per-spawn opt-out must override a group policy of optin")
+	})
 }
 
 // TestRemoteControlDefaults_CodexClampsPolicyForceOn: a group/profile force-on
@@ -167,52 +184,60 @@ func TestRemoteControlDefaults_ExplicitOffBeatsGroupOptIn(t *testing.T) {
 // clamped to off, not a 400. (An EXPLICIT per-spawn opt-in on Codex still 400s;
 // that is TestCodexSpawn_RejectsRemoteControl.)
 func TestRemoteControlDefaults_CodexClampsPolicyForceOn(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("codex-crew")
-	require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "codex-crew", "optin").Code, "set group policy")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("codex-crew")
+		require.Equalf(t, http.StatusOK, setGroupRemoteControlPolicy(t, f, "codex-crew", "optin").Code, "set group policy")
 
-	spawn := f.AsHuman().SpawnWith("codex-crew", map[string]any{"name": "worker", "harness": "codex"})
-	require.Equalf(t, http.StatusOK, spawn.Code,
-		"a policy-derived force-on must not fail a Codex spawn; body=%s", spawn.Raw)
-	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
-	assert.False(t, got, "a Codex spawn must be clamped to no remote-control even under a group optin")
+		spawn := f.AsHuman().SpawnWith("codex-crew", map[string]any{"name": "worker", "harness": "codex"})
+		require.Equalf(t, http.StatusOK, spawn.Code,
+			"a policy-derived force-on must not fail a Codex spawn; body=%s", spawn.Raw)
+		got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok, "no spawn recorded for conv %s", spawn.ConvID)
+		assert.False(t, got, "a Codex spawn must be clamped to no remote-control even under a group optin")
+	})
 }
 
 // TestRemoteControlDefaults_InvalidGroupPolicyRejected: a bad policy token is a
 // 400, not a silent "inherit".
 func TestRemoteControlDefaults_InvalidGroupPolicyRejected(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	rec := setGroupRemoteControlPolicy(t, f, "alpha", "maybe")
-	assert.Equalf(t, http.StatusBadRequest, rec.Code,
-		"an invalid remote_control_policy must be a 400; body=%s", rec.Body.String())
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		rec := setGroupRemoteControlPolicy(t, f, "alpha", "maybe")
+		assert.Equalf(t, http.StatusBadRequest, rec.Code,
+			"an invalid remote_control_policy must be a 400; body=%s", rec.Body.String())
+	})
 }
 
 // TestRemoteControlDefaults_ProfileRejectsRemoteControlOnCodex: a profile may
 // not default Remote Access on for a Codex harness — that is a 400 at save, the
 // same gate the spawn path applies.
 func TestRemoteControlDefaults_ProfileRejectsRemoteControlOnCodex(t *testing.T) {
-	f := newFlow(t)
-	rec := createProfile(t, f, map[string]any{"name": "cdx", "harness": "codex", "remote_control": true})
-	assert.Equalf(t, http.StatusBadRequest, rec.Code,
-		"a Codex profile with remote_control=true must be refused; body=%s", rec.Body.String())
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		rec := createProfile(t, f, map[string]any{"name": "cdx", "harness": "codex", "remote_control": true})
+		assert.Equalf(t, http.StatusBadRequest, rec.Code,
+			"a Codex profile with remote_control=true must be refused; body=%s", rec.Body.String())
+	})
 }
 
 // TestRemoteControlDefaults_GroupPolicyRoundTrips: the PATCHed policy lands on
 // the group row and reads back through the canonical wire token.
 func TestRemoteControlDefaults_GroupPolicyRoundTrips(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	for _, tc := range []struct{ set, want string }{
-		{"optin", "optin"},
-		{"deny", "deny"},
-		{"inherit", "inherit"},
-	} {
-		rec := setGroupRemoteControlPolicy(t, f, "alpha", tc.set)
-		require.Equalf(t, http.StatusOK, rec.Code, "set policy %q body=%s", tc.set, rec.Body.String())
-		assert.Containsf(t, rec.Body.String(), `"remote_control_policy":"`+tc.want+`"`,
-			"policy %q must echo back as %q", tc.set, tc.want)
-	}
+		for _, tc := range []struct{ set, want string }{
+			{"optin", "optin"},
+			{"deny", "deny"},
+			{"inherit", "inherit"},
+		} {
+			rec := setGroupRemoteControlPolicy(t, f, "alpha", tc.set)
+			require.Equalf(t, http.StatusOK, rec.Code, "set policy %q body=%s", tc.set, rec.Body.String())
+			assert.Containsf(t, rec.Body.String(), `"remote_control_policy":"`+tc.want+`"`,
+				"policy %q must echo back as %q", tc.set, tc.want)
+		}
+	})
 }

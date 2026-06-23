@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,40 +36,42 @@ func ungroupedHas(snap dashSnapshot, conv string) bool {
 // has dropped out of the snapshot's ungrouped[] array, so it leaves
 // the virtual group on the dashboard's next render.
 func TestDashboardUngrouped_DragIntoGroupAddsAndLeavesUngrouped(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const conv = "ungr-aaaa-bbbb-cccc-1111"
-	f.HaveConvWithTitle(conv, "loose-worker")
-	f.HaveAliveSession(conv, "spwn-ungr", "tmux-ungr", "/tmp/ungr")
-	f.HaveEnrolledAgent(conv) // an enrolled, ungrouped, online agent
-	f.HaveGroup("alpha")
+		const conv = "ungr-aaaa-bbbb-cccc-1111"
+		f.HaveConvWithTitle(conv, "loose-worker")
+		f.HaveAliveSession(conv, "spwn-ungr", "tmux-ungr", "/tmp/ungr")
+		f.HaveEnrolledAgent(conv) // an enrolled, ungrouped, online agent
+		f.HaveGroup("alpha")
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Pre-condition: online, in no group → surfaced in ungrouped[].
-	pre := fetchDashSnapshot(t, mux)
-	require.True(t, ungroupedHas(pre, conv),
-		"pre-drag: %s should be in ungrouped[]; got %d rows", conv, len(pre.Ungrouped))
-	require.False(t, groupHasMember(pre, "alpha", conv),
-		"pre-drag: %s already in alpha; setup is wrong", conv)
+		// Pre-condition: online, in no group → surfaced in ungrouped[].
+		pre := fetchDashSnapshot(t, mux)
+		require.True(t, ungroupedHas(pre, conv),
+			"pre-drag: %s should be in ungrouped[]; got %d rows", conv, len(pre.Ungrouped))
+		require.False(t, groupHasMember(pre, "alpha", conv),
+			"pre-drag: %s already in alpha; setup is wrong", conv)
 
-	// The drag: runDndAddToGroup → POST /api/groups/alpha/members.
-	addBody := strings.NewReader(`{"conv":"` + conv + `"}`)
-	addReq, _ := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", addBody)
-	addReq.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, addReq)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"POST /api/groups/alpha/members body=%s", rec.Body.String())
+		// The drag: runDndAddToGroup → POST /api/groups/alpha/members.
+		addBody := strings.NewReader(`{"conv":"` + conv + `"}`)
+		addReq, _ := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", addBody)
+		addReq.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, addReq)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST /api/groups/alpha/members body=%s", rec.Body.String())
 
-	// Post-condition: in alpha, gone from ungrouped[].
-	post := fetchDashSnapshot(t, mux)
-	assert.True(t, groupHasMember(post, "alpha", conv),
-		"post-drag: %s should be a member of alpha", conv)
-	assert.False(t, ungroupedHas(post, conv),
-		"post-drag: %s should have left ungrouped[] (it's in alpha now)", conv)
+		// Post-condition: in alpha, gone from ungrouped[].
+		post := fetchDashSnapshot(t, mux)
+		assert.True(t, groupHasMember(post, "alpha", conv),
+			"post-drag: %s should be a member of alpha", conv)
+		assert.False(t, ungroupedHas(post, conv),
+			"post-drag: %s should have left ungrouped[] (it's in alpha now)", conv)
+	})
 }
 
 // Scenario: the virtual "Ungrouped" group is also a drag TARGET.
@@ -81,39 +84,41 @@ func TestDashboardUngrouped_DragIntoGroupAddsAndLeavesUngrouped(t *testing.T) {
 // longer a member of it AND reappears in the snapshot's ungrouped[]
 // array — so it lands back in the virtual group on the dashboard.
 func TestDashboardUngrouped_DragOutOfGroupReturnsToUngrouped(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const conv = "drop-aaaa-bbbb-cccc-1111"
-	f.HaveConvWithTitle(conv, "grouped-worker")
-	f.HaveAliveSession(conv, "spwn-drop", "tmux-drop", "/tmp/drop")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", conv)
+		const conv = "drop-aaaa-bbbb-cccc-1111"
+		f.HaveConvWithTitle(conv, "grouped-worker")
+		f.HaveAliveSession(conv, "spwn-drop", "tmux-drop", "/tmp/drop")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", conv)
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Pre-condition: member of alpha → NOT in ungrouped[].
-	pre := fetchDashSnapshot(t, mux)
-	require.True(t, groupHasMember(pre, "alpha", conv),
-		"pre-drag: %s should be in alpha; setup is wrong", conv)
-	require.False(t, ungroupedHas(pre, conv),
-		"pre-drag: %s should not be in ungrouped[] while it's in alpha", conv)
+		// Pre-condition: member of alpha → NOT in ungrouped[].
+		pre := fetchDashSnapshot(t, mux)
+		require.True(t, groupHasMember(pre, "alpha", conv),
+			"pre-drag: %s should be in alpha; setup is wrong", conv)
+		require.False(t, ungroupedHas(pre, conv),
+			"pre-drag: %s should not be in ungrouped[] while it's in alpha", conv)
 
-	// The drag onto Ungrouped: runDndRemoveFromGroup →
-	// DELETE /api/groups/alpha/members/{conv}.
-	delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/alpha/members/"+conv, nil)
-	rec := testharness.Serve(mux, delReq)
-	require.Equal(t, http.StatusNoContent, rec.Code,
-		"DELETE /api/groups/alpha/members/%s body=%s", conv, rec.Body.String())
+		// The drag onto Ungrouped: runDndRemoveFromGroup →
+		// DELETE /api/groups/alpha/members/{conv}.
+		delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/alpha/members/"+conv, nil)
+		rec := testharness.Serve(mux, delReq)
+		require.Equal(t, http.StatusNoContent, rec.Code,
+			"DELETE /api/groups/alpha/members/%s body=%s", conv, rec.Body.String())
 
-	// Post-condition: gone from alpha, back in ungrouped[].
-	post := fetchDashSnapshot(t, mux)
-	assert.False(t, groupHasMember(post, "alpha", conv),
-		"post-drag: %s should no longer be a member of alpha", conv)
-	assert.True(t, ungroupedHas(post, conv),
-		"post-drag: %s should be back in ungrouped[] (alpha was its only group)", conv)
+		// Post-condition: gone from alpha, back in ungrouped[].
+		post := fetchDashSnapshot(t, mux)
+		assert.False(t, groupHasMember(post, "alpha", conv),
+			"post-drag: %s should no longer be a member of alpha", conv)
+		assert.True(t, ungroupedHas(post, conv),
+			"post-drag: %s should be back in ungrouped[] (alpha was its only group)", conv)
+	})
 }
 
 // Scenario: one of the virtual Ungrouped group's stated purposes is
@@ -126,36 +131,38 @@ func TestDashboardUngrouped_DragOutOfGroupReturnsToUngrouped(t *testing.T) {
 // it shows up in the dashboard's virtual Ungrouped group rather than
 // vanishing.
 func TestDashboardUngrouped_DeletedGroupMembersSurfaceInUngrouped(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const conv = "orph-aaaa-bbbb-cccc-1111"
-	f.HaveConvWithTitle(conv, "orphan-to-be")
-	f.HaveAliveSession(conv, "spwn-orph", "tmux-orph", "/tmp/orph")
-	f.HaveGroup("doomed")
-	f.HaveMember("doomed", conv)
+		const conv = "orph-aaaa-bbbb-cccc-1111"
+		f.HaveConvWithTitle(conv, "orphan-to-be")
+		f.HaveAliveSession(conv, "spwn-orph", "tmux-orph", "/tmp/orph")
+		f.HaveGroup("doomed")
+		f.HaveMember("doomed", conv)
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Pre-condition: member of "doomed" → not loose.
-	pre := fetchDashSnapshot(t, mux)
-	require.True(t, groupHasMember(pre, "doomed", conv),
-		"pre-delete: %s should be in doomed; setup is wrong", conv)
-	require.False(t, ungroupedHas(pre, conv),
-		"pre-delete: %s should not be ungrouped while doomed exists", conv)
+		// Pre-condition: member of "doomed" → not loose.
+		pre := fetchDashSnapshot(t, mux)
+		require.True(t, groupHasMember(pre, "doomed", conv),
+			"pre-delete: %s should be in doomed; setup is wrong", conv)
+		require.False(t, ungroupedHas(pre, conv),
+			"pre-delete: %s should not be ungrouped while doomed exists", conv)
 
-	// Delete the whole group.
-	delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/doomed", nil)
-	rec := testharness.Serve(mux, delReq)
-	require.True(t, rec.Code >= 200 && rec.Code < 300,
-		"DELETE /api/groups/doomed: want 2xx, got %d body=%s", rec.Code, rec.Body.String())
+		// Delete the whole group.
+		delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/doomed", nil)
+		rec := testharness.Serve(mux, delReq)
+		require.True(t, rec.Code >= 200 && rec.Code < 300,
+			"DELETE /api/groups/doomed: want 2xx, got %d body=%s", rec.Code, rec.Body.String())
 
-	// Post-condition: the orphaned-but-online conv lands in ungrouped[].
-	post := fetchDashSnapshot(t, mux)
-	assert.True(t, ungroupedHas(post, conv),
-		"post-delete: orphaned conv %s should surface in ungrouped[]", conv)
+		// Post-condition: the orphaned-but-online conv lands in ungrouped[].
+		post := fetchDashSnapshot(t, mux)
+		assert.True(t, ungroupedHas(post, conv),
+			"post-delete: orphaned conv %s should surface in ungrouped[]", conv)
+	})
 }
 
 // Scenario: a permission grant-holder in no group is an ungrouped
@@ -167,31 +174,33 @@ func TestDashboardUngrouped_DeletedGroupMembersSurfaceInUngrouped(t *testing.T) 
 // Pins that handleDashboardSnapshot does NOT online-gate ungrouped[]:
 // both an offline and an online grant-holder show up.
 func TestDashboardSnapshot_UngroupedIncludesGrantHolders(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const offlineConv = "goff-1111-2222-3333-4444"
-	const onlineConv = "gonl-1111-2222-3333-4444"
-	f.HaveConvWithTitle(offlineConv, "offline-grant-holder")
-	f.HaveConvWithTitle(onlineConv, "online-grant-holder")
-	f.HaveAliveSession(offlineConv, "spwn-goff", "tmux-goff", "/tmp/goff")
-	f.HaveAliveSession(onlineConv, "spwn-gonl", "tmux-gonl", "/tmp/gonl")
-	f.MarkOffline("tmux-goff")
+		const offlineConv = "goff-1111-2222-3333-4444"
+		const onlineConv = "gonl-1111-2222-3333-4444"
+		f.HaveConvWithTitle(offlineConv, "offline-grant-holder")
+		f.HaveConvWithTitle(onlineConv, "online-grant-holder")
+		f.HaveAliveSession(offlineConv, "spwn-goff", "tmux-goff", "/tmp/goff")
+		f.HaveAliveSession(onlineConv, "spwn-gonl", "tmux-gonl", "/tmp/gonl")
+		f.MarkOffline("tmux-goff")
 
-	// Both hold a permission grant but belong to no group — so the
-	// daemon's per-conv perms loop pulls them into agentRows.
-	require.NoError(t, db.GrantAgentPermission(offlineConv, "agent.send", "test"))
-	require.NoError(t, db.GrantAgentPermission(onlineConv, "agent.send", "test"))
+		// Both hold a permission grant but belong to no group — so the
+		// daemon's per-conv perms loop pulls them into agentRows.
+		require.NoError(t, db.GrantAgentPermission(offlineConv, "agent.send", "test"))
+		require.NoError(t, db.GrantAgentPermission(onlineConv, "agent.send", "test"))
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	assert.True(t, ungroupedHas(snap, offlineConv),
-		"offline grant-holder %s should appear in ungrouped[]", offlineConv)
-	assert.True(t, ungroupedHas(snap, onlineConv),
-		"online grant-holder %s should appear in ungrouped[]; got %d rows",
-		onlineConv, len(snap.Ungrouped))
+		assert.True(t, ungroupedHas(snap, offlineConv),
+			"offline grant-holder %s should appear in ungrouped[]", offlineConv)
+		assert.True(t, ungroupedHas(snap, onlineConv),
+			"online grant-holder %s should appear in ungrouped[]; got %d rows",
+			onlineConv, len(snap.Ungrouped))
+	})
 }
 
 // Scenario: the virtual "Ungrouped" group is a dashboard-render
@@ -201,28 +210,30 @@ func TestDashboardSnapshot_UngroupedIncludesGrantHolders(t *testing.T) {
 // unknown group, so the virtual group genuinely cannot be renamed,
 // deleted or otherwise operated on.
 func TestDashboardUngrouped_VirtualNameHasNoBackendGroup(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	_ = newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+		_ = newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Deleting "Ungrouped" — there is no such real group, so the
-	// daemon refuses it (no 2xx). The dashboard never offers a delete
-	// button for the virtual group; this pins that even a hand-rolled
-	// request can't destroy it.
-	delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/Ungrouped", nil)
-	rec := testharness.Serve(mux, delReq)
-	assert.False(t, rec.Code >= 200 && rec.Code < 300,
-		"DELETE /api/groups/Ungrouped should fail (no such real group); got %d body=%s",
-		rec.Code, rec.Body.String())
+		// Deleting "Ungrouped" — there is no such real group, so the
+		// daemon refuses it (no 2xx). The dashboard never offers a delete
+		// button for the virtual group; this pins that even a hand-rolled
+		// request can't destroy it.
+		delReq, _ := http.NewRequest(http.MethodDelete, "/api/groups/Ungrouped", nil)
+		rec := testharness.Serve(mux, delReq)
+		assert.False(t, rec.Code >= 200 && rec.Code < 300,
+			"DELETE /api/groups/Ungrouped should fail (no such real group); got %d body=%s",
+			rec.Code, rec.Body.String())
 
-	// Renaming "Ungrouped" likewise has nothing to act on.
-	renBody := strings.NewReader(`{"new_name":"renamed"}`)
-	renReq, _ := http.NewRequest(http.MethodPost, "/api/groups/Ungrouped/rename", renBody)
-	renReq.Header.Set("Content-Type", "application/json")
-	rec = testharness.Serve(mux, renReq)
-	assert.False(t, rec.Code >= 200 && rec.Code < 300,
-		"POST /api/groups/Ungrouped/rename should fail (no such real group); got %d body=%s",
-		rec.Code, rec.Body.String())
+		// Renaming "Ungrouped" likewise has nothing to act on.
+		renBody := strings.NewReader(`{"new_name":"renamed"}`)
+		renReq, _ := http.NewRequest(http.MethodPost, "/api/groups/Ungrouped/rename", renBody)
+		renReq.Header.Set("Content-Type", "application/json")
+		rec = testharness.Serve(mux, renReq)
+		assert.False(t, rec.Code >= 200 && rec.Code < 300,
+			"POST /api/groups/Ungrouped/rename should fail (no such real group); got %d body=%s",
+			rec.Code, rec.Body.String())
+	})
 }

@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -69,32 +70,34 @@ func seedUsageCache(t *testing.T, cu usageapi.CachedUsage) {
 // path all fail here, on the real /api/snapshot surface the dashboard
 // renders from.
 func TestDashboardUsage_SurfacedInSnapshot(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t) // temp $HOME + a fresh SQLite DB
+		newFlow(t) // temp $HOME + a fresh SQLite DB
 
-	now := time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 17, ResetsAt: now.Add(2*time.Hour + 16*time.Minute)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 10, ResetsAt: now.Add(5*24*time.Hour + 9*time.Hour)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
+		now := time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 17, ResetsAt: now.Add(2*time.Hour + 16*time.Minute)},
+			SevenDay:      &usageapi.CachedBucket{Pct: 10, ResetsAt: now.Add(5*24*time.Hour + 9*time.Hour)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+		require.True(t, snap.Usage.Available, "usage available when the cache is fresh")
+
+		require.NotNil(t, snap.Usage.FiveHour, "5h window present")
+		assert.Equal(t, 17.0, snap.Usage.FiveHour.Pct, "5h percent")
+		assert.Regexp(t, `^\d+h\d+m$`, snap.Usage.FiveHour.Remaining, "5h remaining time format")
+		assert.NotEmpty(t, snap.Usage.FiveHour.ResetsAt, "5h resets_at populated")
+
+		require.NotNil(t, snap.Usage.SevenDay, "7d window present")
+		assert.Equal(t, 10.0, snap.Usage.SevenDay.Pct, "7d percent")
+		assert.Regexp(t, `^\d+d\d+h$`, snap.Usage.SevenDay.Remaining, "7d remaining time format")
+		assert.NotEmpty(t, snap.Usage.SevenDay.ResetsAt, "7d resets_at populated")
 	})
-
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-
-	require.True(t, snap.Usage.Available, "usage available when the cache is fresh")
-
-	require.NotNil(t, snap.Usage.FiveHour, "5h window present")
-	assert.Equal(t, 17.0, snap.Usage.FiveHour.Pct, "5h percent")
-	assert.Regexp(t, `^\d+h\d+m$`, snap.Usage.FiveHour.Remaining, "5h remaining time format")
-	assert.NotEmpty(t, snap.Usage.FiveHour.ResetsAt, "5h resets_at populated")
-
-	require.NotNil(t, snap.Usage.SevenDay, "7d window present")
-	assert.Equal(t, 10.0, snap.Usage.SevenDay.Pct, "7d percent")
-	assert.Regexp(t, `^\d+d\d+h$`, snap.Usage.SevenDay.Remaining, "7d remaining time format")
-	assert.NotEmpty(t, snap.Usage.SevenDay.ResetsAt, "7d resets_at populated")
 }
 
 // Scenario: subscription usage is "sometimes not available". The
@@ -108,35 +111,37 @@ func TestDashboardUsage_SurfacedInSnapshot(t *testing.T) {
 //  3. a fresh cache entry with no rolling-limit buckets — e.g. an
 //     API-billing account, which has cost but no 5h/7d windows.
 func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+		newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Case 1: no usage cached at all — the cold-start state.
-	snap := fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable when nothing is cached")
-	assert.Nil(t, snap.Usage.FiveHour, "no 5h window when unavailable")
-	assert.Nil(t, snap.Usage.SevenDay, "no 7d window when unavailable")
+		// Case 1: no usage cached at all — the cold-start state.
+		snap := fetchDashSnapshot(t, mux)
+		assert.False(t, snap.Usage.Available, "unavailable when nothing is cached")
+		assert.Nil(t, snap.Usage.FiveHour, "no 5h window when unavailable")
+		assert.Nil(t, snap.Usage.SevenDay, "no 7d window when unavailable")
 
-	// Case 2: a cached reading older than the 30-min staleness cap —
-	// a dead source must not keep showing hours-old figures.
-	stale := time.Now().Add(-31 * time.Minute)
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: time.Now().Add(time.Hour)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: time.Now().Add(48 * time.Hour)},
-		FetchedAt:     stale,
-		LastAttemptAt: stale,
+		// Case 2: a cached reading older than the 30-min staleness cap —
+		// a dead source must not keep showing hours-old figures.
+		stale := time.Now().Add(-31 * time.Minute)
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: time.Now().Add(time.Hour)},
+			SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: time.Now().Add(48 * time.Hour)},
+			FetchedAt:     stale,
+			LastAttemptAt: stale,
+		})
+		snap = fetchDashSnapshot(t, mux)
+		assert.False(t, snap.Usage.Available, "unavailable when the cached reading is stale")
+
+		// Case 3: a fresh cache entry carrying no rolling-limit buckets.
+		now := time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{FetchedAt: now, LastAttemptAt: now})
+		snap = fetchDashSnapshot(t, mux)
+		assert.False(t, snap.Usage.Available, "unavailable for an account with no rolling-limit windows")
 	})
-	snap = fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable when the cached reading is stale")
-
-	// Case 3: a fresh cache entry carrying no rolling-limit buckets.
-	now := time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{FetchedAt: now, LastAttemptAt: now})
-	snap = fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable for an account with no rolling-limit windows")
 }
 
 // Scenario: a Claude Code statusline render reports both the 5h and 7d
@@ -148,33 +153,35 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 // requirement — keep the 7d (and 5h) bars while there's still usage within
 // the window — at the real dashboard surface.
 func TestDashboardUsage_SevenDayCarriedForwardWhenRenderOmitsIt(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t) // temp $HOME + a fresh SQLite DB
+		newFlow(t) // temp $HOME + a fresh SQLite DB
 
-	now := time.Now()
-	// First render: both windows present, exactly as the statusbar leaves
-	// the SQLite usage_cache after a session renders its statusline.
-	usageapi.UpdateFromStatusLine(
-		&usageapi.CachedBucket{Pct: 18, ResetsAt: now.Add(2 * time.Hour)},
-		&usageapi.CachedBucket{Pct: 33, ResetsAt: now.Add(4 * 24 * time.Hour)},
-		nil,
-	)
-	// Next render: only the 5h window; the API dropped the 7d bucket.
-	usageapi.UpdateFromStatusLine(
-		&usageapi.CachedBucket{Pct: 21, ResetsAt: now.Add(90 * time.Minute)},
-		nil,
-		nil,
-	)
+		now := time.Now()
+		// First render: both windows present, exactly as the statusbar leaves
+		// the SQLite usage_cache after a session renders its statusline.
+		usageapi.UpdateFromStatusLine(
+			&usageapi.CachedBucket{Pct: 18, ResetsAt: now.Add(2 * time.Hour)},
+			&usageapi.CachedBucket{Pct: 33, ResetsAt: now.Add(4 * 24 * time.Hour)},
+			nil,
+		)
+		// Next render: only the 5h window; the API dropped the 7d bucket.
+		usageapi.UpdateFromStatusLine(
+			&usageapi.CachedBucket{Pct: 21, ResetsAt: now.Add(90 * time.Minute)},
+			nil,
+			nil,
+		)
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	require.True(t, snap.Usage.Available, "usage available — windows carried in the cache")
-	require.NotNil(t, snap.Usage.SevenDay, "7d window still surfaced after the render dropped its bucket")
-	assert.Equal(t, 33.0, snap.Usage.SevenDay.Pct, "carried-forward 7d keeps its last-known percent")
-	require.NotNil(t, snap.Usage.FiveHour, "5h window present")
-	assert.Equal(t, 21.0, snap.Usage.FiveHour.Pct, "fresh 5h reading wins over the carried one")
+		require.True(t, snap.Usage.Available, "usage available — windows carried in the cache")
+		require.NotNil(t, snap.Usage.SevenDay, "7d window still surfaced after the render dropped its bucket")
+		assert.Equal(t, 33.0, snap.Usage.SevenDay.Pct, "carried-forward 7d keeps its last-known percent")
+		require.NotNil(t, snap.Usage.FiveHour, "5h window present")
+		assert.Equal(t, 21.0, snap.Usage.FiveHour.Pct, "fresh 5h reading wins over the carried one")
+	})
 }
 
 // Scenario: the 5h and 7d bars are shown as a pair or not at all. A
@@ -184,80 +191,82 @@ func TestDashboardUsage_SevenDayCarriedForwardWhenRenderOmitsIt(t *testing.T) {
 // at all. Drives the operator's stated rule at the real /api/snapshot
 // surface across the cases that distinguish it.
 func TestDashboardUsage_ShowsBothWindowsOrNeither(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+		newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Case A: only the 5h window is live (mid-session, nothing yet on the
-	// week). The 7d bar still renders, at 0%.
-	now := time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 25, ResetsAt: now.Add(3 * time.Hour)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
+		// Case A: only the 5h window is live (mid-session, nothing yet on the
+		// week). The 7d bar still renders, at 0%.
+		now := time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 25, ResetsAt: now.Add(3 * time.Hour)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+		snap := fetchDashSnapshot(t, mux)
+		require.True(t, snap.Usage.Available, "available when one window is live")
+		require.NotNil(t, snap.Usage.FiveHour, "5h present")
+		assert.Equal(t, 25.0, snap.Usage.FiveHour.Pct, "5h shows its live percent")
+		require.NotNil(t, snap.Usage.SevenDay, "7d bar paired with 5h, not dropped")
+		assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "absent 7d window reads as 0%")
+
+		// Case B: the operator's headline case — the 5h window has reset (its
+		// last reading is older than 5h), but the week still has usage. The 5h
+		// bar must read 0%, not the stale 80%, and the 7d bar must stay.
+		now = time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 80, ResetsAt: now.Add(-10 * time.Minute)},
+			SevenDay:      &usageapi.CachedBucket{Pct: 15, ResetsAt: now.Add(4 * 24 * time.Hour)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+		snap = fetchDashSnapshot(t, mux)
+		require.True(t, snap.Usage.Available, "available while the week still has usage")
+		require.NotNil(t, snap.Usage.FiveHour, "5h bar kept, paired with 7d")
+		assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "reset 5h reads 0%, not the stale percent")
+		assert.Empty(t, snap.Usage.FiveHour.Remaining, "reset 5h carries no remaining-time hint")
+		require.NotNil(t, snap.Usage.SevenDay, "7d still present")
+		assert.Equal(t, 15.0, snap.Usage.SevenDay.Pct, "7d shows its live percent")
+
+		// Case C: every window has reset — nothing live, so the readout
+		// disappears rather than showing a pair of 0% bars.
+		now = time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: now.Add(-time.Hour)},
+			SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: now.Add(-time.Minute)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+		snap = fetchDashSnapshot(t, mux)
+		assert.False(t, snap.Usage.Available, "unavailable when no window is live")
+		assert.Nil(t, snap.Usage.FiveHour, "no 5h bar when nothing is live")
+		assert.Nil(t, snap.Usage.SevenDay, "no 7d bar when nothing is live")
+
+		// Case D: both windows are open (future resets) but at 0% — a current
+		// account that simply hasn't spent into either window yet. The data IS
+		// valid: a future reset means the period is live, so both bars render at
+		// a genuine 0% rather than collapsing to "usage: n/a". This is the
+		// operator's headline case — the statusline shows "5h 0% / 7d 0%" and the
+		// dashboard must agree, not show n/a.
+		now = time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(2 * time.Hour)},
+			SevenDay:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(5 * 24 * time.Hour)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+		snap = fetchDashSnapshot(t, mux)
+		require.True(t, snap.Usage.Available, "available when both windows are live at 0%")
+		require.NotNil(t, snap.Usage.FiveHour, "5h bar present at 0%")
+		assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "5h shows a genuine 0%")
+		assert.NotEmpty(t, snap.Usage.FiveHour.Remaining, "live 0% 5h keeps its remaining-time hint")
+		require.NotNil(t, snap.Usage.SevenDay, "7d bar present at 0%")
+		assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "7d shows a genuine 0%")
+		assert.NotEmpty(t, snap.Usage.SevenDay.Remaining, "live 0% 7d keeps its remaining-time hint")
 	})
-	snap := fetchDashSnapshot(t, mux)
-	require.True(t, snap.Usage.Available, "available when one window is live")
-	require.NotNil(t, snap.Usage.FiveHour, "5h present")
-	assert.Equal(t, 25.0, snap.Usage.FiveHour.Pct, "5h shows its live percent")
-	require.NotNil(t, snap.Usage.SevenDay, "7d bar paired with 5h, not dropped")
-	assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "absent 7d window reads as 0%")
-
-	// Case B: the operator's headline case — the 5h window has reset (its
-	// last reading is older than 5h), but the week still has usage. The 5h
-	// bar must read 0%, not the stale 80%, and the 7d bar must stay.
-	now = time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 80, ResetsAt: now.Add(-10 * time.Minute)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 15, ResetsAt: now.Add(4 * 24 * time.Hour)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
-	})
-	snap = fetchDashSnapshot(t, mux)
-	require.True(t, snap.Usage.Available, "available while the week still has usage")
-	require.NotNil(t, snap.Usage.FiveHour, "5h bar kept, paired with 7d")
-	assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "reset 5h reads 0%, not the stale percent")
-	assert.Empty(t, snap.Usage.FiveHour.Remaining, "reset 5h carries no remaining-time hint")
-	require.NotNil(t, snap.Usage.SevenDay, "7d still present")
-	assert.Equal(t, 15.0, snap.Usage.SevenDay.Pct, "7d shows its live percent")
-
-	// Case C: every window has reset — nothing live, so the readout
-	// disappears rather than showing a pair of 0% bars.
-	now = time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: now.Add(-time.Hour)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: now.Add(-time.Minute)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
-	})
-	snap = fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable when no window is live")
-	assert.Nil(t, snap.Usage.FiveHour, "no 5h bar when nothing is live")
-	assert.Nil(t, snap.Usage.SevenDay, "no 7d bar when nothing is live")
-
-	// Case D: both windows are open (future resets) but at 0% — a current
-	// account that simply hasn't spent into either window yet. The data IS
-	// valid: a future reset means the period is live, so both bars render at
-	// a genuine 0% rather than collapsing to "usage: n/a". This is the
-	// operator's headline case — the statusline shows "5h 0% / 7d 0%" and the
-	// dashboard must agree, not show n/a.
-	now = time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(2 * time.Hour)},
-		SevenDay:      &usageapi.CachedBucket{Pct: 0, ResetsAt: now.Add(5 * 24 * time.Hour)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
-	})
-	snap = fetchDashSnapshot(t, mux)
-	require.True(t, snap.Usage.Available, "available when both windows are live at 0%")
-	require.NotNil(t, snap.Usage.FiveHour, "5h bar present at 0%")
-	assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "5h shows a genuine 0%")
-	assert.NotEmpty(t, snap.Usage.FiveHour.Remaining, "live 0% 5h keeps its remaining-time hint")
-	require.NotNil(t, snap.Usage.SevenDay, "7d bar present at 0%")
-	assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "7d shows a genuine 0%")
-	assert.NotEmpty(t, snap.Usage.SevenDay.Remaining, "live 0% 7d keeps its remaining-time hint")
 }
 
 // seedCostSession writes one sessions row carrying a recorded API
@@ -287,25 +296,27 @@ func seedCostSession(t *testing.T, id, status string, cost float64) {
 // (nothing auto-prunes them), so a retired agent's cost stays in the
 // sum.
 func TestDashboardUsage_TotalCostSurfacedWithoutSubscription(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t)
+		newFlow(t)
 
-	seedCostSession(t, "tcost-live", "idle", 1.25)
-	seedCostSession(t, "tcost-retired", "exited", 0.50)
-	seedCostSession(t, "tcost-sub", "idle", 0) // subscription session: contributes nothing
+		seedCostSession(t, "tcost-live", "idle", 1.25)
+		seedCostSession(t, "tcost-retired", "exited", 0.50)
+		seedCostSession(t, "tcost-sub", "idle", 0) // subscription session: contributes nothing
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	assert.False(t, snap.Usage.Available, "no subscription windows on an API-billing account")
-	assert.InDelta(t, 1.75, snap.Usage.TotalCostUSD, 1e-9,
-		"live + retired session costs summed on the snapshot")
-	// UpdateSessionCost only ever writes today's session_cost_daily row,
-	// so every dollar above was spent today — month-to-date and today
-	// coincide here, and both must surface.
-	assert.InDelta(t, 1.75, snap.Usage.TodayCostUSD, 1e-9,
-		"today's cost surfaced alongside the month-to-date total")
+		assert.False(t, snap.Usage.Available, "no subscription windows on an API-billing account")
+		assert.InDelta(t, 1.75, snap.Usage.TotalCostUSD, 1e-9,
+			"live + retired session costs summed on the snapshot")
+		// UpdateSessionCost only ever writes today's session_cost_daily row,
+		// so every dollar above was spent today — month-to-date and today
+		// coincide here, and both must surface.
+		assert.InDelta(t, 1.75, snap.Usage.TodayCostUSD, 1e-9,
+			"today's cost surfaced alongside the month-to-date total")
+	})
 }
 
 // Scenario: spend straddles a day boundary — a session that spent on an
@@ -315,40 +326,42 @@ func TestDashboardUsage_TotalCostSurfacedWithoutSubscription(t *testing.T) {
 // is the bit production's UpdateSessionCost write path can't exercise
 // (it only ever stamps today), so the earlier row is seeded directly.
 func TestDashboardUsage_TodayCostWindowsToToday(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t)
+		newFlow(t)
 
-	now := time.Now()
-	today := now.Format("2006-01-02")
-	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+		now := time.Now()
+		today := now.Format("2006-01-02")
+		yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
 
-	d, err := db.Open()
-	require.NoError(t, err, "open db")
-	// One session, cumulative cost growing across two days: $1.00 by end
-	// of yesterday, $1.60 by today — so today's spend is the $0.60 delta.
-	for _, r := range []struct {
-		day  string
-		cost float64
-	}{
-		{yesterday, 1.00},
-		{today, 1.60},
-	} {
-		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
-			VALUES (?, ?, ?, ?)`, "straddle", r.day, "conv-straddle", r.cost)
-		require.NoError(t, err, "seed cost row for %s", r.day)
-	}
+		d, err := db.Open()
+		require.NoError(t, err, "open db")
+		// One session, cumulative cost growing across two days: $1.00 by end
+		// of yesterday, $1.60 by today — so today's spend is the $0.60 delta.
+		for _, r := range []struct {
+			day  string
+			cost float64
+		}{
+			{yesterday, 1.00},
+			{today, 1.60},
+		} {
+			_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+				VALUES (?, ?, ?, ?)`, "straddle", r.day, "conv-straddle", r.cost)
+			require.NoError(t, err, "seed cost row for %s", r.day)
+		}
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	// Today is the $0.60 rise over yesterday's high-water mark —
-	// calendar-robust (the windowed delta never reaches back past
-	// yesterday) on every day, including the first of a month.
-	assert.InDelta(t, 0.60, snap.Usage.TodayCostUSD, 1e-9,
-		"today's cost is the delta over yesterday, not the cumulative total")
-	assert.LessOrEqual(t, snap.Usage.TodayCostUSD, snap.Usage.TotalCostUSD,
-		"today's cost can never exceed month-to-date")
+		// Today is the $0.60 rise over yesterday's high-water mark —
+		// calendar-robust (the windowed delta never reaches back past
+		// yesterday) on every day, including the first of a month.
+		assert.InDelta(t, 0.60, snap.Usage.TodayCostUSD, 1e-9,
+			"today's cost is the delta over yesterday, not the cumulative total")
+		assert.LessOrEqual(t, snap.Usage.TodayCostUSD, snap.Usage.TotalCostUSD,
+			"today's cost can never exceed month-to-date")
+	})
 }
 
 // Scenario: both data sources present — fresh subscription windows in
@@ -357,22 +370,24 @@ func TestDashboardUsage_TodayCostWindowsToToday(t *testing.T) {
 // snapshot carries both so the dashboard renders the cost token next
 // to the 5h/7d bars.
 func TestDashboardUsage_TotalCostAlongsideSubscription(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t)
+		newFlow(t)
 
-	now := time.Now()
-	seedUsageCache(t, usageapi.CachedUsage{
-		FiveHour:      &usageapi.CachedBucket{Pct: 17, ResetsAt: now.Add(2 * time.Hour)},
-		FetchedAt:     now,
-		LastAttemptAt: now,
+		now := time.Now()
+		seedUsageCache(t, usageapi.CachedUsage{
+			FiveHour:      &usageapi.CachedBucket{Pct: 17, ResetsAt: now.Add(2 * time.Hour)},
+			FetchedAt:     now,
+			LastAttemptAt: now,
+		})
+		seedCostSession(t, "bcost-live", "idle", 0.42)
+
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+		require.True(t, snap.Usage.Available, "subscription windows available")
+		require.NotNil(t, snap.Usage.FiveHour, "5h window present")
+		assert.InDelta(t, 0.42, snap.Usage.TotalCostUSD, 1e-9, "cost total rides alongside the windows")
 	})
-	seedCostSession(t, "bcost-live", "idle", 0.42)
-
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-
-	require.True(t, snap.Usage.Available, "subscription windows available")
-	require.NotNil(t, snap.Usage.FiveHour, "5h window present")
-	assert.InDelta(t, 0.42, snap.Usage.TotalCostUSD, 1e-9, "cost total rides alongside the windows")
 }

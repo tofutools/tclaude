@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -26,47 +27,49 @@ import (
 // of three members is messaged with `members` naming only two of them;
 // the third receives nothing, and the response lists exactly the two.
 func TestDashboardMessage_GroupSubset_ReachesOnlySelectedMembers(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	g := f.HaveGroup("team")
-	const sender = "dsub-send-bbbb-cccc-000000000001"
-	const memberA = "dsub-aaaa-bbbb-cccc-000000000002"
-	const memberB = "dsub-bbbb-bbbb-cccc-000000000003"
-	const memberC = "dsub-cccc-bbbb-cccc-000000000004"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveMember("team", memberB)
-	f.HaveMember("team", memberC)
-	f.HaveAliveSession(memberA, "spwn-dsub-a", "tclaude-spwn-dsub-a", "/tmp/work")
+		g := f.HaveGroup("team")
+		const sender = "dsub-send-bbbb-cccc-000000000001"
+		const memberA = "dsub-aaaa-bbbb-cccc-000000000002"
+		const memberB = "dsub-bbbb-bbbb-cccc-000000000003"
+		const memberC = "dsub-cccc-bbbb-cccc-000000000004"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveMember("team", memberB)
+		f.HaveMember("team", memberC)
+		f.HaveAliveSession(memberA, "spwn-dsub-a", "tclaude-spwn-dsub-a", "/tmp/work")
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "just A and C",
-		"members": []string{memberA, memberC},
-	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "just A and C",
+			"members": []string{memberA, memberC},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	resp := decodeMcast(t, rec)
-	assert.Equal(t, "team", resp.ViaGroup)
-	assert.ElementsMatch(t, []string{memberA, memberC}, recipientConvIDs(resp),
-		"the multicast fans out to exactly the ticked subset")
+		resp := decodeMcast(t, rec)
+		assert.Equal(t, "team", resp.ViaGroup)
+		assert.ElementsMatch(t, []string{memberA, memberC}, recipientConvIDs(resp),
+			"the multicast fans out to exactly the ticked subset")
 
-	// Real surface: the two ticked members each got one group-stamped
-	// row; the unticked member got nothing.
-	for _, m := range []string{memberA, memberC} {
-		rows, err := db.ListAgentMessagesForConv(m, 100)
+		// Real surface: the two ticked members each got one group-stamped
+		// row; the unticked member got nothing.
+		for _, m := range []string{memberA, memberC} {
+			rows, err := db.ListAgentMessagesForConv(m, 100)
+			require.NoError(t, err)
+			require.Len(t, rows, 1, "ticked member %s got a row", m)
+			assert.Equal(t, "just A and C", rows[0].Body)
+			assert.Equal(t, sender, rows[0].FromConv, "row attributed to the picked From conv")
+			assert.Equal(t, g.ID, rows[0].GroupID, "row stamped with the target group")
+		}
+		bRows, err := db.ListAgentMessagesForConv(memberB, 100)
 		require.NoError(t, err)
-		require.Len(t, rows, 1, "ticked member %s got a row", m)
-		assert.Equal(t, "just A and C", rows[0].Body)
-		assert.Equal(t, sender, rows[0].FromConv, "row attributed to the picked From conv")
-		assert.Equal(t, g.ID, rows[0].GroupID, "row stamped with the target group")
-	}
-	bRows, err := db.ListAgentMessagesForConv(memberB, 100)
-	require.NoError(t, err)
-	assert.Empty(t, bRows, "an unticked member receives nothing")
+		assert.Empty(t, bRows, "an unticked member receives nothing")
 
-	// The alive ticked member is nudged over tmux.
-	f.AssertSentContains("tclaude-spwn-dsub-a:0.0", "new agent message", 2*time.Second)
+		// The alive ticked member is nudged over tmux.
+		f.AssertSentContains("tclaude-spwn-dsub-a:0.0", "new agent message", 2*time.Second)
+	})
 }
 
 // Scenario: a `members` list naming every member behaves identically
@@ -74,32 +77,34 @@ func TestDashboardMessage_GroupSubset_ReachesOnlySelectedMembers(t *testing.T) {
 // backend guarantee that makes the dashboard's "omit members when all
 // ticked" optimisation merely an optimisation, not load-bearing.
 func TestDashboardMessage_GroupSubset_ExplicitFullListReachesEveryMember(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dful-send-bbbb-cccc-000000000001"
-	const memberA = "dful-aaaa-bbbb-cccc-000000000002"
-	const memberB = "dful-bbbb-bbbb-cccc-000000000003"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveMember("team", memberB)
+		f.HaveGroup("team")
+		const sender = "dful-send-bbbb-cccc-000000000001"
+		const memberA = "dful-aaaa-bbbb-cccc-000000000002"
+		const memberB = "dful-bbbb-bbbb-cccc-000000000003"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveMember("team", memberB)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "everyone",
-		"members": []string{memberA, memberB},
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "everyone",
+			"members": []string{memberA, memberB},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		resp := decodeMcast(t, rec)
+		assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
+			"an explicit full list reaches every non-sender member")
+		for _, m := range []string{memberA, memberB} {
+			rows, err := db.ListAgentMessagesForConv(m, 100)
+			require.NoError(t, err)
+			require.Len(t, rows, 1, "member %s got a row", m)
+			assert.Equal(t, "everyone", rows[0].Body)
+		}
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	resp := decodeMcast(t, rec)
-	assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
-		"an explicit full list reaches every non-sender member")
-	for _, m := range []string{memberA, memberB} {
-		rows, err := db.ListAgentMessagesForConv(m, 100)
-		require.NoError(t, err)
-		require.Len(t, rows, 1, "member %s got a row", m)
-		assert.Equal(t, "everyone", rows[0].Body)
-	}
 }
 
 // Scenario: the `members` filter can only shrink reach, never widen
@@ -107,86 +112,92 @@ func TestDashboardMessage_GroupSubset_ExplicitFullListReachesEveryMember(t *test
 // leaves that conv untouched — the filter is intersected against the
 // live roster, so an outside id simply matches nobody.
 func TestDashboardMessage_GroupSubset_NonMemberIDsAreIgnored(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dnon-send-bbbb-cccc-000000000001"
-	const memberA = "dnon-aaaa-bbbb-cccc-000000000002"
-	const outsider = "dnon-outs-bbbb-cccc-000000000003"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveConvWithTitle(outsider, "unrelated-agent")
-	f.HaveEnrolledAgent(outsider)
+		f.HaveGroup("team")
+		const sender = "dnon-send-bbbb-cccc-000000000001"
+		const memberA = "dnon-aaaa-bbbb-cccc-000000000002"
+		const outsider = "dnon-outs-bbbb-cccc-000000000003"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveConvWithTitle(outsider, "unrelated-agent")
+		f.HaveEnrolledAgent(outsider)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "scoped",
-		"members": []string{memberA, outsider},
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "scoped",
+			"members": []string{memberA, outsider},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		resp := decodeMcast(t, rec)
+		assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
+			"only the genuine member is reached — the outside id matches nothing")
+
+		aRows, err := db.ListAgentMessagesForConv(memberA, 100)
+		require.NoError(t, err)
+		require.Len(t, aRows, 1)
+		outRows, err := db.ListAgentMessagesForConv(outsider, 100)
+		require.NoError(t, err)
+		assert.Empty(t, outRows, "a non-member named in `members` is never messaged")
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	resp := decodeMcast(t, rec)
-	assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
-		"only the genuine member is reached — the outside id matches nothing")
-
-	aRows, err := db.ListAgentMessagesForConv(memberA, 100)
-	require.NoError(t, err)
-	require.Len(t, aRows, 1)
-	outRows, err := db.ListAgentMessagesForConv(outsider, 100)
-	require.NoError(t, err)
-	assert.Empty(t, outRows, "a non-member named in `members` is never messaged")
 }
 
 // Scenario: the sender is excluded from the fan-out even when its own
 // conv-id appears in the `members` list — the same self-skip a bare
 // multicast applies. A subset naming [sender, memberA] reaches only A.
 func TestDashboardMessage_GroupSubset_ExcludesSenderEvenIfListed(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dslf-send-bbbb-cccc-000000000001"
-	const memberA = "dslf-aaaa-bbbb-cccc-000000000002"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
+		f.HaveGroup("team")
+		const sender = "dslf-send-bbbb-cccc-000000000001"
+		const memberA = "dslf-aaaa-bbbb-cccc-000000000002"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "not to myself",
-		"members": []string{sender, memberA},
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "not to myself",
+			"members": []string{sender, memberA},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		resp := decodeMcast(t, rec)
+		assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
+			"the sender is skipped even when ticked in the subset")
+		senderRows, err := db.ListAgentMessagesForConv(sender, 100)
+		require.NoError(t, err)
+		assert.Empty(t, senderRows, "the From conv does not message itself")
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	resp := decodeMcast(t, rec)
-	assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
-		"the sender is skipped even when ticked in the subset")
-	senderRows, err := db.ListAgentMessagesForConv(sender, 100)
-	require.NoError(t, err)
-	assert.Empty(t, senderRows, "the From conv does not message itself")
 }
 
 // Scenario: `members` is meaningless on a 1:1 send — there is no
 // roster to narrow. dispatchSend rejects it with a 400 before any row
 // is written, mirroring how it rejects `role` on a solo target.
 func TestDashboardMessage_GroupSubset_RejectedOnSoloTarget(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const alice = "dbad-alic-bbbb-cccc-000000000001"
-	const bob = "dbad-bobb-bbbb-cccc-000000000002"
-	f.HaveMember("team", alice)
-	f.HaveMember("team", bob)
+		f.HaveGroup("team")
+		const alice = "dbad-alic-bbbb-cccc-000000000001"
+		const bob = "dbad-bobb-bbbb-cccc-000000000002"
+		f.HaveMember("team", alice)
+		f.HaveMember("team", bob)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": alice, "to": bob, "body": "solo with a subset",
-		"members": []string{bob},
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": alice, "to": bob, "body": "solo with a subset",
+			"members": []string{bob},
+		})
+		require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "members is only valid with a 'group:' multicast target")
+
+		rows, err := db.ListAgentMessagesForConv(bob, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a rejected send writes no row")
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "members is only valid with a 'group:' multicast target")
-
-	rows, err := db.ListAgentMessagesForConv(bob, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a rejected send writes no row")
 }
 
 // Scenario: a subset that names a member who has since reincarnated
@@ -196,48 +207,50 @@ func TestDashboardMessage_GroupSubset_RejectedOnSoloTarget(t *testing.T) {
 // resolves each `members` entry to its live successor, so the message
 // still lands on the reincarnated agent rather than silently missing.
 func TestDashboardMessage_GroupSubset_FollowsSuccessionToReincarnatedMember(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "drei-send-bbbb-cccc-000000000001"
-	const oldX = "drei-oldx-bbbb-cccc-000000000002"
-	f.HaveMember("team", sender)
-	f.HaveConvWithTitle(oldX, "worker")
-	f.HaveMember("team", oldX)
-	f.HaveAliveSession(oldX, "spwn-drei-x", "tclaude-spwn-drei-x", "/tmp/work")
+		f.HaveGroup("team")
+		const sender = "drei-send-bbbb-cccc-000000000001"
+		const oldX = "drei-oldx-bbbb-cccc-000000000002"
+		f.HaveMember("team", sender)
+		f.HaveConvWithTitle(oldX, "worker")
+		f.HaveMember("team", oldX)
+		f.HaveAliveSession(oldX, "spwn-drei-x", "tclaude-spwn-drei-x", "/tmp/work")
 
-	// The worker reincarnates: oldX is superseded, the live head is Y,
-	// and Reincarnate migrates the group membership to Y.
-	r := f.Reincarnate(oldX, "fresh start")
-	newY := r.NewConv
-	require.NotEqual(t, oldX, newY, "reincarnation produced a fresh conv-id")
+		// The worker reincarnates: oldX is superseded, the live head is Y,
+		// and Reincarnate migrates the group membership to Y.
+		r := f.Reincarnate(oldX, "fresh start")
+		newY := r.NewConv
+		require.NotEqual(t, oldX, newY, "reincarnation produced a fresh conv-id")
 
-	// A stale dashboard snapshot still names oldX — the subset send
-	// carries the superseded id.
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "still reaches you",
-		"members": []string{oldX},
-	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		// A stale dashboard snapshot still names oldX — the subset send
+		// carries the superseded id.
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "still reaches you",
+			"members": []string{oldX},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	resp := decodeMcast(t, rec)
-	assert.ElementsMatch(t, []string{newY}, recipientConvIDs(resp),
-		"the subset filter follows the succession chain to the live head")
-	// newY's inbox also holds the reincarnation follow-up, so assert on
-	// the subset message specifically rather than the row count.
-	newRows, err := db.ListAgentMessagesForConv(newY, 100)
-	require.NoError(t, err)
-	matched := 0
-	for _, m := range newRows {
-		if m.Body == "still reaches you" {
-			matched++
+		resp := decodeMcast(t, rec)
+		assert.ElementsMatch(t, []string{newY}, recipientConvIDs(resp),
+			"the subset filter follows the succession chain to the live head")
+		// newY's inbox also holds the reincarnation follow-up, so assert on
+		// the subset message specifically rather than the row count.
+		newRows, err := db.ListAgentMessagesForConv(newY, 100)
+		require.NoError(t, err)
+		matched := 0
+		for _, m := range newRows {
+			if m.Body == "still reaches you" {
+				matched++
+			}
 		}
-	}
-	assert.Equal(t, 1, matched, "the reincarnated successor received the subset message exactly once")
-	oldRows, err := db.ListAgentMessagesForConv(oldX, 100)
-	require.NoError(t, err)
-	assert.Empty(t, oldRows, "nothing landed in the superseded conv")
+		assert.Equal(t, 1, matched, "the reincarnated successor received the subset message exactly once")
+		oldRows, err := db.ListAgentMessagesForConv(oldX, 100)
+		require.NoError(t, err)
+		assert.Empty(t, oldRows, "nothing landed in the superseded conv")
+	})
 }
 
 // Scenario: the `members` narrowing also works on the agent-facing
@@ -246,31 +259,33 @@ func TestDashboardMessage_GroupSubset_FollowsSuccessionToReincarnatedMember(t *t
 // does. The sender stays gated by handleMulticast's member/owner
 // check; `members` only shrinks reach, so no authority is gained.
 func TestMulticast_MembersSubset_OnAgentMessagesEndpoint(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "amem-send-bbbb-cccc-000000000001"
-	const memberA = "amem-aaaa-bbbb-cccc-000000000002"
-	const memberB = "amem-bbbb-bbbb-cccc-000000000003"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveMember("team", memberB)
+		f.HaveGroup("team")
+		const sender = "amem-send-bbbb-cccc-000000000001"
+		const memberA = "amem-aaaa-bbbb-cccc-000000000002"
+		const memberB = "amem-bbbb-bbbb-cccc-000000000003"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveMember("team", memberB)
 
-	rec := postMessage(t, f, sender, map[string]any{
-		"to": "group:team", "body": "agent subset",
-		"members": []string{memberA},
+		rec := postMessage(t, f, sender, map[string]any{
+			"to": "group:team", "body": "agent subset",
+			"members": []string{memberA},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		resp := decodeMcast(t, rec)
+		assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
+			"the agent-path multicast honours the members subset")
+		aRows, err := db.ListAgentMessagesForConv(memberA, 100)
+		require.NoError(t, err)
+		require.Len(t, aRows, 1)
+		bRows, err := db.ListAgentMessagesForConv(memberB, 100)
+		require.NoError(t, err)
+		assert.Empty(t, bRows, "the unlisted member is not reached")
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	resp := decodeMcast(t, rec)
-	assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
-		"the agent-path multicast honours the members subset")
-	aRows, err := db.ListAgentMessagesForConv(memberA, 100)
-	require.NoError(t, err)
-	require.Len(t, aRows, 1)
-	bRows, err := db.ListAgentMessagesForConv(memberB, 100)
-	require.NoError(t, err)
-	assert.Empty(t, bRows, "the unlisted member is not reached")
 }
 
 // Scenario: a `members` list whose entries are all blank narrows to
@@ -280,29 +295,31 @@ func TestMulticast_MembersSubset_OnAgentMessagesEndpoint(t *testing.T) {
 // stayed nil because every entry trimmed away was once misread as "no
 // filter", widening a malformed subset send into a whole-group blast.)
 func TestDashboardMessage_GroupSubset_BlankMembersListReachesNobody(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dbnk-send-bbbb-cccc-000000000001"
-	const memberA = "dbnk-aaaa-bbbb-cccc-000000000002"
-	const memberB = "dbnk-bbbb-bbbb-cccc-000000000003"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveMember("team", memberB)
+		f.HaveGroup("team")
+		const sender = "dbnk-send-bbbb-cccc-000000000001"
+		const memberA = "dbnk-aaaa-bbbb-cccc-000000000002"
+		const memberB = "dbnk-bbbb-bbbb-cccc-000000000003"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveMember("team", memberB)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "should reach nobody",
-		"members": []string{" ", ""},
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "should reach nobody",
+			"members": []string{" ", ""},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		resp := decodeMcast(t, rec)
+		assert.Empty(t, recipientConvIDs(resp),
+			"a blank members list narrows to nobody — never a full-group fallback")
+		for _, m := range []string{memberA, memberB} {
+			rows, err := db.ListAgentMessagesForConv(m, 100)
+			require.NoError(t, err)
+			assert.Empty(t, rows, "member %s receives nothing from a blank subset", m)
+		}
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	resp := decodeMcast(t, rec)
-	assert.Empty(t, recipientConvIDs(resp),
-		"a blank members list narrows to nobody — never a full-group fallback")
-	for _, m := range []string{memberA, memberB} {
-		rows, err := db.ListAgentMessagesForConv(m, 100)
-		require.NoError(t, err)
-		assert.Empty(t, rows, "member %s receives nothing from a blank subset", m)
-	}
 }

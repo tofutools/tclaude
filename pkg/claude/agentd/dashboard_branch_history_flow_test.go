@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,54 +29,56 @@ import (
 // has landed on the history row. A scan that forgot to rebuild the
 // history, or a resolver that forgot the PR stamp, fails here.
 func TestConvBranchHistory_ScanThenPRStamp(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	// PR enrichment is off in production by default; this scenario
-	// exercises the stamp, so turn it on for the test.
-	t.Cleanup(agentd.SetBranchHistoryPREnrichmentForTest(true))
+		// PR enrichment is off in production by default; this scenario
+		// exercises the stamp, so turn it on for the test.
+		t.Cleanup(agentd.SetBranchHistoryPREnrichmentForTest(true))
 
-	const conv = "aaaaaaaa-bbbb-cccc-dddd-00000000beef"
-	const cwd = "/tmp/wt/payments"
-	const branch = "feature-payments"
+		const conv = "aaaaaaaa-bbbb-cccc-dddd-00000000beef"
+		const cwd = "/tmp/wt/payments"
+		const branch = "feature-payments"
 
-	t.Cleanup(agentd.SetGitInfoResolverForTest(
-		func(repoDir, branch string) (string, string, int, string, string, bool) {
-			if branch == "feature-payments" {
-				return "https://github.com/acme/app", "main", 77,
-					"https://github.com/acme/app/pull/77", "open", true
-			}
-			return "", "", 0, "", "", false
-		}))
+		t.Cleanup(agentd.SetGitInfoResolverForTest(
+			func(repoDir, branch string) (string, string, int, string, string, bool) {
+				if branch == "feature-payments" {
+					return "https://github.com/acme/app", "main", 77,
+						"https://github.com/acme/app/pull/77", "open", true
+				}
+				return "", "", 0, "", "", false
+			}))
 
-	f := newFlow(t)
-	f.HaveGroup("pay-team")
-	f.HaveAliveSessionOnBranch(conv, "spwn-pay", "tmux-pay", cwd, branch)
-	f.HaveMember("pay-team", conv)
+		f := newFlow(t)
+		f.HaveGroup("pay-team")
+		f.HaveAliveSessionOnBranch(conv, "spwn-pay", "tmux-pay", cwd, branch)
+		f.HaveMember("pay-team", conv)
 
-	// Phase 1: the conv re-scan populates conv_branch_history off the
-	// .jsonl turns — one 'scan' row, no PR resolved yet.
-	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+		// Phase 1: the conv re-scan populates conv_branch_history off the
+		// .jsonl turns — one 'scan' row, no PR resolved yet.
+		require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
 
-	rows, err := db.ListConvBranchHistory(conv)
-	require.NoError(t, err)
-	require.Len(t, rows, 1, "the re-scan recorded the branch")
-	assert.Equal(t, branch, rows[0].Branch)
-	assert.Equal(t, db.BranchSourceScan, rows[0].Source)
-	assert.Zero(t, rows[0].PRNumber, "no PR before the snapshot resolver runs")
+		rows, err := db.ListConvBranchHistory(conv)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "the re-scan recorded the branch")
+		assert.Equal(t, branch, rows[0].Branch)
+		assert.Equal(t, db.BranchSourceScan, rows[0].Source)
+		assert.Zero(t, rows[0].PRNumber, "no PR before the snapshot resolver runs")
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Phase 2: the first snapshot is a cold cache miss that kicks the
-	// async branch-link resolve; draining it lets the PR stamp land.
-	_ = fetchDashSnapshot(t, mux)
-	agentd.WaitForBackgroundForTest()
+		// Phase 2: the first snapshot is a cold cache miss that kicks the
+		// async branch-link resolve; draining it lets the PR stamp land.
+		_ = fetchDashSnapshot(t, mux)
+		agentd.WaitForBackgroundForTest()
 
-	rows, err = db.ListConvBranchHistory(conv)
-	require.NoError(t, err)
-	require.Len(t, rows, 1, "still one row — the PR stamp updates, not inserts")
-	assert.Equal(t, 77, rows[0].PRNumber, "PR number stamped from the resolver")
-	assert.Equal(t, "https://github.com/acme/app/pull/77", rows[0].PRURL)
-	assert.Equal(t, "open", rows[0].PRState)
-	assert.Equal(t, db.BranchSourceScan, rows[0].Source, "the PR stamp leaves source intact")
+		rows, err = db.ListConvBranchHistory(conv)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "still one row — the PR stamp updates, not inserts")
+		assert.Equal(t, 77, rows[0].PRNumber, "PR number stamped from the resolver")
+		assert.Equal(t, "https://github.com/acme/app/pull/77", rows[0].PRURL)
+		assert.Equal(t, "open", rows[0].PRState)
+		assert.Equal(t, db.BranchSourceScan, rows[0].Source, "the PR stamp leaves source intact")
+	})
 }

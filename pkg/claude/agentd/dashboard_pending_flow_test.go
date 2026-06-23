@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,37 +61,39 @@ func havePendingSpawn(t *testing.T, f *testharness.Flow, label, tmux, cwd string
 // pane has died (no session row) still lists, but as offline, so the
 // dashboard can disable its focus button.
 func TestDashboardSnapshot_SurfacesPendingSpawns(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	g := f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		g := f.HaveGroup("alpha")
 
-	havePendingSpawn(t, f, "spwn-pend1", "tmux-pend1", "/tmp/pend1", g.ID, "reviewer", "pending-reviewer")
+		havePendingSpawn(t, f, "spwn-pend1", "tmux-pend1", "/tmp/pend1", g.ID, "reviewer", "pending-reviewer")
 
-	// A second pending row whose pane is GONE: a pending_spawns row with no
-	// session at all — the stale state the sweeper has not yet cleaned up.
-	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
-		Label: "spwn-dead", GroupID: g.ID, Role: "worker", Name: "dead-pane",
-	}))
+		// A second pending row whose pane is GONE: a pending_spawns row with no
+		// session at all — the stale state the sweeper has not yet cleaned up.
+		require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+			Label: "spwn-dead", GroupID: g.ID, Role: "worker", Name: "dead-pane",
+		}))
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	alive := findDashPending(snap, "spwn-pend1")
-	require.NotNil(t, alive, "alive pending spawn missing from pending[]; have %+v", snap.Pending)
-	assert.Equal(t, "alpha", alive.Group, "group resolved from group_id")
-	assert.Equal(t, "reviewer", alive.Role)
-	assert.Equal(t, "pending-reviewer", alive.Name)
-	assert.Equal(t, "/tmp/pend1", alive.Cwd, "gate location from the session row")
-	assert.Equal(t, "codex", alive.Harness)
-	assert.True(t, alive.Online, "the pane is live, so the focus button stays enabled")
+		alive := findDashPending(snap, "spwn-pend1")
+		require.NotNil(t, alive, "alive pending spawn missing from pending[]; have %+v", snap.Pending)
+		assert.Equal(t, "alpha", alive.Group, "group resolved from group_id")
+		assert.Equal(t, "reviewer", alive.Role)
+		assert.Equal(t, "pending-reviewer", alive.Name)
+		assert.Equal(t, "/tmp/pend1", alive.Cwd, "gate location from the session row")
+		assert.Equal(t, "codex", alive.Harness)
+		assert.True(t, alive.Online, "the pane is live, so the focus button stays enabled")
 
-	dead := findDashPending(snap, "spwn-dead")
-	require.NotNil(t, dead, "stale pending spawn must still list so the operator can see it")
-	assert.False(t, dead.Online, "a gone pane lists as offline → focus button disabled")
+		dead := findDashPending(snap, "spwn-dead")
+		require.NotNil(t, dead, "stale pending spawn must still list so the operator can see it")
+		assert.False(t, dead.Online, "a gone pane lists as offline → focus button disabled")
 
-	// A pending spawn is NOT an enrolled agent — it must not leak onto the
-	// Agents roster or the group's member list.
-	assert.Nil(t, findDashAgent(snap, "conv-spwn-pend1"),
-		"a pending spawn must not appear as an enrolled agent")
+		// A pending spawn is NOT an enrolled agent — it must not leak onto the
+		// Agents roster or the group's member list.
+		assert.Nil(t, findDashAgent(snap, "conv-spwn-pend1"),
+			"a pending spawn must not appear as an enrolled agent")
+	})
 }
 
 // Scenario: POST /api/pending/focus/{label} opens a terminal ATTACHED to
@@ -98,33 +101,35 @@ func TestDashboardSnapshot_SurfacesPendingSpawns(t *testing.T) {
 // conv-id), so the operator can clear the startup gate. The agent process
 // is untouched — this only gives its detached pane a window.
 func TestPendingFocus_OpensAttachTerminalKeyedOnLabel(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
-	g := f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
+		g := f.HaveGroup("alpha")
 
-	const label = "spwn-foc1"
-	havePendingSpawn(t, f, label, "tmux-foc1", "/tmp/foc1", g.ID, "reviewer", "focus-me")
+		const label = "spwn-foc1"
+		havePendingSpawn(t, f, label, "tmux-foc1", "/tmp/foc1", g.ID, "reviewer", "focus-me")
 
-	var mu sync.Mutex
-	var opened []string
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
-		mu.Lock()
-		defer mu.Unlock()
-		opened = append(opened, cmd)
-		return nil
-	}))
+		var mu sync.Mutex
+		var opened []string
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			opened = append(opened, cmd)
+			return nil
+		}))
 
-	rec := testharness.Serve(mux,
-		testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/"+label, nil))
-	require.Equal(t, http.StatusOK, rec.Code, "focus body=%s", rec.Body.String())
+		rec := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/"+label, nil))
+		require.Equal(t, http.StatusOK, rec.Code, "focus body=%s", rec.Body.String())
 
-	require.Len(t, opened, 1, "exactly one terminal opened")
-	assert.Contains(t, opened[0], "attach", "opens an attach terminal")
-	assert.Contains(t, opened[0], label, "attach is keyed on the spawn label, not a conv-id")
+		require.Len(t, opened, 1, "exactly one terminal opened")
+		assert.Contains(t, opened[0], "attach", "opens an attach terminal")
+		assert.Contains(t, opened[0], label, "attach is keyed on the spawn label, not a conv-id")
 
-	// Window-only: the pane keeps running.
-	assert.True(t, f.World.Tmux.IsAlive("tmux-foc1"), "focus opens a window only — the pane is untouched")
+		// Window-only: the pane keeps running.
+		assert.True(t, f.World.Tmux.IsAlive("tmux-foc1"), "focus opens a window only — the pane is untouched")
+	})
 }
 
 // Scenario: focusing a label with no pending row is a 404 and opens
@@ -132,67 +137,73 @@ func TestPendingFocus_OpensAttachTerminalKeyedOnLabel(t *testing.T) {
 // sweeper already enrolled + cleaned up is "gone" (the dashboard's re-poll
 // will have moved it to the agent roster).
 func TestPendingFocus_404ForUnknownLabel(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	_ = f
-	mux := agentd.BuildDashboardHandlerForTest()
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		_ = f
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	var dispatched bool
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
-		dispatched = true
-		return nil
-	}))
+		var dispatched bool
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+			dispatched = true
+			return nil
+		}))
 
-	rec := testharness.Serve(mux,
-		testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/spwn-nope", nil))
-	assert.Equal(t, http.StatusNotFound, rec.Code, "unknown label is a 404; body=%s", rec.Body.String())
-	assert.False(t, dispatched, "no terminal opened for an unknown pending label")
+		rec := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/spwn-nope", nil))
+		assert.Equal(t, http.StatusNotFound, rec.Code, "unknown label is a 404; body=%s", rec.Body.String())
+		assert.False(t, dispatched, "no terminal opened for an unknown pending label")
+	})
 }
 
 // Scenario: focusing a pending spawn whose pane has died is a 404 and
 // opens nothing — the same offline→404 boundary as the per-agent hide /
 // jump endpoints. The pending row exists, but its tmux pane is gone.
 func TestPendingFocus_404ForDeadPane(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
-	g := f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
+		g := f.HaveGroup("alpha")
 
-	const label = "spwn-dead2"
-	havePendingSpawn(t, f, label, "tmux-dead2", "/tmp/dead2", g.ID, "worker", "dead-pane")
-	f.MarkOffline("tmux-dead2") // the pane died after the spawn was recorded
+		const label = "spwn-dead2"
+		havePendingSpawn(t, f, label, "tmux-dead2", "/tmp/dead2", g.ID, "worker", "dead-pane")
+		f.MarkOffline("tmux-dead2") // the pane died after the spawn was recorded
 
-	var dispatched bool
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
-		dispatched = true
-		return nil
-	}))
+		var dispatched bool
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+			dispatched = true
+			return nil
+		}))
 
-	rec := testharness.Serve(mux,
-		testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/"+label, nil))
-	assert.Equal(t, http.StatusNotFound, rec.Code, "a dead pane is a 404; body=%s", rec.Body.String())
-	assert.False(t, dispatched, "no terminal opened for a dead pane")
+		rec := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/pending/focus/"+label, nil))
+		assert.Equal(t, http.StatusNotFound, rec.Code, "a dead pane is a 404; body=%s", rec.Body.String())
+		assert.False(t, dispatched, "no terminal opened for a dead pane")
+	})
 }
 
 // Scenario: the pending-focus endpoint is POST-only — a GET is rejected
 // with a 405 and never opens a terminal.
 func TestPendingFocus_RejectsNonPost(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
-	g := f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
+		g := f.HaveGroup("alpha")
 
-	const label = "spwn-meth"
-	havePendingSpawn(t, f, label, "tmux-meth", "/tmp/meth", g.ID, "worker", "method")
+		const label = "spwn-meth"
+		havePendingSpawn(t, f, label, "tmux-meth", "/tmp/meth", g.ID, "worker", "method")
 
-	var dispatched bool
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
-		dispatched = true
-		return nil
-	}))
+		var dispatched bool
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+			dispatched = true
+			return nil
+		}))
 
-	rec := testharness.Serve(mux,
-		testharness.JSONRequest(t, http.MethodGet, "/api/pending/focus/"+label, nil))
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "GET must be rejected; body=%s", rec.Body.String())
-	assert.False(t, dispatched, "a rejected method must not open a terminal")
+		rec := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodGet, "/api/pending/focus/"+label, nil))
+		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code, "GET must be rejected; body=%s", rec.Body.String())
+		assert.False(t, dispatched, "a rejected method must not open a terminal")
+	})
 }

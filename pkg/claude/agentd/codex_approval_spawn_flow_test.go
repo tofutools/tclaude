@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,15 +23,17 @@ import (
 // to the non-escalating default (never) and threads it through the spawn path,
 // so the unattended pane can't deadlock on an approval prompt.
 func TestCodexSpawn_DefaultsToNonEscalatingApproval(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("codex-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("codex-crew")
 
-	spawn := f.AsHuman().SpawnHarness("codex-crew", "codex-worker", "codex")
+		spawn := f.AsHuman().SpawnHarness("codex-crew", "codex-worker", "codex")
 
-	got, ok := f.World.SpawnApproval(spawn.ConvID)
-	require.True(t, ok, "the codex spawn should have been observed by the sim spawner")
-	assert.Equal(t, "never", got,
-		"a daemon-spawned (unattended) Codex agent must default to the non-escalating `never` approval policy")
+		got, ok := f.World.SpawnApproval(spawn.ConvID)
+		require.True(t, ok, "the codex spawn should have been observed by the sim spawner")
+		assert.Equal(t, "never", got,
+			"a daemon-spawned (unattended) Codex agent must default to the non-escalating `never` approval policy")
+	})
 }
 
 // TestCodexSpawn_ExplicitApprovalThreadsThrough: an explicit approval policy
@@ -38,38 +41,42 @@ func TestCodexSpawn_DefaultsToNonEscalatingApproval(t *testing.T) {
 // is a real per-spawn override, not just a fixed default. (A human who plans
 // to attach to the pane can ask for an escalating policy.)
 func TestCodexSpawn_ExplicitApprovalThreadsThrough(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("codex-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("codex-crew")
 
-	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":     "supervised",
-		"harness":  "codex",
-		"approval": "on-request",
+		resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+			"name":     "supervised",
+			"harness":  "codex",
+			"approval": "on-request",
+		})
+		require.Equal(t, 200, resp.Code,
+			"an explicit valid approval policy must be accepted; body=%s", resp.Raw)
+
+		got, ok := f.World.SpawnApproval(resp.ConvID)
+		require.True(t, ok, "the codex spawn should have been observed by the sim spawner")
+		assert.Equal(t, "on-request", got,
+			"an explicit approval policy must thread through unchanged")
 	})
-	require.Equal(t, 200, resp.Code,
-		"an explicit valid approval policy must be accepted; body=%s", resp.Raw)
-
-	got, ok := f.World.SpawnApproval(resp.ConvID)
-	require.True(t, ok, "the codex spawn should have been observed by the sim spawner")
-	assert.Equal(t, "on-request", got,
-		"an explicit approval policy must thread through unchanged")
 }
 
 // TestCodexSpawn_InvalidApprovalRejected: a bad approval policy is a 400 at
 // the spawn boundary, not a silent fork that exits non-zero later.
 func TestCodexSpawn_InvalidApprovalRejected(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("codex-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("codex-crew")
 
-	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":     "bad-approval",
-		"harness":  "codex",
-		"approval": "yolo",
+		resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+			"name":     "bad-approval",
+			"harness":  "codex",
+			"approval": "yolo",
+		})
+		require.Equal(t, 400, resp.Code,
+			"an invalid approval policy must be refused with a 400; body=%s", resp.Raw)
+		assert.Contains(t, string(resp.Raw), "invalid_approval",
+			"the refusal should name the approval validation; body=%s", resp.Raw)
 	})
-	require.Equal(t, 400, resp.Code,
-		"an invalid approval policy must be refused with a 400; body=%s", resp.Raw)
-	assert.Contains(t, string(resp.Raw), "invalid_approval",
-		"the refusal should name the approval validation; body=%s", resp.Raw)
 }
 
 // TestClaudeSpawn_HasNoApprovalFlag: Claude Code has no launch-time approval
@@ -77,13 +84,15 @@ func TestCodexSpawn_InvalidApprovalRejected(t *testing.T) {
 // thread an empty approval policy — never a Codex `never` leaking onto a
 // harness that can't parse `--ask-for-approval`.
 func TestClaudeSpawn_HasNoApprovalFlag(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("cc-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("cc-crew")
 
-	spawn := f.AsHuman().Spawn("cc-crew", "cc-worker")
+		spawn := f.AsHuman().Spawn("cc-crew", "cc-worker")
 
-	got, ok := f.World.SpawnApproval(spawn.ConvID)
-	require.True(t, ok, "the claude spawn should have been observed by the sim spawner")
-	assert.Equal(t, "", got,
-		"a Claude Code spawn must omit the approval flag (no --ask-for-approval support)")
+		got, ok := f.World.SpawnApproval(spawn.ConvID)
+		require.True(t, ok, "the claude spawn should have been observed by the sim spawner")
+		assert.Equal(t, "", got,
+			"a Claude Code spawn must omit the approval flag (no --ask-for-approval support)")
+	})
 }

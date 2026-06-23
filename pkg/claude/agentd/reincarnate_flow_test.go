@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -27,32 +28,34 @@ import (
 //   - Group membership moves from old to new; the old conv is no
 //     longer a member.
 func TestReincarnate_OfRN_ProducesRNplus1(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-old-001"
-	const oldTmux = "tclaude-spwn-old-001"
+		const oldConv = "old-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-old-001"
+		const oldTmux = "tclaude-spwn-old-001"
 
-	f.HaveConvWithTitle(oldConv, "worker-r-3")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker-r-3")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		g := f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
+		r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
-	f.AssertReincarnateTitle(r, "worker-r-4")
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker-r-4", 5*time.Second)
+		f.AssertReincarnateTitle(r, "worker-r-4")
+		f.AssertSentContains(r.TmuxTarget(), "/rename worker-r-4", 5*time.Second)
 
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second),
-		"old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
+		assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second),
+			"old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
 
-	// Surface-level invariants the human would see post-reincarnate
-	// in `tclaude agent groups members alpha`:
-	//   - the new conv shows up with the bumped -r-4 title (catches
-	//     both the daemon's title-bump math AND the rename actually
-	//     landing as a renderable title);
-	//   - the old conv is gone (catches the membership migration
-	//     that reincarnate has to do atomically).
-	f.AssertGroupMember(g.Name, r.NewConv, "worker-r-4", 5*time.Second)
-	f.AssertNotGroupMember(g.Name, oldConv)
+		// Surface-level invariants the human would see post-reincarnate
+		// in `tclaude agent groups members alpha`:
+		//   - the new conv shows up with the bumped -r-4 title (catches
+		//     both the daemon's title-bump math AND the rename actually
+		//     landing as a renderable title);
+		//   - the old conv is gone (catches the membership migration
+		//     that reincarnate has to do atomically).
+		f.AssertGroupMember(g.Name, r.NewConv, "worker-r-4", 5*time.Second)
+		f.AssertNotGroupMember(g.Name, oldConv)
+	})
 }

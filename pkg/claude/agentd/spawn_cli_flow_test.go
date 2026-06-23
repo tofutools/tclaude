@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,27 +95,29 @@ func resolveSym(t *testing.T, p string) string {
 // inbox, not typed into a pane — and the stored message body must
 // preserve every newline end-to-end (CLI → wire → daemon → DB).
 func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
-	chdirTo(t, resolveSym(t, t.TempDir()))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
+		chdirTo(t, resolveSym(t, t.TempDir()))
 
-	const brief = "Task: refactor auth.\n\nSteps:\n- audit comparisons\n- write a report"
+		const brief = "Task: refactor auth.\n\nSteps:\n- audit comparisons\n- write a report"
 
-	stderr := new(bytes.Buffer)
-	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Name: "worker", InitialMessage: brief},
-		new(bytes.Buffer), stderr, new(bytes.Buffer),
-	)
-	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
-	require.NotNil(t, resp, "RunSpawn resp")
+		stderr := new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(
+			&agent.SpawnParams{Group: "alpha", Name: "worker", InitialMessage: brief},
+			new(bytes.Buffer), stderr, new(bytes.Buffer),
+		)
+		require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+		require.NotNil(t, resp, "RunSpawn resp")
 
-	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "spawned agent should have one inbox message")
-	// Contains is an exact-substring match — newlines included — so this
-	// proves the brief survived CLI → wire → daemon → DB verbatim.
-	assert.Contains(t, rows[0].Body, brief, "multi-line brief must survive verbatim")
+		rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "spawned agent should have one inbox message")
+		// Contains is an exact-substring match — newlines included — so this
+		// proves the brief survived CLI → wire → daemon → DB verbatim.
+		assert.Contains(t, rows[0].Body, brief, "multi-line brief must survive verbatim")
+	})
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker --file brief.md`.
@@ -123,51 +126,55 @@ func TestSpawnCLI_MultiLineInitialMessagePreserved(t *testing.T) {
 // just a different source. Loading from a file also sidesteps shell
 // quoting, so a brief containing backticks survives verbatim.
 func TestSpawnCLI_InitialMessageFromFile(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
-	chdirTo(t, resolveSym(t, t.TempDir()))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
+		chdirTo(t, resolveSym(t, t.TempDir()))
 
-	const brief = "Task: wire up the `--file` flag.\n\nNotes:\n- backticks must survive\n- newlines too"
-	briefPath := filepath.Join(t.TempDir(), "brief.md")
-	require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o600))
+		const brief = "Task: wire up the `--file` flag.\n\nNotes:\n- backticks must survive\n- newlines too"
+		briefPath := filepath.Join(t.TempDir(), "brief.md")
+		require.NoError(t, os.WriteFile(briefPath, []byte(brief), 0o600))
 
-	stderr := new(bytes.Buffer)
-	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Name: "worker", File: briefPath},
-		new(bytes.Buffer), stderr, new(bytes.Buffer),
-	)
-	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
-	require.NotNil(t, resp, "RunSpawn resp")
+		stderr := new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(
+			&agent.SpawnParams{Group: "alpha", Name: "worker", File: briefPath},
+			new(bytes.Buffer), stderr, new(bytes.Buffer),
+		)
+		require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+		require.NotNil(t, resp, "RunSpawn resp")
 
-	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "spawned agent should have one inbox message")
-	assert.Contains(t, rows[0].Body, brief, "file-sourced brief must reach the inbox verbatim")
+		rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "spawned agent should have one inbox message")
+		assert.Contains(t, rows[0].Body, brief, "file-sourced brief must reach the inbox verbatim")
+	})
 }
 
 // Scenario: a human pipes a brief in — `generate-brief | tclaude agent
 // spawn alpha worker --file -`. The CLI reads stdin and delivers the
 // brief like any other.
 func TestSpawnCLI_InitialMessageFromStdin(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
-	chdirTo(t, resolveSym(t, t.TempDir()))
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
+		chdirTo(t, resolveSym(t, t.TempDir()))
 
-	const brief = "piped brief\nsecond line"
-	stderr := new(bytes.Buffer)
-	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Name: "worker", File: "-"},
-		new(bytes.Buffer), stderr, bytes.NewBufferString(brief),
-	)
-	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
-	require.NotNil(t, resp, "RunSpawn resp")
+		const brief = "piped brief\nsecond line"
+		stderr := new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(
+			&agent.SpawnParams{Group: "alpha", Name: "worker", File: "-"},
+			new(bytes.Buffer), stderr, bytes.NewBufferString(brief),
+		)
+		require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+		require.NotNil(t, resp, "RunSpawn resp")
 
-	rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "spawned agent should have one inbox message")
-	assert.Contains(t, rows[0].Body, brief, "stdin-piped brief must reach the inbox verbatim")
+		rows, err := db.ListAgentMessagesForConv(resp.ConvID, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "spawned agent should have one inbox message")
+		assert.Contains(t, rows[0].Body, brief, "stdin-piped brief must reach the inbox verbatim")
+	})
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker` from a
@@ -182,53 +189,57 @@ func TestSpawnCLI_InitialMessageFromStdin(t *testing.T) {
 //
 // Pins the bug class fixed by commit d7b13e6.
 func TestSpawnCLI_DefaultsCwdToCallersCwd(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
 
-	callerCwd := resolveSym(t, t.TempDir())
-	chdirTo(t, callerCwd)
+		callerCwd := resolveSym(t, t.TempDir())
+		chdirTo(t, callerCwd)
 
-	stdout := new(bytes.Buffer)
-	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Name: "worker"},
-		stdout, new(bytes.Buffer), new(bytes.Buffer),
-	)
-	require.Equal(t, 0, rc, "RunSpawn stdout=%s", stdout.String())
-	require.NotNil(t, resp, "RunSpawn returned nil response")
-	require.NotEmpty(t, resp.ConvID, "RunSpawn returned empty ConvID: %+v", resp)
+		stdout := new(bytes.Buffer)
+		resp, rc := agent.RunSpawn(
+			&agent.SpawnParams{Group: "alpha", Name: "worker"},
+			stdout, new(bytes.Buffer), new(bytes.Buffer),
+		)
+		require.Equal(t, 0, rc, "RunSpawn stdout=%s", stdout.String())
+		require.NotNil(t, resp, "RunSpawn returned nil response")
+		require.NotEmpty(t, resp.ConvID, "RunSpawn returned empty ConvID: %+v", resp)
 
-	rows, err := db.FindSessionsByConvID(resp.ConvID)
-	require.NoError(t, err, "FindSessionsByConvID")
-	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
-	got := resolveSym(t, rows[0].Cwd)
-	assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
+		rows, err := db.FindSessionsByConvID(resp.ConvID)
+		require.NoError(t, err, "FindSessionsByConvID")
+		require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+		got := resolveSym(t, rows[0].Cwd)
+		assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
+	})
 }
 
 // Scenario: explicit `-C /some/path` must still override the auto-
 // captured cwd. Regression guard against a future refactor that drops
 // explicit-wins semantics.
 func TestSpawnCLI_ExplicitCwdOverridesCallersCwd(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
 
-	callerCwd := resolveSym(t, t.TempDir())
-	explicitCwd := resolveSym(t, t.TempDir())
-	chdirTo(t, callerCwd)
+		callerCwd := resolveSym(t, t.TempDir())
+		explicitCwd := resolveSym(t, t.TempDir())
+		chdirTo(t, callerCwd)
 
-	resp, rc := agent.RunSpawn(
-		&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: explicitCwd},
-		new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer),
-	)
-	require.Equal(t, 0, rc, "RunSpawn rc")
-	require.NotNil(t, resp, "RunSpawn resp")
+		resp, rc := agent.RunSpawn(
+			&agent.SpawnParams{Group: "alpha", Name: "worker", Cwd: explicitCwd},
+			new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer),
+		)
+		require.Equal(t, 0, rc, "RunSpawn rc")
+		require.NotNil(t, resp, "RunSpawn resp")
 
-	rows, err := db.FindSessionsByConvID(resp.ConvID)
-	require.NoError(t, err, "FindSessionsByConvID")
-	require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
-	got := resolveSym(t, rows[0].Cwd)
-	assert.Equal(t, explicitCwd, got, "SessionRow.Cwd (explicit -C override)")
+		rows, err := db.FindSessionsByConvID(resp.ConvID)
+		require.NoError(t, err, "FindSessionsByConvID")
+		require.NotEmpty(t, rows, "no session row for conv %s", resp.ConvID)
+		got := resolveSym(t, rows[0].Cwd)
+		assert.Equal(t, explicitCwd, got, "SessionRow.Cwd (explicit -C override)")
+	})
 }
 
 // Scenario: `tclaude --join-group <group>` and `tclaude session new
@@ -236,27 +247,29 @@ func TestSpawnCLI_ExplicitCwdOverridesCallersCwd(t *testing.T) {
 // cwd semantics: caller's cwd flows into the spawn body when
 // params.Dir is empty.
 func TestJoinGroupCLI_DefaultsCwdToCallersCwd(t *testing.T) {
-	f := newFlow(t)
-	g := f.HaveGroup("alpha")
-	bridgeAgentClientToMux(t, f.Mux)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		g := f.HaveGroup("alpha")
+		bridgeAgentClientToMux(t, f.Mux)
 
-	callerCwd := resolveSym(t, t.TempDir())
-	chdirTo(t, callerCwd)
+		callerCwd := resolveSym(t, t.TempDir())
+		chdirTo(t, callerCwd)
 
-	// Detached short-circuits before AttachToSession (which would
-	// shell out to tmux for real).
-	err := agent.RunJoinGroup(&session.NewParams{
-		JoinGroup: "alpha",
-		Detached:  true,
+		// Detached short-circuits before AttachToSession (which would
+		// shell out to tmux for real).
+		err := agent.RunJoinGroup(&session.NewParams{
+			JoinGroup: "alpha",
+			Detached:  true,
+		})
+		require.NoError(t, err, "RunJoinGroup")
+
+		members, err := db.ListAgentGroupMembers(g.ID)
+		require.NoError(t, err, "ListAgentGroupMembers")
+		require.Len(t, members, 1, "expected 1 member in alpha")
+		rows, err := db.FindSessionsByConvID(members[0].ConvID)
+		require.NoError(t, err, "FindSessionsByConvID")
+		require.NotEmpty(t, rows, "no session row for conv %s", members[0].ConvID)
+		got := resolveSym(t, rows[0].Cwd)
+		assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
 	})
-	require.NoError(t, err, "RunJoinGroup")
-
-	members, err := db.ListAgentGroupMembers(g.ID)
-	require.NoError(t, err, "ListAgentGroupMembers")
-	require.Len(t, members, 1, "expected 1 member in alpha")
-	rows, err := db.FindSessionsByConvID(members[0].ConvID)
-	require.NoError(t, err, "FindSessionsByConvID")
-	require.NotEmpty(t, rows, "no session row for conv %s", members[0].ConvID)
-	got := resolveSym(t, rows[0].Cwd)
-	assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
 }

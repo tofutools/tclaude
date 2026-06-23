@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -37,45 +38,47 @@ import (
 //   - The old pane still receives `/exit` (soft-stop is independent of
 //     the cosmetic archive rename).
 func TestReincarnate_RejectsControlCharTitleAtSendKeysSink(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "evil-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-evil-001"
-	const oldTmux = "tclaude-spwn-evil-001"
-	// A hostile predecessor title: the newline is the injection vector
-	// (a premature Enter in send-keys), and the bytes after it are the
-	// payload that would run as its own command if the newline landed.
-	const hostileTitle = "evil\nrm -rf ~"
+		const oldConv = "evil-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-evil-001"
+		const oldTmux = "tclaude-spwn-evil-001"
+		// A hostile predecessor title: the newline is the injection vector
+		// (a premature Enter in send-keys), and the bytes after it are the
+		// payload that would run as its own command if the newline landed.
+		const hostileTitle = "evil\nrm -rf ~"
 
-	f.HaveConvWithTitle(oldConv, hostileTitle)
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	g := f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, hostileTitle)
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		g := f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	r := f.AsHuman().Reincarnate(oldConv, "fresh start handoff")
+		r := f.AsHuman().Reincarnate(oldConv, "fresh start handoff")
 
-	// The successor's handoff nudge landing on the new pane is the
-	// signal that the post-spawn goroutine ran to completion (it fires
-	// AFTER the new-pane deliverRename attempt + flush), so by the time
-	// we see it the new-pane rename decision has already been made.
-	f.AssertSentContains(r.TmuxTarget(), "new agent message", 5*time.Second)
+		// The successor's handoff nudge landing on the new pane is the
+		// signal that the post-spawn goroutine ran to completion (it fires
+		// AFTER the new-pane deliverRename attempt + flush), so by the time
+		// we see it the new-pane rename decision has already been made.
+		f.AssertSentContains(r.TmuxTarget(), "new agent message", 5*time.Second)
 
-	// The old-pane sequence is synchronous in the handler, so /exit has
-	// already been injected by the time Reincarnate() returned.
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 2*time.Second),
-		"old pane should still receive /exit; sent=%+v", f.World.Tmux.Sent())
+		// The old-pane sequence is synchronous in the handler, so /exit has
+		// already been injected by the time Reincarnate() returned.
+		assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 2*time.Second),
+			"old pane should still receive /exit; sent=%+v", f.World.Tmux.Sent())
 
-	// Core assertion: the hostile title never reached send-keys on
-	// either pane. Pre-JOH-177 the old pane would have been typed
-	// "/rename evil\nrm -rf ~-x" — the newline a premature Enter, the
-	// payload a separate command. Scan EVERY recorded send-keys.
-	assertNoInjectedTitle(t, f.World.Tmux.Sent())
+		// Core assertion: the hostile title never reached send-keys on
+		// either pane. Pre-JOH-177 the old pane would have been typed
+		// "/rename evil\nrm -rf ~-x" — the newline a premature Enter, the
+		// payload a separate command. Scan EVERY recorded send-keys.
+		assertNoInjectedTitle(t, f.World.Tmux.Sent())
 
-	// Graceful degradation: the rename being rejected must not abort the
-	// reincarnation. Membership migrates old → new and the successor is
-	// present in the group the human would see via `agent groups members`.
-	assertMemberPresent(t, f.ListGroupMembers(g.Name), r.NewConv)
-	f.AssertNotGroupMember(g.Name, oldConv)
+		// Graceful degradation: the rename being rejected must not abort the
+		// reincarnation. Membership migrates old → new and the successor is
+		// present in the group the human would see via `agent groups members`.
+		assertMemberPresent(t, f.ListGroupMembers(g.Name), r.NewConv)
+		f.AssertNotGroupMember(g.Name, oldConv)
+	})
 }
 
 // assertNoInjectedTitle fails if any recorded send-keys carries a raw

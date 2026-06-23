@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,35 +49,37 @@ func findDashMember(snap dashSnapshot, group, convID string) *dashMember {
 // meter). A known 60% value is the JS contract: with 5 segments at 20%
 // each, round(60/20)=3 segments light bottom-up (2 green + 1 yellow).
 func TestDashboardSnapshot_ContextMeterUsageSurfaced(t *testing.T) {
-	const conv = "ctxm-1111-2222-3333-4444"
-	const label = "spwn-ctxm"
+	synctest.Test(t, func(t *testing.T) {
+		const conv = "ctxm-1111-2222-3333-4444"
+		const label = "spwn-ctxm"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-ctxm", "/tmp/ctxm")
-	f.HaveMember("squad", conv)
+		f := newFlow(t)
+		f.HaveGroup("squad")
+		f.HaveAliveSession(conv, label, "tmux-ctxm", "/tmp/ctxm")
+		f.HaveMember("squad", conv)
 
-	// The statusline hook's write path: context_pct + abs token counts
-	// land on the sessions row keyed by tclaude session ID (the label).
-	require.NoError(t,
-		db.UpdateContextSnapshot(label, 60.0, 110000, 10000, 200000),
-		"UpdateContextSnapshot")
+		// The statusline hook's write path: context_pct + abs token counts
+		// land on the sessions row keyed by tclaude session ID (the label).
+		require.NoError(t,
+			db.UpdateContextSnapshot(label, 60.0, 110000, 10000, 200000),
+			"UpdateContextSnapshot")
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	agentRow := findDashAgent(snap, conv)
-	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
-	assert.Equal(t, 60.0, agentRow.State.ContextPct, "Agents[] context_pct")
-	assert.Equal(t, int64(110000), agentRow.State.TokensInput, "Agents[] tokens_input")
-	assert.Equal(t, int64(10000), agentRow.State.TokensOutput, "Agents[] tokens_output")
-	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize, "Agents[] context_window_size")
+		agentRow := findDashAgent(snap, conv)
+		require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+		assert.Equal(t, 60.0, agentRow.State.ContextPct, "Agents[] context_pct")
+		assert.Equal(t, int64(110000), agentRow.State.TokensInput, "Agents[] tokens_input")
+		assert.Equal(t, int64(10000), agentRow.State.TokensOutput, "Agents[] tokens_output")
+		assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize, "Agents[] context_window_size")
 
-	memberRow := findDashMember(snap, "squad", conv)
-	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
-	assert.Equal(t, 60.0, memberRow.State.ContextPct, "Members[] context_pct")
-	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+		memberRow := findDashMember(snap, "squad", conv)
+		require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
+		assert.Equal(t, 60.0, memberRow.State.ContextPct, "Members[] context_pct")
+		assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+	})
 }
 
 // Regression: Codex has no command-backed statusline, so waiting for the
@@ -84,43 +87,45 @@ func TestDashboardSnapshot_ContextMeterUsageSurfaced(t *testing.T) {
 // happened to persist rollout telemetry. A live Codex session should refresh
 // from its latest rollout token_count when /api/snapshot reads it.
 func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) {
-	const conv = "019ec004-4250-79b1-9ade-ebaea4170180"
-	const label = "spwn-codexctx"
+	synctest.Test(t, func(t *testing.T) {
+		const conv = "019ec004-4250-79b1-9ade-ebaea4170180"
+		const label = "spwn-codexctx"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	agentd.ResetCodexContextRefreshForTest()
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		agentd.ResetCodexContextRefreshForTest()
 
-	// Given: a live Codex agent whose rollout has token_count telemetry,
-	// but whose Stop hook has not persisted that telemetry to SQLite yet.
-	f := newFlow(t)
-	f.HaveGroup("codex-squad")
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", "/tmp/codexctx")
-	cx.ContextWindow = 200000
-	f.HaveMember("codex-squad", conv)
+		// Given: a live Codex agent whose rollout has token_count telemetry,
+		// but whose Stop hook has not persisted that telemetry to SQLite yet.
+		f := newFlow(t)
+		f.HaveGroup("codex-squad")
+		cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", "/tmp/codexctx")
+		cx.ContextWindow = 200000
+		f.HaveMember("codex-squad", conv)
 
-	require.NoError(t, cx.WriteUserInput("do the codex thing"))
-	require.NoError(t, cx.WriteTokenCount(
-		testharness.CodexTokenUsage{InputTokens: 120000, OutputTokens: 8000, TotalTokens: 128000},
-		testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000},
-	))
+		require.NoError(t, cx.WriteUserInput("do the codex thing"))
+		require.NoError(t, cx.WriteTokenCount(
+			testharness.CodexTokenUsage{InputTokens: 120000, OutputTokens: 8000, TotalTokens: 128000},
+			testharness.CodexTokenUsage{InputTokens: 49000, OutputTokens: 1000, TotalTokens: 50000},
+		))
 
-	// When: the dashboard snapshot is read.
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		// When: the dashboard snapshot is read.
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	// Then: both dashboard surfaces get the read-through Codex snapshot.
-	agentRow := findDashAgent(snap, conv)
-	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
-	assert.InDelta(t, 25.0, agentRow.State.ContextPct, 0.001, "Agents[] context_pct")
-	assert.Equal(t, int64(49000), agentRow.State.TokensInput, "Agents[] tokens_input")
-	assert.Equal(t, int64(1000), agentRow.State.TokensOutput, "Agents[] tokens_output")
-	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize, "Agents[] context_window_size")
+		// Then: both dashboard surfaces get the read-through Codex snapshot.
+		agentRow := findDashAgent(snap, conv)
+		require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+		assert.InDelta(t, 25.0, agentRow.State.ContextPct, 0.001, "Agents[] context_pct")
+		assert.Equal(t, int64(49000), agentRow.State.TokensInput, "Agents[] tokens_input")
+		assert.Equal(t, int64(1000), agentRow.State.TokensOutput, "Agents[] tokens_output")
+		assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize, "Agents[] context_window_size")
 
-	memberRow := findDashMember(snap, "codex-squad", conv)
-	require.NotNil(t, memberRow, "agent %s missing from group codex-squad members", conv)
-	assert.InDelta(t, 25.0, memberRow.State.ContextPct, 0.001, "Members[] context_pct")
-	assert.Equal(t, int64(49000), memberRow.State.TokensInput, "Members[] tokens_input")
-	assert.Equal(t, int64(1000), memberRow.State.TokensOutput, "Members[] tokens_output")
-	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+		memberRow := findDashMember(snap, "codex-squad", conv)
+		require.NotNil(t, memberRow, "agent %s missing from group codex-squad members", conv)
+		assert.InDelta(t, 25.0, memberRow.State.ContextPct, 0.001, "Members[] context_pct")
+		assert.Equal(t, int64(49000), memberRow.State.TokensInput, "Members[] tokens_input")
+		assert.Equal(t, int64(1000), memberRow.State.TokensOutput, "Members[] tokens_output")
+		assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] context_window_size")
+	})
 }
 
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
@@ -130,25 +135,27 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 // than garbage. The JS treats this all-zero state as "unknown" and
 // dims every segment.
 func TestDashboardSnapshot_ContextMeterUnknownWhenNoUsage(t *testing.T) {
-	const conv = "ctxu-1111-2222-3333-4444"
-	const label = "spwn-ctxu"
+	synctest.Test(t, func(t *testing.T) {
+		const conv = "ctxu-1111-2222-3333-4444"
+		const label = "spwn-ctxu"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxu", "/tmp/ctxu")
-	f.HaveEnrolledAgent(conv)
+		f := newFlow(t)
+		f.HaveAliveSession(conv, label, "tmux-ctxu", "/tmp/ctxu")
+		f.HaveEnrolledAgent(conv)
 
-	// No UpdateContextSnapshot call — the statusline hook never fired.
+		// No UpdateContextSnapshot call — the statusline hook never fired.
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	agentRow := findDashAgent(snap, conv)
-	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
-	assert.Zero(t, agentRow.State.ContextPct, "no-usage agent should report 0 context_pct")
-	assert.Zero(t, agentRow.State.TokensInput, "no-usage agent should report 0 tokens_input")
-	assert.Zero(t, agentRow.State.TokensOutput, "no-usage agent should report 0 tokens_output")
-	assert.Zero(t, agentRow.State.ContextWindowSize, "no-usage agent should report 0 window size")
+		agentRow := findDashAgent(snap, conv)
+		require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+		assert.Zero(t, agentRow.State.ContextPct, "no-usage agent should report 0 context_pct")
+		assert.Zero(t, agentRow.State.TokensInput, "no-usage agent should report 0 tokens_input")
+		assert.Zero(t, agentRow.State.TokensOutput, "no-usage agent should report 0 tokens_output")
+		assert.Zero(t, agentRow.State.ContextWindowSize, "no-usage agent should report 0 window size")
+	})
 }
 
 // Regression: the dashboard context meter flickered empty because the
@@ -166,38 +173,40 @@ func TestDashboardSnapshot_ContextMeterUnknownWhenNoUsage(t *testing.T) {
 // good snapshot still surfaces on /api/snapshot. Pre-fix it fails (the
 // empty write zeroes the row); post-fix the data survives.
 func TestDashboardSnapshot_ContextMeterSurvivesEmptyStatuslineRender(t *testing.T) {
-	const conv = "ctxc-1111-2222-3333-4444"
-	const label = "spwn-ctxc"
+	synctest.Test(t, func(t *testing.T) {
+		const conv = "ctxc-1111-2222-3333-4444"
+		const label = "spwn-ctxc"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxc", "/tmp/ctxc")
-	f.HaveEnrolledAgent(conv)
+		f := newFlow(t)
+		f.HaveAliveSession(conv, label, "tmux-ctxc", "/tmp/ctxc")
+		f.HaveEnrolledAgent(conv)
 
-	// A populated statusline render writes a good snapshot.
-	require.NoError(t,
-		db.UpdateContextSnapshot(label, 15.0, 146000, 2000, 1000000),
-		"good snapshot")
+		// A populated statusline render writes a good snapshot.
+		require.NoError(t,
+			db.UpdateContextSnapshot(label, 15.0, 146000, 2000, 1000000),
+			"good snapshot")
 
-	// A subsequent render whose context_window block is empty arrives
-	// as an all-zero write. It must NOT clobber the good snapshot.
-	require.NoError(t,
-		db.UpdateContextSnapshot(label, 0, 0, 0, 0),
-		"empty statusline render")
+		// A subsequent render whose context_window block is empty arrives
+		// as an all-zero write. It must NOT clobber the good snapshot.
+		require.NoError(t,
+			db.UpdateContextSnapshot(label, 0, 0, 0, 0),
+			"empty statusline render")
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	agentRow := findDashAgent(snap, conv)
-	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
-	assert.Equal(t, 15.0, agentRow.State.ContextPct,
-		"context_pct must survive an empty statusline render")
-	assert.Equal(t, int64(146000), agentRow.State.TokensInput,
-		"tokens_input must survive an empty statusline render")
-	assert.Equal(t, int64(2000), agentRow.State.TokensOutput,
-		"tokens_output must survive an empty statusline render")
-	assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
-		"context_window_size must survive an empty statusline render")
+		agentRow := findDashAgent(snap, conv)
+		require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+		assert.Equal(t, 15.0, agentRow.State.ContextPct,
+			"context_pct must survive an empty statusline render")
+		assert.Equal(t, int64(146000), agentRow.State.TokensInput,
+			"tokens_input must survive an empty statusline render")
+		assert.Equal(t, int64(2000), agentRow.State.TokensOutput,
+			"tokens_output must survive an empty statusline render")
+		assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
+			"context_window_size must survive an empty statusline render")
+	})
 }
 
 // Regression: the dashboard context meter dropped to empty whenever an
@@ -218,39 +227,41 @@ func TestDashboardSnapshot_ContextMeterSurvivesEmptyStatuslineRender(t *testing.
 // UserPromptSubmit hook does), and asserts /api/snapshot still carries
 // the usage. Pre-fix it fails — the SaveSession zeroes the row.
 func TestDashboardSnapshot_ContextMeterSurvivesStateHookWrite(t *testing.T) {
-	const conv = "ctxs-1111-2222-3333-4444"
-	const label = "spwn-ctxs"
+	synctest.Test(t, func(t *testing.T) {
+		const conv = "ctxs-1111-2222-3333-4444"
+		const label = "spwn-ctxs"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxs", "/tmp/ctxs")
-	f.HaveEnrolledAgent(conv)
+		f := newFlow(t)
+		f.HaveAliveSession(conv, label, "tmux-ctxs", "/tmp/ctxs")
+		f.HaveEnrolledAgent(conv)
 
-	// The statusline hook writes a good context snapshot.
-	require.NoError(t,
-		db.UpdateContextSnapshot(label, 24.0, 241000, 5000, 1000000),
-		"context snapshot")
+		// The statusline hook writes a good context snapshot.
+		require.NoError(t,
+			db.UpdateContextSnapshot(label, 24.0, 241000, 5000, 1000000),
+			"context snapshot")
 
-	// A state-tracking hook fires — e.g. Stop (-> idle) or
-	// UserPromptSubmit — re-saving the session row to update its
-	// status. It must not wipe the context columns.
-	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: "tmux-ctxs",
-		ConvID:      conv,
-		Cwd:         "/tmp/ctxs",
-		Status:      "idle",
-	}), "state-update SaveSession")
+		// A state-tracking hook fires — e.g. Stop (-> idle) or
+		// UserPromptSubmit — re-saving the session row to update its
+		// status. It must not wipe the context columns.
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID:          label,
+			TmuxSession: "tmux-ctxs",
+			ConvID:      conv,
+			Cwd:         "/tmp/ctxs",
+			Status:      "idle",
+		}), "state-update SaveSession")
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	agentRow := findDashAgent(snap, conv)
-	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
-	assert.Equal(t, 24.0, agentRow.State.ContextPct,
-		"context_pct must survive a state-tracking hook's SaveSession")
-	assert.Equal(t, int64(241000), agentRow.State.TokensInput,
-		"tokens_input must survive a state-tracking hook's SaveSession")
-	assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
-		"context_window_size must survive a state-tracking hook's SaveSession")
+		agentRow := findDashAgent(snap, conv)
+		require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+		assert.Equal(t, 24.0, agentRow.State.ContextPct,
+			"context_pct must survive a state-tracking hook's SaveSession")
+		assert.Equal(t, int64(241000), agentRow.State.TokensInput,
+			"tokens_input must survive a state-tracking hook's SaveSession")
+		assert.Equal(t, int64(1000000), agentRow.State.ContextWindowSize,
+			"context_window_size must survive a state-tracking hook's SaveSession")
+	})
 }

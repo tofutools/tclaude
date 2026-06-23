@@ -6,6 +6,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -27,24 +28,16 @@ import (
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
 
-	// Shrink the production waits to test-scale durations. Production
-	// uses 60s alive-timeout + 1s ready-delay to absorb CC startup
-	// jitter; under simulator-backed tests the new conv is alive
-	// instantly, so the long timing only ever makes test cleanup wait.
-	// Worst case (scenario never brings conv online) the post-init
-	// goroutine now bails in 200ms instead of 60s.
+	// Shrink the production waits to test-scale durations. Every flow test
+	// runs inside a synctest bubble, so these sleeps collapse on the fake
+	// clock either way; the shrink is kept because a couple of scenarios
+	// (deferred worktree retirement) assert on the *relative* ordering of
+	// post-init work, which the shrunk durations preserve. Exercising the
+	// genuine 60s/1s production durations under the bubble is a follow-up
+	// (it needs those few ordering-sensitive tests adjusted first).
 	t.Cleanup(agentd.SetWaitTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
-	// Mirror the shrink on the session-side /clear inject knobs — same
-	// "wait for CC's TUI to settle" tax the simulator has no jitter
-	// for. Without this, every /clear flow scenario sits on the 1s
-	// production ready-delay.
 	t.Cleanup(session.SetClearInjectTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
-	// And the agentd-side injectTextAndSubmit settle gap (500ms × 2 per
-	// call). The simulator processes keystrokes synchronously, so this is
-	// pure dead wait — every soft /exit, /rename, welcome and nudge paid
-	// ~1s of it. 1ms keeps the two send-keys ordered without the sleep.
 	t.Cleanup(agentd.SetInjectSettleDelayForTest(time.Millisecond))
-	// Likewise the remote-control disable-confirm pause (700ms in prod).
 	t.Cleanup(agentd.SetRemoteControlConfirmDelayForTest(time.Millisecond))
 
 	w := testharness.New(t)
@@ -61,12 +54,21 @@ func newFlow(t *testing.T) *testharness.Flow {
 	agentd.Spawn = m.Spawner
 	t.Cleanup(func() { agentd.Spawn = prevSpawn })
 
+	// Close the DB after the drain so the database/sql pool's
+	// connectionOpener/Resetter goroutines exit. Registered before the
+	// drain → runs after it (LIFO): goroutines finish their writes, then
+	// the pool shuts down. Harmless under a real clock (the next test's
+	// ResetForTest reopens from the template); REQUIRED under a synctest
+	// bubble, where any goroutine still alive at bubble-exit is a deadlock.
+	t.Cleanup(db.Close)
+
 	// Drain any post-init goroutines (spawn rename+welcome, clone
-	// rename) before the package-var restores and TempDir teardown
-	// run. Registered last → runs first (LIFO), so the goroutines
-	// still see the simulator-backed mocks and finish writing into
-	// $HOME/.tclaude before RemoveAll, and complete before the next
-	// test's db.ResetForTest races them inside db.Open's sync.Once.
+	// rename) before the package-var restores and TempDir teardown run.
+	// Registered last → runs first (LIFO), so the goroutines still see
+	// the simulator-backed mocks and finish writing into $HOME/.tclaude
+	// before RemoveAll, and before the db.Close above closes the pool.
+	// WaitForBackgroundForTest advances the bubble's fake clock past the
+	// post-init goroutines' bounded lifetimes so they exit (see its doc).
 	t.Cleanup(agentd.WaitForBackgroundForTest)
 
 	return testharness.NewFlow(t, w,

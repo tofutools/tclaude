@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,45 +37,47 @@ const danglingConvID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 // demote a dangling entry), and the follow-up DELETE the confirm modal
 // fires purges the orphan completely.
 func TestRetire_DanglingEntry_DashboardSignalsThenDeletes(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	// Enroll WITHOUT any conversation data — the dangling state.
-	f.HaveEnrolledAgent(danglingConvID)
-	st, err := db.EnrollmentState(danglingConvID)
-	require.NoError(t, err)
-	require.Equal(t, db.EnrollmentActive, st, "precondition: an active enrollment with no conv data")
+		// Enroll WITHOUT any conversation data — the dangling state.
+		f.HaveEnrolledAgent(danglingConvID)
+		st, err := db.EnrollmentState(danglingConvID)
+		require.NoError(t, err)
+		require.Equal(t, db.EnrollmentActive, st, "precondition: an active enrollment with no conv data")
 
-	dash := agentd.BuildDashboardHandlerForTest()
+		dash := agentd.BuildDashboardHandlerForTest()
 
-	// 1) Dashboard retire → 409 + {dangling:true}, NOT a dead 404.
-	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
-		"/api/agents/"+danglingConvID+"/retire?shutdown=0&delete_worktree=0", nil))
-	require.Equal(t, http.StatusConflict, rec.Code, "retire body=%s", rec.Body.String())
-	var sig struct {
-		Dangling bool   `json:"dangling"`
-		ConvID   string `json:"conv_id"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig), "decode retire signal")
-	assert.True(t, sig.Dangling, "dashboard retire must flag dangling; body=%s", rec.Body.String())
-	assert.Equal(t, danglingConvID, sig.ConvID)
+		// 1) Dashboard retire → 409 + {dangling:true}, NOT a dead 404.
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+danglingConvID+"/retire?shutdown=0&delete_worktree=0", nil))
+		require.Equal(t, http.StatusConflict, rec.Code, "retire body=%s", rec.Body.String())
+		var sig struct {
+			Dangling bool   `json:"dangling"`
+			ConvID   string `json:"conv_id"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig), "decode retire signal")
+		assert.True(t, sig.Dangling, "dashboard retire must flag dangling; body=%s", rec.Body.String())
+		assert.Equal(t, danglingConvID, sig.ConvID)
 
-	// Retire must not have mutated the enrollment — the dangling signal is
-	// read-only; only the explicit DELETE removes anything.
-	st, _ = db.EnrollmentState(danglingConvID)
-	assert.Equal(t, db.EnrollmentActive, st, "dangling retire must not demote the enrollment")
+		// Retire must not have mutated the enrollment — the dangling signal is
+		// read-only; only the explicit DELETE removes anything.
+		st, _ = db.EnrollmentState(danglingConvID)
+		assert.Equal(t, db.EnrollmentActive, st, "dangling retire must not demote the enrollment")
 
-	// 2) The follow-up DELETE the confirm modal fires purges the orphan.
-	drec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodDelete,
-		"/api/agents/"+danglingConvID, nil))
-	require.Truef(t, drec.Code == http.StatusNoContent || drec.Code == http.StatusOK,
-		"delete dangling: code=%d body=%s", drec.Code, drec.Body.String())
+		// 2) The follow-up DELETE the confirm modal fires purges the orphan.
+		drec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodDelete,
+			"/api/agents/"+danglingConvID, nil))
+		require.Truef(t, drec.Code == http.StatusNoContent || drec.Code == http.StatusOK,
+			"delete dangling: code=%d body=%s", drec.Code, drec.Body.String())
 
-	// The entry is fully gone — no longer an agent at all.
-	st, _ = db.EnrollmentState(danglingConvID)
-	assert.Equal(t, db.EnrollmentNone, st, "dangling entry must be fully removed after delete")
+		// The entry is fully gone — no longer an agent at all.
+		st, _ = db.EnrollmentState(danglingConvID)
+		assert.Equal(t, db.EnrollmentNone, st, "dangling entry must be fully removed after delete")
+	})
 }
 
 // TestRetire_DanglingEntry_V1DispatcherSignals proves the /v1 dispatcher
@@ -82,20 +85,22 @@ func TestRetire_DanglingEntry_DashboardSignalsThenDeletes(t *testing.T) {
 // signal — so the CLI can print actionable guidance instead of the raw
 // resolver error.
 func TestRetire_DanglingEntry_V1DispatcherSignals(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const conv = "aaaaaaaa-1111-2222-3333-444444444444"
-	f.HaveEnrolledAgent(conv)
+		const conv = "aaaaaaaa-1111-2222-3333-444444444444"
+		f.HaveEnrolledAgent(conv)
 
-	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+conv+"/retire?shutdown=0&delete_worktree=0", nil))
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusConflict, rec.Code, "v1 retire body=%s", rec.Body.String())
-	var sig struct {
-		Dangling bool `json:"dangling"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig), "decode v1 retire signal")
-	assert.True(t, sig.Dangling, "v1 retire must flag dangling; body=%s", rec.Body.String())
+		r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+conv+"/retire?shutdown=0&delete_worktree=0", nil))
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusConflict, rec.Code, "v1 retire body=%s", rec.Body.String())
+		var sig struct {
+			Dangling bool `json:"dangling"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig), "decode v1 retire signal")
+		assert.True(t, sig.Dangling, "v1 retire must flag dangling; body=%s", rec.Body.String())
+	})
 }
 
 // TestRetire_UnknownConvID_StaysNotFound guards the gate: a UUID-shaped
@@ -103,20 +108,22 @@ func TestRetire_DanglingEntry_V1DispatcherSignals(t *testing.T) {
 // 404, never the dangling signal — we only offer to "remove a dangling
 // entry" for something that actually IS one.
 func TestRetire_UnknownConvID_StaysNotFound(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	_ = newFlow(t)
+		_ = newFlow(t)
 
-	const unknown = "ffffffff-0000-1111-2222-333333333333"
-	st, _ := db.EnrollmentState(unknown)
-	require.Equal(t, db.EnrollmentNone, st, "precondition: not an agent")
+		const unknown = "ffffffff-0000-1111-2222-333333333333"
+		st, _ := db.EnrollmentState(unknown)
+		require.Equal(t, db.EnrollmentNone, st, "precondition: not an agent")
 
-	dash := agentd.BuildDashboardHandlerForTest()
-	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
-		"/api/agents/"+unknown+"/retire?shutdown=0&delete_worktree=0", nil))
-	assert.Equal(t, http.StatusNotFound, rec.Code,
-		"a non-agent UUID must 404, not be offered for dangling removal; body=%s", rec.Body.String())
+		dash := agentd.BuildDashboardHandlerForTest()
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+unknown+"/retire?shutdown=0&delete_worktree=0", nil))
+		assert.Equal(t, http.StatusNotFound, rec.Code,
+			"a non-agent UUID must 404, not be offered for dangling removal; body=%s", rec.Body.String())
+	})
 }
 
 // TestRetire_DanglingEntry_V1GatedForUnauthorizedAgent guards the
@@ -127,20 +134,22 @@ func TestRetire_UnknownConvID_StaysNotFound(t *testing.T) {
 // and not owning a group containing the (group-less) dangling conv, must
 // get 403 — never the 409 dangling body.
 func TestRetire_DanglingEntry_V1GatedForUnauthorizedAgent(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const dangling = "aaaaaaaa-2222-3333-4444-555555555555"
-	f.HaveEnrolledAgent(dangling)
+		const dangling = "aaaaaaaa-2222-3333-4444-555555555555"
+		f.HaveEnrolledAgent(dangling)
 
-	// An unrelated agent with no permissions and no group ownership.
-	const intruder = "bbbbbbbb-2222-3333-4444-555555555555"
-	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+dangling+"/retire?shutdown=0&delete_worktree=0", nil), intruder)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusForbidden, rec.Code,
-		"unauthorized agent must be refused, not handed the dangling signal; body=%s", rec.Body.String())
-	assert.NotContains(t, rec.Body.String(), "dangling",
-		"the 403 must not leak the dangling flag")
+		// An unrelated agent with no permissions and no group ownership.
+		const intruder = "bbbbbbbb-2222-3333-4444-555555555555"
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+dangling+"/retire?shutdown=0&delete_worktree=0", nil), intruder)
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusForbidden, rec.Code,
+			"unauthorized agent must be refused, not handed the dangling signal; body=%s", rec.Body.String())
+		assert.NotContains(t, rec.Body.String(), "dangling",
+			"the 403 must not leak the dangling flag")
+	})
 }
 
 // TestRetire_DanglingEntry_RetiredAlsoOffered covers the second dangling
@@ -149,30 +158,32 @@ func TestRetire_DanglingEntry_V1GatedForUnauthorizedAgent(t *testing.T) {
 // "not an active agent" 409) and is offered for removal. The follow-up
 // DELETE purges it.
 func TestRetire_DanglingEntry_RetiredAlsoOffered(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const conv = "cccccccc-2222-3333-4444-555555555555"
-	f.HaveRetiredAgent(conv) // enrolled then retired, no conversation data
-	st, _ := db.EnrollmentState(conv)
-	require.Equal(t, db.EnrollmentRetired, st, "precondition: a retired enrollment with no conv data")
+		const conv = "cccccccc-2222-3333-4444-555555555555"
+		f.HaveRetiredAgent(conv) // enrolled then retired, no conversation data
+		st, _ := db.EnrollmentState(conv)
+		require.Equal(t, db.EnrollmentRetired, st, "precondition: a retired enrollment with no conv data")
 
-	dash := agentd.BuildDashboardHandlerForTest()
-	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
-		"/api/agents/"+conv+"/retire?shutdown=0&delete_worktree=0", nil))
-	require.Equal(t, http.StatusConflict, rec.Code, "retire body=%s", rec.Body.String())
-	var sig struct {
-		Dangling bool `json:"dangling"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig))
-	assert.True(t, sig.Dangling, "a retired dangling entry must be offered for removal; body=%s", rec.Body.String())
+		dash := agentd.BuildDashboardHandlerForTest()
+		rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+conv+"/retire?shutdown=0&delete_worktree=0", nil))
+		require.Equal(t, http.StatusConflict, rec.Code, "retire body=%s", rec.Body.String())
+		var sig struct {
+			Dangling bool `json:"dangling"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sig))
+		assert.True(t, sig.Dangling, "a retired dangling entry must be offered for removal; body=%s", rec.Body.String())
 
-	drec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodDelete,
-		"/api/agents/"+conv, nil))
-	require.Truef(t, drec.Code == http.StatusNoContent || drec.Code == http.StatusOK,
-		"delete retired-dangling: code=%d body=%s", drec.Code, drec.Body.String())
-	st, _ = db.EnrollmentState(conv)
-	assert.Equal(t, db.EnrollmentNone, st, "retired dangling entry must be fully removed after delete")
+		drec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodDelete,
+			"/api/agents/"+conv, nil))
+		require.Truef(t, drec.Code == http.StatusNoContent || drec.Code == http.StatusOK,
+			"delete retired-dangling: code=%d body=%s", drec.Code, drec.Body.String())
+		st, _ = db.EnrollmentState(conv)
+		assert.Equal(t, db.EnrollmentNone, st, "retired dangling entry must be fully removed after delete")
+	})
 }

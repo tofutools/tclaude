@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -27,32 +28,34 @@ import (
 // CloneFresh is used (no_copy_conv: true) to skip the .jsonl
 // copy path so the test stays off convops.CopyConversationToPath.
 func TestClone_DerivesTitleFromOriginal(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-old-001"
-	const oldTmux = "tclaude-spwn-old-001"
+		const oldConv = "old-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-old-001"
+		const oldTmux = "tclaude-spwn-old-001"
 
-	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	c := f.AsHuman().CloneFresh(oldConv)
+		c := f.AsHuman().CloneFresh(oldConv)
 
-	assert.Equal(t, oldConv, c.OldConv, "OldConv")
+		assert.Equal(t, oldConv, c.OldConv, "OldConv")
 
-	// Surface-level invariants the human would see post-clone in
-	// `tclaude agent groups members alpha`:
-	//   - both members visible (clone is ADD-only — original isn't
-	//     touched);
-	//   - the new clone shows the derived title "worker-c-1" (the
-	//     post-spawn /rename rendering at the members surface);
-	//   - the original retains its title (no stray /rename on the
-	//     source).
-	f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
-	f.AssertGroupMember("alpha", c.NewConv, "worker-c-1", 5*time.Second)
-	f.AssertGroupMember("alpha", oldConv, "worker", 1*time.Second)
+		// Surface-level invariants the human would see post-clone in
+		// `tclaude agent groups members alpha`:
+		//   - both members visible (clone is ADD-only — original isn't
+		//     touched);
+		//   - the new clone shows the derived title "worker-c-1" (the
+		//     post-spawn /rename rendering at the members surface);
+		//   - the original retains its title (no stray /rename on the
+		//     source).
+		f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
+		f.AssertGroupMember("alpha", c.NewConv, "worker-c-1", 5*time.Second)
+		f.AssertGroupMember("alpha", oldConv, "worker", 1*time.Second)
+	})
 }
 
 // Scenario: cloning an agent WITH a follow-up handoff must not let the
@@ -76,32 +79,34 @@ func TestClone_DerivesTitleFromOriginal(t *testing.T) {
 // Expected: the clone's title is EXACTLY "worker-c-1" (no nudge
 // suffix), and the handoff nudge is still delivered to the pane.
 func TestClone_FollowUpNudgeDoesNotCorruptTitle(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-eeee"
-	const oldLabel = "spwn-old-002"
-	const oldTmux = "tclaude-spwn-old-002"
+		const oldConv = "old-aaaa-bbbb-cccc-eeee"
+		const oldLabel = "spwn-old-002"
+		const oldTmux = "tclaude-spwn-old-002"
 
-	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	c := f.AsHuman().CloneWith(oldConv, map[string]any{
-		"no_copy_conv": true,
-		"follow_up":    "pick up the merge conflict work",
+		c := f.AsHuman().CloneWith(oldConv, map[string]any{
+			"no_copy_conv": true,
+			"follow_up":    "pick up the merge conflict work",
+		})
+		if c.Code != http.StatusOK {
+			t.Fatalf("clone with follow-up: status=%d body=%s", c.Code, c.Raw)
+		}
+
+		// The title settles to the clean derived form — never the
+		// nudge-concatenated variant. AssertCloneTitle matches the title
+		// exactly, so a leaked "[system: ...]" suffix fails here.
+		f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
+
+		// And the handoff nudge is still delivered (as its own line, after
+		// the rename) — folding flush into the ordered post-init goroutine
+		// must not drop the message.
+		f.AssertSentContains(c.TmuxTarget(), "new agent message", 5*time.Second)
 	})
-	if c.Code != http.StatusOK {
-		t.Fatalf("clone with follow-up: status=%d body=%s", c.Code, c.Raw)
-	}
-
-	// The title settles to the clean derived form — never the
-	// nudge-concatenated variant. AssertCloneTitle matches the title
-	// exactly, so a leaked "[system: ...]" suffix fails here.
-	f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
-
-	// And the handoff nudge is still delivered (as its own line, after
-	// the rename) — folding flush into the ordered post-init goroutine
-	// must not drop the message.
-	f.AssertSentContains(c.TmuxTarget(), "new agent message", 5*time.Second)
 }

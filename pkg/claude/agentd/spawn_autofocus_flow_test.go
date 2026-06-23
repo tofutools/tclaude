@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -16,26 +17,28 @@ import (
 // <label>`, routed through the tclaude wrapper (never a raw `tmux
 // attach`) so the reattached session keeps its tclaude features.
 func TestSpawn_AutoFocusOpensAttachTerminal(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	var gotCmd string
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
-		gotCmd = cmd
-		return nil
-	}))
+		var gotCmd string
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
+			gotCmd = cmd
+			return nil
+		}))
 
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"name": "worker", "auto_focus": true,
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+			"name": "worker", "auto_focus": true,
+		})
+		if spawn.Code != http.StatusOK {
+			t.Fatalf("spawn: status=%d body=%s", spawn.Code, spawn.Raw)
+		}
+
+		assert.Contains(t, gotCmd, "session attach",
+			"auto-focus should attach via the tclaude wrapper, not raw tmux")
+		assert.Contains(t, gotCmd, spawn.Label,
+			"auto-focus terminal should attach to the new agent's session label")
 	})
-	if spawn.Code != http.StatusOK {
-		t.Fatalf("spawn: status=%d body=%s", spawn.Code, spawn.Raw)
-	}
-
-	assert.Contains(t, gotCmd, "session attach",
-		"auto-focus should attach via the tclaude wrapper, not raw tmux")
-	assert.Contains(t, gotCmd, spawn.Label,
-		"auto-focus terminal should attach to the new agent's session label")
 }
 
 // Scenario: a human spawns an agent without asking for auto focus —
@@ -45,29 +48,31 @@ func TestSpawn_AutoFocusOpensAttachTerminal(t *testing.T) {
 // Expected: no terminal window is opened. Auto focus is strictly opt-in
 // on the wire; only the dashboard's checkbox defaults it on.
 func TestSpawn_NoAutoFocusByDefault(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	opened := false
-	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
-		opened = true
-		return nil
-	}))
+		opened := false
+		t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+			opened = true
+			return nil
+		}))
 
-	// auto_focus omitted entirely — the CLI / agent-API default.
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
-	if spawn.Code != http.StatusOK {
-		t.Fatalf("spawn (omitted): status=%d body=%s", spawn.Code, spawn.Raw)
-	}
-	assert.False(t, opened, "omitted auto_focus → no terminal should open")
+		// auto_focus omitted entirely — the CLI / agent-API default.
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+		if spawn.Code != http.StatusOK {
+			t.Fatalf("spawn (omitted): status=%d body=%s", spawn.Code, spawn.Raw)
+		}
+		assert.False(t, opened, "omitted auto_focus → no terminal should open")
 
-	// auto_focus explicitly false behaves the same.
-	opened = false
-	spawn = f.AsHuman().SpawnWith("alpha", map[string]any{
-		"name": "worker2", "auto_focus": false,
+		// auto_focus explicitly false behaves the same.
+		opened = false
+		spawn = f.AsHuman().SpawnWith("alpha", map[string]any{
+			"name": "worker2", "auto_focus": false,
+		})
+		if spawn.Code != http.StatusOK {
+			t.Fatalf("spawn (false): status=%d body=%s", spawn.Code, spawn.Raw)
+		}
+		assert.False(t, opened, "auto_focus:false → no terminal should open")
 	})
-	if spawn.Code != http.StatusOK {
-		t.Fatalf("spawn (false): status=%d body=%s", spawn.Code, spawn.Raw)
-	}
-	assert.False(t, opened, "auto_focus:false → no terminal should open")
 }

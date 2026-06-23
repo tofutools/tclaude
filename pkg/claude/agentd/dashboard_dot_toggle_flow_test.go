@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,29 +57,31 @@ func postDotVerb(t *testing.T, mux http.Handler, conv, verb, body string) (int, 
 // /stop with force=false — a soft /exit. The live tmux session goes
 // away and the dashboard snapshot flips the agent to offline.
 func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	const conv = "dton-1111-2222-3333-444444444444"
-	const tmuxSes = "tmux-dton"
-	f.HaveConvWithTitle(conv, "busy-worker")
-	f.HaveAliveSession(conv, "spwn-dton", tmuxSes, "/tmp/dton")
-	f.HaveEnrolledAgent(conv)
-	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
+		const conv = "dton-1111-2222-3333-444444444444"
+		const tmuxSes = "tmux-dton"
+		f.HaveConvWithTitle(conv, "busy-worker")
+		f.HaveAliveSession(conv, "spwn-dton", tmuxSes, "/tmp/dton")
+		f.HaveEnrolledAgent(conv)
+		require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
-	// The confirm's "Soft exit" choice sends {"force":false} — a soft
-	// /exit. (The "Force kill" choice is the next scenario.)
-	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":false}`)
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "soft_stopped", resp.Action,
-		"a soft-exit choice must soft-stop, not force-kill; detail=%s", resp.Detail)
-	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
+		// The confirm's "Soft exit" choice sends {"force":false} — a soft
+		// /exit. (The "Force kill" choice is the next scenario.)
+		code, resp := postDotVerb(t, mux, conv, "stop", `{"force":false}`)
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, "soft_stopped", resp.Action,
+			"a soft-exit choice must soft-stop, not force-kill; detail=%s", resp.Detail)
+		assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
 
-	snap := fetchDashSnapshot(t, mux)
-	a := findDashAgent(snap, conv)
-	require.NotNil(t, a, "the agent stays on the roster after a soft-stop")
-	assert.False(t, a.Online, "after the toggle the agent's dot must read offline")
+		snap := fetchDashSnapshot(t, mux)
+		a := findDashAgent(snap, conv)
+		require.NotNil(t, a, "the agent stays on the roster after a soft-stop")
+		assert.False(t, a.Online, "after the toggle the agent's dot must read offline")
+	})
 }
 
 // Scenario: clicking a GREEN status dot and picking "Force kill" in
@@ -88,29 +91,31 @@ func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
 // used to own; folding it into the dot's confirm kept it reachable
 // after that button was removed.
 func TestDotToggle_OnlineDotCanForceKill(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	const conv = "dtfk-1111-2222-3333-444444444444"
-	const tmuxSes = "tmux-dtfk"
-	f.HaveConvWithTitle(conv, "stuck-worker")
-	f.HaveAliveSession(conv, "spwn-dtfk", tmuxSes, "/tmp/dtfk")
-	f.HaveEnrolledAgent(conv)
-	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
+		const conv = "dtfk-1111-2222-3333-444444444444"
+		const tmuxSes = "tmux-dtfk"
+		f.HaveConvWithTitle(conv, "stuck-worker")
+		f.HaveAliveSession(conv, "spwn-dtfk", tmuxSes, "/tmp/dtfk")
+		f.HaveEnrolledAgent(conv)
+		require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
-	// The confirm's "Force kill" choice sends {"force":true} — a tmux
-	// kill-session that needs no cooperation from the agent.
-	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":true}`)
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "killed", resp.Action,
-		"a force-kill choice must tmux kill-session; detail=%s", resp.Detail)
-	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
+		// The confirm's "Force kill" choice sends {"force":true} — a tmux
+		// kill-session that needs no cooperation from the agent.
+		code, resp := postDotVerb(t, mux, conv, "stop", `{"force":true}`)
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, "killed", resp.Action,
+			"a force-kill choice must tmux kill-session; detail=%s", resp.Detail)
+		assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
 
-	snap := fetchDashSnapshot(t, mux)
-	a := findDashAgent(snap, conv)
-	require.NotNil(t, a, "the agent stays on the roster after a force-kill")
-	assert.False(t, a.Online, "after the force-kill the agent's dot must read offline")
+		snap := fetchDashSnapshot(t, mux)
+		a := findDashAgent(snap, conv)
+		require.NotNil(t, a, "the agent stays on the roster after a force-kill")
+		assert.False(t, a.Online, "after the force-kill the agent's dot must read offline")
+	})
 }
 
 // Scenario: clicking a GREY (offline) status dot turns the agent back
@@ -118,34 +123,36 @@ func TestDotToggle_OnlineDotCanForceKill(t *testing.T) {
 // non-destructive — and the dashboard snapshot flips the agent back
 // to online. The full off→on cycle proves the dot is a real toggle.
 func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	const conv = "dtof-1111-2222-3333-444444444444"
-	const tmuxSes = "tmux-dtof"
-	f.HaveConvWithTitle(conv, "sleepy-worker")
-	f.HaveAliveSession(conv, "spwn-dtof", tmuxSes, "/tmp/dtof")
-	f.HaveEnrolledAgent(conv)
+		const conv = "dtof-1111-2222-3333-444444444444"
+		const tmuxSes = "tmux-dtof"
+		f.HaveConvWithTitle(conv, "sleepy-worker")
+		f.HaveAliveSession(conv, "spwn-dtof", tmuxSes, "/tmp/dtof")
+		f.HaveEnrolledAgent(conv)
 
-	// Turn it off first so the grey dot is the real state under test.
-	code, _ := postDotVerb(t, mux, conv, "stop", `{"force":false}`)
-	require.Equal(t, http.StatusOK, code)
-	require.False(t, f.World.Tmux.IsAlive(tmuxSes), "pre: agent is offline before the grey-dot click")
-	require.False(t, findDashAgent(fetchDashSnapshot(t, mux), conv).Online,
-		"pre: the snapshot agrees the agent is offline")
+		// Turn it off first so the grey dot is the real state under test.
+		code, _ := postDotVerb(t, mux, conv, "stop", `{"force":false}`)
+		require.Equal(t, http.StatusOK, code)
+		require.False(t, f.World.Tmux.IsAlive(tmuxSes), "pre: agent is offline before the grey-dot click")
+		require.False(t, findDashAgent(fetchDashSnapshot(t, mux), conv).Online,
+			"pre: the snapshot agrees the agent is offline")
 
-	// Grey-dot click → wake. Resume is non-destructive, so the toggle
-	// fires it with no confirm.
-	code, resp := postDotVerb(t, mux, conv, "resume", "")
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "resumed", resp.Action,
-		"a grey-dot click must resume the agent; detail=%s", resp.Detail)
+		// Grey-dot click → wake. Resume is non-destructive, so the toggle
+		// fires it with no confirm.
+		code, resp := postDotVerb(t, mux, conv, "resume", "")
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, "resumed", resp.Action,
+			"a grey-dot click must resume the agent; detail=%s", resp.Detail)
 
-	snap := fetchDashSnapshot(t, mux)
-	a := findDashAgent(snap, conv)
-	require.NotNil(t, a, "the agent is still on the roster after waking")
-	assert.True(t, a.Online, "after the toggle the agent's dot must read online again")
+		snap := fetchDashSnapshot(t, mux)
+		a := findDashAgent(snap, conv)
+		require.NotNil(t, a, "the agent is still on the roster after waking")
+		assert.True(t, a.Online, "after the toggle the agent's dot must read online again")
+	})
 }
 
 // Scenario: the toggle is safe to mash. The dashboard re-renders
@@ -154,28 +161,30 @@ func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
 // /resume on an already-on agent are no-ops that report a skipped:*
 // action rather than erroring.
 func TestDotToggle_IdempotentBothDirections(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	f := newFlow(t)
-	mux := agentd.BuildDashboardHandlerForTest()
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	const conv = "dtid-1111-2222-3333-444444444444"
-	const tmuxSes = "tmux-dtid"
-	f.HaveConvWithTitle(conv, "toggle-worker")
-	f.HaveAliveSession(conv, "spwn-dtid", tmuxSes, "/tmp/dtid")
-	f.HaveEnrolledAgent(conv)
+		const conv = "dtid-1111-2222-3333-444444444444"
+		const tmuxSes = "tmux-dtid"
+		f.HaveConvWithTitle(conv, "toggle-worker")
+		f.HaveAliveSession(conv, "spwn-dtid", tmuxSes, "/tmp/dtid")
+		f.HaveEnrolledAgent(conv)
 
-	// Online agent: a redundant /resume (stale grey-dot click) no-ops.
-	code, resp := postDotVerb(t, mux, conv, "resume", "")
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "skipped:already_online", resp.Action,
-		"resuming an online agent must be a reported no-op")
+		// Online agent: a redundant /resume (stale grey-dot click) no-ops.
+		code, resp := postDotVerb(t, mux, conv, "resume", "")
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, "skipped:already_online", resp.Action,
+			"resuming an online agent must be a reported no-op")
 
-	// Take it offline, then a redundant /stop (stale green-dot click)
-	// no-ops too.
-	code, _ = postDotVerb(t, mux, conv, "stop", `{"force":false}`)
-	require.Equal(t, http.StatusOK, code)
-	code, resp = postDotVerb(t, mux, conv, "stop", `{"force":false}`)
-	require.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "skipped:already_offline", resp.Action,
-		"stopping an offline agent must be a reported no-op")
+		// Take it offline, then a redundant /stop (stale green-dot click)
+		// no-ops too.
+		code, _ = postDotVerb(t, mux, conv, "stop", `{"force":false}`)
+		require.Equal(t, http.StatusOK, code)
+		code, resp = postDotVerb(t, mux, conv, "stop", `{"force":false}`)
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, "skipped:already_offline", resp.Action,
+			"stopping an offline agent must be a reported no-op")
+	})
 }

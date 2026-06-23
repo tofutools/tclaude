@@ -59,8 +59,8 @@ func TestDashboardPrefs_ClientWiring(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"const API = '/api/dashboard/prefs'", // talks to the right endpoint
-		"async function initDashPrefs(",       // boot loader
-		"getItem(key)",                        // localStorage-shaped API
+		"async function initDashPrefs(",      // boot loader
+		"getItem(key)",                       // localStorage-shaped API
 		"setItem(key, value)",
 		"removeItem(key)",
 		"export { dashPrefs, initDashPrefs }",

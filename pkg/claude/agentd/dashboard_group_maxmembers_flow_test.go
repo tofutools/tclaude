@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,26 +23,28 @@ import (
 // because `/api/snapshot` never sent the field. This pins it on the
 // real surface the dashboard refreshes through.
 func TestDashboardSnapshot_SurfacesGroupMaxMembers(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
-	f.HaveGroup("alpha") // no cap
-	f.HaveGroup("beta")  // capped at 10 — the same write the dashboard PATCH performs
-	_, err := db.SetAgentGroupMaxMembers("beta", 10)
-	require.NoError(t, err, "SetAgentGroupMaxMembers")
+		f := newFlow(t)
+		f.HaveGroup("alpha") // no cap
+		f.HaveGroup("beta")  // capped at 10 — the same write the dashboard PATCH performs
+		_, err := db.SetAgentGroupMaxMembers("beta", 10)
+		require.NoError(t, err, "SetAgentGroupMaxMembers")
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	byName := map[string]*dashGroup{}
-	for i := range snap.Groups {
-		byName[snap.Groups[i].Name] = &snap.Groups[i]
-	}
-	require.Contains(t, byName, "alpha", "snapshot missing group alpha")
-	require.Contains(t, byName, "beta", "snapshot missing group beta")
+		byName := map[string]*dashGroup{}
+		for i := range snap.Groups {
+			byName[snap.Groups[i].Name] = &snap.Groups[i]
+		}
+		require.Contains(t, byName, "alpha", "snapshot missing group alpha")
+		require.Contains(t, byName, "beta", "snapshot missing group beta")
 
-	assert.Equal(t, 10, byName["beta"].MaxMembers,
-		"a capped group's max_members must surface in /api/snapshot — the 👥 chip renders from it")
-	assert.Equal(t, 0, byName["alpha"].MaxMembers,
-		"an uncapped group reports 0 (unlimited)")
+		assert.Equal(t, 10, byName["beta"].MaxMembers,
+			"a capped group's max_members must surface in /api/snapshot — the 👥 chip renders from it")
+		assert.Equal(t, 0, byName["alpha"].MaxMembers,
+			"an uncapped group reports 0 (unlimited)")
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -58,10 +59,24 @@ func SetBranchHistoryPREnrichmentForTest(enabled bool) func() {
 // teardown started (post-init writes to $HOME/.tclaude/db.sqlite via
 // db.FindSessionsByConvID).
 //
-// Drain time is bounded by reincarnateAliveTimeout — flow_setup_test.go
-// shrinks both timing knobs via SetWaitTimingsForTest so the bound is
-// milliseconds, not minutes.
-func WaitForBackgroundForTest() { bgWG.Wait() }
+// Every flow test runs inside a synctest bubble, so this drains on the
+// fake clock rather than the global bgWG: a process-global WaitGroup
+// binds to the first bubble that touches it, after which Wait is
+// cross-bubble and never durable — it would wedge the fake clock. The
+// post-init goroutines instead sleep on the bubble clock; sleeping a
+// fake duration that exceeds their bounded lifetimes (waitForConvAlive's
+// alive-timeout, the reincarnateSpawnTimeout poll loops) advances the
+// clock through their timers so they wake, finish, and EXIT — which
+// synctest requires of every bubble goroutine before the test returns.
+// It is instant in real time; synctest.Wait then settles residual work.
+//
+// 90s comfortably exceeds the longest post-init lifetime: a scenario
+// whose conv never comes online bails at the 60s reincarnateAliveTimeout.
+// Keep this above that bound if the production timeout ever grows.
+func WaitForBackgroundForTest() {
+	time.Sleep(90 * time.Second)
+	synctest.Wait()
+}
 
 // SetWaitTimingsForTest overrides reincarnateAliveTimeout +
 // reincarnateReadyDelay for the duration of a test. Returns a restore

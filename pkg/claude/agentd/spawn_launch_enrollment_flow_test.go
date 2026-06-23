@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -32,43 +33,45 @@ import (
 //     noting the inbox copy by id and keeping that copy in the inbox;
 //   - NOTHING was injected over tmux.
 func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	const brief = "Investigate the flaky deploy job and report back"
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"name":            "worker",
-		"initial_message": brief,
+		const brief = "Investigate the flaky deploy job and report back"
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+			"name":            "worker",
+			"initial_message": brief,
+		})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+		// The conv-id was known before launch: the session row carries the same id
+		// the spawn returned (preset via claude --session-id), not one a later hook
+		// back-filled.
+		s, err := db.LoadSession(spawn.Label)
+		require.NoError(t, err)
+		require.NotNil(t, s, "spawned session row missing")
+		assert.Equal(t, spawn.ConvID, s.ConvID,
+			"session row conv-id should be the daemon-preset id")
+
+		// The name + welcome rode in as launch args, not tmux injection. A short
+		// brief is inlined under the default cap: the launch prompt carries the
+		// brief verbatim AND notes the inbox copy by id.
+		f.AssertSpawnName(spawn.ConvID, "worker", 2*time.Second)
+		msg := soleInboxMessage(t, spawn.ConvID)
+		f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 2*time.Second)
+		if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); !strings.Contains(
+			prompt, fmt.Sprintf("message #%d", msg.ID)) {
+			t.Fatalf("inlined welcome should note the inbox copy by id; got %q", prompt)
+		}
+
+		// The title resolves from the .jsonl exactly as a /rename would.
+		f.AssertGroupMember("alpha", spawn.ConvID, "worker", 2*time.Second)
+
+		// Nothing was injected over tmux — the whole point of the new path.
+		if sent := f.World.Tmux.Sent(); len(sent) != 0 {
+			t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
+		}
 	})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-
-	// The conv-id was known before launch: the session row carries the same id
-	// the spawn returned (preset via claude --session-id), not one a later hook
-	// back-filled.
-	s, err := db.LoadSession(spawn.Label)
-	require.NoError(t, err)
-	require.NotNil(t, s, "spawned session row missing")
-	assert.Equal(t, spawn.ConvID, s.ConvID,
-		"session row conv-id should be the daemon-preset id")
-
-	// The name + welcome rode in as launch args, not tmux injection. A short
-	// brief is inlined under the default cap: the launch prompt carries the
-	// brief verbatim AND notes the inbox copy by id.
-	f.AssertSpawnName(spawn.ConvID, "worker", 2*time.Second)
-	msg := soleInboxMessage(t, spawn.ConvID)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 2*time.Second)
-	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); !strings.Contains(
-		prompt, fmt.Sprintf("message #%d", msg.ID)) {
-		t.Fatalf("inlined welcome should note the inbox copy by id; got %q", prompt)
-	}
-
-	// The title resolves from the .jsonl exactly as a /rename would.
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 2*time.Second)
-
-	// Nothing was injected over tmux — the whole point of the new path.
-	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
-		t.Fatalf("launch-enrollment spawn must not send-keys; got %+v", sent)
-	}
 }
 
 // Scenario: a slow host — the forked `tclaude session new`'s session-row write
@@ -80,37 +83,39 @@ func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 // KEEPS the enrollment — it must NOT roll back, which would strand a live,
 // named, greeted, group-less pane whose welcome points at a deleted briefing.
 func TestSpawn_LaunchEnrollment_SlowRowWriteKeepsEnrollment(t *testing.T) {
-	f := newFlow(t)
-	// Shrink the async grace so the poll times out quickly, and make the sim
-	// withhold the SessionRow so the poll never resolves it.
-	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
-	f.World.SkipSpawnRow = true
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		// Shrink the async grace so the poll times out quickly, and make the sim
+		// withhold the SessionRow so the poll never resolves it.
+		t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+		f.World.SkipSpawnRow = true
 
-	f.HaveGroup("alpha")
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"name":            "worker",
-		"initial_message": "do the thing",
-	})
+		f.HaveGroup("alpha")
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+			"name":            "worker",
+			"initial_message": "do the thing",
+		})
 
-	// A slow row write must still succeed against the preset id — never a 504
-	// or a rolled-back enrollment.
-	require.Equalf(t, http.StatusOK, spawn.Code,
-		"slow pane must still succeed, not fail/roll back; body=%s", spawn.Raw)
-	require.NotEmpty(t, spawn.ConvID, "must return the preset conv-id")
+		// A slow row write must still succeed against the preset id — never a 504
+		// or a rolled-back enrollment.
+		require.Equalf(t, http.StatusOK, spawn.Code,
+			"slow pane must still succeed, not fail/roll back; body=%s", spawn.Raw)
+		require.NotEmpty(t, spawn.ConvID, "must return the preset conv-id")
 
-	// The pre-fork enrollment survived: the agent is still a group member and
-	// its briefing is still in its inbox.
-	members := f.ListGroupMembers("alpha")
-	var found bool
-	for _, m := range members {
-		if m.ConvID == spawn.ConvID {
-			found = true
+		// The pre-fork enrollment survived: the agent is still a group member and
+		// its briefing is still in its inbox.
+		members := f.ListGroupMembers("alpha")
+		var found bool
+		for _, m := range members {
+			if m.ConvID == spawn.ConvID {
+				found = true
+			}
 		}
-	}
-	assert.Truef(t, found, "slow-pane agent %s must stay a group member, not be rolled back", spawn.ConvID)
+		assert.Truef(t, found, "slow-pane agent %s must stay a group member, not be rolled back", spawn.ConvID)
 
-	msg := soleInboxMessage(t, spawn.ConvID)
-	assert.Equal(t, "Startup context", msg.Subject, "the briefing must survive the slow poll")
+		msg := soleInboxMessage(t, spawn.ConvID)
+		assert.Equal(t, "Startup context", msg.Subject, "the briefing must survive the slow poll")
+	})
 }
 
 // Scenario: the config escape hatch — agent.spawn_legacy_injection=true.
@@ -120,36 +125,38 @@ func TestSpawn_LaunchEnrollment_SlowRowWriteKeepsEnrollment(t *testing.T) {
 // its conv-id, and injects `/rename` + the welcome over tmux — exactly as
 // before — and does NOT use any launch args.
 func TestSpawn_LegacyInjection_ConfigRevertsToSendKeys(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	// Flip the revert switch before spawning. config.Load reads it fresh on
-	// the spawn path (no caching), and newFlow points HOME at this test's
-	// temp dir, so this config governs this spawn only.
-	legacy := true
-	require.NoError(t, config.Save(&config.Config{
-		Agent: &config.AgentConfig{SpawnLegacyInjection: &legacy},
-	}))
+		// Flip the revert switch before spawning. config.Load reads it fresh on
+		// the spawn path (no caching), and newFlow points HOME at this test's
+		// temp dir, so this config governs this spawn only.
+		legacy := true
+		require.NoError(t, config.Save(&config.Config{
+			Agent: &config.AgentConfig{SpawnLegacyInjection: &legacy},
+		}))
 
-	f.HaveGroup("alpha")
-	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
-		"name":            "worker",
-		"initial_message": "Audit the auth module",
+		f.HaveGroup("alpha")
+		spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+			"name":            "worker",
+			"initial_message": "Audit the auth module",
+		})
+		require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+		target := spawn.TmuxTarget()
+		msg := soleInboxMessage(t, spawn.ConvID)
+
+		// Legacy path: /rename + welcome are injected over tmux, as before.
+		f.AssertSentContains(target, "/rename worker", 5*time.Second)
+		f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+		f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
+
+		// And it did NOT take the launch-arg path: no launch --name / prompt.
+		if name, _ := f.World.SpawnName(spawn.ConvID); name != "" {
+			t.Fatalf("legacy path must not set a launch --name; got %q", name)
+		}
+		if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); prompt != "" {
+			t.Fatalf("legacy path must not set a launch prompt; got %q", prompt)
+		}
 	})
-	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
-
-	target := spawn.TmuxTarget()
-	msg := soleInboxMessage(t, spawn.ConvID)
-
-	// Legacy path: /rename + welcome are injected over tmux, as before.
-	f.AssertSentContains(target, "/rename worker", 5*time.Second)
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
-
-	// And it did NOT take the launch-arg path: no launch --name / prompt.
-	if name, _ := f.World.SpawnName(spawn.ConvID); name != "" {
-		t.Fatalf("legacy path must not set a launch --name; got %q", name)
-	}
-	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); prompt != "" {
-		t.Fatalf("legacy path must not set a launch prompt; got %q", prompt)
-	}
 }

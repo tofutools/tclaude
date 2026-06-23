@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -51,49 +52,51 @@ func dashGroupMemberTitle(t *testing.T, snap dashSnapshot, group, convID string)
 // distinct name so superseding is observable rather than a same-string
 // no-op.
 func TestSpawn_PendingNameShownThenSupersededBySelfRename(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	// fetchDashSnapshot hits /api/snapshot, which checkDashboardAuth
-	// gates on a popup-base-pinned Origin; the test handler only injects
-	// that header when a base URL is set.
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		// fetchDashSnapshot hits /api/snapshot, which checkDashboardAuth
+		// gates on a popup-base-pinned Origin; the test handler only injects
+		// that header when a base URL is set.
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f.HaveGroup("alpha")
+		f.HaveGroup("alpha")
 
-	spawn := f.AsHuman().Spawn("alpha", "pending-reviewer")
+		spawn := f.AsHuman().Spawn("alpha", "pending-reviewer")
 
-	// Block the spawn's own /rename injection so the conversation never
-	// gets a custom-title turn — the deterministic stand-in for "agent
-	// spawned, has not renamed itself yet".
-	cc := f.World.CCs.GetByConvID(spawn.ConvID)
-	require.NotNil(t, cc, "spawned CCSim should be registered")
-	cc.SetCommandDelay("/rename ", time.Hour)
+		// Block the spawn's own /rename injection so the conversation never
+		// gets a custom-title turn — the deterministic stand-in for "agent
+		// spawned, has not renamed itself yet".
+		cc := f.World.CCs.GetByConvID(spawn.ConvID)
+		require.NotNil(t, cc, "spawned CCSim should be registered")
+		cc.SetCommandDelay("/rename ", time.Hour)
 
-	// Let the post-spawn injection settle. The welcome [system: …] turn
-	// lands as a user turn, so conv_index now carries a real first prompt
-	// (and the simulator's startup summary) — proving the pending name
-	// outranks BOTH, not merely an otherwise-empty row.
-	agentd.WaitForBackgroundForTest()
+		// Let the post-spawn injection settle. The welcome [system: …] turn
+		// lands as a user turn, so conv_index now carries a real first prompt
+		// (and the simulator's startup summary) — proving the pending name
+		// outranks BOTH, not merely an otherwise-empty row.
+		agentd.WaitForBackgroundForTest()
 
-	// Members surface — what `tclaude agent groups members alpha` renders.
-	// The intended name shows, sourced from agent_enrollment.pending_name.
-	f.AssertGroupMember("alpha", spawn.ConvID, "pending-reviewer", 3*time.Second)
+		// Members surface — what `tclaude agent groups members alpha` renders.
+		// The intended name shows, sourced from agent_enrollment.pending_name.
+		f.AssertGroupMember("alpha", spawn.ConvID, "pending-reviewer", 3*time.Second)
 
-	// Dashboard snapshot — the surface the human actually watches. No
-	// "(unknown)" placeholder.
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	require.Equal(t, "pending-reviewer",
-		dashGroupMemberTitle(t, snap, "alpha", spawn.ConvID),
-		"dashboard should show the pending name before the agent renames itself")
+		// Dashboard snapshot — the surface the human actually watches. No
+		// "(unknown)" placeholder.
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		require.Equal(t, "pending-reviewer",
+			dashGroupMemberTitle(t, snap, "alpha", spawn.ConvID),
+			"dashboard should show the pending name before the agent renames itself")
 
-	// The agent renames itself to a different name. The spawn's blocked
-	// /rename goroutine is still asleep; clearing the delay lets this
-	// fresh keystroke dispatch immediately.
-	cc.SetCommandDelay("/rename ", 0)
-	cc.Receive("/rename real-reviewer")
-	cc.Receive("Enter")
+		// The agent renames itself to a different name. The spawn's blocked
+		// /rename goroutine is still asleep; clearing the delay lets this
+		// fresh keystroke dispatch immediately.
+		cc.SetCommandDelay("/rename ", 0)
+		cc.Receive("/rename real-reviewer")
+		cc.Receive("Enter")
 
-	// Self-rename supersedes the pending name cleanly: a custom title now
-	// exists, so FreshTitle resolves through conv_index from here on.
-	f.AssertGroupMember("alpha", spawn.ConvID, "real-reviewer", 5*time.Second)
+		// Self-rename supersedes the pending name cleanly: a custom title now
+		// exists, so FreshTitle resolves through conv_index from here on.
+		f.AssertGroupMember("alpha", spawn.ConvID, "real-reviewer", 5*time.Second)
+	})
 }

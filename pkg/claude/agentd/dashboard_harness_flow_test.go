@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,47 +28,49 @@ func findDashHarness(snap dashSnapshot, name string) *dashHarness {
 // no in-pane /rename) but CANNOT compact, and it alone takes a launch
 // sandbox.
 func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	_ = f // catalog is registry-derived; no agents needed
+		f := newFlow(t)
+		_ = f // catalog is registry-derived; no agents needed
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	claude := findDashHarness(snap, "claude")
-	require.NotNil(t, claude, "catalog missing claude; have %+v", snap.Harnesses)
-	assert.Equal(t, "Claude Code", claude.DisplayName)
-	assert.NotEmpty(t, claude.Models, "claude offers a curated model list")
-	assert.NotEmpty(t, claude.EffortLevels, "claude offers effort levels")
-	assert.True(t, claude.CanRename, "claude renames in-pane")
-	assert.True(t, claude.CanCompact, "claude compacts in-pane")
-	assert.False(t, claude.CanSandbox, "claude has no launch sandbox flag")
-	assert.Empty(t, claude.SandboxModes, "claude exposes no sandbox modes")
-	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
+		claude := findDashHarness(snap, "claude")
+		require.NotNil(t, claude, "catalog missing claude; have %+v", snap.Harnesses)
+		assert.Equal(t, "Claude Code", claude.DisplayName)
+		assert.NotEmpty(t, claude.Models, "claude offers a curated model list")
+		assert.NotEmpty(t, claude.EffortLevels, "claude offers effort levels")
+		assert.True(t, claude.CanRename, "claude renames in-pane")
+		assert.True(t, claude.CanCompact, "claude compacts in-pane")
+		assert.False(t, claude.CanSandbox, "claude has no launch sandbox flag")
+		assert.Empty(t, claude.SandboxModes, "claude exposes no sandbox modes")
+		assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
 
-	codex := findDashHarness(snap, "codex")
-	require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
-	assert.Equal(t, "Codex CLI", codex.DisplayName)
-	// Codex curates no model list (its set changes per release; validated
-	// server-side), so the dialog falls back to a free-text model entry.
-	assert.Empty(t, codex.Models, "codex curates no model list")
-	assert.NotNil(t, codex.Models, "codex models is [] not null for JS .map safety")
-	assert.NotEmpty(t, codex.EffortLevels, "codex offers effort/reasoning levels")
-	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
-	assert.True(t, codex.CanCompact, "codex supports /compact")
-	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
-	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
-	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
-	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
-	// Every selectable mode carries a one-line help string the dialog renders
-	// as a live hint; the recommended profile has no caveat marker, the raw
-	// modes flag their agentd-reachability / sandbox-off caveat with "⚠".
-	require.NotNil(t, codex.SandboxModeHelp, "codex exposes per-mode sandbox help")
-	for _, m := range codex.SandboxModes {
-		assert.NotEmpty(t, codex.SandboxModeHelp[m], "help text for mode %q", m)
-	}
-	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
-	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
+		codex := findDashHarness(snap, "codex")
+		require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
+		assert.Equal(t, "Codex CLI", codex.DisplayName)
+		// Codex curates no model list (its set changes per release; validated
+		// server-side), so the dialog falls back to a free-text model entry.
+		assert.Empty(t, codex.Models, "codex curates no model list")
+		assert.NotNil(t, codex.Models, "codex models is [] not null for JS .map safety")
+		assert.NotEmpty(t, codex.EffortLevels, "codex offers effort/reasoning levels")
+		assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
+		assert.True(t, codex.CanCompact, "codex supports /compact")
+		assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
+		assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
+		assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
+		assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
+		// Every selectable mode carries a one-line help string the dialog renders
+		// as a live hint; the recommended profile has no caveat marker, the raw
+		// modes flag their agentd-reachability / sandbox-off caveat with "⚠".
+		require.NotNil(t, codex.SandboxModeHelp, "codex exposes per-mode sandbox help")
+		for _, m := range codex.SandboxModes {
+			assert.NotEmpty(t, codex.SandboxModeHelp[m], "help text for mode %q", m)
+		}
+		assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
+		assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
+	})
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to
@@ -76,53 +79,55 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 // Code agent shows harness=claude + no sandbox. Both appear on the Agents[]
 // roster and the group Members[] row (the two places the badges draw).
 func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
-	const codexConv = "cdx1-1111-2222-3333-4444"
-	const codexLabel = "spwn-cdx1"
-	const ccConv = "ccx1-1111-2222-3333-4444"
-	const ccLabel = "spwn-ccx1"
+	synctest.Test(t, func(t *testing.T) {
+		const codexConv = "cdx1-1111-2222-3333-4444"
+		const codexLabel = "spwn-cdx1"
+		const ccConv = "ccx1-1111-2222-3333-4444"
+		const ccLabel = "spwn-ccx1"
 
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveGroup("mixed")
+		f := newFlow(t)
+		f.HaveGroup("mixed")
 
-	// A live Codex agent. HaveAliveCodexSession tags the row harness=codex;
-	// overwrite it (same row id → UPSERT, tmux unchanged so it stays alive)
-	// to also stamp the launch sandbox the daemon spawn would have recorded.
-	f.HaveAliveCodexSession(codexConv, codexLabel, "tmux-cdx1", "/tmp/cdx1")
-	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:          codexLabel,
-		TmuxSession: "tmux-cdx1",
-		ConvID:      codexConv,
-		Cwd:         "/tmp/cdx1",
-		Status:      "running",
-		Harness:     "codex",
-		SandboxMode: "workspace-write",
-	}), "stamp codex sandbox mode")
-	f.HaveMember("mixed", codexConv)
+		// A live Codex agent. HaveAliveCodexSession tags the row harness=codex;
+		// overwrite it (same row id → UPSERT, tmux unchanged so it stays alive)
+		// to also stamp the launch sandbox the daemon spawn would have recorded.
+		f.HaveAliveCodexSession(codexConv, codexLabel, "tmux-cdx1", "/tmp/cdx1")
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID:          codexLabel,
+			TmuxSession: "tmux-cdx1",
+			ConvID:      codexConv,
+			Cwd:         "/tmp/cdx1",
+			Status:      "running",
+			Harness:     "codex",
+			SandboxMode: "workspace-write",
+		}), "stamp codex sandbox mode")
+		f.HaveMember("mixed", codexConv)
 
-	// A live Claude Code agent in the same group (mixed-harness group).
-	f.HaveAliveSession(ccConv, ccLabel, "tmux-ccx1", "/tmp/ccx1")
-	f.HaveMember("mixed", ccConv)
+		// A live Claude Code agent in the same group (mixed-harness group).
+		f.HaveAliveSession(ccConv, ccLabel, "tmux-ccx1", "/tmp/ccx1")
+		f.HaveMember("mixed", ccConv)
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
-	// Codex agent: harness + sandbox surface on both surfaces.
-	codexAgent := findDashAgent(snap, codexConv)
-	require.NotNil(t, codexAgent, "codex agent missing from Agents[]")
-	assert.Equal(t, "codex", codexAgent.State.Harness, "Agents[] codex harness")
-	assert.Equal(t, "workspace-write", codexAgent.State.SandboxMode, "Agents[] codex sandbox")
+		// Codex agent: harness + sandbox surface on both surfaces.
+		codexAgent := findDashAgent(snap, codexConv)
+		require.NotNil(t, codexAgent, "codex agent missing from Agents[]")
+		assert.Equal(t, "codex", codexAgent.State.Harness, "Agents[] codex harness")
+		assert.Equal(t, "workspace-write", codexAgent.State.SandboxMode, "Agents[] codex sandbox")
 
-	codexMember := findDashMember(snap, "mixed", codexConv)
-	require.NotNil(t, codexMember, "codex agent missing from group members")
-	assert.Equal(t, "codex", codexMember.State.Harness, "Members[] codex harness")
-	assert.Equal(t, "workspace-write", codexMember.State.SandboxMode, "Members[] codex sandbox")
+		codexMember := findDashMember(snap, "mixed", codexConv)
+		require.NotNil(t, codexMember, "codex agent missing from group members")
+		assert.Equal(t, "codex", codexMember.State.Harness, "Members[] codex harness")
+		assert.Equal(t, "workspace-write", codexMember.State.SandboxMode, "Members[] codex sandbox")
 
-	// Claude Code agent: harness=claude (the row default), no sandbox.
-	ccAgent := findDashAgent(snap, ccConv)
-	require.NotNil(t, ccAgent, "claude agent missing from Agents[]")
-	assert.Equal(t, "claude", ccAgent.State.Harness, "Agents[] claude harness")
-	assert.Equal(t, "", ccAgent.State.SandboxMode, "claude agent has no sandbox badge")
+		// Claude Code agent: harness=claude (the row default), no sandbox.
+		ccAgent := findDashAgent(snap, ccConv)
+		require.NotNil(t, ccAgent, "claude agent missing from Agents[]")
+		assert.Equal(t, "claude", ccAgent.State.Harness, "Agents[] claude harness")
+		assert.Equal(t, "", ccAgent.State.SandboxMode, "claude agent has no sandbox badge")
+	})
 }
 
 // Scenario: the spawn dialog forwards the chosen harness + sandbox in the
@@ -134,21 +139,23 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 // codex_sandbox_spawn_flow_test; this exercises an EXPLICIT non-default
 // mode, the dialog's other case.
 func TestDashboardSpawn_HarnessAndSandboxBodyContract(t *testing.T) {
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	synctest.Test(t, func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
-	f := newFlow(t)
-	f.HaveGroup("squad")
+		f := newFlow(t)
+		f.HaveGroup("squad")
 
-	spawn := f.SpawnWith("squad", map[string]any{
-		"name":    "cdx-ro",
-		"harness": "codex",
-		"sandbox": "read-only",
+		spawn := f.SpawnWith("squad", map[string]any{
+			"name":    "cdx-ro",
+			"harness": "codex",
+			"sandbox": "read-only",
+		})
+		require.Equal(t, 200, spawn.Code, "spawn body=%s", string(spawn.Raw))
+		require.NotEmpty(t, spawn.ConvID, "spawn returned a conv id")
+
+		got, ok := f.World.SpawnSandbox(spawn.ConvID)
+		require.True(t, ok, "spawner recorded a sandbox for the new conv")
+		assert.Equal(t, "read-only", got,
+			"the dialog's {harness, sandbox} body must thread the explicit sandbox to the spawner")
 	})
-	require.Equal(t, 200, spawn.Code, "spawn body=%s", string(spawn.Raw))
-	require.NotEmpty(t, spawn.ConvID, "spawn returned a conv id")
-
-	got, ok := f.World.SpawnSandbox(spawn.ConvID)
-	require.True(t, ok, "spawner recorded a sandbox for the new conv")
-	assert.Equal(t, "read-only", got,
-		"the dialog's {harness, sandbox} body must thread the explicit sandbox to the spawner")
 }

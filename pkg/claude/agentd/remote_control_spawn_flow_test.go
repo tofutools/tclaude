@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,59 +25,65 @@ import (
 // TestClaudeSpawn_RemoteControlDefaultsOff: a plain CC spawn does not arm Remote
 // Access, and the row's best-known state stays off.
 func TestClaudeSpawn_RemoteControlDefaultsOff(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("cc-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("cc-crew")
 
-	spawn := f.AsHuman().SpawnHarness("cc-crew", "plain-worker", "claude")
+		spawn := f.AsHuman().SpawnHarness("cc-crew", "plain-worker", "claude")
 
-	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
-	require.True(t, ok, "the spawn should have been observed by the sim spawner")
-	assert.False(t, got, "a plain spawn must default remote-control OFF (no --remote-control)")
+		got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
+		require.True(t, ok, "the spawn should have been observed by the sim spawner")
+		assert.False(t, got, "a plain spawn must default remote-control OFF (no --remote-control)")
 
-	rc, err := db.RemoteControlForConv(spawn.ConvID)
-	require.NoError(t, err)
-	assert.False(t, rc, "a plain spawn must leave the row's best-known remote_control off")
+		rc, err := db.RemoteControlForConv(spawn.ConvID)
+		require.NoError(t, err)
+		assert.False(t, rc, "a plain spawn must leave the row's best-known remote_control off")
+	})
 }
 
 // TestClaudeSpawn_RemoteControlOptInArmsAtLaunch: an explicit remote_control:true
 // threads --remote-control through the spawn path AND tags the new row enabled,
 // so the agent boots phone-reachable and the dashboard shows it armed.
 func TestClaudeSpawn_RemoteControlOptInArmsAtLaunch(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("cc-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("cc-crew")
 
-	resp := f.AsHuman().SpawnWith("cc-crew", map[string]any{
-		"name":           "phone-reachable",
-		"remote_control": true,
+		resp := f.AsHuman().SpawnWith("cc-crew", map[string]any{
+			"name":           "phone-reachable",
+			"remote_control": true,
+		})
+		require.Equal(t, 200, resp.Code,
+			"remote_control opt-in on a Claude Code spawn must be accepted; body=%s", resp.Raw)
+
+		got, ok := f.World.SpawnRemoteControl(resp.ConvID)
+		require.True(t, ok, "the spawn should have been observed by the sim spawner")
+		assert.True(t, got,
+			"an explicit remote_control opt-in must thread --remote-control through the spawn path")
+
+		rc, err := db.RemoteControlForConv(resp.ConvID)
+		require.NoError(t, err)
+		assert.True(t, rc,
+			"the spawn must tag the new row's best-known remote_control on, so the dashboard + toggle start armed")
 	})
-	require.Equal(t, 200, resp.Code,
-		"remote_control opt-in on a Claude Code spawn must be accepted; body=%s", resp.Raw)
-
-	got, ok := f.World.SpawnRemoteControl(resp.ConvID)
-	require.True(t, ok, "the spawn should have been observed by the sim spawner")
-	assert.True(t, got,
-		"an explicit remote_control opt-in must thread --remote-control through the spawn path")
-
-	rc, err := db.RemoteControlForConv(resp.ConvID)
-	require.NoError(t, err)
-	assert.True(t, rc,
-		"the spawn must tag the new row's best-known remote_control on, so the dashboard + toggle start armed")
 }
 
 // TestCodexSpawn_RejectsRemoteControl: Codex has no built-in Remote Access, so a
 // remote_control opt-in is a 400 at the boundary, not a flag silently dropped
 // onto a harness that can't honour it.
 func TestCodexSpawn_RejectsRemoteControl(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("codex-crew")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("codex-crew")
 
-	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":           "no-remote",
-		"harness":        "codex",
-		"remote_control": true,
+		resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+			"name":           "no-remote",
+			"harness":        "codex",
+			"remote_control": true,
+		})
+		require.Equal(t, 400, resp.Code,
+			"remote_control on a Codex spawn must be refused with a 400; body=%s", resp.Raw)
+		assert.Contains(t, string(resp.Raw), "invalid_remote_control",
+			"the refusal should name the remote-control gate; body=%s", resp.Raw)
 	})
-	require.Equal(t, 400, resp.Code,
-		"remote_control on a Codex spawn must be refused with a 400; body=%s", resp.Raw)
-	assert.Contains(t, string(resp.Raw), "invalid_remote_control",
-		"the refusal should name the remote-control gate; body=%s", resp.Raw)
 }

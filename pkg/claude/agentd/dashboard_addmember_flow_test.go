@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,47 +28,49 @@ import (
 //     auth (NOT via /v1 SO_PEERCRED — the browser can't speak that);
 //   - the next snapshot reflects both sides of the move.
 func TestDashboardAddMember_FromUngrouped(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const looseConv = "loos-aaaa-bbbb-cccc-dddd"
-	f.HaveConvWithTitle(looseConv, "loose-worker")
-	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
-	f.HaveEnrolledAgent(looseConv)
-	f.HaveGroup("alpha")
+		const looseConv = "loos-aaaa-bbbb-cccc-dddd"
+		f.HaveConvWithTitle(looseConv, "loose-worker")
+		f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
+		f.HaveEnrolledAgent(looseConv)
+		f.HaveGroup("alpha")
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Pre-condition: loose conv shows up in ungrouped[] so the
-	// candidate list would surface it.
-	pre := fetchDashSnapshot(t, mux)
-	require.True(t, containsConv(pre.Ungrouped, looseConv),
-		"pre-add: loose conv %s should appear in ungrouped[]; got %d rows", looseConv, len(pre.Ungrouped))
+		// Pre-condition: loose conv shows up in ungrouped[] so the
+		// candidate list would surface it.
+		pre := fetchDashSnapshot(t, mux)
+		require.True(t, containsConv(pre.Ungrouped, looseConv),
+			"pre-add: loose conv %s should appear in ungrouped[]; got %d rows", looseConv, len(pre.Ungrouped))
 
-	// Add via the dashboard endpoint (the POST the overlay fires).
-	body := strings.NewReader(`{"conv":"` + looseConv + `"}`)
-	r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-	require.NoError(t, err, "build request")
-	r.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, r)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"POST /api/groups/alpha/members body=%s", rec.Body.String())
-	var addResp struct {
-		ConvID string `json:"conv_id"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &addResp), "decode add response")
-	assert.Equal(t, looseConv, addResp.ConvID, "response conv_id")
+		// Add via the dashboard endpoint (the POST the overlay fires).
+		body := strings.NewReader(`{"conv":"` + looseConv + `"}`)
+		r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
+		require.NoError(t, err, "build request")
+		r.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, r)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST /api/groups/alpha/members body=%s", rec.Body.String())
+		var addResp struct {
+			ConvID string `json:"conv_id"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &addResp), "decode add response")
+		assert.Equal(t, looseConv, addResp.ConvID, "response conv_id")
 
-	// Post-condition: snapshot now has the conv under group alpha
-	// AND drops it from ungrouped[].
-	post := fetchDashSnapshot(t, mux)
-	assert.False(t, containsConv(post.Ungrouped, looseConv),
-		"post-add: loose conv %s should NOT be in ungrouped[] after joining alpha", looseConv)
-	postAgent := findAgent(post.Agents, looseConv)
-	require.NotNil(t, postAgent, "post-add: loose conv %s missing from agents[]", looseConv)
-	assert.Contains(t, postAgent.Groups, "alpha", "post-add: agent groups = %v", postAgent.Groups)
+		// Post-condition: snapshot now has the conv under group alpha
+		// AND drops it from ungrouped[].
+		post := fetchDashSnapshot(t, mux)
+		assert.False(t, containsConv(post.Ungrouped, looseConv),
+			"post-add: loose conv %s should NOT be in ungrouped[] after joining alpha", looseConv)
+		postAgent := findAgent(post.Agents, looseConv)
+		require.NotNil(t, postAgent, "post-add: loose conv %s missing from agents[]", looseConv)
+		assert.Contains(t, postAgent.Groups, "alpha", "post-add: agent groups = %v", postAgent.Groups)
+	})
 }
 
 // Scenario: re-adding the same conv via the overlay is idempotent —
@@ -77,35 +80,37 @@ func TestDashboardAddMember_FromUngrouped(t *testing.T) {
 // this stops being idempotent the overlay would surface a confusing
 // failure toast on what looked like a fresh add.
 func TestDashboardAddMember_RepeatIsIdempotent(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const conv = "dup-1111-2222-3333-4444"
-	f.HaveConvWithTitle(conv, "dup-worker")
-	f.HaveAliveSession(conv, "spwn-dup", "tmux-dup", "/tmp/dup")
-	f.HaveGroup("alpha")
+		const conv = "dup-1111-2222-3333-4444"
+		f.HaveConvWithTitle(conv, "dup-worker")
+		f.HaveAliveSession(conv, "spwn-dup", "tmux-dup", "/tmp/dup")
+		f.HaveGroup("alpha")
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	doAdd := func() *http.Request {
-		body := strings.NewReader(`{"conv":"` + conv + `"}`)
-		r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-		require.NoError(t, err, "build request")
-		r.Header.Set("Content-Type", "application/json")
-		return r
-	}
+		doAdd := func() *http.Request {
+			body := strings.NewReader(`{"conv":"` + conv + `"}`)
+			r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
+			require.NoError(t, err, "build request")
+			r.Header.Set("Content-Type", "application/json")
+			return r
+		}
 
-	first := testharness.Serve(mux, doAdd())
-	require.Equal(t, http.StatusOK, first.Code, "first add body=%s", first.Body.String())
-	second := testharness.Serve(mux, doAdd())
-	require.Equal(t, http.StatusOK, second.Code,
-		"second add body=%s; want 200 (idempotent)", second.Body.String())
-	// Membership row count: still exactly one across the snapshot's
-	// per-group view, despite two adds.
-	count := countMembersInGroup(t, mux, "alpha", conv)
-	assert.Equal(t, 1, count, "membership rows for %s in alpha", conv)
+		first := testharness.Serve(mux, doAdd())
+		require.Equal(t, http.StatusOK, first.Code, "first add body=%s", first.Body.String())
+		second := testharness.Serve(mux, doAdd())
+		require.Equal(t, http.StatusOK, second.Code,
+			"second add body=%s; want 200 (idempotent)", second.Body.String())
+		// Membership row count: still exactly one across the snapshot's
+		// per-group view, despite two adds.
+		count := countMembersInGroup(t, mux, "alpha", conv)
+		assert.Equal(t, 1, count, "membership rows for %s in alpha", conv)
+	})
 }
 
 // Scenario: an unknown conv-id (no resolver match) returns 404 from
@@ -113,19 +118,21 @@ func TestDashboardAddMember_RepeatIsIdempotent(t *testing.T) {
 // overlay's error surface readable when a stale candidate row gets
 // clicked after a delete.
 func TestDashboardAddMember_UnknownConvReturns404(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
-	f.HaveGroup("alpha")
+		f := newFlow(t)
+		f.HaveGroup("alpha")
 
-	mux := agentd.BuildDashboardHandlerForTest()
-	body := strings.NewReader(`{"conv":"no-such-conv-anywhere"}`)
-	r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
-	require.NoError(t, err, "build request")
-	r.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, r)
-	assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+		mux := agentd.BuildDashboardHandlerForTest()
+		body := strings.NewReader(`{"conv":"no-such-conv-anywhere"}`)
+		r, err := http.NewRequest(http.MethodPost, "/api/groups/alpha/members", body)
+		require.NoError(t, err, "build request")
+		r.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, r)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+	})
 }
 
 // --- helpers ---

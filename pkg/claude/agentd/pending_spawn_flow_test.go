@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -49,90 +50,92 @@ import (
 // has no post-connect send-keys to observe; that path is covered by the
 // non-gated Codex inline flow tests + the buildSpawnSeedPrompt unit table.)
 func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	// Force the over-cap (stand-by seed + post-connect pointer) path with a tiny
-	// inline cap, so the back-fill still injects a welcome over tmux.
-	tiny := 10
-	require.NoError(t, config.Save(&config.Config{
-		Agent: &config.AgentConfig{SpawnInlineMaxChars: &tiny},
-	}))
+		// Force the over-cap (stand-by seed + post-connect pointer) path with a tiny
+		// inline cap, so the back-fill still injects a welcome over tmux.
+		tiny := 10
+		require.NoError(t, config.Save(&config.Config{
+			Agent: &config.AgentConfig{SpawnInlineMaxChars: &tiny},
+		}))
 
-	// Drive the pending path without a real multi-second wait: a genuinely
-	// gated Codex blows the production grace; the test shrinks it.
-	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+		// Drive the pending path without a real multi-second wait: a genuinely
+		// gated Codex blows the production grace; the test shrinks it.
+		t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
 
-	// Swap in the gated spawner. Non-codex spawns + all resumes delegate to
-	// the default simulator-backed spawner; only the codex SpawnNew is gated.
-	gated := &gatedCodexSpawner{
-		t:     t,
-		w:     f.World,
-		inner: f.World.DefaultMocks(t).Spawner,
-		sims:  map[string]*testharness.CodexSim{},
-	}
-	prevSpawn := agentd.Spawn
-	agentd.Spawn = gated
-	t.Cleanup(func() { agentd.Spawn = prevSpawn })
-
-	g := f.HaveGroup("codex-crew")
-
-	// Spawn a Codex agent. Its conv-id never materialises within the grace,
-	// so the endpoint returns PENDING — 200 with an EMPTY conv_id — instead
-	// of hanging until a timeout (the freeze) or erroring.
-	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
-		"name":            "codex-worker",
-		"harness":         "codex",
-		"initial_message": "Audit the auth module for timing-safe comparison bugs",
-	})
-	require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
-	require.Empty(t, resp.ConvID, "pending spawn returns an empty conv_id")
-	require.NotEmpty(t, resp.Label, "pending spawn returns its label")
-	require.NotEmpty(t, resp.TmuxSession, "pending spawn returns its tmux session")
-
-	// The enrollment intent was persisted, keyed by label — restart-safe and
-	// carrying what the sweeper needs to finish later.
-	ps, err := db.GetPendingSpawn(resp.Label)
-	require.NoError(t, err, "GetPendingSpawn")
-	require.NotNil(t, ps, "spawn recorded a pending_spawns row")
-	assert.Equal(t, g.ID, ps.GroupID, "pending row carries the target group")
-	assert.Equal(t, "codex-worker", ps.Name, "pending row carries the requested name")
-
-	// Not enrolled yet — there is no conv-id to enroll.
-	assert.Empty(t, f.ListGroupMembers("codex-crew"), "no member before the conv-id materialises")
-
-	// SAFETY: nothing whatsoever has been injected into the pane — a Codex
-	// behind a startup gate must receive NO send-keys until it is past
-	// connection. Assert on the raw send-keys log (not just "contains the
-	// name") so the property holds even if the welcome text changes.
-	target := resp.TmuxSession + ":0.0"
-	for _, sk := range f.World.Tmux.Sent() {
-		if sk.Target == target {
-			t.Fatalf("no send-keys must reach the pane before the conv-id materialises; got %q", sk.Text)
+		// Swap in the gated spawner. Non-codex spawns + all resumes delegate to
+		// the default simulator-backed spawner; only the codex SpawnNew is gated.
+		gated := &gatedCodexSpawner{
+			t:     t,
+			w:     f.World,
+			inner: f.World.DefaultMocks(t).Spawner,
+			sims:  map[string]*testharness.CodexSim{},
 		}
-	}
+		prevSpawn := agentd.Spawn
+		agentd.Spawn = gated
+		t.Cleanup(func() { agentd.Spawn = prevSpawn })
 
-	// The operator clears the gate; Codex takes its first turn and its
-	// conv-id finally lands on the session row (the first-turn hook's write).
-	convID := gated.firstTurn(t, resp.Label)
+		g := f.HaveGroup("codex-crew")
 
-	// One sweep back-fills the enrollment and clears the pending row.
-	agentd.RunPendingSpawnSweepForTest()
+		// Spawn a Codex agent. Its conv-id never materialises within the grace,
+		// so the endpoint returns PENDING — 200 with an EMPTY conv_id — instead
+		// of hanging until a timeout (the freeze) or erroring.
+		resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+			"name":            "codex-worker",
+			"harness":         "codex",
+			"initial_message": "Audit the auth module for timing-safe comparison bugs",
+		})
+		require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
+		require.Empty(t, resp.ConvID, "pending spawn returns an empty conv_id")
+		require.NotEmpty(t, resp.Label, "pending spawn returns its label")
+		require.NotEmpty(t, resp.TmuxSession, "pending spawn returns its tmux session")
 
-	gone, err := db.GetPendingSpawn(resp.Label)
-	require.NoError(t, err)
-	assert.Nil(t, gone, "sweeper deletes the pending row after enrolling")
+		// The enrollment intent was persisted, keyed by label — restart-safe and
+		// carrying what the sweeper needs to finish later.
+		ps, err := db.GetPendingSpawn(resp.Label)
+		require.NoError(t, err, "GetPendingSpawn")
+		require.NotNil(t, ps, "spawn recorded a pending_spawns row")
+		assert.Equal(t, g.ID, ps.GroupID, "pending row carries the target group")
+		assert.Equal(t, "codex-worker", ps.Name, "pending row carries the requested name")
 
-	m, err := db.FindMemberInGroup(g.ID, convID)
-	require.NoError(t, err, "FindMemberInGroup")
-	require.NotNil(t, m, "sweeper enrolled the conv into the group")
+		// Not enrolled yet — there is no conv-id to enroll.
+		assert.Empty(t, f.ListGroupMembers("codex-crew"), "no member before the conv-id materialises")
 
-	// The over-cap briefing landed in the inbox during back-fill.
-	msg := soleInboxMessage(t, convID)
+		// SAFETY: nothing whatsoever has been injected into the pane — a Codex
+		// behind a startup gate must receive NO send-keys until it is past
+		// connection. Assert on the raw send-keys log (not just "contains the
+		// name") so the property holds even if the welcome text changes.
+		target := resp.TmuxSession + ":0.0"
+		for _, sk := range f.World.Tmux.Sent() {
+			if sk.Target == target {
+				t.Fatalf("no send-keys must reach the pane before the conv-id materialises; got %q", sk.Text)
+			}
+		}
 
-	// End-to-end: the post-init inbox-pointer welcome now lands on the pane —
-	// only after the conv-id materialised, completing the back-fill. It points
-	// the (now un-gated) agent at the briefing it can finally read.
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
+		// The operator clears the gate; Codex takes its first turn and its
+		// conv-id finally lands on the session row (the first-turn hook's write).
+		convID := gated.firstTurn(t, resp.Label)
+
+		// One sweep back-fills the enrollment and clears the pending row.
+		agentd.RunPendingSpawnSweepForTest()
+
+		gone, err := db.GetPendingSpawn(resp.Label)
+		require.NoError(t, err)
+		assert.Nil(t, gone, "sweeper deletes the pending row after enrolling")
+
+		m, err := db.FindMemberInGroup(g.ID, convID)
+		require.NoError(t, err, "FindMemberInGroup")
+		require.NotNil(t, m, "sweeper enrolled the conv into the group")
+
+		// The over-cap briefing landed in the inbox during back-fill.
+		msg := soleInboxMessage(t, convID)
+
+		// End-to-end: the post-init inbox-pointer welcome now lands on the pane —
+		// only after the conv-id materialised, completing the back-fill. It points
+		// the (now un-gated) agent at the briefing it can finally read.
+		f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
+	})
 }
 
 // gatedCodexSpawner is a SpawnerLike whose codex SpawnNew models a Codex

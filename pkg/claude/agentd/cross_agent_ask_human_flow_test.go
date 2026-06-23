@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,26 +28,28 @@ func stubApproval(t *testing.T, decision bool) {
 // escape hatch is what flips the decision, not some other accidental
 // auth bypass.
 func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const targetConv = "tttt-1111-2222-3333-4444"
-	const targetLabel = "spwn-tt001"
-	const targetTmux = "tclaude-spwn-tt001"
-	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv)
+		const targetConv = "tttt-1111-2222-3333-4444"
+		const targetLabel = "spwn-tt001"
+		const targetTmux = "tclaude-spwn-tt001"
+		f.HaveConvWithTitle(targetConv, "worker")
+		f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", targetConv)
 
-	// A separate caller conv that is NOT in the group and holds no
-	// agent.reincarnate slug. The default newFlow human path bypasses
-	// permissions, so we route as an agent peer.
-	const callerConv = "cccc-1111-2222-3333-4444"
-	r := testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
-	r = agentd.AsAgentPeer(r, callerConv)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusForbidden, rec.Code,
-		"expected 403 without slug + without --ask-human, body=%s", rec.Body.String())
+		// A separate caller conv that is NOT in the group and holds no
+		// agent.reincarnate slug. The default newFlow human path bypasses
+		// permissions, so we route as an agent peer.
+		const callerConv = "cccc-1111-2222-3333-4444"
+		r := testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
+		r = agentd.AsAgentPeer(r, callerConv)
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusForbidden, rec.Code,
+			"expected 403 without slug + without --ask-human, body=%s", rec.Body.String())
+	})
 }
 
 // Scenario: same caller, same denied paths, BUT the caller adds
@@ -60,62 +63,66 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 // conv-id, not the human's empty string, so the orchestration can
 // stamp the right audit.
 func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
-	stubApproval(t, true)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
+		stubApproval(t, true)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const targetConv = "tttt-1111-2222-3333-4444"
-	const targetLabel = "spwn-tt001"
-	const targetTmux = "tclaude-spwn-tt001"
-	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv)
+		const targetConv = "tttt-1111-2222-3333-4444"
+		const targetLabel = "spwn-tt001"
+		const targetTmux = "tclaude-spwn-tt001"
+		f.HaveConvWithTitle(targetConv, "worker")
+		f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", targetConv)
 
-	const callerConv = "cccc-1111-2222-3333-4444"
-	r := testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+targetConv+"/reincarnate",
-		map[string]any{"follow_up": "fresh start"})
-	r.Header.Set("X-Tclaude-Ask-Human", "30s")
-	r = agentd.AsAgentPeer(r, callerConv)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"expected 200 after popup-approve, body=%s", rec.Body.String())
-	// reincarnate orchestration ran: there should be a succession row
-	// from the old conv to a new one.
-	successor, err := db.GetConvSuccessor(targetConv)
-	require.NoError(t, err, "GetConvSuccessor")
-	require.NotEmpty(t, successor, "reincarnate did not record a successor; the orchestration was not actually run")
+		const callerConv = "cccc-1111-2222-3333-4444"
+		r := testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+targetConv+"/reincarnate",
+			map[string]any{"follow_up": "fresh start"})
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		r = agentd.AsAgentPeer(r, callerConv)
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"expected 200 after popup-approve, body=%s", rec.Body.String())
+		// reincarnate orchestration ran: there should be a succession row
+		// from the old conv to a new one.
+		successor, err := db.GetConvSuccessor(targetConv)
+		require.NoError(t, err, "GetConvSuccessor")
+		require.NotEmpty(t, successor, "reincarnate did not record a successor; the orchestration was not actually run")
+	})
 }
 
 // Same setup but popup DENIES. The cross-agent call must still
 // return 403 — the popup is an escape hatch, not a free pass.
 func TestCrossAgentAskHuman_HeaderAndDenialStillRefuses(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
-	stubApproval(t, false)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
+		stubApproval(t, false)
 
-	f := newFlow(t)
+		f := newFlow(t)
 
-	const targetConv = "tttt-1111-2222-3333-4444"
-	const targetLabel = "spwn-tt001"
-	const targetTmux = "tclaude-spwn-tt001"
-	f.HaveConvWithTitle(targetConv, "worker")
-	f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", targetConv)
+		const targetConv = "tttt-1111-2222-3333-4444"
+		const targetLabel = "spwn-tt001"
+		const targetTmux = "tclaude-spwn-tt001"
+		f.HaveConvWithTitle(targetConv, "worker")
+		f.HaveAliveSession(targetConv, targetLabel, targetTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", targetConv)
 
-	const callerConv = "cccc-1111-2222-3333-4444"
-	r := testharness.JSONRequest(t, http.MethodPost,
-		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
-	r.Header.Set("X-Tclaude-Ask-Human", "30s")
-	r = agentd.AsAgentPeer(r, callerConv)
-	rec := testharness.Serve(f.Mux, r)
-	require.Equal(t, http.StatusForbidden, rec.Code,
-		"expected 403 after popup-deny, body=%s", rec.Body.String())
-	// And no succession row was written.
-	successor, _ := db.GetConvSuccessor(targetConv)
-	assert.Empty(t, successor, "reincarnate ran despite popup-deny — successor %s recorded", successor)
+		const callerConv = "cccc-1111-2222-3333-4444"
+		r := testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		r = agentd.AsAgentPeer(r, callerConv)
+		rec := testharness.Serve(f.Mux, r)
+		require.Equal(t, http.StatusForbidden, rec.Code,
+			"expected 403 after popup-deny, body=%s", rec.Body.String())
+		// And no succession row was written.
+		successor, _ := db.GetConvSuccessor(targetConv)
+		assert.Empty(t, successor, "reincarnate ran despite popup-deny — successor %s recorded", successor)
+	})
 }

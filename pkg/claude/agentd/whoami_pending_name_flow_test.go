@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,19 +48,21 @@ func whoamiTitle(t *testing.T, f *testharness.Flow, convID string) string {
 // conv-listing use, rather than a bare DisplayTitle that skips the pending
 // name. Harness-agnostic — the gap bit Codex but the fix is one code path.
 func TestWhoami_FallsBackToPendingName(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const convID = "019ed733-f4df-7510-9514-0e413aabaaf6"
-	f.HaveGroup("tclaude-dev")
-	f.HaveMember("tclaude-dev", convID) // enrolls the agent
-	// Spawn recorded the requested name as the pending name; no custom
-	// title exists yet (the out-of-band rename has not landed).
-	require.NoError(t, db.SetEnrollmentPendingName(convID, "testc"),
-		"SetEnrollmentPendingName")
+		const convID = "019ed733-f4df-7510-9514-0e413aabaaf6"
+		f.HaveGroup("tclaude-dev")
+		f.HaveMember("tclaude-dev", convID) // enrolls the agent
+		// Spawn recorded the requested name as the pending name; no custom
+		// title exists yet (the out-of-band rename has not landed).
+		require.NoError(t, db.SetEnrollmentPendingName(convID, "testc"),
+			"SetEnrollmentPendingName")
 
-	got := whoamiTitle(t, f, convID)
-	assert.Equal(t, "testc", got,
-		"whoami must surface the spawn-time pending name, not (unnamed)")
+		got := whoamiTitle(t, f, convID)
+		assert.Equal(t, "testc", got,
+			"whoami must surface the spawn-time pending name, not (unnamed)")
+	})
 }
 
 // Guard: a real custom title outranks the pending name (custom is the
@@ -67,19 +70,21 @@ func TestWhoami_FallsBackToPendingName(t *testing.T) {
 // custom title nor a pending name still reads as "(unnamed)" — the
 // placeholder whoami has always shown for a genuinely unnamed agent.
 func TestWhoami_CustomTitleOutranksPending_AndUnnamedFallback(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const named = "11111111-1111-1111-1111-111111111111"
-	f.HaveGroup("g")
-	f.HaveMember("g", named)
-	f.HaveConvWithTitle(named, "renamed-title")
-	require.NoError(t, db.SetEnrollmentPendingName(named, "stale-pending"),
-		"SetEnrollmentPendingName")
-	assert.Equal(t, "renamed-title", whoamiTitle(t, f, named),
-		"custom title must outrank the pending name")
+		const named = "11111111-1111-1111-1111-111111111111"
+		f.HaveGroup("g")
+		f.HaveMember("g", named)
+		f.HaveConvWithTitle(named, "renamed-title")
+		require.NoError(t, db.SetEnrollmentPendingName(named, "stale-pending"),
+			"SetEnrollmentPendingName")
+		assert.Equal(t, "renamed-title", whoamiTitle(t, f, named),
+			"custom title must outrank the pending name")
 
-	const bare = "22222222-2222-2222-2222-222222222222"
-	f.HaveMember("g", bare) // enrolled, but no pending name and no title
-	assert.Equal(t, "(unnamed)", whoamiTitle(t, f, bare),
-		"an agent with no name material reads as (unnamed)")
+		const bare = "22222222-2222-2222-2222-222222222222"
+		f.HaveMember("g", bare) // enrolled, but no pending name and no title
+		assert.Equal(t, "(unnamed)", whoamiTitle(t, f, bare),
+			"an agent with no name material reads as (unnamed)")
+	})
 }

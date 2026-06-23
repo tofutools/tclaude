@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -86,33 +87,35 @@ func dashMemberTitle(t *testing.T, group, conv string) string {
 // the new name lands on every read surface — `tclaude agent groups
 // members` and the dashboard's own /api/snapshot group rows.
 func TestDashboardRename_SetsTitle(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
-	const tmux = "tclaude-spwn-rena"
-	f.HaveAliveSession(conv, "spwn-rena", tmux, "/tmp/work")
-	// Give the agent a starting name so this is a genuine rename, not
-	// a first-naming — the .jsonl scan resolves it the way production
-	// resolves an agent's title.
-	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-old"))
-	g := f.HaveGroup("team")
-	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-old", 5*time.Second)
+		const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
+		const tmux = "tclaude-spwn-rena"
+		f.HaveAliveSession(conv, "spwn-rena", tmux, "/tmp/work")
+		// Give the agent a starting name so this is a genuine rename, not
+		// a first-naming — the .jsonl scan resolves it the way production
+		// resolves an agent's title.
+		require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-old"))
+		g := f.HaveGroup("team")
+		f.HaveMember("team", conv)
+		f.AssertGroupMember(g.Name, conv, "worker-old", 5*time.Second)
 
-	mux := renameDashMux(t)
-	rec := postAgentRename(t, mux, conv, map[string]any{"title": "worker-new"})
-	require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
+		mux := renameDashMux(t)
+		rec := postAgentRename(t, mux, conv, map[string]any{"title": "worker-new"})
+		require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
 
-	// `/rename` was injected into the agent's pane.
-	f.AssertSentContains(tmux+":0.0", "/rename worker-new", 5*time.Second)
+		// `/rename` was injected into the agent's pane.
+		f.AssertSentContains(tmux+":0.0", "/rename worker-new", 5*time.Second)
 
-	// The new title converges on the members surface (refreshed from
-	// the .jsonl) once CC processes the injected /rename.
-	f.AssertGroupMember(g.Name, conv, "worker-new", 5*time.Second)
+		// The new title converges on the members surface (refreshed from
+		// the .jsonl) once CC processes the injected /rename.
+		f.AssertGroupMember(g.Name, conv, "worker-new", 5*time.Second)
 
-	// ...and the dashboard's own /api/snapshot group row shows it too.
-	assert.Equal(t, "worker-new", dashMemberTitle(t, g.Name, conv),
-		"the renamed title must surface on the dashboard snapshot")
+		// ...and the dashboard's own /api/snapshot group row shows it too.
+		assert.Equal(t, "worker-new", dashMemberTitle(t, g.Name, conv),
+			"the renamed title must surface on the dashboard snapshot")
+	})
 }
 
 // Scenario: Codex renames are out-of-band writes to Codex's native
@@ -121,39 +124,41 @@ func TestDashboardRename_SetsTitle(t *testing.T) {
 // the native write; otherwise the UI keeps rendering the old cached title
 // until some unrelated full conversation scan happens.
 func TestDashboardRename_CodexUpdatesCachedTitle(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000004"
-	const tmux = "tclaude-spwn-rencdx"
-	cx := f.HaveAliveCodexSession(conv, "spwn-rencdx", tmux, "/tmp/work")
-	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
-		Title:            "codex-old",
-		FirstUserMessage: "hello from codex",
-		Cwd:              "/tmp/work",
-	}))
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID:      conv,
-		CustomTitle: "codex-old",
-		FirstPrompt: "hello from codex",
-		ProjectPath: "/tmp/work",
-		Harness:     "codex",
-	}), "seed stale dashboard title cache")
-	mux := renameDashMux(t)
-	g := f.HaveGroup("team")
-	f.HaveMember("team", conv)
-	assert.Equal(t, "codex-old", dashMemberTitle(t, g.Name, conv),
-		"precondition: dashboard reads the cached Codex title")
+		const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000004"
+		const tmux = "tclaude-spwn-rencdx"
+		cx := f.HaveAliveCodexSession(conv, "spwn-rencdx", tmux, "/tmp/work")
+		require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
+			Title:            "codex-old",
+			FirstUserMessage: "hello from codex",
+			Cwd:              "/tmp/work",
+		}))
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+			ConvID:      conv,
+			CustomTitle: "codex-old",
+			FirstPrompt: "hello from codex",
+			ProjectPath: "/tmp/work",
+			Harness:     "codex",
+		}), "seed stale dashboard title cache")
+		mux := renameDashMux(t)
+		g := f.HaveGroup("team")
+		f.HaveMember("team", conv)
+		assert.Equal(t, "codex-old", dashMemberTitle(t, g.Name, conv),
+			"precondition: dashboard reads the cached Codex title")
 
-	rec := postAgentRename(t, mux, conv, map[string]any{"title": "codex-new"})
-	require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
+		rec := postAgentRename(t, mux, conv, map[string]any{"title": "codex-new"})
+		require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
 
-	got, err := cx.ThreadTitle()
-	require.NoError(t, err)
-	assert.Equal(t, "codex-new", got, "Codex native title store updated")
-	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
-		"Codex rename must not inject /rename; sent=%+v", f.World.Tmux.Sent())
-	assert.Equal(t, "codex-new", dashMemberTitle(t, g.Name, conv),
-		"dashboard cache must reflect the out-of-band Codex rename")
+		got, err := cx.ThreadTitle()
+		require.NoError(t, err)
+		assert.Equal(t, "codex-new", got, "Codex native title store updated")
+		assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
+			"Codex rename must not inject /rename; sent=%+v", f.World.Tmux.Sent())
+		assert.Equal(t, "codex-new", dashMemberTitle(t, g.Name, conv),
+			"dashboard cache must reflect the out-of-band Codex rename")
+	})
 }
 
 // Scenario: the edit panel's "auto" checkbox POSTs {auto: true}. The
@@ -161,30 +166,32 @@ func TestDashboardRename_CodexUpdatesCachedTitle(t *testing.T) {
 // the agent to rename itself. The conversation title is untouched
 // until the agent acts on the nudge on its own next turn.
 func TestDashboardRename_AutoNudge(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000002"
-	const tmux = "tclaude-spwn-renc"
-	f.HaveAliveSession(conv, "spwn-renc", tmux, "/tmp/work")
-	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-keepme"))
-	g := f.HaveGroup("team")
-	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-keepme", 5*time.Second)
+		const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000002"
+		const tmux = "tclaude-spwn-renc"
+		f.HaveAliveSession(conv, "spwn-renc", tmux, "/tmp/work")
+		require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-keepme"))
+		g := f.HaveGroup("team")
+		f.HaveMember("team", conv)
+		f.AssertGroupMember(g.Name, conv, "worker-keepme", 5*time.Second)
 
-	mux := renameDashMux(t)
-	rec := postAgentRename(t, mux, conv, map[string]any{"auto": true})
-	require.Equalf(t, http.StatusOK, rec.Code, "auto-rename body=%s", rec.Body.String())
+		mux := renameDashMux(t)
+		rec := postAgentRename(t, mux, conv, map[string]any{"auto": true})
+		require.Equalf(t, http.StatusOK, rec.Code, "auto-rename body=%s", rec.Body.String())
 
-	// A self-rename nudge — not a /rename — was injected.
-	f.AssertSentContains(tmux+":0.0", "rename yourself", 5*time.Second)
-	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
-		"auto mode must not inject a /rename; sent=%+v", f.World.Tmux.Sent())
+		// A self-rename nudge — not a /rename — was injected.
+		f.AssertSentContains(tmux+":0.0", "rename yourself", 5*time.Second)
+		assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
+			"auto mode must not inject a /rename; sent=%+v", f.World.Tmux.Sent())
 
-	// The title is unchanged — the agent picks its own on a later turn.
-	// dashMemberTitle fatals if the member is missing, so a vanished
-	// member can't let this assertion silently pass.
-	assert.Equal(t, "worker-keepme", dashMemberTitle(t, g.Name, conv),
-		"auto mode must not change the title itself")
+		// The title is unchanged — the agent picks its own on a later turn.
+		// dashMemberTitle fatals if the member is missing, so a vanished
+		// member can't let this assertion silently pass.
+		assert.Equal(t, "worker-keepme", dashMemberTitle(t, g.Name, conv),
+			"auto mode must not change the title itself")
+	})
 }
 
 // Scenario: a title that fails the rename charset gate is rejected with
@@ -192,29 +199,31 @@ func TestDashboardRename_AutoNudge(t *testing.T) {
 // into the pane. The slash in the title is the keystroke-injection
 // vector the gate exists to block.
 func TestDashboardRename_InvalidTitleRejected(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000003"
-	const tmux = "tclaude-spwn-rend"
-	f.HaveAliveSession(conv, "spwn-rend", tmux, "/tmp/work")
-	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-safe"))
-	g := f.HaveGroup("team")
-	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-safe", 5*time.Second)
+		const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000003"
+		const tmux = "tclaude-spwn-rend"
+		f.HaveAliveSession(conv, "spwn-rend", tmux, "/tmp/work")
+		require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-safe"))
+		g := f.HaveGroup("team")
+		f.HaveMember("team", conv)
+		f.AssertGroupMember(g.Name, conv, "worker-safe", 5*time.Second)
 
-	mux := renameDashMux(t)
-	rec := postAgentRename(t, mux, conv, map[string]any{"title": "bad/slashed"})
-	require.Equalf(t, http.StatusBadRequest, rec.Code,
-		"a slash in the title must be rejected; body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "invalid_title",
-		"the rejection must be the title charset gate, not some other 400")
+		mux := renameDashMux(t)
+		rec := postAgentRename(t, mux, conv, map[string]any{"title": "bad/slashed"})
+		require.Equalf(t, http.StatusBadRequest, rec.Code,
+			"a slash in the title must be rejected; body=%s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "invalid_title",
+			"the rejection must be the title charset gate, not some other 400")
 
-	// A rejected rename never reaches the pane.
-	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
-		"a rejected rename must inject nothing; sent=%+v", f.World.Tmux.Sent())
+		// A rejected rename never reaches the pane.
+		assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
+			"a rejected rename must inject nothing; sent=%+v", f.World.Tmux.Sent())
 
-	// The title is left exactly as it was. dashMemberTitle fatals if
-	// the member is missing, so this can't silently pass.
-	assert.Equal(t, "worker-safe", dashMemberTitle(t, g.Name, conv),
-		"a rejected rename must not touch the title")
+		// The title is left exactly as it was. dashMemberTitle fatals if
+		// the member is missing, so this can't silently pass.
+		assert.Equal(t, "worker-safe", dashMemberTitle(t, g.Name, conv),
+			"a rejected rename must not touch the title")
+	})
 }

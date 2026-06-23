@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,36 +24,38 @@ import (
 // Expected: accepted. The brief lands in the successor's inbox as the
 // "reincarnation handoff" message, verbatim — newlines and all.
 func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-old-001"
-	const oldTmux = "tclaude-spwn-old-001"
+		const oldConv = "old-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-old-001"
+		const oldTmux = "tclaude-spwn-old-001"
 
-	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	// Over the retired 4096-byte cap, under the 16384 inbox cap, and
-	// multi-line — both the length AND the newlines used to be rejected.
-	followUp := "Handoff brief - picking up the auth refactor.\n\n" +
-		strings.Repeat("Detail line about an in-flight file and the next step.\n", 130) +
-		"Final line: run the tests before opening the PR."
-	require.Greater(t, len(followUp), 4096, "test brief must exceed the retired cap")
-	require.Less(t, len(followUp), 16384, "test brief must stay under the inbox cap")
-	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+		// Over the retired 4096-byte cap, under the 16384 inbox cap, and
+		// multi-line — both the length AND the newlines used to be rejected.
+		followUp := "Handoff brief - picking up the auth refactor.\n\n" +
+			strings.Repeat("Detail line about an in-flight file and the next step.\n", 130) +
+			"Final line: run the tests before opening the PR."
+		require.Greater(t, len(followUp), 4096, "test brief must exceed the retired cap")
+		require.Less(t, len(followUp), 16384, "test brief must stay under the inbox cap")
+		require.Contains(t, followUp, "\n", "test brief must be multi-line")
 
-	r := f.AsHuman().Reincarnate(oldConv, followUp)
+		r := f.AsHuman().Reincarnate(oldConv, followUp)
 
-	// The handoff rode the inbox — identical agent_messages path to a
-	// spawn --initial-message — and survived verbatim.
-	rows, err := db.ListAgentMessagesForConv(r.NewConv, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "successor should have exactly one inbox message (the handoff)")
-	assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
+		// The handoff rode the inbox — identical agent_messages path to a
+		// spawn --initial-message — and survived verbatim.
+		rows, err := db.ListAgentMessagesForConv(r.NewConv, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "successor should have exactly one inbox message (the handoff)")
+		assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
+		assert.Equal(t, followUp, rows[0].Body,
+			"handoff body must survive verbatim — length and newlines intact")
+	})
 }
 
 // Scenario: a solo (groupless) agent is reincarnated with a multi-line
@@ -63,34 +66,36 @@ func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 // Expected: accepted. The multi-line brief lands in the successor's
 // inbox verbatim, with group_id 0.
 func TestReincarnate_SoloHandoffRidesInbox(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "solo-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-solo-001"
-	const oldTmux = "tclaude-spwn-solo-001"
+		const oldConv = "solo-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-solo-001"
+		const oldTmux = "tclaude-spwn-solo-001"
 
-	f.HaveConvWithTitle(oldConv, "loner")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	// No HaveGroup / HaveMember: this agent is solo.
+		f.HaveConvWithTitle(oldConv, "loner")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		// No HaveGroup / HaveMember: this agent is solo.
 
-	followUp := "Handoff brief - picking up where I left off.\n\n" +
-		"Files: pkg/foo/bar.go, pkg/foo/baz.go.\n" +
-		"Next: finish the refactor, then run the tests."
-	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+		followUp := "Handoff brief - picking up where I left off.\n\n" +
+			"Files: pkg/foo/bar.go, pkg/foo/baz.go.\n" +
+			"Next: finish the refactor, then run the tests."
+		require.Contains(t, followUp, "\n", "test brief must be multi-line")
 
-	r := f.AsHuman().Reincarnate(oldConv, followUp)
+		r := f.AsHuman().Reincarnate(oldConv, followUp)
 
-	// The solo successor has an inbox now — the handoff rode it as a
-	// direct message, the same agent_messages path a grouped handoff
-	// takes.
-	rows, err := db.ListAgentMessagesForConv(r.NewConv, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "solo successor should have exactly one inbox message (the handoff)")
-	assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
-	assert.Equal(t, int64(0), rows[0].GroupID,
-		"a solo handoff is a direct message — group_id 0")
+		// The solo successor has an inbox now — the handoff rode it as a
+		// direct message, the same agent_messages path a grouped handoff
+		// takes.
+		rows, err := db.ListAgentMessagesForConv(r.NewConv, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "solo successor should have exactly one inbox message (the handoff)")
+		assert.Equal(t, "reincarnation handoff", rows[0].Subject, "handoff subject")
+		assert.Equal(t, followUp, rows[0].Body,
+			"handoff body must survive verbatim — length and newlines intact")
+		assert.Equal(t, int64(0), rows[0].GroupID,
+			"a solo handoff is a direct message — group_id 0")
+	})
 }
 
 // Scenario: a follow-up exceeds even the lenient 16384-byte inbox cap.
@@ -98,24 +103,26 @@ func TestReincarnate_SoloHandoffRidesInbox(t *testing.T) {
 // Expected: 400 — rejected at decode time, before the membership
 // snapshot. The cap is generous but still bounded.
 func TestReincarnate_RejectsFollowUpOverInboxCap(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-old-001"
-	const oldTmux = "tclaude-spwn-old-001"
+		const oldConv = "old-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-old-001"
+		const oldTmux = "tclaude-spwn-old-001"
 
-	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	got := f.AsHuman().ReincarnateWith(oldConv, map[string]any{
-		"follow_up": strings.Repeat("a", 20000),
+		got := f.AsHuman().ReincarnateWith(oldConv, map[string]any{
+			"follow_up": strings.Repeat("a", 20000),
+		})
+		assert.Equal(t, http.StatusBadRequest, got.Code,
+			"a follow-up over the 16384 inbox cap should be rejected; body=%s", got.Raw)
+		assert.Contains(t, string(got.Raw), "invalid_follow_up",
+			"error body should name the invalid_follow_up code")
 	})
-	assert.Equal(t, http.StatusBadRequest, got.Code,
-		"a follow-up over the 16384 inbox cap should be rejected; body=%s", got.Raw)
-	assert.Contains(t, string(got.Raw), "invalid_follow_up",
-		"error body should name the invalid_follow_up code")
 }
 
 // Scenario: a grouped worker is cloned with a large multi-line handoff
@@ -124,37 +131,39 @@ func TestReincarnate_RejectsFollowUpOverInboxCap(t *testing.T) {
 // Expected: accepted. The brief lands in the clone's inbox as the
 // "clone handoff" message, verbatim.
 func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "old-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-old-001"
-	const oldTmux = "tclaude-spwn-old-001"
+		const oldConv = "old-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-old-001"
+		const oldTmux = "tclaude-spwn-old-001"
 
-	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	f.HaveGroup("alpha")
-	f.HaveMember("alpha", oldConv)
+		f.HaveConvWithTitle(oldConv, "worker")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		f.HaveGroup("alpha")
+		f.HaveMember("alpha", oldConv)
 
-	followUp := "Clone handoff - explore the parallel approach.\n\n" +
-		strings.Repeat("Background paragraph the clone should read first.\n", 120) +
-		"Report back when the spike is done."
-	require.Greater(t, len(followUp), 4096, "test brief must exceed the retired cap")
-	require.Less(t, len(followUp), 16384, "test brief must stay under the inbox cap")
-	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+		followUp := "Clone handoff - explore the parallel approach.\n\n" +
+			strings.Repeat("Background paragraph the clone should read first.\n", 120) +
+			"Report back when the spike is done."
+		require.Greater(t, len(followUp), 4096, "test brief must exceed the retired cap")
+		require.Less(t, len(followUp), 16384, "test brief must stay under the inbox cap")
+		require.Contains(t, followUp, "\n", "test brief must be multi-line")
 
-	// no_copy_conv keeps the test off convops.CopyConversationToPath.
-	c := f.AsHuman().CloneWith(oldConv, map[string]any{
-		"no_copy_conv": true,
-		"follow_up":    followUp,
+		// no_copy_conv keeps the test off convops.CopyConversationToPath.
+		c := f.AsHuman().CloneWith(oldConv, map[string]any{
+			"no_copy_conv": true,
+			"follow_up":    followUp,
+		})
+		require.Equal(t, http.StatusOK, c.Code, "clone should succeed; body=%s", c.Raw)
+
+		rows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "clone should have exactly one inbox message (the handoff)")
+		assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
+		assert.Equal(t, followUp, rows[0].Body,
+			"handoff body must survive verbatim — length and newlines intact")
 	})
-	require.Equal(t, http.StatusOK, c.Code, "clone should succeed; body=%s", c.Raw)
-
-	rows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "clone should have exactly one inbox message (the handoff)")
-	assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
 }
 
 // Scenario: a solo (groupless) agent is cloned with a multi-line
@@ -164,32 +173,34 @@ func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 //
 // Expected: accepted. The brief lands in the clone's inbox verbatim.
 func TestClone_SoloHandoffRidesInbox(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	const oldConv = "solo-aaaa-bbbb-cccc-dddd"
-	const oldLabel = "spwn-solo-001"
-	const oldTmux = "tclaude-spwn-solo-001"
+		const oldConv = "solo-aaaa-bbbb-cccc-dddd"
+		const oldLabel = "spwn-solo-001"
+		const oldTmux = "tclaude-spwn-solo-001"
 
-	f.HaveConvWithTitle(oldConv, "loner")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
-	// No HaveGroup / HaveMember: this agent is solo.
+		f.HaveConvWithTitle(oldConv, "loner")
+		f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+		// No HaveGroup / HaveMember: this agent is solo.
 
-	followUp := "Clone handoff - take the parallel spike.\n\n" +
-		"Start from pkg/foo/spike.go; report back when done."
-	require.Contains(t, followUp, "\n", "test brief must be multi-line")
+		followUp := "Clone handoff - take the parallel spike.\n\n" +
+			"Start from pkg/foo/spike.go; report back when done."
+		require.Contains(t, followUp, "\n", "test brief must be multi-line")
 
-	c := f.AsHuman().CloneWith(oldConv, map[string]any{
-		"no_copy_conv": true,
-		"follow_up":    followUp,
+		c := f.AsHuman().CloneWith(oldConv, map[string]any{
+			"no_copy_conv": true,
+			"follow_up":    followUp,
+		})
+		require.Equal(t, http.StatusOK, c.Code, "solo clone should succeed; body=%s", c.Raw)
+
+		rows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
+		require.NoError(t, err, "ListAgentMessagesForConv")
+		require.Len(t, rows, 1, "solo clone should have exactly one inbox message (the handoff)")
+		assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
+		assert.Equal(t, followUp, rows[0].Body,
+			"handoff body must survive verbatim — length and newlines intact")
+		assert.Equal(t, int64(0), rows[0].GroupID,
+			"a solo handoff is a direct message — group_id 0")
 	})
-	require.Equal(t, http.StatusOK, c.Code, "solo clone should succeed; body=%s", c.Raw)
-
-	rows, err := db.ListAgentMessagesForConv(c.NewConv, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	require.Len(t, rows, 1, "solo clone should have exactly one inbox message (the handoff)")
-	assert.Equal(t, "clone handoff", rows[0].Subject, "handoff subject")
-	assert.Equal(t, followUp, rows[0].Body,
-		"handoff body must survive verbatim — length and newlines intact")
-	assert.Equal(t, int64(0), rows[0].GroupID,
-		"a solo handoff is a direct message — group_id 0")
 }

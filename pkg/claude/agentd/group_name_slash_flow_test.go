@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,40 +27,42 @@ import (
 // {name}-wildcard routing that fixes it, asserting at the snapshot —
 // the read surface the dashboard actually renders from.
 func TestGroupSlashRename_DashboardRecoversPoisonGroup(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	f := newFlow(t)
-	// HaveGroup writes straight through db.CreateAgentGroup, which has
-	// no name validation — exactly how a slash name slipped in before
-	// the create-side guard landed.
-	f.HaveGroup("squad/alpha")
+		f := newFlow(t)
+		// HaveGroup writes straight through db.CreateAgentGroup, which has
+		// no name validation — exactly how a slash name slipped in before
+		// the create-side guard landed.
+		f.HaveGroup("squad/alpha")
 
-	mux := agentd.BuildDashboardHandlerForTest()
+		mux := agentd.BuildDashboardHandlerForTest()
 
-	// Pre-condition: the poison group is in the snapshot under its
-	// slashed name.
-	pre := fetchDashSnapshot(t, mux)
-	require.True(t, snapshotHasGroup(pre, "squad/alpha"),
-		"pre-rename: slashed group should be in the snapshot; got %v", groupNames(pre))
+		// Pre-condition: the poison group is in the snapshot under its
+		// slashed name.
+		pre := fetchDashSnapshot(t, mux)
+		require.True(t, snapshotHasGroup(pre, "squad/alpha"),
+			"pre-rename: slashed group should be in the snapshot; got %v", groupNames(pre))
 
-	// Rename it via the dashboard endpoint, with the name percent-
-	// encoded the way the browser's encodeURIComponent sends it.
-	body := strings.NewReader(`{"new_name":"squad-alpha"}`)
-	r, err := http.NewRequest(http.MethodPost, "/api/groups/squad%2Falpha/rename", body)
-	require.NoError(t, err, "build request")
-	r.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, r)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"POST /api/groups/squad%%2Falpha/rename body=%s", rec.Body.String())
+		// Rename it via the dashboard endpoint, with the name percent-
+		// encoded the way the browser's encodeURIComponent sends it.
+		body := strings.NewReader(`{"new_name":"squad-alpha"}`)
+		r, err := http.NewRequest(http.MethodPost, "/api/groups/squad%2Falpha/rename", body)
+		require.NoError(t, err, "build request")
+		r.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, r)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST /api/groups/squad%%2Falpha/rename body=%s", rec.Body.String())
 
-	// Post-condition: the snapshot shows the clean name and no longer
-	// the slashed one.
-	post := fetchDashSnapshot(t, mux)
-	assert.True(t, snapshotHasGroup(post, "squad-alpha"),
-		"post-rename: renamed group missing; got %v", groupNames(post))
-	assert.False(t, snapshotHasGroup(post, "squad/alpha"),
-		"post-rename: slashed name should be gone; got %v", groupNames(post))
+		// Post-condition: the snapshot shows the clean name and no longer
+		// the slashed one.
+		post := fetchDashSnapshot(t, mux)
+		assert.True(t, snapshotHasGroup(post, "squad-alpha"),
+			"post-rename: renamed group missing; got %v", groupNames(post))
+		assert.False(t, snapshotHasGroup(post, "squad/alpha"),
+			"post-rename: slashed name should be gone; got %v", groupNames(post))
+	})
 }
 
 // Scenario: the /v1 (SO_PEERCRED socket) twin of the above — the CLI's
@@ -67,25 +70,27 @@ func TestGroupSlashRename_DashboardRecoversPoisonGroup(t *testing.T) {
 // hand-rolled split; the modernized /v1/groups/{name} wildcard routes
 // must carry a slashed group name through to the rename handler.
 func TestGroupSlashRename_V1RecoversPoisonGroup(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("ops/team")
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("ops/team")
 
-	mux := agentd.BuildHandlerForTest()
-	body := strings.NewReader(`{"new_name":"ops-team"}`)
-	r, err := http.NewRequest(http.MethodPost, "/v1/groups/ops%2Fteam/rename", body)
-	require.NoError(t, err, "build request")
-	r.Header.Set("Content-Type", "application/json")
-	r = agentd.AsHumanPeer(r) // human peer bypasses the groups.rename slug
-	rec := testharness.Serve(mux, r)
-	require.Equal(t, http.StatusOK, rec.Code,
-		"POST /v1/groups/ops%%2Fteam/rename body=%s", rec.Body.String())
+		mux := agentd.BuildHandlerForTest()
+		body := strings.NewReader(`{"new_name":"ops-team"}`)
+		r, err := http.NewRequest(http.MethodPost, "/v1/groups/ops%2Fteam/rename", body)
+		require.NoError(t, err, "build request")
+		r.Header.Set("Content-Type", "application/json")
+		r = agentd.AsHumanPeer(r) // human peer bypasses the groups.rename slug
+		rec := testharness.Serve(mux, r)
+		require.Equal(t, http.StatusOK, rec.Code,
+			"POST /v1/groups/ops%%2Fteam/rename body=%s", rec.Body.String())
 
-	old, err := db.GetAgentGroupByName("ops/team")
-	require.NoError(t, err, "lookup old name")
-	assert.Nil(t, old, "slashed name should no longer resolve after rename")
-	renamed, err := db.GetAgentGroupByName("ops-team")
-	require.NoError(t, err, "lookup new name")
-	assert.NotNil(t, renamed, "renamed group should resolve under the clean name")
+		old, err := db.GetAgentGroupByName("ops/team")
+		require.NoError(t, err, "lookup old name")
+		assert.Nil(t, old, "slashed name should no longer resolve after rename")
+		renamed, err := db.GetAgentGroupByName("ops-team")
+		require.NoError(t, err, "lookup new name")
+		assert.NotNil(t, renamed, "renamed group should resolve under the clean name")
+	})
 }
 
 // Scenario: creating a group with a slash in the name is rejected up
@@ -95,23 +100,25 @@ func TestGroupSlashRename_V1RecoversPoisonGroup(t *testing.T) {
 // no new slash-named group can be made (the dashboard create endpoint
 // shares handleGroups with the CLI's `groups create`).
 func TestGroupCreate_RejectsSlashName(t *testing.T) {
-	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
-	t.Cleanup(restoreURL)
+	synctest.Test(t, func(t *testing.T) {
+		restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+		t.Cleanup(restoreURL)
 
-	newFlow(t) // sets up the test DB
+		newFlow(t) // sets up the test DB
 
-	mux := agentd.BuildDashboardHandlerForTest()
-	body := strings.NewReader(`{"name":"bad/name"}`)
-	r, err := http.NewRequest(http.MethodPost, "/api/groups", body)
-	require.NoError(t, err, "build request")
-	r.Header.Set("Content-Type", "application/json")
-	rec := testharness.Serve(mux, r)
-	assert.Equal(t, http.StatusBadRequest, rec.Code,
-		"POST /api/groups with a slashed name should be rejected; body=%s", rec.Body.String())
+		mux := agentd.BuildDashboardHandlerForTest()
+		body := strings.NewReader(`{"name":"bad/name"}`)
+		r, err := http.NewRequest(http.MethodPost, "/api/groups", body)
+		require.NoError(t, err, "build request")
+		r.Header.Set("Content-Type", "application/json")
+		rec := testharness.Serve(mux, r)
+		assert.Equal(t, http.StatusBadRequest, rec.Code,
+			"POST /api/groups with a slashed name should be rejected; body=%s", rec.Body.String())
 
-	g, err := db.GetAgentGroupByName("bad/name")
-	require.NoError(t, err, "group lookup")
-	assert.Nil(t, g, "no slashed group should have been created")
+		g, err := db.GetAgentGroupByName("bad/name")
+		require.NoError(t, err, "group lookup")
+		assert.Nil(t, g, "no slashed group should have been created")
+	})
 }
 
 // snapshotHasGroup reports whether the dashboard snapshot lists a group

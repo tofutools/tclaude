@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,43 +27,45 @@ import (
 // active member of its group under its own conv-id, no succession edge
 // appears, the session row keeps its conv-id and never reads exited.
 func TestForeignOneShot_DoesNotStealAgentIdentity(t *testing.T) {
-	f := newFlow(t)
-	g := setupClearedAgent(t, f)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
+		g := setupClearedAgent(t, f)
 
-	cc := f.World.CCs.GetByLabel(clearAgentLabel)
-	require.NotNil(t, cc, "CCSim for the agent should be registered")
+		cc := f.World.CCs.GetByLabel(clearAgentLabel)
+		require.NotNil(t, cc, "CCSim for the agent should be registered")
 
-	foreignConv := cc.RunForeignOneShot()
+		foreignConv := cc.RunForeignOneShot()
 
-	// `tclaude agent groups members alpha`: the agent is still the live
-	// member under its own conv-id; the foreign conv never appears.
-	members := f.ListGroupMembers(g.Name)
-	require.NotNil(t, findMember(members, clearAgentConv),
-		"the agent must remain a member under its own conv-id; got %+v", members)
-	assert.Nil(t, findMember(members, foreignConv),
-		"the foreign one-shot conv must not appear as a member")
+		// `tclaude agent groups members alpha`: the agent is still the live
+		// member under its own conv-id; the foreign conv never appears.
+		members := f.ListGroupMembers(g.Name)
+		require.NotNil(t, findMember(members, clearAgentConv),
+			"the agent must remain a member under its own conv-id; got %+v", members)
+		assert.Nil(t, findMember(members, foreignConv),
+			"the foreign one-shot conv must not appear as a member")
 
-	// Identity untouched: still an active agent, no succession edge,
-	// and the foreign conv was not promoted to anything.
-	enr, err := db.EnrollmentState(clearAgentConv)
-	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, enr,
-		"the agent must NOT be retired by a foreign process's SessionEnd")
-	succ, err := db.GetConvSuccessor(clearAgentConv)
-	require.NoError(t, err)
-	assert.Empty(t, succ, "no succession edge onto the foreign conv")
-	foreignEnr, err := db.EnrollmentState(foreignConv)
-	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, foreignEnr,
-		"the foreign conv must not inherit the agent's enrollment")
+		// Identity untouched: still an active agent, no succession edge,
+		// and the foreign conv was not promoted to anything.
+		enr, err := db.EnrollmentState(clearAgentConv)
+		require.NoError(t, err)
+		assert.Equal(t, db.EnrollmentActive, enr,
+			"the agent must NOT be retired by a foreign process's SessionEnd")
+		succ, err := db.GetConvSuccessor(clearAgentConv)
+		require.NoError(t, err)
+		assert.Empty(t, succ, "no succession edge onto the foreign conv")
+		foreignEnr, err := db.EnrollmentState(foreignConv)
+		require.NoError(t, err)
+		assert.Equal(t, db.EnrollmentNone, foreignEnr,
+			"the foreign conv must not inherit the agent's enrollment")
 
-	// The session row: conv-id untouched, and not marked exited (the
-	// "Exited" notification fires on the transition to exited, so no
-	// transition ⇒ no notification).
-	state, err := session.LoadSessionState(clearAgentLabel)
-	require.NoError(t, err)
-	assert.Equal(t, clearAgentConv, state.ConvID,
-		"the session row must keep tracking the agent's own conv-id")
-	assert.NotEqual(t, session.StatusExited, state.Status,
-		"a foreign one-shot's SessionEnd must not mark the live session exited")
+		// The session row: conv-id untouched, and not marked exited (the
+		// "Exited" notification fires on the transition to exited, so no
+		// transition ⇒ no notification).
+		state, err := session.LoadSessionState(clearAgentLabel)
+		require.NoError(t, err)
+		assert.Equal(t, clearAgentConv, state.ConvID,
+			"the session row must keep tracking the agent's own conv-id")
+		assert.NotEqual(t, session.StatusExited, state.Status,
+			"a foreign one-shot's SessionEnd must not mark the live session exited")
+	})
 }

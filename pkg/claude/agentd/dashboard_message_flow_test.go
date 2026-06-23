@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -43,135 +44,145 @@ func postDashMessage(t *testing.T, mux http.Handler, body map[string]any) *httpt
 // an agent_messages row attributed to the picked From conv, and an
 // alive member is nudged. The response lists one recipient per member.
 func TestDashboardMessage_GroupTarget_FansOutToEveryMember(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dmsg-send-bbbb-cccc-000000000001"
-	const memberA = "dmsg-aaaa-bbbb-cccc-000000000002"
-	const memberB = "dmsg-bbbb-bbbb-cccc-000000000003"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", memberA)
-	f.HaveMember("team", memberB)
-	f.HaveAliveSession(memberA, "spwn-dmsg-a", "tclaude-spwn-dmsg-a", "/tmp/work")
+		f.HaveGroup("team")
+		const sender = "dmsg-send-bbbb-cccc-000000000001"
+		const memberA = "dmsg-aaaa-bbbb-cccc-000000000002"
+		const memberB = "dmsg-bbbb-bbbb-cccc-000000000003"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", memberA)
+		f.HaveMember("team", memberB)
+		f.HaveAliveSession(memberA, "spwn-dmsg-a", "tclaude-spwn-dmsg-a", "/tmp/work")
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "dashboard broadcast",
-	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "dashboard broadcast",
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	resp := decodeMcast(t, rec)
-	assert.Equal(t, "team", resp.ViaGroup)
-	assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
-		"every non-sender member receives the dashboard multicast")
+		resp := decodeMcast(t, rec)
+		assert.Equal(t, "team", resp.ViaGroup)
+		assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
+			"every non-sender member receives the dashboard multicast")
 
-	// Real surface: each member's inbox has exactly one row, body +
-	// sender intact. The sender itself is excluded from the fan-out.
-	for _, m := range []string{memberA, memberB} {
-		rows, err := db.ListAgentMessagesForConv(m, 100)
+		// Real surface: each member's inbox has exactly one row, body +
+		// sender intact. The sender itself is excluded from the fan-out.
+		for _, m := range []string{memberA, memberB} {
+			rows, err := db.ListAgentMessagesForConv(m, 100)
+			require.NoError(t, err)
+			require.Len(t, rows, 1, "member %s got a row", m)
+			assert.Equal(t, "dashboard broadcast", rows[0].Body)
+			assert.Equal(t, sender, rows[0].FromConv, "row attributed to the picked From conv")
+		}
+		senderRows, err := db.ListAgentMessagesForConv(sender, 100)
 		require.NoError(t, err)
-		require.Len(t, rows, 1, "member %s got a row", m)
-		assert.Equal(t, "dashboard broadcast", rows[0].Body)
-		assert.Equal(t, sender, rows[0].FromConv, "row attributed to the picked From conv")
-	}
-	senderRows, err := db.ListAgentMessagesForConv(sender, 100)
-	require.NoError(t, err)
-	assert.Empty(t, senderRows, "the From conv does not message itself")
+		assert.Empty(t, senderRows, "the From conv does not message itself")
 
-	// The alive member is nudged over tmux.
-	f.AssertSentContains("tclaude-spwn-dmsg-a:0.0", "new agent message", 2*time.Second)
+		// The alive member is nudged over tmux.
+		f.AssertSentContains("tclaude-spwn-dmsg-a:0.0", "new agent message", 2*time.Second)
+	})
 }
 
 // Scenario: a solo target reaches exactly one agent — the fan-out
 // path is not taken, and a third group member gets nothing.
 func TestDashboardMessage_SoloTarget_ReachesOnlyOne(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const alice = "dmsg-alic-bbbb-cccc-000000000001"
-	const bob = "dmsg-bobb-bbbb-cccc-000000000002"
-	const carol = "dmsg-caro-bbbb-cccc-000000000003"
-	f.HaveMember("team", alice)
-	f.HaveMember("team", bob)
-	f.HaveMember("team", carol)
+		f.HaveGroup("team")
+		const alice = "dmsg-alic-bbbb-cccc-000000000001"
+		const bob = "dmsg-bobb-bbbb-cccc-000000000002"
+		const carol = "dmsg-caro-bbbb-cccc-000000000003"
+		f.HaveMember("team", alice)
+		f.HaveMember("team", bob)
+		f.HaveMember("team", carol)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": alice, "to": bob, "body": "just for bob",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": alice, "to": bob, "body": "just for bob",
+		})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		bobRows, err := db.ListAgentMessagesForConv(bob, 100)
+		require.NoError(t, err)
+		require.Len(t, bobRows, 1, "bob got exactly one row")
+		assert.Equal(t, "just for bob", bobRows[0].Body)
+		assert.Equal(t, alice, bobRows[0].FromConv)
+
+		carolRows, err := db.ListAgentMessagesForConv(carol, 100)
+		require.NoError(t, err)
+		assert.Empty(t, carolRows, "a solo send does not fan out to other members")
 	})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	bobRows, err := db.ListAgentMessagesForConv(bob, 100)
-	require.NoError(t, err)
-	require.Len(t, bobRows, 1, "bob got exactly one row")
-	assert.Equal(t, "just for bob", bobRows[0].Body)
-	assert.Equal(t, alice, bobRows[0].FromConv)
-
-	carolRows, err := db.ListAgentMessagesForConv(carol, 100)
-	require.NoError(t, err)
-	assert.Empty(t, carolRows, "a solo send does not fan out to other members")
 }
 
 // Scenario: an empty From is a 400 before any row is written — the
 // dashboard form requires the human to pick a sender.
 func TestDashboardMessage_MissingFrom_BadRequest(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const member = "dmsg-mem1-bbbb-cccc-000000000001"
-	f.HaveMember("team", member)
+		f.HaveGroup("team")
+		const member = "dmsg-mem1-bbbb-cccc-000000000001"
+		f.HaveMember("team", member)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"to": "group:team", "body": "no sender",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"to": "group:team", "body": "no sender",
+		})
+		require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "from is required")
+
+		rows, err := db.ListAgentMessagesForConv(member, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a rejected send writes no row")
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "from is required")
-
-	rows, err := db.ListAgentMessagesForConv(member, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a rejected send writes no row")
 }
 
 // Scenario: a From selector matching no conversation is a 404.
 func TestDashboardMessage_UnknownFrom_NotFound(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const member = "dmsg-mem2-bbbb-cccc-000000000001"
-	f.HaveMember("team", member)
+		f.HaveGroup("team")
+		const member = "dmsg-mem2-bbbb-cccc-000000000001"
+		f.HaveMember("team", member)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": "no-such-conv-anywhere", "to": "group:team", "body": "x",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": "no-such-conv-anywhere", "to": "group:team", "body": "x",
+		})
+		require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+
+		rows, err := db.ListAgentMessagesForConv(member, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a rejected send writes no row")
 	})
-	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
-
-	rows, err := db.ListAgentMessagesForConv(member, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a rejected send writes no row")
 }
 
 // Scenario: an empty body is a 400 — dispatchSend (the shared core)
 // rejects it identically to the /v1 path.
 func TestDashboardMessage_EmptyBody_BadRequest(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const sender = "dmsg-snd2-bbbb-cccc-000000000001"
-	const member = "dmsg-mem3-bbbb-cccc-000000000002"
-	f.HaveMember("team", sender)
-	f.HaveMember("team", member)
+		f.HaveGroup("team")
+		const sender = "dmsg-snd2-bbbb-cccc-000000000001"
+		const member = "dmsg-mem3-bbbb-cccc-000000000002"
+		f.HaveMember("team", sender)
+		f.HaveMember("team", member)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": "group:team", "body": "   ",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": "group:team", "body": "   ",
+		})
+		require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+
+		rows, err := db.ListAgentMessagesForConv(member, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a rejected send writes no row")
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
-
-	rows, err := db.ListAgentMessagesForConv(member, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a rejected send writes no row")
 }
 
 // Scenario: the authority gate is enforced on the dashboard path too.
@@ -182,26 +193,28 @@ func TestDashboardMessage_EmptyBody_BadRequest(t *testing.T) {
 // inside dispatchSend rather than bypassing it (the analog of the
 // export route's missing-asDashboardHumanPeer-wrap 401 test).
 func TestDashboardMessage_UnauthorizedFrom_Forbidden(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	// Two ungrouped agents — no shared group, and the sender holds no
-	// message.direct grant, so the off-group direct send has no path.
-	const sender = "dmsg-unau-bbbb-cccc-000000000001"
-	const recip = "dmsg-recp-bbbb-cccc-000000000002"
-	f.HaveConvWithTitle(sender, "lone-sender")
-	f.HaveConvWithTitle(recip, "lone-recip")
-	f.HaveEnrolledAgent(sender)
-	f.HaveEnrolledAgent(recip)
+		// Two ungrouped agents — no shared group, and the sender holds no
+		// message.direct grant, so the off-group direct send has no path.
+		const sender = "dmsg-unau-bbbb-cccc-000000000001"
+		const recip = "dmsg-recp-bbbb-cccc-000000000002"
+		f.HaveConvWithTitle(sender, "lone-sender")
+		f.HaveConvWithTitle(recip, "lone-recip")
+		f.HaveEnrolledAgent(sender)
+		f.HaveEnrolledAgent(recip)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": sender, "to": recip, "body": "should be refused",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": sender, "to": recip, "body": "should be refused",
+		})
+		require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+
+		rows, err := db.ListAgentMessagesForConv(recip, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a gate-refused send writes no row")
 	})
-	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
-
-	rows, err := db.ListAgentMessagesForConv(recip, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a gate-refused send writes no row")
 }
 
 // Scenario: the multicast gate is enforced on the dashboard path too.
@@ -209,22 +222,24 @@ func TestDashboardMessage_UnauthorizedFrom_Forbidden(t *testing.T) {
 // group cannot multicast into it — handleMulticast's member/owner
 // gate refuses it with 403, and no recipient row is written.
 func TestDashboardMessage_NonMemberFrom_GroupForbidden(t *testing.T) {
-	f := newFlow(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newFlow(t)
 
-	f.HaveGroup("team")
-	const member = "dmsg-mem4-bbbb-cccc-000000000001"
-	const outsider = "dmsg-outs-bbbb-cccc-000000000002"
-	f.HaveMember("team", member)
-	f.HaveConvWithTitle(outsider, "outsider")
-	f.HaveEnrolledAgent(outsider)
+		f.HaveGroup("team")
+		const member = "dmsg-mem4-bbbb-cccc-000000000001"
+		const outsider = "dmsg-outs-bbbb-cccc-000000000002"
+		f.HaveMember("team", member)
+		f.HaveConvWithTitle(outsider, "outsider")
+		f.HaveEnrolledAgent(outsider)
 
-	mux := dashMessageMux(t)
-	rec := postDashMessage(t, mux, map[string]any{
-		"from": outsider, "to": "group:team", "body": "let me in",
+		mux := dashMessageMux(t)
+		rec := postDashMessage(t, mux, map[string]any{
+			"from": outsider, "to": "group:team", "body": "let me in",
+		})
+		require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+
+		rows, err := db.ListAgentMessagesForConv(member, 100)
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a gate-refused multicast writes no row")
 	})
-	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
-
-	rows, err := db.ListAgentMessagesForConv(member, 100)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "a gate-refused multicast writes no row")
 }

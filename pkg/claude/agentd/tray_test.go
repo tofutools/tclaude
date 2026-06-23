@@ -236,9 +236,9 @@ func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
 // rebind slots. Pin its zero / equal / unequal behaviour.
 func TestSliceEq(t *testing.T) {
 	cases := []struct {
-		name    string
-		a, b    []string
-		wantEq  bool
+		name   string
+		a, b   []string
+		wantEq bool
 	}{
 		{"both nil", nil, nil, true},
 		{"nil vs empty", nil, []string{}, true},

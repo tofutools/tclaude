@@ -14,12 +14,12 @@ func TestDashboardAssets_RemoteAccessAdminWired(t *testing.T) {
 	for _, needle := range []string{
 		// HTML: section + the four feature areas' anchors.
 		`id="cfg-remote-admin"`,
-		`id="ra-admin-sans"`,        // server cert SAN list (visibility)
-		`id="ra-addhosts-btn"`,      // add host names (public URL support)
-		`id="ra-admin-devices"`,     // device list
-		`id="ra-addclient-btn"`,     // add a device
-		`id="ra-ca-btn"`,            // CA download
-		`id="ra-setup-btn"`,         // first-time setup / regenerate
+		`id="ra-admin-sans"`,    // server cert SAN list (visibility)
+		`id="ra-addhosts-btn"`,  // add host names (public URL support)
+		`id="ra-admin-devices"`, // device list
+		`id="ra-addclient-btn"`, // add a device
+		`id="ra-ca-btn"`,        // CA download
+		`id="ra-setup-btn"`,     // first-time setup / regenerate
 		// JS module: the endpoints it drives + the render/handlers.
 		"function loadRemoteAdmin(",
 		"/api/remote-access/info",
