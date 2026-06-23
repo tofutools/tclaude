@@ -172,6 +172,12 @@ func runServe(p *serveParams) error {
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
 
+	// audit_log retention sweep (JOH-268). Hard-deletes audit rows older
+	// than the configured retention window (default 30 days) so the command
+	// trail stays bounded. Shares the daemon-wide stop channel. See
+	// audit_cleanup.go.
+	startAuditLogCleanup(cronStop)
+
 	// Session reaper. Sweeps for sessions whose tmux session + process
 	// are gone and stamps status=exited — a crashed or kill -9'd agent
 	// fires no SessionEnd hook, so without this its row would stay
@@ -441,7 +447,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
-	return logRequest(mux)
+	return logRequest(auditRequests(mux))
 }
 
 func logRequest(h http.Handler) http.Handler {

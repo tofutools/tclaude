@@ -99,6 +99,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
+	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
 }
@@ -285,30 +286,42 @@ func autoLaunchDashboard(slop bool) {
 // /api/* call when the dashboard token isn't set (cryptographic
 // randomness failed at startup).
 func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
-	if dashboardSessionToken == "" {
-		http.Error(w, "dashboard not initialised", http.StatusServiceUnavailable)
+	ok, code, msg := dashboardAuthResult(r)
+	if !ok {
+		http.Error(w, msg, code)
 		return false
+	}
+	return true
+}
+
+// dashboardAuthResult is the pure predicate behind checkDashboardAuth:
+// it runs the cookie + Origin/Referer checks and returns whether the
+// request is an authenticated dashboard caller, plus the HTTP code +
+// message to use on failure. Factored out so the audit middleware can
+// ask "is this the authenticated operator?" without writing a response —
+// attribution keys on a *valid session*, never on the response status (a
+// post-auth policy 403, e.g. a blocklisted sudo grant, is still the
+// operator and must not be downgraded to "unauthenticated"). See JOH-268.
+func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
+	if dashboardSessionToken == "" {
+		return false, http.StatusServiceUnavailable, "dashboard not initialised"
 	}
 	c, err := r.Cookie(dashboardCookieName)
 	if err != nil || c.Value != dashboardSessionToken {
-		http.Error(w, "missing or invalid dashboard cookie; load / first", http.StatusForbidden)
-		return false
+		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
 	if origin == "" && referer == "" {
-		http.Error(w, "missing Origin and Referer", http.StatusForbidden)
-		return false
+		return false, http.StatusForbidden, "missing Origin and Referer"
 	}
 	if origin != "" && !strings.HasPrefix(origin, popupBaseURL) {
-		http.Error(w, "Origin mismatch", http.StatusForbidden)
-		return false
+		return false, http.StatusForbidden, "Origin mismatch"
 	}
 	if origin == "" && !strings.HasPrefix(referer, popupBaseURL) {
-		http.Error(w, "Referer mismatch", http.StatusForbidden)
-		return false
+		return false, http.StatusForbidden, "Referer mismatch"
 	}
-	return true
+	return true, http.StatusOK, ""
 }
 
 // snapshotPayload is the wire shape for /api/snapshot. One round-trip

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 69
+const currentVersion = 70
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -445,6 +445,49 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 70 {
+		if err := migrateV69toV70(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV69toV70 adds audit_log — the persistent trail of daemon-proxied
+// tclaude commands (JOH-268): who ran what against which target, recorded
+// from agentd's request middleware. Mirrors the agent_transfer_log shape
+// (migrateV39toV40): a denormalized append-only log with an index on `at`
+// so the periodic retention prune (DELETE WHERE at < cutoff) stays cheap.
+// Actor/target labels are snapshots so a row stays readable after the
+// agent it names is renamed/retired/deleted. Rows are read newest-first
+// by id, never by `at` (RFC3339Nano TEXT lexical order misorders rows
+// inside the same whole second — a known hazard in this DB).
+func migrateV69toV70(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS audit_log (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			at           TEXT NOT NULL,
+			actor_kind   TEXT NOT NULL DEFAULT '',
+			actor_conv   TEXT NOT NULL DEFAULT '',
+			actor_label  TEXT NOT NULL DEFAULT '',
+			verb         TEXT NOT NULL DEFAULT '',
+			target_conv  TEXT NOT NULL DEFAULT '',
+			target_label TEXT NOT NULL DEFAULT '',
+			group_name   TEXT NOT NULL DEFAULT '',
+			detail       TEXT NOT NULL DEFAULT '',
+			method       TEXT NOT NULL DEFAULT '',
+			path         TEXT NOT NULL DEFAULT '',
+			status       INTEGER NOT NULL DEFAULT 0,
+			source       TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_audit_log_at
+			ON audit_log(at);
+
+		UPDATE schema_version SET version = 70;
+	`); err != nil {
+		return fmt.Errorf("migrate v69→v70 (add audit_log): %w", err)
+	}
 	return nil
 }
 

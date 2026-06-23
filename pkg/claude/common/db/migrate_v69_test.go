@@ -111,9 +111,9 @@ func TestMigrateV68toV69_HealsHalfAppliedRun(t *testing.T) {
 }
 
 // TestMigrateV68toV69_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts both virtual_cost_usd columns exist. v69 is head, so this is
-// where the literal currentVersion pin now lives — the tripwire the next
-// migration's author moves forward into their own v70 test.
+// chain and asserts both virtual_cost_usd columns exist. The literal
+// currentVersion tripwire has moved forward to migrate_v70_test.go (v70 is now
+// head); this test keeps the looser currentVersion check.
 func TestMigrateV68toV69_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -122,9 +122,6 @@ func TestMigrateV68toV69_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v68 test —
-	// the next migration's author moves it into their own v70 test.
-	require.Equal(t, 69, currentVersion, "currentVersion is 69")
 
 	for _, table := range []string{"sessions", "session_cost_daily"} {
 		var haveCol int
