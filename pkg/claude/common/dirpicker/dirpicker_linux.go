@@ -5,6 +5,8 @@ package dirpicker
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -37,18 +39,40 @@ func pick(ctx context.Context, opts Options) (string, error) {
 }
 
 // runLinuxPicker runs a picker binary and maps its exit convention onto
-// our contract: stdout is the chosen path; a non-zero exit with no path
-// is the human cancelling (both zenity and kdialog exit 1 on cancel).
-// stderr is discarded — zenity is chatty with GTK warnings even on
-// success, so it makes a poor cancel/error signal.
+// our contract, distinguishing the three outcomes the caller cares about:
+//
+//   - clean exit (0) — stdout is the chosen path;
+//   - the caller's context ended (client disconnected) — surface ctx.Err();
+//   - exit 1 — the human dismissed the dialog (both zenity and kdialog
+//     exit 1 on cancel) → ErrCanceled;
+//   - anything else (no display, GTK init failure, the binary blew up) —
+//     a genuine error carrying the tool's stderr, NOT a phantom cancel.
+//
+// stderr is captured but only read on the genuine-error path, so zenity's
+// GTK chatter on a normal run or a cancel never leaks into a result.
 func runLinuxPicker(ctx context.Context, bin string, args []string) (string, error) {
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	err := cmd.Run()
 	out := strings.TrimSpace(stdout.String())
-	if err != nil && out == "" {
+	if err == nil {
+		return out, nil
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	// A path despite a non-zero exit — trust it.
+	if out != "" {
+		return out, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
 		return "", ErrCanceled
 	}
-	return out, nil
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		return "", fmt.Errorf("%s: %s", bin, msg)
+	}
+	return "", err
 }

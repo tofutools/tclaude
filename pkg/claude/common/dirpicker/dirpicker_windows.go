@@ -24,6 +24,13 @@ import (
 // daemon, is currently POSIX-only, so on Windows nothing calls Pick yet.
 // It's kept so the package is whole and ready if agentd ever ships there.
 func pick(ctx context.Context, opts Options) (string, error) {
+	ps := powershellBinary()
+	if ps == "" {
+		// No PowerShell on PATH → no usable picker; let the caller fall
+		// back to asking the human to type the path (mirrors Linux's
+		// zenity/kdialog LookPath → ErrUnavailable).
+		return "", ErrUnavailable
+	}
 	title := opts.Title
 	if title == "" {
 		title = "Select a directory"
@@ -44,8 +51,11 @@ func pick(ctx context.Context, opts Options) (string, error) {
 	b.WriteString("if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) } else { exit 1 }")
 	b.WriteString("} catch { [Console]::Error.Write($_.Exception.Message); exit 2 }")
 
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", b.String()).Output()
+	out, err := exec.CommandContext(ctx, ps, "-NoProfile", "-NonInteractive", "-STA", "-Command", b.String()).Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err() // client disconnected; dialog torn down
+		}
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			if ee.ExitCode() == 1 {
@@ -59,6 +69,18 @@ func pick(ctx context.Context, opts Options) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// powershellBinary returns the first PowerShell on PATH — Windows
+// PowerShell (powershell.exe, ships with the OS) preferred, then
+// PowerShell 7+ (pwsh) — or "" when neither is found.
+func powershellBinary() string {
+	for _, name := range []string{"powershell", "pwsh"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // escapePowerShellSingleQuote escapes s for a PowerShell single-quoted
