@@ -80,9 +80,9 @@ func TestAuditLog_InsertListPrune(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), removed)
 
-	n, err := CountAuditLog()
+	n, err := CountAuditLog(AuditLogFilter{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), n)
+	assert.Equal(t, 2, n)
 
 	remaining, err := ListAuditLog(AuditLogFilter{})
 	require.NoError(t, err)
@@ -90,6 +90,61 @@ func TestAuditLog_InsertListPrune(t *testing.T) {
 	for _, e := range remaining {
 		assert.NotEqual(t, "spawn", e.Verb, "the old spawn row should have been pruned")
 	}
+}
+
+// TestAuditLog_SearchSortPaginate exercises the server-side query knobs
+// the dashboard relies on: substring search, whitelisted sort, and
+// limit/offset pagination.
+func TestAuditLog_SearchSortPaginate(t *testing.T) {
+	setupTestDB(t)
+
+	// Insert in a known order so id (= insert order) is deterministic.
+	rows := []AuditLogEntry{
+		{ActorLabel: "po", Verb: "spawn", TargetLabel: "alpha", GroupName: "crew", Status: 200, Source: AuditSourceCLI},
+		{ActorLabel: "po", Verb: "message", TargetLabel: "beta", Detail: "ship it", Status: 200, Source: AuditSourceCLI},
+		{ActorLabel: "operator", Verb: "retire", TargetLabel: "beta", Status: 403, Source: AuditSourceDashboard},
+		{ActorLabel: "worker", Verb: "rename", TargetLabel: "gamma", Detail: "→ delta", Status: 200, Source: AuditSourceCLI},
+	}
+	for _, e := range rows {
+		_, err := InsertAuditLog(e)
+		require.NoError(t, err)
+	}
+
+	// Search matches across columns (target label "beta") — 2 rows.
+	beta, err := ListAuditLog(AuditLogFilter{Search: "beta"})
+	require.NoError(t, err)
+	assert.Len(t, beta, 2)
+	n, err := CountAuditLog(AuditLogFilter{Search: "beta"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	// Search matches detail text too.
+	shipit, err := ListAuditLog(AuditLogFilter{Search: "ship"})
+	require.NoError(t, err)
+	require.Len(t, shipit, 1)
+	assert.Equal(t, "message", shipit[0].Verb)
+
+	// Sort by verb ascending: message, rename, retire, spawn.
+	byVerb, err := ListAuditLog(AuditLogFilter{SortBy: AuditSortVerb, Asc: true})
+	require.NoError(t, err)
+	require.Len(t, byVerb, 4)
+	assert.Equal(t, []string{"message", "rename", "retire", "spawn"},
+		[]string{byVerb[0].Verb, byVerb[1].Verb, byVerb[2].Verb, byVerb[3].Verb})
+
+	// Pagination: page size 2, offset 2 → the 3rd+4th newest rows.
+	pageDesc, err := ListAuditLog(AuditLogFilter{Limit: 2, Offset: 0})
+	require.NoError(t, err)
+	require.Len(t, pageDesc, 2)
+	assert.Equal(t, "rename", pageDesc[0].Verb, "newest first by id")
+	page2, err := ListAuditLog(AuditLogFilter{Limit: 2, Offset: 2})
+	require.NoError(t, err)
+	require.Len(t, page2, 2)
+	assert.Equal(t, "spawn", page2[1].Verb, "last page ends on the oldest row")
+
+	// A search wildcard char is matched literally, not as a LIKE wildcard.
+	pct, err := CountAuditLog(AuditLogFilter{Search: "%"})
+	require.NoError(t, err)
+	assert.Equal(t, 0, pct, "a literal %% must not match every row")
 }
 
 // TestAuditLog_AtDefaultsToNow verifies a zero At is stamped at insert

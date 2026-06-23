@@ -15,9 +15,15 @@ import (
 // Wire-shape mirror of agentd's /api/audit response — the Audit tab
 // renders straight from these fields.
 type auditResp struct {
-	Entries       []auditEntryResp `json:"entries"`
-	RetentionDays int              `json:"retention_days"`
-	PruningOn     bool             `json:"pruning_on"`
+	Entries         []auditEntryResp `json:"entries"`
+	Page            int              `json:"page"`
+	PageSize        int              `json:"page_size"`
+	Total           int              `json:"total"`
+	TotalUnfiltered int              `json:"total_unfiltered"`
+	Sort            string           `json:"sort"`
+	Dir             string           `json:"dir"`
+	RetentionDays   int              `json:"retention_days"`
+	PruningOn       bool             `json:"pruning_on"`
 }
 type auditEntryResp struct {
 	ID          int64  `json:"id"`
@@ -83,6 +89,50 @@ func TestAuditEndpoint_ListsFiltersAndRetention(t *testing.T) {
 	require.Len(t, fails.Entries, 1)
 	assert.Equal(t, "retire", fails.Entries[0].Verb)
 	assert.Equal(t, 403, fails.Entries[0].Status)
+
+	// Search (server-side substring) — only the "rebasing now" message.
+	search := fetchAudit(t, mux, "?q=rebasing")
+	require.Len(t, search.Entries, 1)
+	assert.Equal(t, "message", search.Entries[0].Verb)
+	assert.Equal(t, 3, search.TotalUnfiltered, "total_unfiltered counts all rows even while searching")
+}
+
+// The endpoint pages and sorts server-side: a page_size of 1 returns one
+// row with the correct pager totals, and sort=verb&dir=asc reorders.
+func TestAuditEndpoint_PaginatesAndSorts(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	for _, v := range []string{"spawn", "message", "retire"} {
+		_, err := db.InsertAuditLog(db.AuditLogEntry{
+			ActorKind: db.AuditActorHuman, ActorLabel: "operator", Verb: v,
+			Status: 200, Source: db.AuditSourceCLI,
+		})
+		require.NoError(t, err)
+	}
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Page 1 of size 1: one row, total 3, 3 pages.
+	p1 := fetchAudit(t, mux, "?page_size=1&page=1")
+	require.Len(t, p1.Entries, 1)
+	assert.Equal(t, 1, p1.Page)
+	assert.Equal(t, 1, p1.PageSize)
+	assert.Equal(t, 3, p1.Total)
+	assert.Equal(t, "retire", p1.Entries[0].Verb, "default sort is newest first")
+
+	// A page past the end clamps back to the last page (no empty page).
+	pLast := fetchAudit(t, mux, "?page_size=1&page=99")
+	require.Len(t, pLast.Entries, 1)
+	assert.Equal(t, 3, pLast.Page, "stale page clamps to the last page")
+	assert.Equal(t, "spawn", pLast.Entries[0].Verb, "oldest row on the last page")
+
+	// Sort by verb ascending.
+	byVerb := fetchAudit(t, mux, "?sort=verb&dir=asc")
+	require.Len(t, byVerb.Entries, 3)
+	assert.Equal(t, "asc", byVerb.Dir)
+	assert.Equal(t, "verb", byVerb.Sort)
+	assert.Equal(t, "message", byVerb.Entries[0].Verb)
+	assert.Equal(t, "spawn", byVerb.Entries[2].Verb)
 }
 
 // The endpoint refuses an uncookied request — same dashboard-auth gate

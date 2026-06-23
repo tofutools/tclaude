@@ -2,10 +2,37 @@ package agentd
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// A dashboard request is the operator IFF it carries a valid dashboard
+// session — attribution keys on the session, NOT the response status, so
+// a post-auth policy 403 (operator cleared the cookie gate, handler then
+// refused) stays "operator" while an unauthenticated / cross-origin probe
+// is recorded as "unauthenticated".
+func TestAuditActor_DashboardAttributionByteSession(t *testing.T) {
+	// No cookie → unauthenticated, regardless of any later status.
+	r := httptest.NewRequest(http.MethodPost, "/api/groups/crew/spawn", nil)
+	kind, conv, label := auditActor(r, db.AuditSourceDashboard)
+	if kind != db.AuditActorUnknown || label != "unauthenticated" || conv != "" {
+		t.Errorf("uncookied dashboard request = (%q,%q,%q), want (unknown,\"\",unauthenticated)", kind, conv, label)
+	}
+
+	// Valid cookie + matching Origin → operator, even though this request
+	// would (in a real handler) go on to be policy-refused with a 403.
+	t.Cleanup(SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	initDashboardToken()
+	r2 := httptest.NewRequest(http.MethodPost, "/api/sudo", nil)
+	r2.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: dashboardSessionToken})
+	r2.Header.Set("Origin", popupBaseURL)
+	kind, _, label = auditActor(r2, db.AuditSourceDashboard)
+	if kind != db.AuditActorHuman || label != "operator" {
+		t.Errorf("authed dashboard request = (%q,%q), want (human,operator)", kind, label)
+	}
+}
 
 // matchAuditRoute is the allowlist gate: it must map real command routes
 // on both surfaces to the right verb + source, and leave reads and

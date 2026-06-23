@@ -112,6 +112,22 @@ func TestAudit_DeniedAttemptIsRecorded(t *testing.T) {
 	assert.Empty(t, oks, "a denied retire must not appear as a success")
 }
 
+// Scenario: a group rename. The new name lives under the `new_name` body
+// key (not `name`/`title`), so the trail must still capture it in detail.
+func TestAudit_GroupRenameCapturesNewName(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/groups/crew/rename",
+			map[string]any{"new_name": "newcrew"})))
+	require.Equal(t, http.StatusOK, rec.Code, "rename should succeed; body=%s", rec.Body.String())
+
+	row := auditRowByVerb(t, "group.rename")
+	assert.Equal(t, "crew", row.GroupName)
+	assert.Contains(t, row.Detail, "newcrew", "the new group name is captured in detail")
+}
+
 // Read-only / non-command requests (a GET, the snapshot poll) must NOT
 // be audited — the trail is commands only.
 func TestAudit_ReadsAreNotRecorded(t *testing.T) {
@@ -123,7 +139,7 @@ func TestAudit_ReadsAreNotRecorded(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodGet, "/v1/groups/crew/members", nil)))
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	n, err := db.CountAuditLog()
+	n, err := db.CountAuditLog(db.AuditLogFilter{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), n, "a read-only GET must not create an audit row")
+	assert.Equal(t, 0, n, "a read-only GET must not create an audit row")
 }

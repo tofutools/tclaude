@@ -22,14 +22,21 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must(`data-tab="audit"`, "the Audit nav button")
 	must(`id="tab-audit"`, "the Audit tab section")
 	must(`id="audit-list"`, "the table mount audit.js renders into")
-	must(`id="filter-audit"`, "the client-side text filter input")
+	must(`id="filter-audit"`, "the server-side search input")
 	must(`id="audit-outcome"`, "the outcome (success/failure) filter select")
 	must(`id="audit-source"`, "the source (cli/dashboard) filter select")
+	must(`id="audit-pager"`, "the pagination footer mount")
 
 	// audit.js fetches the read endpoint and binds the tab.
 	must("/api/audit", "audit.js fetches the audit read endpoint")
 	must("function bindAuditTab", "audit.js exposes the tab binder")
 	must(`nav button[data-tab="audit"]`, "audit.js loads on tab activation")
+
+	// Server-side search / sort / pagination wiring.
+	must("page_size", "audit.js sends the page size to the server")
+	must("audit-sort", "sortable column header class")
+	must("audit-page-next", "the pager's next-page control")
+	must("reloadFromFirstPage", "a filter/sort change resets to page 1")
 
 	// dashboard.js imports + calls the binder so the tab is live at boot.
 	must("import { bindAuditTab }", "dashboard.js imports the binder")

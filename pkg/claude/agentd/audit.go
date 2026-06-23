@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -310,13 +311,21 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 }
 
-// auditActor resolves the request's actor. Dashboard requests are always
-// the human (cookie-gated loopback). CLI requests route through the same
-// classify() the permission gates use: human (operator token), agent
-// (resolved conv-id + title), or unknown (fail-closed callers — still
-// logged so a denied probe leaves a trail).
+// auditActor resolves the request's actor. A dashboard request is the
+// human operator IFF it carries a valid dashboard session — we re-run
+// the auth predicate here rather than keying on the response status, so a
+// post-auth policy refusal (e.g. a blocklisted sudo grant the operator
+// did clear the cookie gate for, returning 403) stays attributed to the
+// operator, while an unauthenticated / cross-origin probe is recorded as
+// "unauthenticated" instead of masquerading as the human. CLI requests
+// route through the same classify() the permission gates use: human
+// (operator token), agent (resolved conv-id + title), or unknown
+// (fail-closed callers — still logged so a denied probe leaves a trail).
 func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	if source == db.AuditSourceDashboard {
+		if ok, _, _ := dashboardAuthResult(r); !ok {
+			return db.AuditActorUnknown, "", "unauthenticated"
+		}
 		return db.AuditActorHuman, "", "operator"
 	}
 	p := peerFromContext(r.Context())
@@ -335,7 +344,14 @@ func auditActor(r *http.Request, source string) (kind, conv, label string) {
 // can't be resolved — e.g. a just-deleted conv whose index row is gone.
 func resolveAuditTarget(selector string) (conv, label string) {
 	if res, _, err := agent.ResolveSelector(selector); err == nil && res.ConvID != "" {
-		return res.ConvID, auditConvLabel(res.ConvID)
+		// ResolveSelector already returned the conv_index row — use it
+		// directly rather than re-resolving via auditConvLabel.
+		if res.Row != nil {
+			if t := agent.DisplayTitle(res.Row); t != "" {
+				return res.ConvID, t
+			}
+		}
+		return res.ConvID, short8(res.ConvID)
 	}
 	return selector, selector
 }
@@ -463,12 +479,19 @@ func describeMemberTarget(c *auditCtx) {
 }
 
 func describeNewName(c *auditCtx) {
+	// The new name lives under different keys per route: a group rename
+	// sends new_name (groups_rename.go / dashboard), an agent rename sends
+	// title (handleAgentRename). Accept all three.
 	var b struct {
-		Name  string `json:"name"`
-		Title string `json:"title"`
+		NewName string `json:"new_name"`
+		Title   string `json:"title"`
+		Name    string `json:"name"`
 	}
 	_ = json.Unmarshal(c.body, &b)
-	name := strings.TrimSpace(b.Title)
+	name := strings.TrimSpace(b.NewName)
+	if name == "" {
+		name = strings.TrimSpace(b.Title)
+	}
 	if name == "" {
 		name = strings.TrimSpace(b.Name)
 	}
@@ -489,11 +512,15 @@ func describeGroupCreate(c *auditCtx) {
 
 func describeCron(c *auditCtx) {
 	var b struct {
-		Name string `json:"name"`
-		Body string `json:"body"`
+		Name    string `json:"name"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
 	}
 	_ = json.Unmarshal(c.body, &b)
 	detail := strings.TrimSpace(b.Name)
+	if s := strings.TrimSpace(b.Subject); s != "" {
+		detail = strings.TrimSpace(detail + " [" + s + "]")
+	}
 	if body := strings.TrimSpace(b.Body); body != "" {
 		if detail != "" {
 			detail += ": " + body
@@ -527,10 +554,13 @@ func describePermSet(c *auditCtx) {
 	if sel := strings.TrimSpace(b.Conv); sel != "" {
 		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(sel)
 	}
-	var parts []string
+	// Sort the slug=effect pairs so two identical requests produce the
+	// same detail string (map iteration order is otherwise random).
+	parts := make([]string, 0, len(b.Overrides))
 	for slug, effect := range b.Overrides {
 		parts = append(parts, slug+"="+effect)
 	}
+	sort.Strings(parts)
 	c.fields.Detail = auditClip(strings.Join(parts, ", "), 120)
 }
 

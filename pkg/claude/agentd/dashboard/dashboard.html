@@ -417,9 +417,9 @@
        re-poll, like Costs — not the 2s snapshot tick. -->
   <section id="tab-audit">
     <div class="filter-bar">
-      <input id="filter-audit" type="text" placeholder="Filter (actor / verb / target / group / detail)" autocomplete="off" spellcheck="false" />
+      <input id="filter-audit" type="text" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-audit-count"></span>
-      <button class="clear-filter" id="filter-audit-clear" title="Clear filter">×</button>
+      <button class="clear-filter" id="filter-audit-clear" title="Clear search">×</button>
       <label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span>
         <select id="audit-outcome">
           <option value="">all</option>
@@ -438,6 +438,7 @@
       <span id="audit-retention" class="muted"></span>
     </div>
     <div id="audit-list"></div>
+    <div id="audit-pager" class="audit-pager" hidden></div>
   </section>
   <!-- Messages tab — a mail client for introspecting every mailbox the
        daemon stores: agent-to-agent mail plus the human.notify channel.

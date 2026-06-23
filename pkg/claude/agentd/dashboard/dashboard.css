@@ -609,6 +609,30 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
 }
+/* Sortable column headers — click to sort server-side; the active column
+   carries a direction arrow (rendered in audit.js). */
+.audit-table th.audit-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.audit-table th.audit-sort:hover { color: #58a6ff; }
+.audit-table th.audit-sort.active { color: #58a6ff; }
+/* Pager footer under the table — mirrors the Messages tab's pager chrome. */
+.audit-pager {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 6px 4px; font-size: 12px; color: #7d8590;
+}
+.audit-pager[hidden] { display: none; }
+.audit-pager .grow { flex: 1 1 auto; }
+.audit-pager-pos { white-space: nowrap; padding: 0 4px; }
+.audit-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.audit-pager button {
+  background: #161b22; color: #7d8590; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 2px 8px; cursor: pointer;
+}
+.audit-pager button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.audit-pager button:disabled { opacity: 0.4; cursor: default; }
+.audit-pager-size select {
+  background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 1px 4px; cursor: pointer;
+}
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;
