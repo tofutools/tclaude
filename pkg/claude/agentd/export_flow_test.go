@@ -113,6 +113,62 @@ func TestExportFlow_HappyPath(t *testing.T) {
 	assert.Contains(t, dlRec.Header().Get("Content-Disposition"), "auth-research.md")
 }
 
+// TestExportFlow_History drives the "Previous exports" panel surfaces: list,
+// per-entry delete, and clear-all, across two completed exports for one agent.
+func TestExportFlow_History(t *testing.T) {
+	f := newFlow(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	f.HaveGroup("g")
+	f.HaveAliveSession("conv-h", "hagent", "tmux-h-1", "/tmp/h")
+	f.HaveMember("g", "conv-h")
+
+	mkExport := func(name string) int64 {
+		rec := testharness.Serve(dash, dashReq(t, http.MethodPost,
+			"/api/agents/conv-h/export", map[string]any{"preset": "summary"}))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var created struct {
+			ID int64 `json:"id"`
+		}
+		testharness.DecodeJSON(t, rec, &created)
+		subReq := httptest.NewRequest(http.MethodPost,
+			fmt.Sprintf("/v1/export-jobs/%d/artifact?name=%s", created.ID, name),
+			bytes.NewReader([]byte("data:"+name)))
+		subReq.Header.Set("Content-Type", "text/markdown")
+		require.Equal(t, http.StatusOK,
+			testharness.Serve(f.Mux, agentd.AsAgentPeer(subReq, "conv-h")).Code)
+		return created.ID
+	}
+	id1 := mkExport("one.md")
+	id2 := mkExport("two.md")
+
+	// History lists both, newest first.
+	listExports := func() []map[string]any {
+		rec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/agents/conv-h/exports", nil))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out struct {
+			Exports []map[string]any `json:"exports"`
+		}
+		testharness.DecodeJSON(t, rec, &out)
+		return out.Exports
+	}
+	jobs := listExports()
+	require.Len(t, jobs, 2)
+	assert.Equal(t, float64(id2), jobs[0]["id"], "newest first")
+	assert.Equal(t, "ready", jobs[0]["status"])
+
+	// Delete one entry.
+	delRec := testharness.Serve(dash, dashReq(t, http.MethodDelete,
+		fmt.Sprintf("/api/export-jobs/%d", id1), nil))
+	require.Equal(t, http.StatusOK, delRec.Code, delRec.Body.String())
+	require.Len(t, listExports(), 1)
+
+	// Clear all wipes the rest.
+	clrRec := testharness.Serve(dash, dashReq(t, http.MethodDelete, "/api/agents/conv-h/exports", nil))
+	require.Equal(t, http.StatusOK, clrRec.Code, clrRec.Body.String())
+	assert.Empty(t, listExports())
+}
+
 // TestExportFlow_OfflineAgentFastFails proves an export of an agent with no live
 // session is refused up front (409) rather than queuing a job nobody services.
 func TestExportFlow_OfflineAgentFastFails(t *testing.T) {

@@ -20,6 +20,10 @@ func TestDashboardJS_ExportModalWired(t *testing.T) {
 		`id="export-agent-modal"`,               // modal element (dashboard.html)
 		`id="export-agent-instructions"`,        // instructions field (dashboard.html)
 		"/api/export-jobs/",                     // poll/download endpoint (modal-export.js)
+		`id="export-agent-history"`,             // history panel (dashboard.html)
+		"function loadExportHistory(",           // history loader (modal-export.js)
+		"/exports",                              // list/clear endpoint (modal-export.js)
+		`data-export-act="delete"`,              // per-entry delete control (modal-export.js)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q — export modal wiring broken", needle)

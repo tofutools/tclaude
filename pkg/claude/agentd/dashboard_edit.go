@@ -347,6 +347,16 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardCreateExport(w, r, convSelector)
 			return
+		case "exports":
+			switch r.Method {
+			case http.MethodGet:
+				dashboardListExports(w, convSelector)
+			case http.MethodDelete:
+				dashboardClearExports(w, convSelector)
+			default:
+				http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
+			}
+			return
 		default:
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return

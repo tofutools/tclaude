@@ -54,6 +54,10 @@ const maxExportArtifactBytes = 256 << 20 // 256 MiB
 const (
 	exportInstructionsMax = 8 << 10 // 8 KiB
 	exportTitleMax        = 200     // runes
+	// exportHistoryLimit caps how many past exports the "Previous exports"
+	// panel lists per agent. Bounds the payload; older ones still exist
+	// until the TTL sweep or a manual clear removes them.
+	exportHistoryLimit = 50
 )
 
 // Cleanup cadence and retention. Package vars so flow tests can shrink them.
@@ -63,8 +67,9 @@ var (
 	// lying and the TTL sweep can eventually reclaim it.
 	exportJobStaleTimeout = 30 * time.Minute
 	// exportJobTTL: a terminal (ready/failed) job and its on-disk artifact
-	// are deleted this long after they settled, bounding ~/.tclaude/exports.
-	exportJobTTL = 24 * time.Hour
+	// are deleted this long after they settled — a generous backstop so the
+	// "Previous exports" history stays useful, with manual clear for sooner.
+	exportJobTTL = 30 * 24 * time.Hour
 	// exportJobsCleanupInterval: how often the sweep runs.
 	exportJobsCleanupInterval = 10 * time.Minute
 )
@@ -302,8 +307,9 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboardExportJobsAPI dispatches the cookie-authed dashboard routes:
 //
-//	GET /api/export-jobs/{id}          → poll the job status (JSON)
-//	GET /api/export-jobs/{id}/artifact → download the artifact (attachment)
+//	GET    /api/export-jobs/{id}          → poll the job status (JSON)
+//	GET    /api/export-jobs/{id}/artifact → download the artifact (attachment)
+//	DELETE /api/export-jobs/{id}          → delete one export + its artifact
 func handleDashboardExportJobsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -313,10 +319,6 @@ func handleDashboardExportJobsAPI(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || id <= 0 {
 		http.Error(w, "expected /api/export-jobs/{id}", http.StatusNotFound)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
 	job, err := db.GetExportJob(id)
@@ -329,10 +331,63 @@ func handleDashboardExportJobsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) > 1 && parts[1] == "artifact" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET only", http.StatusMethodNotAllowed)
+			return
+		}
 		serveExportArtifact(w, job)
 		return
 	}
-	writeJSON(w, http.StatusOK, exportJobToView(job))
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, exportJobToView(job))
+	case http.MethodDelete:
+		deleteExportJobAndArtifact(job.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": job.ID})
+	default:
+		http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
+	}
+}
+
+// dashboardListExports serves `GET /api/agents/{conv}/exports` — the modal's
+// "Previous exports" history for one agent, newest first.
+func dashboardListExports(w http.ResponseWriter, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+		return
+	}
+	jobs, err := db.ListExportJobsForConv(res.ConvID, exportHistoryLimit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	views := make([]exportJobView, 0, len(jobs))
+	for _, j := range jobs {
+		views = append(views, exportJobToView(j))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"exports": views})
+}
+
+// dashboardClearExports serves `DELETE /api/agents/{conv}/exports` — the
+// "clear all" control: removes every export job + artifact for the agent.
+func dashboardClearExports(w http.ResponseWriter, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+		return
+	}
+	ids, err := db.DeleteExportJobsForConv(res.ConvID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	for _, id := range ids {
+		if rerr := os.RemoveAll(exportJobDir(id)); rerr != nil {
+			slog.Warn("export clear: remove artifact dir failed", "error", rerr, "job", id)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": len(ids)})
 }
 
 // serveExportArtifact streams a ready job's artifact as a browser download.
@@ -490,11 +545,18 @@ func runExportJobsCleanup(now time.Time) {
 		slog.Warn("export cleanup: list terminal failed", "error", err)
 	}
 	for _, j := range old {
-		if err := os.RemoveAll(exportJobDir(j.ID)); err != nil {
-			slog.Warn("export cleanup: remove artifact dir failed", "error", err, "job", j.ID)
-		}
-		if _, err := db.DeleteExportJob(j.ID); err != nil {
-			slog.Warn("export cleanup: delete row failed", "error", err, "job", j.ID)
-		}
+		deleteExportJobAndArtifact(j.ID)
+	}
+}
+
+// deleteExportJobAndArtifact removes a job's on-disk artifact directory and its
+// DB row — the shared teardown used by the TTL sweep and the manual delete /
+// clear-all controls. Best-effort: a failure is logged, never fatal.
+func deleteExportJobAndArtifact(id int64) {
+	if err := os.RemoveAll(exportJobDir(id)); err != nil {
+		slog.Warn("export: remove artifact dir failed", "error", err, "job", id)
+	}
+	if _, err := db.DeleteExportJob(id); err != nil {
+		slog.Warn("export: delete row failed", "error", err, "job", id)
 	}
 }

@@ -14,7 +14,7 @@
 //      job keeps running server-side. Re-opening the action starts a FRESH
 //      export, so a conversation that has gained context exports the new state.
 
-import { $, shortId, bindModalSubmitHotkey } from './helpers.js';
+import { $, esc, shortId, relTime, bindModalSubmitHotkey } from './helpers.js';
 import { toast, bindBackdropDiscard } from './refresh.js';
 
 const POLL_INTERVAL_MS = 2000;
@@ -70,6 +70,7 @@ function openExportModal(conv, label) {
 
   modal.classList.add('show');
   setTimeout(() => $('#export-agent-instructions').focus(), 0);
+  loadExportHistory(conv);
 }
 
 function closeExportModal() {
@@ -207,8 +208,10 @@ function onExportReady(jobId, job) {
   dl.hidden = false;
   dl.textContent = 'Download again';
   dl.onclick = () => triggerDownload(jobId);
-  const label = $('#export-agent-modal').dataset.label || shortId($('#export-agent-modal').dataset.conv);
+  const conv = $('#export-agent-modal').dataset.conv;
+  const label = $('#export-agent-modal').dataset.label || shortId(conv);
   toast(`Export ready for ${label}`);
+  loadExportHistory(conv); // the just-finished export now appears in history
 }
 
 function onExportFailed(job) {
@@ -229,6 +232,68 @@ function triggerDownload(jobId) {
   a.remove();
 }
 
+// --- "Previous exports" history panel ---
+
+// loadExportHistory fetches and renders the agent's past exports. Silent on
+// error (the history is a convenience, not load-bearing for a new export).
+async function loadExportHistory(conv) {
+  const section = $('#export-agent-history');
+  const list = $('#export-agent-history-list');
+  try {
+    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/exports`, { credentials: 'same-origin' });
+    if (!r.ok) { section.hidden = true; return; }
+    const data = await r.json();
+    const jobs = (data && data.exports) || [];
+    if (!jobs.length) { section.hidden = true; list.innerHTML = ''; return; }
+    section.hidden = false;
+    list.innerHTML = jobs.map(renderHistoryItem).join('');
+  } catch (_) {
+    section.hidden = true;
+  }
+}
+
+function renderHistoryItem(j) {
+  const title = j.title ? esc(j.title) : '<span class="ehi-sub">(untitled)</span>';
+  const when = j.created_at ? esc(relTime(j.created_at)) : '';
+  const size = j.artifact_size ? ` · ${fmtBytes(j.artifact_size)}` : '';
+  const status = esc(j.status || '');
+  const dl = j.ready
+    ? `<button data-export-act="download" data-job="${j.id}" title="Download this export">⤓</button>`
+    : '';
+  return `<div class="export-history-item">`
+    + `<div class="ehi-main"><div class="ehi-title">${title}</div>`
+    + `<div class="ehi-sub">${when}${size}</div></div>`
+    + `<span class="ehi-status ${status}">${status}</span>`
+    + dl
+    + `<button class="ehi-del" data-export-act="delete" data-job="${j.id}" title="Delete this export">🗑</button>`
+    + `</div>`;
+}
+
+function fmtBytes(n) {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MiB`;
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KiB`;
+  return `${n} B`;
+}
+
+async function deleteHistoryItem(jobId) {
+  try {
+    await fetch(`/api/export-jobs/${encodeURIComponent(jobId)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    });
+  } catch (_) { /* best-effort */ }
+  loadExportHistory($('#export-agent-modal').dataset.conv);
+}
+
+async function clearAllHistory() {
+  const conv = $('#export-agent-modal').dataset.conv;
+  try {
+    await fetch(`/api/agents/${encodeURIComponent(conv)}/exports`, {
+      method: 'DELETE', credentials: 'same-origin',
+    });
+  } catch (_) { /* best-effort */ }
+  loadExportHistory(conv);
+}
+
 function bindExportModal() {
   $('#export-agent-cancel').addEventListener('click', closeExportModal);
   $('#export-agent-submit').addEventListener('click', submitExport);
@@ -241,6 +306,19 @@ function bindExportModal() {
     instructionsSeeded = true;
   });
   $('#export-agent-instructions').addEventListener('input', () => { instructionsSeeded = false; });
+
+  // History panel: delegated download/delete, plus clear-all.
+  $('#export-agent-history-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-export-act]');
+    if (!btn) return;
+    const jobId = btn.getAttribute('data-job');
+    if (btn.getAttribute('data-export-act') === 'download') {
+      triggerDownload(jobId);
+    } else if (btn.getAttribute('data-export-act') === 'delete') {
+      deleteHistoryItem(jobId);
+    }
+  });
+  $('#export-agent-clear').addEventListener('click', clearAllHistory);
 
   bindModalSubmitHotkey($('#export-agent-modal'), $('#export-agent-submit'));
   bindBackdropDiscard('export-agent-modal', closeExportModal);

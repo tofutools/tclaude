@@ -73,6 +73,59 @@ func TestExportJobFailFromRequested(t *testing.T) {
 	assert.Equal(t, "the agent did not respond", got.Error)
 }
 
+func TestListExportJobsForConv(t *testing.T) {
+	setupTestDB(t)
+	none, err := ListExportJobsForConv("nobody", 50)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+
+	_, err = InsertExportJob(&ExportJob{ConvID: "c1", Title: "first"})
+	require.NoError(t, err)
+	id2, err := InsertExportJob(&ExportJob{ConvID: "c1", Title: "second"})
+	require.NoError(t, err)
+	_, err = InsertExportJob(&ExportJob{ConvID: "c2", Title: "other"})
+	require.NoError(t, err)
+
+	jobs, err := ListExportJobsForConv("c1", 50)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, id2, jobs[0].ID, "newest first by id")
+	assert.Equal(t, "second", jobs[0].Title)
+	assert.Equal(t, "first", jobs[1].Title)
+
+	// limit caps the result.
+	limited, err := ListExportJobsForConv("c1", 1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	assert.Equal(t, id2, limited[0].ID)
+}
+
+func TestDeleteExportJobsForConv(t *testing.T) {
+	setupTestDB(t)
+	a, err := InsertExportJob(&ExportJob{ConvID: "c1"})
+	require.NoError(t, err)
+	b, err := InsertExportJob(&ExportJob{ConvID: "c1"})
+	require.NoError(t, err)
+	keep, err := InsertExportJob(&ExportJob{ConvID: "c2"})
+	require.NoError(t, err)
+
+	ids, err := DeleteExportJobsForConv("c1")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{a, b}, ids, "returns the deleted ids for artifact cleanup")
+
+	gone, err := ListExportJobsForConv("c1", 50)
+	require.NoError(t, err)
+	assert.Empty(t, gone)
+	// The other conv's job survives.
+	_, err = GetExportJob(keep)
+	assert.NoError(t, err)
+
+	// Clearing an empty conv is a no-op, not an error.
+	ids, err = DeleteExportJobsForConv("c1")
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
 func TestListStaleExportJobs(t *testing.T) {
 	setupTestDB(t)
 

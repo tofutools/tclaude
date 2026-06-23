@@ -1539,6 +1539,13 @@
       <div class="export-status-row"><span class="export-spinner" id="export-agent-spinner" aria-hidden="true"></span><span id="export-agent-status-text">Waiting for the agent…</span></div>
       <div class="export-status-note" id="export-agent-status-note"></div>
     </div>
+    <div id="export-agent-history" class="export-history" hidden>
+      <div class="export-history-head">
+        <span class="export-history-title">Previous exports</span>
+        <button id="export-agent-clear" type="button" class="export-history-clear" title="Delete every saved export for this agent">Clear all</button>
+      </div>
+      <div id="export-agent-history-list" class="export-history-list"></div>
+    </div>
     <div class="cron-create-error" id="export-agent-error"></div>
     <div class="modal-buttons">
       <button id="export-agent-cancel" type="button">Cancel</button>

@@ -172,6 +172,77 @@ func FailExportJob(id int64, reason string) (bool, error) {
 	return n > 0, nil
 }
 
+// ListExportJobsForConv returns a conversation's export jobs, newest first
+// (by id = insertion order, NOT created_at — the RFC3339Nano lexical-sort
+// hazard, see ListHumanMessages). limit <= 0 returns all of them. Powers the
+// modal's "Previous exports" history panel.
+func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT id, conv_id, group_name, title, instructions, preset, status, error,
+		       artifact_path, artifact_name, artifact_size, content_type,
+		       created_at, updated_at
+		FROM export_jobs WHERE conv_id = ? ORDER BY id DESC`
+	args := []any{convID}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := d.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*ExportJob
+	for rows.Next() {
+		j, err := scanExportJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// DeleteExportJobsForConv hard-deletes every export job for a conversation and
+// returns their ids so the caller can remove the on-disk artifact dirs. The
+// "clear all" control behind the history panel.
+func DeleteExportJobsForConv(convID string) ([]int64, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT id FROM export_jobs WHERE conv_id = ?`, convID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close()
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := d.Exec(`DELETE FROM export_jobs WHERE conv_id = ?`, convID); err != nil {
+		return nil, fmt.Errorf("delete export jobs for conv: %w", err)
+	}
+	return ids, nil
+}
+
 // ListStaleExportJobs returns jobs whose updated_at is older than `before` —
 // the cleanup sweep's input. `terminalOnly` selects only ready/failed jobs
 // (TTL prune of finished work + its artifacts); when false it returns every
