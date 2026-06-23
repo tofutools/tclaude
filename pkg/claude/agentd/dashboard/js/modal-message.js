@@ -5,7 +5,7 @@
 // modal reuses modal-cron's target picker; bindSudoModal wires the
 // sudo-grant modal (defined in modal-cron) to its DOM controls.
 
-import { $, $$, esc, shortId } from './helpers.js';
+import { $, $$, esc, shortId, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
@@ -536,28 +536,14 @@ async function browseGroupCreateCwd() {
   btn.disabled = true;
   btn.textContent = 'Opening…';
   try {
-    const r = await fetch('/api/pick-directory', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start_dir: input.value.trim(),
-        title: 'Select the group default working directory',
-      }),
+    const res = await pickDirectory({
+      startDir: input.value.trim(),
+      title: 'Select the group default working directory',
     });
-    let data = {};
-    try { data = await r.json(); } catch (_) {}
-    if (!r.ok) {
-      // 409 busy / 503 no-picker / 500 — all carry a human-readable error.
-      errEl.textContent = data.error || `HTTP ${r.status}`;
-      return;
-    }
-    if (data.canceled) return; // dialog dismissed — leave the field as-is
-    if (data.path) {
-      input.value = data.path;
-      input.focus();
-    }
-  } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
+    if (res.error) { errEl.textContent = res.error; return; }
+    if (res.canceled) return; // dialog dismissed — leave the field as-is
+    input.value = res.path;
+    input.focus();
   } finally {
     btn.disabled = false;
     btn.textContent = prevLabel;
