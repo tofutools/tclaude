@@ -368,6 +368,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-autolaunch" /> open the dashboard when <code>agentd serve</code> starts</label>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">System tray</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-notray" /> hide the tray icon (same as <code>--no-tray</code>)</label>
+        <span class="cfg-hint">Skips the system tray icon <code>agentd serve</code> shows by default. Takes effect next time <code>agentd serve</code> starts.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Clone cooldown</span>
         <input type="text" id="cfg-agent-clonecooldown" placeholder="1m" aria-label="Clone cooldown" autocomplete="off" spellcheck="false" style="min-width:120px" />
         <span class="cfg-hint">Minimum gap between two agent-initiated clones of the same agent (Go duration: <code>1m</code>, <code>30s</code>, <code>0</code> to disable). Empty = built-in default.</span>

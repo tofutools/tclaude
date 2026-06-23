@@ -374,6 +374,7 @@ function populateConfigForm(cfg) {
 
   const a = cfg.agent || {};
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
+  $('#cfg-agent-notray').checked = !!a.disable_tray;
   $('#cfg-agent-clonecooldown').value = a.clone_cooldown || '';
   // nil / true both mean "on" (the default); only an explicit false is off.
   $('#cfg-agent-spawnrestrict').checked = a.spawn_group_restriction !== false;
@@ -510,6 +511,8 @@ function assembleConfig() {
   // block stays genuinely empty (see the empty-agent drop below).
   if ($('#cfg-agent-autolaunch').checked) a.auto_launch_dashboard = true;
   else delete a.auto_launch_dashboard;
+  if ($('#cfg-agent-notray').checked) a.disable_tray = true;
+  else delete a.disable_tray;
   const cc = $('#cfg-agent-clonecooldown').value.trim();
   if (cc) a.clone_cooldown = cc; else delete a.clone_cooldown;
   // Checked = "on" = also the default (nil): preserve an existing nil
