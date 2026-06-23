@@ -337,8 +337,8 @@ func TestIsValidSpawnName(t *testing.T) {
 		{"all dashes/underscores", "_-_-_", true},
 		{"max length 64", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789AB", true},
 
-		// --- rejected: oversize ---
-		{"too long 65", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789ABCD", false},
+		// --- rejected: oversize (exactly MaxSpawnNameLen+1 == 65) ---
+		{"too long 65", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz0123456789ABC", false},
 
 		// --- rejected: stricter-than-rename punctuation ---
 		{"single space", "code reviewer", false},
