@@ -28,11 +28,14 @@ func TestDashboardHTML_SpawnAttachmentsUI(t *testing.T) {
 	present(`function addSpawnAttachments(`, "adds chosen/pasted files to the list")
 	present(`function removeSpawnAttachment(`, "removes one attachment")
 	present(`function clearSpawnAttachments(`, "clears + revokes object URLs on open/close")
-	present(`function handleSpawnPaste(`, "captures pasted clipboard images")
+	present(`function handleSpawnPaste(`, "captures pasted clipboard files/images")
+	present(`function bindSpawnDragDrop(`, "wires Finder/Explorer drag-and-drop onto the dialog")
+	present(`bindSpawnDragDrop();`, "drag-and-drop is wired at bind time")
 	present(`function uploadSpawnAttachments(`, "uploads to /api/spawn-attachments")
 	present(`/api/spawn-attachments`, "the upload endpoint path is wired client-side")
 	present(`body.attachments = attachmentPaths`, "uploaded paths ride along in the spawn body")
 
-	// CSS: the list styling exists.
+	// CSS: the list styling + the drag-over highlight exist.
 	present(`.spawn-attachments-list`, "the attachment-list CSS")
+	present(`.cron-create-modal.spawn-drag-over`, "the drag-over highlight CSS")
 }

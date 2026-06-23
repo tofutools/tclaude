@@ -616,27 +616,81 @@ function renderSpawnAttachments() {
   }).join('');
 }
 
-// handleSpawnPaste captures image items pasted anywhere in the dialog (the
-// common "screenshot to clipboard, ⌘V" flow) as PNG attachments. Non-image
-// pastes (text into the init-message textarea) are left untouched.
+// handleSpawnPaste captures files pasted anywhere in the dialog: a screenshot
+// taken to the clipboard ("⌘V" of raw image data) AND a file copied in Finder /
+// Explorer ("⌘C" on a file, then ⌘V). It reads both clipboard surfaces and
+// dedupes — .files carries Finder file copies and image files; .items carries
+// raw bitmaps that some browsers don't expose in .files. A plain text paste
+// (into the init-message textarea) has no file entries, so it's left untouched.
 function handleSpawnPaste(e) {
-  const items = e.clipboardData && e.clipboardData.items;
-  if (!items) return;
-  const imgs = [];
+  const dt = e.clipboardData;
+  if (!dt) return;
+  const collected = [];
+  const seen = new Set();
+  const add = (f) => {
+    if (!f) return;
+    const key = `${f.name}|${f.size}|${f.type}|${f.lastModified || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    collected.push(f);
+  };
+  if (dt.files) {
+    for (let i = 0; i < dt.files.length; i++) add(dt.files[i]);
+  }
   // DataTransferItemList isn't reliably for...of-iterable across browsers —
   // index into it.
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
-      const f = it.getAsFile();
-      if (f) imgs.push(f);
+  if (dt.items) {
+    for (let i = 0; i < dt.items.length; i++) {
+      if (dt.items[i].kind === 'file') add(dt.items[i].getAsFile());
     }
   }
-  if (!imgs.length) return;
-  // We consumed image data — stop the default so a contenteditable / textarea
+  if (!collected.length) return;
+  // We consumed file data — stop the default so a contenteditable / textarea
   // doesn't also try to handle it.
   e.preventDefault();
-  addSpawnAttachments(imgs);
+  addSpawnAttachments(collected);
+}
+
+// bindSpawnDragDrop wires Finder/Explorer drag-and-drop onto the spawn dialog.
+// The handlers sit on the full-screen overlay (so a drop anywhere in the open
+// dialog is captured — and can't fall through to the browser's default of
+// navigating to the dropped file), and a dashed highlight on the card signals
+// the drop target. A depth counter rides the dragenter/dragleave pair so moving
+// the cursor across child elements doesn't flicker the highlight off.
+let spawnDragDepth = 0;
+function bindSpawnDragDrop() {
+  const overlay = $('#agent-spawn-modal');
+  const card = $('#agent-spawn-modal .cron-create-modal');
+  // dataTransfer.types is an Array in modern browsers, a DOMStringList in older
+  // ones — indexOf via the Array prototype handles both.
+  const hasFiles = (e) => {
+    const t = e.dataTransfer && e.dataTransfer.types;
+    return !!t && Array.prototype.indexOf.call(t, 'Files') !== -1;
+  };
+  const clear = () => { spawnDragDepth = 0; card.classList.remove('spawn-drag-over'); };
+  overlay.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    spawnDragDepth++;
+    card.classList.add('spawn-drag-over');
+  });
+  overlay.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  overlay.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    spawnDragDepth = Math.max(0, spawnDragDepth - 1);
+    if (spawnDragDepth === 0) card.classList.remove('spawn-drag-over');
+  });
+  overlay.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // stop the browser from opening the dropped file
+    clear();
+    const files = e.dataTransfer.files;
+    if (files && files.length) addSpawnAttachments(files);
+  });
 }
 
 // uploadSpawnAttachments POSTs the pending files to /api/spawn-attachments and
@@ -1023,6 +1077,7 @@ function bindAgentSpawnModal() {
     e.target.value = '';
   });
   $('#agent-spawn-modal').addEventListener('paste', handleSpawnPaste);
+  bindSpawnDragDrop();
   $('#agent-spawn-attachments-list').addEventListener('click', (e) => {
     const btn = e.target.closest('.att-remove');
     if (btn) removeSpawnAttachment(Number(btn.dataset.attId));

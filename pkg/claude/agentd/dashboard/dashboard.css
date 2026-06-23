@@ -1676,6 +1676,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-size: 14px; padding: 0 4px; flex: 0 0 auto;
 }
 .spawn-attachments-list .att-remove:hover { color: #f85149; }
+/* While a file is dragged over the open dialog (Finder/Explorer drop), outline
+   the card so the drop target is obvious. The class is toggled on the card by
+   bindSpawnDragDrop; the inset shadow reads as a highlight without shifting
+   layout (no border-box reflow). */
+.cron-create-modal.spawn-drag-over {
+  outline: 2px dashed #58a6ff; outline-offset: -6px;
+  box-shadow: inset 0 0 0 9999px rgba(88, 166, 255, 0.06);
+}
 .cron-create-target {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
 }

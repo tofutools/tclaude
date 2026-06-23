@@ -1376,13 +1376,13 @@
          uploaded to a temp dir on submit and listed in the new agent's startup
          briefing so it can read them on its first turn. A <div> (not a <label>)
          so clicking the button doesn't double-trigger the hidden file input. -->
-    <div class="cron-create-row" id="agent-spawn-attachments-row" title="Attach files or paste screenshots to hand to the new agent. They're uploaded to a temp dir and listed in the agent's startup briefing (it reads them with its own file tools). Paste image data anywhere in this dialog (⌘/Ctrl-V) to capture a screenshot as a PNG.">
+    <div class="cron-create-row" id="agent-spawn-attachments-row" title="Attach files or screenshots to hand to the new agent. They're uploaded to a temp dir and listed in the agent's startup briefing (it reads them with its own file tools). Three ways to add: the Attach files button, drag files from Finder/Explorer onto this dialog, or paste (⌘/Ctrl-V) — a clipboard screenshot becomes a PNG and a file copied in Finder/Explorer is attached too.">
       <span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments">
         <div class="spawn-attachments-controls">
           <button type="button" id="agent-spawn-attach-btn">📎 Attach files…</button>
           <input type="file" id="agent-spawn-attach-input" multiple hidden />
-          <span class="spawn-attachments-hint">…or paste a screenshot (⌘/Ctrl-V)</span>
+          <span class="spawn-attachments-hint">…or drag files here / paste (⌘/Ctrl-V)</span>
         </div>
         <ul class="spawn-attachments-list" id="agent-spawn-attachments-list"></ul>
       </div>

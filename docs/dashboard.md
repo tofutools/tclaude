@@ -236,9 +236,11 @@ group's start-dir default pre-fills the directory when present, and — when the
 group has a shared startup context — a checkbox offers to include it in the
 briefing.
 
-The modal also takes **attachments**: click **📎 Attach files** to pick one or
-more files with the native picker, or just **paste a screenshot** (⌘/Ctrl-V
-anywhere in the dialog — a clipboard image is packaged as a PNG). Each pending
+The modal also takes **attachments**, added three ways: click **📎 Attach
+files** to pick one or more with the native picker; **drag files from
+Finder/Explorer** onto the dialog (it highlights as a drop target); or **paste**
+(⌘/Ctrl-V anywhere in the dialog) — a clipboard screenshot is packaged as a PNG,
+and a file copied in Finder/Explorer (⌘/Ctrl-C) is attached as-is. Each pending
 attachment shows in a list with a thumbnail (for images) and a remove button.
 On submit the files are uploaded to a temp dir (`POST /api/spawn-attachments`)
 and their paths are folded into the new agent's startup briefing under an
