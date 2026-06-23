@@ -28,11 +28,13 @@ import (
 // To avoid disturbing the live original — interrupting its in-flight work,
 // polluting its context, or racing its turns — the export does NOT nudge the
 // original. It spawns an isolated CLONE of the conversation (a copy of the
-// .jsonl on a fresh conv-id / session), lets the CLONE produce the summary, and
-// AUTO-DELETES the clone. The summary still attaches to the ORIGINAL: the job's
-// conv_id stays the original (history list + download), while worker_conv_id is
-// the throwaway clone (who is nudged, who submits, whose identity the /v1 gate
-// accepts). The round-trip:
+// .jsonl on a fresh conv-id / session), lets the CLONE produce the summary, then
+// RETIRES the clone (JOH-267): the clone spent tokens on the summary, so its
+// conversation is kept and demoted to a retired agent rather than deleted, which
+// keeps that cost attributed in the Costs view. The summary still attaches to the
+// ORIGINAL: the job's conv_id stays the original (history list + download), while
+// worker_conv_id is the throwaway clone (who is nudged, who submits, whose
+// identity the /v1 gate accepts). The round-trip:
 //
 //	1. Dashboard POST /api/agents/{conv}/export {title, instructions, preset,
 //	   same_group} → createExportJob: validates the conversation is cloneable,
@@ -46,7 +48,7 @@ import (
 //	   returns the brief and flips the job to running.
 //	3. The clone runs `tclaude agent export submit N <files…>` → POST
 //	   /v1/export-jobs/{id}/artifact: stores the uploaded bytes under
-//	   ~/.tclaude/exports/<id>/, flips the job to ready, and AUTO-DELETES the clone.
+//	   ~/.tclaude/exports/<id>/, flips the job to ready, and RETIRES the clone.
 //	4. Dashboard polls GET /api/export-jobs/{id} until ready, then downloads
 //	   GET /api/export-jobs/{id}/artifact (Content-Disposition attachment).
 //
@@ -386,12 +388,43 @@ func failExportJobAndReap(jobID int64, cloneConv, reason string) {
 	deleteSummaryWriterClone(cloneConv)
 }
 
-// deleteSummaryWriterClone tears down an export's throwaway summary-writer clone:
-// force-kill its tmux session, then purge its conversation (DB rows + .jsonl).
-// Best-effort and idempotent — an empty id or an already-gone session/conv is a
-// no-op — so the submit-success path, a failure reap, and the cleanup sweep can
-// all call it without coordinating. NEVER call with the original conv-id: callers
-// guard worker_conv_id != conv_id so the original is never deleted.
+// retireSummaryWriterClone tears down a summary-writer clone that did real work
+// (it produced — or was given the full window to produce — an export, so it
+// spent tokens) WITHOUT erasing its cost. It force-kills the pane, then RETIRES
+// the conversation instead of deleting it: retireAgentConv keeps conv_index +
+// sessions + the .jsonl and only demotes the agent (unjoin groups, revoke perms,
+// flip enrollment → retired), so the clone's spend stays attributed in the Costs
+// view and the clone lands in the dashboard's "Retired" group (JOH-267).
+//
+// EnrollAgent first (INSERT OR IGNORE — a same_group clone is already enrolled;
+// a standalone one is not) so RetireAgent has an active row to flip. Cost capture
+// is not lost to the kill: Claude Code stamps cumulative cost live via the
+// statusline hook, so the summary turn's spend is already recorded by submit time.
+//
+// Best-effort and idempotent. NEVER call with the original conv-id: callers guard
+// worker_conv_id != conv_id so the original is never touched.
+func retireSummaryWriterClone(cloneConv string) {
+	if cloneConv == "" {
+		return
+	}
+	stopOneConv(cloneConv, true /* force kill — the clone is done */)
+	if err := db.EnrollAgent(cloneConv, "export-clone"); err != nil {
+		slog.Warn("export clone: enroll-before-retire failed", "conv", cloneConv, "error", err)
+	}
+	if _, _, err := retireAgentConv(cloneConv, "system:export-clone",
+		"export complete — retired to preserve cost"); err != nil {
+		slog.Warn("export clone: retire failed", "conv", cloneConv, "error", err)
+	}
+}
+
+// deleteSummaryWriterClone tears down a summary-writer clone that did NOT do
+// billable work — an early failure (never came online, spawn failed, the job
+// vanished before the worker was recorded). It force-kills the pane, then purges
+// the conversation (DB rows + .jsonl): there is no cost worth preserving, so a
+// retired entry would just be clutter. Compare retireSummaryWriterClone, used on
+// the success + timeout paths. Best-effort and idempotent — an empty id or an
+// already-gone session/conv is a no-op. NEVER call with the original conv-id:
+// callers guard worker_conv_id != conv_id so the original is never deleted.
 func deleteSummaryWriterClone(cloneConv string) {
 	if cloneConv == "" {
 		return
@@ -513,13 +546,15 @@ func handleExportSubmit(w http.ResponseWriter, r *http.Request) {
 		"name":   name,
 		"size":   len(data),
 	})
-	// The export is delivered — auto-delete the throwaway clone that produced it
-	// (JOH-266). Done AFTER the response (in the background) so the clone's
-	// `export submit` sees its 200 before its pane is killed. The worker != conv
-	// guard makes it impossible to ever delete the ORIGINAL conversation.
+	// The export is delivered — tear down the throwaway clone that produced it.
+	// RETIRE it rather than delete (JOH-267): it spent tokens on the summary, so
+	// keeping the conversation preserves that cost in the Costs view. Done AFTER
+	// the response (in the background) so the clone's `export submit` sees its 200
+	// before its pane is killed. The worker != conv guard makes it impossible to
+	// ever touch the ORIGINAL conversation.
 	if job.WorkerConvID != "" && job.WorkerConvID != job.ConvID {
 		clone := job.WorkerConvID
-		goBackground(func() { deleteSummaryWriterClone(clone) })
+		goBackground(func() { retireSummaryWriterClone(clone) })
 	}
 }
 
@@ -769,12 +804,22 @@ func runExportJobsCleanup(now time.Time) {
 			slog.Warn("export cleanup: timeout fail failed", "error", err, "job", j.ID)
 			continue
 		}
-		// Reap the throwaway clone we spawned for this job so it never leaks
-		// (JOH-266) — only when we actually transitioned it to failed (a job that
-		// raced to ready meanwhile keeps its clone reaped by the submit path). The
-		// worker != conv guard makes deleting the original impossible.
+		// Reap the throwaway clone we spawned for this job so it never leaks —
+		// only when we actually transitioned it to failed (a job that raced to
+		// ready meanwhile keeps its clone reaped by the submit path). The
+		// worker != conv guard makes touching the original impossible.
+		//
+		// A requested/running clone was nudged and may have spent tokens → RETIRE
+		// it to keep that cost (JOH-267). A clone still in 'cloning' was never
+		// nudged (a daemon-crash orphan, since a live waitForConvAlive failure
+		// would already have failed+deleted it) → DELETE; there is no billable
+		// work to preserve.
 		if moved && j.WorkerConvID != "" && j.WorkerConvID != j.ConvID {
-			deleteSummaryWriterClone(j.WorkerConvID)
+			if j.Status == db.ExportStatusRequested || j.Status == db.ExportStatusRunning {
+				retireSummaryWriterClone(j.WorkerConvID)
+			} else {
+				deleteSummaryWriterClone(j.WorkerConvID)
+			}
 		}
 	}
 

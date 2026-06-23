@@ -4,8 +4,8 @@
 // Asks an agent to consolidate a shareable artifact (a summary / report, one or
 // more files auto-zipped) and downloads it here. The async, curated twin of the
 // group's mechanical "⤓ export". To avoid disturbing the live agent, the daemon
-// runs the export on an isolated, auto-deleted CLONE of the conversation — the
-// modal just sees an extra leading "cloning" phase. Flow:
+// runs the export on an isolated CLONE of the conversation — the modal just sees
+// an extra leading "cloning" phase. Flow:
 //
 //   1. The modal collects a format preset, an optional title, free-text
 //      instructions, and the "Clone into the same group" toggle, then POSTs

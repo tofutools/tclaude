@@ -158,24 +158,37 @@ func TestExportFlow_HappyPath(t *testing.T) {
 	assert.Equal(t, artifact, dlRec.Body.Bytes())
 	assert.Contains(t, dlRec.Header().Get("Content-Disposition"), "auth-research.md")
 
-	// 7. The throwaway clone is auto-deleted once the export lands.
-	assertCloneDeleted(t, workerConv, 3*time.Second)
+	// 7. The throwaway clone is RETIRED (not deleted) once the export lands, so
+	// its token spend stays in cost tracking (JOH-267).
+	assertCloneRetired(t, workerConv, 3*time.Second)
 }
 
-// assertCloneDeleted polls until the worker clone's session rows are gone — the
-// auto-delete (kill session + purge conv) runs in the background after submit.
-func assertCloneDeleted(t *testing.T, workerConv string, timeout time.Duration) {
+// assertCloneRetired polls until the worker clone is retired — the teardown
+// (kill session + retire conv) runs in the background after submit. It asserts
+// the conversation is KEPT (the session row carrying the cost survives) and the
+// agent is demoted to retired, rather than purged: the cost-preservation
+// guarantee of JOH-267. The contrast with the old delete behaviour is exactly
+// the surviving session row.
+func assertCloneRetired(t *testing.T, workerConv string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if rows, _ := db.FindSessionsByConvID(workerConv); len(rows) == 0 {
+		if st, _ := db.EnrollmentState(workerConv); st == db.EnrollmentRetired {
+			// The session row (which carries cost_usd, and keys session_cost_daily)
+			// must NOT have been purged — that is what keeps the cost attributed.
+			rows, _ := db.FindSessionsByConvID(workerConv)
+			require.NotEmpty(t, rows,
+				"retired clone %s must keep its session row so its cost is preserved", workerConv)
+			// And the conversation index row survives too (the cost's label/context).
+			row, _ := db.GetConvIndex(workerConv)
+			require.NotNil(t, row, "retired clone %s must keep its conv_index row", workerConv)
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	rows, _ := db.FindSessionsByConvID(workerConv)
-	t.Fatalf("export clone %s was not deleted within %s; %d session rows remain",
-		workerConv, timeout, len(rows))
+	st, _ := db.EnrollmentState(workerConv)
+	t.Fatalf("export clone %s was not retired within %s; enrollment state = %q",
+		workerConv, timeout, st)
 }
 
 // TestExportFlow_OfflineOriginalStillExports proves the clone-based export works
@@ -199,10 +212,11 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 	require.NotEqual(t, "off00000-0000-4000-8000-000000000002", workerConv)
 	f.AssertSentContains(cloneTmux, fmt.Sprintf("export show %d", jobID), 3*time.Second)
 
-	// And the export completes end-to-end on the clone.
+	// And the export completes end-to-end on the clone, which is then retired
+	// (kept for cost tracking), not deleted.
 	subRec := submitAsWorker(t, f.Mux, jobID, workerConv, "summary.md", []byte("# summary\n"))
 	require.Equal(t, http.StatusOK, subRec.Code, subRec.Body.String())
-	assertCloneDeleted(t, workerConv, 3*time.Second)
+	assertCloneRetired(t, workerConv, 3*time.Second)
 }
 
 // TestExportFlow_StandaloneCloneIsIsolated proves the DEFAULT clone is standalone
