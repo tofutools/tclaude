@@ -522,8 +522,51 @@ async function submitGroupCreate() {
   }
 }
 
+// Ask the daemon to open a native directory picker and drop the chosen
+// path into the Default cwd field. The browser can't pop an OS folder
+// chooser itself, so agentd — running on the human's desktop — does it
+// and reports the path back (POST /api/pick-directory). The fetch stays
+// pending while the dialog is open; a cancel leaves the field untouched.
+async function browseGroupCreateCwd() {
+  const input = $('#group-create-cwd');
+  const btn = $('#group-create-cwd-browse');
+  const errEl = $('#group-create-error');
+  errEl.textContent = '';
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Opening…';
+  try {
+    const r = await fetch('/api/pick-directory', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start_dir: input.value.trim(),
+        title: 'Select the group default working directory',
+      }),
+    });
+    let data = {};
+    try { data = await r.json(); } catch (_) {}
+    if (!r.ok) {
+      // 409 busy / 503 no-picker / 500 — all carry a human-readable error.
+      errEl.textContent = data.error || `HTTP ${r.status}`;
+      return;
+    }
+    if (data.canceled) return; // dialog dismissed — leave the field as-is
+    if (data.path) {
+      input.value = data.path;
+      input.focus();
+    }
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+
 function bindGroupCreateModal() {
   $('#group-create-open').addEventListener('click', openGroupCreateModal);
+  $('#group-create-cwd-browse').addEventListener('click', browseGroupCreateCwd);
   // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
   // multi-category cleanup modal — bulk unjoin / retire / delete /
   // reinstate spanning active agents, retired agents and plain
