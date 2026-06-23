@@ -41,6 +41,12 @@ func Open() (*sql.DB, error) {
 			return
 		}
 
+		// Test-only fast path: seed the db file from a cached, fully-migrated
+		// snapshot so the migrate() below short-circuits (the v0->vN chain
+		// costs ~290ms on pure-Go sqlite and the suite opens a fresh db per
+		// test). Inert in production. See migration_template.go.
+		seededFromTemplate := maybeSeedFromTemplate(dbPath)
+
 		// PRAGMAs in the DSN are applied on every new pooled connection.
 		// `foreign_keys` in particular is per-connection in SQLite, so a
 		// one-shot db.Exec wouldn't survive when the pool opens new
@@ -55,6 +61,14 @@ func Open() (*sql.DB, error) {
 		if initErr != nil {
 			_ = globalDB.Close()
 			globalDB = nil
+			return
+		}
+
+		// Test-only: capture the freshly-migrated empty schema so sibling
+		// tests in this process reuse it via the fast path above. No-op when
+		// we just seeded from the template or in production.
+		if !seededFromTemplate {
+			maybeCaptureTemplate(globalDB, dbPath)
 		}
 	})
 	return globalDB, initErr
@@ -81,4 +95,8 @@ func ResetForTest() {
 	}
 	once = sync.Once{}
 	initErr = nil
+	// Arm the migration-template fast path. The first Open in this process
+	// pays the full migration cost and caches the result; every later
+	// ResetForTest+Open reuses the snapshot. See migration_template.go.
+	enableMigrationTemplate()
 }
