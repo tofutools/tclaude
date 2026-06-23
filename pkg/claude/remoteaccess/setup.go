@@ -116,8 +116,11 @@ type ClientResult struct {
 // PRIVATE key is only ever in that .p12 — the server keeps the public cert
 // (for the record) but never the key. Requires Setup to have run.
 func AddClient(name, p12Password, p12Out string) (*ClientResult, error) {
-	if name == "" {
-		return nil, fmt.Errorf("a client name is required")
+	// The name becomes a path component (clients/<name>.crt / .p12), so it is
+	// charset-validated — a path-traversal guard now that AddClient is reachable
+	// from the localhost dashboard, not only the operator's own CLI.
+	if !ValidClientName(name) {
+		return nil, fmt.Errorf("invalid client name %q: use letters, digits, '-' or '_' (1–64 chars, leading alphanumeric)", name)
 	}
 	if p12Password == "" {
 		return nil, fmt.Errorf("a .p12 password is required (it protects the client key in transit to the device)")

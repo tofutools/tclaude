@@ -454,6 +454,68 @@
       </div>
     </div>
 
+    <!-- Remote-access certificate management (JOH-278). Served over both the
+         loopback dashboard and the remote (mTLS + passphrase) listener — a
+         remote session is already a full control-plane operator. remote-admin.js
+         fills the dynamic parts (info/SANs/devices) and wires the forms. -->
+    <div class="cfg-section" id="cfg-remote-admin">
+      <h3>Remote access — certificate management</h3>
+      <p class="cfg-hint" style="padding-left:0">
+        Generate and manage the remote-access secret material (CA, device
+        <code>.p12</code> bundles, the login passphrase) without dropping to the
+        <code>tclaude remote-access</code> CLI.
+      </p>
+      <div id="ra-admin-msg" class="ra-msg" style="display:none"></div>
+
+      <div class="cfg-field">
+        <span class="cfg-label">Material</span>
+        <span class="cfg-hint" id="ra-admin-state" style="padding-left:0"></span>
+      </div>
+
+      <div class="cfg-field">
+        <span class="cfg-label">Cert valid for</span>
+        <div style="flex-basis:100%">
+          <div id="ra-admin-sans" class="ra-chips"></div>
+          <span class="cfg-hint" style="padding-left:0">The host names / IPs a device may dial without a certificate-name mismatch (the server cert's SANs).</span>
+          <div class="ra-inline-form">
+            <input type="text" id="ra-addhosts-input" placeholder="myhost.tailnet.ts.net, example.com" aria-label="Additional host names" autocomplete="off" spellcheck="false" />
+            <button type="button" id="ra-addhosts-btn">Add host name(s)</button>
+          </div>
+          <span class="cfg-hint" style="padding-left:0">Adds SANs to the <strong>server</strong> cert (keeps the existing CA), so a public URL / new name verifies — <em>installed devices keep working</em>, no reinstall. Restart agentd to serve the updated cert.</span>
+        </div>
+      </div>
+
+      <div class="cfg-field">
+        <span class="cfg-label">Devices</span>
+        <div style="flex-basis:100%">
+          <div id="ra-admin-devices" class="ra-devices"></div>
+          <div class="ra-inline-form">
+            <input type="text" id="ra-addclient-name" placeholder="device name (e.g. phone)" aria-label="New device name" autocomplete="off" spellcheck="false" />
+            <input type="password" id="ra-addclient-pw" placeholder=".p12 password" aria-label="New device .p12 password" autocomplete="new-password" />
+            <button type="button" id="ra-addclient-btn">Add device</button>
+          </div>
+          <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device. <button type="button" id="ra-ca-btn" class="ra-link">Download CA cert</button></span>
+        </div>
+      </div>
+
+      <details class="cfg-advanced" id="ra-setup-details">
+        <summary>First-time setup / regenerate material</summary>
+        <div class="cfg-advanced-body">
+          <p class="cfg-hint">Generate the CA + server cert + first device, set the login passphrase, and (optionally) enable the listener. If material already exists, <strong>regenerate</strong> rotates everything including the CA — this <strong>invalidates every installed device</strong> and they must reinstall.</p>
+          <div class="ra-form-grid">
+            <label>Bind <input type="text" id="ra-setup-bind" placeholder="0.0.0.0:8443" autocomplete="off" spellcheck="false" /></label>
+            <label>Extra host names <input type="text" id="ra-setup-hosts" placeholder="myhost.tailnet.ts.net (optional)" autocomplete="off" spellcheck="false" /></label>
+            <label>Login passphrase <input type="password" id="ra-setup-pass" autocomplete="new-password" /></label>
+            <label>Device .p12 password <input type="password" id="ra-setup-p12pw" autocomplete="new-password" /></label>
+            <label>First device name <input type="text" id="ra-setup-client" placeholder="phone" autocomplete="off" spellcheck="false" /></label>
+          </div>
+          <label class="cfg-inline"><input type="checkbox" id="ra-setup-enable" checked /> enable in config.json (restart agentd to start the listener)</label>
+          <label class="cfg-inline"><input type="checkbox" id="ra-setup-regenerate" /> regenerate even though material exists (rotates the CA — invalidates installed devices)</label>
+          <div class="ra-inline-form"><button type="button" id="ra-setup-btn" class="primary">Generate material</button></div>
+        </div>
+      </details>
+    </div>
+
     <datalist id="cfg-slug-list"></datalist>
     <datalist id="cfg-group-list"></datalist>
     <datalist id="cfg-state-list">

@@ -2315,6 +2315,33 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cfg-remote-status { font-size: 12px; color: #7d8590; }
 .cfg-remote-status.ok { color: #3fb950; }
 .cfg-remote-status.warn { color: #e3b341; }
+/* Remote-access cert management (JOH-278). */
+.ra-msg {
+  border: 1px solid #2a623d; background: #0f2417; border-radius: 6px;
+  color: #56d364; font-size: 12px; padding: 8px 12px; margin: 0 0 12px;
+}
+.ra-msg.err { border-color: #f85149; background: #2d1416; color: #ffa198; }
+.ra-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ra-chip {
+  font-size: 12px; font-family: ui-monospace, monospace; color: #adbac7;
+  background: #1c2128; border: 1px solid #30363d; border-radius: 10px; padding: 2px 9px;
+}
+.ra-devices { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.ra-device {
+  display: flex; align-items: center; gap: 12px; font-size: 13px;
+  padding: 5px 9px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px;
+}
+.ra-device-name { font-weight: 600; min-width: 120px; }
+.ra-device-exp { color: #7d8590; font-size: 11px; flex: 1; }
+.ra-inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.ra-inline-form input { flex: 1 1 160px; min-width: 0; }
+.ra-form-grid { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.ra-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #9aa3b2; }
+.ra-link {
+  background: none; border: 0; color: #58a6ff; cursor: pointer; padding: 0;
+  font-size: 12px; text-decoration: underline;
+}
+.ra-link:hover { color: #79c0ff; }
 .cfg-errors {
   border: 1px solid #f85149; background: #2d1416; border-radius: 6px;
   color: #ffa198; font-size: 12px; padding: 8px 12px; margin: 0 0 14px;
