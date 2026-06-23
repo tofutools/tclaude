@@ -403,6 +403,17 @@ type snapshotPayload struct {
 	// master OS-notification switch above the per-group / per-agent
 	// filters. Drives the top-bar bell toggle.
 	NotificationsEnabled bool `json:"notifications_enabled"`
+	// CostTabVisible drives the Costs tab's auto-hide: true when there is
+	// real pay-per-token spend to show OR a subscription account has opted
+	// into the WHAT-IF view (config cost.show_on_subscription). When false
+	// the dashboard hides the Costs nav button + section entirely — the
+	// "don't show an empty Costs tab on a subscription" rule.
+	CostTabVisible bool `json:"cost_tab_visible"`
+	// CostTabWhatIf is true when the Costs tab is showing the hypothetical
+	// subscription estimate (no real spend, but the opt-in is on) rather
+	// than real spend — the front-end renders the WHAT-IF banner and fetches
+	// /api/costs?whatif=1. Implies CostTabVisible.
+	CostTabWhatIf bool `json:"cost_tab_whatif"`
 }
 
 // dashboardHarness is the snapshot view of one spawnable harness — its
@@ -725,6 +736,13 @@ type agentState struct {
 	// dashboard renders no cost badge for it. Surfaced regardless of
 	// liveness, like Model — what a dead agent cost is still informative.
 	CostUSD float64 `json:"cost_usd,omitempty"`
+	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the agent's
+	// cumulative pay-per-token-EQUIVALENT cost on a subscription session. 0
+	// on pay-per-token (CostUSD carries the real figure there) or before a
+	// tick. The Groups tab shows it as the per-agent cost badge — flagged
+	// hypothetical — only when the WHAT-IF view is active
+	// (snapshot.cost_tab_whatif). Surfaced regardless of liveness, like CostUSD.
+	VirtualCostUSD float64 `json:"virtual_cost_usd,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
 	// SessionEnd `reason`, a daemon-owned clean reason, or 'unexpected'
 	// when a harness-specific reaper path has a positive abnormal-death
@@ -827,6 +845,7 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		out.Model = snap.Model
 		out.EffortLevel = snap.EffortLevel
 		out.CostUSD = snap.CostUSD
+		out.VirtualCostUSD = snap.VirtualCostUSD
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically
@@ -1207,6 +1226,21 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
+	// Costs-tab visibility: show when there is real pay-per-token spend to
+	// display, OR a subscription account has opted into the WHAT-IF view
+	// (cost.show_on_subscription). A subscription-only account with the opt-in
+	// off hides the tab — it would only show an empty chart. WHAT-IF mode is
+	// "visible, but no real spend" → the front-end renders the hypothetical
+	// estimate behind a banner and fetches /api/costs?whatif=1. A DB error
+	// degrades to "no real cost" (the opt-in still governs), matching how the
+	// cost figures themselves degrade to 0.
+	hasRealCost, costErr := db.HasAnyRealCost()
+	if costErr != nil {
+		slog.Debug("snapshot: HasAnyRealCost failed; treating as no real cost", "error", costErr)
+	}
+	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
+	out.CostTabVisible = hasRealCost || showOnSub
+	out.CostTabWhatIf = !hasRealCost && showOnSub
 	out.Templates = collectTemplatesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 	var pluginsErr error
@@ -1226,11 +1260,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 // applyCostDisplayFactor scales every cost figure in the snapshot by the
 // configured display multiplier: the per-agent badge (Agents, Ungrouped,
-// and each group member's State.CostUSD) plus the top-bar month-to-date
-// / today readouts. It is the snapshot twin of collectCosts's scaling,
-// so the per-agent badge, the Costs tab and the top-bar headline all
-// move together. A factor of 1 (the default / unset) is a no-op, so the
-// common path is untouched. Display-only: the DB keeps raw values.
+// and each group member's State.CostUSD / State.VirtualCostUSD) plus the
+// top-bar month-to-date / today readouts. The WHAT-IF per-agent figure
+// (VirtualCostUSD) scales on the same factor as the real one, so the Groups
+// tab's hypothetical badge tracks the Costs tab's WHAT-IF total (which
+// collectCosts scales by the same factor). It is the snapshot twin of
+// collectCosts's scaling, so the per-agent badge, the Costs tab and the
+// top-bar headline all move together. A factor of 1 (the default / unset)
+// is a no-op, so the common path is untouched. Display-only: the DB keeps
+// raw values.
 func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 	if factor == 1 {
 		return
@@ -1240,6 +1278,7 @@ func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 	scaleAgents := func(rows []dashboardAgent) {
 		for i := range rows {
 			rows[i].State.CostUSD *= factor
+			rows[i].State.VirtualCostUSD *= factor
 		}
 	}
 	scaleAgents(out.Agents)
@@ -1248,6 +1287,7 @@ func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 		members := out.Groups[gi].Members
 		for mi := range members {
 			members[mi].State.CostUSD *= factor
+			members[mi].State.VirtualCostUSD *= factor
 		}
 	}
 }
