@@ -1,7 +1,10 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -215,6 +218,116 @@ func TestNotificationFilters_GroupAndAgentBells(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"enabled":true`)
 	assert.True(t, notified(t, "sess-globalon", conv), "master back on notifies again")
+}
+
+// Scenario: the per-TYPE notification selector (the top-bar bell popover,
+// backed by GET/POST /api/notifications). Unchecking a type silences only
+// that destination state's banner; the other types still notify. The gate
+// is banner-only — it runs in OnStateTransition, well after the hook
+// callback has already recorded the new status, so the event tclaude
+// relies on is untouched (the brief's "still capture the events"). The
+// human-message knob round-trips through the same endpoint.
+func TestNotificationFilters_PerType(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	enableNotificationsForTest(t)
+
+	const conv = "ptyp-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveEnrolledAgent(conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	getState := func() map[string]any {
+		r := testharness.JSONRequest(t, http.MethodGet, "/api/notifications", nil)
+		rec := testharness.Serve(mux, r)
+		require.Equal(t, http.StatusOK, rec.Code, "GET /api/notifications body=%s", rec.Body.String())
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+	postState := func(body map[string]any) map[string]any {
+		r := testharness.JSONRequest(t, http.MethodPost, "/api/notifications", body)
+		rec := testharness.Serve(mux, r)
+		require.Equal(t, http.StatusOK, rec.Code, "POST /api/notifications body=%s", rec.Body.String())
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		return out
+	}
+
+	// GET surfaces the master switch, the per-type checklist (all five
+	// defaults on) and the human-message intent (default on).
+	state := getState()
+	assert.Equal(t, true, state["enabled"], "master on after enableNotificationsForTest")
+	types, _ := state["types"].(map[string]any)
+	require.NotNil(t, types, "types map present")
+	for _, ty := range []string{"idle", "awaiting_permission", "awaiting_input", "error", "exited"} {
+		assert.Equal(t, true, types[ty], "default type %q on", ty)
+	}
+	assert.Equal(t, true, state["human_messages"], "human messages default on")
+
+	// Baseline: an exit transition notifies.
+	assert.True(t, notifiedTransition(t, "pt-exit-1", conv, "working", "exited"),
+		"exit notifies before the type is unchecked")
+
+	// Uncheck "exited": the response echoes it off, the others stay on.
+	after := postState(map[string]any{"types": map[string]any{"exited": false}})
+	afterTypes, _ := after["types"].(map[string]any)
+	assert.Equal(t, false, afterTypes["exited"], "exited unchecked in the response")
+	assert.Equal(t, true, afterTypes["idle"], "idle still checked")
+
+	// Only the exit banner is silenced — a still-checked type notifies.
+	assert.False(t, notifiedTransition(t, "pt-exit-2", conv, "working", "exited"),
+		"exit no longer notifies once unchecked")
+	assert.True(t, notifiedTransition(t, "pt-idle-1", conv, "working", "idle"),
+		"a still-checked type keeps notifying")
+
+	// Re-check it.
+	postState(map[string]any{"types": map[string]any{"exited": true}})
+	assert.True(t, notifiedTransition(t, "pt-exit-3", conv, "working", "exited"),
+		"exit notifies again after re-checking")
+
+	// An unknown type is a client error, not a silent no-op.
+	bad := testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"types": map[string]any{"bogus": false}})
+	require.Equal(t, http.StatusBadRequest, testharness.Serve(mux, bad).Code, "unknown type rejected")
+
+	// An empty body (no recognised field) is also a 400.
+	empty := testharness.JSONRequest(t, http.MethodPost, "/api/notifications", map[string]any{})
+	require.Equal(t, http.StatusBadRequest, testharness.Serve(mux, empty).Code, "no-field body rejected")
+
+	// The human-message knob round-trips through the same endpoint.
+	off := postState(map[string]any{"human_messages": false})
+	assert.Equal(t, false, off["human_messages"], "human messages off echoed")
+	assert.Equal(t, false, getState()["human_messages"], "and persisted")
+}
+
+// A corrupt config.json must NOT be silently overwritten with defaults by
+// a notification write — the popover refuses with a 409, leaving the
+// Config tab to own recovery (mirrors handleDashboardSlopVolumesPost).
+func TestNotificationsAPI_RefusesCorruptConfig(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t) // points HOME at an isolated temp dir
+	const corrupt = "{ not valid json"
+	require.NoError(t, os.MkdirAll(filepath.Dir(config.ConfigPath()), 0o755))
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(corrupt), 0o600))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"enabled": false})
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusConflict, rec.Code,
+		"corrupt config → 409, not a silent default-overwrite; body=%s", rec.Body.String())
+
+	// The corrupt file is left untouched — the write refused rather than
+	// clobbering it with defaults-plus-the-toggle.
+	data, err := os.ReadFile(config.ConfigPath())
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, string(data), "corrupt config left as-is")
 }
 
 // Scenario: the per-agent / per-group filters also gate the

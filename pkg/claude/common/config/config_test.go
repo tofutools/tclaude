@@ -31,6 +31,74 @@ func TestDefaultConfig_NotifiesOnErrorTransition(t *testing.T) {
 		"a transition with no matching rule must not notify")
 }
 
+// The per-type notification selector is a friendly view over the
+// Transitions list: each canonical NotifyType maps to one wildcard rule
+// {from:"*", to:<type>}. NotifyTypeEnabled reads that bit; SetNotifyType
+// flips it while preserving every other rule.
+func TestNotifyTypeSelector_MapsToWildcardRules(t *testing.T) {
+	n := DefaultConfig().Notifications // the five default *→<type> rules
+
+	// Every default type reads as enabled; a never-configured one does not.
+	for _, ty := range NotifyTypes {
+		assert.True(t, n.NotifyTypeEnabled(ty), "default config notifies on %q", ty)
+	}
+	assert.False(t, n.NotifyTypeEnabled("working"), "working is not a default notify type")
+
+	// Unchecking "exited" drops only its wildcard rule — the other four
+	// types and the rule count both reflect exactly one removal.
+	before := len(n.Transitions)
+	n.SetNotifyType("exited", false)
+	assert.False(t, n.NotifyTypeEnabled("exited"), "exited unchecked")
+	assert.Len(t, n.Transitions, before-1, "exactly one rule removed")
+	assert.True(t, n.NotifyTypeEnabled("idle"), "siblings untouched")
+	assert.True(t, n.NotifyTypeEnabled("error"), "siblings untouched")
+
+	// Re-checking is idempotent: turning it on twice adds a single rule.
+	n.SetNotifyType("exited", true)
+	n.SetNotifyType("exited", true)
+	assert.True(t, n.NotifyTypeEnabled("exited"), "exited re-checked")
+	assert.Len(t, n.Transitions, before, "no duplicate wildcard rule")
+}
+
+// SetNotifyType must never disturb from-specific or non-canonical rules —
+// they belong to the "Advanced" raw editor and round-trip untouched, so
+// the checklist and the raw editor can't clobber each other.
+func TestSetNotifyType_PreservesAdvancedRules(t *testing.T) {
+	n := &NotificationConfig{Transitions: []TransitionRule{
+		{From: "working", To: "idle"}, // from-specific: advanced, not the checkbox
+		{From: "*", To: "idle"},       // canonical: the "idle" checkbox
+		{From: "*", To: "working"},    // non-canonical destination: advanced
+	}}
+
+	// The from-specific working→idle rule must NOT light the "idle" box;
+	// only the wildcard rule does.
+	assert.True(t, n.NotifyTypeEnabled("idle"), "wildcard idle rule present")
+
+	// Uncheck idle: the wildcard idle rule goes, the from-specific and the
+	// non-canonical rules stay.
+	n.SetNotifyType("idle", false)
+	assert.Equal(t, []TransitionRule{
+		{From: "working", To: "idle"},
+		{From: "*", To: "working"},
+	}, n.Transitions, "only the wildcard idle rule removed")
+	assert.False(t, n.NotifyTypeEnabled("idle"))
+}
+
+// HumanMessagesIntent is the checkbox state (default-on, off only on an
+// explicit false) — independent of the master Enabled switch, unlike
+// NotifyHumanMessages which ANDs Enabled.
+func TestHumanMessagesIntent(t *testing.T) {
+	tt := true
+	ff := false
+	assert.True(t, (&NotificationConfig{}).HumanMessagesIntent(), "unset defaults on")
+	assert.True(t, (&NotificationConfig{HumanMessages: &tt}).HumanMessagesIntent())
+	assert.False(t, (&NotificationConfig{HumanMessages: &ff}).HumanMessagesIntent())
+	// Intent ignores Enabled; NotifyHumanMessages does not.
+	disabled := &NotificationConfig{Enabled: false}
+	assert.True(t, disabled.HumanMessagesIntent(), "intent is master-independent")
+	assert.False(t, disabled.NotifyHumanMessages(), "effective banner needs the master on")
+}
+
 // The default config must pass its own validator — the dashboard's
 // config editor would otherwise refuse to save a freshly-loaded config.
 func TestValidate_AcceptsDefaultConfig(t *testing.T) {
@@ -108,6 +176,24 @@ func TestNormalize_FillsDefaults(t *testing.T) {
 	require.NotNil(t, c.Notifications, "notifications block must be populated")
 	assert.Equal(t, 5, c.Notifications.CooldownSeconds)
 	assert.NotEmpty(t, c.Notifications.Transitions)
+}
+
+// An existing notifications block with an explicitly-empty transitions
+// list must stay empty — it is the "notify on no state transition" state
+// (every per-type checkbox unchecked, only human-message notifications
+// left). Re-seeding the defaults here would make unchecking the last type
+// silently revert to all-on. An absent block still gets the defaults.
+func TestNormalize_RespectsExplicitEmptyTransitions(t *testing.T) {
+	emptied := &Config{Notifications: &NotificationConfig{Enabled: true}}
+	Normalize(emptied)
+	assert.Empty(t, emptied.Notifications.Transitions,
+		"an existing block's empty transitions list is a deliberate 'none', not 'unset'")
+	assert.Equal(t, 5, emptied.Notifications.CooldownSeconds, "other defaults still fill in")
+
+	absent := &Config{}
+	Normalize(absent)
+	assert.NotEmpty(t, absent.Notifications.Transitions,
+		"an absent notifications block still seeds the default rules")
 }
 
 // Normalize must be idempotent — the dashboard editor relies on running

@@ -223,6 +223,29 @@ function readCfgTransitionList() {
   return out;
 }
 
+// The "Notify me when an agent…" checklist is a friendly view over the
+// raw transition rules: each canonical destination state maps to one
+// wildcard rule {from:"*", to:<state>}. The raw "Advanced" list
+// (#cfg-notif-transitions) stays the single source of truth read by
+// assembleConfig — the checklist just reflects it and mutates it in
+// place, so the two never disagree and from-specific / non-canonical
+// rules round-trip untouched.
+function syncCfgNotifyTypes() {
+  const rules = readCfgTransitionList();
+  $$('#cfg-notif-types [data-cfg-notify-type]').forEach(cb => {
+    const to = cb.getAttribute('data-cfg-notify-type');
+    cb.checked = rules.some(r => r.from === '*' && r.to === to);
+  });
+}
+function setCfgNotifyType(to, on) {
+  // Drop every wildcard rule for this destination, re-add one iff checked,
+  // and leave all other rules (from-specific or non-canonical) intact.
+  const rules = readCfgTransitionList().filter(r => !(r.from === '*' && r.to === to));
+  if (on) rules.push({ from: '*', to });
+  renderCfgTransitionList(rules);
+  syncCfgNotifyTypes();
+}
+
 // cfgThresholdRow / renderCfgThresholdList / readCfgThresholdList edit
 // the pre_compact_guard floor ladder: one (window_size → min_tokens)
 // pair per row.
@@ -338,6 +361,10 @@ function populateConfigForm(cfg) {
   $('#cfg-notif-enabled').checked = !!n.enabled;
   $('#cfg-notif-cooldown').value = n.cooldown_seconds != null ? n.cooldown_seconds : '';
   renderCfgTransitionList(n.transitions || []);
+  syncCfgNotifyTypes();
+  // human_messages defaults ON within an enabled block — only an explicit
+  // false unchecks it.
+  $('#cfg-notif-human').checked = n.human_messages !== false;
   renderCfgStringList('cfg-notif-command', n.notification_command || [], null, 'argument');
 
   const rl = cfg.ratelimit;
@@ -452,8 +479,16 @@ function assembleConfig() {
   const n = (cfg.notifications && typeof cfg.notifications === 'object') ? cfg.notifications : {};
   n.enabled = $('#cfg-notif-enabled').checked;
   n.cooldown_seconds = cfgInt('cfg-notif-cooldown', 5);
+  // The raw "Advanced" list is the single source of truth — the friendly
+  // checklist mutates it in place. An empty list is written as an absent
+  // key (no state change notifies); the server preserves that rather than
+  // re-seeding the defaults (see config.Normalize).
   const trans = readCfgTransitionList();
   if (trans.length) n.transitions = trans; else delete n.transitions;
+  // human_messages: default-on. Persist only an explicit false (an unset
+  // key reads as on), keeping the saved config minimal.
+  if ($('#cfg-notif-human').checked) delete n.human_messages;
+  else n.human_messages = false;
   const cmd = readCfgStringList('cfg-notif-command');
   if (cmd.length) n.notification_command = cmd; else delete n.notification_command;
   cfg.notifications = n;
@@ -764,6 +799,22 @@ function bindConfigTab() {
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
   });
+  // The friendly per-type checklist edits the raw "Advanced" transition
+  // list in place (one wildcard rule per checked type).
+  $$('#cfg-notif-types [data-cfg-notify-type]').forEach(cb => {
+    cb.addEventListener('change', () => setCfgNotifyType(cb.getAttribute('data-cfg-notify-type'), cb.checked));
+  });
+  // Keep the checklist honest when the Advanced raw editor is edited
+  // directly: typing in a from/to input (input) or removing a row (the ×
+  // delete fires a click that bubbles here; defer so the row is gone
+  // first) re-derives which type boxes are lit. The container element
+  // survives renderCfgTransitionList's innerHTML rebuilds, so this one
+  // listener outlives the rows.
+  const transList = $('#cfg-notif-transitions');
+  if (transList) {
+    transList.addEventListener('input', syncCfgNotifyTypes);
+    transList.addEventListener('click', () => setTimeout(syncCfgNotifyTypes, 0));
+  }
   // Toggle the Model/Effort selects live as the Ask profile changes.
   const askProf = $('#ask-profile');
   if (askProf) askProf.addEventListener('change', applyAskProfileState);

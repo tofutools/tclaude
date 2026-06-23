@@ -55,8 +55,6 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	must("notify_enabled: !cur", "group toggle PATCHes the flipped value")
 	must("case 'toggle-agent-notify':", "agent toggle is routed")
 	must("/notify`", "agent toggle POSTs to /api/agents/{conv}/notify")
-	must("case 'toggle-global-notify':", "master toggle is routed")
-	must("'/api/notifications'", "master toggle POSTs /api/notifications")
 
 	// The tri-state cycle: inherit → off → on → inherit.
 	must("cur === 'inherit' ? 'off' : cur === 'off' ? 'on' : 'inherit'", "agent notify cycles the tri-state")
@@ -66,7 +64,23 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	must(`id="notify-global"`, "top-bar master bell element exists")
 	must("renderNotifyGlobal(!!data.notifications_enabled)", "master bell repaints from the snapshot")
 
-	// dashboard.css: the master bell + the action-menu items are styled.
+	// The master bell now OPENS a popover (notify-menu.js) instead of
+	// being a one-click toggle: the master on/off + per-type checklist +
+	// human-message knob live inside it, all backed by /api/notifications.
+	mustNot("case 'toggle-global-notify':", "the blind one-click master toggle is gone")
+	must("function bindNotifyMenu()", "the bell popover binder is defined")
+	must("bindNotifyMenu();", "the popover binder is wired into bootstrap")
+	must(`id="notify-pop"`, "the popover element exists")
+	must(`id="notify-pop-enabled"`, "the popover's master on/off checkbox exists")
+	must(`data-notify-type="exited"`, "the per-type checklist carries the exited type")
+	must(`data-notify-type="awaiting_permission"`, "the per-type checklist carries the awaiting_permission type")
+	must(`id="notify-pop-human"`, "the human-message knob exists in the popover")
+	must("'/api/notifications'", "the popover reads/writes /api/notifications")
+	must(`nav button[data-tab="config"]`, "the 'Config tab ↗' link jumps to the Config tab")
+
+	// dashboard.css: the master bell, its popover, and the action-menu
+	// items are styled.
 	must(".notify-bell {", "master bell style")
+	must("#notify-pop {", "popover style")
 	must(".action-menu button {", "menu items (incl. the relocated notify toggles) are styled")
 }

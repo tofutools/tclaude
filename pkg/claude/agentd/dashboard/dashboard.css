@@ -1109,6 +1109,58 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .notify-bell.muted { opacity: 0.55; }
 .notify-bell:hover { background: #1f2937; opacity: 1; }
 .notify-bell:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+
+/* The bell's notification-settings popover (notify-menu.js): master on/off
+   + per-type checklist + human-message knob. Anchored to its wrapper so it
+   drops under the header bell; same dark menu skin as .action-menu, high
+   z-index so it floats over the marquee and tab content. */
+.notify-bell-wrap { position: relative; display: inline-flex; align-items: center; }
+#notify-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 220px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  background: #0d1117;
+  border: 1px solid #2a3340;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+  font-size: 12px;
+  color: #c9d1d9;
+}
+#notify-pop.open { display: flex; }
+.notify-pop-master,
+.notify-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notify-pop-master:hover,
+.notify-pop-row:hover { background: #161b22; }
+.notify-pop-master input,
+.notify-pop-row input { cursor: pointer; margin: 0; }
+.notify-pop-sep { height: 1px; background: #2a3340; margin: 4px 2px; }
+.notify-pop-hint { padding: 2px 6px; color: #8b949e; font-size: 11px; }
+/* When the master is off the per-type rows still notify nothing — dim them
+   so the popover reads honestly, but keep them editable (pre-arrange the
+   selection, then flip the master on). */
+#notify-pop.master-off .notify-pop-hint,
+#notify-pop.master-off .notify-pop-row { opacity: 0.5; }
+.notify-pop-config {
+  margin-top: 2px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 5px 8px; font: inherit; font-size: 12px;
+  text-align: center;
+}
+.notify-pop-config:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-max-members-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
@@ -2201,6 +2253,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
+/* The "Notify me when an agent…" per-type checklist — a column of inline
+   checkbox labels under the field label. */
+.cfg-notif-types { display: flex; flex-direction: column; gap: 4px; }
+/* The raw transition-rule editor folded behind an Advanced disclosure. */
+.cfg-field details.cfg-advanced { flex-basis: 100%; margin: 0; }
+.cfg-field details.cfg-advanced > summary { font-size: 12px; color: #9da7b3; }
 .cfg-hint { font-size: 11px; color: #7d8590; flex-basis: 100%; padding-left: 177px; }
 /* Amber heads-up callout for the spawn/clone worktree picker when it
    lands on a repo with no commits yet — informational ("this is what
