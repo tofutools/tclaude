@@ -269,9 +269,11 @@ function yAxisHTML(scaleMax) {
 }
 
 function renderChart(data, proj) {
-  // With the fill toggle on, the leading empty weekdays render as
-  // projected (hollow) bars at the per-weekday average instead of empty
-  // actual columns, so the chart matches the "average month" total.
+  // With the fill toggle on, the leading empty days render as projected
+  // (hollow) bars at the per-unit average instead of empty actual
+  // columns, so the chart matches the "average month" total. Which
+  // leading days are filled (weekdays only, or weekends too) follows the
+  // include-weekends switch via proj.leadingFill.
   const fill = (proj && proj.fillEmpty) ? proj.leadingFill : null;
   const actual = data.days.map(d =>
     fill && fill[d.day] != null
