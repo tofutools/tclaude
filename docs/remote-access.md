@@ -114,12 +114,30 @@ listener down; the loopback dashboard is unaffected either way.
 The dashboard's **Config tab** has a **Remote access** section that edits the
 same `remote_access` block: an **enabled** toggle, a **listen interface** field,
 and an **HTTPS port** (default `8443`). It shows a live status line — warning
-when the toggle is on but no material has been generated yet (run
-`tclaude remote-access setup` first), and reminding you that starting or stopping
-the listener takes effect after an **agentd restart**. The certificates and
-passphrase are *not* editable from the dashboard — they need host filesystem
-access and interactive prompts, so they stay with the `tclaude remote-access`
-CLI.
+when the toggle is on but no material has been generated yet, and reminding you
+that starting or stopping the listener takes effect after an **agentd restart**.
+
+Below it, a **certificate management** panel does what the `tclaude
+remote-access` CLI does, from the browser:
+
+- **First-time setup / regenerate** — generate the CA, server cert, first
+  device and passphrase (and optionally enable the listener). Regenerate rotates
+  the CA and **invalidates every installed device** — it asks for confirmation.
+- **Add a device** — issue a new `.p12` from the existing CA and download it to
+  install on the device; also download the CA cert.
+- **Add host name(s)** — reissue the **server** cert (under the existing CA)
+  with extra SANs so a new address — a public URL, a tailnet name — verifies
+  cleanly. This is non-destructive: **installed devices keep working** (the CA
+  is unchanged); restart agentd to serve the updated cert.
+- **Cert valid for** — the server cert's current SAN list, so you can see at a
+  glance which IPs/hostnames a device may dial without a name mismatch.
+
+This panel is available on the loopback dashboard **and** over the remote
+listener: a remote session has already cleared the client certificate and the
+passphrase and is already a full control-plane operator, so cert management sits
+at the same privilege tier. The passphrase / `.p12` passwords are entered into
+the form, used immediately, and never stored beyond the existing `0600`
+material on disk.
 
 ## Caveats
 

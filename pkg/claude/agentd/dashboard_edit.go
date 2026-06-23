@@ -83,6 +83,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardSpawnProfileRoutes(mux)
 	registerDashboardSpawnAttachmentRoutes(mux)
 	registerDashboardPluginRoutes(mux)
+	registerRemoteAccessAdminRoutes(mux)
 }
 
 // handleDashboardGroupsCreate is the cookie-auth twin of POST /v1/groups.

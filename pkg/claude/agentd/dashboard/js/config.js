@@ -2,6 +2,7 @@ import { $, $$, esc } from './helpers.js';
 import { toast } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 import { loadProfiles } from './profiles.js';
+import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 
 // ===================================================================
 // Config tab — visual editor for ~/.tclaude/config.json
@@ -744,6 +745,9 @@ async function loadConfigTab() {
     $('#cfg-status').textContent = 'failed to load';
     showConfigErrors(['Could not load config: ' + (e.message || e)]);
   }
+  // Localhost-only cert management renders independently of the config form's
+  // load result (it has its own endpoint + error handling).
+  void loadRemoteAdmin();
 }
 
 // cfgLineDiff returns an LCS-based line diff of two strings. Config
@@ -906,6 +910,9 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
+  // Localhost-only remote-access cert management lives in the same tab; wire its
+  // buttons once here (its data loads via loadConfigTab → loadRemoteAdmin).
+  bindRemoteAdmin();
   ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
     'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
