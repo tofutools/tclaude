@@ -22,6 +22,7 @@ import {
 applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
+import { bindGroupReorder } from './group-reorder.js';
 import { bindCronModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import {
@@ -98,6 +99,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSortHeaders();
   bindRowActions();
   bindDnd();
+  bindGroupReorder();
   bindFilter('groups');
   bindFilter('templates');
   bindFilter('cron');
