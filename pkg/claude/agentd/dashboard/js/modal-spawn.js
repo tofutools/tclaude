@@ -1156,12 +1156,12 @@ function bindAgentSpawnModal() {
   // worktree branch; toggling the checkbox re-applies the sync;
   // hand-editing the branch or picking a worktree by hand turns the
   // sync off so it stops fighting the human.
-  $('#agent-spawn-name').addEventListener('input', () => {
-    applyWtSync();
-    // Live preview of the auto-normalized name; the field itself is only
-    // rewritten on blur/submit (commitSpawnName) to keep typing jank-free.
-    updateSpawnNameHint();
-  });
+  $('#agent-spawn-name').addEventListener('input', applyWtSync);
+  // Live preview of the auto-normalized name on every keystroke; the field
+  // itself is only rewritten on blur/submit (commitSpawnName) to keep typing
+  // jank-free. A separate listener so the name→branch sync wiring above stays
+  // byte-identical (guarded by TestDashboardHTML_WorktreeNameSyncWired).
+  $('#agent-spawn-name').addEventListener('input', updateSpawnNameHint);
   $('#agent-spawn-name').addEventListener('blur', commitSpawnName);
   $('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);
   $('#agent-spawn-wt-branch').addEventListener('input', () => {
