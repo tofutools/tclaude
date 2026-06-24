@@ -109,12 +109,15 @@ function reorderTarget(e) {
 }
 
 // dropsBefore reports whether a drop on `details` should land the dragged
-// group BEFORE it (cursor in the top half of the group's header) or AFTER
-// it (bottom half). Measured against the <summary> rect, not the whole
-// <details>, so an expanded group's tall body doesn't skew the midpoint.
+// group BEFORE it (cursor in the top half) or AFTER it (bottom half).
+// Measured against the WHOLE <details> box, not just its <summary> header,
+// so an EXPANDED group's full area counts: hovering low over its open body
+// drops AFTER the entire group, and the after-indicator (drawn on the
+// <details>, see the CSS) sits below the expanded body — not tucked under
+// the header. A collapsed group's box is just its header, so it behaves the
+// same as before.
 function dropsBefore(e, details) {
-  const summary = details.querySelector(':scope > summary');
-  const rect = (summary || details).getBoundingClientRect();
+  const rect = details.getBoundingClientRect();
   return e.clientY < rect.top + rect.height / 2;
 }
 

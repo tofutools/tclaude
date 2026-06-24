@@ -1419,13 +1419,16 @@ details.dnd-drop-over.dnd-effect-clone {
 details[data-group-key] > summary .group-name:active { cursor: grabbing; }
 /* The group being dragged fades, like .dnd-source-row does for members. */
 details[data-group-key].group-reorder-source { opacity: 0.5; }
-/* Insertion line: a 2px accent rule on the target group's header edge the
-   drop would land against (top = before, bottom = after). Inset box-shadow
-   so it reads as a line without shifting layout. */
-details[data-group-key].group-drop-before > summary {
+/* Insertion line: a 2px accent rule on the edge of the WHOLE target group
+   box the drop would land against (top = before, bottom = after). Drawn on
+   the <details> (not its <summary>), so for an EXPANDED group the after-line
+   sits below its full body — matching where the group would actually land —
+   instead of tucked under the header. Inset box-shadow reads as a line
+   without shifting layout. */
+details[data-group-key].group-drop-before {
   box-shadow: inset 0 2px 0 0 #58a6ff;
 }
-details[data-group-key].group-drop-after > summary {
+details[data-group-key].group-drop-after {
   box-shadow: inset 0 -2px 0 0 #58a6ff;
 }
 .dnd-mod-pill {
