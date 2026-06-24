@@ -1416,9 +1416,10 @@ details.dnd-drop-over.dnd-effect-clone {
    pointerdown on the title (.group-name, click to fold/unfold) or any
    click-to-edit chip turns the summary's draggable OFF for that gesture
    (group-reorder.js), so the click lands and never starts a drag. The grab
-   cursor + a faint hover tint on the bare header advertise that it's
-   draggable; the title and chips override the cursor back to pointer so they
-   still read as click targets. */
+   cursor — shown on the bare header, since the title and chips override the
+   cursor back to pointer — plus a faint hover tint over the whole header
+   together advertise that the header is draggable; the per-child pointer
+   cursor still marks the title and chips as click targets. */
 details[data-group-key] > summary[data-group-reorder] { cursor: grab; }
 details[data-group-key] > summary[data-group-reorder]:active { cursor: grabbing; }
 details[data-group-key] > summary[data-group-reorder] [data-act] { cursor: pointer; }
