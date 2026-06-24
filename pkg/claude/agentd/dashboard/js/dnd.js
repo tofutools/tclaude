@@ -253,6 +253,14 @@ function bindDnd() {
     box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
   });
   document.addEventListener('drop', async (e) => {
+    // A group-reorder drag (group-reorder.js) carries this custom MIME and
+    // deliberately never sets text/plain. Ignore such a drop outright — both
+    // modules add a document-level drop listener, and this handler does NOT
+    // gate on dndDragActive, so without this guard it would preventDefault +
+    // clear the shared pill on a reorder drop before the JSON.parse below
+    // happened to bail. The explicit check keeps the two handlers cleanly
+    // separated instead of relying on a parse failure.
+    if (e.dataTransfer.types.includes('application/x-tclaude-group')) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     e.preventDefault();

@@ -27,6 +27,7 @@ import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
 import { dndDragActive } from './dnd.js';
+import { groupReorderActive } from './group-reorder.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode } from './slop.js';
 
@@ -54,6 +55,10 @@ function refreshSuspended() {
   // never bubbles up to the document-level handler, so the drag's
   // own cleanup (this suspension included) would be lost forever.
   if (dndDragActive) return true;
+  // A group-reorder drag is in flight — same reasoning as dndDragActive:
+  // re-rendering the Groups tab would detach the dragged grip mid-drag and
+  // lose the drag's own dragend cleanup (group-reorder.js).
+  if (groupReorderActive) return true;
   // Any modal overlay is open.
   if (document.querySelector('.modal-overlay.show')) return true;
   // A ⚙ options menu is open — re-rendering the Groups tab would

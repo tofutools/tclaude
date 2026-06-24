@@ -16,6 +16,7 @@ import {
   virtualPendingGroup,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
+import { sortGroupsByPref } from './group-reorder.js';
 
 // lastSnapshot still lives in dashboard.js — the snapshot-refresh
 // cluster is not extracted yet. Importing it back forms a deliberate,
@@ -68,7 +69,13 @@ function renderGroupsTab() {
   // Gated solely on the "show ungrouped" checkbox — once ticked, the
   // group stays visible even when empty (a no-text filter never
   // hides it; a text filter narrows it like any group).
-  const list = realGroups.slice();
+  //
+  // Real groups render in the human's persisted drag-reorder order
+  // (group-reorder.js); the virtual groups below keep their fixed slots
+  // (Pending prepended, the rest appended). sortGroupsByPref returns the
+  // groups unchanged when no custom order is saved — i.e. backend order
+  // (alphabetical).
+  const list = sortGroupsByPref(realGroups.slice());
   // The virtual "Pending" group is PREPENDED so a just-spawned agent
   // still stuck behind a startup gate (JOH-205) is the first thing the
   // operator sees — it's an actionable alert, not a routine bucket. Only

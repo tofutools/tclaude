@@ -1410,6 +1410,36 @@ details.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
+/* Drag-to-reorder real groups (group-reorder.js). The ⠿ grip rides at the
+   start of each real group's <summary>; it's the ONLY draggable thing in
+   the header, so dragging it reorders the group without colliding with the
+   member-row drag (which originates from rows in the group body) or the
+   click-to-toggle title. Kept faint at rest so it doesn't clutter the
+   header, brightening on hover to advertise the affordance. */
+.group-reorder-grip {
+  cursor: grab;
+  color: #4d5560;
+  opacity: 0.55;
+  margin-right: 4px;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+.group-reorder-grip:hover { color: #8b98a5; opacity: 1; }
+.group-reorder-grip:active { cursor: grabbing; }
+/* The group being dragged fades, like .dnd-source-row does for members. */
+details[data-group-key].group-reorder-source { opacity: 0.5; }
+/* Insertion line: a 2px accent rule on the target group's header edge the
+   drop would land against (top = before, bottom = after). Inset box-shadow
+   so it reads as a line without shifting layout. */
+details[data-group-key].group-drop-before > summary {
+  box-shadow: inset 0 2px 0 0 #58a6ff;
+}
+details[data-group-key].group-drop-after > summary {
+  box-shadow: inset 0 -2px 0 0 #58a6ff;
+}
 .dnd-mod-pill {
   position: fixed;
   top: 0; left: 0;
