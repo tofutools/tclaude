@@ -2303,14 +2303,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .window-role-chip:hover { border-color: #58a6ff; }
 .window-role-chip.on { background: #1f3a5a; border-color: #58a6ff; color: #d4d4d4; }
 .window-role-chip.partial { border-color: #58a6ff; color: #d4d4d4; }
-/* Whole-dashboard window focus/unfocus trigger — sits in the top bar,
-   left of the Power On / Shutdown buttons. Compact, neutral styling: it
-   is non-destructive (window-only), so it must not shout. */
+/* Command-palette launcher + whole-dashboard window focus/unfocus trigger
+   — both sit in the top bar, left of the Power On / Shutdown buttons. They
+   share one compact, neutral skin: non-destructive actions that must not
+   shout. The bare <button> default skin is far too bright next to the dark
+   chrome, so these explicit rules keep them quiet — and identical. */
+#command-palette-btn,
 #window-all-btn {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
   font-family: inherit; white-space: nowrap;
 }
+#command-palette-btn:hover,
 #window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
 /* === Config tab — visual editor for ~/.tclaude/config.json ========== */
 #tab-config { max-width: 780px; }
