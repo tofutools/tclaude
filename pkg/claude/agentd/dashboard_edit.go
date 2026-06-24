@@ -511,6 +511,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		handleGroupClone(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
+	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
 	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
 	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -742,6 +743,26 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		"group":    renamed.Name,
 		"old_name": g.Name,
 	})
+}
+
+// dashboardGroupRetire is the cookie-auth twin of
+// /v1/groups/{name}/retire (handleGroupRetire) — the human-driven bulk
+// retire behind the command palette's "Retire idle/offline agents in
+// <group>". It trusts the cookie-authed caller (the dashboard is
+// human-only, so caller=""), hence no groups.retire slug check, and
+// shares the same parallel core. Reads the same query knobs as the /v1
+// endpoint: ?shutdown= (default on), ?status= (idle/offline/…; absent =
+// every member) and ?reason=.
+func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	out, err := bulkRetireGroupMembers(g, "",
+		strings.TrimSpace(r.URL.Query().Get("reason")),
+		retireShouldShutdown(r),
+		parseRetireStatusFilter(r.URL.Query().Get("status")))
+	if err != nil {
+		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // dashboardUpdateMember is the dashboard-cookie-auth twin of

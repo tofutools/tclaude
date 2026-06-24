@@ -902,6 +902,121 @@ async function powerOnScope(scope, groupName) {
   refresh();
 }
 
+// retireAgentInteractive runs the full per-agent retire flow shared by
+// the per-row ⚙ "Retire" button and the command palette's "Retire
+// agent: <name>" command: pop the retire confirm (shutdown + optional
+// worktree delete), POST /api/agents/{conv}/retire with the chosen
+// flags, take the dangling-entry recovery path on a 409, then toast the
+// outcome and refresh. A cancelled confirm is a no-op.
+async function retireAgentInteractive(conv, label) {
+  const choice = await retireConfirm({ label, conv });
+  if (!choice) return;
+  const q = `?shutdown=${choice.shutdown ? 1 : 0}`
+    + (choice.deleteWorktree ? '&delete_worktree=1' : '');
+  let r;
+  try {
+    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+  } catch (e) {
+    toast(`Retire failed: ${(e && e.message) || e}`, true);
+    return;
+  }
+  if (!r.ok) {
+    // A dangling entry (conversation gone) can't be retired — offer to
+    // remove it instead of a dead-end error toast.
+    if (await maybeHandleDanglingRetire(r, conv, label)) return;
+    toast(`Retire failed: ${await r.text()}`, true);
+    return;
+  }
+  let retireResp = null;
+  try { retireResp = await r.json(); } catch (_) {}
+  toast(retireToast(label, choice, retireResp));
+  refresh();
+}
+
+// RETIRE_STATUS_LABELS maps a bulk-retire status token to the word used
+// in the confirm/toast copy. Only the two the palette offers today
+// (idle / offline) — the endpoint accepts more, but those are the only
+// statuses a "tidy up the group" gesture should sweep.
+const RETIRE_STATUS_LABELS = { idle: 'idle', offline: 'offline' };
+
+// countGroupMembersByStatus returns how many DISTINCT members of the
+// named group match a bulk-retire status token, using the SAME
+// (online, state.status) definitions the snapshot renders — so the count
+// in the confirm matches the rows the human sees. This mirrors the
+// server's normalizeMemberStatus filter, which the endpoint applies
+// authoritatively; this client count only drives the confirm copy.
+function countGroupMembersByStatus(group, status) {
+  const snap = lastSnapshot || {};
+  const g = (snap.groups || []).find(x => x.name === group);
+  if (!g) return 0;
+  const seen = new Set();
+  let n = 0;
+  for (const m of (g.members || [])) {
+    if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows
+    seen.add(m.conv_id);
+    const matches = status === 'offline'
+      ? !m.online
+      : (m.online && m.state && m.state.status === status);
+    if (matches) n++;
+  }
+  return n;
+}
+
+// bulkRetireGroupInteractive runs the command palette's "Retire
+// idle/offline agents in <group>" command: count the matching members
+// for the confirm copy, confirm once, then POST
+// /api/groups/{name}/retire with the status filter (shutdown defaults
+// on, matching the bulk groups.retire contract — no per-member worktree
+// deletion). The server re-resolves the cohort from live status, so the
+// toast reports its actual count, not the snapshot estimate. Each match
+// is demoted to a plain, reinstatable conversation; nothing is deleted.
+async function bulkRetireGroupInteractive(group, status) {
+  const word = RETIRE_STATUS_LABELS[status] || status;
+  const predicted = countGroupMembersByStatus(group, status);
+  if (predicted === 0) {
+    toast(`retire: no ${word} agents in group "${group}"`);
+    return;
+  }
+  const n = predicted === 1 ? `1 ${word} agent` : `${predicted} ${word} agents`;
+  const confirmed = await confirmModal({
+    title: `Retire ${word} agents?`,
+    body: `This retires ${n} in group "${group}" — each is demoted to a plain `
+      + `conversation (it leaves all its groups and its grants are revoked) and its `
+      + `running session is soft-exited. The conversations themselves survive and `
+      + `can be reinstated; worktrees are left untouched. Agents of other statuses `
+      + `are left alone.`,
+    meta: group,
+    okLabel: `Retire ${predicted === 1 ? '1 agent' : predicted + ' agents'}`,
+  });
+  if (!confirmed) return;
+  let r;
+  try {
+    r = await fetch(`/api/groups/${encodeURIComponent(group)}/retire`
+      + `?status=${encodeURIComponent(status)}&shutdown=1`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+  } catch (e) {
+    toast(`retire failed: ${(e && e.message) || e}`, true);
+    return;
+  }
+  if (!r.ok) {
+    toast(`retire failed: ${await r.text()}`, true);
+    return;
+  }
+  const out = await r.json().catch(() => null);
+  const members = (out && out.members) || [];
+  const retired = members.filter(m => m.action === 'retired').length;
+  const errors = members.filter(m => m.action === 'error').length;
+  let msg = `retired ${retired} ${word} agent${retired === 1 ? '' : 's'} in "${group}"`;
+  if (errors) msg += `, ${errors} failed`;
+  const warns = (out && out.warnings) || [];
+  if (warns.length) msg += ` · ${warns.join('; ')}`;
+  toast(msg, errors > 0);
+  refresh();
+}
+
 // openWindowModal drives the bulk window focus/unfocus feature. One
 // trigger per scope — a group-level button and the top-bar button —
 // opens this modal. Inside it the human picks the DIRECTION (focus
@@ -2547,7 +2662,8 @@ async function stopAgentReq(conv, label, force) {
 export {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
-  maybeHandleDanglingRetire,
+  maybeHandleDanglingRetire, retireAgentInteractive, bulkRetireGroupInteractive,
+  countGroupMembersByStatus,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };

@@ -94,6 +94,25 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// raise command reads "Focus" (no stray "Unfocus" in a label).
 	must("label: 'Hide all windows'", "the bulk detach command reads Hide, not Unfocus")
 
+	// Retire: the palette can demote agents back to plain conversations.
+	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
+	// as the per-row ⚙ Retire button (retireAgentInteractive), and a
+	// per-group "Retire idle/offline agents in <group>" runs the parallel
+	// bulk endpoint (bulkRetireGroupInteractive → POST
+	// /api/groups/{name}/retire?status=…), listed only when a live match
+	// count is non-zero so the palette never offers a no-op.
+	must("label: `Retire agent: ${label}`", "the palette offers a per-agent retire")
+	must("retireAgentInteractive(a.conv_id, label)",
+		"per-agent retire reuses the shared confirm + POST flow")
+	must("for (const status of ['idle', 'offline'])",
+		"the bulk retire offers the idle and offline cohorts")
+	must("label: `Retire ${status} agents in ${g.name}`",
+		"the palette offers a per-group bulk retire by status")
+	must("countGroupMembersByStatus(g.name, status)",
+		"the bulk retire command is gated on a live match count (no no-op)")
+	must("bulkRetireGroupInteractive(g.name, status)",
+		"per-group bulk retire runs the parallel batch endpoint")
+
 	// Ranking + synonyms live in the pure, unit-tested scorer module.
 	must("./palette-score.js", "palette imports the pure ranking module")
 	must("rankCommands(commands", "rendering ranks via the shared scorer")

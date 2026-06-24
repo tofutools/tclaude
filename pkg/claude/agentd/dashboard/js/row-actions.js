@@ -32,8 +32,8 @@ import { openMailbox } from './mail.js';
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
-  resumeAgentReq, retireConfirm, retireToast, shutdownConfirm, stopAgentReq, termDirModal,
-  showAccessTab, maybeHandleDanglingRetire,
+  resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
+  showAccessTab,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
@@ -537,25 +537,11 @@ function bindRowActions() {
           break;
         }
         case 'retire-agent': {
-          const choice = await retireConfirm({ label, conv });
-          if (!choice) return;
-          const q = `?shutdown=${choice.shutdown ? 1 : 0}`
-            + (choice.deleteWorktree ? '&delete_worktree=1' : '');
-          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
-            method: 'POST', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) {
-            // A dangling entry (conversation gone) can't be retired —
-            // offer to remove it instead of a dead-end error toast.
-            if (await maybeHandleDanglingRetire(r, conv, label)) return;
-            toast(`Retire failed: ${await r.text()}`, true);
-            break;
-          }
-          let retireResp = null;
-          try { retireResp = await r.json(); } catch (_) {}
-          toast(retireToast(label, choice, retireResp));
-          break;
+          // The whole confirm → POST → dangling-recovery → toast → refresh
+          // flow lives in refresh.js so the command palette's "Retire
+          // agent: <name>" runs the identical path.
+          await retireAgentInteractive(conv, label);
+          return;
         }
         case 'reinstate-agent': {
           const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
