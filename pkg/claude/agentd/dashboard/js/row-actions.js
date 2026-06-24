@@ -799,14 +799,6 @@ function bindRowActions() {
             const restored = document.createElement('strong');
             restored.className = 'group-name';
             restored.dataset.groupName = oldName;
-            // Keep the drag-to-reorder affordance (group-reorder.js): the
-            // title is the reorder drag handle, so the rebuilt <strong> must
-            // carry the same attributes renderGroups gives it — otherwise a
-            // cancelled rename would leave the title un-draggable until the
-            // next 2s re-render.
-            restored.dataset.groupReorder = oldName;
-            restored.draggable = true;
-            restored.title = 'Click to expand / collapse · drag to reorder this group';
             restored.textContent = oldName;
             if (input.parentNode) input.replaceWith(restored);
             renameEditing = false;

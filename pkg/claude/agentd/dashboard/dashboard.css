@@ -1410,26 +1410,35 @@ details.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
-/* Drag-to-reorder real groups (group-reorder.js). The real group's title
-   (.group-name) IS the reorder drag handle — it's draggable="true" and
-   carries data-group-reorder. A clean click still folds/unfolds the group
-   (bindGroupTitleToggle); only a press-and-drag reorders, so the two
-   gestures don't collide. The title keeps cursor:pointer (its primary
-   action is the fold toggle); :active hints the grab while dragging. */
-details[data-group-key] > summary .group-name:active { cursor: grabbing; }
+/* Drag-to-reorder real groups (group-reorder.js). The group HEADER (its
+   <summary>) is the reorder drag handle: press the bare header and drag to
+   reorder the group. Its interactive children are NOT drag handles — a
+   pointerdown on the title (.group-name, click to fold/unfold) or any
+   click-to-edit chip turns the summary's draggable OFF for that gesture
+   (group-reorder.js), so the click lands and never starts a drag. The grab
+   cursor + a faint hover tint on the bare header advertise that it's
+   draggable; the title and chips override the cursor back to pointer so they
+   still read as click targets. */
+details[data-group-key] > summary[data-group-reorder] { cursor: grab; }
+details[data-group-key] > summary[data-group-reorder]:active { cursor: grabbing; }
+details[data-group-key] > summary[data-group-reorder] [data-act] { cursor: pointer; }
+details[data-group-key] > summary[data-group-reorder]:hover {
+  background: rgba(88, 166, 255, 0.05);
+  border-radius: 4px;
+}
 /* The group being dragged fades, like .dnd-source-row does for members. */
 details[data-group-key].group-reorder-source { opacity: 0.5; }
-/* Insertion line: a 2px accent rule on the edge of the WHOLE target group
-   box the drop would land against (top = before, bottom = after). Drawn on
-   the <details> (not its <summary>), so for an EXPANDED group the after-line
-   sits below its full body — matching where the group would actually land —
-   instead of tucked under the header. Inset box-shadow reads as a line
-   without shifting layout. */
+/* Insertion line: a 3px accent rule drawn just OUTSIDE the WHOLE target group
+   box, on the edge the drop lands against (above = before, below = after).
+   Outset (not inset) so it sits in the gap BETWEEN groups instead of inside
+   the box — an inset line is painted under the group's own content (the
+   expanded body's table / links / copy-cmd) and gets hidden. For an expanded
+   group the after-line therefore sits clearly below its full body. */
 details[data-group-key].group-drop-before {
-  box-shadow: inset 0 2px 0 0 #58a6ff;
+  box-shadow: 0 -3px 0 0 #58a6ff;
 }
 details[data-group-key].group-drop-after {
-  box-shadow: inset 0 -2px 0 0 #58a6ff;
+  box-shadow: 0 3px 0 0 #58a6ff;
 }
 .dnd-mod-pill {
   position: fixed;
