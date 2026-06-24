@@ -9,6 +9,9 @@
      handshake mirrors tclaude's agent-coordination theme. -->
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🤝</text></svg>'>
 <link rel="stylesheet" href="/static/dashboard.css">
+<!-- Vendored (not CDN, like every other dashboard asset) — backs the
+     in-browser terminal modal (js/modal-term.js). -->
+<link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
 </head>
 <body>
 <header>
@@ -776,6 +779,22 @@
       <button id="term-worktree">Worktree dir</button>
       <button id="term-current">Current dir</button>
     </div>
+  </div>
+</div>
+<!-- term-session-modal: the in-browser xterm.js terminal, opened when
+     /api/term or /api/open-window reports mode:"browser" (no native
+     window available — headless agentd or no terminal emulator
+     installed). Distinct from #term-modal above, which is the
+     which-dir picker that runs BEFORE this. See js/modal-term.js. -->
+<div class="modal-overlay" id="term-session-modal">
+  <div class="term-session-modal" role="dialog" aria-modal="true" aria-labelledby="term-session-title">
+    <div class="term-session-header">
+      <h3 id="term-session-title">Terminal</h3>
+      <span class="term-session-status" id="term-session-status"></span>
+      <button type="button" class="term-session-close" id="term-session-close"
+        aria-label="Close" title="Close — the session keeps running, reopen to reattach">&times;</button>
+    </div>
+    <div class="term-session-xterm" id="term-session-xterm"></div>
   </div>
 </div>
 <div class="modal-overlay" id="edit-member-modal">
@@ -1776,6 +1795,11 @@
 </div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
+<!-- Vendored xterm.js, classic (non-module) scripts so they run before
+     dashboard.js's module graph (which includes modal-term.js) — they
+     attach plain globals (Terminal, FitAddon), not ES exports. -->
+<script src="/static/vendor/xterm/xterm.min.js"></script>
+<script src="/static/vendor/xterm/addon-fit.min.js"></script>
 <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>

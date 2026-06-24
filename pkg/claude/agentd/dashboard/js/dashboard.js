@@ -23,6 +23,7 @@ applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
 import { bindCronModal } from './modal-cron.js';
+import { bindTermModal } from './modal-term.js';
 import {
   bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal,
 } from './modal-message.js';
@@ -102,6 +103,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();
+  bindTermModal();
   bindMessageModal();
   bindGroupCreateModal();
   bindTemplatesUI();

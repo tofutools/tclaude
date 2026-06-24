@@ -34,13 +34,13 @@ import (
 // dirResp is the wire shape for GET .../dir.
 type dirResp struct {
 	ConvID        string `json:"conv_id"`
-	StartDir      string `json:"start_dir"`               // Claude Code launch dir
-	StartBranch   string `json:"start_branch,omitempty"`  // git branch of start_dir
-	CurrentDir    string `json:"current_dir"`             // most-recent dir the agent edited in
-	WorktreeDir   string `json:"worktree_dir"`            // git working-tree root of current_dir
+	StartDir      string `json:"start_dir"`                // Claude Code launch dir
+	StartBranch   string `json:"start_branch,omitempty"`   // git branch of start_dir
+	CurrentDir    string `json:"current_dir"`              // most-recent dir the agent edited in
+	WorktreeDir   string `json:"worktree_dir"`             // git working-tree root of current_dir
 	CurrentBranch string `json:"current_branch,omitempty"` // git branch of worktree_dir
-	Source        string `json:"source"`                  // "hook" (tracked) | "fallback" (== start_dir)
-	CallerConv    string `json:"caller_conv,omitempty"`   // set when a different agent asked
+	Source        string `json:"source"`                   // "hook" (tracked) | "fallback" (== start_dir)
+	CallerConv    string `json:"caller_conv,omitempty"`    // set when a different agent asked
 }
 
 // dirOpenResp is the wire shape for POST .../dir.
@@ -269,10 +269,17 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := openTerminal(openShellCmd(dir)); err != nil {
-		http.Error(w, "open terminal: "+err.Error(), http.StatusInternalServerError)
+		// No native window (no display, no terminal emulator installed,
+		// …) — fall back to an in-browser terminal instead of failing
+		// outright. modal-term.js opens a WebSocket at ws and streams a
+		// PTY attached to an ad hoc tmux session at dir (handleDashboardTermWS).
+		writeJSON(w, http.StatusOK, map[string]string{
+			"dir": dir, "which": which, "mode": "browser",
+			"ws": "/api/term-ws/" + url.PathEscape(res.ConvID) + "?which=" + url.QueryEscape(which),
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"dir": dir, "which": which})
+	writeJSON(w, http.StatusOK, map[string]string{"dir": dir, "which": which, "mode": "native"})
 }
 
 // handleDashboardOpenWindowAPI opens a fresh terminal window ATTACHED to
@@ -319,10 +326,15 @@ func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
-		http.Error(w, "open window: "+err.Error(), http.StatusInternalServerError)
+		// No native window — fall back to an in-browser terminal
+		// attached to the same live session (handleDashboardOpenWindowWS).
+		writeJSON(w, http.StatusOK, map[string]string{
+			"conv_id": res.ConvID, "label": sess.ID, "mode": "browser",
+			"ws": "/api/open-window-ws/" + url.PathEscape(res.ConvID),
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "label": sess.ID})
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "label": sess.ID, "mode": "native"})
 }
 
 // openTerminal is the seam for spawning a terminal window. Production

@@ -1296,6 +1296,33 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .modal .field input:focus,
 .modal .field textarea:focus { border-color: #58a6ff; outline: none; }
 .modal .field textarea { resize: vertical; min-height: 60px; }
+/* term-session-modal — the in-browser xterm.js terminal (js/modal-term.js),
+   opened when /api/term or /api/open-window reports mode:"browser"
+   (no native window available). A plain .modal is sized for a form;
+   this needs real screen real estate for a usable terminal, hence its
+   own class rather than reusing .modal. */
+.term-session-modal {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  width: min(960px, calc(100vw - 32px)); height: min(640px, calc(100vh - 64px));
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.term-session-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #161b22;
+  flex: none;
+}
+.term-session-header h3 {
+  margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
+}
+.term-session-status { font-size: 11px; color: #7d8590; flex: 1; }
+.term-session-close {
+  background: none; border: none; color: #7d8590; cursor: pointer;
+  font-size: 20px; line-height: 1; padding: 0 4px;
+}
+.term-session-close:hover { color: #c9d1d9; }
+.term-session-xterm { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
+.term-session-xterm .xterm { height: 100%; }
 /* The "auto" self-rename checkbox sits under the Title input in the
    same .field — strip the text-input styling .modal .field input
    would otherwise smear onto a checkbox. The selectors carry the

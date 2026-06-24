@@ -17,6 +17,7 @@ import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
+import { openTermModal } from './modal-term.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -434,6 +435,7 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
@@ -445,6 +447,8 @@ function bindRowActions() {
             method: 'POST', credentials: 'same-origin',
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
+          const info = await r.json().catch(() => ({}));
+          if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
           toast(`window opened: ${label}`);
           return;
         }
@@ -473,6 +477,7 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
           toast(`terminal opened: ${info.dir || which}`);
           return;
         }
