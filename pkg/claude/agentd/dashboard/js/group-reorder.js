@@ -156,6 +156,19 @@ function applyReorder(dragName, targetName, before) {
   renderGroupsTab();
 }
 
+// endGroupDrag is the single teardown for a reorder drag: clear the active
+// flag, the dragged-source dimming, the drop-line markers and the pill.
+// Idempotent, so calling it from both the drop handler and dragend is safe.
+function endGroupDrag() {
+  // Clear the flag FIRST (mirrors dnd.js) so auto-refresh always resumes
+  // even if a DOM call below were to throw.
+  groupReorderActive = false;
+  groupDragName = null;
+  $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
+  clearDropMarkers();
+  reorderPill(null, null);
+}
+
 function bindGroupReorder() {
   document.addEventListener('dragstart', (e) => {
     const grip = e.target.closest('[data-group-reorder]');
@@ -172,15 +185,13 @@ function bindGroupReorder() {
     if (details) details.classList.add('group-reorder-source');
   });
 
-  document.addEventListener('dragend', () => {
-    // Clear state FIRST (mirrors dnd.js) so auto-refresh always resumes
-    // even if a DOM call below were to throw.
-    groupReorderActive = false;
-    groupDragName = null;
-    $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
-    clearDropMarkers();
-    reorderPill(null, null);
-  });
+  // dragend is the guaranteed reset for a CANCELLED or no-target drag
+  // (Escape, or a release over nothing). A SUCCESSFUL drop tears down in the
+  // drop handler instead (see there) — it must, because that handler
+  // re-renders #groups-list and detaches the dragged grip, after which a
+  // dragend dispatched on the now-detached node never bubbles to this
+  // document-level listener. So this is a fallback, not the primary path.
+  document.addEventListener('dragend', endGroupDrag);
 
   document.addEventListener('dragover', (e) => {
     if (!groupReorderActive) return;
@@ -209,9 +220,19 @@ function bindGroupReorder() {
     const details = reorderTarget(e);
     if (!details) return;
     e.preventDefault();
+    // Snapshot everything we need from the live DOM BEFORE tearing down /
+    // re-rendering: the target name, and the drop side (measured against the
+    // still-attached summary rect).
+    const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
-    applyReorder(groupDragName, targetName, dropsBefore(e, details));
-    // dragend (fired next) clears the flags, markers and pill.
+    const before = dropsBefore(e, details);
+    // Tear down NOW, before applyReorder re-renders #groups-list and detaches
+    // the dragged grip. If we left teardown to dragend, that event — fired on
+    // the detached grip — would never bubble here, so the pill would stay
+    // stuck and groupReorderActive would wedge auto-refresh on. endGroupDrag
+    // is idempotent, so a dragend that does still fire is a harmless no-op.
+    endGroupDrag();
+    applyReorder(dragName, targetName, before);
   });
 }
 
