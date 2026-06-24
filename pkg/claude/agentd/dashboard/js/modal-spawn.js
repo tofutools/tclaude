@@ -16,6 +16,7 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
+import { openTermModal } from './modal-term.js';
 
 
 // ---- Agent spawn modal --------------------------------------------------
@@ -1044,7 +1045,16 @@ async function submitAgentSpawn() {
     try { payload = await r.json(); } catch (_) {}
     closeAgentSpawnModal();
     const label = name || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
-    toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
+    if (autoFocus && payload.focus_mode === 'browser' && payload.focus_ws) {
+      // executeSpawn couldn't pop a native terminal window (headless
+      // agentd, or no terminal emulator installed) — open the same
+      // in-browser fallback the "open window" row action uses, rather
+      // than claiming "opening terminal" and opening nothing.
+      openTermModal({ wsPath: payload.focus_ws, label: payload.label || label });
+      toast(`spawned ${label} → ${group} — opened in-browser terminal`);
+    } else {
+      toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
+    }
     // Vegas-themed celebration when slop is on; silent no-op otherwise.
     slopJackpot();
     // Keep the destination group expanded so the new member is visible.
