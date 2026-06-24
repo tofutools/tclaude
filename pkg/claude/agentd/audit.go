@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -83,6 +84,25 @@ var auditRoutes = []auditRoute{
 	// went unrecorded. The reply's recipient is not in the body (the daemon
 	// derives it from the original message), so describeReply resolves it.
 	{method: http.MethodPost, segs: []string{"messages", "{id}", "reply"}, verb: "reply", describe: describeReply},
+	// Message deletions — we audit sends, so we audit deletions too (else
+	// the trail can be erased untracked). DELETE /v1/messages/{id} is the
+	// CLI/inbox-watch single-delete; POST /v1/inbox/prune is the CLI bulk
+	// prune; the two /api/mailbox/* routes are the dashboard's operator-side
+	// delete (a list of ids) and wipe (whole mailboxes by conv-id).
+	{method: http.MethodDelete, segs: []string{"messages", "{id}"}, verb: "message.delete", describe: describeMessageDelete},
+	{method: http.MethodPost, segs: []string{"inbox", "prune"}, verb: "inbox.prune", describe: describeInboxPrune},
+	{method: http.MethodPost, segs: []string{"mailbox", "delete"}, verb: "message.delete", describe: describeMailboxDelete},
+	{method: http.MethodPost, segs: []string{"mailbox", "wipe"}, verb: "mailbox.wipe", describe: describeMailboxWipe},
+
+	// Self-lifecycle. The `tclaude agent {reincarnate,clone,rename,compact,
+	// remote-control}` verbs hit /v1/whoami/{verb} when acting on SELF and
+	// /v1/agent/{conv}/{verb} when acting on a peer (--target). Only the
+	// latter is covered by the agent/{conv}/{verb} route below, so a
+	// self-reincarnate/clone/rename went unaudited. describeWhoamiVerb gates
+	// to the real lifecycle verbs (sibling /v1/whoami/{context,dir} are GET
+	// reads, never audited) and the target stays blank — the actor column
+	// already names the agent acting on itself.
+	{segs: []string{"whoami", "{verb}"}, describe: describeWhoamiVerb},
 
 	// Per-agent lifecycle verbs. The CLI is /v1/agent/{sel}/{verb}; the
 	// dashboard is /api/agents/{conv}/{verb} (canonicalised agents→agent).
@@ -136,6 +156,25 @@ var auditRoutes = []auditRoute{
 
 	// Human notification channel.
 	{method: http.MethodPost, segs: []string{"notify-human"}, verb: "notify-human", describe: describeNotifyHuman},
+
+	// Group templates: instantiating one spawns a whole group of agents —
+	// a real coordination action — so it's audited (the CLI and dashboard
+	// both POST /…/templates/{name}/instantiate). Template authoring
+	// (create/update/delete/from-group) is config-shaped and left out.
+	{method: http.MethodPost, segs: []string{"templates", "{name}", "instantiate"}, verb: "template.instantiate", describe: describeTemplateInstantiate},
+
+	// Remote-access administration (dashboard, cert-admin gated). Issuing a
+	// client cert / adding SAN hosts / (re)running setup are security-
+	// relevant admin actions worth a trail. Describers capture only safe
+	// fields — passphrases and p12 passwords are NEVER recorded.
+	{method: http.MethodPost, segs: []string{"remote-access", "add-client"}, verb: "remote-access.add-client", describe: describeRemoteAccessClient},
+	{method: http.MethodPost, segs: []string{"remote-access", "add-hosts"}, verb: "remote-access.add-hosts", describe: describeRemoteAccessHosts},
+	{method: http.MethodPost, segs: []string{"remote-access", "setup"}, verb: "remote-access.setup", describe: describeRemoteAccessSetup},
+
+	// Agent power control (dashboard): shutting down / powering on a group
+	// or all agents is a fleet-wide state change.
+	{method: http.MethodPost, segs: []string{"shutdown"}, verb: "power.shutdown", describe: describePower},
+	{method: http.MethodPost, segs: []string{"power-on"}, verb: "power.on", describe: describePower},
 }
 
 // auditRequests wraps a mux so every matched command writes an audit
@@ -512,6 +551,190 @@ func describeAgentVerb(c *auditCtx) {
 	if c.fields.Verb == "rename" {
 		describeNewName(c)
 	}
+}
+
+// auditedWhoamiVerbs is the set of real self-lifecycle verbs the
+// whoami/{verb} route audits. Mirrors auditedAgentVerbs but scoped to the
+// verbs an agent can run on ITSELF — the others (context, dir) are GET
+// reads the mutating-method gate already drops, but the allowlist keeps
+// the audited set explicit so a future POST sibling isn't mis-recorded.
+var auditedWhoamiVerbs = map[string]bool{
+	"reincarnate":    true,
+	"clone":          true,
+	"rename":         true,
+	"compact":        true,
+	"remote-control": true,
+}
+
+// describeWhoamiVerb classifies a self-lifecycle command. The verb is the
+// {verb} path capture; there is no target — the actor (resolved later from
+// the caller's peer identity) IS the subject. Drops anything that isn't a
+// known self-verb so a POST to a read sibling (/v1/whoami/context) can't
+// be mis-recorded.
+func describeWhoamiVerb(c *auditCtx) {
+	if !auditedWhoamiVerbs[c.fields.Verb] {
+		c.fields.Verb = ""
+		return
+	}
+	// A self-rename carries the new title in the body, same as the
+	// manager-path rename.
+	if c.fields.Verb == "rename" {
+		describeNewName(c)
+	}
+}
+
+// describeMessageDelete records a single-message deletion. We can only key
+// off the {id} path capture: the describer runs AFTER the handler, by which
+// point the row is gone, so a preview lookup would always miss. The actor
+// (a party to the message) is named in the actor column; the detail records
+// which message was removed.
+func describeMessageDelete(c *auditCtx) {
+	if id := strings.TrimSpace(c.vars["id"]); id != "" {
+		c.fields.Detail = "message #" + id
+	}
+}
+
+// describeInboxPrune records a bulk inbox prune. The body carries the
+// cutoff window and a read-only flag; we summarise both so the trail shows
+// how aggressive the prune was.
+func describeInboxPrune(c *auditCtx) {
+	var b struct {
+		OlderThanSeconds int64 `json:"older_than_seconds"`
+		ReadOnly         bool  `json:"read_only"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	detail := "older than " + auditDuration(b.OlderThanSeconds)
+	if b.ReadOnly {
+		detail += ", read-only"
+	}
+	c.fields.Detail = detail
+}
+
+// describeMailboxDelete records a dashboard operator-side delete of one or
+// more messages by id (Detail = the count).
+func describeMailboxDelete(c *auditCtx) {
+	var b struct {
+		IDs []int64 `json:"ids"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	c.fields.Detail = auditCount(len(b.IDs), "message", "messages")
+}
+
+// describeMailboxWipe records a dashboard wipe of whole mailboxes by
+// conv-id. A single-mailbox wipe also names that mailbox as the target.
+func describeMailboxWipe(c *auditCtx) {
+	var b struct {
+		Convs []string `json:"convs"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	c.fields.Detail = auditCount(len(b.Convs), "mailbox", "mailboxes")
+	if len(b.Convs) == 1 {
+		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(b.Convs[0])
+	}
+}
+
+// describeTemplateInstantiate records a template instantiation — the
+// {name} path capture is the source template; the body names the new group
+// being spawned (which becomes the row's group + a task preview detail).
+func describeTemplateInstantiate(c *auditCtx) {
+	var b struct {
+		GroupName string `json:"group_name"`
+		Task      string `json:"task"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	if g := strings.TrimSpace(b.GroupName); g != "" {
+		c.fields.GroupName = g
+		c.fields.TargetLabel = g
+	}
+	detail := "from template " + c.vars["name"]
+	if task := strings.TrimSpace(b.Task); task != "" {
+		detail += ": " + task
+	}
+	c.fields.Detail = auditClip(detail, 120)
+}
+
+// describeRemoteAccessClient records issuing a client cert. Only the client
+// NAME is captured — the p12 password in the body is never recorded.
+func describeRemoteAccessClient(c *auditCtx) {
+	var b struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	if name := strings.TrimSpace(b.Name); name != "" {
+		c.fields.Detail = "client: " + auditClip(name, 80)
+	}
+}
+
+// describeRemoteAccessHosts records adding SAN hosts to the server cert.
+func describeRemoteAccessHosts(c *auditCtx) {
+	var b struct {
+		Hosts string `json:"hosts"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	if hosts := strings.TrimSpace(b.Hosts); hosts != "" {
+		c.fields.Detail = "hosts: " + auditClip(hosts, 100)
+	}
+}
+
+// describeRemoteAccessSetup records first-time / regenerate cert setup.
+// Captures only the non-secret fields — the passphrase and p12 password in
+// the body are deliberately NOT read.
+func describeRemoteAccessSetup(c *auditCtx) {
+	var b struct {
+		Bind       string `json:"bind"`
+		ClientName string `json:"client_name"`
+		Regenerate bool   `json:"regenerate"`
+		Enable     bool   `json:"enable"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	parts := make([]string, 0, 4)
+	if bind := strings.TrimSpace(b.Bind); bind != "" {
+		parts = append(parts, "bind "+bind)
+	}
+	if cn := strings.TrimSpace(b.ClientName); cn != "" {
+		parts = append(parts, "client "+cn)
+	}
+	if b.Regenerate {
+		parts = append(parts, "regenerate")
+	}
+	if b.Enable {
+		parts = append(parts, "enable")
+	}
+	c.fields.Detail = auditClip(strings.Join(parts, ", "), 120)
+}
+
+// describePower records an agent power shutdown / power-on. The body's
+// scope ("all" / "group") + group name summarise what was targeted.
+func describePower(c *auditCtx) {
+	var b struct {
+		Scope string `json:"scope"`
+		Group string `json:"group"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	if g := strings.TrimSpace(b.Group); g != "" {
+		c.fields.GroupName = g
+	}
+	if scope := strings.TrimSpace(b.Scope); scope != "" {
+		c.fields.Detail = "scope: " + auditClip(scope, 60)
+	}
+}
+
+// auditDuration renders a second count as a compact human window for the
+// prune detail (e.g. 90000 → "1d1h").
+func auditDuration(seconds int64) string {
+	if seconds <= 0 {
+		return "0s"
+	}
+	d := time.Duration(seconds) * time.Second
+	return d.String()
+}
+
+// auditCount renders "N singular" / "N plural" for a count detail.
+func auditCount(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return strconv.Itoa(n) + " " + plural
 }
 
 // describeAgentTarget is a no-op refinement: the base record path already

@@ -3,6 +3,7 @@ package agentd
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -56,8 +57,30 @@ func TestMatchAuditRoute(t *testing.T) {
 		{"cli permissions grant", http.MethodPost, "/v1/permissions/grant", true, "permissions.grant", db.AuditSourceCLI, nil},
 		{"cli cron add", http.MethodPost, "/v1/cron", true, "cron.add", db.AuditSourceCLI, nil},
 
+		// Reply + message deletions (the originally-missing routes).
+		{"cli reply", http.MethodPost, "/v1/messages/7/reply", true, "reply", db.AuditSourceCLI, map[string]string{"id": "7"}},
+		{"cli message delete", http.MethodDelete, "/v1/messages/7", true, "message.delete", db.AuditSourceCLI, map[string]string{"id": "7"}},
+		{"cli inbox prune", http.MethodPost, "/v1/inbox/prune", true, "inbox.prune", db.AuditSourceCLI, nil},
+		{"dashboard mailbox delete", http.MethodPost, "/api/mailbox/delete", true, "message.delete", db.AuditSourceDashboard, nil},
+		{"dashboard mailbox wipe", http.MethodPost, "/api/mailbox/wipe", true, "mailbox.wipe", db.AuditSourceDashboard, nil},
+
+		// Self-lifecycle (whoami): verb derived from {verb}.
+		{"cli self reincarnate", http.MethodPost, "/v1/whoami/reincarnate", true, "", db.AuditSourceCLI, map[string]string{"verb": "reincarnate"}},
+		{"cli self rename", http.MethodPost, "/v1/whoami/rename", true, "", db.AuditSourceCLI, map[string]string{"verb": "rename"}},
+
+		// Template instantiate (both surfaces share the route).
+		{"cli template instantiate", http.MethodPost, "/v1/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceCLI, map[string]string{"name": "crew-tpl"}},
+		{"dashboard template instantiate", http.MethodPost, "/api/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceDashboard, map[string]string{"name": "crew-tpl"}},
+
+		// Security / daemon admin (dashboard).
+		{"remote-access add-client", http.MethodPost, "/api/remote-access/add-client", true, "remote-access.add-client", db.AuditSourceDashboard, nil},
+		{"remote-access setup", http.MethodPost, "/api/remote-access/setup", true, "remote-access.setup", db.AuditSourceDashboard, nil},
+		{"power shutdown", http.MethodPost, "/api/shutdown", true, "power.shutdown", db.AuditSourceDashboard, nil},
+		{"power on", http.MethodPost, "/api/power-on", true, "power.on", db.AuditSourceDashboard, nil},
+
 		// Reads + non-command routes must not match.
 		{"GET members is a read", http.MethodGet, "/v1/groups/crew/members", false, "", "", nil},
+		{"GET whoami context is a read", http.MethodGet, "/v1/whoami/context", false, "", "", nil},
 		{"snapshot poll", http.MethodGet, "/api/snapshot", false, "", "", nil},
 		{"static asset", http.MethodGet, "/static/js/audit.js", false, "", "", nil},
 		{"unknown prefix", http.MethodPost, "/internal/thing", false, "", "", nil},
@@ -103,5 +126,111 @@ func TestDescribeAgentVerb_DropsNonVerbSiblings(t *testing.T) {
 	describeAgentVerb(&auditCtx{vars: map[string]string{"conv": "worker", "verb": "retire"}, fields: &f2})
 	if f2.Verb != "retire" {
 		t.Errorf("real verb should be kept, got verb=%q", f2.Verb)
+	}
+}
+
+// describeWhoamiVerb mirrors describeAgentVerb but for the self-lifecycle
+// route: it must drop a POST to a read sibling (whoami/context) and keep a
+// real self-verb. A self-rename additionally lifts the new title into the
+// detail.
+func TestDescribeWhoamiVerb(t *testing.T) {
+	// A read sibling reached by POST is not a self-verb → blanked.
+	f := auditFields{Verb: "context"}
+	describeWhoamiVerb(&auditCtx{vars: map[string]string{"verb": "context"}, fields: &f})
+	if f.Verb != "" {
+		t.Errorf("non-verb sibling should be blanked, got verb=%q", f.Verb)
+	}
+
+	// A real self-verb is kept.
+	f2 := auditFields{Verb: "reincarnate"}
+	describeWhoamiVerb(&auditCtx{vars: map[string]string{"verb": "reincarnate"}, fields: &f2})
+	if f2.Verb != "reincarnate" {
+		t.Errorf("real self-verb should be kept, got verb=%q", f2.Verb)
+	}
+
+	// A self-rename carries the new title.
+	f3 := auditFields{Verb: "rename"}
+	describeWhoamiVerb(&auditCtx{
+		vars:   map[string]string{"verb": "rename"},
+		body:   []byte(`{"title":"new name"}`),
+		fields: &f3,
+	})
+	if f3.Verb != "rename" {
+		t.Errorf("rename verb should be kept, got verb=%q", f3.Verb)
+	}
+	if !strings.Contains(f3.Detail, "new name") {
+		t.Errorf("rename detail should carry the new title, got %q", f3.Detail)
+	}
+}
+
+// describeRemoteAccessSetup must capture the non-secret fields and NEVER
+// the passphrase / p12 password from the body.
+func TestDescribeRemoteAccessSetup_RedactsSecrets(t *testing.T) {
+	f := auditFields{}
+	describeRemoteAccessSetup(&auditCtx{
+		body: []byte(`{"bind":"0.0.0.0:8443","client_name":"laptop",` +
+			`"passphrase":"hunter2","p12_password":"s3cr3t","regenerate":true}`),
+		fields: &f,
+	})
+	if !strings.Contains(f.Detail, "0.0.0.0:8443") || !strings.Contains(f.Detail, "laptop") {
+		t.Errorf("detail should carry bind + client name, got %q", f.Detail)
+	}
+	if strings.Contains(f.Detail, "hunter2") || strings.Contains(f.Detail, "s3cr3t") {
+		t.Fatalf("SECRET LEAK: detail must not contain the passphrase/p12 password, got %q", f.Detail)
+	}
+}
+
+// recordApprovalDecision writes one popup-sourced audit row attributed to
+// the operator, naming the requesting agent as the target and the decided
+// permission in the detail.
+func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	req := &approvalRequest{
+		perm:        "tool.bash",
+		convID:      "019ec010-1111-1111-1111-111111111111",
+		convTitle:   "worker",
+		method:      http.MethodPost,
+		path:        "/v1/messages",
+		targetGroup: "crew",
+	}
+	r := httptest.NewRequest(http.MethodPost, "/approve/abc/approve", nil)
+	recordApprovalDecision(r, req, true)
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve"})
+	if err != nil {
+		t.Fatalf("list audit log: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 approval.approve row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.ActorKind != db.AuditActorHuman || row.ActorLabel != "operator" {
+		t.Errorf("actor = (%q,%q), want (human,operator)", row.ActorKind, row.ActorLabel)
+	}
+	if row.TargetConv != req.convID || row.TargetLabel != "worker" {
+		t.Errorf("target = (%q,%q), want (%q,worker)", row.TargetConv, row.TargetLabel, req.convID)
+	}
+	if row.GroupName != "crew" {
+		t.Errorf("group = %q, want crew", row.GroupName)
+	}
+	if row.Source != db.AuditSourcePopup {
+		t.Errorf("source = %q, want %q", row.Source, db.AuditSourcePopup)
+	}
+	if !strings.Contains(row.Detail, "tool.bash") {
+		t.Errorf("detail should name the permission, got %q", row.Detail)
+	}
+
+	// A deny writes the mirror verb.
+	recordApprovalDecision(r, req, false)
+	denies, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.deny"})
+	if err != nil {
+		t.Fatalf("list deny rows: %v", err)
+	}
+	if len(denies) != 1 {
+		t.Fatalf("want 1 approval.deny row, got %d", len(denies))
 	}
 }

@@ -22,6 +22,7 @@ const (
 const (
 	AuditSourceCLI       = "cli"       // /v1/* over the unix socket (the `tclaude agent` CLI)
 	AuditSourceDashboard = "dashboard" // /api/* on the loopback dashboard server
+	AuditSourcePopup     = "popup"     // /approve/* on the loopback popup server (human approval decisions)
 )
 
 // AuditLogEntry is one row of audit_log — the persistent trail of

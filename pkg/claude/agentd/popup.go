@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
@@ -320,12 +321,14 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 			case req.decision <- true:
 			default:
 			}
+			recordApprovalDecision(r, req, true)
 			renderApprovalDoneCallback(w, true)
 		case "deny":
 			select {
 			case req.decision <- false:
 			default:
 			}
+			recordApprovalDecision(r, req, false)
 			renderApprovalDoneCallback(w, false)
 		case "extend":
 			// Resets the auto-deny timer; bounded so an unattended
@@ -354,6 +357,48 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		http.Error(w, "GET or POST", http.StatusMethodNotAllowed)
+	}
+}
+
+// recordApprovalDecision writes an audit row for a human approve/deny of a
+// pending permission request. The popup server isn't under /v1 or /api, so
+// the auditRequests middleware never matches it — and the approval context
+// (which agent, which permission) lives in the in-memory request, not the
+// HTTP body — so we record here directly while `req` is in hand rather than
+// retrofitting the middleware. Best-effort: a logging failure is warned and
+// swallowed so it can never affect the decision the human just made.
+//
+// The popup is human-only (loopback + single-use init token + per-approval
+// session cookie), so the actor is always the operator; the target is the
+// agent whose request was decided. `extend` is not a final decision and is
+// intentionally not recorded.
+func recordApprovalDecision(r *http.Request, req *approvalRequest, approved bool) {
+	verb := "approval.deny"
+	if approved {
+		verb = "approval.approve"
+	}
+	detail := strings.TrimSpace(req.perm)
+	if action := strings.TrimSpace(req.method + " " + req.path); action != "" {
+		if detail != "" {
+			detail += " — " + action
+		} else {
+			detail = action
+		}
+	}
+	if _, err := db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind:   db.AuditActorHuman,
+		ActorLabel:  "operator",
+		Verb:        verb,
+		TargetConv:  req.convID,
+		TargetLabel: req.convTitle,
+		GroupName:   req.targetGroup,
+		Detail:      auditClip(detail, 120),
+		Method:      r.Method,
+		Path:        r.URL.Path,
+		Status:      http.StatusOK,
+		Source:      db.AuditSourcePopup,
+	}); err != nil {
+		slog.Warn("audit: failed to record approval decision", "verb", verb, "err", err)
 	}
 }
 

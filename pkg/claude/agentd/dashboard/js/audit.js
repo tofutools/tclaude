@@ -49,9 +49,9 @@ const COLUMNS = [
 // the everyday create/rest.
 function verbClass(verb) {
   const v = verb || '';
-  if (/(^|\.)(delete|retire|remove|stop|deny|revoke)(\.|$)/.test(v)) return 'audit-verb danger';
-  if (/^(permissions|sudo|owner)/.test(v)) return 'audit-verb elevate';
-  if (/^(spawn|clone|reincarnate|group\.create|member\.add)/.test(v)) return 'audit-verb create';
+  if (/(^|\.)(delete|retire|remove|stop|deny|revoke|prune|wipe|shutdown)(\.|$)/.test(v)) return 'audit-verb danger';
+  if (/^(permissions|sudo|owner|approval|remote-access)/.test(v)) return 'audit-verb elevate';
+  if (/^(spawn|clone|reincarnate|group\.create|member\.add|template\.instantiate|power\.on)/.test(v)) return 'audit-verb create';
   return 'audit-verb';
 }
 
