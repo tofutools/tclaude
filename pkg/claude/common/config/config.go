@@ -707,6 +707,27 @@ type AgentConfig struct {
 	// would break whatever the fixed port was set up for. See
 	// agentd.resolveDashboardPort.
 	DashboardPort int `json:"dashboard_port,omitempty"`
+
+	// PersistOperatorToken opts the daemon into a STABLE operator token
+	// that survives restarts, instead of the default (a fresh random
+	// token minted in memory each `agentd serve` and lost on exit).
+	//
+	// Off / absent (the default) preserves the historical behaviour: the
+	// human re-reads the token off the startup banner and re-exports
+	// TCLAUDE_HUMAN_TOKEN after every daemon restart. On, the token is
+	// generated once and persisted, so the human exports it a single time
+	// and it keeps working across restarts. The `agentd serve
+	// --persist-operator-token` flag ORs with this — either turns it on.
+	//
+	// The persisted secret is stored by agentd (see
+	// agentd.loadOrCreateOperatorToken): the OS keychain when one is
+	// reachable (macOS Keychain / Linux Secret Service / Windows
+	// Credential Manager), else a 0600 ~/.tclaude/operator_token file.
+	// The secret is deliberately NOT held in this config file — config.json
+	// is plaintext and shows up in the Config-tab diff / backups, and the
+	// agent sandbox already denies reads to ~/.tclaude (so the file
+	// fallback keeps the same threat model as the in-memory token).
+	PersistOperatorToken bool `json:"persist_operator_token,omitempty"`
 }
 
 // DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)

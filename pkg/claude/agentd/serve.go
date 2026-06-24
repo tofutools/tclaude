@@ -25,13 +25,14 @@ import (
 )
 
 type serveParams struct {
-	Socket              string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
-	NoTray              bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
-	AutoLaunchDashboard bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
-	Slop                bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
-	Terminal            string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
-	AgentCloneCooldown  string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
-	DashboardPort       int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
+	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude/agentd.sock)"`
+	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
+	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
+	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
+	Terminal             string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
+	AgentCloneCooldown   string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
+	DashboardPort        int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
+	PersistOperatorToken bool   `long:"persist-operator-token" help:"Persist the operator token across restarts (OS keychain when available, else a 0600 ~/.tclaude/operator_token file) instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 }
 
 func serveCmd() *cobra.Command {
@@ -132,10 +133,13 @@ func runServe(p *serveParams) error {
 
 	// Operator token — positively authenticates the human operator on the
 	// CLI / Unix-socket path so the daemon can fail closed instead of
-	// assuming "no Claude Code ancestor => human". Minted fresh each
-	// daemon lifetime, held only in memory. Never written through slog
+	// assuming "no Claude Code ancestor => human". By default minted fresh
+	// each daemon lifetime and held only in memory; with persistence opted
+	// in (flag ORs config) it is generated once and stored (OS keychain or
+	// a 0600 file) so it survives restarts. Never written through slog
 	// (slog → output.log); the banner below prints it only to a TTY.
-	operatorTok := generateOperatorToken()
+	operatorTok, tokenSrc := resolveOperatorToken(shouldPersistOperatorToken(p.PersistOperatorToken, cfg))
+	slog.Info("operator token", "source", tokenSrc.kind, "persisted", tokenSrc.kind != tokenSourceEphemeral)
 
 	// Auto-launch the dashboard in the browser when the human opted in
 	// — either via --auto-launch-dashboard or the persistent
@@ -287,7 +291,7 @@ func runServe(p *serveParams) error {
 			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
 			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (loopback %s)\n", popupBaseURL)
 		}
-		printOperatorTokenBanner(operatorTok)
+		printOperatorTokenBanner(operatorTok, tokenSrc)
 		serveErrCh <- srv.Serve(ln)
 	}()
 
