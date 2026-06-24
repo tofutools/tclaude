@@ -14,8 +14,9 @@
 // is gone for good — there's no minimum-distance threshold to lean on). So a
 // pointerdown over an interactive descendant turns the summary's draggable
 // OFF for that gesture (the click lands); a press on the bare header leaves
-// it ON, making that empty space the drag handle. This is the same
-// suppression dnd.js uses for member rows — see bindGroupReorder.
+// it ON, making that empty space the drag handle. This mirrors the
+// gesture-scoped suppression dnd.js's bindDnd does for member rows; the
+// implementation here is the pointerdown handler in bindGroupReorder below.
 //
 // Why a dashPref and not a server column? Group display order is a
 // dashboard *presentation* concern — the same kind as the per-group
