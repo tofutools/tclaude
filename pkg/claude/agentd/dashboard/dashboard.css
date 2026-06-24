@@ -2041,6 +2041,24 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .cron-create-error:empty { display: none; }
 .cron-create-error::before { content: "⚠ "; font-weight: 600; }
+/* Dismissible variant (built by showModalError): a flex row of ⚠ · message ·
+   ✕, so the close button sits at the banner's top-right. The ::before ⚠
+   becomes the first flex item (gap supplies its spacing, so drop the trailing
+   space the block path bakes into the glyph); the message takes the slack. */
+.cron-create-error.dismissible {
+  display: flex; align-items: flex-start; gap: 6px;
+}
+.cron-create-error.dismissible::before { content: "⚠"; }
+.cron-create-error-msg { flex: 1; min-width: 0; }
+.cron-create-error-x {
+  flex: none;
+  background: none; border: none; cursor: pointer;
+  color: #ffa198; font-size: 14px; line-height: 1;
+  padding: 0 2px; margin: -1px -2px 0 0;
+  opacity: .7;
+}
+.cron-create-error-x:hover { opacity: 1; color: #ffd7d3; }
+.cron-create-error-x:focus-visible { outline: 1px solid #f85149; outline-offset: 1px; opacity: 1; }
 /* Brief attention flash, re-triggered on every (re)show by showModalError
    toggling .flash with a reflow — so an identical, resubmitted error still
    pulses instead of sitting silent. */

@@ -255,20 +255,42 @@ function bindModalSubmitHotkey(modalEl, submitBtn) {
   });
 }
 
-// showModalError sets a modal's inline error line (a .cron-create-error
-// element) to `msg`, then — when `msg` is non-empty — scrolls it into view
-// and re-triggers its attention flash so it can't be missed. The dialogs
-// that use it (spawn / clone / reincarnate, …) are tall and scroll inside a
-// max-height cap, and Ctrl/Cmd+Enter can submit while the error line sits
-// below the fold, so a bare textContent write would leave a failed submit
-// looking like nothing happened. The .cron-create-error CSS renders a
-// populated line as a banner and collapses an empty one (`:empty`), so an
-// empty/falsy `msg` just clears it. Accepts an element or an id (no '#').
+// showModalError renders a modal's inline error line (a .cron-create-error
+// element) as a dismissible banner: the message plus an ✕ that clears it.
+// When `msg` is non-empty it also scrolls the banner into view and re-triggers
+// its attention flash so it can't be missed — the dialogs that use it (spawn /
+// clone / reincarnate, …) are tall and scroll inside a max-height cap, and
+// Ctrl/Cmd+Enter can submit while the line sits below the fold, so a bare
+// textContent write would leave a failed submit looking like nothing happened.
+// An empty/falsy `msg` clears it (the .cron-create-error `:empty` rule then
+// collapses the banner). Accepts an element or an id (no '#').
 function showModalError(elOrId, msg) {
   const el = typeof elOrId === 'string' ? $('#' + elOrId) : elOrId;
   if (!el) return;
-  el.textContent = msg || '';
-  if (!msg) { el.classList.remove('flash'); return; }
+  if (!msg) {
+    // Cleared → empty the line so `:empty` collapses it, and drop the
+    // banner-mode classes so no flex/flash state lingers for the next show.
+    el.textContent = '';
+    el.classList.remove('flash', 'dismissible');
+    return;
+  }
+  // Rebuilt on every show (a textContent write would wipe a prior ✕ anyway),
+  // so the dismiss handler never accumulates across resubmits.
+  el.textContent = '';
+  const span = document.createElement('span');
+  span.className = 'cron-create-error-msg';
+  span.textContent = msg;
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'cron-create-error-x';
+  x.setAttribute('aria-label', 'Dismiss error');
+  x.title = 'Dismiss';
+  x.textContent = '✕';
+  // The error already self-clears on the next submit and on close/reopen; the
+  // ✕ is just "I've read it, hide it now" — so it only clears the line.
+  x.addEventListener('click', () => showModalError(el, ''));
+  el.append(span, x);
+  el.classList.add('dismissible');
   // Remove → force a reflow → re-add so an identical, resubmitted message
   // still restarts the CSS flash animation (the standard restart trick).
   el.classList.remove('flash');

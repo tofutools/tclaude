@@ -38,6 +38,15 @@ func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must("el.classList.add('flash');",
 		"helper (re)triggers the flash")
 
+	// Dismiss button: the banner carries a ✕ that clears it on click, styled
+	// to sit at the top-right (the .dismissible flex variant).
+	must("x.addEventListener('click', () => showModalError(el, ''));",
+		"✕ dismiss button clears the banner")
+	must("cron-create-error-x",
+		"dismiss button element + style present")
+	must(".cron-create-error.dismissible {",
+		"flex variant places the ✕ at the banner's right")
+
 	// Every spawn-family submit error path goes through the helper. Three
 	// dialogs each surface a non-OK fetch body the same way, so the
 	// `showModalError(errEl, (await r.text())` shape must appear 3×.
