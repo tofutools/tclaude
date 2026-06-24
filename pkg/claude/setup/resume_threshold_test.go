@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,26 @@ func TestInstallResumeThresholdOverride_Idempotent(t *testing.T) {
 	got, ok := resumeMinutes(t)
 	require.True(t, ok)
 	assert.Equal(t, config.ResumeThresholdMinutesSuppress, got)
+}
+
+// A corrupt config file is never clobbered: the installer skips with a warning
+// rather than overwriting the operator's unparseable config with defaults.
+func TestInstallResumeThresholdOverride_CorruptConfigNotClobbered(t *testing.T) {
+	tempHome(t)
+	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	const garbage = "{ this is not valid json"
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(garbage), 0o644))
+
+	out := captureStdout(t, func() {
+		require.NoError(t, installResumeThresholdOverride())
+	})
+	assert.Contains(t, out, "Skipping")
+	assert.NotContains(t, out, "✓ Set")
+
+	// The corrupt file is left exactly as-is — not replaced with a default config.
+	data, err := os.ReadFile(config.ConfigPath())
+	require.NoError(t, err)
+	assert.Equal(t, garbage, string(data), "a corrupt config must not be overwritten")
 }
 
 // installExtras wires --install-resume-threshold-override (and --install-all)

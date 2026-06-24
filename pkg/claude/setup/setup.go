@@ -394,9 +394,16 @@ func installExtras(params *Params) error {
 // threshold_minutes (by hand or a previous run), it is left exactly as-is. The
 // user opted in by passing the flag (or --install-all); we don't prompt further.
 func installResumeThresholdOverride() error {
-	cfg, _ := config.Load()
-	if cfg == nil {
-		cfg = config.DefaultConfig()
+	cfg, err := config.Load()
+	if err != nil {
+		// The config file exists but is corrupt/unreadable, so Load fell back to
+		// defaults. Saving now would overwrite the file with those defaults,
+		// silently discarding whatever the operator's unparseable config held —
+		// so skip with a warning rather than clobber it. (A simply-absent file is
+		// not an error: Load returns the default config with a nil error, and we
+		// proceed to write it.)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		return nil
 	}
 	if cfg.ClaudeResume != nil && cfg.ClaudeResume.ThresholdMinutes != nil {
 		fmt.Printf("✓ claude_resume.threshold_minutes already set (%d) — leaving it unchanged\n",

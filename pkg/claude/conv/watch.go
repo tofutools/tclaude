@@ -3,7 +3,6 @@ package conv
 import (
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -2183,15 +2182,9 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
-	// from interrupting this resume. The CLAUDE_CODE_RESUME_* overrides come
-	// from ~/.tclaude/config.json and are Claude-Code-specific, so apply them
-	// only for the Claude harness (Codex has no such prompt). Best-effort: a
-	// Load failure just leaves CC on its own defaults.
-	if h.Name == harness.DefaultName {
-		if cfg, cerr := config.Load(); cerr == nil {
-			maps.Copy(resumeEnv, cfg.ClaudeResumeEnv())
-		}
-	}
+	// from interrupting this resume. No-op for non-Claude harnesses. See
+	// session.ApplyClaudeResumeEnv.
+	session.ApplyClaudeResumeEnv(h, resumeEnv)
 	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports: clcommon.BuildEnvExports(resumeEnv),
 		ResumeID:   convID,
