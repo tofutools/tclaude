@@ -6,6 +6,7 @@
 
 import { $, $$, esc } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+import { recordGroupInteraction } from './last-group.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
@@ -310,6 +311,7 @@ async function submitInstantiate() {
       : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
       failed > 0);
     try { dashPrefs.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
+    recordGroupInteraction(groupName);
     // Jump to the Groups tab so the freshly-spawned group is visible.
     const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
     if (gbtn) gbtn.click();
@@ -658,6 +660,7 @@ async function submitGroupImport() {
     }
     // Show the imported group expanded on the next render.
     try { dashPrefs.setItem('tclaude.dash.group.' + body.group, '1'); } catch (_) {}
+    recordGroupInteraction(body.group);
     refresh();
   } catch (err) {
     errEl.textContent = 'Import failed: ' + ((err && err.message) || String(err)) +

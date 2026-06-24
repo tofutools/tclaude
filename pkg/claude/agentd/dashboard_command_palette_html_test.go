@@ -51,7 +51,21 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("/api/jump/", "per-agent focus reuses /api/jump")
 	must("/api/hide/", "per-agent hide reuses /api/hide")
 	must("openWindowModal('all', null)", "the subset picker reuses the window modal")
-	must("openAgentSpawnModal({})", "the spawn command reuses the spawn modal")
+
+	// Spawn: the plain command reuses the spawn modal, DEFAULTING (not
+	// pinning) the picker to the group the operator last interacted with
+	// (folded / spawned / palette-touched), and there is one PINNED "Spawn
+	// agent in <group>…" per group. Both reuse openAgentSpawnModal; the
+	// group memory lives in the shared last-group module.
+	must("./last-group.js", "the palette imports the last-interacted-group memory")
+	must("const lastGroup = lastInteractedGroup();",
+		"the plain spawn reads the last-interacted group")
+	must("openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {})",
+		"the plain spawn defaults the picker to the last group (still changeable)")
+	must("label: `Spawn agent in ${g.name}…`",
+		"the palette offers a pinned spawn per group")
+	must("openAgentSpawnModal({ groupName: g.name })",
+		"each per-group spawn pins its group")
 
 	// The theme toggle (regular ↔ slop) reuses slop.js's toggleSlop,
 	// which had to be exported for the palette to reach it.
