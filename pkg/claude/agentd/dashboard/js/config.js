@@ -760,6 +760,66 @@ function renderConfigNotice(messages) {
   el.style.display = 'block';
 }
 
+// ===================================================================
+// Section filter — a search box that hides/shows whole config sections
+// by a title-OR-content match. cfgFilterBlocks() resolves the searchable
+// blocks LIVE from the DOM (every .cfg-section plus the standalone
+// Advanced sudo <details>), so a section added to dashboard.html is
+// filtered automatically — there is no hardcoded section list to keep in
+// sync. Hiding a section never affects Save: assembleConfig reads fields
+// by id regardless of visibility, so a filtered-out setting still
+// round-trips.
+// ===================================================================
+function cfgFilterBlocks() {
+  return $$('#tab-config .cfg-section, #tab-config > details.cfg-advanced');
+}
+
+// cfgSearchText is the haystack for one block: its visible text (the <h3>
+// title, every label, hint and <option> label) plus input placeholders
+// and <option>/<datalist> values — so a term like "ghostty" or "8443"
+// that only appears as an attribute still matches. Lower-cased once per
+// call; the section count is tiny so there's no need to cache.
+function cfgSearchText(block) {
+  const parts = [block.textContent || ''];
+  block.querySelectorAll('input, textarea').forEach(el => {
+    if (el.placeholder) parts.push(el.placeholder);
+  });
+  block.querySelectorAll('option').forEach(o => { if (o.value) parts.push(o.value); });
+  return parts.join(' ').toLowerCase();
+}
+
+// applyConfigFilter shows a block when every space-separated term is found
+// somewhere in its searchable text (AND semantics); a blank query shows
+// all. It also updates the match count, the clear button and the no-match
+// line. Safe to call before the form has loaded — it only toggles
+// visibility on whatever sections are in the DOM.
+function applyConfigFilter() {
+  const input = $('#cfg-filter');
+  if (!input) return;
+  const raw = input.value.trim().toLowerCase();
+  const terms = raw ? raw.split(/\s+/) : [];
+  const blocks = cfgFilterBlocks();
+  let shown = 0;
+  blocks.forEach(b => {
+    const match = terms.length === 0 || (() => {
+      const hay = cfgSearchText(b);
+      return terms.every(t => hay.includes(t));
+    })();
+    b.hidden = !match;
+    if (match) shown++;
+  });
+  const clearBtn = $('#cfg-filter-clear');
+  if (clearBtn) clearBtn.hidden = terms.length === 0;
+  const countEl = $('#cfg-filter-count');
+  if (countEl) countEl.textContent = terms.length ? `${shown} / ${blocks.length} sections` : '';
+  const emptyEl = $('#cfg-filter-empty');
+  if (emptyEl) {
+    emptyEl.hidden = !(terms.length && shown === 0);
+    const q = $('#cfg-filter-empty-q');
+    if (q) q.textContent = input.value.trim();
+  }
+}
+
 async function loadConfigTab() {
   // Refresh the slug / group datalists from the latest snapshot.
   const snap = lastSnapshot || {};
@@ -796,6 +856,9 @@ async function loadConfigTab() {
     $('#cfg-status').textContent = 'failed to load';
     showConfigErrors(['Could not load config: ' + (e.message || e)]);
   }
+  // Re-apply any standing filter — a Reload rebuilds the inner lists, and
+  // the operator may have a query typed; keep what's hidden hidden.
+  applyConfigFilter();
   // Localhost-only cert management renders independently of the config form's
   // load result (it has its own endpoint + error handling).
   void loadRemoteAdmin();
@@ -961,6 +1024,23 @@ function bindConfigTab() {
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
+  // Live section filter. Esc clears it; the clear button mirrors that.
+  const filterInput = $('#cfg-filter');
+  if (filterInput) {
+    filterInput.addEventListener('input', applyConfigFilter);
+    filterInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && filterInput.value) {
+        e.preventDefault();
+        filterInput.value = '';
+        applyConfigFilter();
+      }
+    });
+  }
+  const filterClear = $('#cfg-filter-clear');
+  if (filterClear) filterClear.addEventListener('click', () => {
+    if (filterInput) { filterInput.value = ''; filterInput.focus(); }
+    applyConfigFilter();
+  });
   // Localhost-only remote-access cert management lives in the same tab; wire its
   // buttons once here (its data loads via loadConfigTab → loadRemoteAdmin).
   bindRemoteAdmin();
