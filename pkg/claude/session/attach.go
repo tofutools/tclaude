@@ -48,6 +48,14 @@ func runAttach(params *AttachParams) error {
 	// Find matching session
 	state, err := findSession(sessionID)
 	if err != nil {
+		// Not a registered coding session — it may be a bare tmux
+		// session on the tclaude server (e.g. agentd's headless-display
+		// fallback for "open terminal" creates one of these instead of
+		// a GUI window). Attach to it directly by tmux session name.
+		if IsTmuxSessionAlive(sessionID) {
+			fmt.Printf("Attaching to tmux session %s... (Ctrl+B D to detach)\n", sessionID)
+			return attachToSessionWithFlags(sessionID, params.Force)
+		}
 		return err
 	}
 

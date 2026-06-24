@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // --- /v1/whoami/dir and /v1/agent/{selector}/dir ---
@@ -34,13 +36,13 @@ import (
 // dirResp is the wire shape for GET .../dir.
 type dirResp struct {
 	ConvID        string `json:"conv_id"`
-	StartDir      string `json:"start_dir"`               // Claude Code launch dir
-	StartBranch   string `json:"start_branch,omitempty"`  // git branch of start_dir
-	CurrentDir    string `json:"current_dir"`             // most-recent dir the agent edited in
-	WorktreeDir   string `json:"worktree_dir"`            // git working-tree root of current_dir
+	StartDir      string `json:"start_dir"`                // Claude Code launch dir
+	StartBranch   string `json:"start_branch,omitempty"`   // git branch of start_dir
+	CurrentDir    string `json:"current_dir"`              // most-recent dir the agent edited in
+	WorktreeDir   string `json:"worktree_dir"`             // git working-tree root of current_dir
 	CurrentBranch string `json:"current_branch,omitempty"` // git branch of worktree_dir
-	Source        string `json:"source"`                  // "hook" (tracked) | "fallback" (== start_dir)
-	CallerConv    string `json:"caller_conv,omitempty"`   // set when a different agent asked
+	Source        string `json:"source"`                   // "hook" (tracked) | "fallback" (== start_dir)
+	CallerConv    string `json:"caller_conv,omitempty"`    // set when a different agent asked
 }
 
 // dirOpenResp is the wire shape for POST .../dir.
@@ -50,6 +52,11 @@ type dirOpenResp struct {
 	Which      string `json:"which"`
 	Opened     bool   `json:"opened"`
 	CallerConv string `json:"caller_conv,omitempty"`
+	// AttachCmd is set instead of a GUI window actually appearing, when
+	// openTerminalOrTmuxFallback had to fall back to a bare tmux
+	// session (see its doc comment) — the command the caller should
+	// surface to the human so they can reach the shell.
+	AttachCmd string `json:"attach_cmd,omitempty"`
 }
 
 // resolveDirs adapts agent.ResolveLocation to this endpoint's wire
@@ -200,12 +207,13 @@ func openDirTerminal(w http.ResponseWriter, r *http.Request, convID, caller stri
 			"no known "+which+" directory for "+short8(convID))
 		return
 	}
-	if err := openTerminal(openShellCmd(dir)); err != nil {
+	attachCmd, err := openTerminalOrTmuxFallback(dir)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "open_failed",
 			"could not open a terminal: "+err.Error())
 		return
 	}
-	resp := dirOpenResp{ConvID: convID, Dir: dir, Which: which, Opened: true}
+	resp := dirOpenResp{ConvID: convID, Dir: dir, Which: which, Opened: true, AttachCmd: attachCmd}
 	if caller != "" && caller != convID {
 		resp.CallerConv = caller
 	}
@@ -268,11 +276,16 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no known "+which+" directory for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	if err := openTerminal(openShellCmd(dir)); err != nil {
+	attachCmd, err := openTerminalOrTmuxFallback(dir)
+	if err != nil {
 		http.Error(w, "open terminal: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"dir": dir, "which": which})
+	resp := map[string]string{"dir": dir, "which": which}
+	if attachCmd != "" {
+		resp["attach_cmd"] = attachCmd
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleDashboardOpenWindowAPI opens a fresh terminal window ATTACHED to
@@ -318,11 +331,16 @@ func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
+	resp := map[string]string{"conv_id": res.ConvID, "label": sess.ID}
+	// Unlike openDirTerminal/handleDashboardTermAPI, this session already
+	// has a live tmux session — no tmux fallback session needs creating,
+	// the attach command for it (openAttachCmd's payload) already exists.
+	// When the GUI window fails (e.g. headless agentd), just hand that
+	// command back instead of erroring.
 	if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
-		http.Error(w, "open window: "+err.Error(), http.StatusInternalServerError)
-		return
+		resp["attach_cmd"] = "tclaude session attach " + sess.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "label": sess.ID})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // openTerminal is the seam for spawning a terminal window. Production
@@ -331,6 +349,41 @@ func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
 // without spawning a real window. Mirrors the clcommon.Default /
 // agentd.Spawn boundary handles.
 var openTerminal = terminal.OpenWithCommand
+
+// openTerminalOrTmuxFallback tries to pop a GUI terminal at dir via
+// openTerminal. When that fails — most commonly because agentd is
+// running outside a desktop session, so terminal.OpenWithCommand has
+// no DISPLAY/WAYLAND_DISPLAY to target — it falls back to a detached
+// tmux session in dir instead of erroring out, and returns the
+// `tclaude session attach` command a human can run from any shell
+// that reaches this machine's tclaude tmux server (e.g. over SSH).
+// Returns "" (no error) when the GUI terminal opened fine.
+func openTerminalOrTmuxFallback(dir string) (attachCmd string, err error) {
+	guiErr := openTerminal(openShellCmd(dir))
+	if guiErr == nil {
+		return "", nil
+	}
+	name, tmuxErr := newShellTmuxSession(dir)
+	if tmuxErr != nil {
+		return "", fmt.Errorf("%w (tmux fallback also failed: %v)", guiErr, tmuxErr)
+	}
+	return "tclaude session attach " + name, nil
+}
+
+// newShellTmuxSession creates a detached tmux session, on the same
+// tclaude tmux server real coding sessions use, running a login shell
+// in dir. Named with a "shell-" prefix distinct from the bare hex
+// session.GenerateSessionID() uses for coding-session tmux names, so
+// it reads clearly in `tmux ls` and unambiguously signals to session
+// attach's bare-tmux fallback (see session/attach.go) that this is a
+// plain shell, not a registered coding session.
+func newShellTmuxSession(dir string) (name string, err error) {
+	name = "shell-" + session.GenerateSessionID()
+	if err := clcommon.TmuxCommand("new-session", "-d", "-s", name, "-c", dir).Run(); err != nil {
+		return "", err
+	}
+	return name, nil
+}
 
 // openShellCmd builds the payload terminal.OpenWithCommand runs to
 // land the human in an interactive shell at dir. The shape depends on

@@ -1724,15 +1724,17 @@ function addMemberModal(groupName) {
 }
 
 // toast shows a transient message in the bottom-right. error=true
-// makes the left border red. Auto-dismisses after 3s.
+// makes the left border red. Auto-dismisses after ms (default 3s) —
+// callers pass a longer ms for messages the user needs time to read
+// or copy (e.g. a fallback attach command).
 let toastTimer = null;
-export function toast(message, error) {
+export function toast(message, error, ms = 3000) {
   const el = $('#toast');
   el.textContent = message;
   el.classList.toggle('error', !!error);
   el.classList.add('show');
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
 // deleteAgentModal is the per-row "delete forever" confirm. Beyond

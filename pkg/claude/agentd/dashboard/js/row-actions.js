@@ -36,6 +36,21 @@ import {
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 
+// toastAttachFallback surfaces the headless-agentd fallback: when
+// opening a real terminal window failed (no DISPLAY on the agentd
+// host — see openTerminalOrTmuxFallback in pkg/claude/agentd/dir.go),
+// the daemon instead created/reused a tmux session and handed back
+// the `tclaude session attach` command for it in info.attach_cmd.
+// Copies that command to the clipboard and toasts it with extra time
+// to read/paste; returns true if it handled the response (caller
+// should return without toasting its own success message).
+function toastAttachFallback(info) {
+  if (!info.attach_cmd) return false;
+  navigator.clipboard?.writeText(info.attach_cmd).catch(() => {});
+  toast(`no display on agentd host — copied to clipboard: ${info.attach_cmd}`, false, 8000);
+  return true;
+}
+
 // True while an inline rename input is open; suspends the auto-
 // refresh so the 2s tick doesn't blow the input away mid-edit.
 let renameEditing = false;
@@ -434,6 +449,7 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          if (toastAttachFallback(info)) return;
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
@@ -445,6 +461,8 @@ function bindRowActions() {
             method: 'POST', credentials: 'same-origin',
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
+          const info = await r.json().catch(() => ({}));
+          if (toastAttachFallback(info)) return;
           toast(`window opened: ${label}`);
           return;
         }
@@ -473,6 +491,7 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          if (toastAttachFallback(info)) return;
           toast(`terminal opened: ${info.dir || which}`);
           return;
         }
