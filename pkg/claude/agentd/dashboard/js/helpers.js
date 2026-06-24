@@ -254,6 +254,30 @@ function bindModalSubmitHotkey(modalEl, submitBtn) {
     if (!submitBtn.disabled) submitBtn.click();
   });
 }
+
+// showModalError sets a modal's inline error line (a .cron-create-error
+// element) to `msg`, then — when `msg` is non-empty — scrolls it into view
+// and re-triggers its attention flash so it can't be missed. The dialogs
+// that use it (spawn / clone / reincarnate, …) are tall and scroll inside a
+// max-height cap, and Ctrl/Cmd+Enter can submit while the error line sits
+// below the fold, so a bare textContent write would leave a failed submit
+// looking like nothing happened. The .cron-create-error CSS renders a
+// populated line as a banner and collapses an empty one (`:empty`), so an
+// empty/falsy `msg` just clears it. Accepts an element or an id (no '#').
+function showModalError(elOrId, msg) {
+  const el = typeof elOrId === 'string' ? $('#' + elOrId) : elOrId;
+  if (!el) return;
+  el.textContent = msg || '';
+  if (!msg) { el.classList.remove('flash'); return; }
+  // Remove → force a reflow → re-add so an identical, resubmitted message
+  // still restarts the CSS flash animation (the standard restart trick).
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  // block:'nearest' is a no-op when already visible, so this never yanks the
+  // dialog around for an error the human is already looking at.
+  el.scrollIntoView({ block: 'nearest' });
+}
 function onlineDot(online) {
   return online
     ? '<span class="online" title="online">●</span>'
@@ -1321,7 +1345,7 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
-  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,

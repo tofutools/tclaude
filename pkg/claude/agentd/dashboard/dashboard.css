@@ -2018,7 +2018,37 @@ details.group-virtual .group-name { color: #8aa0b8; }
    the modal's left edge rather than in the field column. The flex column's
    10px gap supplies the breathing room above and below the line. */
 .cron-create-sep { border-top: 1px solid #2a3340; }
-.cron-create-error { color: #f85149; font-size: 12px; min-height: 14px; }
+/* Inline modal error line, shared by every .cron-create-style dialog
+   (spawn / clone / reincarnate / cron / group / profile / …). Empty by
+   default and fully collapsed (:empty → display:none), so a cleared error
+   leaves no gap. Once a message is set it renders as a prominent banner —
+   red-tinted fill, a left accent bar and a ⚠ glyph — so a validation or
+   spawn error can't be mistaken for a throwaway hairline or lost below a
+   tall modal's scroll fold (the showModalError helper also scrolls it into
+   view + flashes it). Server errors can carry JSON / newlines / long
+   worktree paths, so wrap rather than overflow the dialog. */
+.cron-create-error {
+  color: #ffa198;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border: 1px solid #5c2b29;
+  border-left: 3px solid #f85149;
+  border-radius: 5px;
+  background: #2d1413;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cron-create-error:empty { display: none; }
+.cron-create-error::before { content: "⚠ "; font-weight: 600; }
+/* Brief attention flash, re-triggered on every (re)show by showModalError
+   toggling .flash with a reflow — so an identical, resubmitted error still
+   pulses instead of sitting silent. */
+.cron-create-error.flash { animation: cron-error-flash .9s ease-out; }
+@keyframes cron-error-flash {
+  0%   { background: #5a201d; box-shadow: 0 0 0 1px #f85149; }
+  100% { background: #2d1413; box-shadow: none; }
+}
 .cron-create-modal .modal-buttons {
   display: flex; justify-content: flex-end; gap: 8px;
   border-top: 1px solid #2a3340; padding-top: 10px;
