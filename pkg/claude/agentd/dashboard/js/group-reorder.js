@@ -1,8 +1,11 @@
 // group-reorder.js — drag-to-reorder the REAL groups in the Groups tab.
 //
-// A small grip handle (⠿) rides at the start of each real group's
-// <summary> (render.js). Dragging it reorders that group relative to the
-// other real groups; the order is persisted as a JSON array of group
+// A real group's title (.group-name, carrying data-group-reorder +
+// draggable, see render.js) IS the reorder drag handle. Dragging it
+// reorders that group relative to the other real groups; a clean click on
+// the same title still folds/unfolds the group (bindGroupTitleToggle in
+// refresh.js) — the browser only starts a drag on movement, so the two
+// gestures don't collide. The order is persisted as a JSON array of group
 // names in dashPrefs under GROUP_ORDER_KEY.
 //
 // Why a dashPref and not a server column? Group display order is a
@@ -171,9 +174,12 @@ function endGroupDrag() {
 
 function bindGroupReorder() {
   document.addEventListener('dragstart', (e) => {
-    const grip = e.target.closest('[data-group-reorder]');
-    if (!grip) return;
-    const name = grip.getAttribute('data-group-reorder');
+    // The drag handle is the group title (.group-name with
+    // data-group-reorder); match on the attribute so the source element can
+    // change without touching this code.
+    const handle = e.target.closest('[data-group-reorder]');
+    if (!handle) return;
+    const name = handle.getAttribute('data-group-reorder');
     if (!name) return;
     groupReorderActive = true;
     groupDragName = name;
@@ -181,7 +187,7 @@ function bindGroupReorder() {
     // withheld. effectAllowed/dropEffect stay 'move' (reorder, never copy).
     e.dataTransfer.setData(GROUP_DRAG_MIME, name);
     e.dataTransfer.effectAllowed = 'move';
-    const details = grip.closest('details[data-group-key]');
+    const details = handle.closest('details[data-group-key]');
     if (details) details.classList.add('group-reorder-source');
   });
 
