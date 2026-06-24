@@ -336,8 +336,9 @@ poll for its conv-id, then inject `/rename` + the welcome over tmux — set
 worktree branch token and the conversation title, so it is restricted to
 `[A-Za-z0-9_-]` (1–64 chars). By default a name straying outside that set is
 **auto-normalized** rather than rejected — runs of spaces/punctuation/unicode
-collapse to a single `-` and leading/trailing separators are trimmed, so
-`--name "code reviewer!"` lands as `code-reviewer`. This applies uniformly to
+collapse to a single `-` and the leading/trailing `-` that produces are
+trimmed (a `_` you typed is kept), so `--name "code reviewer!"` lands as
+`code-reviewer`. This applies uniformly to
 `tclaude agent spawn`, `--join-group`, and the dashboard's spawn modal (which
 previews the normalized name as you type). Set
 `agent.spawn_name_normalize: false` in `~/.tclaude/config.json` (or untick
