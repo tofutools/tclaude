@@ -71,31 +71,48 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 		}
 	}
 
-	// 3. The dispatcher's retire-agent case routes through retireConfirm —
-	//    the SAME modal the drag-onto-Retired gesture uses — and only
-	//    POSTs after a non-null choice, so an accidental click can't
-	//    retire without confirmation.
+	// 3. The dispatcher's retire-agent case delegates to the shared
+	//    retireAgentInteractive flow — the SAME flow the command palette's
+	//    "Retire agent: <name>" runs — so both entry points ask the
+	//    identical question.
 	disp := dashboardAssets
 	caseIdx := strings.Index(disp, "case 'retire-agent': {")
 	if caseIdx < 0 {
 		t.Fatal("row-actions.js: `case 'retire-agent': {` dispatcher case not found")
 	}
-	// Bound the case body at the next `case ` so a later retireConfirm
-	// can't satisfy the assertion for this one.
+	// Bound the case body at the next `case ` so a later string can't
+	// satisfy the assertion for this one.
 	caseBody := disp[caseIdx:]
 	if next := strings.Index(caseBody[len("case 'retire-agent': {"):], "\n        case "); next >= 0 {
 		caseBody = caseBody[:len("case 'retire-agent': {")+next]
 	}
-	confirm := strings.Index(caseBody, "await retireConfirm({")
+	if !strings.Contains(caseBody, "retireAgentInteractive(conv, label)") {
+		t.Error("retire-agent case: must delegate to retireAgentInteractive(conv, label)")
+	}
+
+	// 4. The shared retireAgentInteractive gates on retireConfirm — the
+	//    SAME modal the drag-onto-Retired gesture uses — and only POSTs
+	//    after a non-null choice, so neither an accidental click nor a
+	//    stray palette pick can retire without confirmation.
+	start := strings.Index(disp, "async function retireAgentInteractive(")
+	if start < 0 {
+		t.Fatal("refresh.js: `async function retireAgentInteractive(` not found")
+	}
+	// Bound at the function's own column-0 closing brace — nested braces in
+	// a native ES module are indented, so the first "\n}\n" ends it.
+	fnBody, _, found := strings.Cut(disp[start:], "\n}\n")
+	if !found {
+		t.Fatal("refresh.js: could not bound retireAgentInteractive")
+	}
+	confirm := strings.Index(fnBody, "await retireConfirm({")
 	if confirm < 0 {
-		t.Fatal("retire-agent case: must gate on `await retireConfirm({`")
+		t.Fatal("retireAgentInteractive: must gate on `await retireConfirm({`")
 	}
-	guard := strings.Index(caseBody, "if (!choice) return;")
-	if guard < 0 {
-		t.Error("retire-agent case: must bail on a null choice (`if (!choice) return;`)")
+	if !strings.Contains(fnBody, "if (!choice) return;") {
+		t.Error("retireAgentInteractive: must bail on a null choice (`if (!choice) return;`)")
 	}
-	fetch := strings.Index(caseBody, "/retire")
+	fetch := strings.Index(fnBody, "/retire")
 	if fetch >= 0 && confirm > fetch {
-		t.Errorf("retire-agent case: retireConfirm (at %d) must precede the /retire POST (at %d)", confirm, fetch)
+		t.Errorf("retireAgentInteractive: retireConfirm (at %d) must precede the /retire POST (at %d)", confirm, fetch)
 	}
 }

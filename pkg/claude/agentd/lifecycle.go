@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -291,10 +293,11 @@ type groupRetireResp struct {
 	Warnings []string         `json:"warnings,omitempty"`
 }
 
-// handleGroupRetire retires every OTHER active-agent member of the
-// group in one shot — the bulk parallel of `agent retire`, completing
-// the groups.stop / groups.resume lifecycle family (which until now had
-// no retire sibling).
+// handleGroupRetire retires the active-agent members of the group in
+// one shot — the bulk parallel of `agent retire`, completing the
+// groups.stop / groups.resume lifecycle family (which until now had no
+// retire sibling). It is the SO_PEERCRED /v1 surface; the cookie-authed
+// dashboard route (dashboardGroupRetire) shares the same core.
 //
 // "Retire" demotes an agent to a plain conversation: retireAgentConv
 // drops every group membership (this group and any others the member
@@ -306,18 +309,10 @@ type groupRetireResp struct {
 // (stopOneConv, soft only — never a force-kill), since a retired
 // agent's idle process is almost never wanted.
 //
-// Per-member outcomes (memberOpResult.Action):
-//   - retired                  — demoted (Detail summarises what changed)
-//   - skipped:self             — the caller's own conv; never self-retire
-//   - skipped:no_conv_id       — a placeholder member with no conv yet
-//   - skipped:not_active_agent — already retired / never an agent
-//   - error                    — the retire failed (Detail has the cause)
-//
-// The caller's own conv is always skipped: the brief is "retire OTHER
-// agents in the group", and an agent demoting itself mid-request would
-// revoke its own grants and /exit its own pane out from under the very
-// request it is serving. A human caller (caller == "") has no conv to
-// skip and retires every member.
+// ?status= optionally restricts the cohort to members of a given live
+// status (e.g. status=idle, status=offline, or a comma list) — the
+// "retire idle agents in <group>" palette command. Absent / "all" =
+// every member, the legacy behaviour. See parseRetireStatusFilter.
 //
 // Permission: groups.retire (not in the global defaults — retiring
 // agents is a sensitive cleanup the human normally drives; the slug
@@ -333,66 +328,140 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if !ok {
 		return
 	}
-	members, err := db.ListAgentGroupMembers(g.ID)
+	out, err := bulkRetireGroupMembers(g, caller,
+		strings.TrimSpace(r.URL.Query().Get("reason")),
+		retireShouldShutdown(r),
+		parseRetireStatusFilter(r.URL.Query().Get("status")))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	shutdown := retireShouldShutdown(r)
-	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
-	by := enrollmentActor(caller)
-
-	out := groupRetireResp{Group: g.Name, Action: "retire", Members: []memberOpResult{}}
-	// Groups whose owner roster a retire touched — checked once at the
-	// end so a bulk retire that demotes a member-owner warns about the
-	// now-ownerless group, matching the single-agent cleanup path.
-	ownerless := map[int64]bool{}
-	for _, m := range members {
-		res := memberOpResult{ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
-		switch {
-		case m.ConvID == "":
-			res.Action = "skipped:no_conv_id"
-			res.Detail = "placeholder member (no conv yet)"
-		case caller != "" && m.ConvID == caller:
-			res.Action = "skipped:self"
-			res.Detail = "the caller never retires itself"
-		default:
-			res = retireGroupMember(m.ConvID, by, reason, shutdown, res, ownerless)
-		}
-		out.Members = append(out.Members, res)
-	}
-	out.Warnings = warnOwnerlessGroups(ownerless)
 	writeJSON(w, http.StatusOK, out)
 }
 
-// retireGroupMember retires one member as part of the bulk groups.retire
-// loop. It enforces the "active agent only" guard (a no-op on a conv
-// that was never an agent or is already retired comes back as
+// bulkRetireGroupConcurrency bounds how many members the bulk retire
+// works on at once. Retire is I/O-bound per member (a .jsonl title read,
+// the SQLite demotion writes, a tmux soft-exit), so a handful of workers
+// overlaps that latency without stampeding tmux or the single SQLite
+// writer (WAL serialises writes; busy_timeout absorbs contention).
+const bulkRetireGroupConcurrency = 8
+
+// bulkRetireGroupMembers is the shared core behind both retire surfaces:
+// the SO_PEERCRED /v1/groups/{name}/retire endpoint (agent callers,
+// slug-gated via handleGroupRetire) and the cookie-authed
+// /api/groups/{name}/retire dashboard route (the human, via
+// dashboardGroupRetire). It retires every member of g that passes the
+// status filter and returns the per-member table plus any
+// ownerless-group warnings.
+//
+// caller is the requester's own conv ("" for the human): it is always
+// skipped (skipped:self), since the brief is "retire OTHER agents in the
+// group" and an agent demoting itself mid-request would revoke its own
+// grants and /exit its own pane out from under the request it is
+// serving. filter==nil retires every member (the legacy behaviour); a
+// non-nil filter restricts the cohort to matching live statuses, and
+// non-matching members are simply omitted from the response.
+//
+// Per-member outcomes (memberOpResult.Action):
+//   - retired                  — demoted (Detail summarises what changed)
+//   - skipped:self             — the caller's own conv; never self-retire
+//   - skipped:no_conv_id       — a placeholder member with no conv yet
+//   - skipped:not_active_agent — already retired / never an agent
+//   - error                    — the retire failed (Detail has the cause)
+//
+// The per-member work runs in parallel, bounded by
+// bulkRetireGroupConcurrency. Each worker writes its result and the
+// owner-groups it touched into its own pre-sized slot, so there is no
+// contended shared state; the ownerless set is merged sequentially once
+// every worker has settled — checked once at the end so a bulk retire
+// that demotes a member-owner warns about the now-ownerless group,
+// matching the single-agent cleanup path.
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bool, filter retireStatusFilter) (groupRetireResp, error) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return groupRetireResp{}, err
+	}
+	by := enrollmentActor(caller)
+
+	// The status filter needs live tmux state; fetch it once
+	// (snapshot-shaped) and share the read-only map across workers.
+	// Skipped entirely when no filter is active, so the legacy
+	// "retire everyone" path keeps its old cost.
+	var alive map[string]struct{}
+	if filter != nil {
+		alive, _ = session.LiveTmuxSessions()
+	}
+
+	results := make([]*memberOpResult, len(members))
+	ownerGroupsPer := make([][]int64, len(members))
+
+	eg := new(errgroup.Group)
+	eg.SetLimit(bulkRetireGroupConcurrency)
+	for i, m := range members {
+		eg.Go(func() error {
+			res := memberOpResult{ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+			switch {
+			case m.ConvID == "":
+				res.Action = "skipped:no_conv_id"
+				res.Detail = "placeholder member (no conv yet)"
+			case caller != "" && m.ConvID == caller:
+				res.Action = "skipped:self"
+				res.Detail = "the caller never retires itself"
+			default:
+				if filter != nil {
+					online, status := convLiveStatus(m.ConvID, alive)
+					if !filter.matches(online, status) {
+						return nil // filtered out — omit from the response
+					}
+				}
+				res, ownerGroupsPer[i] = retireGroupMember(m.ConvID, by, reason, shutdown, res)
+			}
+			results[i] = &res
+			return nil
+		})
+	}
+	_ = eg.Wait() // workers never return an error — per-member failures live in res.Action
+
+	out := groupRetireResp{Group: g.Name, Action: "retire", Members: []memberOpResult{}}
+	ownerless := map[int64]bool{}
+	for i := range members {
+		if results[i] != nil {
+			out.Members = append(out.Members, *results[i])
+		}
+		for _, gid := range ownerGroupsPer[i] {
+			ownerless[gid] = true
+		}
+	}
+	out.Warnings = warnOwnerlessGroups(ownerless)
+	return out, nil
+}
+
+// retireGroupMember retires one member as part of the bulk retire. It
+// enforces the "active agent only" guard (a no-op on a conv that was
+// never an agent or is already retired comes back as
 // skipped:not_active_agent), runs the shared retireAgentConv demotion,
-// records any group whose owner roster it touched into the ownerless
-// set, and — when shutdown is requested — soft-exits the member's pane.
-// Returns the populated result; res arrives pre-seeded with ConvID +
-// Title so the caller's table stays consistent across every branch.
-func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpResult, ownerless map[int64]bool) memberOpResult {
+// and — when shutdown is requested — soft-exits the member's pane.
+// Returns the populated result plus the ids of any groups whose owner
+// roster the demotion touched (for the caller's ownerless-warning
+// merge); res arrives pre-seeded with ConvID + Title so the table stays
+// consistent across every branch.
+func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpResult) (memberOpResult, []int64) {
 	state, serr := db.EnrollmentState(convID)
 	if serr != nil {
 		res.Action = "error"
 		res.Detail = "enrollment lookup: " + serr.Error()
-		return res
+		return res, nil
 	}
 	if state != db.EnrollmentActive {
 		res.Action = "skipped:not_active_agent"
 		res.Detail = "enrollment: " + state
-		return res
+		return res, nil
 	}
 	outcome, ownerGroups, rerr := retireAgentConv(convID, by, reason)
 	if rerr != nil {
 		res.Action = "error"
 		res.Detail = rerr.Error()
-		return res
-	}
-	for _, gid := range ownerGroups {
-		ownerless[gid] = true
+		return res, nil
 	}
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
@@ -403,7 +472,92 @@ func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpRes
 			res.Detail = joinDetail(res.Detail, "/exit sent")
 		}
 	}
-	return res
+	return res, ownerGroups
+}
+
+// retireStatusFilter is the optional ?status= filter for bulk retire.
+// nil = match every member (the legacy "retire everyone" behaviour). A
+// non-nil set restricts the retire to members whose live status
+// normalizes to one of its tokens:
+//
+//   - "offline"  → no live tmux session (the pane is dead)
+//   - "idle"     → online, last hook status == idle
+//   - "working"  → online, working
+//   - "awaiting" → online, awaiting_permission OR awaiting_input
+//   - "error"    → online, error
+//
+// The dashboard palette uses "idle" and "offline"; the rest fall out of
+// the same normalization for free and are reachable via the CLI
+// --status flag.
+type retireStatusFilter map[string]bool
+
+// parseRetireStatusFilter reads the ?status= query value into a filter.
+// Empty / absent / "all" yield nil (match everything). Tokens are
+// comma-separated, lower-cased and trimmed.
+func parseRetireStatusFilter(raw string) retireStatusFilter {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" || raw == "all" {
+		return nil
+	}
+	set := retireStatusFilter{}
+	for tok := range strings.SplitSeq(raw, ",") {
+		if tok = strings.TrimSpace(tok); tok != "" {
+			set[tok] = true
+		}
+	}
+	if len(set) == 0 || set["all"] {
+		return nil
+	}
+	return set
+}
+
+// matches reports whether a member with the given liveness + hook status
+// passes the filter. A nil filter matches everything.
+func (f retireStatusFilter) matches(online bool, status string) bool {
+	if f == nil {
+		return true
+	}
+	return f[normalizeMemberStatus(online, status)]
+}
+
+// normalizeMemberStatus folds a member's (online, hook-status) pair into
+// the single token the retire filter keys on — the SAME mapping the
+// dashboard snapshot renders, so a "retire idle agents" palette command
+// retires exactly the rows the human sees marked idle. An offline member
+// (no live session) is "offline" regardless of its frozen hook status;
+// an online member reports its hook status, with the two awaiting_*
+// variants collapsed to "awaiting".
+func normalizeMemberStatus(online bool, status string) string {
+	if !online {
+		return "offline"
+	}
+	switch status {
+	case session.StatusAwaitingPermission, session.StatusAwaitingInput:
+		return "awaiting"
+	default:
+		return status
+	}
+}
+
+// convLiveStatus resolves a conv's (online, hook-status) from the
+// pre-fetched alive set — the snapshot-shaped twin of isConvOnlineIn /
+// stateForConvIn used by the retire status filter. online is true when
+// any of the conv's session rows names a live tmux session; status is
+// that live row's hook status (empty for an offline conv).
+func convLiveStatus(convID string, alive map[string]struct{}) (bool, string) {
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false, ""
+	}
+	for _, r := range rows {
+		if r.TmuxSession == "" {
+			continue
+		}
+		if _, ok := alive[r.TmuxSession]; ok {
+			return true, r.Status
+		}
+	}
+	return false, ""
 }
 
 // summarizeRetireOutcome renders the parts of a retireConvOutcome the

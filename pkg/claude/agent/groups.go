@@ -760,6 +760,7 @@ func runGroupsResume(p *groupsResumeParams, stdout, stderr io.Writer) int {
 
 type groupsRetireParams struct {
 	Name       string `pos:"true" help:"Group name"`
+	Status     string `long:"status" optional:"true" help:"Only retire members of this live status (comma-separated). One or more of: idle, offline, working, awaiting, error. Default (or 'all') = every member." alts:"all,idle,offline,working,awaiting,error"`
 	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default retire also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
 	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the members are being retired (recorded in the audit trail)"`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
@@ -817,6 +818,9 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	}
 	if reason := strings.TrimSpace(p.Reason); reason != "" {
 		q.Set("reason", reason)
+	}
+	if status := strings.TrimSpace(p.Status); status != "" {
+		q.Set("status", status)
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/retire?" + q.Encode()
 

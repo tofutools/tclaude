@@ -44,8 +44,9 @@ func TestDashboardHTML_DanglingRetireWired(t *testing.T) {
 		}
 	}
 
-	// 2) The per-row retire-agent dispatcher case routes a FAILED retire
-	//    through the handler before surfacing its own error toast.
+	// 2) The per-row retire-agent dispatcher delegates to the shared
+	//    retireAgentInteractive flow, which routes a FAILED retire through
+	//    the handler before surfacing its own error toast.
 	caseIdx := strings.Index(src, "case 'retire-agent': {")
 	if caseIdx < 0 {
 		t.Fatal("row-actions.js: `case 'retire-agent': {` not found")
@@ -54,8 +55,21 @@ func TestDashboardHTML_DanglingRetireWired(t *testing.T) {
 	if next := strings.Index(caseBody[len("case 'retire-agent': {"):], "\n        case "); next >= 0 {
 		caseBody = caseBody[:len("case 'retire-agent': {")+next]
 	}
-	if !strings.Contains(caseBody, "maybeHandleDanglingRetire(") {
-		t.Error("retire-agent case: a failed retire must route through maybeHandleDanglingRetire")
+	if !strings.Contains(caseBody, "retireAgentInteractive(conv, label)") {
+		t.Error("retire-agent case: must delegate to the shared retireAgentInteractive flow")
+	}
+	// retireAgentInteractive itself must route a failed retire through the
+	// dangling handler (it owns the confirm → POST → recovery path now).
+	raiStart := strings.Index(src, "async function retireAgentInteractive(")
+	if raiStart < 0 {
+		t.Fatal("refresh.js: `async function retireAgentInteractive(` not found")
+	}
+	raiBody, _, raiFound := strings.Cut(src[raiStart:], "\n}\n")
+	if !raiFound {
+		t.Fatal("refresh.js: could not bound retireAgentInteractive")
+	}
+	if !strings.Contains(raiBody, "maybeHandleDanglingRetire(") {
+		t.Error("retireAgentInteractive: a failed retire must route through maybeHandleDanglingRetire")
 	}
 
 	// 3) The drag-onto-Retired gesture (runDndRetire) does the same.

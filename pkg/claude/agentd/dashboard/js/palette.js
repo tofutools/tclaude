@@ -31,7 +31,10 @@
 
 import { $, $$, esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
-import { toast, openWindowModal } from './refresh.js';
+import {
+  toast, openWindowModal,
+  retireAgentInteractive, bulkRetireGroupInteractive, countGroupMembersByStatus,
+} from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
@@ -304,6 +307,41 @@ function buildCommands() {
       hint: "detach this agent's terminal",
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || ''),
       run: () => hideAgent(a.conv_id, label),
+    });
+  }
+
+  // 8) Per-group bulk retire — "Retire idle / offline agents in <group>".
+  //    A cleanup sweep that demotes a whole cohort of a group's members
+  //    to plain (reinstatable) conversations in one parallel batch (POST
+  //    /api/groups/{name}/retire?status=…). Listed only when the group
+  //    actually HAS members of that status, so the palette never offers a
+  //    no-op. bulkRetireGroupInteractive owns the confirm + POST + toast.
+  for (const g of groups) {
+    for (const status of ['idle', 'offline']) {
+      const n = countGroupMembersByStatus(g.name, status);
+      if (!n) continue;
+      cmds.push({
+        icon: '♻', label: `Retire ${status} agents in ${g.name}`,
+        hint: `demote ${n} ${status} agent${n === 1 ? '' : 's'} to plain conversations`,
+        keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name,
+        run: () => { recordGroupInteraction(g.name); bulkRetireGroupInteractive(g.name, status); },
+      });
+    }
+  }
+
+  // 9) Per-agent retire — "Retire agent: <name>". Demotes one agent back
+  //    to a plain conversation via the same confirm + flags the per-row
+  //    ⚙ Retire button uses (retireAgentInteractive). Listed for every
+  //    agent on the roster, online OR offline — retire is valid on an
+  //    offline agent too (there is just no pane to soft-exit).
+  for (const a of (snap.agents || [])) {
+    const label = a.title || (a.conv_id || '').slice(0, 8);
+    const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
+    cmds.push({
+      icon: '♻', label: `Retire agent: ${label}`,
+      hint: `demote to a plain conversation (${status})`,
+      keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status,
+      run: () => retireAgentInteractive(a.conv_id, label),
     });
   }
 

@@ -64,6 +64,19 @@ func retireMemberAction(resp groupRetireResp, conv string) string {
 	return ""
 }
 
+// setConvStatus overrides a live conv's hook status on its session row.
+// HaveAliveSession defaults the status to "running"; the ?status= filter
+// keys on idle / working / awaiting / error, so the status-filter
+// scenarios stamp the status they mean to select against.
+func setConvStatus(t *testing.T, convID, status string) {
+	t.Helper()
+	row, err := db.FindSessionByConvID(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row, "no session row for %s", convID)
+	row.Status = status
+	require.NoError(t, db.SaveSession(row))
+}
+
 // Scenario: a human bulk-retires a whole group. Every member is demoted
 // to a plain conversation (leaves the active roster, drops its group
 // membership) and — shutdown defaulting ON — its running pane is
@@ -239,4 +252,134 @@ func TestGroupRetire_SkipsAlreadyRetiredMember(t *testing.T) {
 	assert.Equal(t, "retired", retireMemberAction(resp, active), "members=%+v", resp.Members)
 	assert.Equal(t, "skipped:not_active_agent", retireMemberAction(resp, gone),
 		"an already-retired member must be skipped, not re-retired; members=%+v", resp.Members)
+}
+
+// Scenario: ?status=idle retires ONLY the idle members of a group — the
+// "Retire idle agents in <group>" palette command. An online-but-working
+// member and an offline member are both left untouched AND omitted from
+// the response (the filter excludes them, it doesn't list them as
+// skips). Pins the server-side status filter that backs the palette.
+func TestGroupRetire_StatusFilterIdleOnly(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "tclaude-dev"
+	const idleConv = "idle-1111-2222-3333-4444"
+	const workConv = "work-1111-2222-3333-4444"
+	const offConv = "offl-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(idleConv, "idle-worker")
+	f.HaveConvWithTitle(workConv, "busy-worker")
+	f.HaveConvWithTitle(offConv, "offline-worker")
+	// idle + working are online; offline has no live session at all.
+	f.HaveAliveSession(idleConv, "spwn-idle", "tmux-idle", "/tmp/idle")
+	f.HaveAliveSession(workConv, "spwn-work", "tmux-work", "/tmp/work")
+	setConvStatus(t, idleConv, "idle")
+	setConvStatus(t, workConv, "working")
+	f.HaveMember(group, idleConv)
+	f.HaveMember(group, workConv)
+	f.HaveMember(group, offConv)
+
+	code, resp := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, group, "status=idle")
+	require.Equal(t, http.StatusOK, code)
+
+	// Only the idle member is retired and listed.
+	assert.Equal(t, "retired", retireMemberAction(resp, idleConv), "members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, workConv),
+		"a working member must be filtered out (omitted), not listed; members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, offConv),
+		"an offline member must be filtered out of a status=idle retire; members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 1, "status=idle must list only the idle cohort; members=%+v", resp.Members)
+
+	// The idle member is demoted + soft-exited.
+	idleState, err := db.EnrollmentState(idleConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, idleState, "the idle member must be retired")
+	assert.False(t, f.World.Tmux.IsAlive("tmux-idle"), "the idle member's pane is soft-exited")
+
+	// The working + offline members are completely untouched.
+	for _, c := range []string{workConv, offConv} {
+		state, err := db.EnrollmentState(c)
+		require.NoError(t, err)
+		assert.Equal(t, db.EnrollmentActive, state, "%s must stay active under a status=idle retire", c)
+		assert.True(t, flowGroupHasMember(f, group, c), "%s must stay a member", c)
+	}
+	assert.True(t, f.World.Tmux.IsAlive("tmux-work"), "a working member's pane must not be touched")
+}
+
+// Scenario: ?status=offline retires ONLY the members with no live
+// session — the "Retire offline agents in <group>" palette command. An
+// online (idle) member is left untouched and omitted.
+func TestGroupRetire_StatusFilterOffline(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "tclaude-dev"
+	const onlineConv = "onln-1111-2222-3333-4444"
+	const offConv = "ofln-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(onlineConv, "online-worker")
+	f.HaveConvWithTitle(offConv, "offline-worker")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	setConvStatus(t, onlineConv, "idle")
+	f.HaveMember(group, onlineConv)
+	f.HaveMember(group, offConv) // enrolled, but never had a session → offline
+
+	code, resp := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, group, "status=offline")
+	require.Equal(t, http.StatusOK, code)
+
+	assert.Equal(t, "retired", retireMemberAction(resp, offConv), "members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, onlineConv),
+		"an online member must be filtered out of a status=offline retire; members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 1, "status=offline must list only the offline cohort; members=%+v", resp.Members)
+
+	offState, err := db.EnrollmentState(offConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, offState, "the offline member must be retired")
+
+	onlineState, err := db.EnrollmentState(onlineConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, onlineState, "the online member must stay active")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-onln"), "the online member's pane must not be touched")
+}
+
+// Scenario: the dashboard route POST /api/groups/{name}/retire?status=idle
+// (the cookie-auth twin the command palette's "Retire idle agents in
+// <group>" actually calls) retires the idle cohort, just like the /v1
+// surface. Pins the dashboard wiring end to end (route → shared core),
+// distinct from the SO_PEERCRED /v1 path the scenarios above drive.
+func TestDashboardGroupRetire_StatusFilterIdle(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	_ = f // the dashboard mux shares the same process DB the flow seeded
+
+	const group = "dash-team"
+	const idleConv = "didl-1111-2222-3333-4444"
+	const workConv = "dwrk-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(idleConv, "idle-worker")
+	f.HaveConvWithTitle(workConv, "busy-worker")
+	f.HaveAliveSession(idleConv, "spwn-didl", "tmux-didl", "/tmp/didl")
+	f.HaveAliveSession(workConv, "spwn-dwrk", "tmux-dwrk", "/tmp/dwrk")
+	setConvStatus(t, idleConv, "idle")
+	setConvStatus(t, workConv, "working")
+	f.HaveMember(group, idleConv)
+	f.HaveMember(group, workConv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire?status=idle", nil)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "POST /api/groups/%s/retire body=%s", group, rec.Body.String())
+	var resp groupRetireResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode: %s", rec.Body.String())
+
+	assert.Equal(t, "retired", retireMemberAction(resp, idleConv), "members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 1, "the dashboard route must apply the idle filter; members=%+v", resp.Members)
+
+	idleState, err := db.EnrollmentState(idleConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, idleState, "the idle member must be retired via the dashboard route")
+	workState, err := db.EnrollmentState(workConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, workState, "the working member must stay active")
 }
