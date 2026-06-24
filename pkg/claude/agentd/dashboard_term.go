@@ -17,6 +17,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // In-browser terminal fallback for the dashboard's "open terminal" /
@@ -148,6 +149,50 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runPTYOverWS(w, r, openAttachCmd(sess.ID))
+}
+
+// spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
+// spawn endpoint hands back (as focus_ws) when auto-focus could not
+// pop a native window. Label-keyed, not conv-keyed — see
+// handleDashboardSpawnFocusWS.
+func spawnFocusWSPath(label string) string {
+	return "/api/spawn-focus-ws/" + url.PathEscape(label)
+}
+
+// handleDashboardSpawnFocusWS is the in-browser fallback for spawn
+// auto-focus: when executeSpawn's focusSpawn closure can't pop a
+// native terminal window (no DISPLAY/WAYLAND_DISPLAY, or no terminal
+// emulator installed), the spawn response points the dashboard here
+// instead of silently opening nothing while claiming success — see
+// spawnOutcome.FocusMode / handleGroupSpawn.
+//
+// Label-keyed rather than conv-keyed, like pending_focus.go's attach:
+// a freshly-spawned pane may not have a conv-id yet (a gated Codex
+// spawn, or a CC spawn whose hook hasn't landed), but its label is
+// known the moment the pane exists.
+//
+//	GET /api/spawn-focus-ws/{label}
+//
+// Same threat model as the rest of /api/* — the dashboard cookie +
+// Origin pin (or remote pre-auth) is the human-consent layer.
+func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	label := strings.TrimPrefix(r.URL.Path, "/api/spawn-focus-ws/")
+	if u, err := url.PathUnescape(label); err == nil {
+		label = u
+	}
+	if label == "" {
+		http.Error(w, "expected /api/spawn-focus-ws/{label}", http.StatusNotFound)
+		return
+	}
+	sess, err := db.LoadSession(label)
+	if err != nil || sess == nil || sess.TmuxSession == "" {
+		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
+		return
+	}
+	runPTYOverWS(w, r, openAttachCmd(label))
 }
 
 // termResizeMsg is sent from the browser when the xterm instance

@@ -540,8 +540,15 @@ type SpawnResp struct {
 	ConvID      string `json:"conv_id"`
 	Label       string `json:"label"`
 	TmuxSession string `json:"tmux_session"`
-	Code        int    `json:"-"`
-	Raw         []byte `json:"-"`
+	// FocusMode / FocusWS mirror spawnOutcome.FocusMode: "" when
+	// auto-focus wasn't requested, "native" when a real terminal window
+	// opened, "browser" (with FocusWS populated) when the daemon
+	// couldn't pop one and the caller should fall back to the
+	// in-browser terminal instead.
+	FocusMode string `json:"focus_mode,omitempty"`
+	FocusWS   string `json:"focus_ws,omitempty"`
+	Code      int    `json:"-"`
+	Raw       []byte `json:"-"`
 }
 
 // TmuxTarget is the pane address used by injectTextAndSubmit.
