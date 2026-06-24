@@ -18,7 +18,9 @@ golangci-lint run ./...           # Lint
 go install .                      # Install locally
 ```
 
-CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and Windows (amd64 + arm64).
+CI runs `go test ./...` and `golangci-lint run ./...` across Linux and macOS (amd64 + arm64).
+
+**Platform support:** tclaude supports Linux and macOS only. **Windows is not a supported target, and there are no plans to support it outside of WSL** — on Windows, run tclaude inside a WSL distribution (where it behaves as Linux). Some `*_windows.go` build-tagged files survive from earlier Windows support; they are vestigial and unmaintained — don't rely on them or treat Windows as a live target.
 
 ## Architecture
 
@@ -62,7 +64,7 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and W
 
 ## Key patterns
 
-- Platform-specific code uses Go build tags: `_linux.go`, `_darwin.go`, `_windows.go`, `_unix.go`
+- Platform-specific code uses Go build tags: `_linux.go`, `_darwin.go`, `_unix.go` (plus vestigial `_windows.go` files — Windows is not a supported target; see Build & Test)
 - Session state is stored in SQLite with WAL mode for concurrent access from hook callbacks
 - Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
 - The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
