@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -226,6 +227,83 @@ func TestLoadOrCreateOperatorTokenFile_PinnedValueHonored(t *testing.T) {
 func TestLoadOrCreateOperatorTokenFile_EmptyPathErrors(t *testing.T) {
 	if _, _, err := loadOrCreateOperatorTokenFile(""); err == nil {
 		t.Fatal("expected error for empty path")
+	}
+}
+
+func TestLoadOrCreateOperatorToken_KeychainEmptyAdoptsExistingFileToken(t *testing.T) {
+	fp := withTokenTestEnv(t)
+	// An earlier keychain-less boot left a token in the file.
+	if err := os.MkdirAll(filepath.Dir(fp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const fileTok = "tclo_from_earlier_fileonly_boot"
+	if err := os.WriteFile(fp, []byte(fileTok+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Now the keychain is reachable but empty.
+	keychainGet = func(string, string) (string, error) { return "", keyring.ErrNotFound }
+	var stored string
+	keychainSet = func(_, _, secret string) error { stored = secret; return nil }
+
+	tok, src := loadOrCreateOperatorToken()
+	if src.kind != tokenSourceKeychain {
+		t.Fatalf("source = %q, want keychain", src.kind)
+	}
+	// It must ADOPT the file token (converge the stores), not mint a new one.
+	if tok != fileTok {
+		t.Fatalf("token = %q, want adopted file token %q", tok, fileTok)
+	}
+	if stored != fileTok {
+		t.Fatalf("keychain stored %q, want adopted %q", stored, fileTok)
+	}
+}
+
+// TestWriteOperatorTokenBanner_SecretOnlyOnTTY is the security-relevant test:
+// the token bytes must appear ONLY on the TTY path, never on any non-TTY
+// branch (which could be a log file).
+func TestWriteOperatorTokenBanner_SecretOnlyOnTTY(t *testing.T) {
+	const secret = "tclo_super_secret_value"
+	srcs := []tokenSource{
+		{kind: tokenSourceEphemeral},
+		{kind: tokenSourceKeychain},
+		{kind: tokenSourceFile, path: "/home/u/.tclaude/operator_token"},
+	}
+	for _, src := range srcs {
+		t.Run(string(src.kind)+"/tty", func(t *testing.T) {
+			var buf bytes.Buffer
+			writeOperatorTokenBanner(&buf, secret, src, true)
+			if !strings.Contains(buf.String(), secret) {
+				t.Fatalf("TTY banner for %q omitted the export line/secret:\n%s", src.kind, buf.String())
+			}
+		})
+		t.Run(string(src.kind)+"/non-tty", func(t *testing.T) {
+			var buf bytes.Buffer
+			writeOperatorTokenBanner(&buf, secret, src, false)
+			if strings.Contains(buf.String(), secret) {
+				t.Fatalf("non-TTY banner for %q LEAKED the secret:\n%s", src.kind, buf.String())
+			}
+		})
+	}
+}
+
+func TestLoadOrCreateOperatorTokenFile_ReChmodsLoosePerms(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, ".tclaude", "operator_token")
+	if err := os.MkdirAll(filepath.Dir(fp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fp, []byte("tclo_loose\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadOrCreateOperatorTokenFile(fp); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	fi, err := os.Stat(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("perm after read = %o, want 0600 (defensive re-chmod)", perm)
 	}
 }
 

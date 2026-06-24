@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,9 +68,9 @@ func mintOperatorToken() string {
 }
 
 // setOperatorToken installs tok as the live operator token under the lock.
-// Used by both the ephemeral (generateOperatorToken) and the persisted
-// (resolveOperatorToken) paths so the verifier/banner are agnostic to how
-// the token was sourced.
+// Reached by both the ephemeral path (via generateOperatorToken) and the
+// persisted path (resolveOperatorToken), so the verifier/banner are agnostic
+// to how the token was sourced.
 func setOperatorToken(tok string) {
 	operatorTokenMu.Lock()
 	operatorToken = tok
@@ -175,13 +176,24 @@ func loadOrCreateOperatorToken() (string, tokenSource) {
 	case found:
 		return tok, tokenSource{kind: tokenSourceKeychain}
 	default:
-		// Backend reachable, no token stored yet — mint one and store it.
-		fresh := mintOperatorToken()
-		if serr := keychainSet(keychainService, keychainUser, fresh); serr != nil {
+		// Backend reachable but holds no token yet. Prefer ADOPTING an
+		// existing file token (left by an earlier keychain-less boot) over
+		// minting a fresh one, so the keychain and the file converge on a
+		// single value instead of diverging — that keeps the exported
+		// TCLAUDE_HUMAN_TOKEN stable as a host gains a keychain backend.
+		// (Residual: a keychain that flaps available→unavailable→available
+		// across boots can still flip the token, since the unavailable boot
+		// mints into the file independently. Rare; both values are valid
+		// while live.)
+		seed := existingFileToken()
+		if seed == "" {
+			seed = mintOperatorToken()
+		}
+		if serr := keychainSet(keychainService, keychainUser, seed); serr != nil {
 			slog.Warn("operator token: keychain store failed, using file fallback", "err", serr)
 			break
 		}
-		return fresh, tokenSource{kind: tokenSourceKeychain}
+		return seed, tokenSource{kind: tokenSourceKeychain}
 	}
 
 	tok, src, err := loadOrCreateOperatorTokenFile(operatorTokenFilePath())
@@ -223,10 +235,30 @@ var operatorTokenFilePath = func() string {
 	return filepath.Join(home, ".tclaude", "operator_token")
 }
 
+// existingFileToken returns the token currently stored in the fallback file
+// (trimmed), or "" if there is none / it is unreadable. Best-effort: it
+// never errors, so the keychain-adopt path can treat "" as "nothing to
+// adopt" and mint instead.
+func existingFileToken() string {
+	path := operatorTokenFilePath()
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // loadOrCreateOperatorTokenFile reads the operator token from path, or mints
-// and writes a fresh one (0600) when the file is absent or empty. An
-// existing file is re-chmodded to 0600 defensively. Returns an error only
-// on an unexpected read/write failure (a missing file is not an error).
+// and writes a fresh one when the file is absent or empty. The secret is
+// protected by the file's own 0600 mode (an existing file is re-chmodded to
+// 0600 defensively); the containing ~/.tclaude dir is created if missing but
+// is otherwise left at whatever mode it already has (it is shared with the
+// db / config / logs and created 0755 elsewhere — the 0600 file is the
+// boundary, not the dir). Returns an error only on an unexpected read/write
+// failure (a missing file is not an error).
 func loadOrCreateOperatorTokenFile(path string) (string, tokenSource, error) {
 	if path == "" {
 		return "", tokenSource{}, errors.New("could not resolve operator token file path (no home dir)")
@@ -321,23 +353,32 @@ func printOperatorTokenBanner(tok string, src tokenSource) {
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		isTTY = true
 	}
+	writeOperatorTokenBanner(os.Stdout, tok, src, isTTY)
+}
+
+// writeOperatorTokenBanner renders the banner to w. The secret (tok) is
+// emitted ONLY when isTTY is true; every non-TTY branch prints just the
+// location (keychain / file path) or a relaunch hint, never the token. Split
+// out from printOperatorTokenBanner so this secret-gating is unit-testable
+// without a real terminal.
+func writeOperatorTokenBanner(w io.Writer, tok string, src tokenSource, isTTY bool) {
 	if isTTY {
-		fmt.Printf("  operator token — the human sets it with:\n")
-		fmt.Printf("    export %s=%q\n", humanTokenEnvVar, tok)
+		fmt.Fprintf(w, "  operator token — the human sets it with:\n")
+		fmt.Fprintf(w, "    export %s=%q\n", humanTokenEnvVar, tok)
 		switch src.kind {
 		case tokenSourceKeychain:
-			fmt.Printf("    (persisted in the OS keychain — stable across restarts, export once)\n")
+			fmt.Fprintf(w, "    (persisted in the OS keychain — stable across restarts, export once)\n")
 		case tokenSourceFile:
-			fmt.Printf("    (persisted at %s — stable across restarts, export once)\n", src.path)
+			fmt.Fprintf(w, "    (persisted at %s — stable across restarts, export once)\n", src.path)
 		}
 		return
 	}
 	switch src.kind {
 	case tokenSourceKeychain:
-		fmt.Printf("  operator token persisted in the OS keychain — stable across restarts; retrieve it from the keychain\n")
+		fmt.Fprintf(w, "  operator token persisted in the OS keychain — stable across restarts; retrieve it from the keychain\n")
 	case tokenSourceFile:
-		fmt.Printf("  operator token persisted at %s (0600) — stable across restarts\n", src.path)
+		fmt.Fprintf(w, "  operator token persisted at %s (0600) — stable across restarts\n", src.path)
 	default:
-		fmt.Printf("  operator token issued — relaunch agentd attached to a terminal to see it\n")
+		fmt.Fprintf(w, "  operator token issued — relaunch agentd attached to a terminal to see it\n")
 	}
 }
