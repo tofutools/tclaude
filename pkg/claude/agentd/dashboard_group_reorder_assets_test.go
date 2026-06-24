@@ -12,8 +12,8 @@ import (
 // the load-bearing wiring against a silent refactor break.
 //
 // The pieces that must stay connected:
-//   - render.js draws a draggable ⠿ grip into each real group's <summary>,
-//     carrying the group name (escaped) as the drag identity;
+//   - render.js makes each real group's title (.group-name) the draggable
+//     reorder handle, carrying the group name (escaped) as the drag identity;
 //   - group-reorder.js drives the drag and persists the order under the
 //     dashPrefs key, using a custom drag MIME;
 //   - dnd.js (member-row DnD) explicitly ignores that custom MIME so the
@@ -23,9 +23,10 @@ import (
 //   - refresh.js suspends auto-refresh while a reorder drag is in flight.
 func TestDashboardJS_GroupReorderWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		// render.js: the grip is draggable, names its group, and escapes it.
-		{`class="group-reorder-grip" draggable="true" data-group-reorder="${esc(g.name)}"`,
-			"render.js draws an escaped, draggable grip in each real group header"},
+		// render.js: the group title IS the reorder drag handle — draggable,
+		// names its group (escaped), and stays the click-to-toggle label.
+		{`class="group-name" data-group-name="${esc(g.name)}" data-group-reorder="${esc(g.name)}" draggable="true"`,
+			"render.js makes each real group's title the escaped, draggable reorder handle"},
 		// group-reorder.js: the custom MIME and the persisted pref key.
 		{`'application/x-tclaude-group'`, "group-reorder.js uses a dedicated drag MIME"},
 		{`tclaude.dash.groupOrder`, "group-reorder.js persists the order under its dashPrefs key"},

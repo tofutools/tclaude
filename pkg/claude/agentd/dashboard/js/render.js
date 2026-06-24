@@ -405,8 +405,7 @@ function renderGroups(groups) {
     return `
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${isOpen ? ' open' : ''}>
       <summary>
-        <span class="group-reorder-grip" draggable="true" data-group-reorder="${esc(g.name)}" title="Drag to reorder this group" aria-label="Drag to reorder group ${esc(g.name)}">⠿</span>
-        <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
+        <strong class="group-name" data-group-name="${esc(g.name)}" data-group-reorder="${esc(g.name)}" draggable="true" title="Click to expand / collapse · drag to reorder this group">${esc(g.name)}</strong>
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
