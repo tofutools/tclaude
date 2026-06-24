@@ -719,8 +719,9 @@ func describePower(c *auditCtx) {
 	}
 }
 
-// auditDuration renders a second count as a compact human window for the
-// prune detail (e.g. 90000 → "1d1h").
+// auditDuration renders a second count as a Go duration string for the
+// prune detail (e.g. 3600 → "1h0m0s"; Go's Duration has no day unit, so a
+// multi-day window reads as "Nh0m0s").
 func auditDuration(seconds int64) string {
 	if seconds <= 0 {
 		return "0s"
