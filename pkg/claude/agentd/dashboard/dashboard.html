@@ -76,6 +76,7 @@
       </div>
     </span>
   </span>
+  <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍 commands</button>
   <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
   <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
   <button id="shutdown-all-btn" data-act="shutdown-all" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown all</button>
@@ -1812,6 +1813,28 @@
 </div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
 <div class="toast" id="toast"></div>
+<!-- Command palette ("spotlight") — a Ctrl/Cmd-K keyboard launcher that
+     searches across the dashboard's existing operations (hide / focus
+     windows, tab navigation, spawn) and runs the picked one. palette.js
+     owns it; it's a thin surface over endpoints + modals that already
+     exist, so it holds no agent state of its own. A .modal-overlay so it
+     gets the shared backdrop AND suspends the 2s auto-refresh while open
+     (refreshSuspended() keys on .modal-overlay.show), keeping a
+     re-render from yanking focus out of the search box. -->
+<div class="modal-overlay palette-overlay" id="command-palette-modal">
+  <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+    <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+           placeholder="Type a command…  (hide all windows · focus an agent · go to a tab · spawn…)" />
+    <div id="palette-list" class="palette-list" role="listbox" aria-label="Commands"></div>
+    <div class="palette-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>↵</kbd> run</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
 <!-- Vendored xterm.js, classic (non-module) scripts so they run before
      dashboard.js's module graph (which includes modal-term.js) — they
      attach plain globals (Terminal, FitAddon), not ES exports. -->
