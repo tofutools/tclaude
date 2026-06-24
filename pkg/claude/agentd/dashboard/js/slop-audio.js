@@ -226,8 +226,13 @@ function setEnabled(on) {
   renderToggle();
   if (on) {
     // Build/resume the ctx inside this click gesture so the first real
-    // effect is instant, and give a tiny confirmation blip.
-    if (ensureCtx()) coinClink();
+    // effect is instant, and give a tiny confirmation blip — but only in
+    // slop ("casino") mode. In the regular-mode Vegas view (body.vegas
+    // without body.slop) there are no FX, so a casino coin blip would
+    // contradict the "music + volume, no FX" intent; the same button there
+    // just (un)mutes the radio. The ctx is still warmed for a later slop.
+    const ctxReady = ensureCtx();
+    if (ctxReady && isSlopActive()) coinClink();
   } else if (ctx && ctx.state === 'running') {
     ctx.suspend().catch(() => {});
   }

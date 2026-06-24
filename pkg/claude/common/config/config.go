@@ -415,13 +415,23 @@ type ConvWatchConfig struct {
 // untouched config stays clean and an absent value is the default rather
 // than the empty string.
 //
+// VegasInRegularMode, when true, surfaces the Vegas music features — the
+// Vegas tab, the header volume mixer (🎚️) and master sound switch (🔊),
+// and the lounge radio — on the PLAIN dashboard, not just in slop
+// ("casino") mode. It decouples the soundtrack from the full cosmetic
+// re-skin: you get music + volume + the tab WITHOUT the slot machines,
+// header shimmer, coins and sound FX. A *bool so absent = off (the
+// features stay slop-only) and an explicit value round-trips through the
+// Config tab.
+//
 // Written by the dashboard's volume sliders via POST /api/slop/volumes and
 // the channel picker via POST /api/slop/channel; also round-trips through
 // the Config tab like any other field.
 type SlopConfig struct {
-	MusicVolume   *int    `json:"music_volume,omitempty"`
-	EffectsVolume *int    `json:"effects_volume,omitempty"`
-	Channel       *string `json:"channel,omitempty"`
+	MusicVolume        *int    `json:"music_volume,omitempty"`
+	EffectsVolume      *int    `json:"effects_volume,omitempty"`
+	Channel            *string `json:"channel,omitempty"`
+	VegasInRegularMode *bool   `json:"vegas_in_regular_mode,omitempty"`
 }
 
 // SlopChannels is the allowlist of SomaFM channel ids slop mode's Vegas
@@ -490,6 +500,19 @@ func (c *Config) ResolvedSlopVolumes() (music, effects int) {
 		effects = min(100, max(0, *c.Slop.EffectsVolume))
 	}
 	return music, effects
+}
+
+// ShowVegasInRegularMode reports whether the Vegas music features (the
+// Vegas tab, the header volume mixer + sound switch, and the lounge
+// radio) should appear on the plain dashboard — config
+// slop.vegas_in_regular_mode. Off by default (absent / nil / explicit
+// false); only an explicit true opts in. Nil-safe on the receiver so
+// callers need no guard.
+func (c *Config) ShowVegasInRegularMode() bool {
+	if c == nil || c.Slop == nil || c.Slop.VegasInRegularMode == nil {
+		return false
+	}
+	return *c.Slop.VegasInRegularMode
 }
 
 // FocusConfig holds window-focus behavior knobs.

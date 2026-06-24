@@ -28,6 +28,7 @@ import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
 import { renameEditing } from './row-actions.js';
 import { dndDragActive } from './dnd.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
+import { setVegasRegularMode } from './slop.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -294,6 +295,7 @@ export async function refresh() {
     renderDashDefaultProfile();
     renderNotifyGlobal(!!data.notifications_enabled);
     applyCostTabVisibility(data);
+    setVegasRegularMode(!!data.vegas_in_regular_mode);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

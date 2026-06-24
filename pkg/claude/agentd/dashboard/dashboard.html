@@ -48,11 +48,14 @@
     </div>
   </span>
   <span class="meta" id="status"></span>
-  <!-- Slop-mode HUD — a running credits counter + the casino sound-FX
-       toggle. CSS-hidden unless body.slop (see dashboard.css); fed by
-       slop-credits.js / slop-audio.js. Always in the DOM so flipping slop
-       in-place doesn't need a re-render. Not aria-hidden: it holds the
-       interactive sound button, which must stay reachable when shown. -->
+  <!-- Vegas HUD — a credits counter (slop-credits.js), the master sound
+       switch (slop-audio.js) and the 🎚️ volume mixer (slop-volume.js).
+       CSS-hidden unless body.slop OR body.vegas (the regular-mode opt-in)
+       — see dashboard.css; the volume controls go wherever the music does.
+       The credits tally + FX slider are casino-only and hide in the
+       regular-mode view. Always in the DOM so flipping mode in-place needs
+       no re-render. Not aria-hidden: it holds the interactive sound +
+       volume controls, which must stay reachable when shown. -->
   <span class="slop-hud" id="slop-hud">
     <span class="slop-credits" id="slop-credits" title="Slop credits — climbs on every jackpot this session">🪙 0</span>
     <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
@@ -68,7 +71,11 @@
           <input id="slop-vol-music" type="range" min="0" max="100" step="1" value="100" aria-label="Music volume">
           <span class="slop-vol-val" id="slop-vol-music-val">100%</span>
         </label>
-        <label class="slop-vol-row" title="Effects volume — the casino sound FX (coins, reels, jackpots)">
+        <!-- The FX slider drives the casino sound effects, which only exist
+             in slop mode — CSS-hidden in the regular-mode Vegas view (see
+             .slop-vol-row-fx in dashboard.css), leaving just the 🎵 music
+             slider there. The value still persists and applies in slop. -->
+        <label class="slop-vol-row slop-vol-row-fx" title="Effects volume — the casino sound FX (coins, reels, jackpots)">
           <span class="slop-vol-ico">🔔</span>
           <input id="slop-vol-fx" type="range" min="0" max="100" step="1" value="100" aria-label="Effects volume">
           <span class="slop-vol-val" id="slop-vol-fx-val">100%</span>
@@ -277,6 +284,15 @@
         <span class="cfg-label">Show cost on subscription</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-cost-show-on-subscription" /> show the Costs tab + per-agent cost on a subscription (WHAT-IF)</label>
         <span class="cfg-hint">On a subscription there's no pay-per-token charge, so the Costs tab and per-agent cost badge are hidden by default. Enable this to show them in <strong>WHAT-IF</strong> mode — the estimated equivalent cost <em>if</em> you were billed pay-per-token (Claude Code's client-side <code>total_cost_usd</code>), clearly flagged as hypothetical. On pay-per-token the Costs tab always shows real spend regardless of this setting.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Vegas music</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Show in regular mode</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-slop-vegas-regular" /> show the Vegas tab, volume controls &amp; play music outside slop mode</label>
+        <span class="cfg-hint">The dashboard's casino "slop" mode (the 🎰 in the header) bundles a <strong>Vegas</strong> tab with a lounge-radio player and a header volume mixer. Enable this to surface those — the tab, the 🔊 sound switch and 🎚️ volume sliders, and the music — on the <em>plain</em> dashboard too, without the slot machines, coins and sound FX. Music starts muted and plays on your first click (browsers block autoplay); the 🔊 button mutes it (remembered per browser). Off by default. Stored in the <code>slop</code> block of config.json alongside the volume/channel settings.</span>
       </div>
     </div>
 
@@ -708,10 +724,11 @@
       <div class="mail-gutter" data-boundary="list-reader" title="Drag to resize · double-click to reset"></div>
     </div>
   </section>
-  <!-- Vegas tab — appears after Config only in slop mode. vegas.js
-       injects a lounge-radio <audio> player into #vegas-player when slop
-       turns on and tears it down when slop turns off, so the music stops
-       the moment you leave the mode. -->
+  <!-- Vegas tab — appears after Config when slop mode is on OR the
+       regular-mode opt-in is set (config slop.vegas_in_regular_mode →
+       body.vegas). vegas.js injects a lounge-radio <audio> player into
+       #vegas-player when the Vegas features turn on and tears it down when
+       they turn off, so the music stops the moment the feature leaves. -->
   <section id="tab-vegas">
     <!-- The welcome line lives INSIDE the card (its header) so the card is
          self-contained: when sound is muted vegas.js never builds the
@@ -721,7 +738,11 @@
       <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
       <div id="vegas-player"></div>
     </div>
-    <p class="vegas-hint">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
+    <!-- Two hints, one shown per mode (CSS, body.vegas:not(.slop)). In
+         slop mode the music is tied to the 🎰 theme; in regular mode it's
+         a config setting governed by the header sound/volume controls. -->
+    <p class="vegas-hint vegas-hint-slop">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
+    <p class="vegas-hint vegas-hint-regular">Music plays whenever the dashboard is open. Use the 🔊 and 🎚️ controls in the header to mute or set the volume; turn this off again under <strong>Vegas music</strong> on the Config tab.</p>
     <!-- High-rollers leaderboard — slop-credits.js renders agent jackpot
          rankings (this session) in here, with a 🔥 on any agent on a
          hot streak. Empty placeholder until the first jackpot lands. -->

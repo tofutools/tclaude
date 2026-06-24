@@ -21,7 +21,7 @@
 // play/pause only (its native <audio controls> volume was removed), so
 // the 🎵 slider here drives setMusicVolume(vegas.js) directly.
 
-import { isSlopActive } from './slop.js';
+import { isVegasActive } from './slop.js';
 import { setEffectsVolume } from './slop-audio.js';
 import { setMusicVolume } from './vegas.js';
 import { toast } from './refresh.js';
@@ -80,7 +80,8 @@ function schedulePersist() {
 }
 
 // loadVolumes fetches the persisted values once, lazily on the first
-// slop activation — the plain dashboard never pays for the request.
+// Vegas activation — a plain dashboard with the feature off never pays
+// for the request.
 async function loadVolumes() {
   if (loaded) return;
   loaded = true;
@@ -144,13 +145,15 @@ export function bindSlopVolume() {
     schedulePersist();
   });
 
-  // Load the persisted values when slop turns on (and close the mixer
-  // when it turns off — the HUD it anchors to is CSS-hidden then).
-  document.addEventListener('tclaude:slop', (e) => {
-    if (e.detail && e.detail.active) loadVolumes();
+  // Load the persisted values when the Vegas features turn on (and close
+  // the mixer when they turn off — the HUD it anchors to is CSS-hidden
+  // then). tclaude:vegas fires for both slop mode and the regular-mode
+  // opt-in; read the live state rather than the event detail.
+  document.addEventListener('tclaude:vegas', () => {
+    if (isVegasActive()) loadVolumes();
     else setPopoverOpen(false);
   });
-  if (isSlopActive()) loadVolumes();
+  if (isVegasActive()) loadVolumes();
 
   apply();
 }
