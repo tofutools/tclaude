@@ -59,6 +59,23 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("run: () => toggleSlop(),", "the palette offers a Switch theme command")
 	must("'Switch to slop theme'", "the toggle is labelled by its destination theme")
 
+	// Group fold: collapse / expand the Groups-tab <details> listing.
+	must("Collapse all groups", "the palette can collapse every group")
+	must("Expand all groups", "the palette can expand every group")
+	must("function setGroupOpen(", "per-group collapse/expand toggles the group's <details>")
+	must("data-group-key=", "fold targets the group's <details data-group-key>")
+
+	// Consistent presentation: every detach command reads "Hide", every
+	// raise command reads "Focus" (no stray "Unfocus" in a label).
+	must("label: 'Hide all windows'", "the bulk detach command reads Hide, not Unfocus")
+
+	// Ranking + synonyms live in the pure, unit-tested scorer module.
+	must("./palette-score.js", "palette imports the pure ranking module")
+	must("rankCommands(commands", "rendering ranks via the shared scorer")
+	must("export const SYNONYMS", "the scorer defines a synonym map")
+	must("hide: ['unfocus']", "hide is a synonym for unfocus")
+	must("show: ['focus']", "show is a synonym for focus")
+
 	// Accessibility + focus hygiene: the combobox input points its
 	// aria-activedescendant at the keyboard-selected option (each option
 	// carries a stable id), and closing returns focus to the trigger.

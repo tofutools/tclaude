@@ -34,6 +34,7 @@ import { lastSnapshot } from './dashboard.js';
 import { toast, openWindowModal } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
+import { rankCommands } from './palette-score.js';
 
 const MODAL_ID = 'command-palette-modal';
 
@@ -108,13 +109,42 @@ async function hideAgent(conv, label) {
   }
 }
 
+// -- Group fold helpers — collapse/expand the Groups-tab listing. Each
+//    group renders as <details data-group-key>; assigning .open fires a
+//    native toggle event that bindDetailsPersistence (refresh.js) catches,
+//    so the state sticks across the 2s re-render. We switch to the Groups
+//    tab first so the change is actually visible.
+
+function gotoGroupsTab() {
+  const btn = $('nav button[data-tab="groups"]');
+  if (btn) btn.click();
+}
+
+function setGroupOpen(name, open) {
+  gotoGroupsTab();
+  const d = $(`#tab-groups details[data-group-key="${CSS.escape(name)}"]`);
+  if (!d) { toast(`group ${name}: not listed on the Groups tab`, true); return; }
+  d.open = open; // fires toggle → bindDetailsPersistence persists the state
+  const sum = d.querySelector('summary');
+  if (sum) sum.scrollIntoView({ block: 'nearest' });
+}
+
+function setAllGroupsOpen(open) {
+  gotoGroupsTab();
+  const all = $$('#tab-groups details[data-group-key]');
+  for (const d of all) d.open = open;
+  const n = `${all.length} group${all.length === 1 ? '' : 's'}`;
+  toast(open ? `expanded ${n}` : `collapsed ${n}`);
+}
+
 // -- Command list ------------------------------------------------------
 
 // buildCommands assembles the command list from the live snapshot plus
 // the current <nav>. Order is "headline first": the global hide/show
-// the branch is named for, then spawn, then tab navigation, then the
-// per-group and per-agent window ops. Filtering re-ranks by query, so
-// this order only governs the empty-query view.
+// the branch is named for, then spawn, theme, tab navigation, group
+// fold (collapse/expand), then the per-group and per-agent window ops.
+// rankCommands re-ranks by query, so this order only governs the
+// empty-query view.
 function buildCommands() {
   const snap = lastSnapshot || {};
   const cmds = [];
@@ -122,11 +152,11 @@ function buildCommands() {
   // 1) Global window ops — "hide all windows" (and its inverse), plus
   //    the modal for picking an arbitrary subset.
   cmds.push({
-    icon: '⏏', label: 'Unfocus all windows',
+    icon: '⏏', label: 'Hide all windows',
     hint: 'detach every agent terminal window (agents keep running)',
-    keywords: 'hide all windows declutter detach panic minimize',
+    keywords: 'hide unfocus all windows declutter detach panic minimize',
     run: () => bulkWindowOp({ direction: 'unfocus', scope: 'all' },
-      'unfocus all windows'),
+      'hide all windows'),
   });
   cmds.push({
     icon: '◎', label: 'Focus all windows',
@@ -180,7 +210,37 @@ function buildCommands() {
     });
   }
 
-  // 5) Per-group window ops — only groups with at least one running
+  // 5) Group view — collapse / expand the Groups-tab listing. These
+  //    apply to EVERY group (even idle ones — folding an idle group is
+  //    valid), unlike the window ops below which need a running member.
+  cmds.push({
+    icon: '⊟', label: 'Collapse all groups',
+    hint: 'fold every group on the Groups tab',
+    keywords: 'collapse fold close all groups view rows',
+    run: () => setAllGroupsOpen(false),
+  });
+  cmds.push({
+    icon: '⊞', label: 'Expand all groups',
+    hint: 'unfold every group on the Groups tab',
+    keywords: 'expand unfold open all groups view rows',
+    run: () => setAllGroupsOpen(true),
+  });
+  for (const g of (snap.groups || [])) {
+    cmds.push({
+      icon: '⊟', label: `Collapse group: ${g.name}`,
+      hint: 'fold this group',
+      keywords: 'collapse fold close group ' + g.name,
+      run: () => setGroupOpen(g.name, false),
+    });
+    cmds.push({
+      icon: '⊞', label: `Expand group: ${g.name}`,
+      hint: 'unfold this group',
+      keywords: 'expand unfold open group ' + g.name,
+      run: () => setGroupOpen(g.name, true),
+    });
+  }
+
+  // 6) Per-group window ops — only groups with at least one running
   //    member (an idle group has no window to focus or hide).
   for (const g of (snap.groups || [])) {
     const online = (g.members || []).filter(m => m.online).length;
@@ -188,7 +248,7 @@ function buildCommands() {
     const n = `${online} window${online === 1 ? '' : 's'}`;
     cmds.push({
       icon: '⏏', label: `Hide group: ${g.name}`,
-      hint: `unfocus ${n}`,
+      hint: `hide ${n}`,
       keywords: 'hide unfocus group windows ' + g.name,
       run: () => bulkWindowOp(
         { direction: 'unfocus', scope: 'group', group: g.name },
@@ -204,18 +264,18 @@ function buildCommands() {
     });
   }
 
-  // 6) Per-agent window ops — RUNNING agents only.
+  // 7) Per-agent window ops — RUNNING agents only.
   for (const a of (snap.agents || [])) {
     if (!a.online) continue;
     const label = a.title || (a.conv_id || '').slice(0, 8);
     cmds.push({
-      icon: '◉', label: `Focus window: ${label}`,
+      icon: '◎', label: `Focus window: ${label}`,
       hint: "raise / open this agent's terminal",
-      keywords: 'focus jump bring up window agent ' + label + ' ' + (a.conv_id || ''),
+      keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || ''),
       run: () => jumpAgent(a.conv_id, label),
     });
     cmds.push({
-      icon: '⊘', label: `Hide window: ${label}`,
+      icon: '⏏', label: `Hide window: ${label}`,
       hint: "detach this agent's terminal",
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || ''),
       run: () => hideAgent(a.conv_id, label),
@@ -225,32 +285,10 @@ function buildCommands() {
   return cmds;
 }
 
-// filterCommands narrows the command list to those whose searchable
-// text contains every whitespace-token of the query (AND match). A
-// match in the label outranks one only in the hint/keywords, so the
-// most direct command floats to the top. Empty query → the whole list
-// in build order.
-function filterCommands(q) {
-  q = q.trim().toLowerCase();
-  if (!q) return commands.slice();
-  const tokens = q.split(/\s+/);
-  const scored = [];
-  for (const cmd of commands) {
-    const label = cmd.label.toLowerCase();
-    const hay = (cmd.label + ' ' + (cmd.hint || '') + ' ' + (cmd.keywords || '')).toLowerCase();
-    if (!tokens.every(t => hay.includes(t))) continue;
-    const score = tokens.every(t => label.includes(t)) ? 2 : 1;
-    scored.push({ cmd, score });
-  }
-  // Stable sort (modern engines) keeps build order within a score band.
-  scored.sort((a, b) => b.score - a.score);
-  return scored.map(s => s.cmd);
-}
-
 // -- Rendering ---------------------------------------------------------
 
 function render(q) {
-  filtered = filterCommands(q);
+  filtered = rankCommands(commands, q);
   if (selected >= filtered.length) selected = filtered.length - 1;
   if (selected < 0) selected = 0;
   if (!filtered.length) {
