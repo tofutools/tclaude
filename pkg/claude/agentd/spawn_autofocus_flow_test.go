@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
@@ -36,6 +37,39 @@ func TestSpawn_AutoFocusOpensAttachTerminal(t *testing.T) {
 		"auto-focus should attach via the tclaude wrapper, not raw tmux")
 	assert.Contains(t, gotCmd, spawn.Label,
 		"auto-focus terminal should attach to the new agent's session label")
+	assert.Equal(t, "native", spawn.FocusMode,
+		"a successful native open should report focus_mode:native")
+	assert.Empty(t, spawn.FocusWS, "no browser fallback when the native open succeeded")
+}
+
+// Scenario: a human spawns with "auto focus" checked, but the host has
+// no native terminal to pop — headless agentd (no DISPLAY/WAYLAND_DISPLAY)
+// or no terminal emulator installed, modelled here by openTerminal
+// returning an error.
+//
+// Expected: the spawn still succeeds (best-effort focus never fails the
+// spawn), and the response reports focus_mode:"browser" plus a focus_ws
+// path the dashboard can open an in-browser terminal against — instead
+// of silently opening nothing while the toast claims "opening terminal".
+func TestSpawn_AutoFocusFallsBackToBrowserWhenNoNativeWindow(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		return errors.New("no DISPLAY")
+	}))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "auto_focus": true,
+	})
+	if spawn.Code != http.StatusOK {
+		t.Fatalf("spawn: status=%d body=%s", spawn.Code, spawn.Raw)
+	}
+
+	assert.Equal(t, "browser", spawn.FocusMode,
+		"a failed native open should report focus_mode:browser")
+	assert.Equal(t, "/api/spawn-focus-ws/"+spawn.Label, spawn.FocusWS,
+		"focus_ws should be the label-keyed spawn-focus-ws path")
 }
 
 // Scenario: a human spawns an agent without asking for auto focus —

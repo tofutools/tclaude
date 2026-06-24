@@ -416,6 +416,10 @@ function populateConfigForm(cfg) {
   // Default off (auto-hide on subscription).
   $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
 
+  // Vegas music in regular mode — surface the Vegas tab / volume mixer /
+  // radio outside slop mode. Default off; lives in the slop block.
+  $('#cfg-slop-vegas-regular').checked = !!(cfg.slop && cfg.slop.vegas_in_regular_mode);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -543,6 +547,17 @@ function assembleConfig() {
   // `omitempty`) so an all-default cost block doesn't marshal a spurious key.
   if ($('#cfg-cost-show-on-subscription').checked) cost.show_on_subscription = true; else delete cost.show_on_subscription;
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
+
+  // slop is an optional block — its volumes/channel (owned by the header
+  // mixer + picker, no widget on this page) ride along in the clone. Set
+  // only this page's one key, vegas_in_regular_mode: true when checked,
+  // dropped otherwise (false is the omitempty default). Drop the whole
+  // block only when nothing is left so an all-default slop doesn't marshal
+  // as a spurious "slop": {} diff — but a block that still holds a volume
+  // or channel survives.
+  const slop = (cfg.slop && typeof cfg.slop === 'object') ? cfg.slop : {};
+  if ($('#cfg-slop-vegas-regular').checked) slop.vegas_in_regular_mode = true; else delete slop.vegas_in_regular_mode;
+  if (Object.keys(slop).length) cfg.slop = slop; else delete cfg.slop;
 
   // ask is an optional block. Clone the existing one so a future sub-field
   // with no widget round-trips, then set the two form-owned keys. An empty

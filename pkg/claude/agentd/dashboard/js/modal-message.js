@@ -7,6 +7,7 @@
 
 import { $, $$, esc, shortId, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
+import { recordGroupInteraction } from './last-group.js';
 import {
   bindTargetPicker, populateTargetPicker, readTargetPicker, pickCronTargetModal,
   openSudoGrantModal, closeSudoGrantModal, submitSudoGrant, pickSudoAgentModal,
@@ -514,6 +515,7 @@ async function submitGroupCreate() {
     toast(`group created: ${name}`);
     // Persist the expanded state so the new group shows expanded on next render.
     try { dashPrefs.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
+    recordGroupInteraction(name);
     refresh();
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);

@@ -556,3 +556,36 @@ func TestSpawnNameNormalizeEnabled(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, loaded.SpawnNameNormalizeEnabled(), "explicit false survives round-trip")
 }
+
+// TestShowVegasInRegularMode covers the default-OFF *bool resolver behind
+// the opt-in that surfaces the Vegas music features outside slop mode: nil
+// config, an absent slop block, and an absent key all mean OFF; only an
+// explicit true opts in. The JSON shape is asserted too so a default config
+// stays clean (no redundant key) while an explicit-on round-trips, and the
+// key coexists with the other slop settings (volumes/channel).
+func TestShowVegasInRegularMode(t *testing.T) {
+	off := false
+	on := true
+
+	assert.False(t, (*Config)(nil).ShowVegasInRegularMode(), "nil config → off")
+	assert.False(t, (&Config{}).ShowVegasInRegularMode(), "no slop block → off")
+	assert.False(t, (&Config{Slop: &SlopConfig{}}).ShowVegasInRegularMode(), "absent key → off")
+	assert.False(t, (&Config{Slop: &SlopConfig{VegasInRegularMode: &off}}).ShowVegasInRegularMode(), "explicit false → off")
+	assert.True(t, (&Config{Slop: &SlopConfig{VegasInRegularMode: &on}}).ShowVegasInRegularMode(), "explicit true → on")
+
+	// A default (absent) value omits the key (omitempty + nil pointer).
+	clean, err := json.Marshal(&Config{Slop: &SlopConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "vegas_in_regular_mode")
+
+	// An explicit-on round-trips through Save/Load alongside a volume so the
+	// new key and the existing slop settings coexist.
+	t.Setenv("HOME", t.TempDir())
+	vol := 80
+	require.NoError(t, Save(&Config{Slop: &SlopConfig{VegasInRegularMode: &on, MusicVolume: &vol}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.ShowVegasInRegularMode(), "explicit true survives round-trip")
+	music, _ := loaded.ResolvedSlopVolumes()
+	assert.Equal(t, 80, music, "the music volume coexists with the new flag")
+}

@@ -1011,13 +1011,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"group":        g.Name,
 		"conv_id":      outcome.ConvID,
 		"label":        outcome.Label,
 		"tmux_session": outcome.TmuxSession,
 		"attach_cmd":   "tclaude session attach " + outcome.Label,
-	})
+	}
+	// FocusMode is only ever non-empty when the caller asked for
+	// auto-focus. "browser" means openTerminal couldn't pop a native
+	// window — the dashboard's spawn modal points at focus_ws instead of
+	// claiming success and opening nothing (see spawnOutcome.FocusMode).
+	if outcome.FocusMode != "" {
+		resp["focus_mode"] = outcome.FocusMode
+		if outcome.FocusMode == "browser" {
+			resp["focus_ws"] = spawnFocusWSPath(outcome.Label)
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // spawnParams is the fully-resolved, validated input to executeSpawn.
@@ -1133,6 +1144,14 @@ type spawnOutcome struct {
 	ConvID      string
 	Label       string
 	TmuxSession string
+	// FocusMode reports what the auto-focus attempt (if AutoFocus was
+	// requested) actually did: "" (not requested, or the pane never came
+	// up within the poll), "native" (a real GUI terminal window opened),
+	// or "browser" (no native window could be popped — headless agentd,
+	// or no terminal emulator installed — so the caller should fall back
+	// to the in-browser terminal, same as handleDashboardOpenWindowAPI's
+	// mode:"browser"). Set once, by the focusSpawn closure in executeSpawn.
+	FocusMode string
 }
 
 // spawnFailure is a typed failure from executeSpawn. The HTTP handler
@@ -1474,15 +1493,30 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// needs a human at it. Fired at most once; best-effort, a failure to pop
 	// a window is logged, never bubbled.
 	focused := false
+	// focusMode records what focusSpawn actually did, for the three
+	// spawnOutcome literals below to report back to the caller — see
+	// spawnOutcome.FocusMode. Left "" when AutoFocus is off or the pane
+	// never came up within the poll, so focusSpawn never ran.
+	focusMode := ""
 	focusSpawn := func() {
 		if !p.AutoFocus || focused {
 			return
 		}
 		focused = true
 		if err := openTerminal(openAttachCmd(label)); err != nil {
-			slog.Warn("spawn: auto-focus terminal failed to open",
+			// No native window — headless agentd (no DISPLAY/WAYLAND_DISPLAY)
+			// or no terminal emulator installed. Don't just log and drop it:
+			// report "browser" so the caller (handleGroupSpawn) can point the
+			// dashboard at the in-browser terminal fallback, the same
+			// mode:"browser" handshake handleDashboardOpenWindowAPI already
+			// uses — otherwise auto-focus silently does nothing on a headless
+			// host while claiming success.
+			slog.Warn("spawn: auto-focus terminal failed to open natively; falling back to in-browser terminal",
 				"label", label, "error", err)
+			focusMode = "browser"
+			return
 		}
+		focusMode = "native"
 	}
 
 	// Poll the sessions table for the conv-id. The hook callback writes it
@@ -1584,7 +1618,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if launchEnroll {
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label}, nil
+		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode}, nil
 	}
 
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
@@ -1593,7 +1627,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 			return nil, fail
 		}
-		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession}, nil
+		return &spawnOutcome{ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
 	}
 
 	// Conv-id did not materialise within the poll. An Async (dashboard) spawn
@@ -1624,7 +1658,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
 			"label", label, "group", g.Name, "harness", p.Harness)
-		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession}, nil
+		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
 	}
 
 	// Synchronous (template) path: the caller needs the conv-id now, so a

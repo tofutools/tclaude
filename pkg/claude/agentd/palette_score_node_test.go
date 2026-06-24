@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -11,9 +12,15 @@ import (
 // test runner — no bundler, no framework, no node_modules, matching the
 // dashboard's deliberate no-build-system convention. This wrapper runs
 // that suite as part of `go test ./...` (the repo's single documented test
-// entry point) and SKIPS cleanly when node isn't installed, so a node-less
-// contributor isn't blocked while CI — whose GitHub runners ship node —
-// still gets the coverage.
+// entry point).
+//
+// node availability:
+//   - In CI the Test job runs actions/setup-node, so node is guaranteed.
+//     A missing node THERE is a real failure — we never let the suite
+//     silently skip and let CI go green without having run (the classic
+//     "green ≠ ran" trap). With this guard, a green CI provably means the
+//     JS tests executed.
+//   - Locally a node-less contributor just skips, so they aren't blocked.
 //
 // The .mjs imports the same raw ES module the browser loads; it lives in
 // jstest/ (outside dashboard/) so `//go:embed dashboard` doesn't ship the
@@ -21,7 +28,11 @@ import (
 func TestPaletteScore_JS(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node not on PATH — skipping JS unit tests (CI runners have node)")
+		if os.Getenv("CI") != "" {
+			t.Fatal("node not on PATH in CI — JS unit tests did not run " +
+				"(the Test job is expected to run actions/setup-node)")
+		}
+		t.Skip("node not on PATH — skipping JS unit tests (install node to run them)")
 	}
 	// `go test` runs with the package dir as the working directory, so the
 	// jstest/ glob resolves relative to it. Pass each *.test.mjs explicitly

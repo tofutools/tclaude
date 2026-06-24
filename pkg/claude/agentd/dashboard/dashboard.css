@@ -1381,12 +1381,13 @@ details[open] > summary .spawn-btn { opacity: 1; }
   padding: 0; margin: 0 5px 0 0; vertical-align: middle;
   background: none; border: none; border-radius: 0;
 }
-/* Drag-and-drop: move a member from group A onto group B's
-   header to migrate. The member <tr> is draggable; the <summary>
-   row is the drop target. While dragging, the source row dims so
-   the user can track its origin and we highlight every other group's
-   summary as a valid drop target. The source's own summary stays
-   un-highlighted (move-onto-self is a no-op). */
+/* Drag-and-drop: move a member from group A onto group B's box to
+   migrate. The member <tr> is draggable; the whole group <details> is
+   the drop target (a release anywhere over an expanded group lands in
+   it — not just the header). While dragging, the source row dims so the
+   user can track its origin and we outline every other group's box as a
+   valid drop target. The source's own box stays un-highlighted
+   (move-onto-self is a no-op). */
 .dnd-draggable {
   cursor: grab;
 }
@@ -1395,14 +1396,18 @@ details[open] > summary .spawn-btn { opacity: 1; }
   opacity: 0.45;
   background: #161b22;
 }
-summary.dnd-drop-over {
-  background: #1f3148;
-  outline: 1px dashed #58a6ff;
+/* Whole-box drop highlight. A dashed outline bounds the entire group
+   (header + expanded body) so it's clear the drop targets the group,
+   not one row; the tint is kept low-alpha so member rows stay readable
+   under it. */
+details.dnd-drop-over {
+  background: rgba(31, 49, 72, 0.4);
+  outline: 2px dashed #58a6ff;
   outline-offset: -2px;
   border-radius: 4px;
 }
-summary.dnd-drop-over.dnd-effect-clone {
-  background: #1d2c1f;
+details.dnd-drop-over.dnd-effect-clone {
+  background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
 /* Drag-to-reorder real groups (group-reorder.js). The ⠿ grip rides at the
@@ -2732,14 +2737,17 @@ body.slop .slop-machine[data-status="exited"] {
   .slop-coin, .slop-jackpot { display: none; animation: none; }
 }
 
-/* ─── Vegas tab (body.slop) ────────────────────────────────────────
-   The casino-music tab that appears after Config when slop mode is on.
-   The nav button is CSS-hidden otherwise so it never shows in the
-   plain dashboard; the section follows the normal tab show/hide rules
-   (section.active). vegas.js injects the YouTube <iframe> into
-   #vegas-player on slop-enable and removes it on disable. */
+/* ─── Vegas tab (body.slop / body.vegas) ───────────────────────────
+   The casino-music tab that appears after Config. The nav button is
+   CSS-hidden by default so it never shows in a plain dashboard, and
+   revealed when EITHER slop ("casino") mode is on (body.slop) OR the
+   regular-mode opt-in is set (body.vegas — config
+   slop.vegas_in_regular_mode, applied from the snapshot by refresh.js).
+   The section follows the normal tab show/hide rules (section.active);
+   vegas.js owns the lounge-radio <audio> player inside #vegas-player. */
 nav button[data-tab="vegas"] { display: none; }
-body.slop nav button[data-tab="vegas"] { display: block; }
+body.slop nav button[data-tab="vegas"],
+body.vegas nav button[data-tab="vegas"] { display: block; }
 
 /* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
    cost_tab_visible is false — a subscription account with no real spend that
@@ -2793,6 +2801,12 @@ body.hide-costs #groups-cost-toggle { display: none; }
   font-size: 12px;
   margin-top: 12px;
 }
+/* One hint per mode: the slop-flavoured "leave slop mode to stop it" line
+   by default, the config-flavoured one only in the regular-mode Vegas view
+   (body.vegas without the casino re-skin). */
+.vegas-hint-regular { display: none; }
+body.vegas:not(.slop) .vegas-hint-slop { display: none; }
+body.vegas:not(.slop) .vegas-hint-regular { display: block; }
 /* #vegas-player is just the dynamic content holder now (the card styling
    moved to .vegas-card). The gap below the intro only appears once vegas.js
    has injected content, so a muted/empty player shows just the intro header
@@ -3077,17 +3091,29 @@ body.slop #agent-spawn-submit.slop-pull-active {
   .slop-trail-coin { display: none; animation: none; }
 }
 
-/* ─── Slop HUD: credits counter + sound toggle (body.slop) ──────────
-   A small header cluster — a 🪙 credits tally (slop-credits.js) and the
-   casino sound-FX mute toggle (slop-audio.js). Hidden in the plain
-   dashboard; revealed only in slop mode, like the Vegas tab. */
+/* ─── Slop HUD: credits counter + sound toggle (body.slop / body.vegas) ─
+   A small header cluster — a 🪙 credits tally (slop-credits.js), the
+   master sound switch (slop-audio.js) and the 🎚️ volume mixer
+   (slop-volume.js). Hidden in a plain dashboard; revealed in slop mode OR
+   the regular-mode Vegas opt-in (body.vegas), like the Vegas tab — the
+   volume controls go wherever the music does. */
 .slop-hud { display: none; }
-body.slop .slop-hud {
+body.slop .slop-hud,
+body.vegas .slop-hud {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   margin-left: 10px;
 }
+/* The 🪙 credits tally, the high-rollers leaderboard and the 🔔 FX volume
+   slider are all casino-FX-only — the FX exist only in slop mode, with no
+   jackpots or sounds in the regular-mode music view. Hide all three when
+   Vegas is on WITHOUT the casino re-skin so the regular dashboard shows
+   just the sound switch + the 🎵 music slider (HUD) and the bare radio
+   player (tab). The FX volume still persists and applies if slop turns on. */
+body.vegas:not(.slop) .slop-credits,
+body.vegas:not(.slop) .slop-vol-row-fx,
+body.vegas:not(.slop) #vegas-leaderboard { display: none; }
 .slop-credits {
   color: #ffe88c;
   font-weight: 700;

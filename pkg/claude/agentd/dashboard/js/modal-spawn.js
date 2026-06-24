@@ -16,6 +16,8 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
+import { openTermModal } from './modal-term.js';
+import { recordGroupInteraction } from './last-group.js';
 
 
 // ---- Agent spawn modal --------------------------------------------------
@@ -807,8 +809,19 @@ async function uploadSpawnAttachments() {
   return (payload.files || []).map(f => f.path);
 }
 
+// openAgentSpawnModal opens the spawn dialog. opts:
+//   • groupName    — pin to this group: the <select> is set and HIDDEN
+//                    (the per-group "+ spawn agent" buttons and the
+//                    palette's "Spawn agent in <group>…" commands).
+//   • defaultGroup — preselect this group but keep the <select> VISIBLE
+//                    so it can still be changed (the palette's plain
+//                    "Spawn agent…", which defaults into the last group
+//                    the operator touched but doesn't force it).
+// groupName wins when both are set. Neither → the picker defaults to the
+// first group, as before.
 function openAgentSpawnModal(opts) {
   const groupName = (opts && opts.groupName) || '';
+  const defaultGroup = (opts && opts.defaultGroup) || '';
   const groupRow = $('#agent-spawn-group-row');
   const select = $('#agent-spawn-group');
   // Populate the <select> from the latest snapshot. The select stays
@@ -830,7 +843,13 @@ function openAgentSpawnModal(opts) {
     groupRow.style.display = 'none';
   } else {
     groupRow.style.display = '';
-    if (!select.value && groups.length) select.value = groups[0].name;
+    // Preselect defaultGroup when it's a live option; otherwise fall back
+    // to the first group (the long-standing default).
+    if (defaultGroup && [...select.options].some(o => o.value === defaultGroup)) {
+      select.value = defaultGroup;
+    } else if (!select.value && groups.length) {
+      select.value = groups[0].name;
+    }
   }
   $('#agent-spawn-name').value = '';
   $('#agent-spawn-role').value = '';
@@ -1044,11 +1063,23 @@ async function submitAgentSpawn() {
     try { payload = await r.json(); } catch (_) {}
     closeAgentSpawnModal();
     const label = name || (payload.conv_id ? shortId(payload.conv_id) : 'agent');
-    toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
+    if (autoFocus && payload.focus_mode === 'browser' && payload.focus_ws) {
+      // executeSpawn couldn't pop a native terminal window (headless
+      // agentd, or no terminal emulator installed) — open the same
+      // in-browser fallback the "open window" row action uses, rather
+      // than claiming "opening terminal" and opening nothing.
+      openTermModal({ wsPath: payload.focus_ws, label: payload.label || label });
+      toast(`spawned ${label} → ${group} — opened in-browser terminal`);
+    } else {
+      toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
+    }
     // Vegas-themed celebration when slop is on; silent no-op otherwise.
     slopJackpot();
     // Keep the destination group expanded so the new member is visible.
     try { dashPrefs.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
+    // Remember it as the last group touched so the palette's plain "Spawn
+    // agent…" defaults here next time.
+    recordGroupInteraction(group);
     refresh();
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
