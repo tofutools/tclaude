@@ -5,8 +5,45 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// auditRequests (and logRequest) wrap every response in *statusRec for
+// status-code capture. statusRec embeds the http.ResponseWriter
+// *interface*, and Go's method promotion through an embedded interface
+// only forwards methods declared on that interface — never extra
+// methods (like Hijack) the concrete value underneath happens to
+// implement. Unless statusRec forwards Hijack explicitly, any handler
+// behind auditRequests that needs to hijack the connection (e.g. a
+// WebSocket upgrade, like the dashboard's in-browser terminal) fails
+// with "response does not implement http.Hijacker" — a real-world
+// regression that http.NewRecorder-based tests can't catch, since
+// httptest.NewRecorder doesn't implement Hijacker either way.
+func TestStatusRec_PreservesHijackerThroughAuditRequests(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	srv := httptest.NewServer(auditRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade behind auditRequests: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+	})))
+	defer srv.Close()
+
+	wsURL := "ws" + srv.URL[len("http"):]
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		status := ""
+		if resp != nil {
+			status = resp.Status
+		}
+		t.Fatalf("dial through auditRequests failed: %v (status=%s)", err, status)
+	}
+	_ = conn.Close()
+}
 
 // A dashboard request is the operator IFF it carries a valid dashboard
 // session — attribution keys on the session, NOT the response status, so
