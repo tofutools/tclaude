@@ -2180,8 +2180,13 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
+	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
+	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
+	// from interrupting this resume. No-op for non-Claude harnesses. See
+	// session.ApplyClaudeResumeEnv.
+	session.ApplyClaudeResumeEnv(h, resumeEnv)
 	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports: clcommon.BuildEnvExports(map[string]string{"TCLAUDE_SESSION_ID": sessionID}),
+		EnvExports: clcommon.BuildEnvExports(resumeEnv),
 		ResumeID:   convID,
 		ExtraArgs:  extraArgs,
 	})

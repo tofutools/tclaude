@@ -472,6 +472,11 @@ func runNew(params *NewParams) error {
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
 	}
+	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
+	// this detached pane (the daemon forks `tclaude session new -r` here, and a
+	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
+	// harnesses. See ApplyClaudeResumeEnv.
+	ApplyClaudeResumeEnv(h, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
