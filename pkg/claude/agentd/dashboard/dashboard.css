@@ -2341,6 +2341,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
 #tab-config { max-width: 780px; }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
 .cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
+/* Config-tab live section filter. The bar itself reuses .filter-bar; these
+   add the muted reassurance note and the no-match line. Filtered-out
+   sections use the [hidden] attribute (browser default display:none) —
+   .cfg-section / details.cfg-advanced set no display of their own, so no
+   override rule is needed. */
+.cfg-filter-note { font-size: 11px; color: #7d8590; white-space: nowrap; }
+.cfg-filter-empty {
+  font-size: 12px; color: #7d8590; font-style: italic;
+  border: 1px dashed #30363d; border-radius: 8px;
+  padding: 16px; margin: 0 0 14px; text-align: center;
+}
 .cfg-section {
   border: 1px solid #30363d; border-radius: 8px; background: #0f141a;
   margin: 0 0 14px; padding: 2px 14px 12px;

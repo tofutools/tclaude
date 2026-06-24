@@ -222,6 +222,21 @@
     <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
 
+    <!-- Live section filter. Hides/shows whole .cfg-section blocks by a
+         title-OR-content substring match (space-separated terms = AND).
+         config.js queries .cfg-section live on every keystroke, so any
+         section added to this tab is filtered automatically — there is no
+         hardcoded section list anywhere. -->
+    <div class="filter-bar cfg-filter-bar">
+      <input type="search" id="cfg-filter" placeholder="Filter settings by title or content…"
+        aria-label="Filter config settings" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="cfg-filter-count"></span>
+      <button type="button" class="clear-filter" id="cfg-filter-clear" hidden>clear ×</button>
+      <span class="spacer"></span>
+      <span class="cfg-filter-note">Filtering only hides sections — every setting still saves.</span>
+    </div>
+    <div class="cfg-filter-empty" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
+
     <div class="cfg-section">
       <h3>General</h3>
       <div class="cfg-field">
