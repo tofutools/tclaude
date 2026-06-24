@@ -90,9 +90,10 @@ function memberRowHTML(m, ctx) {
 // cron / add-member / spawn buttons, no default-cwd / default-context.
 // Its only interactive role is drag-and-drop:
 //   - member rows are draggable INTO real groups (→ join);
-//   - the summary is a drop target for real-group members (→ leave
-//     that group; if it was their only group they reappear here).
-// The summary carries data-dnd-target-ungrouped (NOT -target-group),
+//   - the whole group box is a drop target for real-group members
+//     (→ leave that group; if it was their only group they reappear
+//     here).
+// The <details> carries data-dnd-target-ungrouped (NOT -target-group),
 // so the move/clone code paths can never mistake it for a real group.
 //
 // Offline visibility: the group honours the tab-wide "show offline"
@@ -116,8 +117,8 @@ function renderVirtualGroup(g) {
           </tbody>
         </table>`;
   return `
-    <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
-      <summary data-dnd-target-ungrouped="1">
+    <details class="group-virtual" data-group-key="${esc(key)}" data-dnd-target-ungrouped="1"${isOpen ? ' open' : ''}>
+      <summary>
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
         <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
@@ -176,10 +177,10 @@ function renderVirtualConversationsGroup(g) {
 // agents demoted back to plain conversations. Like the virtual
 // Conversations group it is inert AS A GROUP, but it IS a drag source
 // AND a drag target:
-//   - its summary (data-dnd-target-retired) accepts an agent row →
-//     retire it, demoting the agent back to a plain conversation;
+//   - its whole group box (data-dnd-target-retired) accepts an agent
+//     row → retire it, demoting the agent back to a plain conversation;
 //   - its rows (data-dnd-source-retired) drag onto a real group →
-//     reinstate + join, or onto the Ungrouped header → reinstate with
+//     reinstate + join, or onto the Ungrouped box → reinstate with
 //     no group.
 // It is the landing surface so a just-retired agent stays visible on
 // the tab. Each row also keeps the per-row "reinstate" button.
@@ -208,8 +209,8 @@ function renderVirtualRetiredGroup(g) {
           </tbody>
         </table>`;
   return `
-    <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
-      <summary data-dnd-target-retired="1">
+    <details class="group-virtual" data-group-key="${esc(key)}" data-dnd-target-retired="1"${isOpen ? ' open' : ''}>
+      <summary>
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
         <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
@@ -402,8 +403,8 @@ function renderGroups(groups) {
     if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
     const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
     return `
-    <details data-group-key="${esc(g.name)}"${isOpen ? ' open' : ''}>
-      <summary data-dnd-target-group="${esc(g.name)}">
+    <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${isOpen ? ' open' : ''}>
+      <summary>
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
