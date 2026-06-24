@@ -559,6 +559,13 @@ type snapshotPayload struct {
 	// decide whether to auto-normalize an invalid agent name to the safe
 	// branch-token charset (the default) or reject it with the inline error.
 	SpawnNameNormalize bool `json:"spawn_name_normalize"`
+	// VegasInRegularMode mirrors config slop.vegas_in_regular_mode — the
+	// opt-in that surfaces the Vegas music features (the Vegas tab, the
+	// header volume mixer + sound switch, the lounge radio) on the PLAIN
+	// dashboard, decoupled from the full slop casino re-skin. refresh.js
+	// toggles body.vegas off this so the music/tab/volume light up in
+	// regular mode without the slot machines and FX. Default false.
+	VegasInRegularMode bool `json:"vegas_in_regular_mode"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1145,6 +1152,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		Harnesses:            buildHarnessCatalog(),
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
+		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

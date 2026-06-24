@@ -77,11 +77,16 @@ function renderState() {
   const link = document.querySelector('link[rel="icon"]');
   if (link) link.setAttribute('href', isSlop ? SLOP_FAVICON : original.favicon);
   // Broadcast the current slop state so feature modules can react
-  // without importing slop.js internals — vegas.js starts/stops the
-  // background music off this. Fired on every apply/toggle; listeners
-  // that care about edges diff for themselves. One-way, like the
-  // `tclaude:snapshot` event refresh.js emits.
+  // without importing slop.js internals — slop-fx / slop-audio / the
+  // marquee key on this. Fired on every apply/toggle; listeners that care
+  // about edges diff for themselves. One-way, like the `tclaude:snapshot`
+  // event refresh.js emits.
   document.dispatchEvent(new CustomEvent('tclaude:slop', { detail: { active: isSlop } }));
+  // The Vegas music features (tab / volume mixer / radio) are live in slop
+  // mode too, so re-sync them whenever slop flips. They read the combined
+  // isVegasActive() state (slop OR the regular-mode opt-in), not this
+  // event's detail — see vegas.js / slop-volume.js.
+  document.dispatchEvent(new CustomEvent('tclaude:vegas', { detail: { active: isVegasActive() } }));
 }
 
 // toggleSlop flips between the regular and slop themes — the same thing
@@ -115,6 +120,31 @@ export function applySlopThemeIfRequested() {
 // icon, and consumers (slop-fx.js) re-check on every click.
 export function isSlopActive() {
   return document.body.classList.contains('slop');
+}
+
+// isVegasActive reports whether the Vegas music features — the Vegas tab,
+// the header volume mixer + sound switch, and the lounge radio — should
+// be live. That's true in slop ("casino") mode OR when the regular-mode
+// opt-in (config slop.vegas_in_regular_mode → body.vegas, applied from the
+// snapshot by refresh.js) is on. The music/volume modules gate on this
+// instead of isSlopActive so they light up in both modes; the casino
+// flair (slop-fx, slot machines, marquee) stays keyed on body.slop alone.
+export function isVegasActive() {
+  return document.body.classList.contains('slop') ||
+    document.body.classList.contains('vegas');
+}
+
+// setVegasRegularMode toggles the regular-mode Vegas opt-in (body.vegas) —
+// the config-driven twin of the slop theme that reveals the Vegas tab, the
+// volume HUD and the radio WITHOUT the casino re-skin. refresh.js calls
+// this from every snapshot with config slop.vegas_in_regular_mode. It only
+// dispatches tclaude:vegas (which vegas.js / slop-volume.js sync off) when
+// the state actually changes, so the 2s poll doesn't churn the player.
+export function setVegasRegularMode(on) {
+  on = !!on;
+  if (on === document.body.classList.contains('vegas')) return;
+  document.body.classList.toggle('vegas', on);
+  document.dispatchEvent(new CustomEvent('tclaude:vegas', { detail: { active: isVegasActive() } }));
 }
 
 // bindSlopHotkey wires a single global keyboard shortcut that toggles

@@ -1,8 +1,11 @@
-// vegas.js — background music for slop ("vegas") mode.
+// vegas.js — background music for the Vegas ("slop") soundtrack.
 //
-// In slop mode a "Vegas" tab appears after Config holding a lounge-music
-// player. The player is created when slop turns on and torn down when it
-// turns off, so the soundtrack stops the moment you leave the mode.
+// A "Vegas" tab appears after Config holding a lounge-music player. It is
+// live whenever the Vegas features are active — that's slop ("casino")
+// mode OR the regular-mode opt-in (config slop.vegas_in_regular_mode,
+// body.vegas applied from the snapshot by refresh.js). The player is
+// created when they turn on and torn down when they turn off, so the
+// soundtrack stops the moment the feature leaves.
 //
 // We stream an internet radio station via an <audio> element rather than
 // embedding YouTube: monetised YouTube content serves ads, and many of
@@ -10,10 +13,11 @@
 // it rendered "Video unavailable / Watch on YouTube"). A plain ICE/MP3
 // stream has neither problem, plays forever, and pauses cleanly.
 //
-// We react to slop state via the `tclaude:slop` CustomEvent that slop.js
-// dispatches on every apply/toggle ({ detail: { active } }), rather than
-// reaching into slop.js's internals. Companion to slop.js (the theme
-// toggle) and slop-fx.js (the visual flair).
+// We react to that combined state via the `tclaude:vegas` CustomEvent
+// slop.js dispatches whenever slop OR the regular-mode opt-in flips,
+// reading the live isVegasActive() rather than the event's detail —
+// rather than reaching into slop.js's internals. Companion to slop.js
+// (the theme toggle) and slop-fx.js (the casino-only visual flair).
 //
 // The radio is also governed by the master sound switch slop-audio.js
 // owns (the 🔇/🔊 button in the header): we only auto-start when sound
@@ -29,7 +33,7 @@
 // the track. Best-effort: a blip just leaves the last song shown, and an
 // empty feed hides the song line — the music is unaffected either way.
 
-import { isSlopActive } from './slop.js';
+import { isVegasActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
 
 // The station catalog. SomaFM is listener-supported and genuinely
@@ -161,7 +165,7 @@ function startMusic() {
   const host = document.getElementById('vegas-player');
   if (!host) return;
   // Already playing — don't rebuild, which would restart the stream on a
-  // redundant event (e.g. a duplicate tclaude:slop).
+  // redundant event (e.g. a duplicate tclaude:vegas).
   if (host.querySelector('audio')) return;
   // Drop any stale arm from a previous stop, and clear a leftover error
   // card from a previous failed attempt.
@@ -481,42 +485,42 @@ function leaveVegasTabIfActive() {
     s.classList.toggle('active', s.id === 'tab-groups'));
 }
 
-export function bindVegasMusic() {
-  document.addEventListener('tclaude:slop', (e) => {
-    const active = !!(e.detail && e.detail.active);
-    if (active) {
-      // Load the persisted channel once (lazily, on first activation) so a
-      // later unmute starts on the saved station. If sound is already on,
-      // startMusic runs first on the default and loadChannel switches it.
-      loadChannel();
-      // Reached from a toggle click → we're inside that gesture's call
-      // stack, so autoplay-with-sound is granted. Only start when the
-      // master sound switch is on — a muted user entering slop shouldn't
-      // get the radio.
-      if (isSlopSoundEnabled()) startMusic();
-    } else {
-      stopMusic();
-      leaveVegasTabIfActive();
-    }
-  });
-  // The master sound switch (slop-audio.js's header button) toggled. Mute
-  // → stop the stream; unmute → start it if we're in slop mode. This is
-  // what makes the one header button govern the music as well as the FX.
-  document.addEventListener('tclaude:slopsound', (e) => {
-    const on = !!(e.detail && e.detail.enabled);
-    if (on) {
-      if (isSlopActive()) startMusic();
-    } else {
-      stopMusic();
-    }
-  });
-  // Page loaded already in slop mode (e.g. `--slop` → ?slop=1). The
-  // initial tclaude:slop fired from applySlopThemeIfRequested() before
-  // this binder existed, so load the saved channel and kick the player off
-  // here — unless sound is muted. startMusic handles the gestureless
-  // autoplay block by starting muted and unmuting on the first interaction.
-  if (isSlopActive()) {
+// syncVegas brings the radio in line with the live state. It plays when
+// the Vegas features are active (slop OR the regular-mode opt-in) AND the
+// master sound switch is on; otherwise it stops. Idempotent — startMusic
+// no-ops if a player already exists, stopMusic if none does — so it's safe
+// to call on every tclaude:vegas / tclaude:slopsound event and on boot.
+//
+// When reached from a toggle click (or the master-switch click) we're
+// inside that gesture's call stack, so autoplay-with-sound is granted; on
+// a gestureless activation (the snapshot turning body.vegas on, or a
+// ?slop=1 load) startMusic falls back to muted playback and unmutes on the
+// first interaction. leaveVegasTabIfActive only fires when the features go
+// fully inactive, so merely muting the sound never kicks you off the tab.
+function syncVegas() {
+  if (isVegasActive()) {
+    // Load the persisted channel once (lazily, on first activation) so a
+    // later unmute starts on the saved station.
     loadChannel();
     if (isSlopSoundEnabled()) startMusic();
+    else stopMusic(); // master mute → no stream, but keep the tab/HUD
+  } else {
+    stopMusic();
+    leaveVegasTabIfActive();
   }
+}
+
+export function bindVegasMusic() {
+  // The Vegas features' availability changed — slop toggled, or the
+  // regular-mode opt-in flipped (refresh.js → setVegasRegularMode).
+  document.addEventListener('tclaude:vegas', syncVegas);
+  // The master sound switch (slop-audio.js's header button) toggled. This
+  // is what makes the one header button govern the music as well as the FX.
+  document.addEventListener('tclaude:slopsound', syncVegas);
+  // Page may have loaded already active (e.g. `--slop` → ?slop=1; the
+  // regular-mode opt-in arrives with the first snapshot, after this binds,
+  // via its own tclaude:vegas). The initial tclaude:vegas from
+  // applySlopThemeIfRequested() fired before this binder existed, so sync
+  // the initial state here.
+  syncVegas();
 }
