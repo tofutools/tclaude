@@ -307,6 +307,44 @@ func TestLoadOrCreateOperatorTokenFile_ReChmodsLoosePerms(t *testing.T) {
 	}
 }
 
+// TestLoadOrCreateOperatorTokenFile_ForcesPermsWhenOverwritingEmptyFile
+// guards the secret-at-loose-perms hole: os.WriteFile does NOT re-mode an
+// existing file, so writing the freshly-minted secret into a pre-existing
+// empty 0644 file must still end at 0600.
+func TestLoadOrCreateOperatorTokenFile_ForcesPermsWhenOverwritingEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, ".tclaude", "operator_token")
+	if err := os.MkdirAll(filepath.Dir(fp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing EMPTY file at loose perms — forces the mint-and-write
+	// branch (not the read+chmod branch).
+	if err := os.WriteFile(fp, []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := loadOrCreateOperatorTokenFile(fp)
+	if err != nil {
+		t.Fatalf("mint-and-write: %v", err)
+	}
+	if !strings.HasPrefix(tok, humanTokenPrefix) {
+		t.Fatalf("token %q missing prefix (should have minted fresh)", tok)
+	}
+	fi, err := os.Stat(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("perm after overwriting empty 0644 file = %o, want 0600", perm)
+	}
+	got, err := os.ReadFile(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != tok {
+		t.Fatalf("file contents %q != minted token %q", strings.TrimSpace(string(got)), tok)
+	}
+}
+
 func TestLoadOrCreateOperatorToken_DegradesToEphemeralWhenFileUnavailable(t *testing.T) {
 	withTokenTestEnv(t)
 	// Keychain unavailable AND no resolvable file path → ephemeral, so the

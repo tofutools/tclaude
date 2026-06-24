@@ -253,12 +253,14 @@ func existingFileToken() string {
 
 // loadOrCreateOperatorTokenFile reads the operator token from path, or mints
 // and writes a fresh one when the file is absent or empty. The secret is
-// protected by the file's own 0600 mode (an existing file is re-chmodded to
-// 0600 defensively); the containing ~/.tclaude dir is created if missing but
-// is otherwise left at whatever mode it already has (it is shared with the
-// db / config / logs and created 0755 elsewhere — the 0600 file is the
-// boundary, not the dir). Returns an error only on an unexpected read/write
-// failure (a missing file is not an error).
+// always protected by the file's own 0600 mode — enforced on every path:
+// a non-empty existing file is re-chmodded defensively on read, and the
+// mint-and-write path forces 0600 after the write (os.WriteFile does not
+// re-mode an existing file). The containing ~/.tclaude dir is created 0700
+// when missing, else left as-is (it is shared with the db / config / logs,
+// typically already 0755 — the 0600 file is the boundary, not the dir).
+// Returns an error only on an unexpected read/write failure (a missing file
+// is not an error).
 func loadOrCreateOperatorTokenFile(path string) (string, tokenSource, error) {
 	if path == "" {
 		return "", tokenSource{}, errors.New("could not resolve operator token file path (no home dir)")
@@ -280,6 +282,13 @@ func loadOrCreateOperatorTokenFile(path string) (string, tokenSource, error) {
 	}
 	if err := os.WriteFile(path, []byte(tok+"\n"), 0o600); err != nil {
 		return "", tokenSource{}, fmt.Errorf("write operator token file %s: %w", path, err)
+	}
+	// os.WriteFile applies its 0600 perm only when CREATING the file — it
+	// truncates an existing one without changing its mode. So a pre-existing
+	// empty/loose-perm file (e.g. 0644) would otherwise keep its loose mode
+	// after we write the secret into it. Force 0600 unconditionally.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", tokenSource{}, fmt.Errorf("chmod operator token file %s: %w", path, err)
 	}
 	return tok, tokenSource{kind: tokenSourceFile, path: path}, nil
 }
