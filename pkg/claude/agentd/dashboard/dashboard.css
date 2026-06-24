@@ -3070,12 +3070,14 @@ body.vegas .slop-hud {
   gap: 8px;
   margin-left: 10px;
 }
-/* The 🪙 credits tally and the high-rollers leaderboard count casino FX
-   wins, which only exist in slop mode — there are no jackpots in the
-   regular-mode music view. Hide both when Vegas is on WITHOUT the casino
-   re-skin so the regular dashboard shows just the sound + volume controls
-   (HUD) and the bare radio player (tab). */
+/* The 🪙 credits tally, the high-rollers leaderboard and the 🔔 FX volume
+   slider are all casino-FX-only — the FX exist only in slop mode, with no
+   jackpots or sounds in the regular-mode music view. Hide all three when
+   Vegas is on WITHOUT the casino re-skin so the regular dashboard shows
+   just the sound switch + the 🎵 music slider (HUD) and the bare radio
+   player (tab). The FX volume still persists and applies if slop turns on. */
 body.vegas:not(.slop) .slop-credits,
+body.vegas:not(.slop) .slop-vol-row-fx,
 body.vegas:not(.slop) #vegas-leaderboard { display: none; }
 .slop-credits {
   color: #ffe88c;

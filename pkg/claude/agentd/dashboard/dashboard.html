@@ -48,11 +48,14 @@
     </div>
   </span>
   <span class="meta" id="status"></span>
-  <!-- Slop-mode HUD — a running credits counter + the casino sound-FX
-       toggle. CSS-hidden unless body.slop (see dashboard.css); fed by
-       slop-credits.js / slop-audio.js. Always in the DOM so flipping slop
-       in-place doesn't need a re-render. Not aria-hidden: it holds the
-       interactive sound button, which must stay reachable when shown. -->
+  <!-- Vegas HUD — a credits counter (slop-credits.js), the master sound
+       switch (slop-audio.js) and the 🎚️ volume mixer (slop-volume.js).
+       CSS-hidden unless body.slop OR body.vegas (the regular-mode opt-in)
+       — see dashboard.css; the volume controls go wherever the music does.
+       The credits tally + FX slider are casino-only and hide in the
+       regular-mode view. Always in the DOM so flipping mode in-place needs
+       no re-render. Not aria-hidden: it holds the interactive sound +
+       volume controls, which must stay reachable when shown. -->
   <span class="slop-hud" id="slop-hud">
     <span class="slop-credits" id="slop-credits" title="Slop credits — climbs on every jackpot this session">🪙 0</span>
     <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
@@ -68,7 +71,11 @@
           <input id="slop-vol-music" type="range" min="0" max="100" step="1" value="100" aria-label="Music volume">
           <span class="slop-vol-val" id="slop-vol-music-val">100%</span>
         </label>
-        <label class="slop-vol-row" title="Effects volume — the casino sound FX (coins, reels, jackpots)">
+        <!-- The FX slider drives the casino sound effects, which only exist
+             in slop mode — CSS-hidden in the regular-mode Vegas view (see
+             .slop-vol-row-fx in dashboard.css), leaving just the 🎵 music
+             slider there. The value still persists and applies in slop. -->
+        <label class="slop-vol-row slop-vol-row-fx" title="Effects volume — the casino sound FX (coins, reels, jackpots)">
           <span class="slop-vol-ico">🔔</span>
           <input id="slop-vol-fx" type="range" min="0" max="100" step="1" value="100" aria-label="Effects volume">
           <span class="slop-vol-val" id="slop-vol-fx-val">100%</span>
