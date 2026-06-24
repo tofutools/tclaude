@@ -84,7 +84,10 @@ function renderState() {
   document.dispatchEvent(new CustomEvent('tclaude:slop', { detail: { active: isSlop } }));
 }
 
-function toggleSlop() {
+// toggleSlop flips between the regular and slop themes — the same thing
+// the header 🤝/🎰 icon click and the global hotkey do. Exported so the
+// command palette can offer it as a "Switch theme" command.
+export function toggleSlop() {
   document.body.classList.toggle('slop');
   renderState();
   const u = new URL(window.location.href);
