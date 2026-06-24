@@ -46,6 +46,7 @@ import { bindAuditTab } from './audit.js';
 import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
+import { bindCommandPalette } from './palette.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -87,6 +88,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   bindTabs();
   bindTabHotkeys();
+  // The Ctrl/Cmd-K command palette. After bindTabs() so its "Go to <tab>"
+  // commands click nav buttons whose handlers are already wired.
+  bindCommandPalette();
   bindAccessSubtabs();
   bindCopy();
   bindDetailsPersistence();
