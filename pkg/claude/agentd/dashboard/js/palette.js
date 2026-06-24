@@ -122,10 +122,12 @@ function gotoGroupsTab() {
 }
 
 function setGroupOpen(name, open) {
-  recordGroupInteraction(name);
   gotoGroupsTab();
   const d = $(`#tab-groups details[data-group-key="${CSS.escape(name)}"]`);
   if (!d) { toast(`group ${name}: not listed on the Groups tab`, true); return; }
+  // Record only once we know the fold will actually happen — symmetric with
+  // the modal record sites, which stamp after their success point.
+  recordGroupInteraction(name);
   d.open = open; // fires toggle → bindDetailsPersistence persists the state
   const sum = d.querySelector('summary');
   if (sum) sum.scrollIntoView({ block: 'nearest' });

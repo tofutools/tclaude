@@ -67,6 +67,17 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("openAgentSpawnModal({ groupName: g.name })",
 		"each per-group spawn pins its group")
 
+	// The "last interacted group" memory MUST be stamped from the genuine
+	// group-title click/keyboard fold (bindGroupTitleToggle), NOT from the
+	// `toggle` event — the 2s re-render re-fires `toggle` on every open
+	// <details>, so recording there would let whatever group is open last
+	// win with no operator intent. Pin the record call on the title-toggle
+	// path so a refactor that moves it onto the spurious `toggle` handler
+	// (bindDetailsPersistence) is conspicuous. (A string guard can't prove
+	// the negative; this pins the intended placement.)
+	must("recordGroupInteraction(details.getAttribute('data-group-key'))",
+		"genuine fold/unfold records the last-interacted group on the click path")
+
 	// The theme toggle (regular ↔ slop) reuses slop.js's toggleSlop,
 	// which had to be exported for the palette to reach it.
 	must("export function toggleSlop(", "slop.js exports its theme toggle")
