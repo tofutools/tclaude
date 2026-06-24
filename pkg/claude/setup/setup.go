@@ -65,6 +65,7 @@ type Params struct {
 	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled agent-* skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the self.* permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
+	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
 
 	// Harness selects which coding harness's hooks to install/check
 	// (default "claude" → ~/.claude/settings.json; "codex" →
@@ -83,7 +84,8 @@ func Cmd() *cobra.Command {
 			"clickable notifications.\n\n" +
 			"The --install-* flags add optional extras on top of the baseline (they do not " +
 			"replace it): --install-agent-skills, --install-default-agent-permissions, " +
-			"--install-sandbox-hardening. --install-all enables every extra.",
+			"--install-sandbox-hardening, --install-resume-threshold-override. " +
+			"--install-all enables every extra.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -370,6 +372,46 @@ func installExtras(params *Params) error {
 			return err
 		}
 	}
+	if params.InstallResumeThreshold || params.InstallAll {
+		fmt.Println("\n=== Resume Threshold Override ===")
+		if err := installResumeThresholdOverride(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// installResumeThresholdOverride writes a claude_resume.threshold_minutes
+// override to ~/.tclaude/config.json that suppresses Claude Code's interactive
+// "Resume from summary" chooser — the multiple-choice prompt CC pops when
+// resuming an old, large session, which hangs tclaude's scripted resume (a
+// detached tmux pane can't answer a TUI it didn't expect). tclaude injects the
+// value as the CLAUDE_CODE_RESUME_THRESHOLD_MINUTES env var on the panes it
+// spawns; it never touches ~/.claude/settings.json, so manual `claude` runs and
+// the dashboard's config diff viewer stay clean.
+//
+// Skip-if-set, never overwrite: if the operator already configured a
+// threshold_minutes (by hand or a previous run), it is left exactly as-is. The
+// user opted in by passing the flag (or --install-all); we don't prompt further.
+func installResumeThresholdOverride() error {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	if cfg.ClaudeResume != nil && cfg.ClaudeResume.ThresholdMinutes != nil {
+		fmt.Printf("✓ claude_resume.threshold_minutes already set (%d) — leaving it unchanged\n",
+			*cfg.ClaudeResume.ThresholdMinutes)
+		return nil
+	}
+	if cfg.ClaudeResume == nil {
+		cfg.ClaudeResume = &config.ClaudeResumeConfig{}
+	}
+	v := config.ResumeThresholdMinutesSuppress
+	cfg.ClaudeResume.ThresholdMinutes = &v
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	fmt.Printf("✓ Set claude_resume.threshold_minutes=%d (suppresses Claude Code's resume-from-summary prompt)\n", v)
 	return nil
 }
 

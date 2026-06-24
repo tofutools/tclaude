@@ -46,6 +46,7 @@ tclaude setup --install-agent-skills --install-default-agent-permissions
 | `--install-agent-skills` | Bundled `agent-*` skills in `~/.claude/skills/`, `~/.agents/skills/`, and `$CODEX_HOME/skills` (default `~/.codex/skills`) | Using the agent coordination features |
 | `--install-default-agent-permissions` | Grants the `self.*` slugs those skills use | Using the agent coordination features |
 | `--install-sandbox-hardening` | Locks down agentd state in the Claude Code sandbox | Only if you run agents inside the CC sandbox |
+| `--install-resume-threshold-override` | Suppresses Claude Code's "Resume from summary" prompt for tclaude-spawned panes (it breaks scripted resume) | If detached/agent resumes hang on the resume chooser |
 | `--install-all` | Everything above | You want it all |
 
 See the **[Installation guide](https://tofutools.github.io/tclaude/#installation)** for the full walkthrough.

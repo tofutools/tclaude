@@ -248,6 +248,14 @@
         <div class="cfg-list" id="cfg-precompact-thresholds"></div>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Resume-from-summary prompt</span>
+        <label class="cfg-inline">show after
+          <input type="number" id="cfg-resume-minutes" min="0" placeholder="70" aria-label="Resume threshold minutes" style="width:11em" /> min idle</label>
+        <label class="cfg-inline">and
+          <input type="number" id="cfg-resume-tokens" min="0" placeholder="100000" aria-label="Resume token threshold" style="width:11em" /> tokens</label>
+        <span class="cfg-hint">Claude Code shows an interactive "Resume from summary" chooser when you resume a session that's both old <em>and</em> large — which hangs tclaude's scripted resume, since a detached pane can't answer it. These override the age / size thresholds CC uses to decide; the prompt fires only when <strong>both</strong> are exceeded, so raising <em>either</em> high enough suppresses it. <code>tclaude setup --install-resume-threshold-override</code> sets minutes to <code>525600000</code> (≈1000 years) to switch it off. Empty = Claude Code's defaults (70 min / 100k tokens); <code>0</code> always shows it. Injected as <code>CLAUDE_CODE_RESUME_*</code> env vars on tclaude-spawned <code>claude</code> panes only — never written to <code>~/.claude/settings.json</code>, so your manual <code>claude</code> runs are untouched.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Record hooks</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
         <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -471,6 +473,19 @@ func runNew(params *NewParams) error {
 	// Build claude command with all environment variables forwarded
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
+	}
+	// Suppress (or tune) Claude Code's interactive "Resume from summary"
+	// chooser for this detached pane: it would otherwise block a scripted
+	// resume (the daemon forks `tclaude session new -r` here), since a
+	// tmux-driven flow can't answer a TUI it didn't expect. The thresholds
+	// live in ~/.tclaude/config.json (never ~/.claude/settings.json), injected
+	// as CLAUDE_CODE_RESUME_* env vars on the spawned process. Claude-only —
+	// the vars are CC-specific and Codex has no such prompt. A best-effort
+	// Load failure leaves CC on its own defaults rather than aborting the spawn.
+	if h.Name == harness.DefaultName {
+		if cfg, cerr := config.Load(); cerr == nil {
+			maps.Copy(additionalEnv, cfg.ClaudeResumeEnv())
+		}
 	}
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 

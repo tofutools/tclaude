@@ -397,6 +397,14 @@ function populateConfigForm(cfg) {
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
   $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
   renderCfgThresholdList(pcg.thresholds || []);
+
+  // Resume-from-summary prompt thresholds — blank when unset (Claude Code's
+  // own default); a stored value (incl. 0 = always show) renders as-is so the
+  // human sees exactly what's on disk, including the large suppress sentinel.
+  const cr = cfg.claude_resume || {};
+  $('#cfg-resume-minutes').value = cr.threshold_minutes != null ? cr.threshold_minutes : '';
+  $('#cfg-resume-tokens').value = cr.token_threshold != null ? cr.token_threshold : '';
+
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
 
@@ -499,6 +507,21 @@ function assembleConfig() {
   const pcgFloors = readCfgThresholdList();
   if (pcgFloors.length) pcg.thresholds = pcgFloors; else delete pcg.thresholds;
   if (Object.keys(pcg).length) cfg.pre_compact_guard = pcg; else delete cfg.pre_compact_guard;
+
+  // claude_resume is an optional block — the CLAUDE_CODE_RESUME_* overrides
+  // tclaude injects into spawned Claude Code panes. Clone the existing block so
+  // a future sub-field with no widget round-trips. A blank field clears that
+  // override (CC keeps its own default); a value — including 0 (always show) or
+  // the large suppress sentinel — is written. A negative is written too, so the
+  // server's Validate surfaces the error rather than the value silently
+  // vanishing. Drop the whole block when nothing is left, so an all-default
+  // config doesn't marshal a spurious "claude_resume": {} diff.
+  const cr = (cfg.claude_resume && typeof cfg.claude_resume === 'object') ? cfg.claude_resume : {};
+  const crMinRaw = $('#cfg-resume-minutes').value.trim();
+  if (crMinRaw !== '') cr.threshold_minutes = cfgInt('cfg-resume-minutes', 0); else delete cr.threshold_minutes;
+  const crTokRaw = $('#cfg-resume-tokens').value.trim();
+  if (crTokRaw !== '') cr.token_threshold = cfgInt('cfg-resume-tokens', 0); else delete cr.token_threshold;
+  if (Object.keys(cr).length) cfg.claude_resume = cr; else delete cfg.claude_resume;
 
   cfg.record_hooks = $('#cfg-record-hooks').checked;
 

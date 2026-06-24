@@ -73,6 +73,92 @@ type Config struct {
 	// listener — see RemoteAccessConfig. Absent / disabled (the default)
 	// keeps agentd loopback-only.
 	RemoteAccess *RemoteAccessConfig `json:"remote_access,omitempty"`
+
+	// ClaudeResume tunes Claude Code's interactive "Resume from summary"
+	// prompt for tclaude-spawned panes — see ClaudeResumeConfig. Absent /
+	// nil keeps Claude Code's own defaults.
+	ClaudeResume *ClaudeResumeConfig `json:"claude_resume,omitempty"`
+}
+
+// ClaudeResumeConfig tunes Claude Code's interactive "Resume from summary"
+// chooser — the multiple-choice prompt CC shows when resuming a conversation
+// that is BOTH old (≥ ThresholdMinutes since last activity) AND large
+// (≥ TokenThreshold estimated tokens). That prompt breaks tclaude's scripted
+// resume: a detached, tmux-driven pane can't answer a TUI it didn't expect, so
+// the resume hangs. Raising either threshold high enough makes the prompt never
+// fire (CC's gate shows it only when both conditions hold, so lifting one is
+// enough) — `tclaude setup --install-resume-threshold-override` writes a large
+// ThresholdMinutes for exactly this reason.
+//
+// tclaude applies these as the CLAUDE_CODE_RESUME_THRESHOLD_MINUTES /
+// CLAUDE_CODE_RESUME_TOKEN_THRESHOLD environment variables on the `claude`
+// process it spawns ONLY — it never writes them into ~/.claude/settings.json.
+// That keeps the operator's manual `claude` runs untouched and makes this block
+// (in ~/.tclaude/config.json) the single source of truth the dashboard Config
+// tab and its diff viewer edit. The env vars are Claude-Code-specific, so the
+// overrides are injected only when the spawned harness is Claude Code; Codex has
+// no equivalent prompt and ignores the block.
+//
+// Both fields are pointers so "absent" is distinguishable from an explicit 0:
+// a nil pointer omits the matching env var (Claude Code keeps its own built-in
+// default — 70 minutes / 100,000 tokens), a set value injects it. The env vars
+// are undocumented and version-specific (verified against Claude Code 2.1.187);
+// if a future CC build renames or drops them the override degrades to a no-op,
+// never an error — clear the block to revert.
+type ClaudeResumeConfig struct {
+	// ThresholdMinutes overrides CLAUDE_CODE_RESUME_THRESHOLD_MINUTES — the
+	// minimum age (minutes since last activity) a conversation must reach
+	// before the resume prompt is even considered. nil omits the var (CC's
+	// 70-minute default). Set it very high (ResumeThresholdMinutesSuppress)
+	// to suppress the prompt for tclaude's automation.
+	ThresholdMinutes *int `json:"threshold_minutes,omitempty"`
+	// TokenThreshold overrides CLAUDE_CODE_RESUME_TOKEN_THRESHOLD — the
+	// minimum estimated context size (tokens) a conversation must reach
+	// before the resume prompt is considered. nil omits the var (CC's
+	// 100,000-token default). A secondary knob: raising ThresholdMinutes
+	// alone already suppresses the prompt.
+	TokenThreshold *int `json:"token_threshold,omitempty"`
+}
+
+// Claude Code resume-prompt environment variables. These gate CC's
+// "Resume from summary" chooser; tclaude injects them per-spawn to keep the
+// chooser from blocking a detached resume. Undocumented + version-specific
+// (Claude Code 2.1.187) — treated as best-effort, so an unknown-to-CC name is
+// simply ignored by the harness rather than an error here.
+const (
+	EnvResumeThresholdMinutes = "CLAUDE_CODE_RESUME_THRESHOLD_MINUTES"
+	EnvResumeTokenThreshold   = "CLAUDE_CODE_RESUME_TOKEN_THRESHOLD"
+)
+
+// ResumeThresholdMinutesSuppress is the ThresholdMinutes value
+// `tclaude setup --install-resume-threshold-override` writes to switch the
+// "Resume from summary" prompt off for tclaude-spawned panes: 525,600,000
+// minutes (1,000 years), so a resumed session's age can never reach it and the
+// prompt never fires. A deliberately absurd, clearly-intentional sentinel —
+// not a real threshold anyone would pick by hand.
+const ResumeThresholdMinutesSuppress = 525_600_000
+
+// ClaudeResumeEnv returns the CLAUDE_CODE_RESUME_* environment overrides to
+// inject into a spawned Claude Code process, or an empty map when nothing is
+// configured. Each set field contributes its env var; a nil field is omitted so
+// Claude Code keeps its own default for that threshold. Nil-safe on the receiver
+// so callers need no guard.
+//
+// It is harness-agnostic by construction — it just resolves the configured
+// integers to their CC env-var names. The caller decides WHEN to apply them
+// (only for the Claude Code harness), so this method never gates on harness.
+func (c *Config) ClaudeResumeEnv() map[string]string {
+	if c == nil || c.ClaudeResume == nil {
+		return nil
+	}
+	env := map[string]string{}
+	if c.ClaudeResume.ThresholdMinutes != nil {
+		env[EnvResumeThresholdMinutes] = strconv.Itoa(*c.ClaudeResume.ThresholdMinutes)
+	}
+	if c.ClaudeResume.TokenThreshold != nil {
+		env[EnvResumeTokenThreshold] = strconv.Itoa(*c.ClaudeResume.TokenThreshold)
+	}
+	return env
 }
 
 // AuditConfig configures the agentd audit log — the persistent trail of
@@ -1159,6 +1245,20 @@ func Validate(c *Config) []string {
 	if cc := c.Cost; cc != nil && cc.EstimateFactor != nil {
 		if f := *cc.EstimateFactor; f <= 0 || f > maxCostEstimateFactor {
 			errs = append(errs, fmt.Sprintf("cost.estimate_factor %g is out of range (>0 and ≤%g) — it is a display multiplier, e.g. 1.1 for +10%%", f, maxCostEstimateFactor))
+		}
+	}
+
+	// The resume thresholds are minute / token counts handed verbatim to
+	// Claude Code, which parses them as non-negative integers; a negative
+	// value is meaningless (and CC would reject it), so flag it rather than
+	// inject a var CC ignores. 0 is allowed — it FORCES the prompt for every
+	// resume, the deliberate inverse of the suppress sentinel.
+	if cr := c.ClaudeResume; cr != nil {
+		if cr.ThresholdMinutes != nil && *cr.ThresholdMinutes < 0 {
+			errs = append(errs, fmt.Sprintf("claude_resume.threshold_minutes %d must not be negative (use a large value to suppress the prompt, 0 to always show it)", *cr.ThresholdMinutes))
+		}
+		if cr.TokenThreshold != nil && *cr.TokenThreshold < 0 {
+			errs = append(errs, fmt.Sprintf("claude_resume.token_threshold %d must not be negative (use a large value to suppress the prompt, 0 to always show it)", *cr.TokenThreshold))
 		}
 	}
 

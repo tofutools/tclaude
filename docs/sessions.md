@@ -187,6 +187,31 @@ Enable it in `~/.tclaude/config.json` or via the dashboard **Config** tab:
 
 > Note: the guard refuses an *early* compaction; it does not move CC's trigger point. If CC re-attempts auto-compaction every turn past its boundary, the guard refuses each attempt (and logs it to `~/.tclaude/output.log`) until the floor is reached.
 
+## Resume-from-summary prompt
+
+When you resume a conversation that is **both old and large**, Claude Code shows an interactive *"Resume from summary"* chooser — a multiple-choice prompt offering to compact the session before resuming. That's fine when you're sitting at the keyboard, but it **breaks tclaude's scripted resume**: the daemon (and watch-mode resume) launch a detached `claude --resume` in a tmux pane and drive it with `send-keys`, and a tmux-driven flow can't answer a TUI it didn't expect — so the resume just hangs on the chooser.
+
+tclaude suppresses the chooser for the panes it spawns by raising the thresholds Claude Code uses to decide whether to show it. CC only shows the prompt when **both** the session age (`CLAUDE_CODE_RESUME_THRESHOLD_MINUTES`, default 70) **and** the estimated size (`CLAUDE_CODE_RESUME_TOKEN_THRESHOLD`, default 100,000 tokens) are exceeded, so lifting **either** one high enough switches it off. tclaude applies these as environment variables on the spawned `claude` process **only** — it never writes them into `~/.claude/settings.json`, so your manual `claude` runs are untouched and the values live in tclaude's own config (where the dashboard **Config** tab and its diff viewer can edit them). The overrides are Claude-Code-specific; Codex CLI has no such prompt and ignores them.
+
+Install the default suppression with either flag (idempotent — it skips if you've already configured a value, and never overwrites it):
+
+```bash
+tclaude setup --install-resume-threshold-override   # or: --install-all
+```
+
+That writes a large `threshold_minutes` (≈1000 years) so a resumed session's age can never reach it. Tune it by hand in `~/.tclaude/config.json` or via the dashboard **Config** tab:
+
+```json
+{
+  "claude_resume": {
+    "threshold_minutes": 525600000,
+    "token_threshold": 100000
+  }
+}
+```
+
+Omit a field to leave that threshold on Claude Code's own default; set a small value (e.g. `0`) to make the prompt *always* show. The thresholds are undocumented, version-specific Claude Code knobs (verified against CC 2.1.187), so tclaude treats them as best-effort — if a future CC build renames or drops them the override simply becomes a no-op rather than an error.
+
 ## Tmux Integration
 
 tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 
