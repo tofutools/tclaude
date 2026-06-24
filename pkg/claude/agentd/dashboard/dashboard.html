@@ -388,6 +388,11 @@
         <span class="cfg-hint">Only affects spawn-capable agents; humans always bypass spawn guardrails.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Normalize spawn names</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-spawnnormalize" /> auto-fix invalid characters in an agent name instead of rejecting it</label>
+        <span class="cfg-hint">On (default): a name like <code>code reviewer!</code> becomes <code>code-reviewer</code> at spawn. Off: a name outside <code>[A-Za-z0-9_-]</code> is rejected. Applies to the spawn dialog, <code>tclaude agent spawn</code>, and the daemon.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Spawn rate limit</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-spawnmax-enabled" /> cap</label>
         <input type="number" id="cfg-agent-spawnmax" min="0" placeholder="10" aria-label="Spawn rate limit per hour" />
@@ -1513,6 +1518,10 @@
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
       <input id="agent-spawn-name" type="text" placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
+      <!-- Live preview of the auto-normalized name when the typed one carries
+           characters outside [A-Za-z0-9_-] and config's spawn-name-normalize is
+           on. Set by updateSpawnNameHint(); empty (hidden) when nothing to fix. -->
+      <div id="agent-spawn-name-hint" class="spawn-field-hint"></div>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Role</span>

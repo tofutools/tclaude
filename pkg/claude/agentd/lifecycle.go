@@ -701,6 +701,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// calls executeSpawn directly, bypassing this gate; it falls back to the
 	// downstream isValidRenameTitle silent-drop — see handleTemplateInstantiate.)
 	body.Name = strings.TrimSpace(body.Name)
+	// Auto-normalize an invalid name to the safe branch-token charset when
+	// config's agent.spawn_name_normalize is on (the default), so any name a
+	// human types "just works" — "code reviewer!" lands as "code-reviewer"
+	// rather than 400ing. The CLI and dashboard normalize client-side too, so
+	// this is usually a no-op here (NormalizeSpawnName is idempotent); it is
+	// the authoritative backstop for a raw POST. Read config live so a Config
+	// tab toggle takes effect without a daemon restart. Disabled (explicit
+	// false) keeps the strict reject below.
+	if !isValidSpawnName(body.Name) {
+		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
+			body.Name = agent.NormalizeSpawnName(body.Name)
+		}
+	}
 	if !isValidSpawnName(body.Name) {
 		writeError(w, http.StatusBadRequest, "invalid_name",
 			fmt.Sprintf("name must be 1-%d characters from [A-Za-z0-9_-] (letters, "+

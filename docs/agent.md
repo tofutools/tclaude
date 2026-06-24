@@ -332,6 +332,19 @@ delay. To revert Claude Code to the older flow — launch a bare `claude`,
 poll for its conv-id, then inject `/rename` + the welcome over tmux — set
 `agent.spawn_legacy_injection: true` in `~/.tclaude/config.json`.
 
+**Name charset + auto-normalization.** A spawn name doubles as a git
+worktree branch token and the conversation title, so it is restricted to
+`[A-Za-z0-9_-]` (1–64 chars). By default a name straying outside that set is
+**auto-normalized** rather than rejected — runs of spaces/punctuation/unicode
+collapse to a single `-` and leading/trailing separators are trimmed, so
+`--name "code reviewer!"` lands as `code-reviewer`. This applies uniformly to
+`tclaude agent spawn`, `--join-group`, and the dashboard's spawn modal (which
+previews the normalized name as you type). Set
+`agent.spawn_name_normalize: false` in `~/.tclaude/config.json` (or untick
+*Normalize spawn names* on the dashboard's Config tab) to restore the strict
+behaviour, where an out-of-charset name is rejected. An empty name is always
+valid — the agent gets an auto-generated label.
+
 For a **Codex** spawn the daemon can't preset the conv-id (Codex generates
 it at its first turn), but Codex must self-submit *some* first-turn prompt
 for that id — and its on-disk history — to materialise at all. So that

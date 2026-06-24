@@ -554,6 +554,11 @@ type snapshotPayload struct {
 	// master OS-notification switch above the per-group / per-agent
 	// filters. Drives the top-bar bell toggle.
 	NotificationsEnabled bool `json:"notifications_enabled"`
+	// SpawnNameNormalize mirrors config.SpawnNameNormalizeEnabled (config
+	// agent.spawn_name_normalize, default on). The spawn modal reads it to
+	// decide whether to auto-normalize an invalid agent name to the safe
+	// branch-token charset (the default) or reject it with the inline error.
+	SpawnNameNormalize bool `json:"spawn_name_normalize"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1139,6 +1144,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		UserDefaultModel:     readUserDefaultModel(),
 		Harnesses:            buildHarnessCatalog(),
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
+		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

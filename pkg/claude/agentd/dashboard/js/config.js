@@ -451,6 +451,9 @@ function populateConfigForm(cfg) {
   $('#cfg-agent-clonecooldown').value = a.clone_cooldown || '';
   // nil / true both mean "on" (the default); only an explicit false is off.
   $('#cfg-agent-spawnrestrict').checked = a.spawn_group_restriction !== false;
+  // Same default-on *bool shape: nil / true = normalize names, only an
+  // explicit false rejects invalid names.
+  $('#cfg-agent-spawnnormalize').checked = a.spawn_name_normalize !== false;
   const smph = a.spawn_max_per_hour;
   $('#cfg-agent-spawnmax-enabled').checked = smph != null;
   $('#cfg-agent-spawnmax').value = smph != null ? smph : '';
@@ -611,6 +614,13 @@ function assembleConfig() {
     if (a.spawn_group_restriction === false) delete a.spawn_group_restriction;
   } else {
     a.spawn_group_restriction = false;
+  }
+  // Default-on: preserve an existing nil/true rather than writing a
+  // redundant explicit `true`; only persist the explicit `false`.
+  if ($('#cfg-agent-spawnnormalize').checked) {
+    if (a.spawn_name_normalize === false) delete a.spawn_name_normalize;
+  } else {
+    a.spawn_name_normalize = false;
   }
   if ($('#cfg-agent-spawnmax-enabled').checked) a.spawn_max_per_hour = cfgInt('cfg-agent-spawnmax', 10);
   else delete a.spawn_max_per_hour;

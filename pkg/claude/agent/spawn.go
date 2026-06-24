@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -316,7 +317,19 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// message instead of reaching the daemon. An empty name is fine (the
 	// agent gets an auto-generated label); a non-empty one must be a safe
 	// token. The daemon re-validates server-side (handleGroupSpawn).
+	//
+	// When config's agent.spawn_name_normalize is on (the default), coerce a
+	// bad name to the safe charset instead of rejecting it — so `tclaude
+	// agent spawn --name "code reviewer"` "just works" the same way the
+	// dashboard modal does. The daemon re-normalizes (idempotent) as the
+	// authoritative backstop. Disabled (explicit false) keeps the strict
+	// reject below.
 	name := strings.TrimSpace(p.Name)
+	if !isValidSpawnName(name) {
+		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
+			name = NormalizeSpawnName(name)
+		}
+	}
 	if !isValidSpawnName(name) {
 		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
 		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")

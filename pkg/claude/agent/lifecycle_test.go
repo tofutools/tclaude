@@ -179,3 +179,56 @@ func TestIsValidSpawnName(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeSpawnName covers the auto-normalization the spawn surfaces
+// apply when config.agent.spawn_name_normalize is on (the default): any
+// typed name is coerced into the [A-Za-z0-9_-] charset isValidSpawnName
+// accepts, so "code reviewer!" "just works" rather than 400ing. The two
+// invariants every case must hold — the output is always valid, and
+// normalization is idempotent — are asserted in the loop below the table.
+func TestNormalizeSpawnName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// Already-valid names pass through untouched.
+		{"already valid", "code-reviewer_2", "code-reviewer_2"},
+		{"plain", "abc123", "abc123"},
+		{"empty stays empty", "", ""},
+
+		// Spaces / punctuation collapse to a single dash.
+		{"space", "code reviewer", "code-reviewer"},
+		{"slash", "code/reviewer", "code-reviewer"},
+		{"dot", "code.reviewer", "code-reviewer"},
+		{"multiple spaces collapse", "code   reviewer", "code-reviewer"},
+		{"mixed punctuation collapses", "code @#! reviewer", "code-reviewer"},
+
+		// Leading/trailing junk is trimmed away.
+		{"brackets trimmed", "[reviewer]", "reviewer"},
+		{"leading punctuation", "!foo", "foo"},
+		{"trailing punctuation", "foo!", "foo"},
+		{"surrounded by junk + spaces", "  *foo*  ", "foo"}, // the dashes spaces/junk become are trimmed off the ends
+
+		// Unicode → dash, trailing dash trimmed.
+		{"latin extended", "café", "caf"},
+		{"emoji only", "🎉", ""},
+		{"emoji suffix", "reviewer😀", "reviewer"},
+
+		// Length cap (64) with a clean trailing-dash trim after the cut.
+		{"oversize truncated", strings.Repeat("a", MaxSpawnNameLen+10), strings.Repeat("a", MaxSpawnNameLen)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeSpawnName(tt.in)
+			assert.Equalf(t, tt.want, got, "NormalizeSpawnName(%q)", tt.in)
+			// Invariant 1: the result always clears the spawn-name gate, so a
+			// caller can normalize-then-spawn with no second rejection.
+			assert.Truef(t, isValidSpawnName(got),
+				"NormalizeSpawnName(%q) = %q is not a valid spawn name", tt.in, got)
+			// Invariant 2: idempotent — normalizing the output is a no-op.
+			assert.Equalf(t, got, NormalizeSpawnName(got),
+				"NormalizeSpawnName not idempotent on %q", tt.in)
+		})
+	}
+}
