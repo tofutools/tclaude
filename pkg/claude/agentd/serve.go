@@ -1,7 +1,9 @@
 package agentd
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -549,4 +551,20 @@ type statusRec struct {
 func (r *statusRec) WriteHeader(c int) {
 	r.code = c
 	r.ResponseWriter.WriteHeader(c)
+}
+
+// Hijack forwards to the wrapped ResponseWriter's http.Hijacker, which Go
+// does NOT promote automatically: statusRec embeds the http.ResponseWriter
+// *interface*, and method promotion through an embedded interface only
+// forwards methods declared on that interface (Header/Write/WriteHeader) —
+// never extra methods the concrete value underneath happens to implement.
+// Without this, gorilla/websocket's Upgrade (which type-asserts for
+// http.Hijacker) fails on every request routed through logRequest /
+// auditRequests, breaking the dashboard's in-browser terminal WebSocket.
+func (r *statusRec) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("statusRec: underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return h.Hijack()
 }

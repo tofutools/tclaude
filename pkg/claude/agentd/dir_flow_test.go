@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -308,4 +309,98 @@ func TestDir_WorktreeFallsBackToStart(t *testing.T) {
 	var info dirInfo
 	testharness.DecodeJSON(t, rec, &info)
 	assert.Equal(t, startDir, info.WorktreeDir, "worktree_dir falls back to start")
+}
+
+// Scenario: openTerminal can't pop a native window — no display, no
+// terminal emulator installed, whatever the reason.
+//
+// Expected: POST /api/term/{conv} degrades to the in-browser terminal
+// fallback (200, mode:"browser", a ws path the dashboard can open
+// modal-term.js against) instead of failing outright.
+func TestDir_DashboardTermButtonFallsBackToBrowser(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirfb-aaaa-bbbb-cccc-dddd"
+	const startDir = "/home/u/git"
+
+	f.HaveConvWithTitle(conv, "dash-term-fallback")
+	f.HaveAliveSession(conv, "lbl-dirfb", "tclaude-dirfb", startDir)
+
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		return errors.New("no graphical display: neither DISPLAY nor WAYLAND_DISPLAY is set")
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/term/"+conv, map[string]string{"which": "start"}))
+	require.Equal(t, http.StatusOK, rec.Code, "term fallback: body=%s", rec.Body.String())
+	var info struct {
+		Dir   string `json:"dir"`
+		Which string `json:"which"`
+		Mode  string `json:"mode"`
+		WS    string `json:"ws"`
+	}
+	testharness.DecodeJSON(t, rec, &info)
+	assert.Equal(t, "browser", info.Mode, "no native window available, so mode must be browser")
+	assert.Equal(t, startDir, info.Dir)
+	assert.Equal(t, "/api/term-ws/"+conv+"?which=start", info.WS,
+		"ws path must target the same conv + which the request asked for")
+}
+
+// Scenario: same as above but for the "open window" (attach to live
+// session) action.
+//
+// Expected: POST /api/open-window/{conv} degrades to the in-browser
+// fallback attached to the same live session, instead of failing.
+func TestDir_DashboardOpenWindowButtonFallsBackToBrowser(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirowfb-aaaa-bbbb-cccc-dddd"
+	const label = "lbl-dirowfb"
+	const startDir = "/home/u/git"
+
+	f.HaveConvWithTitle(conv, "dash-open-window-fallback")
+	f.HaveAliveSession(conv, label, "tclaude-dirowfb", startDir)
+
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		return errors.New("no graphical display: neither DISPLAY nor WAYLAND_DISPLAY is set")
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/open-window/"+conv, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "open-window fallback: body=%s", rec.Body.String())
+	var info struct {
+		ConvID string `json:"conv_id"`
+		Label  string `json:"label"`
+		Mode   string `json:"mode"`
+		WS     string `json:"ws"`
+	}
+	testharness.DecodeJSON(t, rec, &info)
+	assert.Equal(t, "browser", info.Mode, "no native window available, so mode must be browser")
+	assert.Equal(t, label, info.Label)
+	assert.Equal(t, "/api/open-window-ws/"+conv, info.WS)
+}
+
+// Scenario: the new term/open-window WebSocket upgrade routes carry
+// the same human-consent threat model as every other dashboard /api/*
+// route.
+//
+// Expected: a request with no dashboard session cookie is refused
+// before ever reaching websocket.Upgrade.
+func TestDir_TermWSRoutesRequireDashboardAuth(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	dash := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(dash)
+
+	rec := testharness.Serve(dash, httptest.NewRequest(http.MethodGet, "/api/term-ws/whatever", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"term-ws without a session cookie must be refused; body=%s", rec.Body.String())
+
+	rec = testharness.Serve(dash, httptest.NewRequest(http.MethodGet, "/api/open-window-ws/whatever", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"open-window-ws without a session cookie must be refused; body=%s", rec.Body.String())
 }
