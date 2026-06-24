@@ -378,6 +378,11 @@
         <span class="cfg-hint">Skips the system tray icon <code>agentd serve</code> shows by default. Takes effect next time <code>agentd serve</code> starts.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Persist operator token</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-persisttoken" /> keep the same operator token across restarts (same as <code>--persist-operator-token</code>)</label>
+        <span class="cfg-hint">Default off: a fresh token is minted every <code>agentd serve</code>, so you re-export <code>TCLAUDE_HUMAN_TOKEN</code> after each restart. On: the token is generated once and stored in the OS keychain (or a <code>0600 ~/.tclaude/operator_token</code> file when no keychain is available), so you export it just once. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Clone cooldown</span>
         <input type="text" id="cfg-agent-clonecooldown" placeholder="1m" aria-label="Clone cooldown" autocomplete="off" spellcheck="false" style="min-width:120px" />
         <span class="cfg-hint">Minimum gap between two agent-initiated clones of the same agent (Go duration: <code>1m</code>, <code>30s</code>, <code>0</code> to disable). Empty = built-in default.</span>

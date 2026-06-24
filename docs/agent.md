@@ -161,6 +161,22 @@ banner into their shell; the CLI then attaches it to every daemon
 request automatically. Restarting the daemon mints a new token, so the
 human re-copies it. Agents never need a token.
 
+**Opt in to a stable token.** If re-copying after every restart is
+tiresome, pass `--persist-operator-token` to `agentd serve` (or set
+`agent.persist_operator_token: true` in `~/.tclaude/config.json`, also a
+checkbox on the dashboard's Config tab — the two OR together). The daemon
+then generates the token once and stores it, reusing it across restarts,
+so you export it a single time. It is stored in the **OS keychain** when
+one is reachable (macOS Keychain, Linux Secret Service, Windows Credential
+Manager); on a host with no keychain backend (headless Linux, WSL without
+D-Bus) it falls back to a `0600 ~/.tclaude/operator_token` file. The
+secret is deliberately **not** written into `config.json` (which is
+plaintext and shows up in the Config-tab diff and backups); the file
+fallback keeps the same boundary as the in-memory token, since the agent
+sandbox already denies reads to `~/.tclaude`. You can also pin your own
+token by writing that file directly. Default (off) is the
+fresh-token-each-boot behaviour described above.
+
 **A Claude Code ancestor always wins over the token.** Because the
 human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a CC session
 launched from that shell would inherit it — so the daemon classifies
@@ -650,9 +666,12 @@ embeds.
   running terminal; restart manually after upgrades. (No launchd /
   systemd unit yet.)
 - Identity is resolved from the **socket peer** plus, for the human
-  operator, a per-daemon-lifetime **operator token** that is held in
-  memory only — never persisted to disk. A daemon restart mints a
-  fresh token.
+  operator, a per-daemon-lifetime **operator token**. By default it is
+  held in memory only — never persisted to disk — and a daemon restart
+  mints a fresh one. Opting in (`--persist-operator-token` /
+  `agent.persist_operator_token`) makes it stable across restarts,
+  stored in the OS keychain or a `0600 ~/.tclaude/operator_token` file;
+  see [The operator token](#the-operator-token).
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
 - The popup and the dashboard share the daemon's loopback port;
