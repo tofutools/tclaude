@@ -672,11 +672,22 @@ function costTokenHTML(today, mtd) {
 // source (the Claude top-level fields, or the nested .codex object —
 // both share the {available, five_hour, seven_day} shape). Returns an
 // array of token strings, empty when the source reports nothing.
+//
+// When the source is available it always emits BOTH windows — a missing
+// five_hour/seven_day renders as a 0% placeholder bar rather than being
+// dropped. The Claude and Codex rows are stacked and column-aligned (see
+// renderUsage), so the two rows MUST carry the same window slots or they
+// desync: a row with only a 7d token would slide its 7d under the other
+// row's 5h. The Go snapshot already pairs the windows ("show both or
+// neither" — pairUsageWindows zero-fills the absent one), but rendering
+// the placeholder here too keeps the layout aligned independent of that
+// guarantee — better a little too much usage data than a misaligned row.
 function subscriptionWindowsHTML(src) {
   const wins = [];
   if (src && src.available) {
-    if (src.five_hour) wins.push(usageWindowHTML('5h', src.five_hour));
-    if (src.seven_day) wins.push(usageWindowHTML('7d', src.seven_day));
+    const zero = { pct: 0, remaining: '' };
+    wins.push(usageWindowHTML('5h', src.five_hour || zero));
+    wins.push(usageWindowHTML('7d', src.seven_day || zero));
   }
   return wins;
 }

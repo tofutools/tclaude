@@ -773,7 +773,13 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
    rows and don't reflow over time. */
 #usage.multiline .ulabel { display: inline-block; min-width: 2ch; }            /* "5h" / "7d" */
 #usage.multiline .upct   { display: inline-block; min-width: 4ch; text-align: right; } /* up to "100%" */
-#usage.multiline .urem   { display: inline-block; min-width: 7ch; }            /* up to "(6d23h)" / "(reset)" */
+/* 8ch, not 7ch: the worst-case reset hint is the 7-day/weekly window in its
+   final sub-24h stretch, formatRemaining's "%dh%dm" → "23h59m" → "(23h59m)"
+   = 8 chars. At 7ch that hint overflowed its column; because the block is
+   right-aligned (align-items: flex-end) the overflowing row grew wider than
+   the other and the two rows desynced by ~1ch — every field, not just the
+   hint, slid out of alignment. (reset)/(6d23h) are the 7ch cases. */
+#usage.multiline .urem   { display: inline-block; min-width: 8ch; }            /* up to "(23h59m)" */
 
 /* -- Costs tab ------------------------------------------------------
    Per-day spend bars in the same money-green as the cost tokens.
