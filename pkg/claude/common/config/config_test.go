@@ -528,3 +528,31 @@ func TestAskConfig_RoundTrips(t *testing.T) {
 	assert.Equal(t, "opus", loaded.Ask.Model)
 	assert.Equal(t, "high", loaded.Ask.Effort)
 }
+
+// TestSpawnNameNormalizeEnabled covers the default-on *bool resolver behind
+// the auto-normalize-spawn-name feature: nil config, an absent agent block,
+// and an absent key all mean ON (any typed name "just works"); only an
+// explicit false disables it. The JSON shape is asserted too so a default
+// config stays clean (no redundant key) while an explicit-off round-trips.
+func TestSpawnNameNormalizeEnabled(t *testing.T) {
+	off := false
+	on := true
+
+	assert.True(t, (*Config)(nil).SpawnNameNormalizeEnabled(), "nil config → on")
+	assert.True(t, (&Config{}).SpawnNameNormalizeEnabled(), "no agent block → on")
+	assert.True(t, (&Config{Agent: &AgentConfig{}}).SpawnNameNormalizeEnabled(), "absent key → on")
+	assert.True(t, (&Config{Agent: &AgentConfig{SpawnNameNormalize: &on}}).SpawnNameNormalizeEnabled(), "explicit true → on")
+	assert.False(t, (&Config{Agent: &AgentConfig{SpawnNameNormalize: &off}}).SpawnNameNormalizeEnabled(), "explicit false → off")
+
+	// A default config omits the key (omitempty + nil pointer).
+	clean, err := json.Marshal(&Config{Agent: &AgentConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "spawn_name_normalize")
+
+	// An explicit-off round-trips through Save/Load and stays off.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Agent: &AgentConfig{SpawnNameNormalize: &off}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.False(t, loaded.SpawnNameNormalizeEnabled(), "explicit false survives round-trip")
+}

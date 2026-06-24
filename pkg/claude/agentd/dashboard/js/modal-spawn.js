@@ -300,6 +300,98 @@ function updateSpawnGroupContextRow(groupName) {
 // worktree picker.
 const SPAWN_WT_NONE = '(no worktree — use CWD above)';
 
+// ---- Spawn name normalization (config agent.spawn_name_normalize) -------
+//
+// A spawn name doubles as a git worktree branch token and the conversation
+// title, so it is restricted to [A-Za-z0-9_-]. Rather than reject a name
+// that strays outside that set, the default behaviour auto-normalizes it
+// (e.g. "code reviewer!" → "code-reviewer") so any typed name works. The
+// three constants/functions below mirror the Go side (agent.MaxSpawnNameLen,
+// isValidSpawnName, agent.NormalizeSpawnName) so the live preview matches
+// exactly what the daemon would create; the daemon re-normalizes as the
+// authoritative backstop.
+
+const MAX_SPAWN_NAME_LEN = 64;
+
+// SPAWN_NAME_VALID matches the daemon's isValidSpawnName charset gate. An
+// empty name is separately allowed (the agent gets an auto-generated label),
+// so callers test `name && !SPAWN_NAME_VALID.test(name)`.
+const SPAWN_NAME_VALID = /^[A-Za-z0-9_-]{1,64}$/;
+
+// spawnNameNormalizeEnabled reflects config agent.spawn_name_normalize
+// (default on) from the latest snapshot. Undefined (snapshot not loaded yet
+// / older daemon) defaults ON to match the Go default — the modal auto-fixes
+// rather than rejecting.
+function spawnNameNormalizeEnabled() {
+  return !lastSnapshot || lastSnapshot.spawn_name_normalize !== false;
+}
+
+// normalizeSpawnName mirrors agent.NormalizeSpawnName (Go): collapse every
+// run of disallowed characters to a single '-', trim leading/trailing '-',
+// cap at MAX_SPAWN_NAME_LEN, and re-trim a trailing '-' a mid-run cut leaves.
+// `for…of` iterates by code point, matching Go's rune loop. The output is
+// all-ASCII so .length == char count == the Go byte cap. Idempotent; an
+// all-invalid input yields "".
+function normalizeSpawnName(name) {
+  let out = '';
+  let prevSep = false;
+  for (const ch of name) {
+    if (/[A-Za-z0-9_-]/.test(ch)) {
+      out += ch;
+      prevSep = false;
+    } else if (!prevSep) {
+      out += '-';
+      prevSep = true;
+    }
+  }
+  out = out.replace(/^-+/, '').replace(/-+$/, '');
+  if (out.length > MAX_SPAWN_NAME_LEN) {
+    out = out.slice(0, MAX_SPAWN_NAME_LEN).replace(/-+$/, '');
+  }
+  return out;
+}
+
+// updateSpawnNameHint shows a live preview under the Name field: when the
+// typed name carries forbidden characters it either previews the normalized
+// result (normalization on) or warns it'll be rejected (off). Purely
+// advisory — it never rewrites the field (commitSpawnName does that on blur /
+// submit), so typing stays jank-free. The .spawn-field-hint :empty rule
+// hides it when there's nothing to say.
+function updateSpawnNameHint() {
+  const hintEl = $('#agent-spawn-name-hint');
+  if (!hintEl) return;
+  const raw = $('#agent-spawn-name').value.trim();
+  hintEl.classList.remove('warn');
+  if (!raw || SPAWN_NAME_VALID.test(raw)) {
+    hintEl.textContent = '';
+    return;
+  }
+  if (spawnNameNormalizeEnabled()) {
+    const norm = normalizeSpawnName(raw);
+    hintEl.textContent = norm
+      ? `will be created as “${norm}”`
+      : 'no usable characters — the agent will get an auto-generated name';
+  } else {
+    hintEl.classList.add('warn');
+    hintEl.textContent = 'invalid — use only letters, digits, underscore and dash (max 64 chars)';
+  }
+}
+
+// commitSpawnName applies the normalized name back into the Name field (and
+// re-runs the name→branch sync so the worktree branch follows the fixed
+// name). Called on the field's blur and from submit. A no-op when the name
+// is already valid/empty or normalization is off — in the off case submit
+// reports the inline error instead.
+function commitSpawnName() {
+  if (!spawnNameNormalizeEnabled()) return;
+  const el = $('#agent-spawn-name');
+  const raw = el.value.trim();
+  if (!raw || SPAWN_NAME_VALID.test(raw)) return;
+  el.value = normalizeSpawnName(raw);
+  applyWtSync();
+  updateSpawnNameHint();
+}
+
 // applyWtSync reflects the "Sync worktree branch with name"
 // checkbox into the spawn modal's worktree picker. Call it after
 // the picker (re)loads, after the name changes, and whenever the
@@ -447,8 +539,10 @@ function applyProfileToSpawnForm(p) {
   if (p.include_group_default_context != null) {
     $('#agent-spawn-group-context').checked = !!p.include_group_default_context;
   }
-  // The name may have changed → re-sync the worktree branch name.
+  // The name may have changed → re-sync the worktree branch name + the
+  // normalize preview.
   applyWtSync();
+  updateSpawnNameHint();
 }
 
 // clearSpawnProfileFields resets the profile-controlled fields to their
@@ -473,6 +567,7 @@ function clearSpawnProfileFields() {
   $('#agent-spawn-load-profile').value = '';
   syncSelectTitle($('#agent-spawn-load-profile'));
   applyWtSync();
+  updateSpawnNameHint();
 }
 
 // populateSpawnProfileOptions rebuilds the Profile selector's <option> list
@@ -799,6 +894,9 @@ function openAgentSpawnModal(opts) {
     meta.style.display = 'none';
   }
   $('#agent-spawn-modal').classList.add('show');
+  // Clear any stale normalize preview from a prior open (the name field was
+  // reset above); a profile apply below refreshes it if it sets a name.
+  updateSpawnNameHint();
   // Populate the Profile selector and apply the group/dashboard default
   // profile. Runs after the modal is shown so its own stale-guard (which
   // checks the modal is still open) is satisfied; the fields above stand as
@@ -819,7 +917,7 @@ function closeAgentSpawnModal() {
 
 async function submitAgentSpawn() {
   const group = $('#agent-spawn-group').value;
-  const name = $('#agent-spawn-name').value.trim();
+  let name = $('#agent-spawn-name').value.trim();
   const role = $('#agent-spawn-role').value.trim();
   const descr = $('#agent-spawn-descr').value.trim();
   // The initial message is delivered to the new agent's inbox (an
@@ -849,15 +947,24 @@ async function submitAgentSpawn() {
     errEl.textContent = 'group is required';
     return;
   }
-  // Reject an invalid name client-side so the human gets an inline error
-  // instead of a round-trip 400. An empty name is fine (the agent gets an
-  // auto-generated label); a non-empty one must be a safe token. Mirrors
-  // the daemon's isValidSpawnName gate (agentd/handlers.go) — the name
-  // doubles as a git worktree branch name and becomes the conversation
-  // title, so only [A-Za-z0-9_-], 1–64 chars, are allowed.
-  if (name && !/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
-    errEl.textContent = 'name may use only letters, digits, underscore and dash (max 64 chars)';
-    return;
+  // Handle an invalid name client-side instead of a round-trip 400. An empty
+  // name is fine (the agent gets an auto-generated label); a non-empty one
+  // must be a safe token — the name doubles as a git worktree branch name and
+  // becomes the conversation title, so only [A-Za-z0-9_-], 1–64 chars, are
+  // allowed. When config's agent.spawn_name_normalize is on (the default) we
+  // auto-fix the name to that charset (and re-sync the worktree branch + the
+  // success label to match); off, we reject with the inline error. The daemon
+  // re-normalizes/re-validates as the authoritative backstop.
+  if (name && !SPAWN_NAME_VALID.test(name)) {
+    if (spawnNameNormalizeEnabled()) {
+      name = normalizeSpawnName(name);
+      $('#agent-spawn-name').value = name;
+      applyWtSync();
+      updateSpawnNameHint();
+    } else {
+      errEl.textContent = 'name may use only letters, digits, underscore and dash (max 64 chars)';
+      return;
+    }
   }
   // Persist the checkbox so the human's choice sticks across spawns.
   try { dashPrefs.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
@@ -1050,6 +1157,12 @@ function bindAgentSpawnModal() {
   // hand-editing the branch or picking a worktree by hand turns the
   // sync off so it stops fighting the human.
   $('#agent-spawn-name').addEventListener('input', applyWtSync);
+  // Live preview of the auto-normalized name on every keystroke; the field
+  // itself is only rewritten on blur/submit (commitSpawnName) to keep typing
+  // jank-free. A separate listener so the name→branch sync wiring above stays
+  // byte-identical (guarded by TestDashboardHTML_WorktreeNameSyncWired).
+  $('#agent-spawn-name').addEventListener('input', updateSpawnNameHint);
+  $('#agent-spawn-name').addEventListener('blur', commitSpawnName);
   $('#agent-spawn-wt-sync').addEventListener('change', applyWtSync);
   $('#agent-spawn-wt-branch').addEventListener('input', () => {
     $('#agent-spawn-wt-sync').checked = false;

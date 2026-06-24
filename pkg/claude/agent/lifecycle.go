@@ -168,16 +168,67 @@ func isValidSpawnName(name string) bool {
 		return false
 	}
 	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		default:
+		if !isSpawnNameRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// isSpawnNameRune reports whether r is in the spawn-name charset: ASCII
+// letters, digits, '-' and '_'. Factored out so isValidSpawnName (the
+// accept set) and NormalizeSpawnName (the coerce set) read off ONE
+// definition and can't drift.
+func isSpawnNameRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z':
+	case r >= 'A' && r <= 'Z':
+	case r >= '0' && r <= '9':
+	case r == '-' || r == '_':
+	default:
+		return false
+	}
+	return true
+}
+
+// NormalizeSpawnName coerces an arbitrary string into a valid spawn name —
+// the safe [A-Za-z0-9_-] branch-token charset isValidSpawnName accepts —
+// so any name a human types "just works" instead of being rejected. It is
+// the opt-out-able auto-normalization the spawn surfaces (the dashboard
+// modal, `tclaude agent spawn`, the daemon's spawn boundary) apply when
+// config's agent.spawn_name_normalize is on (the default).
+//
+// Every maximal run of disallowed characters (spaces, punctuation, unicode,
+// control chars) collapses to a single '-', and leading/trailing '-'
+// introduced this way are trimmed — so "code reviewer!" → "code-reviewer"
+// and "[café]" → "caf". The result is then capped at MaxSpawnNameLen (it is
+// all ASCII, so bytes == runes), re-trimming a trailing '-' a mid-run cut
+// may leave.
+//
+// It is idempotent: normalizing its own output returns it unchanged, and
+// the output always satisfies isValidSpawnName, so a caller can
+// normalize-then-spawn with no second rejection. An all-disallowed input
+// (e.g. "🎉") normalizes to "" — still valid, since an empty spawn name is
+// the "just give me an auto-labelled agent" case.
+func NormalizeSpawnName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	prevSep := false
+	for _, r := range name {
+		if isSpawnNameRune(r) {
+			b.WriteRune(r)
+			prevSep = false
+		} else if !prevSep {
+			// Collapse a run of disallowed chars into one separator.
+			b.WriteByte('-')
+			prevSep = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > MaxSpawnNameLen {
+		out = strings.TrimRight(out[:MaxSpawnNameLen], "-")
+	}
+	return out
 }
 
 // runSlashWithOptionalTarget dispatches to either the self endpoint

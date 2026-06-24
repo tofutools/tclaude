@@ -663,6 +663,18 @@ type AgentConfig struct {
 	// flow). See agentd.spawnUsesLegacyInjection.
 	SpawnLegacyInjection *bool `json:"spawn_legacy_injection,omitempty"`
 
+	// SpawnNameNormalize controls whether the spawn surfaces auto-normalize
+	// an entered agent name to the safe [A-Za-z0-9_-] branch-token charset
+	// (collapsing spaces/punctuation/unicode to '-', e.g. "code reviewer!" →
+	// "code-reviewer") instead of rejecting it with a 400. It is a *bool so
+	// the default-on state (nil / absent) is distinguishable from an explicit
+	// off: nil means ON — any typed name "just works", which is the
+	// out-of-box behaviour the dashboard's spawn modal, `tclaude agent spawn`,
+	// and the daemon's spawn boundary all share. Set it false to restore the
+	// strict reject-invalid-name behaviour. See agent.NormalizeSpawnName and
+	// Config.SpawnNameNormalizeEnabled.
+	SpawnNameNormalize *bool `json:"spawn_name_normalize,omitempty"`
+
 	// SpawnInlineMaxChars bounds the "inline the briefing into the first turn"
 	// optimisation. When a freshly-spawned agent's startup briefing (group
 	// context + task brief) fits within this many runes, the whole briefing is
@@ -896,6 +908,19 @@ func (c *Config) HasDefaultPermission(perm string) bool {
 		return false
 	}
 	return slices.Contains(c.Agent.DefaultPermissions, perm)
+}
+
+// SpawnNameNormalizeEnabled reports whether the spawn surfaces should
+// auto-normalize an invalid agent name (agent.NormalizeSpawnName) rather
+// than reject it. nil config / absent agent block / absent key all mean ON
+// — the out-of-box default, so any typed name "just works"; only an
+// explicit "spawn_name_normalize": false disables it. Nil-safe so callers
+// need no guard.
+func (c *Config) SpawnNameNormalizeEnabled() bool {
+	if c == nil || c.Agent == nil || c.Agent.SpawnNameNormalize == nil {
+		return true
+	}
+	return *c.Agent.SpawnNameNormalize
 }
 
 // NotificationConfig holds settings for OS notifications.
