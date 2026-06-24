@@ -7,6 +7,7 @@
 import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
+import { recordGroupInteraction } from './last-group.js';
 import {
   renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderUsage, renderDashDefaultProfile,
@@ -512,10 +513,18 @@ function bindGroupTitleToggle() {
       const ae = document.activeElement;
       if (ae && summary.contains(ae) && ae.matches('input, textarea, select')) {
         e.preventDefault();
+        return;
       }
+      // Genuine keyboard fold/unfold — remember it as the last group touched
+      // (drives the command palette's default spawn target).
+      recordGroupInteraction(details.getAttribute('data-group-key'));
       return;
     }
-    if (e.target.closest('.group-name')) return; // the title — allow toggle
+    if (e.target.closest('.group-name')) {
+      // Genuine mouse fold/unfold of the group title — remember it.
+      recordGroupInteraction(details.getAttribute('data-group-key'));
+      return; // the title — allow toggle
+    }
     e.preventDefault();
   }, true);
 }

@@ -35,6 +35,7 @@ import { toast, openWindowModal } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
+import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 
 const MODAL_ID = 'command-palette-modal';
 
@@ -124,6 +125,9 @@ function setGroupOpen(name, open) {
   gotoGroupsTab();
   const d = $(`#tab-groups details[data-group-key="${CSS.escape(name)}"]`);
   if (!d) { toast(`group ${name}: not listed on the Groups tab`, true); return; }
+  // Record only once we know the fold will actually happen — symmetric with
+  // the modal record sites, which stamp after their success point.
+  recordGroupInteraction(name);
   d.open = open; // fires toggle → bindDetailsPersistence persists the state
   const sum = d.querySelector('summary');
   if (sum) sum.scrollIntoView({ block: 'nearest' });
@@ -147,6 +151,7 @@ function setAllGroupsOpen(open) {
 // empty-query view.
 function buildCommands() {
   const snap = lastSnapshot || {};
+  const groups = snap.groups || [];
   const cmds = [];
 
   // 1) Global window ops — "hide all windows" (and its inverse), plus
@@ -172,13 +177,33 @@ function buildCommands() {
     run: () => openWindowModal('all', null),
   });
 
-  // 2) Spawn a new agent.
+  // 2) Spawn a new agent. The plain command DEFAULTS the dialog's group
+  //    picker to the group the operator last interacted with (folded /
+  //    spawned / palette-touched) but leaves it changeable; the per-group
+  //    variants below PIN a specific group each (hiding the picker). Both
+  //    reuse the existing spawn modal — `defaultGroup` preselects without
+  //    forcing, `groupName` fixes + hides the picker.
+  const lastGroup = lastInteractedGroup();
+  const lastGroupLive = groups.some(g => g.name === lastGroup);
   cmds.push({
     icon: '＋', label: 'Spawn agent…',
-    hint: 'open the spawn dialog',
-    keywords: 'new agent create spawn launch start',
-    run: () => openAgentSpawnModal({}),
+    hint: lastGroupLive
+      ? `open the spawn dialog (defaults to ${lastGroup} — last used)`
+      : 'open the spawn dialog',
+    keywords: 'new agent create spawn launch start'
+      + (lastGroupLive ? ' ' + lastGroup : ''),
+    run: () => openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {}),
   });
+  // One pinned spawn per group, so the operator can launch straight into a
+  // named group without first picking it in the dialog.
+  for (const g of groups) {
+    cmds.push({
+      icon: '＋', label: `Spawn agent in ${g.name}…`,
+      hint: 'open the spawn dialog pinned to this group',
+      keywords: 'new agent create spawn launch start group ' + g.name,
+      run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
+    });
+  }
 
   // 3) Theme toggle — regular ↔ slop, the only two themes today (the
   //    header 🤝/🎰 icon does the same). Labelled by the DESTINATION so
@@ -225,7 +250,7 @@ function buildCommands() {
     keywords: 'expand unfold open all groups view rows',
     run: () => setAllGroupsOpen(true),
   });
-  for (const g of (snap.groups || [])) {
+  for (const g of groups) {
     cmds.push({
       icon: '⊟', label: `Collapse group: ${g.name}`,
       hint: 'fold this group',
@@ -242,7 +267,7 @@ function buildCommands() {
 
   // 6) Per-group window ops — only groups with at least one running
   //    member (an idle group has no window to focus or hide).
-  for (const g of (snap.groups || [])) {
+  for (const g of groups) {
     const online = (g.members || []).filter(m => m.online).length;
     if (!online) continue;
     const n = `${online} window${online === 1 ? '' : 's'}`;
@@ -250,17 +275,17 @@ function buildCommands() {
       icon: '⏏', label: `Hide group: ${g.name}`,
       hint: `hide ${n}`,
       keywords: 'hide unfocus group windows ' + g.name,
-      run: () => bulkWindowOp(
+      run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'unfocus', scope: 'group', group: g.name },
-        `hide group ${g.name}`),
+        `hide group ${g.name}`); },
     });
     cmds.push({
       icon: '◎', label: `Focus group: ${g.name}`,
       hint: `raise ${n}`,
       keywords: 'focus show group windows ' + g.name,
-      run: () => bulkWindowOp(
+      run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'focus', scope: 'group', group: g.name },
-        `focus group ${g.name}`),
+        `focus group ${g.name}`); },
     });
   }
 
