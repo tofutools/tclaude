@@ -1,6 +1,8 @@
 package agentd_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -78,6 +80,57 @@ func TestAudit_MessageRecordsAgentActorAndPreview(t *testing.T) {
 	assert.Equal(t, "worker", row.TargetLabel, "target label is the recipient's display title")
 	assert.Contains(t, row.Detail, "rebasing now", "message preview is captured in detail")
 	assert.Equal(t, http.StatusOK, row.Status)
+}
+
+// Scenario: a worker replies to a message from the PO via `tclaude agent
+// reply` (POST /v1/messages/{id}/reply). The reply must leave its own
+// audit row — verb "reply", actor the worker, target the original sender
+// (the PO) — even though the reply path is three segments and the body
+// carries no `to`. Regression: the single-segment "messages" audit route
+// never matched the reply path, so replies were silently unaudited.
+func TestAudit_ReplyRecordsAgentActorAndTarget(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	po := f.AsHuman().Spawn("crew", "po")
+	require.Equal(t, http.StatusOK, po.Code, "spawn po; body=%s", po.Raw)
+	worker := f.AsHuman().Spawn("crew", "worker")
+	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
+	f.AssertGroupMember("crew", po.ConvID, "po", 5*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+
+	// PO messages the worker; capture the message id to reply to.
+	sent := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{
+			"to":      worker.ConvID,
+			"subject": "status?",
+			"body":    "where are we on the rebase",
+		}), po.ConvID))
+	require.Equal(t, http.StatusOK, sent.Code, "message should succeed; body=%s", sent.Body.String())
+	var sentBody struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(sent.Body.Bytes(), &sentBody))
+	require.NotZero(t, sentBody.ID, "message id should be returned")
+
+	// Worker replies — the reply target is derived server-side from the
+	// original (the PO), not carried in the body.
+	reply := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost,
+			fmt.Sprintf("/v1/messages/%d/reply", sentBody.ID),
+			map[string]any{"body": "rebase done, merging now"}), worker.ConvID))
+	require.Equal(t, http.StatusOK, reply.Code, "reply should succeed; body=%s", reply.Body.String())
+
+	row := auditRowByVerb(t, "reply")
+	assert.Equal(t, db.AuditActorAgent, row.ActorKind)
+	assert.Equal(t, worker.ConvID, row.ActorConv)
+	assert.Equal(t, "worker", row.ActorLabel, "actor label is the replier's display title")
+	assert.Equal(t, po.ConvID, row.TargetConv, "reply target is the original sender")
+	assert.Equal(t, "po", row.TargetLabel)
+	assert.Equal(t, "crew", row.GroupName, "reply stays on the original's routing group")
+	assert.Contains(t, row.Detail, "rebase done", "reply body is captured in detail")
+	assert.Equal(t, http.StatusOK, row.Status)
+	assert.Equal(t, db.AuditSourceCLI, row.Source)
 }
 
 // Scenario: an agent tries to retire another agent it neither owns nor

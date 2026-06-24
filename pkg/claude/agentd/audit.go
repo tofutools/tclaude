@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -75,6 +76,13 @@ type auditRoute struct {
 var auditRoutes = []auditRoute{
 	// Messaging.
 	{method: http.MethodPost, segs: []string{"messages"}, verb: "message", describe: describeMessage},
+	// Reply to a received message — `tclaude agent reply` / `inbox watch`,
+	// which POST /v1/messages/{id}/reply (CLI/TUI only; the dashboard has
+	// no reply path). Without this entry the single-segment "messages"
+	// route above never matches the three-segment reply path, so replies
+	// went unrecorded. The reply's recipient is not in the body (the daemon
+	// derives it from the original message), so describeReply resolves it.
+	{method: http.MethodPost, segs: []string{"messages", "{id}", "reply"}, verb: "reply", describe: describeReply},
 
 	// Per-agent lifecycle verbs. The CLI is /v1/agent/{sel}/{verb}; the
 	// dashboard is /api/agents/{conv}/{verb} (canonicalised agents→agent).
@@ -399,6 +407,51 @@ func describeMessage(c *auditCtx) {
 	} else if to != "" {
 		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(to)
 	}
+	detail := b.Subject
+	if body := strings.TrimSpace(b.Body); body != "" {
+		if detail != "" {
+			detail += " — " + body
+		} else {
+			detail = body
+		}
+	}
+	c.fields.Detail = auditClip(detail, 120)
+}
+
+// describeReply records a reply to a received message. Unlike a fresh
+// message, the request body carries only subject/body — the recipient is
+// the original message's sender, which the daemon derives from the {id}
+// path var. We resolve it here so the trail still shows WHO the reply
+// went to, mirroring the handler's own routing: the target is the
+// original sender walked forward to its live successor (so a reply that
+// lands on a reincarnated agent is attributed to the successor), and the
+// routing group stays the original's group (0 = a direct/off-group send).
+// A best-effort lookup: if the original row is gone (a 404 reply) the
+// target simply stays blank, which still records the attempt.
+func describeReply(c *auditCtx) {
+	var b struct {
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+
+	if id, err := strconv.ParseInt(c.vars["id"], 10, 64); err == nil {
+		if orig, err := db.GetAgentMessage(id); err == nil && orig != nil {
+			if orig.GroupID != 0 {
+				if g, _ := db.GetAgentGroupByID(orig.GroupID); g != nil {
+					c.fields.GroupName = g.Name
+				}
+			}
+			target, _ := walkSuccession(orig.FromConv)
+			if target == "" {
+				target = orig.FromConv
+			}
+			if target != "" {
+				c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(target)
+			}
+		}
+	}
+
 	detail := b.Subject
 	if body := strings.TrimSpace(b.Body); body != "" {
 		if detail != "" {
