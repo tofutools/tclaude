@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -904,7 +904,7 @@ function openAgentSpawnModal(opts) {
   // Load the worktree picker against the Worktree-repo field, then
   // apply the name-sync checkbox once it settles.
   spawnWtLoad($('#agent-spawn-wt-repo').value.trim());
-  $('#agent-spawn-error').textContent = '';
+  showModalError('agent-spawn-error', '');
   const meta = $('#agent-spawn-meta');
   if (groupName) {
     meta.textContent = `joining group: ${groupName}`;
@@ -961,9 +961,9 @@ async function submitAgentSpawn() {
   const autoFocus = $('#agent-spawn-focus').checked;
   const includeGroupContext = $('#agent-spawn-group-context').checked;
   const errEl = $('#agent-spawn-error');
-  errEl.textContent = '';
+  showModalError(errEl, '');
   if (!group) {
-    errEl.textContent = 'group is required';
+    showModalError(errEl, 'group is required');
     return;
   }
   // Handle an invalid name client-side instead of a round-trip 400. An empty
@@ -981,7 +981,7 @@ async function submitAgentSpawn() {
       applyWtSync();
       updateSpawnNameHint();
     } else {
-      errEl.textContent = 'name may use only letters, digits, underscore and dash (max 64 chars)';
+      showModalError(errEl, 'name may use only letters, digits, underscore and dash (max 64 chars)');
       return;
     }
   }
@@ -1056,7 +1056,7 @@ async function submitAgentSpawn() {
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+      showModalError(errEl, (await r.text()) || `HTTP ${r.status}`);
       return;
     }
     let payload = {};
@@ -1082,7 +1082,7 @@ async function submitAgentSpawn() {
     recordGroupInteraction(group);
     refresh();
   } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
+    showModalError(errEl, (err && err.message) || String(err));
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Spawn';
@@ -1283,7 +1283,7 @@ function openCloneAgentModal(conv, label, cwd) {
   $('#clone-agent-followup').value = '';
   $('#clone-agent-copy-conv').checked = true;
   $('#clone-agent-wt-branch').value = '';
-  $('#clone-agent-error').textContent = '';
+  showModalError('clone-agent-error', '');
   $('#clone-agent-modal').dataset.conv = conv;
   $('#clone-agent-modal').dataset.label = label || '';
   $('#clone-agent-modal').dataset.cwd = cwd;
@@ -1317,7 +1317,7 @@ async function submitCloneAgent() {
   const followUp = normaliseFollowUp($('#clone-agent-followup').value);
   const copyConv = $('#clone-agent-copy-conv').checked;
   const errEl = $('#clone-agent-error');
-  errEl.textContent = '';
+  showModalError(errEl, '');
   const submitBtn = $('#clone-agent-submit');
   submitBtn.disabled = true;
   submitBtn.textContent = 'Cloning…';
@@ -1339,7 +1339,7 @@ async function submitCloneAgent() {
       signal: ctrl.signal,
     });
     if (!r.ok) {
-      errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+      showModalError(errEl, (await r.text()) || `HTTP ${r.status}`);
       return;
     }
     let payload = {};
@@ -1357,9 +1357,9 @@ async function submitCloneAgent() {
     refresh();
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      errEl.textContent = `clone timed out after ${CLONE_FETCH_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`;
+      showModalError(errEl, `clone timed out after ${CLONE_FETCH_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`);
     } else {
-      errEl.textContent = (err && err.message) || String(err);
+      showModalError(errEl, (err && err.message) || String(err));
     }
   } finally {
     clearTimeout(timer);
@@ -1413,7 +1413,7 @@ function openReincarnateAgentModal(conv, label) {
   meta.textContent = label ? `target: ${label}` : `target: ${shortId(conv)}`;
   $('#reincarnate-agent-followup').value = '';
   $('#reincarnate-agent-focus').value = '';
-  $('#reincarnate-agent-error').textContent = '';
+  showModalError('reincarnate-agent-error', '');
   // Every open resets to the self-reincarnate default.
   const selfRadio = $('input[name=reincarnate-mode][value=self]');
   if (selfRadio) selfRadio.checked = true;
@@ -1433,13 +1433,13 @@ async function submitReincarnateAgent() {
   const conv = modal.dataset.conv;
   const label = modal.dataset.label || shortId(conv);
   const errEl = $('#reincarnate-agent-error');
-  errEl.textContent = '';
+  showModalError(errEl, '');
   const mode = reincarnateMode();
   let body;
   if (mode === 'force') {
     const followUp = normaliseFollowUp($('#reincarnate-agent-followup').value);
     if (!followUp) {
-      errEl.textContent = 'follow-up is required for force reincarnate';
+      showModalError(errEl, 'follow-up is required for force reincarnate');
       return;
     }
     body = { mode: 'force', follow_up: followUp };
@@ -1459,7 +1459,7 @@ async function submitReincarnateAgent() {
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      errEl.textContent = (await r.text()) || `HTTP ${r.status}`;
+      showModalError(errEl, (await r.text()) || `HTTP ${r.status}`);
       return;
     }
     let payload = {};
@@ -1473,7 +1473,7 @@ async function submitReincarnateAgent() {
     }
     refresh();
   } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
+    showModalError(errEl, (err && err.message) || String(err));
   } finally {
     // Recompute label + disabled state for whatever mode is selected
     // (relevant only on the error path — success closed the modal).
