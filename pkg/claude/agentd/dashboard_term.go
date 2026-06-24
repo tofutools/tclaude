@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -49,8 +50,14 @@ var termWSUpgrader = websocket.Upgrader{
 // persists on the tclaude tmux server until killed manually or the
 // host restarts; tclaude adds no reaper for it, matching how tmux
 // sessions already behave everywhere else in this codebase.
+//
+// The identity is a hash of the *full* convID, not the display-shortened
+// short8(convID): two conversations that share the same first 8 chars
+// would otherwise hash to the same session name and `tmux new-session -A`
+// would attach them to the same browser terminal.
 func termSessionName(convID, which string) string {
-	return "tclaude-term-" + short8(convID) + "-" + which
+	sum := sha256.Sum256([]byte(convID))
+	return fmt.Sprintf("tclaude-term-%x-%s", sum[:8], which)
 }
 
 // handleDashboardTermWS is the in-browser fallback for "open
@@ -180,12 +187,30 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 		_ = cmd.Wait()
 	}()
 
+	// Closing ptmx unblocks the PTY->WS reader; closing conn unblocks the
+	// WS->PTY reader. Whichever pump exits first runs this once, so the
+	// other side can never stay blocked and wg.Wait() always completes —
+	// e.g. when the PTY EOFs (shell/tmux exited) the WS->PTY goroutine
+	// would otherwise stay parked in conn.ReadMessage() forever. The
+	// outer defers (conn.Close, then ptmx.Close + SIGHUP to the `sh -c`
+	// wrapper + cmd.Wait) still run afterwards; the double close is a
+	// harmless no-op. The tmux/tclaude session itself lives on — SIGHUP
+	// only reaches the wrapper.
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = ptmx.Close()
+			_ = conn.Close()
+		})
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// PTY -> WebSocket
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		buf := make([]byte, 4096)
 		for {
 			n, err := ptmx.Read(buf)
@@ -201,13 +226,10 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 	// WebSocket -> PTY (input + resize)
 	go func() {
 		defer wg.Done()
+		defer closeBoth()
 		for {
 			msgType, data, err := conn.ReadMessage()
 			if err != nil {
-				// Client disconnected — detach cleanly; the deferred
-				// SIGHUP above only reaches the `sh -c` wrapper, the
-				// tmux/tclaude session itself lives on.
-				_ = ptmx.Close()
 				return
 			}
 			if msgType == websocket.TextMessage {

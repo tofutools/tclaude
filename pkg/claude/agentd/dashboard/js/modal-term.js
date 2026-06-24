@@ -62,7 +62,14 @@ export function openTermModal({ wsPath, label }) {
     term.onResize(() => sendResize());
     new ResizeObserver(() => fitAddon.fit()).observe($('#term-session-xterm'));
   }
+  // term is a reused singleton: clear the previous session's scrollback so
+  // reopening the modal for a different agent never flashes stale output
+  // under the new title before the fresh PTY redraws.
+  term.reset();
   fitAddon.fit();
+  // Move keyboard focus into xterm so the modal is usable immediately —
+  // without this, keyboard users have to click inside before they can type.
+  term.focus();
   connect();
 }
 
