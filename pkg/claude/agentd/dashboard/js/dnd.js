@@ -216,6 +216,13 @@ function bindDnd() {
       return;
     }
     e.preventDefault(); // required for drop to fire on this element
+    // Own the highlight here rather than leaning on the dragenter that
+    // (usually) preceded us: when the gesture flips inert→live in place
+    // — e.g. pressing Ctrl/Cmd to clone into the source's own group,
+    // which fires no new dragenter — dragover is the only handler that
+    // runs, so it must add dnd-drop-over itself. Idempotent on a box
+    // dragenter already lit.
+    box.classList.add('dnd-drop-over');
     e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
     box.classList.toggle('dnd-effect-clone', isClone);
     let text;
