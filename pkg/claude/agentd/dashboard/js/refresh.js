@@ -321,6 +321,81 @@ function bindTabs() {
   });
 }
 
+// visibleTabButtons returns the nav tab buttons that are actually on
+// screen, in DOM (left-to-right) order. offsetParent === null means a
+// display:none somewhere up the chain — which is exactly how the Vegas
+// tab (hidden unless body.slop) and the Costs tab (hidden via
+// body.hide-costs) drop out. Checking visibility instead of naming those
+// two keeps the cycler correct if more conditional tabs appear later.
+function visibleTabButtons() {
+  return $$('nav button[data-tab]').filter(b => b.offsetParent !== null);
+}
+
+// cycleTab moves the active tab by `dir` (+1 = right / next, -1 = left /
+// prev) across the visible tabs, wrapping around at both ends. Activation
+// goes through the button's own .click() on purpose: several tabs hang an
+// extra click listener on their nav button to lazy-load their data
+// (loadCosts, loadAudit, the Messages/Config tabs…), and a synthetic
+// .click() fires every one of them — so keyboard cycling behaves
+// identically to a mouse click. Returns the newly-activated button (or
+// null if there are somehow no visible tabs).
+function cycleTab(dir) {
+  const tabs = visibleTabButtons();
+  if (!tabs.length) return null;
+  const active = tabs.findIndex(b => b.classList.contains('active'));
+  // active < 0 ⇒ the current tab is itself hidden (e.g. you were on Vegas
+  // and slop just turned off); start the step from the first visible tab.
+  const from = active < 0 ? 0 : active;
+  const next = (from + dir + tabs.length) % tabs.length;
+  tabs[next].click();
+  return tabs[next];
+}
+
+// isEditableTarget guards the bare-bracket hotkey so it never hijacks
+// text entry — while you're in any input/textarea/select or a
+// contenteditable, [ and ] type their literal character as usual.
+function isEditableTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+    el.isContentEditable;
+}
+
+// bindTabHotkeys wires keyboard tab cycling. The obvious chords
+// (Cmd/Ctrl+[ ], Ctrl+Tab, Cmd/Ctrl+1..9) are all reserved by the browser
+// for switching ITS OWN tabs and can't be intercepted from a page, so we
+// use the two conflict-free idioms web apps settle on:
+//   • bare [ / ] cycle prev / next — but only when you're not typing in a
+//     field and no modal/overlay is open, so it never steals a keystroke.
+//   • ←/→ cycle while the tab bar itself holds keyboard focus (the
+//     WAI-ARIA tablist pattern); roving focus follows the activated tab so
+//     repeated arrows keep stepping.
+function bindTabHotkeys() {
+  document.addEventListener('keydown', e => {
+    // Leave every modifier chord to the browser / app — plain keys only.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    // ←/→ while focus is on the tab bar (ARIA tablist idiom). preventDefault
+    // so the arrow doesn't also scroll, and move focus onto the new tab.
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        document.activeElement && document.activeElement.closest('nav')) {
+      e.preventDefault();
+      const moved = cycleTab(e.key === 'ArrowRight' ? 1 : -1);
+      if (moved) moved.focus();
+      return;
+    }
+
+    // Bare [ / ] anywhere on the page — except while typing or with a modal
+    // open (a modal traps interaction; cycling tabs behind it is surprising).
+    // Compared against e.key (not e.code) so it follows the user's layout.
+    if ((e.key === '[' || e.key === ']') && !isEditableTarget(e.target) &&
+        !document.querySelector('.modal-overlay.show, .manage-overlay.show')) {
+      e.preventDefault();
+      cycleTab(e.key === ']' ? 1 : -1);
+    }
+  });
+}
+
 // applyCostTabVisibility drives the Costs tab's auto-hide and WHAT-IF mode
 // off the snapshot's server-computed flags:
 //   - cost_tab_visible false → hide the Costs nav button + section entirely
@@ -2454,7 +2529,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
