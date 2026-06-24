@@ -1,5 +1,6 @@
 // dnd.js — drag-and-drop: moving / cloning / retiring agents by dragging
-// member rows onto group headers.
+// member rows onto a group's box (its whole <details>, not just the
+// header — dropping anywhere over an expanded group counts).
 //
 // Extracted from dashboard.js in the Stage 2 module split. Owns
 // dndDragActive — the in-flight-drag flag refreshSuspended consults.
@@ -12,10 +13,11 @@ import { renderGroupsTab } from './tabs.js';
 import { refresh, toast, confirmModal, retireConfirm, retireToast, maybeHandleDanglingRetire } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 
-// Drag-and-drop: move a member row from group A onto group B's
-// <summary> header to migrate. Optimistic local mutation runs first
-// so the user sees the move immediately; the daemon round-trip
-// confirms (or snaps back on failure).
+// Drag-and-drop: move a member row from group A onto group B's box
+// (anywhere over group B's <details> — header or expanded body) to
+// migrate. Optimistic local mutation runs first so the user sees the
+// move immediately; the daemon round-trip confirms (or snaps back on
+// failure).
 //
 // Order on success: POST /api/groups/B/members → DELETE
 // /api/groups/A/members/{conv}. POST first guarantees the conv is
@@ -39,10 +41,46 @@ let dndDragActive = false;
 let dndSourceUngrouped = false;
 let dndSourceConversation = false;
 let dndSourceRetired = false;
-// Every droppable summary — real group headers AND the two droppable
-// virtual group headers (Ungrouped, Retired). The DnD listeners share
-// this selector. The Conversations header is a drag SOURCE only.
-const DND_TARGET_SEL = 'summary[data-dnd-target-group],summary[data-dnd-target-ungrouped],summary[data-dnd-target-retired]';
+// dndSourceGroup: the real group a dragged member row comes from (''
+// for the virtual sources). Like the flags above, dragover/dragenter
+// can't read the DataTransfer payload, so this module-level copy is how
+// the hover handlers recognise a drop onto the row's OWN group — an
+// inert no-op (unless it's a clone) that must not highlight, especially
+// now that a drag starts right inside the source group's expanded box.
+let dndSourceGroup = '';
+// Every droppable box — real group <details> AND the two droppable
+// virtual group <details> (Ungrouped, Retired). The drop target moved
+// from the <summary> header to the whole <details> so a release
+// anywhere over an expanded group lands in it. The DnD listeners share
+// this selector. The Conversations box is a drag SOURCE only.
+const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired]';
+// isCloneGesture: a Ctrl/Cmd-held drag onto a REAL-group box with a
+// non-retired source. Clone is meaningless for the virtual targets, and
+// a retired source always reinstates (never clones). dragover, dragenter
+// and the pill all key off this so the hint, the highlight tint and the
+// drop branch agree.
+function isCloneGesture(e, box) {
+  return (!!e.ctrlKey || !!e.metaKey)
+    && !box.hasAttribute('data-dnd-target-ungrouped')
+    && !box.hasAttribute('data-dnd-target-retired')
+    && !dndSourceRetired;
+}
+// dndInertOnto: true when a drag from the current source onto `box`
+// would change nothing, so the hover handlers skip the highlight + pill
+// (and, by not calling preventDefault, stop `drop` from ever firing).
+// Folds every no-op into one place:
+//   - a row onto the virtual group it already lives in (Ungrouped);
+//   - a conversation or an already-retired row onto Retired;
+//   - a plain (non-clone) move onto the source's OWN group.
+function dndInertOnto(box, isClone) {
+  if (box.hasAttribute('data-dnd-target-ungrouped')) return dndSourceUngrouped;
+  if (box.hasAttribute('data-dnd-target-retired')) return dndSourceRetired || dndSourceConversation;
+  // Real-group target: inert only when it's the source's own group and
+  // the gesture isn't a clone (cloning a sibling into the same group is
+  // a real op). dndSourceGroup is '' for the virtual sources, so this
+  // never fires for an add / promote / reinstate onto a real group.
+  return !isClone && !!dndSourceGroup && box.getAttribute('data-dnd-target-group') === dndSourceGroup;
+}
 // updateDndPill positions + labels the hint pill that tracks the
 // cursor during a drag. `info` is null to hide the pill, else
 // {text, clone} — text is the action label, clone tints it green.
@@ -130,6 +168,7 @@ function bindDnd() {
     dndSourceUngrouped = sourceUngrouped;
     dndSourceConversation = sourceConversation;
     dndSourceRetired = sourceRetired;
+    dndSourceGroup = sourceGroup || '';
     // dndDragActive (set above) is what suspends auto-refresh for the
     // duration of the drag — see refreshSuspended().
   });
@@ -145,38 +184,47 @@ function bindDnd() {
     dndSourceUngrouped = false;
     dndSourceConversation = false;
     dndSourceRetired = false;
+    dndSourceGroup = '';
     const row = e.target.closest('.dnd-draggable');
     if (row) row.classList.remove('dnd-source-row');
     // Clear any lingering hover highlight (Firefox sometimes fires
     // dragend without a final dragleave on the target).
-    $$('summary.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
+    $$('.dnd-drop-over').forEach(s => s.classList.remove('dnd-drop-over', 'dnd-effect-clone'));
     $('#dnd-pill').classList.remove('show', 'clone');
     refresh();
   });
   document.addEventListener('dragover', (e) => {
     if (!dndDragActive) return;
-    const summary = e.target.closest(DND_TARGET_SEL);
-    if (!summary) {
+    const box = e.target.closest(DND_TARGET_SEL);
+    if (!box) {
       updateDndPill(e, null);
       return;
     }
-    const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
-    const targetRetired = summary.hasAttribute('data-dnd-target-retired');
+    const targetUngrouped = box.hasAttribute('data-dnd-target-ungrouped');
+    const targetRetired = box.hasAttribute('data-dnd-target-retired');
+    const isClone = isCloneGesture(e, box);
     // No-op drops — don't preventDefault (so `drop` never fires) and
-    // don't show a hint:
-    //   - a row onto the virtual group it already lives in;
-    //   - a plain conversation onto Retired (only agents can retire).
-    if ((targetUngrouped && dndSourceUngrouped) ||
-        (targetRetired && (dndSourceRetired || dndSourceConversation))) {
+    // don't show a hint. dndInertOnto folds in every inert case: a row
+    // onto the virtual group it already lives in, a conversation /
+    // retired row onto Retired, and a plain move onto the source's own
+    // group (the common one now that a drag starts inside that box).
+    // Clear any highlight too, so toggling Ctrl/Cmd over the source's
+    // own group (clone ⇄ no-op) doesn't strand a stale tint on the box.
+    if (dndInertOnto(box, isClone)) {
+      box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
       updateDndPill(e, null);
       return;
     }
     e.preventDefault(); // required for drop to fire on this element
-    // Clone is meaningful only for a real-group target, and never for
-    // a retired source (that path reinstates, it doesn't clone).
-    const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !dndSourceRetired;
+    // Own the highlight here rather than leaning on the dragenter that
+    // (usually) preceded us: when the gesture flips inert→live in place
+    // — e.g. pressing Ctrl/Cmd to clone into the source's own group,
+    // which fires no new dragenter — dragover is the only handler that
+    // runs, so it must add dnd-drop-over itself. Idempotent on a box
+    // dragenter already lit.
+    box.classList.add('dnd-drop-over');
     e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
-    summary.classList.toggle('dnd-effect-clone', isClone);
+    box.classList.toggle('dnd-effect-clone', isClone);
     let text;
     if (targetRetired) text = '↓ retire — demote to conversation';
     else if (targetUngrouped) text = dndSourceRetired ? '↓ reinstate (no group)' : dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
@@ -189,36 +237,35 @@ function bindDnd() {
   });
   document.addEventListener('dragenter', (e) => {
     if (!dndDragActive) return;
-    const summary = e.target.closest(DND_TARGET_SEL);
-    if (!summary) return;
-    // No highlight for the inert no-ops — mirror the dragover guard.
-    if ((summary.hasAttribute('data-dnd-target-ungrouped') && dndSourceUngrouped) ||
-        (summary.hasAttribute('data-dnd-target-retired') && (dndSourceRetired || dndSourceConversation))) return;
-    summary.classList.add('dnd-drop-over');
+    const box = e.target.closest(DND_TARGET_SEL);
+    if (!box) return;
+    // No highlight for the inert no-ops — mirror the dragover guard so
+    // the box only lights up when a drop here would actually do something.
+    if (dndInertOnto(box, isCloneGesture(e, box))) return;
+    box.classList.add('dnd-drop-over');
   });
   document.addEventListener('dragleave', (e) => {
-    const summary = e.target.closest(DND_TARGET_SEL);
-    if (!summary) return;
-    // dragleave fires when the cursor enters a child element too;
-    // only remove the highlight when the cursor has actually left
-    // the summary.
-    if (summary.contains(e.relatedTarget)) return;
-    summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
+    const box = e.target.closest(DND_TARGET_SEL);
+    if (!box) return;
+    // dragleave fires when the cursor crosses into a child element too;
+    // only drop the highlight once the cursor has actually left the box.
+    if (box.contains(e.relatedTarget)) return;
+    box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
   });
   document.addEventListener('drop', async (e) => {
-    const summary = e.target.closest(DND_TARGET_SEL);
-    if (!summary) return;
+    const box = e.target.closest(DND_TARGET_SEL);
+    if (!box) return;
     e.preventDefault();
-    summary.classList.remove('dnd-drop-over', 'dnd-effect-clone');
+    box.classList.remove('dnd-drop-over', 'dnd-effect-clone');
     $('#dnd-pill').classList.remove('show', 'clone');
     const raw = e.dataTransfer.getData('application/x-tclaude-member')
       || e.dataTransfer.getData('text/plain');
     let payload;
     try { payload = JSON.parse(raw); } catch (_) { return; }
     if (!payload || !payload.conv) return;
-    const targetUngrouped = summary.hasAttribute('data-dnd-target-ungrouped');
-    const targetRetired = summary.hasAttribute('data-dnd-target-retired');
-    const targetGroup = summary.getAttribute('data-dnd-target-group');
+    const targetUngrouped = box.hasAttribute('data-dnd-target-ungrouped');
+    const targetRetired = box.hasAttribute('data-dnd-target-retired');
+    const targetGroup = box.getAttribute('data-dnd-target-group');
     const sourceUngrouped = !!payload.sourceUngrouped;
     const sourceConversation = !!payload.sourceConversation;
     const sourceRetired = !!payload.sourceRetired;
