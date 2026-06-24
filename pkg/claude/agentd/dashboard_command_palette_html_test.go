@@ -59,6 +59,13 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("run: () => toggleSlop(),", "the palette offers a Switch theme command")
 	must("'Switch to slop theme'", "the toggle is labelled by its destination theme")
 
+	// Accessibility + focus hygiene: the combobox input points its
+	// aria-activedescendant at the keyboard-selected option (each option
+	// carries a stable id), and closing returns focus to the trigger.
+	must("aria-activedescendant", "the combobox announces the active option to screen readers")
+	must("palette-opt-", "options carry stable ids for aria-activedescendant")
+	must("lastFocus = document.activeElement", "the trigger element is captured for focus restore")
+
 	// Keyboard model: ↑/↓ move, Enter runs, Esc closes.
 	must("case 'ArrowDown':", "ArrowDown moves the selection")
 	must("case 'ArrowUp':", "ArrowUp moves the selection")

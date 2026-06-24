@@ -46,6 +46,10 @@ let selected = 0;
 let overlay = null;
 let input = null;
 let list = null;
+// The element focused when the palette opened, so closing returns focus
+// there (the 🔍 button, or wherever the hotkey was pressed) instead of
+// dropping it to <body>.
+let lastFocus = null;
 
 function isOpen() {
   return overlay !== null && overlay.classList.contains('show');
@@ -251,11 +255,15 @@ function render(q) {
   if (selected < 0) selected = 0;
   if (!filtered.length) {
     list.innerHTML = '<div class="palette-empty">No matching commands</div>';
+    input.removeAttribute('aria-activedescendant');
     return;
   }
+  // Each option carries a stable id so the combobox input can point its
+  // aria-activedescendant at the keyboard-selected row — that's how a
+  // screen reader announces the active command as ↑/↓ move.
   list.innerHTML = filtered.map((c, i) => `
     <div class="palette-item${i === selected ? ' selected' : ''}" data-idx="${i}"
-         role="option" aria-selected="${i === selected ? 'true' : 'false'}">
+         id="palette-opt-${i}" role="option" aria-selected="${i === selected ? 'true' : 'false'}">
       <span class="palette-ico">${esc(c.icon || '•')}</span>
       <span class="palette-label">${esc(c.label)}</span>
       ${c.hint ? `<span class="palette-hint">${esc(c.hint)}</span>` : ''}
@@ -264,7 +272,8 @@ function render(q) {
 }
 
 // paintSelection updates the highlight + ARIA without a full re-render
-// and scrolls the active row into view — used by ↑/↓ and hover.
+// and scrolls the active row into view — used by ↑/↓ and hover. It also
+// re-points the input's aria-activedescendant at the active option.
 function paintSelection() {
   const items = list.querySelectorAll('.palette-item');
   items.forEach((el, i) => {
@@ -273,6 +282,8 @@ function paintSelection() {
     el.setAttribute('aria-selected', on ? 'true' : 'false');
     if (on) el.scrollIntoView({ block: 'nearest' });
   });
+  if (filtered.length) input.setAttribute('aria-activedescendant', 'palette-opt-' + selected);
+  else input.removeAttribute('aria-activedescendant');
 }
 
 function move(d) {
@@ -297,6 +308,8 @@ function runSelected() {
 // -- Open / close ------------------------------------------------------
 
 function openPalette() {
+  // Remember where focus was so closePalette can return it.
+  lastFocus = document.activeElement;
   commands = buildCommands();
   selected = 0;
   input.value = '';
@@ -309,6 +322,13 @@ function openPalette() {
 
 function closePalette() {
   overlay.classList.remove('show');
+  input.removeAttribute('aria-activedescendant');
+  // Return focus to the trigger element rather than letting it drop to
+  // <body>. Guarded — the element may have been re-rendered away.
+  if (lastFocus && typeof lastFocus.focus === 'function') {
+    try { lastFocus.focus(); } catch (_) { /* element gone */ }
+  }
+  lastFocus = null;
 }
 
 // bindCommandPalette wires the global Ctrl/Cmd-K trigger and the
@@ -329,8 +349,12 @@ export function bindCommandPalette() {
     if (!(e.ctrlKey || e.metaKey)) return;
     if ((e.key || '').toLowerCase() !== 'k') return;
     e.preventDefault();
-    if (isOpen()) closePalette();
-    else openPalette();
+    if (isOpen()) { closePalette(); return; }
+    // Don't pop the launcher on top of another open dialog (e.g. mid
+    // spawn-form): stacked overlays are a surprise and the dialog
+    // beneath keeps its own state. The hotkey resumes once it closes.
+    if (document.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
+    openPalette();
   });
 
   // Typing filters; ↑/↓ move; Enter runs; Esc closes. Bound to the
