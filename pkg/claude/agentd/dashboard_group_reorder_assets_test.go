@@ -12,10 +12,11 @@ import (
 // the load-bearing wiring against a silent refactor break.
 //
 // The pieces that must stay connected:
-//   - render.js makes each real group's title (.group-name) the draggable
+//   - render.js makes each real group's HEADER (<summary>) the draggable
 //     reorder handle, carrying the group name (escaped) as the drag identity;
-//   - group-reorder.js drives the drag and persists the order under the
-//     dashPrefs key, using a custom drag MIME;
+//   - group-reorder.js suppresses that drag for a press on an interactive
+//     header child (so the title still folds and the chips still edit), drives
+//     the drag, and persists the order under the dashPrefs key via a custom MIME;
 //   - dnd.js (member-row DnD) explicitly ignores that custom MIME so the
 //     two document-level drop handlers stay isolated;
 //   - tabs.js renders real groups through sortGroupsByPref;
@@ -23,10 +24,14 @@ import (
 //   - refresh.js suspends auto-refresh while a reorder drag is in flight.
 func TestDashboardJS_GroupReorderWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		// render.js: the group title IS the reorder drag handle — draggable,
-		// names its group (escaped), and stays the click-to-toggle label.
-		{`class="group-name" data-group-name="${esc(g.name)}" data-group-reorder="${esc(g.name)}" draggable="true"`,
-			"render.js makes each real group's title the escaped, draggable reorder handle"},
+		// render.js: the group HEADER is the reorder drag handle — draggable
+		// and naming its group (escaped).
+		{`<summary draggable="true" data-group-reorder="${esc(g.name)}"`,
+			"render.js makes each real group's header the escaped, draggable reorder handle"},
+		// group-reorder.js: a press on an interactive header child suppresses the
+		// drag so the click (fold / edit) lands instead of starting a reorder.
+		{`const summary = e.target.closest('summary[data-group-reorder]');`,
+			"group-reorder.js suppresses the header drag for clicks on interactive children"},
 		// group-reorder.js: the custom MIME and the persisted pref key.
 		{`'application/x-tclaude-group'`, "group-reorder.js uses a dedicated drag MIME"},
 		{`tclaude.dash.groupOrder`, "group-reorder.js persists the order under its dashPrefs key"},

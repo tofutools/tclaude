@@ -1,12 +1,21 @@
 // group-reorder.js — drag-to-reorder the REAL groups in the Groups tab.
 //
-// A real group's title (.group-name, carrying data-group-reorder +
-// draggable, see render.js) IS the reorder drag handle. Dragging it
-// reorders that group relative to the other real groups; a clean click on
-// the same title still folds/unfolds the group (bindGroupTitleToggle in
-// refresh.js) — the browser only starts a drag on movement, so the two
-// gestures don't collide. The order is persisted as a JSON array of group
-// names in dashPrefs under GROUP_ORDER_KEY.
+// A real group's HEADER (its <summary>, carrying data-group-reorder +
+// draggable, see render.js) is the reorder drag handle: press the bare
+// header and drag to reorder that group relative to the other real groups.
+// The order is persisted as a JSON array of group names in dashPrefs under
+// GROUP_ORDER_KEY.
+//
+// The header also holds CLICK targets — the title (.group-name, click to
+// fold/unfold), the click-to-edit chips (descr / cwd / cap / profile, all
+// data-act) and the link chips. Native DnD starts the drag on the draggable
+// ANCESTOR, so a press-with-wobble on any of those would otherwise start a
+// reorder drag and eat the click (and once a native drag begins, the click
+// is gone for good — there's no minimum-distance threshold to lean on). So a
+// pointerdown over an interactive descendant turns the summary's draggable
+// OFF for that gesture (the click lands); a press on the bare header leaves
+// it ON, making that empty space the drag handle. This is the same
+// suppression dnd.js uses for member rows — see bindGroupReorder.
 //
 // Why a dashPref and not a server column? Group display order is a
 // dashboard *presentation* concern — the same kind as the per-group
@@ -46,7 +55,7 @@ const GROUP_DRAG_MIME = 'application/x-tclaude-group';
 
 // groupReorderActive mirrors dnd.js's dndDragActive: a live-binding flag
 // refreshSuspended() reads so a 2s auto-refresh can't rebuild the Groups
-// tab DOM mid-drag (which would detach the dragged grip and lose the
+// tab DOM mid-drag (which would detach the dragged header and lose the
 // drag's own dragend cleanup). Exported as a `let` so importers see the
 // updated value.
 let groupReorderActive = false;
@@ -176,10 +185,37 @@ function endGroupDrag() {
 }
 
 function bindGroupReorder() {
+  // Gesture-scoped draggable suppression (mirrors dnd.js's row handling).
+  // The whole group <summary> is draggable, but a press that lands on an
+  // interactive child — the title, a click-to-edit chip, a link chip, any
+  // button — must produce that child's CLICK, not a reorder drag. So disable
+  // the summary's draggable for the duration of such a gesture; a press on
+  // the bare header leaves it on. pointerdown targets the actual element
+  // under the cursor and fires BEFORE the drag is initiated, so it's the
+  // right place to decide. pointerup/pointercancel restore it immediately, so
+  // the header is never left un-draggable between gestures.
+  let suppressedSummary = null;
+  const restoreSummaryDraggable = () => {
+    if (!suppressedSummary) return;
+    suppressedSummary.draggable = true;
+    suppressedSummary = null;
+  };
+  document.addEventListener('pointerdown', (e) => {
+    const summary = e.target.closest('summary[data-group-reorder]');
+    if (!summary) return;
+    const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable], .group-name');
+    if (ctl && summary.contains(ctl)) {
+      summary.draggable = false;
+      suppressedSummary = summary;
+    }
+  });
+  document.addEventListener('pointerup', restoreSummaryDraggable);
+  document.addEventListener('pointercancel', restoreSummaryDraggable);
+
   document.addEventListener('dragstart', (e) => {
-    // The drag handle is the group title (.group-name with
-    // data-group-reorder); match on the attribute so the source element can
-    // change without touching this code.
+    // The drag handle is the group header (<summary> with data-group-reorder);
+    // match on the attribute so the source element can change without touching
+    // this code.
     const handle = e.target.closest('[data-group-reorder]');
     if (!handle) return;
     const name = handle.getAttribute('data-group-reorder');
@@ -197,7 +233,7 @@ function bindGroupReorder() {
   // dragend is the guaranteed reset for a CANCELLED or no-target drag
   // (Escape, or a release over nothing). A SUCCESSFUL drop tears down in the
   // drop handler instead (see there) — it must, because that handler
-  // re-renders #groups-list and detaches the dragged grip, after which a
+  // re-renders #groups-list and detaches the dragged header, after which a
   // dragend dispatched on the now-detached node never bubbles to this
   // document-level listener. So this is a fallback, not the primary path.
   document.addEventListener('dragend', endGroupDrag);
@@ -231,13 +267,13 @@ function bindGroupReorder() {
     e.preventDefault();
     // Snapshot everything we need from the live DOM BEFORE tearing down /
     // re-rendering: the target name, and the drop side (measured against the
-    // still-attached summary rect).
+    // still-attached target box).
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const before = dropsBefore(e, details);
     // Tear down NOW, before applyReorder re-renders #groups-list and detaches
-    // the dragged grip. If we left teardown to dragend, that event — fired on
-    // the detached grip — would never bubble here, so the pill would stay
+    // the dragged header. If we left teardown to dragend, that event — fired
+    // on the detached header — would never bubble here, so the pill would stay
     // stuck and groupReorderActive would wedge auto-refresh on. endGroupDrag
     // is idempotent, so a dragend that does still fire is a harmless no-op.
     endGroupDrag();
