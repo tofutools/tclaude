@@ -18,7 +18,7 @@ golangci-lint run ./...           # Lint
 go install .                      # Install locally
 ```
 
-CI runs `go test ./...` and `golangci-lint run ./...` across Linux and macOS (amd64 + arm64). Windows is no longer a supported target — on Windows, run tclaude under WSL.
+CI runs `go test ./...` and `golangci-lint run ./...` across Linux, macOS, and Windows (amd64 + arm64).
 
 ## Architecture
 
