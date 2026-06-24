@@ -15,13 +15,14 @@
 // order survives daemon restarts, browser profiles and multiple tabs.
 //
 // Isolation from the member-row drag-and-drop in dnd.js is deliberate and
-// total: this drag sets ONLY a custom MIME ('application/x-tclaude-group')
-// — never 'text/plain' — so dnd.js's drop handler (which falls back to
-// text/plain) reads empty data and bails. It also uses its own
-// groupReorderActive flag, while dnd.js's dragover/dragenter handlers
-// self-gate on dndDragActive; the two flags are never set together, so
-// the two feature modules' document-level listeners coexist without
-// stepping on each other.
+// total. This drag sets ONLY a custom MIME ('application/x-tclaude-group')
+// — never 'text/plain'. dnd.js's drop handler checks for that exact MIME
+// up front and returns, so a reorder drop never reaches the member-move
+// path. The two modules also use separate active flags (groupReorderActive
+// here, dndDragActive there) which are never set together — each module's
+// dragstart only fires for its own source element — and dnd.js's
+// dragover/dragenter self-gate on dndDragActive. So the two feature
+// modules' document-level listeners coexist without stepping on each other.
 //
 // Deliberate, benign import cycle with tabs.js (group-reorder ↔ tabs),
 // mirroring render.js/dashboard.js: neither module reads the other's
