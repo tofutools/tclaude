@@ -754,10 +754,14 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // endpoint: ?shutdown= (default on), ?status= (idle/offline/…; absent =
 // every member) and ?reason=.
 func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	filter, ferr := parseRetireStatusFilter(r.URL.Query().Get("status"))
+	if ferr != nil {
+		http.Error(w, "retire: "+ferr.Error(), http.StatusBadRequest)
+		return
+	}
 	out, err := bulkRetireGroupMembers(g, "",
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r),
-		parseRetireStatusFilter(r.URL.Query().Get("status")))
+		retireShouldShutdown(r), filter)
 	if err != nil {
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return

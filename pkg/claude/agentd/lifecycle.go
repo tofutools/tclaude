@@ -328,10 +328,14 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if !ok {
 		return
 	}
+	filter, ferr := parseRetireStatusFilter(r.URL.Query().Get("status"))
+	if ferr != nil {
+		writeError(w, http.StatusBadRequest, "status", ferr.Error())
+		return
+	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r),
-		parseRetireStatusFilter(r.URL.Query().Get("status")))
+		retireShouldShutdown(r), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -491,24 +495,42 @@ func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpRes
 // --status flag.
 type retireStatusFilter map[string]bool
 
+// validRetireStatuses is the closed vocabulary of ?status= tokens — the
+// outputs of normalizeMemberStatus. Kept in sync with that switch: an
+// unknown token is rejected rather than silently matching nobody.
+var validRetireStatuses = map[string]bool{
+	"offline": true, "idle": true, "working": true, "awaiting": true, "error": true,
+}
+
 // parseRetireStatusFilter reads the ?status= query value into a filter.
-// Empty / absent / "all" yield nil (match everything). Tokens are
-// comma-separated, lower-cased and trimmed.
-func parseRetireStatusFilter(raw string) retireStatusFilter {
+// Empty / absent / "all" yield a nil filter (match everything). Tokens
+// are comma-separated, lower-cased and trimmed. An unknown token is an
+// error, not a silent no-op: without this a typo (?status=offlien) would
+// match nobody and return 200 with an empty member list, indistinguish-
+// able from "the group has no offline agents". Callers surface it as 400.
+func parseRetireStatusFilter(raw string) (retireStatusFilter, error) {
 	raw = strings.TrimSpace(strings.ToLower(raw))
 	if raw == "" || raw == "all" {
-		return nil
+		return nil, nil
 	}
 	set := retireStatusFilter{}
 	for tok := range strings.SplitSeq(raw, ",") {
-		if tok = strings.TrimSpace(tok); tok != "" {
-			set[tok] = true
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
 		}
+		if tok == "all" {
+			return nil, nil // "all" anywhere in the list = no filter
+		}
+		if !validRetireStatuses[tok] {
+			return nil, fmt.Errorf("unknown status %q (valid: all, offline, idle, working, awaiting, error)", tok)
+		}
+		set[tok] = true
 	}
-	if len(set) == 0 || set["all"] {
-		return nil
+	if len(set) == 0 {
+		return nil, nil
 	}
-	return set
+	return set, nil
 }
 
 // matches reports whether a member with the given liveness + hook status

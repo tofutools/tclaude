@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -382,4 +383,73 @@ func TestDashboardGroupRetire_StatusFilterIdle(t *testing.T) {
 	workState, err := db.EnrollmentState(workConv)
 	require.NoError(t, err)
 	assert.Equal(t, db.EnrollmentActive, workState, "the working member must stay active")
+}
+
+// Scenario: an unknown ?status= token is rejected with 400, not silently
+// treated as "match nobody" (which would 200 with an empty member list,
+// indistinguishable from "the group has no agents of that status"). The
+// group is left completely untouched.
+func TestGroupRetire_UnknownStatusRejected(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "tclaude-dev"
+	const conv = "ukst-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "spwn-ukst", "tmux-ukst", "/tmp/ukst")
+	f.HaveMember(group, conv)
+
+	code, _ := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, group, "status=offlien")
+	assert.Equal(t, http.StatusBadRequest, code,
+		"an unknown status token must be 400, not a silent no-op")
+
+	// The member is untouched: still an active agent, still online.
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state, "a rejected retire must not demote anyone")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-ukst"), "a rejected retire must not stop sessions")
+}
+
+// Scenario: a bulk retire that demotes two members who each SOLELY own a
+// DIFFERENT other group surfaces an ownerless warning for BOTH groups —
+// proving the parallel ownerless-merge gathers the owner-groups every
+// worker touched, not just whichever finished last. Exercises the
+// post-Wait aggregation under real concurrency (CI runs it with -race).
+func TestGroupRetire_ParallelOwnerlessMergeAcrossMembers(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const team = "tclaude-dev"
+	const ownerA = "owna-1111-2222-3333-4444"
+	const ownerB = "ownb-1111-2222-3333-4444"
+	const plain = "plan-1111-2222-3333-4444"
+	f.HaveGroup(team)
+	alpha := f.HaveGroup("alpha")
+	beta := f.HaveGroup("beta")
+	for _, c := range []string{ownerA, ownerB, plain} {
+		f.HaveConvWithTitle(c, c[:4])
+		f.HaveMember(team, c)
+	}
+	// ownerA solely owns alpha; ownerB solely owns beta — and each is a
+	// member of the group it owns (retire only unjoins groups the conv is
+	// a member of). Retiring them from `team` cascades a full demotion
+	// that unjoins them everywhere, emptying alpha's + beta's owner
+	// rosters — so each worker reports a DIFFERENT ownerless group.
+	f.HaveMember("alpha", ownerA)
+	f.HaveMember("beta", ownerB)
+	require.NoError(t, db.AddAgentGroupOwner(alpha.ID, ownerA, "human"))
+	require.NoError(t, db.AddAgentGroupOwner(beta.ID, ownerB, "human"))
+
+	code, resp := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, team, "")
+	require.Equal(t, http.StatusOK, code)
+	for _, c := range []string{ownerA, ownerB, plain} {
+		assert.Equal(t, "retired", retireMemberAction(resp, c), "members=%+v", resp.Members)
+	}
+
+	// Both now-ownerless groups must be warned about — the merge gathered
+	// owner-groups from BOTH workers, not just one.
+	joined := strings.Join(resp.Warnings, "\n")
+	assert.Contains(t, joined, `"alpha"`, "alpha lost its only owner; warnings=%v", resp.Warnings)
+	assert.Contains(t, joined, `"beta"`, "beta lost its only owner; warnings=%v", resp.Warnings)
 }
