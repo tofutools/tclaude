@@ -92,6 +92,18 @@ func runRetiredAgentCleanup(now time.Time) {
 			slog.Info("retired cleanup: skipping still-online retired conv", "conv", e.ConvID)
 			continue
 		}
+		// Re-read the row's state immediately before the irreversible
+		// delete. ListRetiredAgents above is a one-shot snapshot; between it
+		// and this delete a concurrent reinstate (the dashboard's
+		// "reinstate" button → db.ReinstateAgent / PromoteAgent) could have
+		// flipped this row retired→active. isConvOnline wouldn't catch a
+		// just-reinstated-but-still-offline agent, so without this recheck
+		// the sweep could permanently delete a freshly reinstated agent. On
+		// any error (or any non-retired state) we skip — never delete on an
+		// uncertain state. Cheap insurance on a no-undo path.
+		if st, err := db.EnrollmentState(e.ConvID); err != nil || st != db.EnrollmentRetired {
+			continue
+		}
 		// Log every deletion individually: the .jsonl is removed and there
 		// is no undo, so the daemon log is the sole forensic record of what
 		// was reaped (the aggregate line below is for at-a-glance volume).

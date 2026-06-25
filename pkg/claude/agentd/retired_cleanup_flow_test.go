@@ -87,6 +87,48 @@ func TestRetiredCleanup_SkipsActiveAgents(t *testing.T) {
 	assert.Equal(t, db.EnrollmentActive, state, "an active agent must never be reaped")
 }
 
+// End-to-end on-disk + cost behaviour: a long-retired conversation with a
+// real .jsonl on disk and a recorded daily cost is reaped — its .jsonl is
+// removed (it no longer lists via `conv ls`) and its enrollment purged —
+// while its session_cost_daily row SURVIVES with conv_id intact, so spend
+// totals are never lost (conv_id is denormalised at write time). This is
+// the headline safety claim of the feature.
+func TestRetiredCleanup_RemovesJSONLButKeepsCost(t *testing.T) {
+	f := newFlow(t)
+	writeRetiredCleanupConfig(t, true, 365)
+
+	const convID = "77777777-7777-7777-7777-777777777777"
+	const label = "cost-conv-session"
+	cwd := t.TempDir()
+	// A real .jsonl on disk (CCSim) + a sessions row, so DeleteConvByID's
+	// file-removal branch is genuinely exercised and a cost row can be
+	// attributed to the conv.
+	f.HaveAliveSession(convID, label, "tmux-cost-conv", cwd)
+	require.NoError(t, db.UpdateSessionCost(label, 2.50)) // denormalises conv_id onto today's cost row
+	f.MarkOffline("tmux-cost-conv")                       // offline so the online-skip guard doesn't fire
+	f.HaveRetiredAgent(convID)
+
+	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
+
+	// Enrollment purged and the .jsonl gone from disk (conv ls can't see it).
+	enr, err := db.GetEnrollment(convID)
+	require.NoError(t, err)
+	assert.Nil(t, enr, "long-retired enrollment should be deleted")
+	f.AssertConvNotListed(convID, cwd)
+
+	// The daily cost row survives deletion, still attributed to the conv.
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	var found bool
+	for _, r := range rows {
+		if r.ConvID == convID {
+			found = true
+			assert.InDelta(t, 2.50, r.CostUSD, 1e-9, "recorded spend must survive deletion")
+		}
+	}
+	assert.True(t, found, "session_cost_daily row for the deleted conv must survive (cost totals never lost)")
+}
+
 // A retired conversation whose tmux pane is somehow still alive is
 // skipped even past the window — the sweep never races a live pane's
 // writes to its own .jsonl during teardown (mirrors handleAgentDelete's

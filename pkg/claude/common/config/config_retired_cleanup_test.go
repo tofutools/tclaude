@@ -26,6 +26,8 @@ func TestResolvedRetiredCleanup(t *testing.T) {
 		{"enabled, explicit window", &Config{Agent: &AgentConfig{RetiredCleanup: &RetiredCleanupConfig{Enabled: true, AfterDays: 90}}}, true, 90},
 		{"enabled, zero falls back to default", &Config{Agent: &AgentConfig{RetiredCleanup: &RetiredCleanupConfig{Enabled: true}}}, true, DefaultRetiredCleanupAfterDays},
 		{"enabled, negative falls back to default", &Config{Agent: &AgentConfig{RetiredCleanup: &RetiredCleanupConfig{Enabled: true, AfterDays: -5}}}, true, DefaultRetiredCleanupAfterDays},
+		{"enabled, over-max clamps down", &Config{Agent: &AgentConfig{RetiredCleanup: &RetiredCleanupConfig{Enabled: true, AfterDays: 1 << 40}}}, true, MaxRetiredCleanupAfterDays},
+		{"enabled, exactly max kept", &Config{Agent: &AgentConfig{RetiredCleanup: &RetiredCleanupConfig{Enabled: true, AfterDays: MaxRetiredCleanupAfterDays}}}, true, MaxRetiredCleanupAfterDays},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +50,7 @@ func TestValidate_RetiredCleanup(t *testing.T) {
 	}
 	reject(&RetiredCleanupConfig{Enabled: true, AfterDays: 0})
 	reject(&RetiredCleanupConfig{Enabled: true, AfterDays: -1})
+	reject(&RetiredCleanupConfig{Enabled: true, AfterDays: MaxRetiredCleanupAfterDays + 1})
 
 	accept := func(rc *RetiredCleanupConfig) {
 		c := DefaultConfig()

@@ -512,7 +512,7 @@
       <div class="cfg-field">
         <span class="cfg-label">Auto-cleanup</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-agent-retired-cleanup-enabled" /> delete agents retired longer than</label>
-        <input type="number" id="cfg-agent-retired-cleanup-days" min="1" placeholder="365" aria-label="Days retired before deletion" style="min-width:90px" />
+        <input type="number" id="cfg-agent-retired-cleanup-days" min="1" max="36525" placeholder="365" aria-label="Days retired before deletion" style="min-width:90px" />
         <span>days</span>
         <span class="cfg-hint">agentd sweeps every 30&nbsp;min (and at startup). Empty = built-in default (365 ≈ 1 year). Irreversible — choose a window long enough that anything still wanted has been reinstated.</span>
       </div>

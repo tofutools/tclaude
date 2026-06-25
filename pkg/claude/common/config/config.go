@@ -743,13 +743,6 @@ type AgentConfig struct {
 	DefaultPermissions        []string            `json:"default_permissions,omitempty"`
 	Sudo                      *SudoConfig         `json:"sudo,omitempty"`
 	ContextNudge              *ContextNudgeConfig `json:"context_nudge,omitempty"`
-
-	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
-	// DELETES agents/conversations that have been retired for a very long
-	// time (JOH-269). Absent / disabled (the default) keeps today's
-	// keep-retired-forever behaviour — retire stays the non-destructive
-	// half of cleanup. See RetiredCleanupConfig + ResolvedRetiredCleanup.
-	RetiredCleanup *RetiredCleanupConfig `json:"retired_cleanup,omitempty"`
 	AutoLaunchDashboard       bool                `json:"auto_launch_dashboard,omitempty"`
 	DisableTray               bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
 	BranchHistoryPREnrichment bool                `json:"branch_history_pr_enrichment,omitempty"`
@@ -757,6 +750,13 @@ type AgentConfig struct {
 	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
 	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
+
+	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
+	// DELETES agents/conversations that have been retired for a very long
+	// time (JOH-269). Absent / disabled (the default) keeps today's
+	// keep-retired-forever behaviour — retire stays the non-destructive
+	// half of cleanup. See RetiredCleanupConfig + ResolvedRetiredCleanup.
+	RetiredCleanup *RetiredCleanupConfig `json:"retired_cleanup,omitempty"`
 
 	// SpawnLegacyInjection reverts the daemon's Claude Code spawn flow to the
 	// legacy path: launch a bare `claude`, poll for its conv-id, then inject
@@ -924,13 +924,24 @@ type RetiredCleanupConfig struct {
 // reinstated or referenced well before it is reaped.
 const DefaultRetiredCleanupAfterDays = 365
 
+// MaxRetiredCleanupAfterDays caps the retention window at ~100 years.
+// No real retention policy approaches it; the cap exists purely to keep an
+// absurd hand-edited value (e.g. order 1e18) from overflowing the day
+// arithmetic in time.AddDate and wrapping the cutoff into the FUTURE —
+// which would make every retired conversation immediately eligible. Both
+// ResolvedRetiredCleanup (the runtime path, which never calls Validate)
+// and Validate enforce it, so a hand-edited config is safe even though
+// only the dashboard save runs Validate.
+const MaxRetiredCleanupAfterDays = 36525
+
 // ResolvedRetiredCleanup returns whether the long-horizon retired-agent
 // cleanup is enabled and, if so, the effective retention window in days.
 // Nil-safe so callers need no guard. Returns (false, 0) when the block is
 // absent or disabled, so a caller can tell "off" apart from "on with the
 // default window". A non-positive AfterDays resolves to the built-in
 // default — never a zero/negative window, which would make every retired
-// conversation immediately eligible.
+// conversation immediately eligible — and an over-large value is clamped to
+// MaxRetiredCleanupAfterDays so the cutoff can never overflow into the future.
 func (c *Config) ResolvedRetiredCleanup() (enabled bool, afterDays int) {
 	if c == nil || c.Agent == nil || c.Agent.RetiredCleanup == nil || !c.Agent.RetiredCleanup.Enabled {
 		return false, 0
@@ -938,6 +949,9 @@ func (c *Config) ResolvedRetiredCleanup() (enabled bool, afterDays int) {
 	afterDays = c.Agent.RetiredCleanup.AfterDays
 	if afterDays <= 0 {
 		afterDays = DefaultRetiredCleanupAfterDays
+	}
+	if afterDays > MaxRetiredCleanupAfterDays {
+		afterDays = MaxRetiredCleanupAfterDays
 	}
 	return true, afterDays
 }
@@ -1451,8 +1465,8 @@ func Validate(c *Config) []string {
 			if rc.Enabled {
 				lo = 1
 			}
-			if rc.AfterDays < lo {
-				errs = append(errs, fmt.Sprintf("agent.retired_cleanup.after_days %d is out of range (must be ≥%d — it is the number of days an agent stays retired before it is permanently deleted)", rc.AfterDays, lo))
+			if rc.AfterDays < lo || rc.AfterDays > MaxRetiredCleanupAfterDays {
+				errs = append(errs, fmt.Sprintf("agent.retired_cleanup.after_days %d is out of range (must be %d–%d — it is the number of days an agent stays retired before it is permanently deleted)", rc.AfterDays, lo, MaxRetiredCleanupAfterDays))
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
