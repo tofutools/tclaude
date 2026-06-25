@@ -40,6 +40,15 @@ func BuildRemoteDashboardHandlerForTest(m *remoteaccess.Material) http.Handler {
 // config.json, defaulting to DefaultAuditRetentionDays.
 func RunAuditLogCleanupForTest(now time.Time) { runAuditLogCleanup(now) }
 
+// RunRetiredAgentCleanupForTest runs one long-horizon retired-agent
+// cleanup sweep synchronously (the same work startRetiredAgentCleanup
+// does on its timer), so a flow test can drive the delete without
+// starting the goroutine or waiting its 30-minute interval. It reads the
+// opt-in toggle + retention window from the test HOME's config.json.
+// Passing an explicit `now` lets a test backdate the cutoff so a
+// just-retired agent is treated as long-retired without sleeping.
+func RunRetiredAgentCleanupForTest(now time.Time) { runRetiredAgentCleanup(now) }
+
 // SetBranchHistoryPREnrichmentForTest flips the conv_branch_history PR
 // enrichment gate, which production leaves off by default. A test that
 // wants refreshBranchLink to stamp resolved PRs onto the history table

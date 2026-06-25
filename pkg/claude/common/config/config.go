@@ -751,6 +751,13 @@ type AgentConfig struct {
 	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
 	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
 
+	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
+	// DELETES agents/conversations that have been retired for a very long
+	// time (JOH-269). Absent / disabled (the default) keeps today's
+	// keep-retired-forever behaviour — retire stays the non-destructive
+	// half of cleanup. See RetiredCleanupConfig + ResolvedRetiredCleanup.
+	RetiredCleanup *RetiredCleanupConfig `json:"retired_cleanup,omitempty"`
+
 	// SpawnLegacyInjection reverts the daemon's Claude Code spawn flow to the
 	// legacy path: launch a bare `claude`, poll for its conv-id, then inject
 	// `/rename <name>` and the welcome turn over tmux with delays. The default
@@ -883,6 +890,70 @@ func (c *ContextNudgeConfig) Resolved() (enabled bool, minPct, intervalPct int) 
 		intervalPct = defaultContextNudgeIntervalPct
 	}
 	return true, minPct, intervalPct
+}
+
+// RetiredCleanupConfig controls the opt-in long-horizon auto-cleanup
+// that permanently DELETES agents/conversations once they have been
+// retired for AfterDays days (JOH-269). It is the general retention
+// lever on top of retire: retire demotes an agent to a plain
+// conversation but keeps its row + .jsonl forever (the non-destructive
+// half of cleanup); this is what eventually reclaims that disk + DB
+// growth for entities nobody reinstated.
+//
+// Off by default — deleting is irreversible, so a fresh daemon must
+// never start removing conversations until the human explicitly opts
+// in. Deleting a conversation does NOT lose its dollar cost:
+// session_cost_daily denormalises conv_id at write time, so spend
+// totals survive (the row just reverts to its "(unknown)" title once
+// conv_index is gone). The default window is deliberately long
+// (DefaultRetiredCleanupAfterDays, ~1 year) so anything still wanted
+// has long since been reinstated or referenced.
+type RetiredCleanupConfig struct {
+	// Enabled turns the sweep on. Default false (absent) keeps the
+	// historical keep-retired-forever behaviour.
+	Enabled bool `json:"enabled,omitempty"`
+	// AfterDays is how many days a conversation must have been retired
+	// before it is eligible for deletion. 0 / absent means the built-in
+	// default (DefaultRetiredCleanupAfterDays) — see ResolvedRetiredCleanup.
+	AfterDays int `json:"after_days,omitempty"`
+}
+
+// DefaultRetiredCleanupAfterDays is the out-of-box retention window the
+// sweep uses when RetiredCleanup is enabled but pins no AfterDays — ~1
+// year. Long enough that a still-wanted retired conversation has been
+// reinstated or referenced well before it is reaped.
+const DefaultRetiredCleanupAfterDays = 365
+
+// MaxRetiredCleanupAfterDays caps the retention window at ~100 years.
+// No real retention policy approaches it; the cap exists purely to keep an
+// absurd hand-edited value (e.g. order 1e18) from overflowing the day
+// arithmetic in time.AddDate and wrapping the cutoff into the FUTURE —
+// which would make every retired conversation immediately eligible. Both
+// ResolvedRetiredCleanup (the runtime path, which never calls Validate)
+// and Validate enforce it, so a hand-edited config is safe even though
+// only the dashboard save runs Validate.
+const MaxRetiredCleanupAfterDays = 36525
+
+// ResolvedRetiredCleanup returns whether the long-horizon retired-agent
+// cleanup is enabled and, if so, the effective retention window in days.
+// Nil-safe so callers need no guard. Returns (false, 0) when the block is
+// absent or disabled, so a caller can tell "off" apart from "on with the
+// default window". A non-positive AfterDays resolves to the built-in
+// default — never a zero/negative window, which would make every retired
+// conversation immediately eligible — and an over-large value is clamped to
+// MaxRetiredCleanupAfterDays so the cutoff can never overflow into the future.
+func (c *Config) ResolvedRetiredCleanup() (enabled bool, afterDays int) {
+	if c == nil || c.Agent == nil || c.Agent.RetiredCleanup == nil || !c.Agent.RetiredCleanup.Enabled {
+		return false, 0
+	}
+	afterDays = c.Agent.RetiredCleanup.AfterDays
+	if afterDays <= 0 {
+		afterDays = DefaultRetiredCleanupAfterDays
+	}
+	if afterDays > MaxRetiredCleanupAfterDays {
+		afterDays = MaxRetiredCleanupAfterDays
+	}
+	return true, afterDays
 }
 
 // PreCompactGuardConfig controls the PreCompact hook that refuses an
@@ -1382,6 +1453,20 @@ func Validate(c *Config) []string {
 			}
 			if cn.IntervalPct < lo || cn.IntervalPct > 100 {
 				errs = append(errs, fmt.Sprintf("agent.context_nudge.interval_pct %d is out of range (%d–100)", cn.IntervalPct, lo))
+			}
+		}
+		if rc := a.RetiredCleanup; rc != nil {
+			// after_days is a permanent-delete threshold, so 0 while the
+			// sweep is enabled is a footgun: ResolvedRetiredCleanup silently
+			// rewrites a non-positive window to the ~1-year default, so the
+			// human's "0" never takes effect. Require a real ≥1 value while
+			// enabled; tolerate 0 (the inert zero value) when it's off.
+			lo := 0
+			if rc.Enabled {
+				lo = 1
+			}
+			if rc.AfterDays < lo || rc.AfterDays > MaxRetiredCleanupAfterDays {
+				errs = append(errs, fmt.Sprintf("agent.retired_cleanup.after_days %d is out of range (must be %d–%d — it is the number of days an agent stays retired before it is permanently deleted)", rc.AfterDays, lo, MaxRetiredCleanupAfterDays))
 			}
 		}
 		errs = append(errs, validateSudo(a.Sudo)...)
