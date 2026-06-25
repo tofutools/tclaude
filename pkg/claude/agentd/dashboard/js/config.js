@@ -316,6 +316,7 @@ function syncCfgEnables() {
   $('#cfg-ratelimit-5h').disabled = !rl;
   $('#cfg-ratelimit-7d').disabled = !rl;
   $('#cfg-agent-spawnmax').disabled = !$('#cfg-agent-spawnmax-enabled').checked;
+  $('#cfg-agent-retired-cleanup-days').disabled = !$('#cfg-agent-retired-cleanup-enabled').checked;
   const nudge = $('#cfg-nudge-enabled').checked;
   $('#cfg-nudge-min').disabled = !nudge;
   $('#cfg-nudge-interval').disabled = !nudge;
@@ -482,6 +483,12 @@ function populateConfigForm(cfg) {
   // value while the nudge is enabled is a config Validate flags.
   $('#cfg-nudge-min').value = cn.min_pct != null ? cn.min_pct : '';
   $('#cfg-nudge-interval').value = cn.interval_pct != null ? cn.interval_pct : '';
+  // Retired-agent cleanup (opt-in). Default off; a stored after_days
+  // shows as-is (blank when unset → the built-in ~1-year default).
+  const rc = a.retired_cleanup || {};
+  $('#cfg-agent-retired-cleanup-enabled').checked = !!rc.enabled;
+  $('#cfg-agent-retired-cleanup-days').value = (rc.after_days != null && rc.after_days !== 0) ? rc.after_days : '';
+
   renderCfgStringList('cfg-agent-permissions', a.default_permissions || [], 'cfg-slug-list', 'permission slug');
   renderCfgStringList('cfg-agent-allowedgroups', a.spawn_allowed_groups || [], 'cfg-group-list', 'group name');
 
@@ -709,6 +716,22 @@ function assembleConfig() {
   if (perms.length) a.default_permissions = perms; else delete a.default_permissions;
   const grps = readCfgStringList('cfg-agent-allowedgroups');
   if (grps.length) a.spawn_allowed_groups = grps; else delete a.spawn_allowed_groups;
+
+  // retired_cleanup is an optional opt-in block. Clone the existing one so
+  // a future sub-field with no widget round-trips, then set the two
+  // form-owned keys. enabled is written only when checked (false is the
+  // omitempty default). The day window is kept even while disabled so
+  // toggling off→on round-trips; a blank window means the built-in default
+  // (drop the key). A 0/negative entered while enabled is still written so
+  // the server's Validate surfaces "must be ≥1" rather than vanishing. Drop
+  // the whole block when nothing is left, so an all-default config doesn't
+  // marshal a spurious "retired_cleanup": {} diff.
+  const rc = (a.retired_cleanup && typeof a.retired_cleanup === 'object') ? a.retired_cleanup : {};
+  const rcEnabled = $('#cfg-agent-retired-cleanup-enabled').checked;
+  if (rcEnabled) rc.enabled = true; else delete rc.enabled;
+  const rcDaysRaw = $('#cfg-agent-retired-cleanup-days').value.trim();
+  if (rcDaysRaw !== '') rc.after_days = cfgInt('cfg-agent-retired-cleanup-days', 0); else delete rc.after_days;
+  if (Object.keys(rc).length) a.retired_cleanup = rc; else delete a.retired_cleanup;
 
   const sudoRaw = $('#cfg-sudo-json').value.trim();
   if (sudoRaw) {
@@ -1084,7 +1107,8 @@ function bindConfigTab() {
   // buttons once here (its data loads via loadConfigTab → loadRemoteAdmin).
   bindRemoteAdmin();
   ['cfg-precompact-enabled', 'cfg-ratelimit-enabled',
-    'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled'].forEach(id => {
+    'cfg-agent-spawnmax-enabled', 'cfg-nudge-enabled',
+    'cfg-agent-retired-cleanup-enabled'].forEach(id => {
     $('#' + id).addEventListener('change', syncCfgEnables);
   });
   // The friendly per-type checklist edits the raw "Advanced" transition

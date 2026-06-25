@@ -197,6 +197,14 @@ button is therefore mainly for *offline* past conversations you want back
 on the roster; a conversation you deliberately **retire** stays retired
 even while its pane is still running.
 
+Retired conversations are kept **forever** by default — retire is the
+non-destructive half of cleanup. If you'd rather reclaim the long tail
+automatically, the Config tab's **Retired-agent cleanup** toggle opts into
+a periodic sweep (every 30 min, and at `agentd serve` startup) that
+*permanently deletes* anything retired longer than a window you set
+(default ≈ 1 year). It's off until you enable it, and deleting a
+conversation never loses its recorded cost — spend totals survive.
+
 **Drag-and-drop.** Drag a member row onto another group's header to **move**
 it; hold **Ctrl** (**Cmd** on macOS) while dragging to **clone** it into the
 target group instead, leaving the original in place. A hint pill follows the

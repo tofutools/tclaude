@@ -217,6 +217,13 @@ func runServe(p *serveParams) error {
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
 
+	// Long-horizon retired-agent cleanup (JOH-269). OPT-IN: when the human
+	// enables agent.retired_cleanup, permanently deletes agents/convs that
+	// have been retired longer than the configured window (~1 year by
+	// default). Off by default — retire stays the non-destructive half of
+	// cleanup. Shares the daemon-wide stop channel. See retired_cleanup.go.
+	startRetiredAgentCleanup(cronStop)
+
 	// Session reaper. Sweeps for sessions whose tmux session + process
 	// are gone and stamps status=exited — a crashed or kill -9'd agent
 	// fires no SessionEnd hook, so without this its row would stay

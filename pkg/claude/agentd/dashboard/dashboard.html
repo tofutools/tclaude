@@ -501,6 +501,24 @@
     </div>
 
     <div class="cfg-section">
+      <h3>Retired-agent cleanup</h3>
+      <p class="cfg-hint" style="padding-left:0">
+        Optional long-horizon housekeeping that <strong>permanently deletes</strong> agents/conversations
+        once they have been <em>retired</em> for a long time — reclaiming the Retired tab, mailbox queries
+        and disk that retired entities (e.g. export summary-writer clones) otherwise hold forever.
+        <strong>Off by default</strong>; retire stays the non-destructive half of cleanup. Deleting a
+        conversation does <strong>not</strong> lose its cost — spend totals survive deletion.
+      </p>
+      <div class="cfg-field">
+        <span class="cfg-label">Auto-cleanup</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-agent-retired-cleanup-enabled" /> delete agents retired longer than</label>
+        <input type="number" id="cfg-agent-retired-cleanup-days" min="1" placeholder="365" aria-label="Days retired before deletion" style="min-width:90px" />
+        <span>days</span>
+        <span class="cfg-hint">agentd sweeps every 30&nbsp;min (and at startup). Empty = built-in default (365 ≈ 1 year). Irreversible — choose a window long enough that anything still wanted has been reinstated.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
       <h3>Remote access</h3>
       <p class="cfg-hint" style="padding-left:0">
         Expose this <strong>dashboard</strong> to your phone or another machine over the
