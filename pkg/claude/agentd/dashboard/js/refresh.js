@@ -1104,8 +1104,14 @@ function openRetirePreview(group, status) {
     renderFooter();
   };
   const onSearch = () => renderList();
-  const onSelectAll = () => { for (const c of candidates) c.checked = true; render(); };
-  const onSelectNone = () => { for (const c of candidates) c.checked = false; render(); };
+  // select-all / select-none act on the CURRENTLY-VISIBLE rows, so under
+  // an active filter "select none" only clears the rows the human can see
+  // — it never silently unticks (or ticks) agents hidden by the filter.
+  // With no filter, matchesFilter passes everything, so they behave as a
+  // plain all/none. The global "n of N selected" count keeps the true
+  // total honest even when some checked rows are filtered out of view.
+  const onSelectAll = () => { for (const c of candidates.filter(matchesFilter)) c.checked = true; render(); };
+  const onSelectNone = () => { for (const c of candidates.filter(matchesFilter)) c.checked = false; render(); };
 
   const cleanup = () => {
     overlay.classList.remove('show');

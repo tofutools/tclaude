@@ -769,9 +769,13 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // query (filter path); a body field, when present, wins.
 func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	var body struct {
-		Convs    []string `json:"convs"`
-		Shutdown *bool    `json:"shutdown"`
-		Reason   *string  `json:"reason"`
+		// Convs is a POINTER so an absent key (nil → legacy status-filter
+		// path) is distinguishable from an explicit empty list ({"convs":[]}
+		// → explicit path with nothing selected, which is a 400, NOT a
+		// silent fallback that would retire the whole group).
+		Convs    *[]string `json:"convs"`
+		Shutdown *bool     `json:"shutdown"`
+		Reason   *string   `json:"reason"`
 	}
 	// The body is optional — the legacy status-filter callers send none.
 	// A present-but-malformed body is a 400, not a silent fallthrough, so
@@ -801,19 +805,23 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		reason = strings.TrimSpace(*body.Reason)
 	}
 
-	// Explicit selection wins over the status filter. Dedupe into a set so
-	// a duplicated conv-id costs one retire, not two.
+	// An explicit `convs` key (even empty) selects the explicit path and
+	// wins over the status filter; its absence keeps the legacy filter
+	// path. Dedupe into a set so a duplicated conv-id costs one retire, not
+	// two. A present-but-empty (or all-blank) list is a 400, never a
+	// fallthrough — that guards against {"convs":[]} silently meaning
+	// "retire everyone".
 	var selected map[string]struct{}
 	var filter retireStatusFilter
-	if len(body.Convs) > 0 {
-		selected = make(map[string]struct{}, len(body.Convs))
-		for _, c := range body.Convs {
+	if body.Convs != nil {
+		selected = make(map[string]struct{}, len(*body.Convs))
+		for _, c := range *body.Convs {
 			if c = strings.TrimSpace(c); c != "" {
 				selected[c] = struct{}{}
 			}
 		}
 		if len(selected) == 0 {
-			http.Error(w, "retire: convs list had no valid conv-ids", http.StatusBadRequest)
+			http.Error(w, "retire: convs was provided but held no valid conv-ids", http.StatusBadRequest)
 			return
 		}
 	} else {
