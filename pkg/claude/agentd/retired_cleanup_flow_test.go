@@ -87,6 +87,28 @@ func TestRetiredCleanup_SkipsActiveAgents(t *testing.T) {
 	assert.Equal(t, db.EnrollmentActive, state, "an active agent must never be reaped")
 }
 
+// A retired conversation whose tmux pane is somehow still alive is
+// skipped even past the window — the sweep never races a live pane's
+// writes to its own .jsonl during teardown (mirrors handleAgentDelete's
+// refuse-while-alive guard). Near-impossible for a year-retired agent,
+// but the guard is cheap and this locks it down.
+func TestRetiredCleanup_SkipsOnlineRetired(t *testing.T) {
+	f := newFlow(t)
+	writeRetiredCleanupConfig(t, true, 365)
+
+	const convID = "66666666-6666-6666-6666-666666666666"
+	// A live session (registered in the tmux sim, so isConvOnline sees it),
+	// then retire the enrollment without killing the pane.
+	f.HaveAliveSession(convID, "online-retired", "tmux-online-retired", t.TempDir())
+	f.HaveRetiredAgent(convID)
+
+	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
+
+	enr, err := db.GetEnrollment(convID)
+	require.NoError(t, err)
+	assert.NotNil(t, enr, "a still-online retired conv must be skipped, not deleted")
+}
+
 // The feature is OPT-IN: with no config (the out-of-box default, sweep
 // disabled), even a very old retired conversation is kept — today's
 // keep-retired-forever behaviour is preserved until the human opts in.

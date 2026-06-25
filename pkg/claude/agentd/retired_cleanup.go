@@ -92,10 +92,15 @@ func runRetiredAgentCleanup(now time.Time) {
 			slog.Info("retired cleanup: skipping still-online retired conv", "conv", e.ConvID)
 			continue
 		}
+		// Log every deletion individually: the .jsonl is removed and there
+		// is no undo, so the daemon log is the sole forensic record of what
+		// was reaped (the aggregate line below is for at-a-glance volume).
 		if _, err := conv.DeleteConvByID(e.ConvID); err != nil {
 			slog.Warn("retired cleanup: delete failed", "conv", e.ConvID, "error", err)
 			continue
 		}
+		slog.Info("retired cleanup: deleted long-retired conversation",
+			"conv", e.ConvID, "retired_at", e.RetiredAt.Format(time.RFC3339))
 		deleted++
 	}
 	if deleted > 0 {

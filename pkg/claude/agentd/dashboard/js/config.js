@@ -718,20 +718,28 @@ function assembleConfig() {
   if (grps.length) a.spawn_allowed_groups = grps; else delete a.spawn_allowed_groups;
 
   // retired_cleanup is an optional opt-in block. Clone the existing one so
-  // a future sub-field with no widget round-trips, then set the two
-  // form-owned keys. enabled is written only when checked (false is the
-  // omitempty default). The day window is kept even while disabled so
-  // toggling off→on round-trips; a blank window means the built-in default
-  // (drop the key). A 0/negative entered while enabled is still written so
-  // the server's Validate surfaces "must be ≥1" rather than vanishing. Drop
-  // the whole block when nothing is left, so an all-default config doesn't
-  // marshal a spurious "retired_cleanup": {} diff.
+  // a future sub-field with no widget round-trips, then set the form-owned
+  // keys. Mirrors the context_nudge shape: when ENABLED we always write a
+  // real after_days, filling a blank field with the built-in default (365),
+  // so the common "tick + accept the default + Save" path produces a config
+  // the server's Validate accepts (it requires after_days ≥ 1 while enabled)
+  // — an explicit 0 is still written so Validate can surface "must be ≥1".
   const rc = (a.retired_cleanup && typeof a.retired_cleanup === 'object') ? a.retired_cleanup : {};
-  const rcEnabled = $('#cfg-agent-retired-cleanup-enabled').checked;
-  if (rcEnabled) rc.enabled = true; else delete rc.enabled;
-  const rcDaysRaw = $('#cfg-agent-retired-cleanup-days').value.trim();
-  if (rcDaysRaw !== '') rc.after_days = cfgInt('cfg-agent-retired-cleanup-days', 0); else delete rc.after_days;
-  if (Object.keys(rc).length) a.retired_cleanup = rc; else delete a.retired_cleanup;
+  if ($('#cfg-agent-retired-cleanup-enabled').checked) {
+    rc.enabled = true;
+    rc.after_days = cfgInt('cfg-agent-retired-cleanup-days', 365);
+    a.retired_cleanup = rc;
+  } else {
+    // Disabled: drop the enable flag (false is the omitempty default) but
+    // keep the window the user entered so toggling off→on round-trips. A
+    // blank window leaves the block genuinely absent; drop it when nothing
+    // is left so an all-default config doesn't marshal a spurious
+    // "retired_cleanup": {} diff.
+    delete rc.enabled;
+    const rcDaysRaw = $('#cfg-agent-retired-cleanup-days').value.trim();
+    if (rcDaysRaw !== '') rc.after_days = cfgInt('cfg-agent-retired-cleanup-days', 0); else delete rc.after_days;
+    if (Object.keys(rc).length) a.retired_cleanup = rc; else delete a.retired_cleanup;
+  }
 
   const sudoRaw = $('#cfg-sudo-json').value.trim();
   if (sudoRaw) {
