@@ -587,6 +587,215 @@ details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
+
+/* ── Group activity bots ──────────────────────────────────────────────
+   The deduped per-status robot row (group-activity.js → groupActivityHTML)
+   that rides in a group <summary> right after the name, and the same row
+   aggregated for the whole dashboard in the top bar (#global-activity).
+   One 🤖 per distinct status present; motion — plus a corner tag glyph
+   for the less-obvious states — tells the states apart at a glance. The
+   whole point is to read a FOLDED group without unfolding it, so this row
+   stays visible whether the <details> is open or closed.
+
+   All motion is pure CSS transform/opacity (compositor-cheap) and is
+   dropped under prefers-reduced-motion below; the bots/tags/counts (the
+   actual information) stay. */
+.group-activity {
+  display: inline-flex; align-items: center;
+  margin: 0 6px; vertical-align: middle; line-height: 1;
+}
+/* Each group emits BOTH a regular-mode and a slop-mode wrapper; CSS shows
+   exactly one per mode, so flipping slop swaps the visual with no
+   re-render (same trick as the slot-machine state pill). Either wrapper is
+   empty when its configured style is 'off'. */
+.ga-regular, .ga-slop {
+  display: inline-flex; align-items: center; gap: 3px; line-height: 1;
+}
+.ga-slop { display: none; }
+body.slop .ga-regular { display: none; }
+body.slop .ga-slop { display: inline-flex; }
+
+.actbot {
+  position: relative; display: inline-block;
+  font-size: 14px; line-height: 1; width: 1.15em; height: 1.2em;
+  text-align: center;
+  transform-origin: 50% 90%; /* dance/tilt pivot at the feet */
+}
+.actbot-face { display: inline-block; }
+.actbot-tag {
+  position: absolute; top: -0.5em; right: -0.45em;
+  font-size: 0.62em; line-height: 1; pointer-events: none;
+  filter: drop-shadow(0 0 1px #000);
+}
+.actbot-count {
+  position: absolute; bottom: -3px; right: -5px;
+  /* Absolute (not em) so the badge survives .actbot-sprite, whose box is
+     sized in px — an em size there would inherit the sprite's font-size. */
+  font-size: 9px; line-height: 1.1; min-width: 1em; padding: 0 2px;
+  border-radius: 6px; background: #1f6feb; color: #fff;
+  box-shadow: 0 0 0 1px #0d1117;
+}
+
+/* Per-variant motion. working DANCES, idle just BREATHES (near-still),
+   asking head-TILTS under a bobbing ❓, error SHAKES, crashed lies
+   toppled + greyed, offline dims to a sleeping 💤. */
+/* Every loop uses `alternate` so the animation PING-PONGS (plays forward,
+   then reverses) instead of resetting to 0% — the boundary value AND
+   velocity always match by construction, so there is NO jump at the cycle
+   end. The keyframes are the two (or three) extremes; alternate supplies
+   the return leg. Durations are per-leg, so the full there-and-back is 2×. */
+.actbot-working .actbot-face { animation: actbot-dance   0.45s ease-in-out infinite alternate; }
+.actbot-idle    .actbot-face { animation: actbot-breathe 1.7s  ease-in-out infinite alternate; }
+.actbot-asking  .actbot-face { animation: actbot-tilt    0.8s  ease-in-out infinite alternate; }
+.actbot-asking  .actbot-tag  { animation: actbot-bob     0.8s  ease-in-out infinite alternate; }
+.actbot-error   .actbot-face { animation: actbot-shake   0.13s ease-in-out infinite alternate; }
+.actbot-crashed { opacity: 0.85; }
+.actbot-crashed .actbot-face { transform: rotate(90deg); filter: grayscale(0.4); }
+.actbot-offline { opacity: 0.5; }
+.actbot-offline .actbot-face { filter: grayscale(1); }
+.actbot-offline .actbot-tag  { animation: actbot-bob     1.7s  ease-in-out infinite alternate; }
+
+/* dance bobs side-to-side with a hop through center; the others are simple
+   two-state extremes. With `alternate` the return leg is the exact reverse,
+   so each turn is at an extreme where ease-in-out has zero velocity. */
+@keyframes actbot-dance {
+  0%   { transform: translateY(0)    rotate(-8deg); }
+  50%  { transform: translateY(-4px) rotate(0deg); }
+  100% { transform: translateY(0)    rotate(8deg); }
+}
+@keyframes actbot-breathe {
+  from { transform: scale(1); }
+  to   { transform: scale(1.07); }
+}
+@keyframes actbot-tilt {
+  from { transform: rotate(-12deg); }
+  to   { transform: rotate(12deg); }
+}
+@keyframes actbot-shake {
+  from { transform: translateX(-1.5px); }
+  to   { transform: translateX(1.5px); }
+}
+@keyframes actbot-bob {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-2px); }
+}
+
+/* Wrapper level tint — a faint glow so the group's loudest state reads in
+   peripheral vision; the bots carry the real signal. */
+.ga-regular.level-error,  .ga-slop.level-error,
+.ga-regular.level-asking, .ga-slop.level-asking { filter: drop-shadow(0 0 3px rgba(248, 81, 73, 0.45)); }
+.ga-regular.level-working, .ga-slop.level-working { filter: drop-shadow(0 0 3px rgba(63, 185, 80, 0.40)); }
+
+/* Top-bar global indicator — same bot row(s), aggregated across every group
+   + the ungrouped bucket. Collapses out of the flex header when empty
+   (renderGlobalActivity clears innerHTML when there's no live membership). */
+.global-activity {
+  display: inline-flex; align-items: center; margin-left: 6px;
+  vertical-align: middle; cursor: default;
+}
+.global-activity:empty { display: none; }
+.global-activity .actbot { font-size: 15px; }
+
+/* ── Sprite (pixel-art) bots — the slop-mode default ──────────────────
+   pixellab robots animated by DISCRETE background-image keyframes: each
+   @keyframes block swaps .actbot-spr's frame, held with step-end. No
+   sprite sheet, no JS loop — frames come from the embedded /static/sprites
+   tree. Each .spr-* also sets its first frame as a static background so a
+   reduced-motion (animation:none) bot still shows a pose. crashed/offline
+   share one static frame, greyed / toppled by CSS. */
+.actbot-sprite {
+  /* Fixed height → uniform row; width follows from each pose's own
+     aspect-ratio below. width:auto is ESSENTIAL — the base .actbot rule
+     sets width:1.15em (for the emoji glyph), and with both width AND height
+     fixed, aspect-ratio is ignored, which letterboxes + shrinks the sprite.
+     Clearing width to auto lets aspect-ratio derive it from the height, so
+     box aspect == frame aspect → the robot fills it, no letterbox. */
+  width: auto;
+  height: 30px;
+  transform-origin: 50% 90%;
+}
+/* Per-pose aspect — each frame set is trimmed to its OWN bounds (heights
+   all land ~49px so the row stays even; only widths differ by pose: a
+   dancing robot is wider than a standing idle one). Keep these in sync
+   with the cropped frame dimensions (the trim step prints them). */
+.actbot-sprite.actbot-working { aspect-ratio: 31 / 49; }
+.actbot-sprite.actbot-asking  { aspect-ratio: 28 / 49; }
+.actbot-sprite.actbot-error   { aspect-ratio: 36 / 49; }
+.actbot-sprite.actbot-idle    { aspect-ratio: 24 / 50; }
+.actbot-sprite.actbot-crashed,
+.actbot-sprite.actbot-offline { aspect-ratio: 24 / 49; }
+/* The top-bar global indicator uses the SAME sprite height as the in-group
+   ones (set above) — no override needed; this rule is kept as the hook if
+   they ever want to diverge again. */
+.global-activity .actbot-sprite { height: 30px; }
+.actbot-spr {
+  display: block; width: 100%; height: 100%;
+  background-repeat: no-repeat; background-position: center;
+  background-size: contain; image-rendering: pixelated;
+}
+.spr-dance  { background-image: url(sprites/dance_0.png);  animation: spr-dance  0.9s step-end infinite; }
+.spr-asking { background-image: url(sprites/asking_0.png); animation: spr-asking 1.2s step-end infinite; }
+.spr-error  { background-image: url(sprites/error_0.png);  animation: spr-error  0.7s step-end infinite; }
+.spr-idle   { background-image: url(sprites/idle_0.png);   animation: spr-idle   2.0s step-end infinite; }
+.spr-static { background-image: url(sprites/bot.png); }
+.actbot-sprite.actbot-crashed .actbot-spr { transform: rotate(90deg); filter: grayscale(0.5); }
+.actbot-sprite.actbot-offline .actbot-spr { filter: grayscale(1); }
+
+@keyframes spr-dance {
+  0%     { background-image: url(sprites/dance_0.png); }
+  11.11% { background-image: url(sprites/dance_1.png); }
+  22.22% { background-image: url(sprites/dance_2.png); }
+  33.33% { background-image: url(sprites/dance_3.png); }
+  44.44% { background-image: url(sprites/dance_4.png); }
+  55.55% { background-image: url(sprites/dance_5.png); }
+  66.66% { background-image: url(sprites/dance_6.png); }
+  77.77% { background-image: url(sprites/dance_7.png); }
+  88.88% { background-image: url(sprites/dance_8.png); }
+}
+@keyframes spr-asking {
+  0%     { background-image: url(sprites/asking_0.png); }
+  11.11% { background-image: url(sprites/asking_1.png); }
+  22.22% { background-image: url(sprites/asking_2.png); }
+  33.33% { background-image: url(sprites/asking_3.png); }
+  44.44% { background-image: url(sprites/asking_4.png); }
+  55.55% { background-image: url(sprites/asking_5.png); }
+  66.66% { background-image: url(sprites/asking_6.png); }
+  77.77% { background-image: url(sprites/asking_7.png); }
+  88.88% { background-image: url(sprites/asking_8.png); }
+}
+@keyframes spr-error {
+  0%     { background-image: url(sprites/error_0.png); }
+  11.11% { background-image: url(sprites/error_1.png); }
+  22.22% { background-image: url(sprites/error_2.png); }
+  33.33% { background-image: url(sprites/error_3.png); }
+  44.44% { background-image: url(sprites/error_4.png); }
+  55.55% { background-image: url(sprites/error_5.png); }
+  66.66% { background-image: url(sprites/error_6.png); }
+  77.77% { background-image: url(sprites/error_7.png); }
+  88.88% { background-image: url(sprites/error_8.png); }
+}
+@keyframes spr-idle {
+  0%  { background-image: url(sprites/idle_0.png); }
+  25% { background-image: url(sprites/idle_1.png); }
+  50% { background-image: url(sprites/idle_2.png); }
+  75% { background-image: url(sprites/idle_3.png); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .actbot, .actbot-face, .actbot-tag, .actbot-spr { animation: none !important; }
+}
+
+/* Slop mode cranks EMOJI dancers up — faster feet + a disco hue-cycle glow
+   — but only when slop's configured style is emoji (the .ga-slop wrapper).
+   Sprite bots are already pixel robots and need no extra flourish. */
+body.slop .ga-slop .actbot-working .actbot-face { animation-duration: 0.5s; }
+body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinite; }
+@keyframes actbot-disco {
+  0%   { filter: hue-rotate(0deg) drop-shadow(0 0 4px gold); }
+  50%  { filter: hue-rotate(180deg) drop-shadow(0 0 6px #ff00ff); }
+  100% { filter: hue-rotate(360deg) drop-shadow(0 0 4px gold); }
+}
+
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }

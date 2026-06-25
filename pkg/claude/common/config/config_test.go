@@ -589,3 +589,42 @@ func TestShowVegasInRegularMode(t *testing.T) {
 	music, _ := loaded.ResolvedSlopVolumes()
 	assert.Equal(t, 80, music, "the music volume coexists with the new flag")
 }
+
+// TestActivityBotsStyles covers the per-mode style resolvers behind the
+// dashboard's activity-bot indicator: regular defaults to "emoji", slop to
+// "sprites"; nil config / absent block / absent key / an unknown value all
+// fall back to those defaults; explicit values win. The JSON shape is
+// asserted so a default config stays clean (no block), while a non-default
+// pair round-trips through Save/Load.
+func TestActivityBotsStyles(t *testing.T) {
+	// Defaults: regular emoji, slop sprites.
+	assert.Equal(t, ActivityBotsEmoji, (*Config)(nil).ActivityBotsRegular(), "nil → emoji")
+	assert.Equal(t, ActivityBotsSprites, (*Config)(nil).ActivityBotsSlop(), "nil → sprites")
+	assert.Equal(t, ActivityBotsEmoji, (&Config{}).ActivityBotsRegular(), "no block → emoji")
+	assert.Equal(t, ActivityBotsSprites, (&Config{}).ActivityBotsSlop(), "no block → sprites")
+	assert.Equal(t, ActivityBotsEmoji, (&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{}}}).ActivityBotsRegular(), "absent key → emoji")
+
+	// An unknown (hand-edited garbage) value degrades to the default.
+	garbage := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: "wat", Slop: "nope"}}}
+	assert.Equal(t, ActivityBotsEmoji, garbage.ActivityBotsRegular(), "unknown → emoji")
+	assert.Equal(t, ActivityBotsSprites, garbage.ActivityBotsSlop(), "unknown → sprites")
+
+	// Explicit values win, including the cross/off combos.
+	explicit := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsSprites, Slop: ActivityBotsOff}}}
+	assert.Equal(t, ActivityBotsSprites, explicit.ActivityBotsRegular(), "explicit sprites")
+	assert.Equal(t, ActivityBotsOff, explicit.ActivityBotsSlop(), "explicit off")
+
+	// A fresh (all-default) config serializes no dashboard block.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "activity_bots")
+	assert.NotContains(t, string(clean), "dashboard")
+
+	// A non-default pair survives Save/Load.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsOff, Slop: ActivityBotsEmoji}}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, ActivityBotsOff, loaded.ActivityBotsRegular(), "regular off survives round-trip")
+	assert.Equal(t, ActivityBotsEmoji, loaded.ActivityBotsSlop(), "slop emoji survives round-trip")
+}

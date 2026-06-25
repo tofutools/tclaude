@@ -1,0 +1,204 @@
+// group-activity.js — the deduped "activity bot" indicator.
+//
+// A group's <summary> header (render.js) and the top bar (the
+// #global-activity slot) both want a glanceable answer to "is anything
+// happening in here?" — especially when a group is FOLDED, where the
+// per-member rows (and their state pills) are hidden behind the
+// disclosure triangle. This module turns a member list into a small row
+// of animated robot icons: one bot per DISTINCT status present, deduped,
+// each carrying a count when more than one member shares that status.
+//
+// The mapping (operator's framing — "one dancing bot of different style
+// per status"):
+//   working / main_agent_idle      → a DANCING bot   (green, lively)
+//   idle                           → a STILL bot      (amber, calm)
+//   awaiting_permission / _input   → an ASKING bot    (❓, blue — needs you)
+//   error                          → an ALARMED bot   (💥, red)
+//   offline + exit_reason unexpected → a CRASHED bot  (💀, gold)
+//   offline (clean)                → a SLEEPING bot    (💤, dim)
+//
+// Pure + DOM-free on purpose: the same module the browser imports is unit
+// tested under Node (jstest/group-activity.test.mjs). The HTML builders
+// below emit ONLY fixed class names, emoji and integer counts — never any
+// caller-supplied string — so the output needs no escaping and stays
+// injection-safe by construction. Group names (used in the global
+// tooltip) are joined in render.js and assigned via the .title DOM
+// property, which never parses HTML.
+
+// VARIANT_ORDER is both the dedup key set AND the left-to-right / loudest
+// -first priority. The first present variant becomes the container's
+// `level-*` class (its overall "mood"), and the bots render in this
+// order so the most urgent one leads. A lingering CRASHED corpse is
+// deliberately ranked BELOW working/idle: a crash is notable (its bot
+// still shows) but it should not permanently paint an otherwise-busy
+// group with an alarm colour.
+export const VARIANT_ORDER = ['error', 'asking', 'working', 'idle', 'crashed', 'offline'];
+
+// Friendly, count-prefixable nouns for the tooltips ("2 working", "1
+// awaiting"). 'asking' collapses awaiting_permission + awaiting_input —
+// from a glance they mean the same thing ("go look"); the precise split
+// still lives in the per-member row pills.
+const VARIANT_LABEL = {
+  error: 'error',
+  asking: 'awaiting',
+  working: 'working',
+  idle: 'idle',
+  crashed: 'crashed',
+  offline: 'offline',
+};
+
+// Corner glyph layered over the 🤖 face for the variants whose animation
+// alone wouldn't read at a glance. working/idle differ by motion (dance
+// vs still) and carry no tag, keeping the common cases clean.
+const VARIANT_TAG = {
+  asking: '❓',
+  error: '💥',
+  crashed: '💀',
+  offline: '💤',
+};
+
+// memberVariant classifies a single snapshot member into one VARIANT_ORDER
+// key. Offline-first: a dead process's frozen state.status would mislabel
+// it (mirrors statePill's reasoning in helpers.js), so we read online +
+// exit_reason for the offline cases and only trust state.status while the
+// agent is actually online.
+export function memberVariant(m) {
+  if (!m || !m.online) {
+    const reason = (m && m.state && m.state.exit_reason) || '';
+    return reason === 'unexpected' ? 'crashed' : 'offline';
+  }
+  const s = (m.state && m.state.status) || '';
+  if (s === 'error') return 'error';
+  if (s === 'awaiting_permission' || s === 'awaiting_input') return 'asking';
+  if (s === 'working' || s === 'main_agent_idle') return 'working';
+  // idle, exited-while-online, or a blank online status all fold into the
+  // calm "idle" bot — online but not actively doing anything notable.
+  return 'idle';
+}
+
+// activitySummary reduces a member list to counts + the ordered set of
+// variants worth showing as bots. Clean-offline is suppressed UNLESS the
+// whole group is cleanly offline (so a folded, all-asleep group still
+// shows one dim 💤 bot instead of an empty chip); crashed always shows
+// (it's notable). Returns { total, online, counts, present, level,
+// summaryText } — `present` already filtered + ordered, `level` the
+// loudest present variant (or 'empty'), `summaryText` the tooltip line.
+export function activitySummary(members) {
+  const counts = { error: 0, asking: 0, working: 0, idle: 0, crashed: 0, offline: 0 };
+  let total = 0;
+  let online = 0;
+  for (const m of (members || [])) {
+    total++;
+    if (m && m.online) online++;
+    counts[memberVariant(m)]++;
+  }
+  const liveCount = total - counts.offline; // everything except clean-offline
+  const present = VARIANT_ORDER.filter(v => {
+    if (counts[v] <= 0) return false;
+    if (v === 'offline') return liveCount === 0; // only when the whole group is asleep
+    return true;
+  });
+  const level = present[0] || 'empty';
+  const summaryText = present.map(v => `${counts[v]} ${VARIANT_LABEL[v]}`).join(' · ');
+  return { total, online, counts, present, level, summaryText };
+}
+
+// botHTML renders one bot for a single variant. `n` (a number) feeds the
+// count badge (shown only when >1) and the per-bot tooltip. No string
+// interpolation of caller input — safe to drop into innerHTML.
+function botHTML(variant, n) {
+  const tagGlyph = VARIANT_TAG[variant];
+  const tag = tagGlyph ? `<span class="actbot-tag">${tagGlyph}</span>` : '';
+  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
+  const tip = `${n} ${VARIANT_LABEL[variant]}`;
+  return `<span class="actbot actbot-${variant}" title="${tip}" aria-label="${tip}">`
+    + `<span class="actbot-face">🤖</span>${tag}${count}</span>`;
+}
+
+// activityBotsHTML emits the inner bot row for a summary (no wrapper).
+// Returns '' when there's nothing to show.
+export function activityBotsHTML(summary) {
+  if (!summary || !summary.present.length) return '';
+  return summary.present.map(v => botHTML(v, summary.counts[v])).join('');
+}
+
+// === Sprite (pixel-art) bot row — the slop-mode default ==================
+//
+// The same deduped row, but each bot is a pixellab robot sprite animated
+// via pure-CSS discrete background-image keyframes (dashboard.css → the
+// spr-* classes + /static/sprites/*.png). The POSE carries the status, so
+// — unlike the emoji bots — no corner tag glyph is layered on; crashed and
+// offline share a single static frame (greyed / toppled by CSS).
+const SPRITE_ANIM = {
+  working: 'dance',
+  asking: 'asking',
+  error: 'error',
+  idle: 'idle',
+  crashed: 'static',
+  offline: 'static',
+};
+
+function spriteBotHTML(variant, n) {
+  const anim = SPRITE_ANIM[variant] || 'static';
+  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
+  const tip = `${n} ${VARIANT_LABEL[variant]}`;
+  return `<span class="actbot actbot-sprite actbot-${variant}" title="${tip}" aria-label="${tip}">`
+    + `<span class="actbot-spr spr-${anim}"></span>${count}</span>`;
+}
+
+// spriteBotsHTML emits the inner sprite row for a summary (no wrapper).
+export function spriteBotsHTML(summary) {
+  if (!summary || !summary.present.length) return '';
+  return summary.present.map(v => spriteBotHTML(v, summary.counts[v])).join('');
+}
+
+// styledBotsHTML renders the inner bot row for a summary in one of the
+// three styles. 'off' (or an empty summary) → ''. The single switchboard
+// both render call sites go through, so emoji/sprites stay interchangeable.
+export function styledBotsHTML(summary, style) {
+  if (!summary || style === 'off' || !summary.present.length) return '';
+  return style === 'sprites' ? spriteBotsHTML(summary) : activityBotsHTML(summary);
+}
+
+// groupActivityHTML is the one-shot helper render.js drops into a group
+// <summary>. It emits a regular-mode wrapper (.ga-regular) AND a slop-mode
+// wrapper (.ga-slop), each rendered in its configured style — CSS shows
+// exactly one per mode (body.slop), so toggling slop swaps the visual with
+// NO re-render (the same trick the slot-machine state pill uses). Each
+// wrapper carries the loudest-variant `level-*` class + a breakdown
+// tooltip. Returns '' when BOTH modes resolve to nothing (off / empty
+// group), so the header stays uncluttered.
+export function groupActivityHTML(members, regularStyle, slopStyle) {
+  const s = activitySummary(members);
+  if (!s.present.length) return '';
+  const wrap = (cls, style) => {
+    const inner = styledBotsHTML(s, style);
+    return inner
+      ? `<span class="${cls} level-${s.level}" title="${s.summaryText}">${inner}</span>`
+      : '';
+  };
+  const reg = wrap('ga-regular', regularStyle);
+  const slop = wrap('ga-slop', slopStyle);
+  if (!reg && !slop) return '';
+  return `<span class="group-activity">${reg}${slop}</span>`;
+}
+
+// aggregateActivity flattens several member lists (every group + the
+// ungrouped bucket) into one summary — the backing for the global top-bar
+// indicator. Dedups by conv_id: an agent that belongs to several groups
+// appears in EACH group's member list, so without this the global counts
+// would multiply that agent by its group count. Members with no conv_id
+// (e.g. test fixtures) are never deduped — they all pass through.
+export function aggregateActivity(memberLists) {
+  const all = [];
+  const seen = new Set();
+  for (const list of (memberLists || [])) {
+    for (const m of (list || [])) {
+      const id = m && m.conv_id;
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      all.push(m);
+    }
+  }
+  return activitySummary(all);
+}

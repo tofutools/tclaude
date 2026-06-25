@@ -566,6 +566,13 @@ type snapshotPayload struct {
 	// toggles body.vegas off this so the music/tab/volume light up in
 	// regular mode without the slot machines and FX. Default false.
 	VegasInRegularMode bool `json:"vegas_in_regular_mode"`
+	// ActivityBots mirrors config dashboard.activity_bots — the per-mode
+	// STYLE of the deduped "activity bot" indicator in group headers + the
+	// top bar. Each field is "emoji" | "sprites" | "off"; the front-end
+	// (render.js) emits both a regular-mode and a slop-mode row and CSS
+	// shows the one for the current mode. Defaults: regular emoji, slop
+	// sprites. See ActivityBotsRegular / ActivityBotsSlop.
+	ActivityBots activityBotsView `json:"activity_bots"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -584,6 +591,15 @@ type snapshotPayload struct {
 	// the saved intent; this carries the live reality so the UI can flag a
 	// "no material yet" foot-gun and a "restart agentd to apply" pending state.
 	RemoteAccess dashboardRemoteAccess `json:"remote_access"`
+}
+
+// activityBotsView carries the resolved per-mode activity-bot style to the
+// dashboard — each is "emoji" | "sprites" | "off" (config
+// dashboard.activity_bots, defaulted by ActivityBotsRegular /
+// ActivityBotsSlop). The front-end picks Regular vs Slop off body.slop.
+type activityBotsView struct {
+	Regular string `json:"regular"`
+	Slop    string `json:"slop"`
 }
 
 // dashboardRemoteAccess is the snapshot view of the remote-access feature's
@@ -1153,6 +1169,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
 		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),
+		ActivityBots: activityBotsView{
+			Regular: cfg.ActivityBotsRegular(),
+			Slop:    cfg.ActivityBotsSlop(),
+		},
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

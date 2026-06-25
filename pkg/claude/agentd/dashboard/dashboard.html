@@ -16,6 +16,14 @@
 <body>
 <header>
   <h1>🤝 tclaude agent dashboard</h1>
+  <!-- Global activity pulse — a deduped row of status "bots" aggregated
+       across every group + the ungrouped bucket (render.js
+       renderGlobalActivity, painted each 2s poll). One glance answers
+       "is anything working / does anything need me?" without scanning
+       the list; the title attribute breaks it down per group. Collapses
+       (CSS :empty) when there are zero members, or when both modes'
+       styles are "off". -->
+  <span class="global-activity" id="global-activity" aria-label="Activity across all groups"></span>
   <span class="meta" id="meta">loading…</span>
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <!-- Master OS-notification bell + per-type popover. The bell glyph
@@ -300,6 +308,28 @@
         <span class="cfg-label">Show cost on subscription</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-cost-show-on-subscription" /> show the Costs tab + per-agent cost on a subscription (WHAT-IF)</label>
         <span class="cfg-hint">On a subscription there's no pay-per-token charge, so the Costs tab and per-agent cost badge are hidden by default. Enable this to show them in <strong>WHAT-IF</strong> mode — the estimated equivalent cost <em>if</em> you were billed pay-per-token (Claude Code's client-side <code>total_cost_usd</code>), clearly flagged as hypothetical. On pay-per-token the Costs tab always shows real spend regardless of this setting.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
+      <h3>Dashboard</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Activity bots — regular mode</span>
+        <select id="cfg-dashboard-activity-bots-regular" aria-label="Activity bot style in regular mode">
+          <option value="emoji">Emoji bots</option>
+          <option value="sprites">Pixel sprites</option>
+          <option value="off">Off</option>
+        </select>
+        <span class="cfg-hint">Each group header (and the top bar) shows a little row of robot icons — one per <em>status</em> present among its members, deduped: a bot <strong>dancing</strong> when an agent is working, standing still when idle, raising a ❓ when one awaits input, and so on. Especially handy on a <em>folded</em> group, where the per-agent rows are hidden — one glance tells you if anything's happening inside. <strong>Emoji bots</strong> are lightweight emoji+CSS; <strong>Pixel sprites</strong> are animated pixel-art robots; <strong>Off</strong> hides them. This is the plain dashboard's style (default <em>Emoji bots</em>). Stored as <code>dashboard.activity_bots.regular</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Activity bots — slop mode 🎰</span>
+        <select id="cfg-dashboard-activity-bots-slop" aria-label="Activity bot style in slop mode">
+          <option value="emoji">Emoji bots</option>
+          <option value="sprites">Pixel sprites</option>
+          <option value="off">Off</option>
+        </select>
+        <span class="cfg-hint">The same indicator's style when the dashboard's casino <strong>slop</strong> mode (the 🎰 in the header) is on — chosen independently of regular mode, the way slop already swaps the state pill for a slot machine. Default <em>Pixel sprites</em> (the full dancing robots), but you can keep the emoji bots, or turn them off. (Reduced-motion browsers get the bots <em>without</em> animation either way.) Stored as <code>dashboard.activity_bots.slop</code>.</span>
       </div>
     </div>
 

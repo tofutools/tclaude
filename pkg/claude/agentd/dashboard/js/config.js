@@ -420,6 +420,12 @@ function populateConfigForm(cfg) {
   // radio outside slop mode. Default off; lives in the slop block.
   $('#cfg-slop-vegas-regular').checked = !!(cfg.slop && cfg.slop.vegas_in_regular_mode);
 
+  // Activity bots — per-mode style of the deduped robot indicator.
+  // Defaults: regular emoji, slop sprites (mirrors the Go resolvers).
+  const ab = (cfg.dashboard && cfg.dashboard.activity_bots) || {};
+  $('#cfg-dashboard-activity-bots-regular').value = ab.regular || 'emoji';
+  $('#cfg-dashboard-activity-bots-slop').value = ab.slop || 'sprites';
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -558,6 +564,20 @@ function assembleConfig() {
   const slop = (cfg.slop && typeof cfg.slop === 'object') ? cfg.slop : {};
   if ($('#cfg-slop-vegas-regular').checked) slop.vegas_in_regular_mode = true; else delete slop.vegas_in_regular_mode;
   if (Object.keys(slop).length) cfg.slop = slop; else delete cfg.slop;
+
+  // dashboard is an optional block. activity_bots stores only the NON-
+  // default per-mode styles (regular default emoji, slop default sprites),
+  // dropping a default key — and the activity_bots / dashboard objects when
+  // empty — so an all-default config marshals no spurious "dashboard": {}.
+  // Mirrors the Go omitempty + per-mode-default resolvers.
+  const dashboard = (cfg.dashboard && typeof cfg.dashboard === 'object') ? cfg.dashboard : {};
+  const ab = (dashboard.activity_bots && typeof dashboard.activity_bots === 'object') ? dashboard.activity_bots : {};
+  const abReg = $('#cfg-dashboard-activity-bots-regular').value;
+  const abSlop = $('#cfg-dashboard-activity-bots-slop').value;
+  if (abReg && abReg !== 'emoji') ab.regular = abReg; else delete ab.regular;
+  if (abSlop && abSlop !== 'sprites') ab.slop = abSlop; else delete ab.slop;
+  if (Object.keys(ab).length) dashboard.activity_bots = ab; else delete dashboard.activity_bots;
+  if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field
   // with no widget round-trips, then set the two form-owned keys. An empty
