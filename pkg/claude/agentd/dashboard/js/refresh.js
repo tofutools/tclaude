@@ -1021,8 +1021,12 @@ function countGroupMembersByStatus(group, status) {
 // Demotion semantics are unchanged from the old confirm: each retired
 // match is demoted to a plain, reinstatable conversation (leaves its
 // groups, grants revoked) and — when the shutdown box is ticked (default
-// on) — its running pane is soft-exited. Worktrees are left untouched.
-// Cancel / Esc / backdrop is a no-op.
+// on) — its running pane is soft-exited. An optional, default-OFF
+// "delete each agent's git worktree + branch" box (coupled to shutdown,
+// since removal can only run after a pane exits) sends delete_worktree to
+// the BE, which cleans up each retired member's worktree under the same
+// per-agent safety rules as the single retire (main repo / shared
+// worktrees kept). Cancel / Esc / backdrop is a no-op.
 //
 // The candidate list is snapshotted from lastSnapshot at open time and
 // then OWNED by the modal: the 2s auto-refresh is suspended while a
@@ -1044,6 +1048,8 @@ function openRetirePreview(group, status) {
   const errEl = $('#retire-preview-error');
   const searchEl = $('#retire-preview-search');
   const shutdownCb = $('#retire-preview-shutdown');
+  const wtRow = $('#retire-preview-wt-row');
+  const wtCb = $('#retire-preview-wt');
   const submitBtn = $('#retire-preview-submit');
   const cancelBtn = $('#retire-preview-cancel');
   const selAllBtn = $('#retire-preview-select-all');
@@ -1053,8 +1059,26 @@ function openRetirePreview(group, status) {
   errEl.textContent = '';
   searchEl.value = '';
   shutdownCb.checked = true;
+  wtCb.checked = false; // worktree delete is opt-in for the batch
+  wtCb.disabled = false;
+  wtRow.classList.remove('disabled');
   for (const c of candidates) c.checked = true;
   titleEl.textContent = `Retire ${word} agents in "${group}"`;
+
+  // The worktree box is coupled to shutdown: a worktree is removed only
+  // after its agent's pane exits, so deleting one requires shutting the
+  // sessions down. Unticking shutdown disables + unticks the box (the
+  // single-agent retire modal couples the same way).
+  const syncWtCoupling = () => {
+    if (shutdownCb.checked) {
+      wtCb.disabled = false;
+      wtRow.classList.remove('disabled');
+    } else {
+      wtCb.checked = false;
+      wtCb.disabled = true;
+      wtRow.classList.add('disabled');
+    }
+  };
 
   const checkedCount = () => candidates.filter(c => c.checked).length;
   const matchesFilter = (c) => {
@@ -1120,6 +1144,7 @@ function openRetirePreview(group, status) {
     searchEl.removeEventListener('input', onSearch);
     selAllBtn.removeEventListener('click', onSelectAll);
     selNoneBtn.removeEventListener('click', onSelectNone);
+    shutdownCb.removeEventListener('change', syncWtCoupling);
     submitBtn.removeEventListener('click', onSubmit);
     cancelBtn.removeEventListener('click', cleanup);
     overlay.removeEventListener('click', onOverlay);
@@ -1133,6 +1158,9 @@ function openRetirePreview(group, status) {
     // to the BE verbatim, the same list the human just reviewed.
     const convs = candidates.filter(c => c.checked).map(c => c.conv_id);
     if (convs.length === 0) return;
+    // Snapshot the worktree choice too — coupled to shutdown, so a box
+    // disabled by an unticked shutdown never sends delete_worktree.
+    const deleteWorktree = wtCb.checked && !wtCb.disabled;
     // Busy feedback: disable + swap the label for a spinner while the POST
     // is in flight, so a click that takes a beat doesn't look ignored. The
     // busy state is torn down by renderFooter on any error path (it resets
@@ -1146,7 +1174,7 @@ function openRetirePreview(group, status) {
       r = await fetch(`/api/groups/${encodeURIComponent(group)}/retire`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ convs, shutdown: shutdownCb.checked }),
+        body: JSON.stringify({ convs, shutdown: shutdownCb.checked, delete_worktree: deleteWorktree }),
       });
     } catch (e) {
       errEl.textContent = `retire failed: ${(e && e.message) || e}`;
@@ -1165,6 +1193,18 @@ function openRetirePreview(group, status) {
     const errors = members.filter(m => m.action === 'error').length;
     let msg = `retired ${retired} agent${retired === 1 ? '' : 's'} in "${group}"`;
     if (errors) msg += `, ${errors} failed`;
+    // Summarise the worktree cleanup when it was requested. Most retired
+    // panes are still draining their /exit at response time, so the BE
+    // reports "scheduled" (removed after the pane exits) far more often
+    // than an inline "removed"; "cleaned up" covers both without
+    // overstating that the dirs are already gone. The BE keeps
+    // main/shared/no-worktree members, which we don't tally; a deferred
+    // removal that later fails surfaces on its own in the Messages tab.
+    if (deleteWorktree) {
+      const wt = members.map(m => m.worktree).filter(Boolean);
+      const swept = wt.filter(p => p.action === 'removed' || p.action === 'scheduled').length;
+      if (swept) msg += ` · ${swept} worktree${swept === 1 ? '' : 's'} cleaned up`;
+    }
     const warns = (out && out.warnings) || [];
     if (warns.length) msg += ` · ${warns.join('; ')}`;
     toast(msg, errors > 0);
@@ -1175,6 +1215,7 @@ function openRetirePreview(group, status) {
   searchEl.addEventListener('input', onSearch);
   selAllBtn.addEventListener('click', onSelectAll);
   selNoneBtn.addEventListener('click', onSelectNone);
+  shutdownCb.addEventListener('change', syncWtCoupling);
   submitBtn.addEventListener('click', onSubmit);
   cancelBtn.addEventListener('click', cleanup);
   overlay.addEventListener('click', onOverlay);

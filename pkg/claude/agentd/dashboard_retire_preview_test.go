@@ -40,6 +40,8 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 	must(`id="retire-preview-select-all"`, "the preview can select all candidates")
 	must(`id="retire-preview-select-none"`, "the preview can clear the selection")
 	must(`id="retire-preview-shutdown"`, "the preview has a shut-down-sessions toggle")
+	must(`id="retire-preview-wt"`, "the preview has a delete-worktrees toggle")
+	must(`id="retire-preview-wt-row"`, "the worktree toggle's row exists (coupling target)")
 	must(`id="retire-preview-submit"`, "the preview has a submit button")
 	must(`id="retire-preview-cancel"`, "the preview has a cancel button")
 
@@ -71,8 +73,8 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"candidates.filter(c => c.checked).map(c => c.conv_id)", // the ticked list
-		"JSON.stringify({ convs, shutdown: shutdownCb.checked })", // posted verbatim in the body
-		"/api/groups/${encodeURIComponent(group)}/retire",        // to the group retire route
+		"JSON.stringify({ convs, shutdown: shutdownCb.checked, delete_worktree: deleteWorktree })", // posted verbatim in the body
+		"/api/groups/${encodeURIComponent(group)}/retire",                                          // to the group retire route
 	} {
 		if !strings.Contains(fnBody, needle) {
 			t.Errorf("openRetirePreview: missing %q — the explicit-list POST is the whole point", needle)
@@ -110,4 +112,19 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 		"the batch-retire submit button carries the cleanup-modal danger (red) styling")
 	must(".cleanup-modal .modal-buttons button.primary.danger {",
 		"the cleanup-modal danger (red) button rule exists for the submit to bind to")
+
+	// 7. The worktree opt-in: default OFF (opt-in for the batch), coupled to
+	//    shutdown (removal can only run after a pane exits), and the choice
+	//    feeds the POST through `deleteWorktree`, which is guarded so a box
+	//    disabled by an unticked shutdown never sends delete_worktree.
+	for _, needle := range []string{
+		"wtCb.checked = false; // worktree delete is opt-in for the batch", // default OFF on open
+		"const syncWtCoupling = () => {",                                   // shutdown→worktree coupling
+		"const deleteWorktree = wtCb.checked && !wtCb.disabled;",           // disabled box never opts in
+		"shutdownCb.addEventListener('change', syncWtCoupling)",            // coupling is wired live
+	} {
+		if !strings.Contains(fnBody, needle) {
+			t.Errorf("openRetirePreview: missing %q — the worktree opt-in must be coupled to shutdown", needle)
+		}
+	}
 }

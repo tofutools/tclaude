@@ -1510,6 +1510,11 @@
       <span>Also shut down the running sessions
         <span class="wt-note">soft-exits each retired agent's tmux pane (/exit) — the conversations are kept either way</span></span>
     </label>
+    <label class="delete-agent-wt" id="retire-preview-wt-row">
+      <input type="checkbox" id="retire-preview-wt" />
+      <span id="retire-preview-wt-label">Also delete each agent's git worktree + branch
+        <span class="wt-note">removes the worktree directory and force-deletes its branch, after each agent exits — the main repo and worktrees shared with a surviving agent are always kept; requires shutting the sessions down</span></span>
+    </label>
     <div class="cleanup-error" id="retire-preview-error"></div>
     <div class="modal-buttons">
       <button id="retire-preview-cancel" type="button">Cancel</button>
