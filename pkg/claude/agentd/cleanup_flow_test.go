@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,6 +213,11 @@ func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
 // a test can assert which worktrees were (and were not) touched.
 type fakeWorktrees struct {
 	byDir map[string]worktree.WorktreeStatus
+	// mu guards removed/branchRemoved: the deferred retire path records
+	// removals from a background goroutine (scheduleRetireWorktreeCleanup)
+	// while the test goroutine polls wasRemoved/branchesRemoved, so every
+	// access to those slices must be synchronized.
+	mu sync.Mutex
 	// removed records every root passed to either remove seam (delete or
 	// retire). branchRemoved is the branch arg the retire seam received,
 	// in lockstep — empty entries for delete-path removals.
@@ -230,8 +236,10 @@ func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
 }
 
 func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
+	f.mu.Lock()
 	f.removed = append(f.removed, root)
 	f.branchRemoved = append(f.branchRemoved, "")
+	f.mu.Unlock()
 	return true, nil
 }
 
@@ -240,22 +248,37 @@ func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {
 // non-empty, non-protected branch — mirroring the real helper's
 // main/master guard so a flow test can assert the trunk is never swept.
 func (f *fakeWorktrees) removeBranch(root, branch string, _ bool) (bool, bool, error) {
+	f.mu.Lock()
 	f.removed = append(f.removed, root)
 	f.branchRemoved = append(f.branchRemoved, branch)
-	if f.removeErr != nil {
-		return false, false, f.removeErr
+	removeErr := f.removeErr
+	f.mu.Unlock()
+	if removeErr != nil {
+		return false, false, removeErr
 	}
 	deleted := branch != "" && strings.ToLower(branch) != "main" && strings.ToLower(branch) != "master"
 	return true, deleted, nil
 }
 
 func (f *fakeWorktrees) wasRemoved(root string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, r := range f.removed {
 		if r == root {
 			return true
 		}
 	}
 	return false
+}
+
+// branchesRemoved returns a snapshot of the branches passed to the
+// removal seams. Callers must use this rather than reading the
+// branchRemoved slice directly: a deferred retire cleanup may still be
+// recording removals from a background goroutine.
+func (f *fakeWorktrees) branchesRemoved() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.branchRemoved...)
 }
 
 // installFakeWorktrees swaps the agentd worktree seams for the test so

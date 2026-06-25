@@ -79,7 +79,7 @@ func TestRetire_DeleteWorktreeRemovesWorktreeAndBranch(t *testing.T) {
 	assert.Contains(t, resp.Worktree.Detail, "branch feat")
 
 	assert.True(t, fw.wasRemoved(cwd), "the linked worktree must be removed")
-	require.Contains(t, fw.branchRemoved, "feat", "the branch must be passed to the removal seam")
+	require.Contains(t, fw.branchesRemoved(), "feat", "the branch must be passed to the removal seam")
 	assert.False(t, f.World.Tmux.IsAlive("tmux-rwwt"), "shutdown must stop the session")
 
 	// Retire semantics still hold — the agent leaves the active roster.
@@ -232,7 +232,7 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 
 	assert.True(t, fw.wasRemoved(cwd), "the worktree must be removed after the agent exits")
-	require.Contains(t, fw.branchRemoved, "feat")
+	require.Contains(t, fw.branchesRemoved(), "feat")
 
 	// A SUCCESSFUL deferred delete is silent — it matches the optimistic
 	// toast, so it must NOT post a Messages-tab notice (no success noise).
