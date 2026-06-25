@@ -32,6 +32,7 @@ import { openMailbox } from './mail.js';
 import {
   refresh, toast, confirmModal, addMemberModal, deleteAgentModal,
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
+  openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
   showAccessTab,
 } from './refresh.js';
@@ -1131,6 +1132,13 @@ function bindRowActions() {
           // Open the bulk-cleanup overlay scoped to this group. The
           // modal manages its own POST + refresh on success.
           openCleanupModal({ mode: 'group', group });
+          return;
+        }
+        case 'cleanup-worktrees-group': {
+          // Open the repo-wide worktree janitor scoped to this group's
+          // repo(s). The modal loads + classifies the candidates, owns
+          // its POST to /api/worktrees/cleanup, and refreshes on success.
+          openWorktreeCleanup(group);
           return;
         }
         case 'shutdown-group': {

@@ -34,6 +34,7 @@ import { lastSnapshot } from './dashboard.js';
 import {
   toast, openWindowModal,
   retireAgentInteractive, openRetirePreview, countGroupMembersByStatus,
+  openWorktreeCleanup,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
@@ -330,6 +331,24 @@ function buildCommands() {
         run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },
       });
     }
+  }
+
+  // 8b) Per-group worktree cleanup — "Cleanup worktrees in <group>". The
+  //     repo-wide janitor: scans the group's default dir (∪ its agents'
+  //     history dirs) for stale git worktrees and opens a preview modal
+  //     to pick which to remove. Offered whenever the group has somewhere
+  //     to scan (a default dir or any members); the modal itself reports
+  //     "nothing to clean up" when a scan comes back empty, so the gate is
+  //     deliberately loose rather than firing a probe per group here.
+  for (const g of groups) {
+    const scannable = (g.default_cwd && g.default_cwd.trim()) || (g.members && g.members.length);
+    if (!scannable) continue;
+    cmds.push({
+      icon: '🧹', label: `Cleanup worktrees in ${g.name}`,
+      hint: "scan this group's repo for stale worktrees and remove the ones you pick",
+      keywords: 'cleanup worktree worktrees tidy remove stale orphan branch git group ' + g.name,
+      run: () => { recordGroupInteraction(g.name); openWorktreeCleanup(g.name); },
+    });
   }
 
   // 9) Per-agent retire — "Retire agent: <name>". Demotes one agent back

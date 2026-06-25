@@ -103,6 +103,46 @@ func parseWorktreePorcelain(output string) []WorktreeInfo {
 	return worktrees
 }
 
+// MainRepoForPath returns the absolute path of the MAIN worktree of the
+// repo containing dir — the primary checkout, not the linked worktree
+// dir happens to be. Resolved from `git --git-common-dir` (the shared
+// .git all worktrees point at): its parent is the main worktree. Used to
+// anchor a post-removal `git worktree prune` at a checkout that survives
+// the sweep. Returns "" on any git failure (best-effort tidy-up).
+func MainRepoForPath(dir string) string {
+	out, err := gitIn(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return ""
+	}
+	// common is "<main>/.git" for a normal repo; its parent is the main
+	// worktree. A bare repo has no working tree — filepath.Dir is still a
+	// sane anchor for prune.
+	if strings.HasSuffix(common, string(filepath.Separator)+".git") || strings.HasSuffix(common, "/.git") {
+		return filepath.Dir(common)
+	}
+	return filepath.Dir(common)
+}
+
+// PruneWorktreesIn runs `git worktree prune` in the repo containing dir,
+// clearing the administrative registrations of worktrees whose working
+// directories have been deleted out-of-band (by hand, or by a tool that
+// removed the dir without telling git). `git worktree remove` already
+// cleans the link for worktrees it removes; this mops up the *dangling*
+// links a directory-only delete leaves behind. It only ever touches
+// entries whose dir is already missing — never a live worktree — so it
+// is safe to run repo-wide after a sweep.
+func PruneWorktreesIn(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	_, err := gitIn(dir, "worktree", "prune")
+	return err
+}
+
 // ListWorktreesIn returns all worktrees of the repo containing dir.
 func ListWorktreesIn(dir string) ([]WorktreeInfo, error) {
 	out, err := gitIn(dir, "worktree", "list", "--porcelain")
@@ -110,6 +150,25 @@ func ListWorktreesIn(dir string) ([]WorktreeInfo, error) {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 	return parseWorktreePorcelain(out), nil
+}
+
+// IsDirtyIn reports whether the working tree at dir has uncommitted
+// changes — modified, staged, OR untracked files (`git status
+// --porcelain` lists all three; untracked show as "??"). The worktree
+// janitor uses this to badge a worktree whose removal would lose work,
+// so it can leave it un-ticked by default.
+//
+// Best-effort: a git failure (dir gone, not a repo, flaky call) comes
+// back false rather than erroring — dirtiness is advisory UI, and a
+// discovery scan over many worktrees must not abort on one bad dir.
+// The actual removal still uses --force, so a stale "clean" reading
+// never blocks an explicit, human-confirmed delete.
+func IsDirtyIn(dir string) bool {
+	out, err := gitIn(dir, "status", "--porcelain")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) != ""
 }
 
 // BranchesIn returns the deduplicated short branch names (local +
