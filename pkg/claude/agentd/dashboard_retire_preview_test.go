@@ -98,4 +98,16 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 		}
 	}
 	must(".btn-spinner {", "the in-button spinner has a CSS rule")
+
+	// 6. The submit button must read as DESTRUCTIVE — red, like the single
+	//    -agent retire/delete confirms — so a batch retire signals it is
+	//    really shutting agents down rather than looking like a benign
+	//    primary action. Inside .cleanup-modal that's the `primary danger`
+	//    red variant (confirm-danger's neutral cleanup-modal base would lose
+	//    to the generic button rule at equal specificity); the red rule must
+	//    exist for it to bind to.
+	must(`id="retire-preview-submit" class="primary danger"`,
+		"the batch-retire submit button carries the cleanup-modal danger (red) styling")
+	must(".cleanup-modal .modal-buttons button.primary.danger {",
+		"the cleanup-modal danger (red) button rule exists for the submit to bind to")
 }
