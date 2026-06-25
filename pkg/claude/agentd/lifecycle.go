@@ -35,6 +35,11 @@ type memberOpResult struct {
 	Action  string `json:"action"`           // "soft_stopped", "killed", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
 	Detail  string `json:"detail,omitempty"` // human-readable note (e.g. error message)
 	TmuxSes string `json:"tmux_session,omitempty"`
+	// Worktree is the optional worktree+branch cleanup outcome attached by
+	// a bulk retire that requested it (delete_worktree). nil on every other
+	// bulk op (stop/resume) and on a retire that did not ask for cleanup,
+	// so the field is omitted from those responses entirely.
+	Worktree *retireWorktreePlan `json:"worktree,omitempty"`
 }
 
 type groupOpResp struct {
@@ -314,6 +319,13 @@ type groupRetireResp struct {
 // "retire idle agents in <group>" palette command. Absent / "all" =
 // every member, the legacy behaviour. See parseRetireStatusFilter.
 //
+// ?delete_worktree=1 additionally removes each retired member's git
+// worktree and force-deletes its branch — the bulk parallel of the
+// single-agent retire option. It defaults OFF (the failsafe in
+// retireShouldDeleteWorktree); the same safety rules apply per member
+// (the main repo and worktrees shared with a surviving agent are kept,
+// removal waits until the member's pane exits).
+//
 // Permission: groups.retire (not in the global defaults — retiring
 // agents is a sensitive cleanup the human normally drives; the slug
 // delegates it to a trusted coordinator). Gated with
@@ -335,7 +347,7 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), filter, nil)
+		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -383,6 +395,21 @@ const bulkRetireGroupConcurrency = 8
 // When selected is non-nil the status filter is ignored entirely (the
 // human's explicit pick wins — there is nothing to re-resolve).
 //
+// deleteWorktree (the batch parallel of the single-agent retire option)
+// additionally removes each retired member's git worktree and force-
+// deletes its branch. It is per-member and reuses the single-agent
+// machinery (resolveRetireWorktree before the shutdown, then
+// scheduleRetireWorktreeCleanup), so the same safety rules hold: the main
+// repo and worktrees a SURVIVING agent still works in are kept, and the
+// removal waits until the member's pane exits (its cwd is the worktree).
+// A worktree shared by two members BOTH retired in this batch is
+// conservatively kept: each still sees the OTHER's session row for that
+// worktree root — session rows outlive a soft-exit, so the shared check
+// (which keys on row existence, not pane liveness) marks it shared for
+// both. The safe failure mode — never a yank from under a sibling whose
+// pane is still draining. The per-member outcome rides back in
+// memberOpResult.Worktree.
+//
 // Per-member outcomes (memberOpResult.Action):
 //   - retired                  — demoted (Detail summarises what changed)
 //   - skipped:self             — the caller's own conv; never self-retire
@@ -397,7 +424,7 @@ const bulkRetireGroupConcurrency = 8
 // every worker has settled — checked once at the end so a bulk retire
 // that demotes a member-owner warns about the now-ownerless group,
 // matching the single-agent cleanup path.
-func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bool, filter retireStatusFilter, selected map[string]struct{}) (groupRetireResp, error) {
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}) (groupRetireResp, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return groupRetireResp{}, err
@@ -441,7 +468,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bo
 						return nil // filtered out — omit from the response
 					}
 				}
-				res, ownerGroupsPer[i] = retireGroupMember(m.ConvID, by, reason, shutdown, res)
+				res, ownerGroupsPer[i] = retireGroupMember(m.ConvID, by, reason, shutdown, deleteWorktree, res)
 			}
 			results[i] = &res
 			return nil
@@ -472,7 +499,18 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bo
 // roster the demotion touched (for the caller's ownerless-warning
 // merge); res arrives pre-seeded with ConvID + Title so the table stays
 // consistent across every branch.
-func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpResult) (memberOpResult, []int64) {
+//
+// When deleteWorktree is set the member's git worktree+branch is also
+// cleaned up, reusing the single-agent retire machinery: the worktree is
+// resolved BEFORE the shutdown — defensive ordering, since both inputs the
+// resolve reads (the recorded location and the sibling session rows the
+// shared-worktree check keys on) survive a soft-exit, but resolving up
+// front keeps the view stable. scheduleRetireWorktreeCleanup then runs it
+// — inline when the member is already offline, deferred to a waiter when a
+// /exit is in flight, kept when no shutdown was asked for. The per-member
+// plan rides back on res.Worktree, and its one-line note is folded into
+// Detail so the CLI/table row says what happened.
+func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
 	state, serr := db.EnrollmentState(convID)
 	if serr != nil {
 		res.Action = "error"
@@ -492,11 +530,26 @@ func retireGroupMember(convID, by, reason string, shutdown bool, res memberOpRes
 	}
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
+
+	// Resolve the worktree BEFORE the shutdown — the safe order: the
+	// shared-worktree check and the recorded location both survive a
+	// soft-exit, so resolving up front keeps the view stable.
+	var wt agentWorktreeView
+	if deleteWorktree {
+		wt = resolveRetireWorktree(convID)
+	}
 	if shutdown {
 		sd := stopOneConv(convID, false /* soft exit */)
 		res.TmuxSes = sd.TmuxSes
 		if sd.Action == "soft_stopped" {
 			res.Detail = joinDetail(res.Detail, "/exit sent")
+		}
+	}
+	if deleteWorktree {
+		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
+		res.Worktree = &plan
+		if plan.Detail != "" {
+			res.Detail = joinDetail(res.Detail, plan.Detail)
 		}
 	}
 	return res, ownerGroups

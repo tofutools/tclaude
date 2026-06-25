@@ -765,8 +765,13 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 //     ?shutdown= (default on), ?status= (idle/offline/…; absent = every
 //     member) and ?reason=.
 //
-// shutdown/reason may be supplied in the body (explicit path) or the
-// query (filter path); a body field, when present, wins.
+// shutdown/reason/delete_worktree may be supplied in the body (explicit
+// path) or the query (filter path); a body field, when present, wins.
+// delete_worktree opts the whole batch into removing each retired
+// member's git worktree+branch (the preview modal's checkbox); it
+// defaults OFF, and the per-member safety rules of the single-agent
+// retire still apply (main repo / shared worktrees kept, removal deferred
+// until each pane exits).
 func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	var body struct {
 		// Convs is a POINTER so an absent key (nil → legacy status-filter
@@ -776,6 +781,10 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		Convs    *[]string `json:"convs"`
 		Shutdown *bool     `json:"shutdown"`
 		Reason   *string   `json:"reason"`
+		// DeleteWorktree opts the whole batch into worktree+branch cleanup
+		// (the preview modal's checkbox). A POINTER so an absent key keeps
+		// the query fallback / the OFF failsafe; present wins.
+		DeleteWorktree *bool `json:"delete_worktree"`
 	}
 	// The body is optional — the legacy status-filter callers send none.
 	// A present-but-malformed body is a 400, not a silent fallthrough, so
@@ -795,7 +804,9 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		}
 	}
 
-	// shutdown/reason resolve from the body when present, else the query.
+	// shutdown/reason/delete_worktree resolve from the body when present,
+	// else the query (delete_worktree defaults OFF — the failsafe, so a
+	// caller that omits it never nukes a worktree by accident).
 	shutdown := retireShouldShutdown(r)
 	if body.Shutdown != nil {
 		shutdown = *body.Shutdown
@@ -803,6 +814,10 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
 	if body.Reason != nil {
 		reason = strings.TrimSpace(*body.Reason)
+	}
+	deleteWorktree := retireShouldDeleteWorktree(r)
+	if body.DeleteWorktree != nil {
+		deleteWorktree = *body.DeleteWorktree
 	}
 
 	// An explicit `convs` key (even empty) selects the explicit path and
@@ -833,7 +848,7 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		}
 	}
 
-	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, filter, selected)
+	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, deleteWorktree, filter, selected)
 	if err != nil {
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return
