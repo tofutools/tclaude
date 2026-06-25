@@ -634,6 +634,14 @@
       <strong>⚠ WHAT-IF</strong> — you're on a subscription, so these figures are an <em>estimate</em> of what this would cost on pay-per-token billing (Claude Code's client-side <code>total_cost_usd</code>). They are <strong>not a real charge</strong>.
     </div>
     <div id="costs-chart"></div>
+    <!-- Breakdown filter — a client-side text narrowing of the per-agent
+         table below (matches name / id / model), hidden by costs.js when
+         there are no rows. Sort is on the table's own clickable headers. -->
+    <div class="filter-bar" id="costs-table-filter" hidden>
+      <input id="filter-costs" type="text" placeholder="Filter agents (name / id / model)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-costs-count"></span>
+      <button class="clear-filter" id="filter-costs-clear" title="Clear filter">×</button>
+    </div>
     <div id="costs-table"></div>
   </section>
   <!-- Audit tab — the trail of daemon-proxied tclaude commands (who ran

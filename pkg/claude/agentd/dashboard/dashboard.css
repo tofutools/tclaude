@@ -853,7 +853,23 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
    newer row above it rather than as a separate agent. */
 .cost-cont { color: #6e7681; font-size: 12px; }
 #costs-table tr.cost-continued td:first-child { padding-left: 14px; }
+/* Chain head: the latest day of a multi-day conversation. A ↳ marker in
+   the cost-accent green tags it as the current generation — distinct from
+   a one-off single-day agent (no marker) and from the dim ↩ earlier
+   slices. */
+.cost-head { color: #6e9c7d; font-size: 12px; }
+/* Multi-day chain: every row of a conversation that spent across several
+   days carries a subtle left accent so "this agent ran more than one day"
+   reads at a glance. Hovering any row of the chain highlights the whole
+   set — the rows can be non-contiguous in the recency sort, so the tint
+   is how you see which scattered rows belong together. */
+#costs-table tr.cost-chain td:first-child { box-shadow: inset 2px 0 0 #2f4858; }
+#costs-table tr.cost-chain-hl td { background: #1a2330; }
 #costs-table .cost-total-row td { border-top: 1px solid #2a3340; }
+/* Clickable column headers — same affordance as the Audit table. */
+#costs-table th.cost-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+#costs-table th.cost-sort:hover { color: #58a6ff; }
+#costs-table th.cost-sort.active { color: #58a6ff; }
 .empty { color: #7d8590; font-style: italic; padding: 24px; text-align: center; }
 .row-actions {
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
