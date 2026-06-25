@@ -393,9 +393,10 @@ function costHeaderHTML() {
 // resume shows its true per-day spend (e.g. $16.44 the day it started,
 // $3.64 the day it was continued) instead of one double-counted lump.
 // The earlier-day slices carry `continued`, rendered with a ↩ marker so
-// it's clear they belong to the same conversation as a newer row above.
-// The footer counts distinct conversations, not rows, so a multi-day
-// agent still reads as one agent.
+// it's clear they belong to the same conversation as a newer day of that
+// agent (which the sort/filter may place anywhere, not necessarily
+// adjacent). The footer counts distinct conversations, not rows, so a
+// multi-day agent still reads as one agent.
 //
 // A conversation with more than one slice is a multi-day "chain". Every
 // row of such a chain gets data-conv (the shared conv id) and a subtle
@@ -459,7 +460,7 @@ function renderTable(data) {
           if (a.continued) cls.push('cost-continued');
           if (chain) cls.push('cost-chain');
           const marker = a.continued
-            ? '<span class="cost-cont" title="Continued conversation — an earlier day of the agent above; hover to highlight all its days">↩</span> '
+            ? '<span class="cost-cont" title="Continued conversation — an earlier day of this agent; hover to highlight all its days">↩</span> '
             : chain
               ? `<span class="cost-head" title="Latest day of an agent active across ${sliceCount[a.conv_id]} days — hover to highlight all of them">↳</span> `
               : '';
