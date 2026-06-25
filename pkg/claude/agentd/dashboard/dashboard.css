@@ -3505,6 +3505,23 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 @keyframes export-spin { to { transform: rotate(360deg); } }
 
+/* Inline, in-button busy spinner — feedback that a submit click is in
+   flight (e.g. the retire-preview "Retire N agents" button while its POST
+   is pending). currentColor + a transparent top-border gives a spinning
+   gap that reads on any button colour (including the danger red), so it
+   needs no per-button tuning. Reuses the export-spin keyframes. */
+.btn-spinner {
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.85;
+  animation: export-spin 0.7s linear infinite;
+}
+
 /* --- export "Clone into the same group" toggle (JOH-266) --- */
 .export-same-group {
   display: flex; align-items: flex-start; gap: 8px;

@@ -1445,6 +1445,30 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="retire-preview-modal">
+  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="retire-preview-title">
+    <h3 id="retire-preview-title">Retire agents</h3>
+    <p class="cleanup-hint" id="retire-preview-hint"></p>
+    <div class="cleanup-toolbar">
+      <button type="button" id="retire-preview-select-all">select all</button>
+      <button type="button" id="retire-preview-select-none">select none</button>
+      <input type="search" id="retire-preview-search" placeholder="filter title / id…" aria-label="Filter agents" />
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="retire-preview-count"></span>
+    </div>
+    <div class="cleanup-list" id="retire-preview-list"></div>
+    <label class="delete-agent-wt" id="retire-preview-shutdown-row">
+      <input type="checkbox" id="retire-preview-shutdown" checked />
+      <span>Also shut down the running sessions
+        <span class="wt-note">soft-exits each retired agent's tmux pane (/exit) — the conversations are kept either way</span></span>
+    </label>
+    <div class="cleanup-error" id="retire-preview-error"></div>
+    <div class="modal-buttons">
+      <button id="retire-preview-cancel" type="button">Cancel</button>
+      <button id="retire-preview-submit" class="confirm-danger" type="button">Retire</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="delete-agent-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-agent-title">
     <h3 id="delete-agent-title">Permanently delete this agent?</h3>

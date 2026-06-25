@@ -385,6 +385,175 @@ func TestDashboardGroupRetire_StatusFilterIdle(t *testing.T) {
 	assert.Equal(t, db.EnrollmentActive, workState, "the working member must stay active")
 }
 
+// Scenario: the dashboard retire-preview path posts an EXPLICIT conv-id
+// list (the rows the human ticked in the preview modal), and the BE
+// retires precisely that set — never a cohort it re-derived from live
+// status. Three idle/working members; the body selects two of them
+// (omitting the third), and one of the two is "working", not idle. The
+// outcome proves the two selected are retired REGARDLESS of their live
+// status (no status re-filter) and the unselected third stays untouched
+// even though it would match a status=idle sweep. This is the property
+// that keeps "what the human previewed" == "what the BE retires".
+func TestDashboardGroupRetire_ExplicitConvsSelection(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "dash-explicit"
+	const pickIdle = "epia-1111-2222-3333-4444" // selected, idle
+	const pickWork = "epwk-1111-2222-3333-4444" // selected, WORKING (status ignored)
+	const keep = "epkp-1111-2222-3333-4444"     // NOT selected, idle → must survive
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(pickIdle, "picked-idle")
+	f.HaveConvWithTitle(pickWork, "picked-working")
+	f.HaveConvWithTitle(keep, "kept-idle")
+	f.HaveAliveSession(pickIdle, "spwn-epia", "tmux-epia", "/tmp/epia")
+	f.HaveAliveSession(pickWork, "spwn-epwk", "tmux-epwk", "/tmp/epwk")
+	f.HaveAliveSession(keep, "spwn-epkp", "tmux-epkp", "/tmp/epkp")
+	setConvStatus(t, pickIdle, "idle")
+	setConvStatus(t, pickWork, "working")
+	setConvStatus(t, keep, "idle")
+	f.HaveMember(group, pickIdle)
+	f.HaveMember(group, pickWork)
+	f.HaveMember(group, keep)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	body := map[string]any{"convs": []string{pickIdle, pickWork}, "shutdown": true}
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire", body)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "POST /api/groups/%s/retire body=%s", group, rec.Body.String())
+	var resp groupRetireResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode: %s", rec.Body.String())
+
+	// Exactly the two selected are retired and listed; the working one too
+	// — the explicit path never re-applies a status filter.
+	assert.Equal(t, "retired", retireMemberAction(resp, pickIdle), "members=%+v", resp.Members)
+	assert.Equal(t, "retired", retireMemberAction(resp, pickWork),
+		"an explicitly-selected member is retired regardless of live status; members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, keep),
+		"an unselected member must be omitted, never retired; members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 2, "only the two selected convs are acted on; members=%+v", resp.Members)
+
+	for _, c := range []string{pickIdle, pickWork} {
+		state, err := db.EnrollmentState(c)
+		require.NoError(t, err)
+		assert.Equal(t, db.EnrollmentRetired, state, "%s must be retired", c)
+	}
+	// The unselected member is fully intact: active, still a member, still online.
+	keepState, err := db.EnrollmentState(keep)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, keepState, "the unselected member stays active")
+	assert.True(t, flowGroupHasMember(f, group, keep), "the unselected member stays in the group")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-epkp"), "the unselected member's pane must not be touched")
+	// shutdown:true soft-exits the two selected panes.
+	assert.False(t, f.World.Tmux.IsAlive("tmux-epia"), "selected idle member's pane is soft-exited")
+	assert.False(t, f.World.Tmux.IsAlive("tmux-epwk"), "selected working member's pane is soft-exited")
+}
+
+// Scenario: an explicit-convs retire with ?status= present ignores the
+// query status entirely — the body's selection wins, so a member that
+// would be filtered OUT by the status is still retired when ticked. Pins
+// "explicit selection beats the status filter" so a refactor can't let a
+// stray query param silently narrow the human's previewed list.
+func TestDashboardGroupRetire_ExplicitConvsOverrideStatusQuery(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "dash-override"
+	const conv = "eovr-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "working-but-picked")
+	f.HaveAliveSession(conv, "spwn-eovr", "tmux-eovr", "/tmp/eovr")
+	setConvStatus(t, conv, "working") // would be excluded by status=idle
+	f.HaveMember(group, conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	body := map[string]any{"convs": []string{conv}}
+	// ?status=idle is present but must be ignored when convs is supplied.
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire?status=idle", body)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp groupRetireResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode: %s", rec.Body.String())
+
+	assert.Equal(t, "retired", retireMemberAction(resp, conv),
+		"the explicit selection wins over ?status=idle; members=%+v", resp.Members)
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentRetired, state, "the picked member must be retired")
+}
+
+// Scenario: a conv-id in the explicit `convs` list that is NOT a member
+// of the group is silently ignored — the membership table is
+// authoritative, the explicit set only NARROWS it. This pins the security
+// invariant that the explicit path can never retire a conv outside the
+// group, no matter what the body asks for. A real active agent that is not
+// a member stays fully untouched.
+func TestDashboardGroupRetire_ExplicitConvsIgnoresNonMember(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "dash-nonmember"
+	const member = "nmem-1111-2222-3333-4444"  // in the group, selected
+	const outsider = "nout-1111-2222-3333-4444" // active agent, NOT in the group
+	f.HaveGroup(group)
+	f.HaveGroup("other-team")
+	f.HaveConvWithTitle(member, "member")
+	f.HaveConvWithTitle(outsider, "outsider")
+	f.HaveAliveSession(member, "spwn-nmem", "tmux-nmem", "/tmp/nmem")
+	f.HaveAliveSession(outsider, "spwn-nout", "tmux-nout", "/tmp/nout")
+	f.HaveMember(group, member)
+	f.HaveMember("other-team", outsider) // outsider is an agent, but of another group
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	// The body asks to retire BOTH, but the outsider is not a member here.
+	body := map[string]any{"convs": []string{member, outsider}}
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire", body)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp groupRetireResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode: %s", rec.Body.String())
+
+	assert.Equal(t, "retired", retireMemberAction(resp, member), "members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, outsider),
+		"a non-member conv-id must never be acted on, even when the body lists it; members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 1, "only the real member is acted on; members=%+v", resp.Members)
+
+	// The outsider is fully intact: still an active agent, still online.
+	state, err := db.EnrollmentState(outsider)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state, "a non-member must stay an active agent")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-nout"), "a non-member's pane must not be touched")
+}
+
+// Scenario: an explicit but EMPTY convs list ({"convs":[]}) is a 400, NOT
+// a silent fallthrough to "retire every member". Pins the footgun guard:
+// a present convs key always selects the explicit path, and an empty one
+// is a client error rather than a whole-group sweep.
+func TestDashboardGroupRetire_EmptyConvsRejected(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "dash-emptyconvs"
+	const conv = "ecnv-1111-2222-3333-4444"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "should-survive")
+	f.HaveAliveSession(conv, "spwn-ecnv", "tmux-ecnv", "/tmp/ecnv")
+	f.HaveMember(group, conv)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	body := map[string]any{"convs": []string{}}
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire", body)
+	rec := testharness.Serve(mux, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code,
+		"an explicit empty convs list must be a 400, never a retire-everyone; body=%s", rec.Body.String())
+
+	// The member is untouched: a rejected request must demote nobody.
+	state, err := db.EnrollmentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.EnrollmentActive, state, "an empty-convs 400 must not demote anyone")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-ecnv"), "an empty-convs 400 must not stop sessions")
+}
+
 // Scenario: an unknown ?status= token is rejected with 400, not silently
 // treated as "match nobody" (which would 200 with an empty member list,
 // indistinguishable from "the group has no agents of that status"). The

@@ -961,80 +961,227 @@ async function retireAgentInteractive(conv, label) {
 // statuses a "tidy up the group" gesture should sweep.
 const RETIRE_STATUS_LABELS = { idle: 'idle', offline: 'offline' };
 
-// countGroupMembersByStatus returns how many DISTINCT members of the
-// named group match a bulk-retire status token, using the SAME
-// (online, state.status) definitions the snapshot renders — so the count
-// in the confirm matches the rows the human sees. This mirrors the
-// server's normalizeMemberStatus filter, which the endpoint applies
-// authoritatively; this client count only drives the confirm copy.
-function countGroupMembersByStatus(group, status) {
+// groupMembersByStatus returns the DISTINCT members of the named group
+// that match a bulk-retire status token, using the SAME (online,
+// state.status) definitions the snapshot renders — so the preview lists
+// exactly the rows the human sees on the dashboard. This mirrors the
+// server's normalizeMemberStatus filter; the server still applies that
+// filter authoritatively on the legacy ?status= path, but the preview
+// modal sends an EXPLICIT conv-id list built from these members, so what
+// the human ticks is precisely what the BE retires.
+//
+// Each entry is {conv_id, title, status, role} — enough to render a
+// preview row and to post the explicit selection.
+function groupMembersByStatus(group, status) {
   const snap = lastSnapshot || {};
   const g = (snap.groups || []).find(x => x.name === group);
-  if (!g) return 0;
+  if (!g) return [];
   const seen = new Set();
-  let n = 0;
+  const out = [];
   for (const m of (g.members || [])) {
     if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows
     seen.add(m.conv_id);
     const matches = status === 'offline'
       ? !m.online
       : (m.online && m.state && m.state.status === status);
-    if (matches) n++;
+    if (matches) {
+      out.push({
+        conv_id: m.conv_id,
+        title: m.title || '',
+        status: m.online ? ((m.state && m.state.status) || 'online') : 'offline',
+        role: m.role || '',
+      });
+    }
   }
-  return n;
+  return out;
 }
 
-// bulkRetireGroupInteractive runs the command palette's "Retire
-// idle/offline agents in <group>" command: count the matching members
-// for the confirm copy, confirm once, then POST
-// /api/groups/{name}/retire with the status filter (shutdown defaults
-// on, matching the bulk groups.retire contract — no per-member worktree
-// deletion). The server re-resolves the cohort from live status, so the
-// toast reports its actual count, not the snapshot estimate. Each match
-// is demoted to a plain, reinstatable conversation; nothing is deleted.
-async function bulkRetireGroupInteractive(group, status) {
+// countGroupMembersByStatus is the cardinality of groupMembersByStatus —
+// the palette gates each per-group retire command on a non-zero count so
+// it never offers a no-op sweep.
+function countGroupMembersByStatus(group, status) {
+  return groupMembersByStatus(group, status).length;
+}
+
+// openRetirePreview runs the command palette's "Retire idle/offline
+// agents in <group>" command. Rather than firing a status-filtered bulk
+// retire that the server RE-RESOLVES from live state, it pops a PREVIEW
+// modal so the human commits an exact list:
+//   1. lists precisely the matching members (groupMembersByStatus), all
+//      ticked by default, so the human sees exactly who will be retired;
+//   2. lets the human opt individual agents out (per-row checkbox, plus
+//      select-all / select-none and a title/id filter);
+//   3. on submit, POSTs the EXPLICIT conv-id list the human approved to
+//      /api/groups/{name}/retire {convs:[…]} — so the BE retires that
+//      exact set, never a cohort it re-derived between preview and submit
+//      (an agent that flips status in the meantime is still retired iff it
+//      was on the previewed list).
+//
+// Demotion semantics are unchanged from the old confirm: each retired
+// match is demoted to a plain, reinstatable conversation (leaves its
+// groups, grants revoked) and — when the shutdown box is ticked (default
+// on) — its running pane is soft-exited. Worktrees are left untouched.
+// Cancel / Esc / backdrop is a no-op.
+//
+// The candidate list is snapshotted from lastSnapshot at open time and
+// then OWNED by the modal: the 2s auto-refresh is suspended while a
+// .modal-overlay is open and submit posts these exact conv-ids, so the
+// cohort cannot shift under the human between preview and submit.
+function openRetirePreview(group, status) {
   const word = RETIRE_STATUS_LABELS[status] || status;
-  const predicted = countGroupMembersByStatus(group, status);
-  if (predicted === 0) {
+  const candidates = groupMembersByStatus(group, status).map(m => ({ ...m, checked: true }));
+  if (candidates.length === 0) {
     toast(`retire: no ${word} agents in group "${group}"`);
     return;
   }
-  const n = predicted === 1 ? `1 ${word} agent` : `${predicted} ${word} agents`;
-  const confirmed = await confirmModal({
-    title: `Retire ${word} agents?`,
-    body: `This retires ${n} in group "${group}" — each is demoted to a plain `
-      + `conversation (it leaves all its groups and its grants are revoked) and its `
-      + `running session is soft-exited. The conversations themselves survive and `
-      + `can be reinstated; worktrees are left untouched. Agents of other statuses `
-      + `are left alone.`,
-    meta: group,
-    okLabel: `Retire ${predicted === 1 ? '1 agent' : predicted + ' agents'}`,
-  });
-  if (!confirmed) return;
-  let r;
-  try {
-    r = await fetch(`/api/groups/${encodeURIComponent(group)}/retire`
-      + `?status=${encodeURIComponent(status)}&shutdown=1`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-  } catch (e) {
-    toast(`retire failed: ${(e && e.message) || e}`, true);
-    return;
+
+  const overlay = $('#retire-preview-modal');
+  const titleEl = $('#retire-preview-title');
+  const hintEl = $('#retire-preview-hint');
+  const listEl = $('#retire-preview-list');
+  const countEl = $('#retire-preview-count');
+  const errEl = $('#retire-preview-error');
+  const searchEl = $('#retire-preview-search');
+  const shutdownCb = $('#retire-preview-shutdown');
+  const submitBtn = $('#retire-preview-submit');
+  const cancelBtn = $('#retire-preview-cancel');
+  const selAllBtn = $('#retire-preview-select-all');
+  const selNoneBtn = $('#retire-preview-select-none');
+
+  // Reset transient state on every open.
+  errEl.textContent = '';
+  searchEl.value = '';
+  shutdownCb.checked = true;
+  for (const c of candidates) c.checked = true;
+  titleEl.textContent = `Retire ${word} agents in "${group}"`;
+
+  const checkedCount = () => candidates.filter(c => c.checked).length;
+  const matchesFilter = (c) => {
+    const q = searchEl.value.trim().toLowerCase();
+    if (!q) return true;
+    return c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q);
+  };
+
+  function renderHint() {
+    hintEl.textContent = `These ${word} agents in group "${group}" will be demoted to plain, `
+      + `reinstatable conversations — each leaves all its groups and its grants are revoked. `
+      + `Untick any you want to keep; only the ticked agents are retired.`;
   }
-  if (!r.ok) {
-    toast(`retire failed: ${await r.text()}`, true);
-    return;
+  function renderList() {
+    const rows = candidates.filter(matchesFilter);
+    if (rows.length === 0) {
+      listEl.innerHTML = '<div class="cleanup-empty">no agents match the filter</div>';
+      return;
+    }
+    listEl.innerHTML = rows.map(c => {
+      const badges = `<span class="cleanup-badge">${esc(c.status)}</span>`
+        + (c.role ? `<span class="cleanup-badge">${esc(c.role)}</span>` : '');
+      return `<div class="cleanup-row"><label>`
+        + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
+        + `<span class="title">${esc(c.title || '(untitled)')}</span>`
+        + `<span class="id">${esc(c.conv_id.slice(0, 8))}</span>`
+        + `${badges}</label></div>`;
+    }).join('');
   }
-  const out = await r.json().catch(() => null);
-  const members = (out && out.members) || [];
-  const retired = members.filter(m => m.action === 'retired').length;
-  const errors = members.filter(m => m.action === 'error').length;
-  let msg = `retired ${retired} ${word} agent${retired === 1 ? '' : 's'} in "${group}"`;
-  if (errors) msg += `, ${errors} failed`;
-  const warns = (out && out.warnings) || [];
-  if (warns.length) msg += ` · ${warns.join('; ')}`;
-  toast(msg, errors > 0);
-  refresh();
+  function renderFooter() {
+    const n = checkedCount();
+    countEl.textContent = `${n} of ${candidates.length} selected`;
+    // textContent (not innerHTML) also clears any in-flight busy spinner —
+    // renderFooter is the canonical "button reflects the selection, ready
+    // for input" state, so it's where the busy state is torn down.
+    submitBtn.textContent = n === 1 ? 'Retire 1 agent' : `Retire ${n} agents`;
+    submitBtn.disabled = n === 0;
+    submitBtn.removeAttribute('aria-busy');
+  }
+  function render() { renderHint(); renderList(); renderFooter(); }
+
+  const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
+  const onListChange = (e) => {
+    const cb = e.target.closest('input[type=checkbox]');
+    if (!cb) return;
+    const c = findCandidate(cb.getAttribute('data-conv'));
+    if (c) c.checked = cb.checked;
+    renderFooter();
+  };
+  const onSearch = () => renderList();
+  // select-all / select-none act on the CURRENTLY-VISIBLE rows, so under
+  // an active filter "select none" only clears the rows the human can see
+  // — it never silently unticks (or ticks) agents hidden by the filter.
+  // With no filter, matchesFilter passes everything, so they behave as a
+  // plain all/none. The global "n of N selected" count keeps the true
+  // total honest even when some checked rows are filtered out of view.
+  const onSelectAll = () => { for (const c of candidates.filter(matchesFilter)) c.checked = true; render(); };
+  const onSelectNone = () => { for (const c of candidates.filter(matchesFilter)) c.checked = false; render(); };
+
+  const cleanup = () => {
+    overlay.classList.remove('show');
+    listEl.removeEventListener('change', onListChange);
+    searchEl.removeEventListener('input', onSearch);
+    selAllBtn.removeEventListener('click', onSelectAll);
+    selNoneBtn.removeEventListener('click', onSelectNone);
+    submitBtn.removeEventListener('click', onSubmit);
+    cancelBtn.removeEventListener('click', cleanup);
+    overlay.removeEventListener('click', onOverlay);
+    document.removeEventListener('keydown', onKey);
+  };
+  const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+
+  async function onSubmit() {
+    // Snapshot the ticked conv-ids at click time — this is the list sent
+    // to the BE verbatim, the same list the human just reviewed.
+    const convs = candidates.filter(c => c.checked).map(c => c.conv_id);
+    if (convs.length === 0) return;
+    // Busy feedback: disable + swap the label for a spinner while the POST
+    // is in flight, so a click that takes a beat doesn't look ignored. The
+    // busy state is torn down by renderFooter on any error path (it resets
+    // textContent + clears aria-busy); on success the modal just closes.
+    submitBtn.disabled = true;
+    submitBtn.setAttribute('aria-busy', 'true');
+    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Retiring…';
+    errEl.textContent = '';
+    let r;
+    try {
+      r = await fetch(`/api/groups/${encodeURIComponent(group)}/retire`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ convs, shutdown: shutdownCb.checked }),
+      });
+    } catch (e) {
+      errEl.textContent = `retire failed: ${(e && e.message) || e}`;
+      renderFooter();
+      return;
+    }
+    if (!r.ok) {
+      errEl.textContent = await r.text();
+      renderFooter();
+      return;
+    }
+    const out = await r.json().catch(() => null);
+    cleanup();
+    const members = (out && out.members) || [];
+    const retired = members.filter(m => m.action === 'retired').length;
+    const errors = members.filter(m => m.action === 'error').length;
+    let msg = `retired ${retired} agent${retired === 1 ? '' : 's'} in "${group}"`;
+    if (errors) msg += `, ${errors} failed`;
+    const warns = (out && out.warnings) || [];
+    if (warns.length) msg += ` · ${warns.join('; ')}`;
+    toast(msg, errors > 0);
+    refresh();
+  }
+
+  listEl.addEventListener('change', onListChange);
+  searchEl.addEventListener('input', onSearch);
+  selAllBtn.addEventListener('click', onSelectAll);
+  selNoneBtn.addEventListener('click', onSelectNone);
+  submitBtn.addEventListener('click', onSubmit);
+  cancelBtn.addEventListener('click', cleanup);
+  overlay.addEventListener('click', onOverlay);
+  document.addEventListener('keydown', onKey);
+
+  render();
+  overlay.classList.add('show');
+  setTimeout(() => submitBtn.focus(), 0);
 }
 
 // openWindowModal drives the bulk window focus/unfocus feature. One
@@ -2682,8 +2829,8 @@ async function stopAgentReq(conv, label, force) {
 export {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
-  maybeHandleDanglingRetire, retireAgentInteractive, bulkRetireGroupInteractive,
-  countGroupMembersByStatus,
+  maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview,
+  groupMembersByStatus, countGroupMembersByStatus,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };
