@@ -78,6 +78,46 @@ type Config struct {
 	// prompt for tclaude-spawned panes — see ClaudeResumeConfig. Absent /
 	// nil keeps Claude Code's own defaults.
 	ClaudeResume *ClaudeResumeConfig `json:"claude_resume,omitempty"`
+
+	// Dashboard holds display toggles for the agentd web dashboard that
+	// don't belong to the slop / cost / notification blocks — see
+	// DashboardConfig. Absent → all defaults.
+	Dashboard *DashboardConfig `json:"dashboard,omitempty"`
+}
+
+// Activity-bot style values — the per-mode choices in ActivityBotsConfig.
+// "emoji" is the lightweight emoji+CSS bot row; "sprites" is the pixel-art
+// robot animation; "off" hides the indicator. An empty / unknown value
+// falls back to the per-mode default (see ActivityBotsRegular /
+// ActivityBotsSlop).
+const (
+	ActivityBotsEmoji   = "emoji"
+	ActivityBotsSprites = "sprites"
+	ActivityBotsOff     = "off"
+)
+
+// DashboardConfig holds display toggles for the agentd web dashboard.
+type DashboardConfig struct {
+	// ActivityBots selects the style of the per-group + global "activity
+	// bot" indicator — the deduped row of robot icons that rides in each
+	// group <summary> header (visible even when the group is folded) and in
+	// the top bar, summarising member status at a glance. The style is
+	// chosen INDEPENDENTLY for the plain dashboard and for slop mode — see
+	// ActivityBotsConfig. Absent → defaults (emoji in regular, sprites in
+	// slop).
+	ActivityBots *ActivityBotsConfig `json:"activity_bots,omitempty"`
+}
+
+// ActivityBotsConfig picks the activity-bot visual independently per mode,
+// so the lightweight emoji bots can ride the plain dashboard while the full
+// pixel-art robots come out for slop ("casino") mode — the defaults — or
+// any other mix, or off entirely. Each field is one of
+// ActivityBots{Emoji,Sprites,Off}; empty / unknown falls back to that
+// mode's default. prefers-reduced-motion already drops just the animation
+// (keeping the bots); these are the change-the-style / turn-it-off knobs.
+type ActivityBotsConfig struct {
+	Regular string `json:"regular,omitempty"` // plain dashboard; default emoji
+	Slop    string `json:"slop,omitempty"`    // slop mode; default sprites
 }
 
 // ClaudeResumeConfig tunes Claude Code's interactive "Resume from summary"
@@ -513,6 +553,42 @@ func (c *Config) ShowVegasInRegularMode() bool {
 		return false
 	}
 	return *c.Slop.VegasInRegularMode
+}
+
+// normalizeActivityBotsStyle returns s when it's a known style, else ""
+// (so resolvers fall back to their per-mode default for a blank or a
+// hand-edited garbage value).
+func normalizeActivityBotsStyle(s string) string {
+	switch s {
+	case ActivityBotsEmoji, ActivityBotsSprites, ActivityBotsOff:
+		return s
+	default:
+		return ""
+	}
+}
+
+// ActivityBotsRegular reports the activity-bot style for the plain
+// (non-slop) dashboard — config dashboard.activity_bots.regular. Default
+// "emoji" (absent block/key or an unknown value). Nil-safe on the receiver.
+func (c *Config) ActivityBotsRegular() string {
+	if c != nil && c.Dashboard != nil && c.Dashboard.ActivityBots != nil {
+		if s := normalizeActivityBotsStyle(c.Dashboard.ActivityBots.Regular); s != "" {
+			return s
+		}
+	}
+	return ActivityBotsEmoji
+}
+
+// ActivityBotsSlop reports the activity-bot style for slop ("casino") mode
+// — config dashboard.activity_bots.slop. Default "sprites" (absent block/key
+// or an unknown value). Nil-safe on the receiver.
+func (c *Config) ActivityBotsSlop() string {
+	if c != nil && c.Dashboard != nil && c.Dashboard.ActivityBots != nil {
+		if s := normalizeActivityBotsStyle(c.Dashboard.ActivityBots.Slop); s != "" {
+			return s
+		}
+	}
+	return ActivityBotsSprites
 }
 
 // FocusConfig holds window-focus behavior knobs.

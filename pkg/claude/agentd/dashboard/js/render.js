@@ -8,9 +8,10 @@ import {
   $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
-  cwdCell, branchCell, offlineDefault, groupShowOffline,
+  cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
 import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
+import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity } from './group-activity.js';
 import { dashPrefs } from './prefs.js';
 import { getDashDefaultProfile } from './profiles.js';
 
@@ -120,6 +121,7 @@ function renderVirtualGroup(g) {
     <details class="group-virtual" data-group-key="${esc(key)}" data-dnd-target-ungrouped="1"${isOpen ? ' open' : ''}>
       <summary>
         <strong class="group-name">${esc(g.name)}</strong>
+        ${groupActivityChip(members)}
         <span class="group-virtual-badge" title="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group.">virtual</span>
         <span class="muted">— ${members.length} agent${members.length === 1 ? '' : 's'} not in any group${hiddenOffline > 0 ? ` · ${hiddenOffline} offline hidden` : ''}</span>
       </summary>
@@ -361,6 +363,23 @@ function remoteControlPolicyMenuItem(g) {
   return `<button data-act="set-group-remote-control" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-policy="${esc(policy)}" data-next="${esc(next)}" title="${esc(tip)}">${ico} remote policy: ${esc(label)}</button>`;
 }
 
+// activityStyles reads the per-mode activity-bot styles from the snapshot
+// (config dashboard.activity_bots). Falls back to the Go-side defaults
+// (regular emoji, slop sprites) when the flag is absent — a pre-flag
+// daemon, or the moment before the first snapshot lands.
+function activityStyles() {
+  const ab = (lastSnapshot && lastSnapshot.activity_bots) || {};
+  return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites' };
+}
+
+// groupActivityChip builds the dual-mode bot row for a group <summary>
+// using the configured per-mode styles. Empty when both modes are 'off'
+// or the group has no members.
+function groupActivityChip(members) {
+  const st = activityStyles();
+  return groupActivityHTML(members, st.regular, st.slop);
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
@@ -406,6 +425,7 @@ function renderGroups(groups) {
     <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
+        ${groupActivityChip(members)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
@@ -803,8 +823,53 @@ function renderDashDefaultProfile() {
     : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)';
 }
 
+// renderGlobalActivity paints the top-bar #global-activity slot: the
+// same deduped bot row as the group headers, but aggregated across every
+// real group PLUS the ungrouped bucket — one glance tells you if anything
+// anywhere is working or needs you, without scanning the list or
+// unfolding groups. The tooltip breaks the total down per group (only
+// those with live, non-offline activity, so it stays short). Group names
+// go through the .title DOM PROPERTY (never innerHTML), so they're inert
+// — no escaping needed; the bot row HTML carries no caller input.
+function renderGlobalActivity() {
+  const el = $('#global-activity');
+  if (!el) return;
+  const snap = lastSnapshot;
+  if (!snap) { el.innerHTML = ''; el.removeAttribute('title'); return; }
+  const groups = snap.groups || [];
+  const lists = groups.map(g => g.members || []);
+  lists.push(snap.ungrouped || []);
+  // aggregateActivity dedups by conv_id — an agent in several groups is in
+  // each group's member list, so a naive flatten would multiply its counts.
+  const s = aggregateActivity(lists);
+  // Emit a regular-mode + a slop-mode wrapper in their configured styles,
+  // exactly like the group chips — CSS shows the right one per mode. Clear
+  // out when both modes render nothing (style off, or zero members).
+  const st = activityStyles();
+  const wrap = (cls, style) => {
+    const inner = styledBotsHTML(s, style);
+    return inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
+  };
+  const reg = wrap('ga-regular', st.regular);
+  const slop = wrap('ga-slop', st.slop);
+  if (!reg && !slop) { el.innerHTML = ''; el.removeAttribute('title'); return; }
+  // Per-source breakdown for the tooltip — skip sources that are only
+  // offline so the list highlights what's actually live.
+  const lines = [];
+  for (const g of groups) {
+    const gs = activitySummary(g.members || []);
+    if (gs.present.length && gs.level !== 'offline') lines.push(`${g.name}: ${gs.summaryText}`);
+  }
+  const ung = activitySummary(snap.ungrouped || []);
+  if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${ung.summaryText}`);
+  el.innerHTML = reg + slop;
+  syncBotAnimations(); // re-phase to wall-clock so the 2s poll doesn't restart-jump
+  el.title = `Activity across all groups — ${s.summaryText}`
+    + (lines.length ? '\n' + lines.join('\n') : '');
+}
+
 export {
-  renderGroups, renderPermissions, renderSlugs, showStatus,
+  renderGroups, renderGlobalActivity, renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal,
 };

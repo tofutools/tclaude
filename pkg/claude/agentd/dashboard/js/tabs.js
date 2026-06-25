@@ -4,7 +4,7 @@
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, shortId, relTime } from './helpers.js';
+import { $, esc, shortId, relTime, syncBotAnimations } from './helpers.js';
 import {
   sortHead, applySort, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
@@ -103,6 +103,10 @@ function renderGroupsTab() {
   }
   const filtered = filterGroups(list, q);
   $('#groups-list').innerHTML = renderGroups(filtered);
+  // Re-phase the activity-bot animations to wall-clock so this wholesale
+  // innerHTML swap (every 2s poll, plus filter/sort/drag) doesn't restart
+  // them with a visible jump. See helpers.syncBotAnimations.
+  syncBotAnimations();
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.
   const total = realGroups.length;

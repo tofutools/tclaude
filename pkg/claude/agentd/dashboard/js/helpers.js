@@ -1361,12 +1361,36 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
   return { canceled: true }; // empty result — treat as a no-op cancel
 }
 
+// syncBotAnimations re-phases the activity-bot CSS animations to a shared
+// wall-clock, so the dashboard's wholesale re-renders (the 2s snapshot
+// poll, plus filter/sort/drag) — which replace the groups subtree and
+// thereby restart every CSS animation from 0% — don't make the bots
+// visibly jump. Setting `animation-delay = -(now % period)` on a freshly
+// created element makes its displayed phase a function of wall-clock ALONE
+// (the element's own start time cancels out: with start C and delay
+// -(C % P), phase at time t is ((t - C) + (C % P)) % P = t % P), so the new
+// element resumes exactly where the replaced one was — continuous, and
+// incidentally in lock-step across all bots. The period is read from
+// computed style (so it tracks the CSS durations with no duplication);
+// `alternate` doubles it. Called right after each bot-bearing re-render.
+function syncBotAnimations() {
+  const now = (typeof performance !== 'undefined' ? performance.now() : 0);
+  for (const el of $$('.actbot-face, .actbot-tag, .actbot-spr')) {
+    const cs = getComputedStyle(el);
+    const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when none
+    if (!dur) continue;
+    const period = dur * 1000 * (cs.animationDirection.startsWith('alternate') ? 2 : 1);
+    el.style.animationDelay = (-(now % period)) + 'ms';
+  }
+}
+
 // Public API — the helpers used outside this module. actionCog is
 // exported because render.js builds the group header's ⚙ menu with it.
 // The rest (statusPillClass, fmtTokens, contextMeterTooltip, the
 // per-row button builders, focusHideButtons, stackedLoc) are internal
 // composition details of the exported builders above.
 export {
+  syncBotAnimations,
   $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,

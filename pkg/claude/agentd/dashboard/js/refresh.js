@@ -11,7 +11,7 @@ import { recordGroupInteraction } from './last-group.js';
 import {
   renderPermissions, renderSlugs, showStatus,
   renderMessagesBadge, renderUsage, renderDashDefaultProfile,
-  renderNotifyGlobal,
+  renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
 import { renderMailTab, onMailSearchChanged } from './mail.js';
 import {
@@ -284,6 +284,7 @@ export async function refresh() {
       sudoByConv[g.conv_id].push(g);
     });
     renderGroupsTab();
+    renderGlobalActivity();
     renderTemplatesTab();
     renderCronTab();
     renderSudoTab();
