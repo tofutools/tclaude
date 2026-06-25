@@ -1079,6 +1079,7 @@ function openRetirePreview(group, status) {
       wtRow.classList.add('disabled');
     }
   };
+  syncWtCoupling(); // reflect the (default-on) shutdown state on open
 
   const checkedCount = () => candidates.filter(c => c.checked).length;
   const matchesFilter = (c) => {

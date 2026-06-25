@@ -403,9 +403,11 @@ const bulkRetireGroupConcurrency = 8
 // repo and worktrees a SURVIVING agent still works in are kept, and the
 // removal waits until the member's pane exits (its cwd is the worktree).
 // A worktree shared by two members BOTH retired in this batch is
-// conservatively kept (each sees the other's still-live session and marks
-// it shared) — the safe failure mode, never a yank from under a sibling
-// whose pane is still draining. The per-member outcome rides back in
+// conservatively kept: each still sees the OTHER's session row for that
+// worktree root — session rows outlive a soft-exit, so the shared check
+// (which keys on row existence, not pane liveness) marks it shared for
+// both. The safe failure mode — never a yank from under a sibling whose
+// pane is still draining. The per-member outcome rides back in
 // memberOpResult.Worktree.
 //
 // Per-member outcomes (memberOpResult.Action):
@@ -500,13 +502,14 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 //
 // When deleteWorktree is set the member's git worktree+branch is also
 // cleaned up, reusing the single-agent retire machinery: the worktree is
-// resolved BEFORE the shutdown (the shared-worktree check reads sibling
-// sessions the soft-exit will start tearing down, and the recorded
-// location must still be intact), then scheduleRetireWorktreeCleanup runs
-// it — inline when the member is already offline, deferred to a waiter
-// when a /exit is in flight, kept when no shutdown was asked for. The
-// per-member plan rides back on res.Worktree, and its one-line note is
-// folded into Detail so the CLI/table row says what happened.
+// resolved BEFORE the shutdown — defensive ordering, since both inputs the
+// resolve reads (the recorded location and the sibling session rows the
+// shared-worktree check keys on) survive a soft-exit, but resolving up
+// front keeps the view stable. scheduleRetireWorktreeCleanup then runs it
+// — inline when the member is already offline, deferred to a waiter when a
+// /exit is in flight, kept when no shutdown was asked for. The per-member
+// plan rides back on res.Worktree, and its one-line note is folded into
+// Detail so the CLI/table row says what happened.
 func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
 	state, serr := db.EnrollmentState(convID)
 	if serr != nil {
@@ -528,9 +531,9 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
 
-	// Resolve the worktree BEFORE the shutdown: the deferred removal waits
-	// on the pane exiting, and the shared-worktree check reads sibling
-	// sessions the soft-stop will start tearing down.
+	// Resolve the worktree BEFORE the shutdown — the safe order: the
+	// shared-worktree check and the recorded location both survive a
+	// soft-exit, so resolving up front keeps the view stable.
 	var wt agentWorktreeView
 	if deleteWorktree {
 		wt = resolveRetireWorktree(convID)

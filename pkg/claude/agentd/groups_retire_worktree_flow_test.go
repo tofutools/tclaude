@@ -206,6 +206,51 @@ func TestDashboardGroupRetire_DeleteWorktreeKeepsMainAndShared(t *testing.T) {
 	assert.True(t, f.World.Tmux.IsAlive("tmux-bwsv"), "the survivor's pane must not be touched")
 }
 
+// Scenario: TWO members that BOTH share one worktree and are BOTH selected
+// in the same batch retire — the worktree is conservatively KEPT for both.
+// Each still sees the other's session row for that root (rows outlive a
+// soft-exit), so the shared check marks it shared either way. This is the
+// safe failure mode the batch doc promises: never remove a worktree out
+// from under a co-retired sibling whose pane is still draining. (If a
+// future change made soft-exit delete the session row, this test would
+// fail loudly — the regression guard for that latent race.)
+func TestDashboardGroupRetire_DeleteWorktreeBothShareKept(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "wt-coshare"
+	const convA = "bwca-1111-2222-3333-4444"
+	const convB = "bwcb-1111-2222-3333-4444"
+	const shared = "/tmp/bw-coshare"
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(convA, "co-a")
+	f.HaveConvWithTitle(convB, "co-b")
+	f.HaveAliveSession(convA, "spwn-bwca", "tmux-bwca", shared)
+	f.HaveAliveSession(convB, "spwn-bwcb", "tmux-bwcb", shared) // same dir
+	f.HaveMember(group, convA)
+	f.HaveMember(group, convB)
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		shared: {Root: shared, Branch: "shared", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postDashGroupRetireWt(t, mux, group, map[string]any{
+		"convs": []string{convA, convB}, "shutdown": true, "delete_worktree": true,
+	})
+	require.Equal(t, http.StatusOK, code)
+
+	for _, c := range []string{convA, convB} {
+		action, detail, wtAction, hasWt := resp.member(c)
+		assert.Equal(t, "retired", action, "%s must be retired; members=%+v", c, resp.Members)
+		require.True(t, hasWt, "%s must carry a worktree outcome", c)
+		assert.Equal(t, "kept", wtAction,
+			"a worktree two co-retired members share is conservatively kept; %s detail=%s", c, detail)
+		assert.Contains(t, detail, "shared")
+	}
+	assert.False(t, fw.wasRemoved(shared),
+		"the co-shared worktree must never be removed while a sibling pane may still be draining")
+}
+
 // Scenario: the SO_PEERCRED /v1 route honours ?delete_worktree=1 — the
 // coordinator path. A slug-holding agent bulk-retires a worker and its
 // worktree+branch are swept, proving the option is wired on both retire
