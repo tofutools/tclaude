@@ -33,7 +33,7 @@ import { $, $$, esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import {
   toast, openWindowModal,
-  retireAgentInteractive, bulkRetireGroupInteractive, countGroupMembersByStatus,
+  retireAgentInteractive, openRetirePreview, countGroupMembersByStatus,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
@@ -312,19 +312,22 @@ function buildCommands() {
 
   // 8) Per-group bulk retire — "Retire idle / offline agents in <group>".
   //    A cleanup sweep that demotes a whole cohort of a group's members
-  //    to plain (reinstatable) conversations in one parallel batch (POST
-  //    /api/groups/{name}/retire?status=…). Listed only when the group
-  //    actually HAS members of that status, so the palette never offers a
-  //    no-op. bulkRetireGroupInteractive owns the confirm + POST + toast.
+  //    to plain (reinstatable) conversations. Opens a PREVIEW modal
+  //    (openRetirePreview) listing precisely the matching members so the
+  //    human can opt individual agents out before the batch fires; submit
+  //    POSTs the explicit conv-id list to /api/groups/{name}/retire, so
+  //    the BE retires exactly what was previewed. Listed only when the
+  //    group actually HAS members of that status, so the palette never
+  //    offers a no-op.
   for (const g of groups) {
     for (const status of ['idle', 'offline']) {
       const n = countGroupMembersByStatus(g.name, status);
       if (!n) continue;
       cmds.push({
         icon: '♻', label: `Retire ${status} agents in ${g.name}`,
-        hint: `demote ${n} ${status} agent${n === 1 ? '' : 's'} to plain conversations`,
+        hint: `preview + demote ${n} ${status} agent${n === 1 ? '' : 's'} to plain conversations`,
         keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name,
-        run: () => { recordGroupInteraction(g.name); bulkRetireGroupInteractive(g.name, status); },
+        run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },
       });
     }
   }

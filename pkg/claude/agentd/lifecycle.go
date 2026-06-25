@@ -335,7 +335,7 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), filter)
+		retireShouldShutdown(r), filter, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -362,9 +362,26 @@ const bulkRetireGroupConcurrency = 8
 // skipped (skipped:self), since the brief is "retire OTHER agents in the
 // group" and an agent demoting itself mid-request would revoke its own
 // grants and /exit its own pane out from under the request it is
-// serving. filter==nil retires every member (the legacy behaviour); a
-// non-nil filter restricts the cohort to matching live statuses, and
-// non-matching members are simply omitted from the response.
+// serving.
+//
+// Cohort selection is one of two mutually-exclusive mechanisms:
+//   - selected != nil — an EXPLICIT set of conv-ids: retire exactly the
+//     members whose conv-id is in the set, regardless of their current
+//     live status. This is the dashboard preview path — the human ticked
+//     a list, and the BE must retire precisely that list and nothing it
+//     re-derived (so an agent that flips status between preview and
+//     submit is still retired iff it was on the previewed list). A member
+//     not in the set is omitted from the response; a conv in the set that
+//     is not (or no longer) a member of g is simply never reached, so it
+//     is silently ignored — the membership table is authoritative, the
+//     set only narrows it.
+//   - selected == nil — the status FILTER path: filter==nil retires every
+//     member (the legacy behaviour); a non-nil filter restricts the
+//     cohort to members whose live status matches, re-resolved server-side
+//     from live tmux. Non-matching members are omitted from the response.
+//
+// When selected is non-nil the status filter is ignored entirely (the
+// human's explicit pick wins — there is nothing to re-resolve).
 //
 // Per-member outcomes (memberOpResult.Action):
 //   - retired                  — demoted (Detail summarises what changed)
@@ -380,7 +397,7 @@ const bulkRetireGroupConcurrency = 8
 // every worker has settled — checked once at the end so a bulk retire
 // that demotes a member-owner warns about the now-ownerless group,
 // matching the single-agent cleanup path.
-func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bool, filter retireStatusFilter) (groupRetireResp, error) {
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bool, filter retireStatusFilter, selected map[string]struct{}) (groupRetireResp, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return groupRetireResp{}, err
@@ -389,10 +406,11 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bo
 
 	// The status filter needs live tmux state; fetch it once
 	// (snapshot-shaped) and share the read-only map across workers.
-	// Skipped entirely when no filter is active, so the legacy
-	// "retire everyone" path keeps its old cost.
+	// Skipped entirely when no filter is active OR an explicit selection
+	// is supplied (the explicit path never consults live status), so the
+	// legacy "retire everyone" path and the preview path keep their cost.
 	var alive map[string]struct{}
-	if filter != nil {
+	if filter != nil && selected == nil {
 		alive, _ = session.LiveTmuxSessions()
 	}
 
@@ -412,7 +430,12 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown bo
 				res.Action = "skipped:self"
 				res.Detail = "the caller never retires itself"
 			default:
-				if filter != nil {
+				switch {
+				case selected != nil:
+					if _, ok := selected[m.ConvID]; !ok {
+						return nil // not in the explicit selection — omit
+					}
+				case filter != nil:
 					online, status := convLiveStatus(m.ConvID, alive)
 					if !filter.matches(online, status) {
 						return nil // filtered out — omit from the response

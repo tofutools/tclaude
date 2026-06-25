@@ -750,18 +750,82 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // retire behind the command palette's "Retire idle/offline agents in
 // <group>". It trusts the cookie-authed caller (the dashboard is
 // human-only, so caller=""), hence no groups.retire slug check, and
-// shares the same parallel core. Reads the same query knobs as the /v1
-// endpoint: ?shutdown= (default on), ?status= (idle/offline/…; absent =
-// every member) and ?reason=.
+// shares the same parallel core.
+//
+// Two cohort-selection modes, chosen by the request body:
+//   - EXPLICIT (the preview path): an optional JSON body {convs:[…],
+//     shutdown?, reason?}. When convs is non-empty the retire is scoped to
+//     exactly those conv-ids — the list the human ticked in the retire
+//     preview modal — and the BE retires precisely that set, never a
+//     re-derived cohort. This is what keeps "the list the human saw" and
+//     "the list the BE acts on" identical even if an agent flips status
+//     between preview and submit.
+//   - STATUS FILTER (the legacy path): no body (or an empty convs list)
+//     falls back to the same query knobs as the /v1 endpoint —
+//     ?shutdown= (default on), ?status= (idle/offline/…; absent = every
+//     member) and ?reason=.
+//
+// shutdown/reason may be supplied in the body (explicit path) or the
+// query (filter path); a body field, when present, wins.
 func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	filter, ferr := parseRetireStatusFilter(r.URL.Query().Get("status"))
-	if ferr != nil {
-		http.Error(w, "retire: "+ferr.Error(), http.StatusBadRequest)
-		return
+	var body struct {
+		Convs    []string `json:"convs"`
+		Shutdown *bool    `json:"shutdown"`
+		Reason   *string  `json:"reason"`
 	}
-	out, err := bulkRetireGroupMembers(g, "",
-		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), filter)
+	// The body is optional — the legacy status-filter callers send none.
+	// A present-but-malformed body is a 400, not a silent fallthrough, so
+	// a client bug surfaces instead of retiring the wrong cohort. The 64
+	// KiB cap bounds an abusive payload; a realistic convs list is tiny.
+	if r.ContentLength != 0 {
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			http.Error(w, "retire: read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(bytes.TrimSpace(raw)) > 0 {
+			if err := json.Unmarshal(raw, &body); err != nil {
+				http.Error(w, "retire: decode body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
+	// shutdown/reason resolve from the body when present, else the query.
+	shutdown := retireShouldShutdown(r)
+	if body.Shutdown != nil {
+		shutdown = *body.Shutdown
+	}
+	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	if body.Reason != nil {
+		reason = strings.TrimSpace(*body.Reason)
+	}
+
+	// Explicit selection wins over the status filter. Dedupe into a set so
+	// a duplicated conv-id costs one retire, not two.
+	var selected map[string]struct{}
+	var filter retireStatusFilter
+	if len(body.Convs) > 0 {
+		selected = make(map[string]struct{}, len(body.Convs))
+		for _, c := range body.Convs {
+			if c = strings.TrimSpace(c); c != "" {
+				selected[c] = struct{}{}
+			}
+		}
+		if len(selected) == 0 {
+			http.Error(w, "retire: convs list had no valid conv-ids", http.StatusBadRequest)
+			return
+		}
+	} else {
+		var ferr error
+		filter, ferr = parseRetireStatusFilter(r.URL.Query().Get("status"))
+		if ferr != nil {
+			http.Error(w, "retire: "+ferr.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, filter, selected)
 	if err != nil {
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return

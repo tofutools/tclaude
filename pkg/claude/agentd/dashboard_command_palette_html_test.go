@@ -97,10 +97,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
 	// as the per-row ⚙ Retire button (retireAgentInteractive), and a
-	// per-group "Retire idle/offline agents in <group>" runs the parallel
-	// bulk endpoint (bulkRetireGroupInteractive → POST
-	// /api/groups/{name}/retire?status=…), listed only when a live match
-	// count is non-zero so the palette never offers a no-op.
+	// per-group "Retire idle/offline agents in <group>" opens a PREVIEW
+	// modal (openRetirePreview) that lists precisely the matching members,
+	// lets the human opt agents out, and POSTs the EXPLICIT ticked conv-id
+	// list to /api/groups/{name}/retire — so the BE retires exactly what
+	// the human previewed, not a cohort it re-derived. Listed only when a
+	// live match count is non-zero so the palette never offers a no-op.
 	must("label: `Retire agent: ${label}`", "the palette offers a per-agent retire")
 	must("retireAgentInteractive(a.conv_id, label)",
 		"per-agent retire reuses the shared confirm + POST flow")
@@ -110,8 +112,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the palette offers a per-group bulk retire by status")
 	must("countGroupMembersByStatus(g.name, status)",
 		"the bulk retire command is gated on a live match count (no no-op)")
-	must("bulkRetireGroupInteractive(g.name, status)",
-		"per-group bulk retire runs the parallel batch endpoint")
+	must("openRetirePreview(g.name, status)",
+		"per-group bulk retire opens the preview modal")
 
 	// Ranking + synonyms live in the pure, unit-tested scorer module.
 	must("./palette-score.js", "palette imports the pure ranking module")
