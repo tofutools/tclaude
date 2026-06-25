@@ -1021,12 +1021,12 @@ function countGroupMembersByStatus(group, status) {
 // Demotion semantics are unchanged from the old confirm: each retired
 // match is demoted to a plain, reinstatable conversation (leaves its
 // groups, grants revoked) and — when the shutdown box is ticked (default
-// on) — its running pane is soft-exited. An optional, default-OFF
-// "delete each agent's git worktree + branch" box (coupled to shutdown,
-// since removal can only run after a pane exits) sends delete_worktree to
-// the BE, which cleans up each retired member's worktree under the same
-// per-agent safety rules as the single retire (main repo / shared
-// worktrees kept). Cancel / Esc / backdrop is a no-op.
+// on) — its running pane is soft-exited. A default-ON "delete each
+// agent's git worktree + branch" box (coupled to shutdown, since removal
+// can only run after a pane exits) sends delete_worktree to the BE, which
+// cleans up each retired member's worktree under the same per-agent safety
+// rules as the single retire (main repo / shared worktrees kept). Untick
+// it to keep the worktrees. Cancel / Esc / backdrop is a no-op.
 //
 // The candidate list is snapshotted from lastSnapshot at open time and
 // then OWNED by the modal: the 2s auto-refresh is suspended while a
@@ -1059,7 +1059,7 @@ function openRetirePreview(group, status) {
   errEl.textContent = '';
   searchEl.value = '';
   shutdownCb.checked = true;
-  wtCb.checked = false; // worktree delete is opt-in for the batch
+  wtCb.checked = true; // worktree delete defaults ON (the BE keeps main/shared/no-worktree members)
   wtCb.disabled = false;
   wtRow.classList.remove('disabled');
   for (const c of candidates) c.checked = true;

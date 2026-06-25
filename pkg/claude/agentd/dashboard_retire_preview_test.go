@@ -113,15 +113,15 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 	must(".cleanup-modal .modal-buttons button.primary.danger {",
 		"the cleanup-modal danger (red) button rule exists for the submit to bind to")
 
-	// 7. The worktree opt-in: default OFF (opt-in for the batch), coupled to
-	//    shutdown (removal can only run after a pane exits), and the choice
-	//    feeds the POST through `deleteWorktree`, which is guarded so a box
-	//    disabled by an unticked shutdown never sends delete_worktree.
+	// 7. The worktree toggle: default ON, coupled to shutdown (removal can
+	//    only run after a pane exits), and the choice feeds the POST through
+	//    `deleteWorktree`, which is guarded so a box disabled by an unticked
+	//    shutdown never sends delete_worktree.
 	for _, needle := range []string{
-		"wtCb.checked = false; // worktree delete is opt-in for the batch", // default OFF on open
-		"const syncWtCoupling = () => {",                                   // shutdown→worktree coupling
-		"const deleteWorktree = wtCb.checked && !wtCb.disabled;",           // disabled box never opts in
-		"shutdownCb.addEventListener('change', syncWtCoupling)",            // coupling is wired live
+		"wtCb.checked = true; // worktree delete defaults ON", // default ON on open
+		"const syncWtCoupling = () => {",                       // shutdown→worktree coupling
+		"const deleteWorktree = wtCb.checked && !wtCb.disabled;", // disabled box never opts in
+		"shutdownCb.addEventListener('change', syncWtCoupling)",  // coupling is wired live
 	} {
 		if !strings.Contains(fnBody, needle) {
 			t.Errorf("openRetirePreview: missing %q — the worktree opt-in must be coupled to shutdown", needle)
