@@ -153,21 +153,21 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// Check if hooks are installed (warn if not)
 	session.EnsureHooksInstalled(false, stdout, stderr)
 
-	// Use conv ID prefix as session ID
+	// The session PK carries the FULL conversation identity — never a
+	// truncation (two conversations sharing an 8-char prefix would collide on
+	// the PK; SaveSession's ON CONFLICT silently overwrites). The tmux name is
+	// the short, human-facing handle. See JOH-248.
 	sessionID := rc.ConvID
-	if len(sessionID) > 8 {
-		sessionID = sessionID[:8]
-	}
 
-	// Check if session already exists
+	// Check if a session already exists for this conversation.
 	existing, _ := session.LoadSessionState(sessionID)
 	if existing != nil && session.IsTmuxSessionAlive(existing.TmuxSession) {
-		fmt.Fprintf(stderr, "Session %s already exists for this conversation\n", sessionID)
-		fmt.Fprintf(stderr, "Attach with: tclaude session attach %s\n", sessionID)
+		fmt.Fprintf(stderr, "Session %s already exists for this conversation\n", existing.TmuxSession)
+		fmt.Fprintf(stderr, "Attach with: tclaude session attach %s\n", existing.TmuxSession)
 		return 1
 	}
 
-	tmuxSession := sessionID
+	tmuxSession := session.UniqueTmuxSessionName(session.ShortTmuxBase(sessionID, ""))
 
 	// Build the in-tmux launch command via the conv's own harness, mirroring
 	// the watch-mode resume (createSessionForConv): a Codex conv relaunches
@@ -220,7 +220,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	if len(displayName) > 50 {
 		displayName = displayName[:47] + "..."
 	}
-	fmt.Fprintf(stdout, "Resuming [%s] in session %s\n", displayName, sessionID)
+	fmt.Fprintf(stdout, "Resuming [%s] in session %s\n", displayName, tmuxSession)
 	fmt.Fprintf(stdout, "  Directory: %s\n", rc.ProjectPath)
 
 	if attach {
@@ -228,6 +228,6 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		return session.AttachToTmuxSession(tmuxSession)
 	}
 
-	fmt.Fprintf(stdout, "\nAttach with: tclaude session attach %s\n", sessionID)
+	fmt.Fprintf(stdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)
 	return 0
 }

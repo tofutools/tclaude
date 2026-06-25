@@ -471,7 +471,7 @@ func runNew(params *NewParams) error {
 	// The tmux session name is the short, human-facing handle (tmux status
 	// line, `session ls`, attach target). Render it short here while the PK
 	// stays full, and keep it unique among live tmux sessions.
-	tmuxSession := uniqueTmuxSessionName(shortTmuxBase(sessionID, params.Label))
+	tmuxSession := UniqueTmuxSessionName(ShortTmuxBase(sessionID, params.Label))
 
 	if params.WaitForRateLimit {
 		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {

@@ -108,14 +108,27 @@ func findSession(id string) (*SessionState, error) {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	// Try exact match first — on the full id, or on the short tmux handle we
-	// render to users (the two diverge once the PK carries a full UUID; an
-	// exact tmux-name match keeps the displayed handle authoritative even when
-	// it was disambiguated with a -N suffix). See JOH-248.
+	// Exact id match wins outright — the PK is unique.
 	for _, state := range states {
-		if state.ID == id || state.TmuxSession == id {
+		if state.ID == id {
 			return state, nil
 		}
+	}
+
+	// Exact match on the short tmux handle we render to users (it diverges
+	// from the full-UUID PK; matching it keeps the displayed handle
+	// authoritative even when it was disambiguated with a -N suffix). tmux
+	// names are reused once a session exits, so a dead row can linger sharing
+	// a name — prefer the most-recently-updated match, which is the live
+	// owner. See JOH-248.
+	var tmuxMatch *SessionState
+	for _, state := range states {
+		if state.TmuxSession == id && (tmuxMatch == nil || state.Updated.After(tmuxMatch.Updated)) {
+			tmuxMatch = state
+		}
+	}
+	if tmuxMatch != nil {
+		return tmuxMatch, nil
 	}
 
 	// Try prefix match (on the full id — a short conv/synthetic prefix).

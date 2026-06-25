@@ -2,6 +2,7 @@ package session
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,9 +34,9 @@ func TestGenerateSessionID_FullEntropyNotTruncated(t *testing.T) {
 
 func TestShortTmuxBase(t *testing.T) {
 	full := "d0e9fa14-1234-4abc-9def-0123456789ab"
-	assert.Equal(t, "d0e9fa14", shortTmuxBase(full, ""), "a long id renders as its 8-char prefix")
-	assert.Equal(t, "spwn-ab12cd", shortTmuxBase(full, "spwn-ab12cd"), "an explicit label wins verbatim, never truncated")
-	assert.Equal(t, "abc", shortTmuxBase("abc", ""), "an already-short id is left as-is")
+	assert.Equal(t, "d0e9fa14", ShortTmuxBase(full, ""), "a long id renders as its 8-char prefix")
+	assert.Equal(t, "spwn-ab12cd", ShortTmuxBase(full, "spwn-ab12cd"), "an explicit label wins verbatim, never truncated")
+	assert.Equal(t, "abc", ShortTmuxBase("abc", ""), "an already-short id is left as-is")
 }
 
 func TestSessionHandle(t *testing.T) {
@@ -90,4 +91,42 @@ func TestSessionPK_FullUUID_NoPrefixCollision(t *testing.T) {
 	got, err = findSession(convB)
 	require.NoError(t, err)
 	assert.Equal(t, convB, got.ID, "the full conversation UUID resolves to its session")
+}
+
+// tmux session names are reused after a session exits, so two rows (distinct
+// full UUIDs) can share one tmux name — a stale dead row and the live owner.
+// The bare tmux handle must resolve to the live owner (most-recently-updated),
+// not the lingering exited row. See JOH-248.
+func TestFindSession_StaleTmuxName_PrefersLiveOwner(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	stale := "d0e9fa14-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	live := "d0e9fa14-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: stale, ConvID: stale, TmuxSession: "d0e9fa14", Status: StatusExited,
+	}))
+	// Force a distinct, later updated_at for the live row (SaveSession stamps
+	// updated_at = now on each write).
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: live, ConvID: live, TmuxSession: "d0e9fa14", Status: StatusIdle,
+	}))
+
+	got, err := findSession("d0e9fa14")
+	require.NoError(t, err)
+	assert.Equal(t, live, got.ID,
+		"the bare tmux handle must resolve to the live owner, not a stale exited row")
+}
+
+func TestUniqueTmuxSessionName_FreeBaseUnchanged(t *testing.T) {
+	// No tclaude tmux server in the unit-test env, so every candidate is free
+	// and the bare base is returned verbatim ("short if possible"). The -N
+	// suffix fallback needs a live tmux session and is exercised end-to-end,
+	// not here.
+	assert.Equal(t, "d0e9fa14", UniqueTmuxSessionName("d0e9fa14"))
+	assert.Equal(t, "spwn-ab12cd", UniqueTmuxSessionName("spwn-ab12cd"))
+	assert.Equal(t, "", UniqueTmuxSessionName(""))
 }

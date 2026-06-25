@@ -321,11 +321,12 @@ func GenerateSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// shortTmuxBase returns the short, human-facing base for a session's tmux
+// ShortTmuxBase returns the short, human-facing base for a session's tmux
 // name: an explicit label verbatim, else the first 8 chars of the (full)
 // session id. The tmux name is where the id is deliberately rendered short;
-// the stored PK keeps the full identity (JOH-248).
-func shortTmuxBase(sessionID, label string) string {
+// the stored PK keeps the full identity (JOH-248). Exported so the conv-resume
+// paths share one definition with `session new`.
+func ShortTmuxBase(sessionID, label string) string {
 	if label != "" {
 		return label
 	}
@@ -335,11 +336,13 @@ func shortTmuxBase(sessionID, label string) string {
 	return sessionID
 }
 
-// uniqueTmuxSessionName keeps the short tmux name unique among live tmux
+// UniqueTmuxSessionName keeps the short tmux name unique among live tmux
 // sessions. tmux requires unique session names and two resumed conversations
 // can share an 8-char prefix, so a taken base falls back to a -N suffix.
-// "Short if possible": the bare base is used whenever it is free.
-func uniqueTmuxSessionName(base string) string {
+// "Short if possible": the bare base is used whenever it is free. (Best-effort:
+// a racing creator between this check and `tmux new-session` just makes that
+// spawn fail with a duplicate-name error — no corruption.)
+func UniqueTmuxSessionName(base string) string {
 	if base == "" || !IsTmuxSessionAlive(base) {
 		return base
 	}
