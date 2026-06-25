@@ -55,6 +55,30 @@ const SPANS = [
 ];
 
 let currentSpan = 'month';
+
+// The breakdown table's sortable columns, in render order — mirrors the
+// Audit tab's clickable-header pattern. Every column is client-side
+// sortable (the per-agent rows arrive as one small array, so a header
+// click re-renders from the data already in hand — no refetch). `sort` is
+// the comparator key; `numeric`/`text` pick the default direction on a
+// fresh column (text A→Z, cost/activity newest-or-highest first).
+const COST_COLUMNS = [
+  { label: 'Agent', sort: 'agent', text: true },
+  { label: 'Cost', sort: 'cost', numeric: true },
+  { label: 'Model', sort: 'model', text: true },
+  { label: 'Last activity', sort: 'activity' },
+];
+// Active sort. Default activity/desc reproduces the server's recency
+// ordering (collectCosts already returns rows newest-first), so the
+// initial render is unchanged. Held in memory like the Audit tab's view
+// state — it survives re-polls and span changes but resets on reload.
+let costSort = 'activity';
+let costDir = 'desc';
+// The last /api/costs payload, kept so a header click can re-sort and
+// re-render the table without refetching (the chart/summary are unchanged
+// by a sort, only the table re-renders).
+let lastCostData = null;
+
 let lastFetchedAt = 0;
 // The WHAT-IF mode the last load fetched under. A flip (the opt-in toggled,
 // or real spend appearing) must reload immediately so the chart/table/banner
@@ -321,6 +345,49 @@ function renderSummary(data, proj) {
   $('#costs-summary').innerHTML = bits.join('<span class="cost-sep">·</span>');
 }
 
+// recencyKey mirrors the server's costRowRecencyKey: the precise
+// last-activity timestamp when known, else the calendar day floored to
+// midnight (which sorts just below any same-day timestamp). Lexical order
+// is time order — the local offset is constant across rows.
+function recencyKey(a) {
+  if (a.last_activity) return a.last_activity;
+  if (a.last_day) return a.last_day + 'T00:00:00';
+  return '';
+}
+
+// sortCostAgents returns a sorted copy of the breakdown rows for the
+// active column/direction. The activity column with dir 'desc' reproduces
+// collectCosts's server order exactly (recency desc, then cost desc, then
+// conv id asc), so the default view is unchanged. The cost/conv-id
+// tiebreakers are applied un-negated regardless of direction, so equal
+// primary-key rows keep a stable, sensible order either way.
+function sortCostAgents(agents, key, dir) {
+  const mul = dir === 'asc' ? 1 : -1;
+  const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  return agents.slice().sort((x, y) => {
+    let c = 0;
+    switch (key) {
+      case 'agent': c = (x.title || '').localeCompare(y.title || ''); break;
+      case 'cost': c = (x.cost_usd || 0) - (y.cost_usd || 0); break;
+      case 'model': c = (x.model || '').localeCompare(y.model || ''); break;
+      default: c = cmpStr(recencyKey(x), recencyKey(y)); break; // 'activity'
+    }
+    if (c !== 0) return c < 0 ? -mul : mul;
+    if ((x.cost_usd || 0) !== (y.cost_usd || 0)) return (y.cost_usd || 0) - (x.cost_usd || 0);
+    return cmpStr(x.conv_id || '', y.conv_id || '');
+  });
+}
+
+// costHeaderHTML renders the breakdown's clickable column headers with the
+// active sort's direction arrow — the same affordance the Audit tab uses.
+function costHeaderHTML() {
+  return '<tr>' + COST_COLUMNS.map(c => {
+    const active = costSort === c.sort;
+    const arrow = active ? (costDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th class="cost-sort${active ? ' active' : ''}" data-sort="${c.sort}" title="Sort by ${esc(c.label)}">${esc(c.label)}${arrow}</th>`;
+  }).join('') + '</tr>';
+}
+
 // renderTable draws the per-agent breakdown. The API splits a
 // conversation that spent across several days into one row per day, so a
 // resume shows its true per-day spend (e.g. $16.44 the day it started,
@@ -335,25 +402,58 @@ function renderSummary(data, proj) {
 // left accent (.cost-chain); its latest day — the one row that is not
 // `continued` — is the chain head and gets a ↳ marker so the current
 // generation reads as the live tip of a chain rather than as a one-off
-// single-day agent (which carries no marker at all). Because rows are
-// sorted by recency the chain's slices can be non-contiguous, so hovering
-// any one of them highlights the whole set (see bindCostsChainHover).
+// single-day agent (which carries no marker at all). The chain's slices
+// can be non-contiguous in any sort, so hovering any one of them
+// highlights the whole set (see bindCostsChainHover).
+//
+// Columns are click-sortable (costHeaderHTML / costSort+costDir) and the
+// rows are narrowed by the table's text filter (#filter-costs — matches
+// title / conv id / model) so a specific agent can be isolated; the
+// footer then totals just the visible rows, and the count chip reads
+// matched/all. Sort and filter are display-only over the data already
+// fetched — neither refetches; the chart and summary stay on the full set.
 function renderTable(data) {
   const agents = data.agents || [];
+  const bar = $('#costs-table-filter');
+  const countEl = $('#filter-costs-count');
+  if (bar) bar.hidden = !agents.length;
   if (!agents.length) {
     $('#costs-table').innerHTML = '';
+    if (countEl) countEl.textContent = '';
     return;
   }
   const nAgents = new Set(agents.map(a => a.conv_id)).size;
-  // Slices per conversation: >1 means a multi-day chain whose rows are
-  // accented, hover-linked, and whose head carries the ↳ marker.
+  // Slices per conversation, counted over the FULL set so "active across N
+  // days" and the chain accent stay truthful even when the filter hides
+  // some of a conversation's days. >1 means a multi-day chain.
   const sliceCount = {};
   for (const a of agents) sliceCount[a.conv_id] = (sliceCount[a.conv_id] || 0) + 1;
+
+  const q = ($('#filter-costs')?.value || '').trim().toLowerCase();
+  const matches = a => !q
+    || (a.title || '').toLowerCase().includes(q)
+    || (a.conv_id || '').toLowerCase().includes(q)
+    || (a.model || '').toLowerCase().includes(q);
+  const visible = sortCostAgents(agents, costSort, costDir).filter(matches);
+  const filtered = visible.length !== agents.length;
+  const shownConvs = new Set(visible.map(a => a.conv_id)).size;
+  if (countEl) countEl.textContent = filtered ? `${shownConvs} / ${nAgents}` : '';
+
+  if (!visible.length) {
+    $('#costs-table').innerHTML = '<div class="empty">No agents match the filter.</div>';
+    return;
+  }
+
+  // Footer reflects what's shown: when a filter narrows the set it totals
+  // just the visible rows (the subtotal for the isolated agent[s]);
+  // unfiltered it uses the response total so it agrees with the chart to
+  // the cent rather than drifting on floating-point summation.
+  const footTotal = filtered ? visible.reduce((s, a) => s + (a.cost_usd || 0), 0) : data.total_usd;
   $('#costs-table').innerHTML = `
     <table>
-      <thead><tr><th>Agent</th><th>Cost</th><th>Model</th><th>Last activity</th></tr></thead>
+      <thead>${costHeaderHTML()}</thead>
       <tbody>
-        ${agents.map(a => {
+        ${visible.map(a => {
           const chain = sliceCount[a.conv_id] > 1;
           const cls = [];
           if (a.continued) cls.push('cost-continued');
@@ -372,8 +472,8 @@ function renderTable(data) {
           </tr>`;
         }).join('')}
         <tr class="cost-total-row">
-          <td><span class="muted">total (${nAgents} agent${nAgents === 1 ? '' : 's'})</span></td>
-          <td><span class="cost-amt">${esc(fmtUSD(data.total_usd))}</span></td>
+          <td><span class="muted">${filtered ? 'matched' : 'total'} (${shownConvs} agent${shownConvs === 1 ? '' : 's'})</span></td>
+          <td><span class="cost-amt">${esc(fmtUSD(footTotal))}</span></td>
           <td></td>
           <td></td>
         </tr>
@@ -405,6 +505,56 @@ function bindCostsChainHover() {
   tbl.addEventListener('mouseleave', () => { if (current) setHL(null); });
 }
 
+// reRenderCostTable re-draws just the breakdown from the data already in
+// hand — the shared path for a sort-header click or a filter keystroke,
+// neither of which needs a refetch (the chart/summary are unaffected).
+function reRenderCostTable() {
+  if (lastCostData) renderTable(lastCostData);
+}
+
+// bindCostsSort wires the clickable column headers (delegated on the
+// re-rendered #costs-table). Clicking the active column flips its
+// direction; a fresh column takes its natural default (text A→Z,
+// cost/activity highest-or-newest first), mirroring the Audit tab.
+function bindCostsSort() {
+  const tbl = $('#costs-table');
+  if (!tbl) return;
+  tbl.addEventListener('click', e => {
+    const th = e.target.closest('th.cost-sort');
+    if (!th) return;
+    const key = th.dataset.sort;
+    if (costSort === key) {
+      costDir = costDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      costSort = key;
+      const col = COST_COLUMNS.find(c => c.sort === key);
+      costDir = col && col.text ? 'asc' : 'desc';
+    }
+    reRenderCostTable();
+  });
+}
+
+// bindCostsFilter wires the breakdown's text filter (#filter-costs) and
+// its clear button — a client-side narrowing over the rows already
+// fetched, so it re-renders live with no debounce. Escape clears too.
+function bindCostsFilter() {
+  const input = $('#filter-costs');
+  if (input) {
+    input.addEventListener('input', reRenderCostTable);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { input.value = ''; reRenderCostTable(); }
+    });
+  }
+  const clear = $('#filter-costs-clear');
+  if (clear) {
+    clear.addEventListener('click', () => {
+      if (input) input.value = '';
+      reRenderCostTable();
+      if (input) input.focus();
+    });
+  }
+}
+
 async function loadCosts() {
   const seq = ++loadSeq;
   const span = currentSpan;
@@ -426,16 +576,22 @@ async function loadCosts() {
     if (!r.ok) throw new Error(await r.text() || r.status);
     const data = await r.json();
     if (seq !== loadSeq) return; // superseded by a newer load
+    // Kept for the sort/filter re-render path, which redraws the table
+    // from this payload without refetching.
+    lastCostData = data;
     const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
     renderSummary(data, proj);
     renderChart(data, proj);
     renderTable(data);
   } catch (e) {
     if (seq !== loadSeq) return;
+    lastCostData = null;
     // Clear the sibling panes too — a stale summary/table next to the
     // error banner would read as current data for the failed span.
     $('#costs-summary').textContent = '';
     $('#costs-table').innerHTML = '';
+    const bar = $('#costs-table-filter');
+    if (bar) bar.hidden = true;
     $('#costs-chart').innerHTML =
       `<div class="empty">Failed to load costs: ${esc(e.message || e)}</div>`;
   }
@@ -537,6 +693,8 @@ function syncFillToggle() {
 function bindCostsTab() {
   $('nav button[data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
   bindCostsChainHover();
+  bindCostsSort();
+  bindCostsFilter();
   // Cost display multiplier: debounce typing so a few keystrokes settle
   // into one save+reload, but commit immediately on Enter / blur.
   const factorInput = $('#costs-factor');

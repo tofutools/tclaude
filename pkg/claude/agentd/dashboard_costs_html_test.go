@@ -104,9 +104,27 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("data-tip", "tooltip attribute rendered on nonzero columns")
 	must(".cost-col[data-tip]:hover::after", "instant CSS tooltip rule present")
 
-	// Breakdown table: the per-agent model column.
-	must("<th>Model</th>", "model column header present")
+	// Breakdown table: the per-agent model column, now rendered through
+	// the sortable-header builder rather than a static <th>.
+	must("{ label: 'Model', sort: 'model'", "model column defined in the sortable header set")
 	must("a.model", "model field rendered from the API row")
+
+	// Sortable headers: clickable columns with a direction arrow, default
+	// activity/desc (which reproduces the server's recency order), wired on
+	// a delegated click — the same affordance as the Audit tab.
+	must("function costHeaderHTML", "sortable header builder present")
+	must("th.cost-sort", "header click target class rendered + bound")
+	must("function sortCostAgents", "client-side column sort implemented")
+	must("function bindCostsSort", "header-click sort wired")
+	must("#costs-table th.cost-sort { cursor: pointer", "sortable headers styled clickable")
+
+	// Breakdown filter: a client-side text narrowing of the table (matches
+	// name / id / model), with the matched/all count chip and clear button.
+	must(`id="filter-costs"`, "breakdown filter input present")
+	must(`id="filter-costs-count"`, "filter match-count chip present")
+	must(`id="filter-costs-clear"`, "filter clear button present")
+	must("function bindCostsFilter", "filter input wired")
+	must("No agents match the filter.", "empty-after-filter state rendered")
 
 	// Continued-conversation marker: a multi-day conversation splits into
 	// one row per day, and the earlier-day slices carry `continued`,
