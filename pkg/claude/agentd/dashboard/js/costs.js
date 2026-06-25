@@ -329,6 +329,15 @@ function renderSummary(data, proj) {
 // it's clear they belong to the same conversation as a newer row above.
 // The footer counts distinct conversations, not rows, so a multi-day
 // agent still reads as one agent.
+//
+// A conversation with more than one slice is a multi-day "chain". Every
+// row of such a chain gets data-conv (the shared conv id) and a subtle
+// left accent (.cost-chain); its latest day — the one row that is not
+// `continued` — is the chain head and gets a ↳ marker so the current
+// generation reads as the live tip of a chain rather than as a one-off
+// single-day agent (which carries no marker at all). Because rows are
+// sorted by recency the chain's slices can be non-contiguous, so hovering
+// any one of them highlights the whole set (see bindCostsChainHover).
 function renderTable(data) {
   const agents = data.agents || [];
   if (!agents.length) {
@@ -336,17 +345,32 @@ function renderTable(data) {
     return;
   }
   const nAgents = new Set(agents.map(a => a.conv_id)).size;
+  // Slices per conversation: >1 means a multi-day chain whose rows are
+  // accented, hover-linked, and whose head carries the ↳ marker.
+  const sliceCount = {};
+  for (const a of agents) sliceCount[a.conv_id] = (sliceCount[a.conv_id] || 0) + 1;
   $('#costs-table').innerHTML = `
     <table>
       <thead><tr><th>Agent</th><th>Cost</th><th>Model</th><th>Last activity</th></tr></thead>
       <tbody>
-        ${agents.map(a => `
-          <tr${a.continued ? ' class="cost-continued"' : ''}>
-            <td>${a.continued ? '<span class="cost-cont" title="Continued conversation — earlier day of an agent shown above">↩</span> ' : ''}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
+        ${agents.map(a => {
+          const chain = sliceCount[a.conv_id] > 1;
+          const cls = [];
+          if (a.continued) cls.push('cost-continued');
+          if (chain) cls.push('cost-chain');
+          const marker = a.continued
+            ? '<span class="cost-cont" title="Continued conversation — an earlier day of the agent above; hover to highlight all its days">↩</span> '
+            : chain
+              ? `<span class="cost-head" title="Latest day of an agent active across ${sliceCount[a.conv_id]} days — hover to highlight all of them">↳</span> `
+              : '';
+          return `
+          <tr${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
+            <td>${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>
-          </tr>`).join('')}
+          </tr>`;
+        }).join('')}
         <tr class="cost-total-row">
           <td><span class="muted">total (${nAgents} agent${nAgents === 1 ? '' : 's'})</span></td>
           <td><span class="cost-amt">${esc(fmtUSD(data.total_usd))}</span></td>
@@ -355,6 +379,30 @@ function renderTable(data) {
         </tr>
       </tbody>
     </table>`;
+}
+
+// bindCostsChainHover ties together the rows of a multi-day chain:
+// hovering any one highlights every row sharing its conv id. Delegated on
+// the #costs-table container (which survives each renderTable re-render),
+// so it is wired once. Only rows carrying data-conv (chains of >1 slice)
+// participate; comparing the attribute value avoids needing CSS.escape on
+// the conv id. mouseleave clears the highlight when the pointer leaves the
+// table, and hovering a non-chain row (no data-conv) clears it too.
+function bindCostsChainHover() {
+  const tbl = $('#costs-table');
+  if (!tbl) return;
+  let current = null;
+  const setHL = conv => {
+    tbl.querySelectorAll('tr[data-conv]').forEach(tr =>
+      tr.classList.toggle('cost-chain-hl', !!conv && tr.getAttribute('data-conv') === conv));
+    current = conv;
+  };
+  tbl.addEventListener('mouseover', e => {
+    const row = e.target.closest('tr[data-conv]');
+    const conv = row ? row.getAttribute('data-conv') : null;
+    if (conv !== current) setHL(conv);
+  });
+  tbl.addEventListener('mouseleave', () => { if (current) setHL(null); });
 }
 
 async function loadCosts() {
@@ -488,6 +536,7 @@ function syncFillToggle() {
 // change, slow re-poll off the snapshot tick while visible.
 function bindCostsTab() {
   $('nav button[data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
+  bindCostsChainHover();
   // Cost display multiplier: debounce typing so a few keystrokes settle
   // into one save+reload, but commit immediately on Enter / blur.
   const factorInput = $('#costs-factor');

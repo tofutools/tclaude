@@ -114,6 +114,17 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("a.continued", "continuation flag read from the API row")
 	must("↩", "continuation marker glyph rendered")
 	must(".cost-cont", "continuation marker styled")
+
+	// Multi-day chain: a conversation with more than one slice tags its
+	// rows so the current generation (the latest-day head) reads as the
+	// live tip of a chain and hovering any row highlights the whole set.
+	must("sliceCount[a.conv_id]", "rows-per-conversation counted to detect multi-day chains")
+	must("↳", "chain-head marker glyph rendered on the latest day")
+	must(".cost-head", "chain-head marker styled")
+	must(`data-conv="`, "chain rows tagged with their shared conv id")
+	must("function bindCostsChainHover", "chain hover-highlight wired")
+	must(".cost-chain-hl", "hovered chain highlight styled")
+	must("#costs-table tr.cost-chain td:first-child", "chain rows carry the left accent")
 }
 
 // TestDashboardHTML_CostsFillEmptyWeekdaysWired guards the Costs tab's
