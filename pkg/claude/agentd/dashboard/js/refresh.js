@@ -339,6 +339,19 @@ function visibleTabButtons() {
   return $$('nav button[data-tab]').filter(b => b.offsetParent !== null);
 }
 
+// cyclingTabs is true only while cycleTab() is dispatching its synthetic
+// nav-button .click() for a keyboard tab-cycle ([ / ] or ←/→). A per-tab
+// activation handler can read isCyclingTabs() to behave differently for a
+// keyboard cycle than for a deliberate switch (mouse click / command
+// palette / deep link). Today only the Config tab uses it: it focuses its
+// search box on a deliberate switch, but NOT mid-cycle — focusing the
+// <input> would make isEditableTarget() true and trap the very [ / ] / ←/→
+// keys used to keep cycling, stranding the user on Config. .click()
+// dispatches its listeners synchronously, so the flag is observably true
+// for exactly the duration of the handlers it triggers.
+let cyclingTabs = false;
+export function isCyclingTabs() { return cyclingTabs; }
+
 // cycleTab moves the active tab by `dir` (+1 = right / next, -1 = left /
 // prev) across the visible tabs, wrapping around at both ends. Activation
 // goes through the button's own .click() on purpose: several tabs hang an
@@ -355,7 +368,14 @@ function cycleTab(dir) {
   // and slop just turned off); start the step from the first visible tab.
   const from = active < 0 ? 0 : active;
   const next = (from + dir + tabs.length) % tabs.length;
-  tabs[next].click();
+  // Mark this as a keyboard cycle so handlers fired by the synthetic click
+  // (e.g. the Config tab's search-focus) can opt out — see isCyclingTabs.
+  cyclingTabs = true;
+  try {
+    tabs[next].click();
+  } finally {
+    cyclingTabs = false;
+  }
   return tabs[next];
 }
 
