@@ -1,5 +1,5 @@
 import { $, $$, esc } from './helpers.js';
-import { toast } from './refresh.js';
+import { toast, isCyclingTabs } from './refresh.js';
 import { lastSnapshot } from './dashboard.js';
 import { loadProfiles } from './profiles.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
@@ -1016,11 +1016,30 @@ async function saveConfig() {
   }
 }
 
+// focusConfigSearch puts the cursor in the section filter and selects any
+// existing text, so a deliberate switch to the Config tab lands ready to
+// type a filter (and overtype a stale one). The #cfg-filter input lives in
+// static HTML, so this works even before loadConfigTab's fetch resolves;
+// bindTabs (wired earlier in boot) has already made #tab-config visible by
+// the time this fires, so the input is focusable.
+function focusConfigSearch() {
+  const filterInput = $('#cfg-filter');
+  if (!filterInput) return;
+  filterInput.focus();
+  filterInput.select();
+}
+
 function bindConfigTab() {
   // Lazy-load on the first activation of the Config tab.
   const navBtn = $('nav button[data-tab="config"]');
   if (navBtn) navBtn.addEventListener('click', () => {
     if (!configLoaded) loadConfigTab();
+    // Focus the search on a deliberate switch — a mouse click, the command
+    // palette's "Go to Config", or a "Config ↗" deep link — but NOT during
+    // keyboard tab-cycling ([ / ] and ←/→). Focusing the <input> there
+    // would trap those very hotkeys (isEditableTarget) and strand the user
+    // on Config; see isCyclingTabs in refresh.js.
+    if (!isCyclingTabs()) focusConfigSearch();
   });
   $('#cfg-reload').addEventListener('click', loadConfigTab);
   $('#cfg-save').addEventListener('click', saveConfig);
