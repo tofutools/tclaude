@@ -453,20 +453,25 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// Generate session ID (use short prefix for our tracking)
-	// Priority: explicit label > conv ID prefix (when resuming) > random
+	// The session row's primary key carries the FULL identity — never a
+	// truncation. On resume that's the conversation's full UUID (already in
+	// sessions.conv_id); collapsing it to 8 chars made two conversations
+	// sharing a hex prefix collide on the PK (SaveSession's ON CONFLICT(id)
+	// silently overwrote the row → wrong-session reattach + conflated
+	// notify_state / session_cost_daily). See JOH-248.
+	// Priority: explicit label > resumed conv UUID > random synthetic.
 	sessionID := GenerateSessionID()
-	if shortID != "" {
-		// Use conv ID prefix as session ID for easy association
-		sessionID = shortID
-		if len(sessionID) > 8 {
-			sessionID = sessionID[:8]
-		}
+	if fullConvID != "" {
+		sessionID = fullConvID
 	}
 	if params.Label != "" {
 		sessionID = params.Label
 	}
-	tmuxSession := sessionID
+
+	// The tmux session name is the short, human-facing handle (tmux status
+	// line, `session ls`, attach target). Render it short here while the PK
+	// stays full, and keep it unique among live tmux sessions.
+	tmuxSession := uniqueTmuxSessionName(shortTmuxBase(sessionID, params.Label))
 
 	if params.WaitForRateLimit {
 		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {
@@ -633,11 +638,11 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	fmt.Printf("Created session %s\n", sessionID)
+	fmt.Printf("Created session %s\n", tmuxSession)
 	fmt.Printf("  Directory: %s\n", cwd)
 
 	if params.Detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", sessionID)
+		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
 

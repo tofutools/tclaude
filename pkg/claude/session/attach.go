@@ -55,18 +55,18 @@ func runAttach(params *AttachParams) error {
 	if !IsTmuxSessionAlive(state.TmuxSession) {
 		state.Status = StatusExited
 		_ = SaveSessionState(state)
-		return fmt.Errorf("session %s has exited", state.ID)
+		return fmt.Errorf("session %s has exited", sessionHandle(state))
 	}
 
 	// By default, don't attach if session already has clients (use --force to override)
 	if !params.Force && IsTmuxSessionAttached(state.TmuxSession) {
-		fmt.Printf("Session %s is already attached in another terminal\n", state.ID)
+		fmt.Printf("Session %s is already attached in another terminal\n", sessionHandle(state))
 		// Try to focus the terminal window
 		TryFocusAttachedSession(state.TmuxSession)
 		return nil
 	}
 
-	fmt.Printf("Attaching to session %s... (Ctrl+B D to detach)\n", state.ID)
+	fmt.Printf("Attaching to session %s... (Ctrl+B D to detach)\n", sessionHandle(state))
 	return AttachToSession(state.ID, state.TmuxSession, params.Force)
 }
 
@@ -108,14 +108,17 @@ func findSession(id string) (*SessionState, error) {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	// Try exact match first
+	// Try exact match first — on the full id, or on the short tmux handle we
+	// render to users (the two diverge once the PK carries a full UUID; an
+	// exact tmux-name match keeps the displayed handle authoritative even when
+	// it was disambiguated with a -N suffix). See JOH-248.
 	for _, state := range states {
-		if state.ID == id {
+		if state.ID == id || state.TmuxSession == id {
 			return state, nil
 		}
 	}
 
-	// Try prefix match
+	// Try prefix match (on the full id — a short conv/synthetic prefix).
 	var matches []*SessionState
 	for _, state := range states {
 		if strings.HasPrefix(state.ID, id) {

@@ -76,7 +76,7 @@ func runPrune(params *PruneParams) error {
 		fmt.Printf("Would delete %d exited session(s):\n", len(toDelete))
 		for _, state := range toDelete {
 			age := FormatDuration(time.Since(state.Updated))
-			fmt.Printf("  %s  (exited %s ago)\n", state.ID, age)
+			fmt.Printf("  %s  (exited %s ago)\n", sessionHandle(state), age)
 		}
 		return nil
 	}
@@ -84,7 +84,7 @@ func runPrune(params *PruneParams) error {
 	deleted := 0
 	for _, state := range toDelete {
 		if err := DeleteSessionState(state.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", state.ID, err)
+			fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", sessionHandle(state), err)
 			continue
 		}
 		deleted++

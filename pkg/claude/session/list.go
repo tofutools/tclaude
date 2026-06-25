@@ -127,7 +127,7 @@ func runList(params *ListParams) error {
 
 		t.AppendRow(table.Row{
 			colorFunc(indicator),
-			colorFunc(state.ID),
+			colorFunc(sessionHandle(state)),
 			colorFunc(shortenPathForTable(state.Cwd, 40)),
 			colorFunc(status),
 			colorFunc(FormatDuration(time.Since(state.Created))),

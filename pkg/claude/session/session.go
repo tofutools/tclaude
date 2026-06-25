@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -306,11 +308,59 @@ func CheckTmuxInstalled() error {
 	return nil
 }
 
-// GenerateSessionID creates a short unique session ID
+// GenerateSessionID creates a unique synthetic session id, used as the
+// session row's primary key when the conversation UUID isn't known at spawn
+// time (a fresh, non-resumed session). 64 bits of crypto entropy — never a
+// truncation of a longer id; only the tmux name / on-screen rendering are
+// shortened (JOH-248). Falls back to nanosecond time if the system RNG fails.
 func GenerateSessionID() string {
-	// Use last 8 hex chars of unix nano time
-	hex := fmt.Sprintf("%016x", time.Now().UnixNano())
-	return hex[len(hex)-8:]
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// shortTmuxBase returns the short, human-facing base for a session's tmux
+// name: an explicit label verbatim, else the first 8 chars of the (full)
+// session id. The tmux name is where the id is deliberately rendered short;
+// the stored PK keeps the full identity (JOH-248).
+func shortTmuxBase(sessionID, label string) string {
+	if label != "" {
+		return label
+	}
+	if len(sessionID) > 8 {
+		return sessionID[:8]
+	}
+	return sessionID
+}
+
+// uniqueTmuxSessionName keeps the short tmux name unique among live tmux
+// sessions. tmux requires unique session names and two resumed conversations
+// can share an 8-char prefix, so a taken base falls back to a -N suffix.
+// "Short if possible": the bare base is used whenever it is free.
+func uniqueTmuxSessionName(base string) string {
+	if base == "" || !IsTmuxSessionAlive(base) {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !IsTmuxSessionAlive(candidate) {
+			return candidate
+		}
+	}
+	return base
+}
+
+// sessionHandle is the short, human-facing identifier for a session — its
+// tmux name when set (a label stays whole; a conv-derived name is already the
+// 8-char prefix), else the full id. Used for display and the attach hint; it
+// resolves back to the session via findSession (JOH-248).
+func sessionHandle(s *SessionState) string {
+	if s.TmuxSession != "" {
+		return s.TmuxSession
+	}
+	return s.ID
 }
 
 // FormatDuration formats a duration in a human-readable way
@@ -410,7 +460,7 @@ func GetSessionCompletions(includeExited bool) []string {
 		}
 		dir = strings.ReplaceAll(dir, " ", "_")
 
-		completion := fmt.Sprintf("%s_%s_%s", state.ID, state.Status, dir)
+		completion := fmt.Sprintf("%s_%s_%s", sessionHandle(state), state.Status, dir)
 		completions = append(completions, completion)
 	}
 

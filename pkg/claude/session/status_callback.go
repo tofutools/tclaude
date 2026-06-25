@@ -158,10 +158,10 @@ func autoRegisterSession(hookInput HookInput) *SessionState {
 
 	tmuxSession := GetCurrentTmuxSession()
 
+	// The session PK is the conversation's full UUID — never a truncation.
+	// Two conversations sharing an 8-char prefix would otherwise collide on
+	// the PK (SaveSession's ON CONFLICT overwrite). See JOH-248.
 	sessionID := hookInput.SessionID
-	if len(sessionID) > 8 {
-		sessionID = sessionID[:8]
-	}
 
 	cwd := hookInput.Cwd
 	if cwd == "" {
@@ -179,19 +179,12 @@ func autoRegisterSession(hookInput HookInput) *SessionState {
 		Updated:     time.Now(),
 	}
 
-	// Handle ID collision
-	if exists, _ := SessionExists(sessionID); exists {
-		existing, err := LoadSessionState(sessionID)
-		if err == nil && existing.ConvID == hookInput.SessionID {
-			return existing
-		}
-		for i := 1; i < 100; i++ {
-			newID := fmt.Sprintf("%s-%d", sessionID, i)
-			if exists, _ := SessionExists(newID); !exists {
-				state.ID = newID
-				break
-			}
-		}
+	// Idempotency: if a row is already keyed by this conversation's full UUID,
+	// reuse it rather than overwriting. Full-UUID PKs never collide across
+	// different conversations, so the old 8-char-prefix -N suffixing is gone
+	// (the caller reconciles conv_id/status on the returned row). See JOH-248.
+	if existing, err := LoadSessionState(sessionID); err == nil && existing != nil {
+		return existing
 	}
 
 	if err := SaveSessionState(state); err != nil {
