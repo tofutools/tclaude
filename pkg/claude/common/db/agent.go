@@ -915,8 +915,6 @@ type AgentDeletionCounts struct {
 // Conv-scoped (always, keyed on convID — these belong to THIS generation):
 //
 //   - agent_messages (from_conv = ? OR to_conv = ?)
-//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades to
-//     agent_cron_runs via the FK.
 //   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?)
 //   - conv_embeddings
 //   - conv_index
@@ -928,6 +926,8 @@ type AgentDeletionCounts struct {
 //
 //   - agent_group_members, agent_group_owners, agent_permissions,
 //     agent_notify_prefs
+//   - agent_cron_jobs (owner_agent = ? OR target_agent = ?), agent-keyed since
+//     JOH-26 PR3a. Each delete cascades to agent_cron_runs via the FK.
 //   - agents (cascades the remaining agent_conversations links)
 //
 // Deleting a PREDECESSOR generation (a reincarnate / Claude Code /clear keeps
@@ -974,8 +974,6 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 	for _, s := range []convStep{
 		{`DELETE FROM agent_messages WHERE from_conv = ?`, &c.MessagesFrom},
 		{`DELETE FROM agent_messages WHERE to_conv = ?`, &c.MessagesTo},
-		{`DELETE FROM agent_cron_jobs WHERE owner_conv = ?`, &c.CronJobsOwned},
-		{`DELETE FROM agent_cron_jobs WHERE target_conv = ?`, &c.CronJobsTarget},
 		{`DELETE FROM agent_conv_succession WHERE old_conv_id = ?`, &c.SuccessionOld},
 		{`DELETE FROM agent_conv_succession WHERE new_conv_id = ?`, &c.SuccessionNew},
 		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
@@ -1024,6 +1022,13 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 				{`DELETE FROM agent_group_owners WHERE agent_id = ?`, &c.GroupOwners},
 				{`DELETE FROM agent_permissions WHERE agent_id = ?`, &c.Permissions},
 				{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, &c.NotifyPrefs},
+				// Cron jobs are agent-keyed (JOH-26 PR3a): a job belongs to its
+				// owner/target actor, so it is torn down with the actor (and only
+				// then) — deleting a predecessor generation leaves the live
+				// actor's schedules intact. Each delete cascades to
+				// agent_cron_runs via the FK.
+				{`DELETE FROM agent_cron_jobs WHERE owner_agent = ?`, &c.CronJobsOwned},
+				{`DELETE FROM agent_cron_jobs WHERE target_agent = ?`, &c.CronJobsTarget},
 				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
 			} {
 				res, err := tx.Exec(s.stmt, agentID)

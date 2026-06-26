@@ -47,10 +47,52 @@ func (j *AgentCronJob) IsGroupTarget() bool {
 	return j.TargetKind == CronTargetGroup
 }
 
+// cronConvToAgent resolves a cron owner/target conv to its stable actor id,
+// enrolling the conv as an agent when it is not already known (JOH-26 PR3a). A
+// job's owner schedules it and a conv-target receives it — both are addressable
+// agents, so they carry an actor like a group member does (mirrors
+// AddAgentGroupMember's EnrollAgent + AgentIDForConv). Keying owner/target on
+// agent_id means a reincarnate / Claude Code /clear no longer has to rewrite the
+// ref: the actor's id never moves, and the fire path resolves it back to the
+// actor's current conv at fire time. An empty conv — a group-target job, or a
+// human-scheduled job with no owner attribution — maps to "" (no actor).
+func cronConvToAgent(convID string) (string, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return "", nil
+	}
+	if err := EnrollAgent(convID, "cron"); err != nil {
+		return "", err
+	}
+	return AgentIDForConv(convID)
+}
+
+// cronSelect is the shared SELECT for reading cron jobs. owner/target are keyed
+// on agent_id (JOH-26 PR3a); each LEFT JOIN resolves the actor back to its
+// CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
+// the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
+// '') or an owner-less job keeps an empty string rather than dropping the row.
+// The 13 projected columns match scanAgentCronJob's field order.
+const cronSelect = `SELECT j.id, j.name,
+	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
+	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
+	j.last_run_at, j.last_run_status
+	FROM agent_cron_jobs j
+	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
+	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
+
 // InsertAgentCronJob writes a new job row. Returns the new ID.
 // CreatedAt is stamped server-side; the caller's value is ignored.
 func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	ownerAgent, err := cronConvToAgent(j.OwnerConv)
+	if err != nil {
+		return 0, err
+	}
+	targetAgent, err := cronConvToAgent(j.TargetConv)
 	if err != nil {
 		return 0, err
 	}
@@ -60,10 +102,10 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 		kind = CronTargetConv
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
-		(name, owner_conv, target_kind, target_conv, group_id, interval_seconds,
+		(name, owner_agent, target_kind, target_agent, group_id, interval_seconds,
 		 subject, body, enabled, created_at, last_run_at, last_run_status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
-		j.Name, j.OwnerConv, kind, j.TargetConv, j.GroupID, j.IntervalSeconds,
+		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.IntervalSeconds,
 		j.Subject, j.Body, boolToInt(j.Enabled), now)
 	if err != nil {
 		return 0, err
@@ -77,10 +119,7 @@ func GetAgentCronJob(id int64) (*AgentCronJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT id, name, owner_conv, target_kind, target_conv, group_id,
-		interval_seconds, subject, body, enabled, created_at,
-		last_run_at, last_run_status
-		FROM agent_cron_jobs WHERE id = ?`, id)
+	row := d.QueryRow(cronSelect+` WHERE j.id = ?`, id)
 	j, err := scanAgentCronJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -94,10 +133,7 @@ func ListAgentCronJobs() ([]*AgentCronJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, name, owner_conv, target_kind, target_conv, group_id,
-		interval_seconds, subject, body, enabled, created_at,
-		last_run_at, last_run_status
-		FROM agent_cron_jobs ORDER BY id`)
+	rows, err := d.Query(cronSelect + ` ORDER BY j.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -207,16 +243,28 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 		args = append(args, *p.Name)
 	}
 	if p.OwnerConv != nil {
-		sets = append(sets, "owner_conv = ?")
-		args = append(args, *p.OwnerConv)
+		// Re-key the patched owner conv onto its actor (JOH-26 PR3a); a switch
+		// to a group target clears it via TargetConv="" → owner_agent unchanged.
+		ownerAgent, aerr := cronConvToAgent(*p.OwnerConv)
+		if aerr != nil {
+			return 0, aerr
+		}
+		sets = append(sets, "owner_agent = ?")
+		args = append(args, ownerAgent)
 	}
 	if p.TargetKind != nil {
 		sets = append(sets, "target_kind = ?")
 		args = append(args, *p.TargetKind)
 	}
 	if p.TargetConv != nil {
-		sets = append(sets, "target_conv = ?")
-		args = append(args, *p.TargetConv)
+		// "" (a switch to a group target) resolves to "" — clearing the
+		// target_agent, mirroring the pre-cutover target_conv clear.
+		targetAgent, aerr := cronConvToAgent(*p.TargetConv)
+		if aerr != nil {
+			return 0, aerr
+		}
+		sets = append(sets, "target_agent = ?")
+		args = append(args, targetAgent)
 	}
 	if p.GroupID != nil {
 		sets = append(sets, "group_id = ?")

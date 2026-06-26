@@ -14,16 +14,19 @@ import (
 )
 
 // These tests cover succession-safe delivery for a CONV-target cron
-// job: when the job's target conversation has been reincarnated (the
-// stored conv superseded, a fresh live conv-id taking over), firing the
-// job must reach the LIVE successor, not the dead conv.
+// job: when the job's target conversation has been reincarnated (a fresh
+// live conv-id taking over), firing the job must reach the LIVE
+// successor, not the dead conv.
 //
-// fireCronJob's conv branch walks the succession chain
+// Two layers make this safe. Since JOH-26 PR3a the job stores the
+// target's stable agent_id, which the fire path resolves to the actor's
+// CURRENT conv on every tick — so a reincarnated target tracks the live
+// generation automatically, with no stored ref to go stale. And
+// fireCronJob's conv branch still walks the succession chain
 // (walkSuccession) before delivery — the same resolution the one-shot
-// message path and the group fan-out (fanOutToGroup) already do.
-// MigrateCronJobConvRef re-points target_conv eagerly at reincarnate
-// time, but that is best-effort; the fire-time walk is the fallback
-// that makes delivery succession-safe regardless.
+// message path and the group fan-out (fanOutToGroup) do — as
+// defence-in-depth for a RecordConvSuccession-only edge that never
+// advanced the actor's current-conv pointer (Scenario B).
 
 // createCronJobAsHuman POSTs /v1/cron as the human peer (who bypasses
 // the auth gate) and returns the new job's id.
@@ -59,13 +62,12 @@ func findCronMsg(t *testing.T, conv, body string) *db.AgentMessage {
 	return match[0]
 }
 
-// Scenario A: a conv-target cron job whose stored target_conv is a
-// SUPERSEDED conv-id still delivers to the live successor. This is the
-// fallback the fix adds — it models the case where the eager
-// MigrateCronJobConvRef missed the row (best-effort, no retry) or a
-// stale ref arrived via cross-machine sync. Without the fire-time
-// walkSuccession the message would land in the dead conv's inbox and
-// be silently lost.
+// Scenario A: a conv-target cron job whose target reincarnates still
+// delivers to the live successor. Under the agent-keyed cutover (JOH-26
+// PR3a) the job stores the target's stable agent_id, which the fire path
+// resolves to the actor's CURRENT conv every tick — so the target can
+// never go stale, and delivery tracks the live generation directly (no
+// succession redirect needed, so the row carries no Original-To header).
 func TestCronSoloSuccession_StaleRef_DeliversToLiveHead(t *testing.T) {
 	f := newFlow(t)
 
@@ -88,26 +90,21 @@ func TestCronSoloSuccession_StaleRef_DeliversToLiveHead(t *testing.T) {
 		"body":     "status please",
 	})
 
-	// The worker reincarnates: oldX is superseded, the live head is Y.
+	// The worker reincarnates: oldX is superseded, the live head is Y. The
+	// job's target_agent never moves; the fire path resolves it to the actor's
+	// new current conv.
 	r := f.Reincarnate(oldX, "fresh start")
 	newY := r.NewConv
 	require.NotEqual(t, oldX, newY, "reincarnation produced a fresh conv-id")
 
-	// Model a missed eager migration: re-point the job's target_conv
-	// back at the now-dead oldX. (Reincarnate's MigrateCronJobConvRef
-	// already moved it to Y; this puts the row into exactly the stale
-	// state the fire-time walk has to recover from.)
-	stale := oldX
-	n, err := db.UpdateAgentCronJobFields(id, db.UpdateCronPatch{TargetConv: &stale})
-	require.NoError(t, err)
-	require.Equal(t, 1, n, "re-staled the job's target_conv")
-
 	require.Equal(t, "ok", fireCronNow(t, f, id), "fire status")
 
-	// Delivery followed the succession chain to the live head.
+	// Delivery reached the live head, addressed directly (the agent-keyed
+	// target resolved straight to the current conv — never a stale ref), so the
+	// row carries no Original-To redirect header.
 	msg := findCronMsg(t, newY, "status please")
-	assert.Equal(t, oldX, msg.OriginalToConv,
-		"the row records the superseded conv the job addressed")
+	assert.Empty(t, msg.OriginalToConv,
+		"agent-keyed target resolves to the current conv; no succession redirect")
 	assert.Equal(t, g.ID, msg.GroupID, "row stamped with the job's routing group")
 
 	// Nothing landed in the dead conv's inbox.
@@ -153,10 +150,10 @@ func TestCronSoloSuccession_SoloSendKeys_FollowsChain(t *testing.T) {
 }
 
 // Scenario C: the end-to-end happy path — reincarnate the target
-// between job creation and fire, delivery reaches the live agent. Here
-// the eager MigrateCronJobConvRef carries it (target_conv is rewritten
-// at reincarnate time); the fire-time walk is then a no-op. Documents
-// that the two layers compose.
+// between job creation and fire, delivery reaches the live agent. The
+// stored target_agent is stable, so GetAgentCronJob resolves it to the
+// actor's new current conv with no rewrite needed; the fire-time walk is
+// then a no-op.
 func TestCronSoloSuccession_EndToEnd_ReincarnateBetweenCreateAndFire(t *testing.T) {
 	f := newFlow(t)
 
@@ -180,13 +177,13 @@ func TestCronSoloSuccession_EndToEnd_ReincarnateBetweenCreateAndFire(t *testing.
 	r := f.Reincarnate(oldX, "fresh start")
 	newY := r.NewConv
 
-	// The eager migration re-pointed the stored target_conv at the live
-	// successor — MigrateCronJobConvRef ran inside the reincarnate flow.
+	// The stored target_agent is stable; GetAgentCronJob resolves it to the
+	// actor's current conv, which reincarnate advanced to the live successor.
 	job, err := db.GetAgentCronJob(id)
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	assert.Equal(t, newY, job.TargetConv,
-		"reincarnate eagerly migrated the job's target_conv to the live conv")
+		"target_agent resolves to the actor's live current conv")
 
 	require.Equal(t, "ok", fireCronNow(t, f, id), "fire status")
 

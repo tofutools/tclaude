@@ -163,13 +163,15 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		return fireCronGroupJob(j, subject)
 	}
 
-	// Conv target: resolve the live successor of the stored conv before
-	// delivering. MigrateCronJobConvRef re-points target_conv at
-	// reincarnate time, but that is best-effort with no retry — walking
-	// the succession chain here makes delivery succession-safe
-	// regardless, matching the fan-out path (fanOutToGroup) and the
-	// one-shot message path (which redirects via agent.ResolveSelector).
-	// originalTo is non-empty only when a redirect actually happened.
+	// Conv target: j.TargetConv is the target actor's CURRENT conv, resolved
+	// from target_agent → agents.current_conv_id at read time (JOH-26 PR3a), so
+	// a job whose target reincarnated already addresses the live generation.
+	// walkSuccession stays as defence-in-depth — on a current conv it is a
+	// no-op (the head has no successor) — and keeps delivery succession-safe in
+	// the vanishingly small window between the List resolution and this fire,
+	// matching the fan-out path (fanOutToGroup) and the one-shot message path
+	// (which redirects via agent.ResolveSelector). originalTo is non-empty only
+	// when a redirect actually happened.
 	targetConv, originalTo := walkSuccession(j.TargetConv)
 
 	if j.GroupID > 0 {

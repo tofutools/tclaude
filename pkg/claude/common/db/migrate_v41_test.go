@@ -102,10 +102,11 @@ func TestMigrateV40toV41_FreshSchemaHasTargetKind(t *testing.T) {
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
 
 	// An insert that omits target_kind lands as 'conv' — the DEFAULT
-	// holds on a fresh schema built through the full chain.
+	// holds on a fresh schema built through the full chain. owner/target are
+	// agent-keyed columns since v74 (JOH-26 PR3a).
 	_, err = d.Exec(`
 		INSERT INTO agent_cron_jobs
-			(name, owner_conv, target_conv, interval_seconds, body, enabled, created_at)
+			(name, owner_agent, target_agent, interval_seconds, body, enabled, created_at)
 			VALUES ('c', 'o', 't', 600, 'b', 1, '2026-05-16T00:00:00Z')`)
 	require.NoError(t, err, "insert without target_kind")
 	var kind string

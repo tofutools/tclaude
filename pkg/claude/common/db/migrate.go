@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 73
+const currentVersion = 74
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -465,6 +465,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 73 {
 		if err := migrateV72toV73(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 74 {
+		if err := migrateV73toV74(db); err != nil {
 			return err
 		}
 	}
@@ -2497,12 +2503,13 @@ func migrateV29toV30(db *sql.DB) error {
 // which the outer SELECT and WHERE then filter on. Split out from the
 // migration so it is independently testable.
 func backfillAgentEnrollment(db *sql.DB) error {
-	// Source the conv UNION column-aware: after the JOH-26 v73 cutover the
-	// membership/owner/permission/sudo tables become agent-keyed (no conv_id),
-	// so their SELECT would otherwise fail with "no such column". Those convs
-	// are already agents by then, so dropping them from the coverage UNION is
-	// correct. backfillAgentEnrollment only runs at v30 in production, where
-	// they still carry conv_id; the column guard just keeps it (and its test)
+	// Source the conv UNION column-aware: after the JOH-26 cutovers the
+	// membership/owner/permission/sudo tables (v73) and the clone history + cron
+	// owner/target columns (v74) become agent-keyed (no conv_id / *_conv), so
+	// their SELECT would otherwise fail with "no such column". Those convs are
+	// already agents by then, so dropping them from the coverage UNION is
+	// correct. backfillAgentEnrollment only runs at v30 in production, where they
+	// still carry the conv column; the column guard just keeps it (and its test)
 	// robust against the head schema.
 	sources := []struct{ table, col string }{
 		{"agent_group_members", "conv_id"},
