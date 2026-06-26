@@ -2526,6 +2526,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cleanup-badge.removed_with_branch { color: #3fb950; border-color: #1d3a23; }
 /* worktree-cleanup: per-category badges + dirty flag. */
 .cleanup-badge.cat-orphan { color: #3fb950; border-color: #1d3a23; }
+.cleanup-badge.cat-retired { color: #56d4bc; border-color: #17403a; }
 .cleanup-badge.cat-agent { color: #d29922; border-color: #4d3c12; }
 .cleanup-badge.cat-live { color: #58a6ff; border-color: #1f3a5a; }
 .cleanup-badge.cat-main { color: #7d8590; border-color: #2a3340; }

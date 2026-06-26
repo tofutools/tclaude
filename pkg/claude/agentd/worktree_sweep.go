@@ -60,9 +60,10 @@ var (
 // removing it would break that conversation's cwd-scoped resume (a live
 // agent loses its cwd outright; an offline one can no longer be resumed).
 type sweepAgent struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Online bool   `json:"online"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Online  bool   `json:"online"`
+	Retired bool   `json:"retired"` // enrollment retired_at set — a demoted, cleanup-bound conv
 }
 
 // sweepWorktree is one candidate row in the discovery response.
@@ -79,18 +80,21 @@ type sweepWorktree struct {
 	Reason   string       `json:"reason"`   // why this default / what the row is
 }
 
-// categoryRank orders the list so the safe-to-remove orphans float to
-// the top and the never-removed main repo sinks to the bottom.
+// categoryRank orders the list so the safe-to-remove rows (orphans, then
+// retired-agent leftovers) float to the top and the never-removed main
+// repo sinks to the bottom.
 func categoryRank(cat string) int {
 	switch cat {
 	case "orphan":
 		return 0
-	case "agent":
+	case "retired":
 		return 1
-	case "live":
+	case "agent":
 		return 2
-	default: // main
+	case "live":
 		return 3
+	default: // main
+		return 4
 	}
 }
 
@@ -154,12 +158,15 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 			RepoRoot: repoRootOf(wt, repoRoots),
 			IsMain:   wt.IsMain,
 		}
-		// Resolve the bound agents (title + liveness) for this worktree.
+		// Resolve the bound agents (title + liveness + retired state) for
+		// this worktree.
 		var anyOnline bool
 		for _, cid := range rootConvs[path] {
 			online := isConvOnline(cid)
 			anyOnline = anyOnline || online
-			row.Agents = append(row.Agents, sweepAgent{ConvID: cid, Title: agent.FreshTitle(cid), Online: online})
+			row.Agents = append(row.Agents, sweepAgent{
+				ConvID: cid, Title: agent.FreshTitle(cid), Online: online, Retired: convRetired(cid),
+			})
 		}
 		switch {
 		case wt.IsMain:
@@ -167,7 +174,26 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 		case anyOnline:
 			row.Category, row.Checked, row.Reason = "live", false,
 				"in use by a running agent ("+agentNames(row.Agents)+")"
+		case len(row.Agents) > 0 && allRetiredAgents(row.Agents):
+			// Every bound agent is retired — a demoted, group-stripped conv
+			// that is exactly what this janitor exists to reclaim. Treat it
+			// like an orphan: pre-tick the clean ones, hold dirty ones back
+			// for review. Reinstating the conv later still works, but loses
+			// this working dir (its cwd-scoped resume). Dirtiness matters for
+			// the pre-tickable rows, so the git status call earns its keep
+			// here (skipped on the agent / live / main rows below).
+			row.Dirty = worktreeDirtyFn(path)
+			if row.Dirty {
+				row.Category, row.Checked, row.Reason = "retired", false,
+					"retired agent "+agentNames(row.Agents)+" with uncommitted changes — review before deleting"
+			} else {
+				row.Category, row.Checked, row.Reason = "retired", true,
+					"retired agent "+agentNames(row.Agents)+" — safe to remove (reinstate-resume loses this dir)"
+			}
 		case len(row.Agents) > 0:
+			// At least one bound conv is not retired — a still-enrolled
+			// (merely-offline) agent, or a plain non-agent conversation.
+			// Either way its resume is cwd-bound, so protect the worktree.
 			row.Category, row.Checked, row.Reason = "agent", false,
 				"belongs to agent "+agentNames(row.Agents)+" — deleting breaks its resume"
 		default:
@@ -292,6 +318,31 @@ func liveAgentWorktreeRoots() map[string]bool {
 		}
 	}
 	return roots
+}
+
+// convRetired reports whether convID is a retired agent enrollment — the
+// signal that distinguishes a "retired" worktree (a cleanup target) from
+// an "agent" one (a still-enrolled, merely-offline agent we must protect).
+// A read error or a non-agent / active conv is treated as not-retired, so
+// the classifier fails safe to the protective "agent"/"orphan" path.
+func convRetired(convID string) bool {
+	state, err := db.EnrollmentState(convID)
+	return err == nil && state == db.EnrollmentRetired
+}
+
+// allRetiredAgents reports whether every bound agent is retired (and there
+// is at least one). A single still-active bound agent keeps the worktree
+// out of the "retired" cleanup bucket — its resume must stay protected.
+func allRetiredAgents(agents []sweepAgent) bool {
+	if len(agents) == 0 {
+		return false
+	}
+	for _, a := range agents {
+		if !a.Retired {
+			return false
+		}
+	}
+	return true
 }
 
 // agentNames renders a short, comma-joined label of an agent set for a
