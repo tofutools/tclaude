@@ -234,10 +234,18 @@ func collectMessages(d *sql.DB, groupID int64) ([]groupexport.Message, error) {
 }
 
 func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string, error) {
+	// owner/target are agent-keyed (JOH-26 PR3a); resolve each back to its
+	// actor's CURRENT conv so the export stays conv-portable. LEFT JOIN +
+	// COALESCE keeps a group-target job (target_agent '') or an owner-less job
+	// rather than dropping it.
 	rows, err := d.Query(`
-		SELECT id, name, owner_conv, target_conv, interval_seconds, subject, body,
-		       enabled, created_at, last_run_at, last_run_status
-		FROM agent_cron_jobs WHERE group_id = ? ORDER BY id`, groupID)
+		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
+		       j.interval_seconds, j.subject, j.body,
+		       j.enabled, j.created_at, j.last_run_at, j.last_run_status
+		FROM agent_cron_jobs j
+		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
+		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
+		WHERE j.group_id = ? ORDER BY j.id`, groupID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("collect cron jobs: %w", err)
 	}
@@ -246,7 +254,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	var ids []string
 	for rows.Next() {
 		var j groupexport.CronJob
-		if err := rows.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetConv,
+		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
 			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.CreatedAt,
 			&j.LastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
@@ -411,9 +419,13 @@ func collectSuccessions(d *sql.DB, convIDs []string) ([]groupexport.Succession, 
 
 func collectSpawnHist(d *sql.DB, convIDs []string) ([]groupexport.SpawnHist, error) {
 	clause, args := inClause(convIDs)
+	// spawner is agent-keyed (JOH-26 PR3a); resolve to the actor's current conv
+	// and filter against the member conv set (current convs), mirroring
+	// collectPermissions.
 	rows, err := d.Query(`
-		SELECT spawner_conv_id, spawned_at
-		FROM agent_spawn_history WHERE spawner_conv_id `+clause+` ORDER BY spawned_at`, args...)
+		SELECT ag.current_conv_id, h.spawned_at
+		FROM agent_spawn_history h JOIN agents ag ON ag.agent_id = h.spawner_agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY h.spawned_at`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect spawn history: %w", err)
 	}
@@ -431,9 +443,12 @@ func collectSpawnHist(d *sql.DB, convIDs []string) ([]groupexport.SpawnHist, err
 
 func collectCloneHist(d *sql.DB, convIDs []string) ([]groupexport.CloneHist, error) {
 	clause, args := inClause(convIDs)
+	// source is agent-keyed (JOH-26 PR3a); resolve to the actor's current conv
+	// and filter against the member conv set, mirroring collectPermissions.
 	rows, err := d.Query(`
-		SELECT source_conv_id, cloned_at
-		FROM agent_clone_history WHERE source_conv_id `+clause+` ORDER BY cloned_at`, args...)
+		SELECT ag.current_conv_id, h.cloned_at
+		FROM agent_clone_history h JOIN agents ag ON ag.agent_id = h.source_agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY h.cloned_at`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect clone history: %w", err)
 	}
@@ -805,10 +820,16 @@ func (c *importCtx) successions() error {
 }
 
 func (c *importCtx) spawnHist() error {
+	// History is keyed on the spawner's actor (JOH-26 PR3a); resolve the
+	// remapped conv to its agent, mirroring members()/permissions().
 	for _, s := range c.exp.SpawnHist {
+		agentID, err := ensureAgentForConvTx(c.tx, c.rc(s.SpawnerConvID), "import")
+		if err != nil {
+			return fmt.Errorf("import: spawn history actor: %w", err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
-			VALUES (?, ?)`, c.rc(s.SpawnerConvID), s.SpawnedAt); err != nil {
+			INSERT INTO agent_spawn_history (spawner_agent_id, spawned_at)
+			VALUES (?, ?)`, agentID, s.SpawnedAt); err != nil {
 			return fmt.Errorf("import: spawn history: %w", err)
 		}
 	}
@@ -816,14 +837,33 @@ func (c *importCtx) spawnHist() error {
 }
 
 func (c *importCtx) cloneHist() error {
+	// History is keyed on the source's actor (JOH-26 PR3a); resolve the
+	// remapped conv to its agent.
 	for _, h := range c.exp.CloneHist {
+		agentID, err := ensureAgentForConvTx(c.tx, c.rc(h.SourceConvID), "import")
+		if err != nil {
+			return fmt.Errorf("import: clone history actor: %w", err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-			VALUES (?, ?)`, c.rc(h.SourceConvID), h.ClonedAt); err != nil {
+			INSERT INTO agent_clone_history (source_agent_id, cloned_at)
+			VALUES (?, ?)`, agentID, h.ClonedAt); err != nil {
 			return fmt.Errorf("import: clone history: %w", err)
 		}
 	}
 	return nil
+}
+
+// rcToAgent remaps an exported conv (c.rc) then resolves it to its owning
+// actor, returning "" for an empty conv (a group-target or owner-less cron ref)
+// so the agent-keyed column stays empty rather than minting a bogus actor for
+// "". Used by the cron import to populate owner_agent / target_agent (JOH-26
+// PR3a).
+func (c *importCtx) rcToAgent(convID string) (string, error) {
+	conv := c.rc(convID)
+	if conv == "" {
+		return "", nil
+	}
+	return ensureAgentForConvTx(c.tx, conv, "import")
 }
 
 func (c *importCtx) cronJobsAndRuns() error {
@@ -832,12 +872,27 @@ func (c *importCtx) cronJobsAndRuns() error {
 	// to the run rows.
 	jobIDMap := make(map[int64]int64, len(c.exp.CronJobs))
 	for _, j := range c.exp.CronJobs {
+		ownerAgent, err := c.rcToAgent(j.OwnerConv)
+		if err != nil {
+			return fmt.Errorf("import: cron job %q owner actor: %w", j.Name, err)
+		}
+		targetAgent, err := c.rcToAgent(j.TargetConv)
+		if err != nil {
+			return fmt.Errorf("import: cron job %q target actor: %w", j.Name, err)
+		}
+		// Preserve the conv/group discriminator so a group fan-out job doesn't
+		// round-trip as a (broken, empty-target) conv job. Older archives carry
+		// no target_kind — default it to the v41 column default ("conv").
+		kind := j.TargetKind
+		if kind == "" {
+			kind = CronTargetConv
+		}
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_cron_jobs
-				(name, owner_conv, target_conv, group_id, interval_seconds,
+				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
 				 subject, body, enabled, created_at, last_run_at, last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			j.Name, c.rc(j.OwnerConv), c.rc(j.TargetConv), c.newGroupID,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
 			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.CreatedAt,
 			j.LastRunAt, j.LastRunStatus)
 		if err != nil {

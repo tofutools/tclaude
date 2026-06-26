@@ -59,53 +59,6 @@ func TestResolveLatestConv_WalksChain(t *testing.T) {
 	}
 }
 
-func TestMigrateCronJobConvRef(t *testing.T) {
-	setupTestDB(t)
-
-	// Two jobs: one owned by `oldconv`, one targeted at `oldconv`.
-	owner, err := InsertAgentCronJob(&AgentCronJob{
-		Name:            "owned-by-old",
-		OwnerConv:       "oldconv",
-		TargetConv:      "someother",
-		IntervalSeconds: 60,
-		Body:            "ping",
-		Enabled:         true,
-	})
-	require.NoError(t, err, "insert owner job")
-	target, err := InsertAgentCronJob(&AgentCronJob{
-		Name:            "targets-old",
-		OwnerConv:       "manager",
-		TargetConv:      "oldconv",
-		IntervalSeconds: 120,
-		Body:            "status?",
-		Enabled:         true,
-	})
-	require.NoError(t, err, "insert target job")
-	// Sanity: a third job that doesn't reference oldconv at all.
-	bystander, err := InsertAgentCronJob(&AgentCronJob{
-		Name:            "untouched",
-		OwnerConv:       "elsewhere",
-		TargetConv:      "elsewhere2",
-		IntervalSeconds: 30,
-		Body:            "ok",
-		Enabled:         true,
-	})
-	require.NoError(t, err, "insert bystander job")
-
-	n, err := MigrateCronJobConvRef("oldconv", "newconv")
-	require.NoError(t, err, "MigrateCronJobConvRef")
-	assert.Equal(t, int64(2), n, "rows affected")
-
-	got1, _ := GetAgentCronJob(owner)
-	assert.Equal(t, "newconv", got1.OwnerConv, "owner job owner_conv")
-	assert.Equal(t, "someother", got1.TargetConv, "owner job target_conv mutated unexpectedly")
-	got2, _ := GetAgentCronJob(target)
-	assert.Equal(t, "newconv", got2.TargetConv, "target job target_conv")
-	got3, _ := GetAgentCronJob(bystander)
-	assert.Equal(t, "elsewhere", got3.OwnerConv, "bystander owner mutated")
-	assert.Equal(t, "elsewhere2", got3.TargetConv, "bystander target mutated")
-}
-
 func TestListAgentConvSuccessions_OrderedByRecency(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, RecordConvSuccession("a1", "a2", "reincarnate"), "first record")

@@ -33,16 +33,17 @@ func TestBackfillAgentEnrollment(t *testing.T) {
 	_, err = d.Exec(`DELETE FROM agent_enrollment`)
 	require.NoError(t, err, "clear agent_enrollment")
 
-	// Post-v73 the membership/owner/permission tables are agent-keyed, so this
-	// "every conv in an agentic table gets enrolled" check uses the tables that
-	// remain conv-keyed (clone/spawn history, cron). The conv names are kept so
+	// Post-v73/v74 the membership/owner/permission tables (v73) and the
+	// clone/spawn history + cron tables (v74) are agent-keyed, so this "every
+	// conv in an agentic table gets enrolled" check uses the tables that remain
+	// conv-keyed (head aliases, workdir, succession). The conv names are kept so
 	// the assertions below are unchanged.
-	mustExec(t, d, `INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-		VALUES ('member-conv', '2020-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO agent_head_aliases (handle, anchor_conv_id, created_at, by_conv)
+		VALUES ('h-member', 'member-conv', '2020-01-01T00:00:00Z', '')`)
 	mustExec(t, d, `INSERT INTO agent_workdir (conv_id, dir, updated_at, worktree_root, branch)
 		VALUES ('owner-conv', '/tmp/o', '2020-01-01T00:00:00Z', '', '')`)
-	mustExec(t, d, `INSERT INTO agent_cron_jobs (owner_conv, target_conv, interval_seconds, created_at)
-		VALUES ('perm-conv', '', 60, '2020-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO agent_head_aliases (handle, anchor_conv_id, created_at, by_conv)
+		VALUES ('h-perm', 'perm-conv', '2020-01-01T00:00:00Z', '')`)
 	_ = gid
 	mustExec(t, d, `INSERT INTO agent_conv_succession (old_conv_id, new_conv_id, reason, succeeded_at)
 		VALUES ('old-conv', 'new-conv', 'reincarnate', '2020-01-01T00:00:00Z')`)

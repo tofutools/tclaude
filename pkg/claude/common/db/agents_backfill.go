@@ -226,10 +226,12 @@ func collectAgentConvs(d *sql.DB) ([]string, error) {
 	var selects []string
 	for _, s := range sources {
 		// Skip a source whose table or column is absent. The column guard
-		// matters AFTER the v73 cutover: the membership/owner/permission/sudo/
-		// notify tables become agent-keyed (no conv_id), and their actors
-		// already exist by construction, so they contribute nothing to a
-		// coverage backfill. Pre-v73 they still carry conv_id and are included.
+		// matters AFTER the v73/v74 cutovers: the membership/owner/permission/
+		// sudo/notify tables (v73) and the cron owner/target + spawn/clone
+		// history (v74) become agent-keyed (no conv_id / *_conv column), and
+		// their actors already exist by construction, so they contribute
+		// nothing to a coverage backfill. Pre-cutover they still carry the conv
+		// column and are included.
 		ok, err := columnExists(d, s.table, s.col)
 		if err != nil {
 			return nil, err

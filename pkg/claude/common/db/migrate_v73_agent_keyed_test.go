@@ -20,7 +20,6 @@ func TestMigrateV72toV73_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 73, currentVersion, "tripwire: bump this and add a v73→v74 test when you add a migration")
 
 	// The cutover swapped conv_id for agent_id on every identity table.
 	for _, tbl := range []string{

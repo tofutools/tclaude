@@ -102,10 +102,10 @@ func TestBackfillAgentsKeepsClonesSeparate(t *testing.T) {
 
 	enroll(t, d, "source", "spawn", "", "")
 	enroll(t, d, "fork", "clone", "", "")
-	// Clone history records the fork's lineage, but there is NO succession
-	// edge — the backfill must not merge them.
-	mustExec(t, d, `INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-		VALUES ('source', '2020-01-01T00:00:01Z')`)
+	// A clone records the fork's lineage (clone history, agent-keyed since v74)
+	// but there is NO succession edge between source and fork — the backfill
+	// collapses ONLY along succession edges, never by lineage, so they stay
+	// distinct actors.
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 
@@ -171,10 +171,11 @@ func TestBackfillAgentsCoversIdentityOnlyConv(t *testing.T) {
 
 	resetAgentLayer(t, d)
 	// A conv that appears only in a (still conv-keyed) agentic table, with no
-	// enrollment — the defensive coverage path. clone_history is one of the
-	// conv-keyed sources collectAgentConvs scans.
-	mustExec(t, d, `INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-		VALUES ('lonely', '2020-01-01T00:00:00Z')`)
+	// enrollment — the defensive coverage path. agent_head_aliases.anchor_conv_id
+	// is one of the conv-keyed sources collectAgentConvs scans (the clone/spawn
+	// history + cron tables went agent-keyed in v74, JOH-26 PR3a).
+	mustExec(t, d, `INSERT INTO agent_head_aliases (handle, anchor_conv_id, created_at, by_conv)
+		VALUES ('lonely-alias', 'lonely', '2020-01-01T00:00:00Z', '')`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 

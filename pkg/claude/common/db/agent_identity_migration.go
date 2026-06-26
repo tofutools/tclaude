@@ -11,16 +11,16 @@ import (
 // display name. Items is a compact human-readable summary (only the
 // non-zero facets) for API responses and logs.
 //
-// As of the JOH-26 v73 cutover only CronJobs is ever populated: the identity
-// tables are agent-keyed and no longer rekeyed on rotation. The other count
-// fields are retained (so summarize/Items and any API shape stay stable) but
-// are always zero now; they go away with MigrateAgentIdentity itself in the
-// final stage.
+// As of the JOH-26 PR3a cutover (v74) NO count field is ever populated: every
+// identity-bearing table — including cron jobs and the spawn/clone rate-limit
+// history — is agent-keyed, so a rotation rekeys nothing. The count fields are
+// retained (so summarize/Items and any API shape stay stable) but are always
+// zero now; they go away with MigrateAgentIdentity itself in PR3b.
 type AgentIdentityMigration struct {
 	GroupMembers int64  // always 0 post-v73 (agent-keyed, no rekey)
 	Ownerships   int64  // always 0 post-v73 (agent-keyed, no rekey)
 	Permissions  int64  // always 0 post-v73 (agent-keyed, no rekey)
-	CronJobs     int64  // agent_cron_jobs rows whose owner/target ref moved
+	CronJobs     int64  // always 0 post-v74 (agent-keyed, no rekey)
 	NotifyPrefs  int64  // always 0 post-v73 (agent-keyed, no rekey)
 	CarriedName  string // the agent's display name, carried onto newConv
 	Items        []string
@@ -57,12 +57,11 @@ func resolveCarriedName(oldConv string) string {
 
 // MigrateAgentIdentity handles a conv-id rotation (reincarnate / /clear).
 //
-// As of the JOH-26 agent-id cutover (v73), the identity-bearing tables —
-// group memberships, ownerships, permission overrides, sudo grants, notify
-// prefs — are keyed on the stable agent_id, so they need NO rekey: the actor
-// keeps its agent_id and only its live conv pointer advances (the agent
-// dual-write below). The single remaining conv-keyed rotation here is
-// agent_cron_jobs (owner/target conv refs), which is still rewritten old→new.
+// As of the JOH-26 agent-id cutover (v73 + PR3a's v74), EVERY identity-bearing
+// table — group memberships, ownerships, permission overrides, sudo grants,
+// notify prefs, cron jobs, and the spawn/clone rate-limit history — is keyed on
+// the stable agent_id, so a rotation rekeys NOTHING: the actor keeps its
+// agent_id and only its live conv pointer advances (the agent dual-write below).
 //
 // Within the same transaction it records the succession edge
 // (agent_conv_succession: old → new, so stale references resolve
@@ -127,25 +126,16 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 	nowNano := now.Format(time.RFC3339Nano)
 	nowSec := now.UTC().Format(time.RFC3339)
 
-	// --- rekey the still-conv-keyed identity rows old → new ---
+	// --- no identity rows need rekeying (JOH-26 PR3a) ---
 	//
-	// As of the JOH-26 cutover, group memberships, ownerships, permission
-	// overrides and the notify pref are keyed on the stable agent_id, so they
-	// need NO rekey — the actor's agent_id never moves, only its conv pointer
-	// does (the dual-write below advances it). cron jobs are still conv-keyed,
-	// so they remain the one thing this rotation rewrites.
-	//
-	// cron jobs: an agent can be a job's owner, its target, or both — rewrite
-	// whichever side(s) reference oldConv. Mirrors db.MigrateCronJobConvRef
-	// (kept standalone for non-transactional callers).
-	cronRes, err := tx.Exec(`UPDATE agent_cron_jobs
-		SET owner_conv  = CASE WHEN owner_conv  = ?1 THEN ?2 ELSE owner_conv END,
-		    target_conv = CASE WHEN target_conv = ?1 THEN ?2 ELSE target_conv END
-		WHERE owner_conv = ?1 OR target_conv = ?1`, oldConv, newConv)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: rekey cron jobs: %w", err)
-	}
-	out.CronJobs, _ = cronRes.RowsAffected()
+	// Every identity-bearing table is now keyed on the stable agent_id: group
+	// memberships / ownerships / permission overrides / notify pref (v73), and —
+	// as of PR3a — cron jobs (owner_agent / target_agent) and the spawn/clone
+	// rate-limit history. A rotation keeps the actor's agent_id and only advances
+	// its live conv pointer (the dual-write below), so NOTHING here is physically
+	// rekeyed. out.CronJobs stays 0; the field is retained for API/summary
+	// stability and goes away with MigrateAgentIdentity itself in PR3b. The cron
+	// fire path resolves owner/target agent → current_conv at fire time.
 
 	// --- succession edge old → new ---
 	// Mirrors db.RecordConvSuccession. Powers db.ResolveLatestConv, so a
