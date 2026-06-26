@@ -466,7 +466,7 @@ function renderTable(data) {
               : '';
           return `
           <tr${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
-            <td>${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
+            <td title="${esc((a.title || '(unknown)') + ' · ' + shortId(a.conv_id))}">${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>
