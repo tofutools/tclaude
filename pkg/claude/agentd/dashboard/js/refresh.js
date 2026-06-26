@@ -1227,6 +1227,272 @@ function openRetirePreview(group, status) {
   setTimeout(() => submitBtn.focus(), 0);
 }
 
+// openWorktreeCleanup drives the group cog's "🧹 cleanup worktrees…"
+// command — the repo-wide worktree janitor. Unlike openRetirePreview
+// (which reads the cohort from lastSnapshot), this LOADS its candidates
+// from the daemon: GET /api/groups/{group}/worktrees resolves the
+// group's default dir (∪ its agents' history dirs) to repo root(s) and
+// lists every linked worktree of those repos, each classified
+// (main / live / agent / orphan) and dirty-flagged, with a smart-default
+// `checked` flag — orphans pre-ticked, resume-bound and dirty ones left
+// for the human to review.
+//
+// The modal then OWNS that list (the 2s auto-refresh is suspended while a
+// .modal-overlay is open). The human edits the selection — per-row, the
+// category mass-toggle chips, select-all/none over the filtered view, the
+// title/path filter — and a live "⟳ rescan" re-pulls the candidate set
+// (preserving rows the human manually toggled). Submit POSTs the EXACT
+// ticked path list to /api/worktrees/cleanup; the daemon re-validates
+// every path (skips the main repo + any live-agent worktree) and removes
+// the rest — force, plus the branch when the toggle is on. Cancel / Esc /
+// backdrop is a no-op.
+async function openWorktreeCleanup(group) {
+  const overlay = $('#worktree-cleanup-modal');
+  const titleEl = $('#worktree-cleanup-title');
+  const hintEl = $('#worktree-cleanup-hint');
+  const catsEl = $('#worktree-cleanup-categories');
+  const listEl = $('#worktree-cleanup-list');
+  const countEl = $('#worktree-cleanup-count');
+  const errEl = $('#worktree-cleanup-error');
+  const searchEl = $('#worktree-cleanup-search');
+  const branchesCb = $('#worktree-cleanup-branches');
+  const submitBtn = $('#worktree-cleanup-submit');
+  const cancelBtn = $('#worktree-cleanup-cancel');
+  const rescanBtn = $('#worktree-cleanup-rescan');
+  const selAllBtn = $('#worktree-cleanup-select-all');
+  const selNoneBtn = $('#worktree-cleanup-select-none');
+
+  let candidates = [];
+  let repoRoots = [];
+  // Paths the human has manually toggled — preserved across a live rescan
+  // so a re-scan refreshes untouched rows to the fresh server default
+  // without clobbering an explicit choice.
+  const touched = new Set();
+
+  errEl.textContent = '';
+  searchEl.value = '';
+  branchesCb.checked = true;
+  titleEl.textContent = `Clean up worktrees in "${group}"`;
+  countEl.textContent = '';
+  catsEl.innerHTML = '';
+  submitBtn.disabled = true;
+
+  // The set the modal acts on excludes the main repo (never removable):
+  // every selection / count / toggle below operates over removable rows.
+  const removable = () => candidates.filter(c => !c.is_main);
+  const checkedRows = () => removable().filter(c => c.checked);
+  const matchesFilter = (c) => {
+    const q = searchEl.value.trim().toLowerCase();
+    if (!q) return true;
+    const hay = `${c.path} ${c.branch} ${(c.agents || []).map(a => a.title).join(' ')}`.toLowerCase();
+    return hay.includes(q);
+  };
+  const catRows = (cat) => removable().filter(c => c.category === cat);
+  const dirtyRows = () => removable().filter(c => c.dirty);
+
+  const agentLabel = (agents) => {
+    if (!agents || !agents.length) return '';
+    const names = agents.map(a => a.title || (a.conv_id || '').slice(0, 8));
+    return 'agent: ' + names.join(', ');
+  };
+
+  function renderHint() {
+    const n = removable().length;
+    const where = repoRoots.length ? repoRoots.join(', ') : "this group's repo";
+    hintEl.textContent = n === 0
+      ? `No removable worktrees found in ${where}.`
+      : `${n} removable worktree${n === 1 ? '' : 's'} in ${where}. `
+        + `Orphans (no agent) are pre-ticked; worktrees an agent still uses (resume-bound) and ones `
+        + `with uncommitted changes are left unticked for you to review. Only ticked worktrees are removed.`;
+  }
+
+  // Category mass-toggle chips: one per non-empty category (orphan /
+  // agent / live) plus a cross-cutting "uncommitted" chip. Each shows
+  // checked/total and flips its whole set at once (ignoring the filter —
+  // that's the point of a bulk toggle); .active marks a fully-ticked set.
+  function renderCats() {
+    const defs = [['orphan', 'orphans'], ['agent', 'agent-bound'], ['live', 'live']];
+    let html = '';
+    for (const [cat, label] of defs) {
+      const rows = catRows(cat);
+      if (!rows.length) continue;
+      const on = rows.filter(c => c.checked).length;
+      html += `<button type="button" data-cat="${esc(cat)}" class="${on === rows.length ? 'active' : ''}"`
+        + ` title="Toggle all ${rows.length} ${esc(label)} worktrees">${esc(label)} ${on}/${rows.length}</button>`;
+    }
+    const dr = dirtyRows();
+    if (dr.length) {
+      const on = dr.filter(c => c.checked).length;
+      html += `<button type="button" data-dirty="1" class="${on === dr.length ? 'active' : ''}"`
+        + ` title="Toggle all ${dr.length} worktrees with uncommitted changes">uncommitted ${on}/${dr.length}</button>`;
+    }
+    catsEl.innerHTML = html;
+    catsEl.style.display = html ? '' : 'none';
+  }
+
+  function renderList() {
+    const rows = removable().filter(matchesFilter);
+    // Main worktrees are shown too (disabled, for context) but never
+    // filtered out by the removable() gate above — append them at the end.
+    const mains = candidates.filter(c => c.is_main && matchesFilter(c));
+    const all = rows.concat(mains);
+    if (all.length === 0) {
+      listEl.innerHTML = '<div class="cleanup-empty">no worktrees match the filter</div>';
+      return;
+    }
+    listEl.innerHTML = all.map(c => {
+      const dis = c.is_main;
+      const badges = `<span class="cleanup-badge cat-${esc(c.category)}">${esc(c.category)}</span>`
+        + (c.dirty ? `<span class="cleanup-badge dirty">uncommitted</span>` : '')
+        + (c.agents && c.agents.length ? `<span class="cleanup-badge">${esc(agentLabel(c.agents))}</span>` : '');
+      return `<div class="cleanup-row${dis ? ' disabled' : ''}" title="${esc(c.reason || '')}"><label>`
+        + `<input type="checkbox" data-path="${esc(c.path)}"${c.checked ? ' checked' : ''}${dis ? ' disabled' : ''} />`
+        + `<span class="branch">${esc(c.branch || '(detached)')}</span>`
+        + `${badges}`
+        + `<span class="path" title="${esc(c.path)}">${esc(c.path)}</span>`
+        + `</label></div>`;
+    }).join('');
+  }
+
+  function renderFooter() {
+    const n = checkedRows().length;
+    const total = removable().length;
+    countEl.textContent = `${n} of ${total} selected`;
+    submitBtn.textContent = n === 1 ? 'Remove 1 worktree' : `Remove ${n} worktrees`;
+    submitBtn.disabled = n === 0;
+    submitBtn.removeAttribute('aria-busy');
+  }
+  function render() { renderHint(); renderCats(); renderList(); renderFooter(); }
+
+  const findCandidate = (p) => candidates.find(c => c.path === p);
+  const onListChange = (e) => {
+    const cb = e.target.closest('input[type=checkbox]');
+    if (!cb) return;
+    const c = findCandidate(cb.getAttribute('data-path'));
+    if (c && !c.is_main) { c.checked = cb.checked; touched.add(c.path); }
+    renderCats();
+    renderFooter();
+  };
+  const onSearch = () => renderList();
+  const onSelectAll = () => { for (const c of removable().filter(matchesFilter)) { c.checked = true; touched.add(c.path); } render(); };
+  const onSelectNone = () => { for (const c of removable().filter(matchesFilter)) { c.checked = false; touched.add(c.path); } render(); };
+  const onCats = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    let rows = null;
+    if (b.dataset.cat) rows = catRows(b.dataset.cat);
+    else if (b.dataset.dirty) rows = dirtyRows();
+    if (!rows) return;
+    const allOn = rows.length > 0 && rows.every(c => c.checked);
+    for (const c of rows) { c.checked = !allOn; touched.add(c.path); }
+    render();
+  };
+
+  // load (re)pulls the candidate set. On a rescan, a row the human
+  // manually toggled keeps that choice; every untouched row takes the
+  // fresh server default, so the scan reflects live state (an agent that
+  // went offline flips its worktree orphan→ticked) without undoing an
+  // explicit opt-in/out.
+  async function load(isRescan) {
+    errEl.textContent = '';
+    listEl.innerHTML = '<div class="cleanup-empty">scanning…</div>';
+    const prev = new Map(candidates.map(c => [c.path, c.checked]));
+    let r;
+    try {
+      r = await fetch(`/api/groups/${encodeURIComponent(group)}/worktrees`, { credentials: 'same-origin' });
+    } catch (e) {
+      errEl.textContent = `scan failed: ${(e && e.message) || e}`;
+      listEl.innerHTML = '<div class="cleanup-empty">scan failed</div>';
+      return;
+    }
+    if (!r.ok) {
+      errEl.textContent = await r.text();
+      listEl.innerHTML = '<div class="cleanup-empty">scan failed</div>';
+      return;
+    }
+    const data = await r.json().catch(() => null);
+    repoRoots = (data && data.repo_roots) || [];
+    candidates = ((data && data.worktrees) || []).map(wt => {
+      let checked = !!wt.checked;
+      if (isRescan && touched.has(wt.path) && prev.has(wt.path)) checked = prev.get(wt.path);
+      return { ...wt, checked: wt.is_main ? false : checked };
+    });
+    render();
+  }
+
+  const cleanup = () => {
+    overlay.classList.remove('show');
+    listEl.removeEventListener('change', onListChange);
+    searchEl.removeEventListener('input', onSearch);
+    selAllBtn.removeEventListener('click', onSelectAll);
+    selNoneBtn.removeEventListener('click', onSelectNone);
+    catsEl.removeEventListener('click', onCats);
+    rescanBtn.removeEventListener('click', onRescan);
+    submitBtn.removeEventListener('click', onSubmit);
+    cancelBtn.removeEventListener('click', cleanup);
+    overlay.removeEventListener('click', onOverlay);
+    document.removeEventListener('keydown', onKey);
+  };
+  const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+  const onRescan = async () => {
+    rescanBtn.disabled = true;
+    try { await load(true); } finally { rescanBtn.disabled = false; }
+  };
+
+  async function onSubmit() {
+    const paths = checkedRows().map(c => c.path);
+    if (paths.length === 0) return;
+    submitBtn.disabled = true;
+    submitBtn.setAttribute('aria-busy', 'true');
+    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Removing…';
+    errEl.textContent = '';
+    let r;
+    try {
+      r = await fetch('/api/worktrees/cleanup', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths, delete_branches: branchesCb.checked }),
+      });
+    } catch (e) {
+      errEl.textContent = `cleanup failed: ${(e && e.message) || e}`;
+      renderFooter();
+      return;
+    }
+    if (!r.ok) {
+      errEl.textContent = await r.text();
+      renderFooter();
+      return;
+    }
+    const out = await r.json().catch(() => null);
+    cleanup();
+    const removed = (out && out.removed) || 0;
+    const branches = (out && out.branches) || 0;
+    const skipped = (out && out.skipped) || 0;
+    const failed = (out && out.failed) || 0;
+    let msg = `removed ${removed} worktree${removed === 1 ? '' : 's'}`;
+    if (branches) msg += ` (+${branches} branch${branches === 1 ? '' : 'es'})`;
+    if (skipped) msg += `, ${skipped} skipped`;
+    if (failed) msg += `, ${failed} failed`;
+    toast(msg, failed > 0);
+    refresh();
+  }
+
+  listEl.addEventListener('change', onListChange);
+  searchEl.addEventListener('input', onSearch);
+  selAllBtn.addEventListener('click', onSelectAll);
+  selNoneBtn.addEventListener('click', onSelectNone);
+  catsEl.addEventListener('click', onCats);
+  rescanBtn.addEventListener('click', onRescan);
+  submitBtn.addEventListener('click', onSubmit);
+  cancelBtn.addEventListener('click', cleanup);
+  overlay.addEventListener('click', onOverlay);
+  document.addEventListener('keydown', onKey);
+
+  overlay.classList.add('show');
+  await load(false);
+}
+
 // openWindowModal drives the bulk window focus/unfocus feature. One
 // trigger per scope — a group-level button and the top-bar button —
 // opens this modal. Inside it the human picks the DIRECTION (focus
@@ -2872,7 +3138,7 @@ async function stopAgentReq(conv, label, force) {
 export {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
-  maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview,
+  maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openWorktreeCleanup,
   groupMembersByStatus, countGroupMembersByStatus,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,

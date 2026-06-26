@@ -51,6 +51,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardGroupRoutes(mux)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
+	mux.HandleFunc("/api/worktrees/cleanup", handleDashboardWorktreeCleanup)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
 	mux.HandleFunc("/api/hide/", handleDashboardHideAPI)
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
@@ -462,6 +463,7 @@ func looksLikeConvID(s string) bool {
 //	PATCH  /api/groups/{name}                   → update settings (body: {default_cwd})
 //	POST   /api/groups/{name}/clone             → clone the group (body: {new_name?, no_clone_members?})
 //	POST   /api/groups/{name}/rename            → rename (body: {new_name})
+//	GET    /api/groups/{name}/worktrees         → discover the group's repo worktrees for cleanup
 //	GET    /api/groups/{name}/export            → download the group as a .zip archive
 //	POST   /api/groups/{name}/spawn             → spawn a new tclaude session and auto-join this group
 //	POST   /api/groups/{name}/members           → add member (body: {conv, role?, descr?})
@@ -512,6 +514,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
+	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
 	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
 	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {

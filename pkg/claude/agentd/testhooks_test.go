@@ -418,6 +418,31 @@ func SetRetireWorktreeFnForTest(
 	return func() { removeWorktreeBranchFn = prev }
 }
 
+// SetSweepWorktreeFnsForTest swaps the repo-wide worktree-janitor seams
+// — repo listing, repo-root resolution, dirty detection, main-repo
+// resolution and prune — so the worktree-sweep discovery/cleanup flow
+// tests run without real git repos. Returns a restore func for
+// t.Cleanup.
+func SetSweepWorktreeFnsForTest(
+	list func(dir string) ([]worktree.WorktreeInfo, error),
+	repoRoot func(path string) (string, error),
+	dirty func(dir string) bool,
+	mainRepo func(dir string) string,
+	prune func(dir string) error,
+) func() {
+	prevList, prevRoot, prevDirty := listWorktreesInFn, repoRootForPathFn, worktreeDirtyFn
+	prevMain, prevPrune := mainRepoForPathFn, pruneWorktreesFn
+	listWorktreesInFn = list
+	repoRootForPathFn = repoRoot
+	worktreeDirtyFn = dirty
+	mainRepoForPathFn = mainRepo
+	pruneWorktreesFn = prune
+	return func() {
+		listWorktreesInFn, repoRootForPathFn, worktreeDirtyFn = prevList, prevRoot, prevDirty
+		mainRepoForPathFn, pruneWorktreesFn = prevMain, prevPrune
+	}
+}
+
 // SetRetireWorktreeGraceForTest shrinks the deferred retire cleanup's
 // exit-grace window so a flow test can exercise the grace-timeout branch
 // (agent never exits → worktree kept → human notice) without waiting the

@@ -1522,6 +1522,32 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="worktree-cleanup-modal">
+  <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="worktree-cleanup-title">
+    <h3 id="worktree-cleanup-title">Clean up worktrees</h3>
+    <p class="cleanup-hint" id="worktree-cleanup-hint"></p>
+    <div class="cleanup-toolbar">
+      <button type="button" id="worktree-cleanup-select-all">select all</button>
+      <button type="button" id="worktree-cleanup-select-none">select none</button>
+      <button type="button" id="worktree-cleanup-rescan" title="Re-scan the repo for worktrees right now (live state can shift as agents come and go)">⟳ rescan</button>
+      <input type="search" id="worktree-cleanup-search" placeholder="filter path / branch…" aria-label="Filter worktrees" />
+      <span class="spacer"></span>
+      <span class="cleanup-count" id="worktree-cleanup-count"></span>
+    </div>
+    <div class="cleanup-toolbar cleanup-categories" id="worktree-cleanup-categories"></div>
+    <div class="cleanup-list" id="worktree-cleanup-list"></div>
+    <label class="delete-agent-wt" id="worktree-cleanup-branches-row">
+      <input type="checkbox" id="worktree-cleanup-branches" checked />
+      <span>Also delete the feature branch
+        <span class="wt-note">force-deletes each removed worktree's local branch — <code>main</code>/<code>master</code> are always kept</span></span>
+    </label>
+    <div class="cleanup-error" id="worktree-cleanup-error"></div>
+    <div class="modal-buttons">
+      <button id="worktree-cleanup-cancel" type="button">Cancel</button>
+      <button id="worktree-cleanup-submit" class="primary danger" type="button">Remove</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="delete-agent-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-agent-title">
     <h3 id="delete-agent-title">Permanently delete this agent?</h3>
