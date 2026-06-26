@@ -419,6 +419,15 @@ func auditConvLabel(convID string) string {
 	return short8(convID)
 }
 
+// auditDetailMax caps a freeform Detail value at write time — message /
+// reply / notify bodies, and the cron / template / sudo text. Generous
+// enough that the dashboard's Detail column (which wraps) shows the whole
+// thing for almost all rows, while still bounding a pathological body in the
+// stored audit row. The short, structured labels (role: / client: / scope:
+// / hosts: / → name) keep their own tighter caps — they're bounded by
+// nature, so 512 would never apply.
+const auditDetailMax = 512
+
 // auditClip trims and length-caps a free-text value for the Detail
 // column / a label, collapsing whitespace so a multi-line message body
 // reads as one symbolic line.
@@ -454,7 +463,7 @@ func describeMessage(c *auditCtx) {
 			detail = body
 		}
 	}
-	c.fields.Detail = auditClip(detail, 120)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 }
 
 // describeReply records a reply to a received message. Unlike a fresh
@@ -499,7 +508,7 @@ func describeReply(c *auditCtx) {
 			detail = body
 		}
 	}
-	c.fields.Detail = auditClip(detail, 120)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 }
 
 func describeSpawn(c *auditCtx) {
@@ -650,7 +659,7 @@ func describeTemplateInstantiate(c *auditCtx) {
 	if task := strings.TrimSpace(b.Task); task != "" {
 		detail += ": " + task
 	}
-	c.fields.Detail = auditClip(detail, 120)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 }
 
 // describeRemoteAccessClient records issuing a client cert. Only the client
@@ -810,7 +819,7 @@ func describeCron(c *auditCtx) {
 			detail = body
 		}
 	}
-	c.fields.Detail = auditClip(detail, 100)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 }
 
 func describePerm(c *auditCtx) {
@@ -857,7 +866,7 @@ func describeSudo(c *auditCtx) {
 	if reason := strings.TrimSpace(b.Reason); reason != "" {
 		detail = strings.TrimSpace(detail + " (" + reason + ")")
 	}
-	c.fields.Detail = auditClip(detail, 120)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 	if sel := strings.TrimSpace(b.Conv); sel != "" {
 		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(sel)
 	}
@@ -877,5 +886,5 @@ func describeNotifyHuman(c *auditCtx) {
 			detail = body
 		}
 	}
-	c.fields.Detail = auditClip(detail, 120)
+	c.fields.Detail = auditClip(detail, auditDetailMax)
 }

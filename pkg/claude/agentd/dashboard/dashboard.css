@@ -840,13 +840,21 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   font-size: 11px; border: 1px solid #1f6feb; color: #58a6ff;
 }
 .audit-table td { vertical-align: top; }
-/* Keep a long detail string on one line — the full text is on the title
-   tooltip, so the table stays scannable. */
-.audit-table td .muted {
-  display: inline-block; max-width: 48ch;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  vertical-align: bottom;
+/* Per-column wrap policy when the tab is narrowed:
+   - When / Outcome  — never wrap; short structured tokens that shrink to
+     their content width (width:1% + nowrap = shrink-to-fit).
+   - Actor / Action / Target — stay on one line, truncating with an ellipsis
+     once too long; the full value is on the cell's title tooltip.
+   - Detail — the freeform narrative wraps, and is the greedy column
+     (width:100%) so it absorbs the table's slack rather than stretching it.
+     Narrowing the tab makes Detail wrap to more lines; the other columns
+     keep their single-line widths. */
+.audit-table td.audit-nowrap { white-space: nowrap; width: 1%; }
+.audit-table td.audit-trunc {
+  white-space: nowrap; max-width: 26ch;
+  overflow: hidden; text-overflow: ellipsis;
 }
+.audit-table td.audit-detail { white-space: normal; overflow-wrap: anywhere; width: 100%; }
 .filter-bar label.filter-toggle select {
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; font-size: 12px; cursor: pointer;
@@ -1075,6 +1083,22 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #costs-table tr.cost-chain td:first-child { box-shadow: inset 2px 0 0 #2f4858; }
 #costs-table tr.cost-chain-hl td { background: #1a2330; }
 #costs-table .cost-total-row td { border-top: 1px solid #2a3340; }
+/* Narrowing the tab must keep every cell on a single line. Cost / Model /
+   Last activity carry short tokens that read wrong broken across lines, so
+   each is pinned to its content width (width:1% + nowrap = shrink-to-fit, so
+   it never absorbs the table's slack) and stays on one line. All that slack
+   goes to the Agent column, which fills the remaining width and only
+   truncates with an ellipsis once the name genuinely doesn't fit — never
+   earlier. max-width:0 is the canonical table-cell ellipsis trick: it lets
+   the first cell ellipsize within its allotted (leftover) width instead of
+   growing the column. Applies to the body rows and the total row alike. */
+#costs-table td:not(:first-child) { white-space: nowrap; width: 1%; }
+#costs-table td:first-child {
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Clickable column headers — same affordance as the Audit table. */
 #costs-table th.cost-sort { cursor: pointer; user-select: none; white-space: nowrap; }
 #costs-table th.cost-sort:hover { color: #58a6ff; }

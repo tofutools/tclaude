@@ -106,6 +106,20 @@ function targetCell(e) {
   return bits.length ? bits.join(' ') : '<span class="muted">—</span>';
 }
 
+// actorTitle / targetTitle build the plain-text full value for the cell's
+// hover tooltip — the Actor / Target columns truncate with an ellipsis when
+// narrow (see .audit-trunc), so the untruncated text lives on the title.
+function actorTitle(e) {
+  if (e.actor_kind === 'human') return 'the human operator';
+  if (e.actor_kind === 'agent') {
+    return (e.actor_label || '(agent)') + (e.actor_conv ? ' ' + shortId(e.actor_conv) : '');
+  }
+  return e.actor_label || 'unknown';
+}
+function targetTitle(e) {
+  return [e.group_name, e.target_label].filter(Boolean).join(' ') || '—';
+}
+
 // headerHTML renders the sortable column header row with the active
 // sort's direction arrow.
 function headerHTML() {
@@ -139,12 +153,12 @@ function renderAudit() {
       <tbody>
         ${rows.map(e => `
           <tr>
-            <td>${whenCellHTML(e)}</td>
-            <td>${actorCell(e)}</td>
-            <td><span class="${verbClass(e.verb)}">${esc(e.verb)}</span>${e.source === 'dashboard' ? ' <span class="id" title="run from the dashboard">⊞</span>' : ''}</td>
-            <td>${targetCell(e)}</td>
-            <td><span class="muted" title="${esc(e.detail || '')}">${esc(e.detail || '')}</span></td>
-            <td>${statusPill(e.status)}</td>
+            <td class="audit-nowrap">${whenCellHTML(e)}</td>
+            <td class="audit-trunc" title="${esc(actorTitle(e))}">${actorCell(e)}</td>
+            <td class="audit-trunc" title="${esc(e.verb || '')}"><span class="${verbClass(e.verb)}">${esc(e.verb)}</span>${e.source === 'dashboard' ? ' <span class="id" title="run from the dashboard">⊞</span>' : ''}</td>
+            <td class="audit-trunc" title="${esc(targetTitle(e))}">${targetCell(e)}</td>
+            <td class="audit-detail"><span class="muted" title="${esc(e.detail || '')}">${esc(e.detail || '')}</span></td>
+            <td class="audit-nowrap">${statusPill(e.status)}</td>
           </tr>`).join('')}
       </tbody>
     </table>`;
