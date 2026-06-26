@@ -3071,6 +3071,15 @@ body.hide-costs nav button[data-tab="costs"],
 body.hide-costs #tab-costs { display: none; }
 body.hide-costs #groups-cost-toggle { display: none; }
 
+/* Plugins-tab auto-hide. body.hide-plugins is set by refresh.js when the
+   server's plugins_tab_visible is false — no plugins installed, no broken
+   plugins.json, and the dashboard.always_show_plugins_tab opt-in is off. Like
+   the Costs tab, both the nav button AND the section are hidden so the tab
+   vanishes entirely (refresh.js also falls the active tab back to Groups if
+   Plugins was showing). */
+body.hide-plugins nav button[data-tab="plugins"],
+body.hide-plugins #tab-plugins { display: none; }
+
 /* The 💲 per-agent-cost toggle in the Groups filter bar. Dims when off so the
    pressed/unpressed state reads at a glance. */
 .cost-toggle {

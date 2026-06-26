@@ -291,6 +291,7 @@ export async function refresh() {
     renderLinksTab();
     renderPluginsTab();
     renderPluginsBadge(data.plugins_warn || 0);
+    applyPluginsTabVisibility(data);
     // Permissions + Slug registry now live as sub-panels of the merged
     // "Access" tab; the renderers write into the per-panel mount divs.
     $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
@@ -444,6 +445,28 @@ function applyCostTabVisibility(data) {
   document.body.classList.toggle('cost-whatif', whatif);
   if (!visible) {
     const sec = document.getElementById('tab-costs');
+    if (sec && sec.classList.contains('active')) {
+      $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
+      $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));
+    }
+  }
+}
+
+// applyPluginsTabVisibility drives the Plugins tab's auto-hide off the
+// server's plugins_tab_visible flag (dashboard.go), mirroring
+// applyCostTabVisibility: most users never define a plugin, so an empty
+// Plugins tab is just clutter. body.hide-plugins removes the nav button +
+// section via CSS; the server keeps the tab visible whenever something IS
+// there to manage (≥1 plugin, a broken plugins.json, or the
+// dashboard.always_show_plugins_tab opt-in). If the Plugins tab is the
+// active one when it gets hidden — e.g. the human deleted their last plugin,
+// or turned the opt-in off in the Config tab — fall back to Groups so they
+// aren't stranded on a now-invisible section.
+function applyPluginsTabVisibility(data) {
+  const visible = !!(data && data.plugins_tab_visible);
+  document.body.classList.toggle('hide-plugins', !visible);
+  if (!visible) {
+    const sec = document.getElementById('tab-plugins');
     if (sec && sec.classList.contains('active')) {
       $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'groups'));
       $$('main section').forEach(s => s.classList.toggle('active', s.id === 'tab-groups'));

@@ -106,6 +106,15 @@ type DashboardConfig struct {
 	// ActivityBotsConfig. Absent → defaults (emoji in regular, sprites in
 	// slop).
 	ActivityBots *ActivityBotsConfig `json:"activity_bots,omitempty"`
+	// AlwaysShowPluginsTab forces the dashboard's Plugins tab to stay
+	// visible even when no plugins are installed. By default the tab
+	// auto-hides when the installed set is empty (most users never define a
+	// plugin, and the tab would only show the built-in catalog) — flip this
+	// on to keep it around, e.g. to reach the catalog and install one. A
+	// broken plugins.json still surfaces the tab regardless, so the error is
+	// never hidden. Default false (auto-hide when empty). See
+	// (*Config).ShowPluginsTabAlways.
+	AlwaysShowPluginsTab bool `json:"always_show_plugins_tab,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -589,6 +598,14 @@ func (c *Config) ActivityBotsSlop() string {
 		}
 	}
 	return ActivityBotsSprites
+}
+
+// ShowPluginsTabAlways reports whether the dashboard should keep the Plugins
+// tab visible even with no plugins installed — config
+// dashboard.always_show_plugins_tab. Default false (the tab auto-hides when
+// the installed set is empty). Nil-safe on the receiver.
+func (c *Config) ShowPluginsTabAlways() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.AlwaysShowPluginsTab
 }
 
 // FocusConfig holds window-focus behavior knobs.

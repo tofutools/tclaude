@@ -427,6 +427,10 @@ function populateConfigForm(cfg) {
   $('#cfg-dashboard-activity-bots-regular').value = ab.regular || 'emoji';
   $('#cfg-dashboard-activity-bots-slop').value = ab.slop || 'sprites';
 
+  // Always show the Plugins tab even with no plugins installed. Default off
+  // (the tab auto-hides when empty); lives in the dashboard block.
+  $('#cfg-dashboard-always-show-plugins').checked = !!(cfg.dashboard && cfg.dashboard.always_show_plugins_tab);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -584,6 +588,10 @@ function assembleConfig() {
   if (abReg && abReg !== 'emoji') ab.regular = abReg; else delete ab.regular;
   if (abSlop && abSlop !== 'sprites') ab.slop = abSlop; else delete ab.slop;
   if (Object.keys(ab).length) dashboard.activity_bots = ab; else delete dashboard.activity_bots;
+  // always_show_plugins_tab: true when checked, dropped otherwise (false is
+  // the omitempty default) so an all-default dashboard block doesn't marshal a
+  // spurious key.
+  if ($('#cfg-dashboard-always-show-plugins').checked) dashboard.always_show_plugins_tab = true; else delete dashboard.always_show_plugins_tab;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field
