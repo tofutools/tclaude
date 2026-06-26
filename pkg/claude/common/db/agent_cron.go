@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -64,7 +65,20 @@ func cronConvToAgent(convID string) (string, error) {
 	if err := EnrollAgent(convID, "cron"); err != nil {
 		return "", err
 	}
-	return AgentIDForConv(convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return "", err
+	}
+	// EnrollAgent's actor dual-write is best-effort (it logs and returns nil on
+	// a transient failure), so a non-empty conv could still resolve to "". Treat
+	// that as an error rather than silently storing owner_agent/target_agent =
+	// '' (which would de-own / de-target the job) — the same guard
+	// AddAgentGroupMember uses, and the runtime twin of the migration's strict
+	// coverage gate.
+	if agentID == "" {
+		return "", fmt.Errorf("cronConvToAgent: no actor for conv %s", convID)
+	}
+	return agentID, nil
 }
 
 // cronSelect is the shared SELECT for reading cron jobs. owner/target are keyed

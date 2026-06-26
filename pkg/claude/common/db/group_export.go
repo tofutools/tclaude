@@ -239,7 +239,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	// COALESCE keeps a group-target job (target_agent '') or an owner-less job
 	// rather than dropping it.
 	rows, err := d.Query(`
-		SELECT j.id, j.name, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
+		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
 		       j.interval_seconds, j.subject, j.body,
 		       j.enabled, j.created_at, j.last_run_at, j.last_run_status
 		FROM agent_cron_jobs j
@@ -254,7 +254,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	var ids []string
 	for rows.Next() {
 		var j groupexport.CronJob
-		if err := rows.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetConv,
+		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
 			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.CreatedAt,
 			&j.LastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
@@ -880,12 +880,19 @@ func (c *importCtx) cronJobsAndRuns() error {
 		if err != nil {
 			return fmt.Errorf("import: cron job %q target actor: %w", j.Name, err)
 		}
+		// Preserve the conv/group discriminator so a group fan-out job doesn't
+		// round-trip as a (broken, empty-target) conv job. Older archives carry
+		// no target_kind — default it to the v41 column default ("conv").
+		kind := j.TargetKind
+		if kind == "" {
+			kind = CronTargetConv
+		}
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_cron_jobs
-				(name, owner_agent, target_agent, group_id, interval_seconds,
+				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
 				 subject, body, enabled, created_at, last_run_at, last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			j.Name, ownerAgent, targetAgent, c.newGroupID,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
 			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.CreatedAt,
 			j.LastRunAt, j.LastRunStatus)
 		if err != nil {
