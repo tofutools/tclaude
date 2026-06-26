@@ -31,6 +31,7 @@ type costDelta struct {
 	sessionID string
 	usd       float64
 	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
+	model     string // model display name denormalised onto the row; "" if unknown
 }
 
 // costDeltasFromRows turns cumulative (conv, day) snapshots into per-day
@@ -74,7 +75,7 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 			baseline = 0
 		}
 		if d := val - baseline; d > 0 {
-			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d, updatedAt: r.UpdatedAt})
+			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d, updatedAt: r.UpdatedAt, model: r.Model})
 			baseline = val
 		}
 	}
@@ -130,8 +131,10 @@ type costDayPoint struct {
 // continuations of the row shown above. Title resolves through the same
 // cached lookup the snapshot uses; a conv deleted since the spend was
 // recorded keeps its history under the "(unknown)" placeholder. Model
-// is the display name reported by the day's most recent costed session;
-// empty when no live sessions row still carries one. Day is the slice's
+// is the display name reported by the day's most recent costed session,
+// denormalised onto the cost row at write time so it survives the
+// session being deleted; empty only for pre-v71 history of an
+// already-gone session, or a session that never reported a model. Day is the slice's
 // local calendar day; LastActivity is the wall-clock time (RFC3339Nano)
 // of the slice's most recent spend — the finer-grained timestamp the
 // breakdown shows and sorts on; "" when unknown (pre-v53 history whose
@@ -209,10 +212,9 @@ func collectCosts(from time.Time, factor float64, whatif bool) (costsResponse, e
 		// later same-day stamp raises it. "" when no contributing row
 		// carried a timestamp.
 		lastActivity string
-		// model of the slice's latest-stamped session with a known model;
-		// modelAt tracks that stamp so a model-less session (its row
-		// deleted, or no statusline tick yet) never blanks a value recorded
-		// earlier the same day.
+		// model of the slice's latest-stamped delta with a known model;
+		// modelAt tracks that stamp so a model-less delta (no statusline
+		// tick yet) never blanks a value recorded earlier the same day.
 		model   string
 		modelAt string
 	}
@@ -240,7 +242,15 @@ func collectCosts(from time.Time, factor float64, whatif bool) (costsResponse, e
 		if d.updatedAt > a.lastActivity {
 			a.lastActivity = d.updatedAt
 		}
-		if m := models[d.sessionID]; m != "" && d.updatedAt >= a.modelAt {
+		// Prefer the model denormalised onto the cost row — it survives the
+		// sessions row being deleted, so a retired agent still names its
+		// model. Fall back to the live sessions lookup for pre-v71 history
+		// of a still-alive session whose row predates the denormalisation.
+		m := d.model
+		if m == "" {
+			m = models[d.sessionID]
+		}
+		if m != "" && d.updatedAt >= a.modelAt {
 			a.model, a.modelAt = m, d.updatedAt
 		}
 		if d.day > convMaxDay[d.convID] {

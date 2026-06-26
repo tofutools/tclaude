@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 70
+const currentVersion = 71
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -451,6 +451,99 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 71 {
+		if err := migrateV70toV71(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV70toV71 adds session_cost_daily.model — the LLM model display
+// name ("Opus 4.8 (1M context)", "Sonnet 4.6", …) denormalised onto the
+// cost-history row at write time, the model sibling of the conv_id that
+// v50→v51 already denormalises. Without it the Costs tab's per-agent
+// MODEL column resolved the model with a LIVE lookup against the sessions
+// row (SessionModels), so the instant a session row was deleted — agent
+// retired/killed, or a conv resumed/reincarnated under a fresh session id
+// — its surviving cost history could no longer name a model and the cell
+// rendered blank. Snapshotting the model into the history row (like the
+// cost itself) makes it survive the sessions row's deletion, so a retired
+// agent keeps showing what it ran on. Default "" so every existing row
+// and every reader that doesn't yet select the column keeps working.
+//
+// The backfill seeds the column from every live sessions row that still
+// carries a model (the same lookup SessionModels did), so today's history
+// names its model immediately instead of waiting for each session's next
+// statusline tick; rows whose session was already deleted keep "" (their
+// model is gone for good — only NEW spend going forward can be captured).
+//
+// Single transaction, pragma_table_info-guarded (the migrateV56toV57
+// convention): SQLite has no ADD COLUMN IF NOT EXISTS, so a half-applied /
+// re-run must converge instead of wedging on "duplicate column name". The
+// ALTER is further guarded on the table existing at all: a real DB always
+// has session_cost_daily by here (v50→v51 created it), but the migration
+// chain's partial-schema heal tests seed only the tables a downstream
+// migration ALTERs, so the column add (and backfill) no-ops when the
+// table is absent and just advances the version.
+func migrateV70toV71(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_cost_daily'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe table: %w", err)
+	}
+	var haveCol, haveSessions int
+	if haveTable > 0 {
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('session_cost_daily') WHERE name = 'model'`,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe column: %w", err)
+		}
+		// The backfill reads from sessions; in a real DB it always exists by
+		// here, but a partial-schema heal DB could have session_cost_daily
+		// without it, so probe and skip the backfill rather than wedge on
+		// "no such table: sessions".
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+		).Scan(&haveSessions); err != nil {
+			return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe sessions table: %w", err)
+		}
+	}
+	if haveTable > 0 && haveCol == 0 {
+		if _, err := tx.Exec(
+			`ALTER TABLE session_cost_daily ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): add column: %w", err)
+		}
+		// Backfill from the live sessions row where one still carries a
+		// model — the same source the per-agent breakdown read live until
+		// now. History whose session was already deleted keeps "".
+		if haveSessions > 0 {
+			if _, err := tx.Exec(`
+				UPDATE session_cost_daily SET model = (
+					SELECT s.model FROM sessions s WHERE s.id = session_cost_daily.session_id
+				)
+				WHERE session_id IN (SELECT id FROM sessions WHERE model <> '')`,
+			); err != nil {
+				return fmt.Errorf("migrate v70→v71 (backfill session_cost_daily.model): %w", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 71`); err != nil {
+		return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): commit: %w", err)
+	}
 	return nil
 }
 
