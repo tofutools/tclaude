@@ -999,7 +999,7 @@ async function submitAgentSpawn() {
       okLabel: 'Spawn anyway',
     });
     if (!proceed) {
-      // Drop focus on the Name field so a quick correction needs no mouse.
+      // Put the cursor in the Name field so a quick correction needs no mouse.
       $('#agent-spawn-name').focus();
       return;
     }
