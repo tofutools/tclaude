@@ -63,5 +63,14 @@ jobs:
       # resources (tmux sim, SQLite) and the interleaved output is hard to read on a
       # failure. Two-at-a-time keeps output legible without serializing the whole run.
       # (No tests use t.Parallel(), so -parallel is irrelevant here.)
+      #
+      # The Go race detector is OFF by default and gated behind the RUN_RACE
+      # repository variable (Settings -> Secrets and variables -> Actions ->
+      # Variables -> RUN_RACE=true) so it can be enabled later without a code
+      # change. It roughly triples the test step's wall-clock, which is why it
+      # is opt-in. The suite is race-clean as of this writing, so flipping the
+      # variable is safe. -race needs CGO, which the ubuntu/macOS runners have
+      # on by default (this matrix is ubuntu+macOS only — the detector does not
+      # support windows/arm64, so do not add -race to a matrix that includes it).
       - name: Run tests
-        run: go test -p 2 ./...
+        run: go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} -p 2 ./...
