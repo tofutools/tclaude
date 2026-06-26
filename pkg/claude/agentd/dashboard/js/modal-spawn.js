@@ -921,10 +921,11 @@ function openAgentSpawnModal(opts) {
   // checks the modal is still open) is satisfied; the fields above stand as
   // the blank baseline a profile then overlays.
   initSpawnProfileSelector(select.value);
-  setTimeout(() => {
-    if (groupName) $('#agent-spawn-name').focus();
-    else select.focus();
-  }, 0);
+  // Always land on Name — the first thing you type when spawning. Even when no
+  // group was pre-selected (the Group picker is the first field), the picker
+  // already carries a sensible default, so jumping straight to Name matches the
+  // common flow: type a name, type the initial msg, Ctrl/Cmd+Enter to spawn.
+  setTimeout(() => $('#agent-spawn-name').focus(), 0);
 }
 
 function closeAgentSpawnModal() {
