@@ -202,7 +202,7 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, a := range agents {
-			universe = append(universe, a.ConvID)
+			universe = append(universe, a.CurrentConvID)
 		}
 	default:
 		http.Error(w, "invalid scope "+strconv.Quote(scope)+
@@ -298,7 +298,7 @@ func unfocusAllAgentWindows() (agentWindowsResp, error) {
 	}
 	universe := make([]string, 0, len(agents))
 	for _, a := range agents {
-		universe = append(universe, a.ConvID)
+		universe = append(universe, a.CurrentConvID)
 	}
 	return runWindowOp("unfocus", "all", "", universe, nil), nil
 }

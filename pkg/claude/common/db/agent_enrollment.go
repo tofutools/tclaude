@@ -255,16 +255,18 @@ func GetEnrollment(convID string) (*AgentEnrollment, error) {
 	return e, err
 }
 
-// ListActiveAgents returns every active (non-retired) enrollment —
-// the canonical agent roster the dashboard and `tclaude agent ls`
-// render, online and offline alike.
-func ListActiveAgents() ([]*AgentEnrollment, error) {
+// listActiveEnrollments returns every active (non-retired) enrollment.
+// Legacy / internal as of JOH-26 PR3b: the dashboard + roster surfaces now
+// read the actor-level roster (ListActiveAgents over the agents table); only
+// the enrollment unit tests still consult this directly, until agent_enrollment
+// is removed in PR3c.
+func listActiveEnrollments() ([]*AgentEnrollment, error) {
 	return listEnrollments(`retired_at = ''`)
 }
 
-// ListRetiredAgents returns every retired enrollment — the demoted
-// agents the dashboard offers a "reinstate" button for.
-func ListRetiredAgents() ([]*AgentEnrollment, error) {
+// listRetiredEnrollments returns every retired enrollment. Legacy / internal —
+// see listActiveEnrollments.
+func listRetiredEnrollments() ([]*AgentEnrollment, error) {
 	return listEnrollments(`retired_at != ''`)
 }
 

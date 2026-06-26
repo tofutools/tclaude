@@ -249,11 +249,11 @@ func TestRetireReinstateAndRoster(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 
-	active, err := ListActiveAgents2()
+	active, err := ListActiveAgents()
 	require.NoError(t, err)
 	assert.Equal(t, []string{live}, agentIDs(active), "only the live actor is active")
 
-	retired, err := ListRetiredAgents2()
+	retired, err := ListRetiredAgents()
 	require.NoError(t, err)
 	assert.Equal(t, []string{gone}, agentIDs(retired))
 

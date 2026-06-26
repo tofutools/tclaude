@@ -242,6 +242,43 @@ func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 		"the superseded predecessor %s must be retired (reinstatable for knowledge pings)", conv)
 }
 
+// TestEnrollment_ReincarnatePredecessorNotOnRetiredRoster pins the JOH-26 PR3b
+// actor-level Retired-tray semantics. A reincarnate retires the predecessor's
+// ENROLLMENT row (above), but the predecessor is a past GENERATION of the
+// still-active actor — NOT a retired agent. The roster now reads the
+// actor-level retired flag (agents.retired_at), which a rotation never sets, so
+// the predecessor appears NOWHERE on the roster (active, retired, or plain
+// conversation) while the live successor is the active agent. Under the old
+// conv-keyed roster the predecessor surfaced in retired[].
+func TestEnrollment_ReincarnatePredecessorNotOnRetiredRoster(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "rcrp-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "worker")
+	f.HaveAliveSession(conv, "spwn-rcrp", "tmux-rcrp", "/tmp/rcrp")
+	f.HaveEnrolledAgent(conv)
+
+	r := f.Reincarnate(conv, "carry on")
+	require.NotEmpty(t, r.NewConv, "reincarnate returns a new conv-id")
+
+	// Precondition: the predecessor's ENROLLMENT is retired (the legacy bit),
+	// but the ACTOR is not — only its live conv pointer advanced.
+	oldState, _ := db.EnrollmentState(conv)
+	require.Equal(t, db.EnrollmentRetired, oldState, "predecessor enrollment is retired")
+
+	snap := fetchDashSnapshot(t, mux)
+	assert.True(t, agentInSnap(snap.Agents, r.NewConv),
+		"the live successor is the active agent on the roster")
+	assert.False(t, retiredInSnap(snap.Retired, conv),
+		"a reincarnate predecessor must NOT appear on the actor-level retired roster")
+	assert.False(t, agentInSnap(snap.Agents, conv),
+		"the predecessor generation is not a separate active agent")
+	assert.False(t, convInSnap(snap.Conversations, conv),
+		"the predecessor is an agent generation, not a leaked plain conversation")
+}
+
 // Scenario: cloning preserves agentic status — the clone is enrolled
 // as an active agent in its own right, and the original keeps running
 // as an agent too.

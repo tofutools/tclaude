@@ -361,16 +361,45 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 	return n > 0, nil
 }
 
-// ListActiveAgents2 / ListRetiredAgents2 return the actor-level rosters. The
-// `2` suffix is temporary scaffolding: they live alongside the conv-keyed
-// agent_enrollment list functions until the roster surfaces cut over to
-// agent_id, at which point the enrollment ones retire and these lose the
-// suffix.
-func ListActiveAgents2() ([]*Agent, error) { return listAgents(`retired_at = ''`) }
+// ListActiveAgents / ListRetiredAgents return the actor-level rosters — the
+// canonical roster surfaces (the dashboard, power/focus, mailbox, retired
+// cleanup) read these (JOH-26 PR3b). A reincarnate / Claude Code /clear
+// predecessor is a past generation of an ACTIVE actor, so it never appears on
+// the retired roster; only an actor a human explicitly retired (its retired_at
+// dual-written by db.RetireAgent) does. Active reports one row per live actor
+// (its current_conv).
+func ListActiveAgents() ([]*Agent, error) { return listAgents(`retired_at = ''`) }
 
-// ListRetiredAgents2 returns the retired actors (the dashboard reinstate
+// ListRetiredAgents returns the retired actors (the dashboard reinstate
 // candidates).
-func ListRetiredAgents2() ([]*Agent, error) { return listAgents(`retired_at != ''`) }
+func ListRetiredAgents() ([]*Agent, error) { return listAgents(`retired_at != ''`) }
+
+// ListAgentConvIDs returns every conversation generation known to the actor
+// layer — the full set of agent_conversations.conv_id across all actors (active,
+// retired, and superseded predecessors alike). Roster surfaces use it to exclude
+// EVERY agent generation from the "plain conversations" list: the actor rosters
+// expose only each actor's current conv, so without this a predecessor
+// generation would leak in as a promotion candidate.
+func ListAgentConvIDs() (map[string]struct{}, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id FROM agent_conversations`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out[c] = struct{}{}
+	}
+	return out, rows.Err()
+}
 
 func listAgents(where string) ([]*Agent, error) {
 	d, err := Open()

@@ -87,7 +87,7 @@ func TestBackfillAgentEnrollment(t *testing.T) {
 
 	// Idempotent: re-running the backfill changes nothing.
 	require.NoError(t, backfillAgentEnrollment(d), "backfill re-run")
-	active, lerr := ListActiveAgents()
+	active, lerr := listActiveEnrollments()
 	require.NoError(t, lerr)
 	assert.Len(t, active, 5, "re-running the backfill must not duplicate rows")
 }
@@ -139,7 +139,7 @@ func TestMigrateV30toV31RemovesSupersededEnrollments(t *testing.T) {
 
 	// Idempotent: re-running deletes nothing more.
 	require.NoError(t, migrateV30toV31(d), "migrateV30toV31 re-run")
-	active, lerr := ListActiveAgents()
+	active, lerr := listActiveEnrollments()
 	require.NoError(t, lerr)
 	assert.Len(t, active, 2, "only chain-c + loner remain enrolled")
 }
@@ -200,9 +200,9 @@ func TestEnrollmentLifecycle(t *testing.T) {
 
 	// List surfaces split active vs retired.
 	_, _ = RetireAgent("c2", "human", "")
-	active, err := ListActiveAgents()
+	active, err := listActiveEnrollments()
 	require.NoError(t, err)
-	retired, err := ListRetiredAgents()
+	retired, err := listRetiredEnrollments()
 	require.NoError(t, err)
 	assert.Len(t, active, 1, "c1 active")
 	assert.Len(t, retired, 1, "c2 retired")
