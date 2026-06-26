@@ -71,7 +71,7 @@ func TestRetireAgentRetiresActor(t *testing.T) {
 	assert.False(t, a.Active(), "the actor must be retired alongside the enrollment")
 	assert.Equal(t, "human", a.RetiredBy)
 
-	active, _ := ListActiveAgents2()
+	active, _ := ListActiveAgents()
 	assert.NotContains(t, agentIDs(active), agentID, "a retired actor is off the active roster")
 }
 

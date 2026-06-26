@@ -217,20 +217,21 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	// relies on. ListActiveAgents excludes retired agents.
 	if active, err := db.ListActiveAgents(); err == nil {
 		for _, e := range active {
-			if e.ConvID == "" || e.ConvID == myID {
+			conv := e.CurrentConvID
+			if conv == "" || conv == myID {
 				continue
 			}
-			if _, exists := byConv[e.ConvID]; exists {
+			if _, exists := byConv[conv]; exists {
 				continue
 			}
-			if groups, gerr := db.ListGroupsForConv(e.ConvID); gerr != nil || len(groups) > 0 {
+			if groups, gerr := db.ListGroupsForConv(conv); gerr != nil || len(groups) > 0 {
 				continue
 			}
-			byConv[e.ConvID] = &peerEntry{
-				ConvID:            e.ConvID,
-				Title:             agent.FreshTitle(e.ConvID),
-				agentLocationView: locationView(e.ConvID),
-				Online:            isConvOnlineIn(e.ConvID, aliveSessions),
+			byConv[conv] = &peerEntry{
+				ConvID:            conv,
+				Title:             agent.FreshTitle(conv),
+				agentLocationView: locationView(conv),
+				Online:            isConvOnlineIn(conv, aliveSessions),
 			}
 		}
 	}
