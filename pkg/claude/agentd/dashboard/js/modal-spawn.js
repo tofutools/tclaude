@@ -14,7 +14,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, bindBackdropDiscard } from './refresh.js';
+import { refresh, toast, bindBackdropDiscard, confirmModal } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -982,6 +982,25 @@ async function submitAgentSpawn() {
       updateSpawnNameHint();
     } else {
       showModalError(errEl, 'name may use only letters, digits, underscore and dash (max 64 chars)');
+      return;
+    }
+  }
+  // Require a name OR an initial description so the agent is identifiable.
+  // With both blank the agent would get an auto-generated label — usually a
+  // slip where the human typed only an initial message and forgot the name.
+  // Pop the shared confirm overlay (z-index 1000, so it stacks on top of this
+  // still-open modal) before going through with it. Its Esc / Cancel resolves
+  // false WITHOUT closing the spawn modal — so a cancel lands the human right
+  // back here with their fields intact to add a name/description and resubmit.
+  if (!name && !descr) {
+    const proceed = await confirmModal({
+      title: 'Spawn without a name?',
+      body: 'No agent name or description was given, so this agent will get an auto-generated name. Add a name or description, or spawn anyway?',
+      okLabel: 'Spawn anyway',
+    });
+    if (!proceed) {
+      // Drop focus on the Name field so a quick correction needs no mouse.
+      $('#agent-spawn-name').focus();
       return;
     }
   }
