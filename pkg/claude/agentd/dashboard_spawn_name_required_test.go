@@ -5,13 +5,19 @@ import (
 	"testing"
 )
 
-// The spawn modal HARD-requires a name OR an initial description: with both
-// blank the new agent would only get an auto-generated label, which is almost
-// always a slip (the human typed an initial message and forgot the name).
-// submitAgentSpawn rejects that outright with an inline error and re-focuses
-// the Name field — it does NOT spawn. This is pure embedded JS with no server
-// path of its own, so guard the wiring against a silent drop in a future
-// refactor. Mirrors TestDashboardHTML_SpawnNameNormalizeWired.
+// The spawn modal requires a name OR an initial description so the new agent is
+// identifiable. With both blank there are two outcomes, both gated behind the
+// same `if (!name && !descr)` check in submitAgentSpawn:
+//
+//   - An initial message was typed → derive a name from its first few words
+//     (deriveSpawnNameFromMessage) and confirm before spawning. The human
+//     confirms they don't want to pick a name by hand; the agent is auto-named.
+//   - No usable message either → the hard inline error fires and re-focuses the
+//     Name field; the spawn does NOT go through.
+//
+// This is pure embedded JS with no server path of its own, so guard the wiring
+// against a silent drop in a future refactor. Mirrors
+// TestDashboardHTML_SpawnNameNormalizeWired.
 func TestDashboardHTML_SpawnNameOrDescrRequired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -26,13 +32,21 @@ func TestDashboardHTML_SpawnNameOrDescrRequired(t *testing.T) {
 		}
 	}
 
-	// The gate: both-blank → inline error + return, never a spawn.
+	// The gate still fires only when BOTH name and description are blank.
 	must("if (!name && !descr) {", "gate fires only when name AND description are blank")
-	must("give the agent a name or an initial description", "the inline error explains the requirement")
 
-	// The earlier soft-confirm ("spawn anyway") path is gone — the requirement
-	// is now hard, so its confirm copy (which was unique to this gate) must not
-	// linger anywhere in the bundle.
-	mustNot("Spawn without a name?", "the soft-confirm path was replaced by a hard requirement")
-	mustNot("okLabel: 'Spawn anyway'", "no 'spawn anyway' escape hatch anymore")
+	// With an initial message, derive a name from its first words and confirm
+	// before spawning — rather than rejecting.
+	must("function deriveSpawnNameFromMessage(", "the helper that builds a name from the initial message exists")
+	must("deriveSpawnNameFromMessage(initMsg)", "the gate derives a name from the initial message")
+	must("Auto-name this agent?", "the confirm explains the auto-name before spawning")
+
+	// With no derivable name (blank/symbol-only message), the hard inline error
+	// still fires and the spawn does not go through.
+	must("give the agent a name or an initial description", "the inline error explains the requirement when nothing is derivable")
+
+	// The earlier soft-confirm ("spawn anyway") copy from #562 stays gone — the
+	// new confirm is the auto-name one, not a blanket "spawn anyway" escape hatch.
+	mustNot("Spawn without a name?", "the old soft-confirm path is not resurrected")
+	mustNot("okLabel: 'Spawn anyway'", "no 'spawn anyway' escape hatch")
 }

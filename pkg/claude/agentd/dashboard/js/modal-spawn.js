@@ -14,7 +14,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, bindBackdropDiscard } from './refresh.js';
+import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -351,6 +351,26 @@ function normalizeSpawnName(name) {
     out = out.slice(0, MAX_SPAWN_NAME_LEN).replace(/-+$/, '');
   }
   return out;
+}
+
+// deriveSpawnNameFromMessage builds a fallback spawn name from the first few
+// words of the initial message — used when the human gave neither a name nor a
+// description but did type an initial message (so they clearly meant to spawn
+// *something*, they just skipped naming it). It takes up to the first four
+// whitespace-separated words, dropping any that are pure punctuation/emoji
+// (those normalize to nothing, so they shouldn't eat a word slot), and runs the
+// result through normalizeSpawnName — yielding the same [A-Za-z0-9_-] token,
+// length-capped, that the daemon would accept as a name. Returns "" when the
+// message has no usable characters at all (blank, or all symbols), so the caller
+// can fall back to requiring an explicit name.
+function deriveSpawnNameFromMessage(msg) {
+  const words = [];
+  for (const raw of (msg || '').trim().split(/\s+/)) {
+    const w = normalizeSpawnName(raw);
+    if (w) words.push(w);
+    if (words.length >= 4) break;
+  }
+  return normalizeSpawnName(words.join('-'));
 }
 
 // updateSpawnNameHint shows a live preview under the Name field: when the
@@ -987,17 +1007,41 @@ async function submitAgentSpawn() {
     }
   }
   // Require a name OR an initial description so the agent is identifiable.
-  // Both blank is rejected outright — with neither, the agent would only get
-  // an auto-generated label, which is almost always a slip (the human typed an
-  // initial message and forgot the name). Surface it as an inline error (like
-  // the group/name checks above) and put the cursor in the Name field so a
-  // quick correction needs no mouse. Note `descr` already counts even when its
-  // value would normalize away as a name — a description is free-text, not a
-  // branch/title token, so any non-blank text satisfies the gate.
+  // Note `descr` already counts even when its value would normalize away as a
+  // name — a description is free-text, not a branch/title token, so any
+  // non-blank text satisfies the gate.
+  //
+  // With both blank but an initial message present, the human clearly meant to
+  // spawn *something* and just skipped the name — so rather than reject, derive
+  // a name from the first few words of that message and confirm it (the user
+  // confirms they don't want to pick one by hand). On confirm we adopt the
+  // derived name (mirroring it into the field so the worktree-branch sync + the
+  // normalize preview follow). With no usable message either there's nothing to
+  // derive from — keep the hard inline error and re-focus the Name field so a
+  // quick correction needs no mouse.
   if (!name && !descr) {
-    showModalError(errEl, 'give the agent a name or an initial description');
-    $('#agent-spawn-name').focus();
-    return;
+    const derived = deriveSpawnNameFromMessage(initMsg);
+    if (!derived) {
+      showModalError(errEl, 'give the agent a name or an initial description');
+      $('#agent-spawn-name').focus();
+      return;
+    }
+    const proceed = await confirmModal({
+      title: 'Auto-name this agent?',
+      body: 'No name or description was given, so the agent will be auto-named from the first words of your initial message:',
+      meta: `“${derived}”`,
+      okLabel: 'Auto-name & spawn',
+    });
+    if (!proceed) {
+      // Cancelled — land back on the populated form, Name field focused, so the
+      // human can type a name/description and resubmit.
+      $('#agent-spawn-name').focus();
+      return;
+    }
+    name = derived;
+    $('#agent-spawn-name').value = name;
+    applyWtSync();
+    updateSpawnNameHint();
   }
   // Persist the checkbox so the human's choice sticks across spawns.
   try { dashPrefs.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
