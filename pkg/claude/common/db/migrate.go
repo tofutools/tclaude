@@ -495,8 +495,6 @@ func migrateV71toV72(db *sql.DB) error {
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
 		);
-		CREATE INDEX IF NOT EXISTS idx_agents_active
-			ON agents(agent_id) WHERE retired_at = '';
 
 		CREATE TABLE IF NOT EXISTS agent_conversations (
 			conv_id   TEXT PRIMARY KEY,

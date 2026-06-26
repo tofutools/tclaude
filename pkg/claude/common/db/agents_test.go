@@ -107,9 +107,10 @@ func TestLinkConvToAgent(t *testing.T) {
 	assert.ElementsMatch(t, []string{"gen-1", "gen-2"}, convs)
 }
 
-// TestLinkConvToAgentIsIdempotent: a conv belongs to exactly one actor; a
-// re-link of the same conv is a no-op and never reassigns it.
-func TestLinkConvToAgentIsIdempotent(t *testing.T) {
+// TestLinkConvToAgentConflictAware: a conv belongs to exactly one actor —
+// re-linking it to the SAME actor is an idempotent no-op, but re-linking it
+// to a DIFFERENT actor is refused (error), never silently ignored.
+func TestLinkConvToAgentConflictAware(t *testing.T) {
 	setupTestDB(t)
 	_, err := Open()
 	require.NoError(t, err, "Open")
@@ -119,8 +120,12 @@ func TestLinkConvToAgentIsIdempotent(t *testing.T) {
 	a2, err := AllocateAgent("conv-y", "spawn")
 	require.NoError(t, err)
 
-	// Try to steal conv-x onto a2 — must be ignored (conv_id PK).
-	require.NoError(t, LinkConvToAgent("conv-x", a2, ConvRoleGeneration, "bogus"))
+	// Re-link to the same actor — idempotent no-op.
+	require.NoError(t, LinkConvToAgent("conv-x", a1, ConvRoleHead, "again"))
+
+	// Try to steal conv-x onto a2 — must ERROR, and conv-x stays with a1.
+	err = LinkConvToAgent("conv-x", a2, ConvRoleGeneration, "bogus")
+	require.Error(t, err, "a cross-actor relink must be refused, not silently ignored")
 	got, err := AgentIDForConv("conv-x")
 	require.NoError(t, err)
 	assert.Equal(t, a1, got, "an existing conv link is never reassigned")
@@ -135,6 +140,13 @@ func TestSetAgentCurrentConvCAS(t *testing.T) {
 
 	agentID, err := AllocateAgent("c0", "spawn")
 	require.NoError(t, err)
+	// The live pointer can only point at a linked generation of the actor.
+	require.NoError(t, LinkConvToAgent("c1", agentID, ConvRoleGeneration, "test"))
+	require.NoError(t, LinkConvToAgent("c2", agentID, ConvRoleGeneration, "test"))
+
+	// A conv that is NOT linked to this actor is rejected outright.
+	_, err = SetAgentCurrentConv(agentID, "c0", "stranger")
+	require.Error(t, err, "the live pointer cannot point at an unlinked conv")
 
 	// Stale expectation → no move.
 	moved, err := SetAgentCurrentConv(agentID, "wrong-old", "c1")

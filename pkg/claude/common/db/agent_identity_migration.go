@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -210,29 +211,22 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 
 	// --- stable agent-identity dual-write (JOH-26) ---
 	// A rotation (reincarnate / /clear) preserves the actor: link newConv to
-	// oldConv's agent_id as a fresh generation and advance the live pointer.
-	// The pointer move is a CAS on the prior generation (oldConv) so two
-	// racing rotations cannot both advance the same actor from stale state.
-	// Additive in this release — authorization still reads the conv-keyed
-	// rows rekeyed above; once authz cuts over to agent_id this link is what
-	// makes the rekey unnecessary.
-	agentID, err := ensureAgentForConvTx(tx, oldConv, reason)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: resolve agent: %w", err)
-	}
-	if err := linkConvTx(tx, newConv, agentID, ConvRoleHead, reason, now); err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: link successor generation: %w", err)
-	}
-	if _, err := tx.Exec(`UPDATE agents SET current_conv_id = ?
-		WHERE agent_id = ? AND current_conv_id = ?`,
-		newConv, agentID, oldConv); err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: advance current conv: %w", err)
-	}
-	// Demote the predecessor generation's role: it is no longer the head.
-	if _, err := tx.Exec(`UPDATE agent_conversations SET role = ?
-		WHERE conv_id = ? AND agent_id = ?`,
-		ConvRoleGeneration, oldConv, agentID); err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: demote predecessor generation: %w", err)
+	// oldConv's agent_id as a fresh generation and advance the live pointer,
+	// carrying the display name onto the actor row too. The whole dual-write
+	// is BEST-EFFORT and non-aborting: it can skip (logged) but must never
+	// roll back the legacy conv-keyed rekey above, which is the
+	// behaviour-preserving contract of this additive release. Authorization
+	// still reads the rekeyed rows; once authz cuts over to agent_id, this
+	// link is what makes the rekey unnecessary.
+	if agentID, aerr := ensureAgentForConvTx(tx, oldConv, reason); aerr != nil {
+		slog.Warn("MigrateAgentIdentity: could not resolve actor for dual-write; skipping",
+			"old", oldConv, "new", newConv, "error", aerr)
+	} else if moved, derr := advanceAgentToNewConv(tx, agentID, oldConv, newConv, reason, carriedName, now); derr != nil {
+		slog.Warn("MigrateAgentIdentity: actor dual-write failed; skipping (legacy rekey unaffected)",
+			"old", oldConv, "new", newConv, "agent", agentID, "error", derr)
+	} else if !moved {
+		slog.Warn("MigrateAgentIdentity: actor pointer not advanced (successor owned elsewhere or oldConv not the live head)",
+			"old", oldConv, "new", newConv, "agent", agentID)
 	}
 
 	// --- carry the display name onto newConv.pending_name ---

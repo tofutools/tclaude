@@ -261,8 +261,11 @@ func ConvsForAgent(agentID string) ([]string, error) {
 // two racing rotations cannot both advance the same actor from stale state —
 // the second observes a mismatch (false) instead of silently clobbering.
 //
-// Pass expectedOldConv == "" to set the pointer unconditionally (the
-// allocate path, where there is no prior generation to guard against).
+// newConv MUST already be a linked generation of agentID (link it via
+// LinkConvToAgent first) — the live pointer is, by definition, one of the
+// actor's own generations, never an unrelated or unlinked conv. A newConv
+// that is not linked to agentID is rejected (false, error). Pass
+// expectedOldConv == "" to set the pointer unconditionally.
 func SetAgentCurrentConv(agentID, expectedOldConv, newConv string) (bool, error) {
 	agentID = strings.TrimSpace(agentID)
 	newConv = strings.TrimSpace(newConv)
@@ -272,6 +275,14 @@ func SetAgentCurrentConv(agentID, expectedOldConv, newConv string) (bool, error)
 	d, err := Open()
 	if err != nil {
 		return false, err
+	}
+	owner, err := agentIDForConvTx(d, newConv)
+	if err != nil {
+		return false, err
+	}
+	if owner != agentID {
+		return false, fmt.Errorf("SetAgentCurrentConv: conv %s is not a linked generation of agent %s (owner=%q)",
+			newConv, agentID, owner)
 	}
 	var res sql.Result
 	if expectedOldConv == "" {
@@ -437,11 +448,82 @@ func insertAgentTx(q dbExecQuerier, agentID, convID, via string, now time.Time) 
 	return err
 }
 
+// linkConvTx maps convID onto agentID. Conflict-aware: idempotent when convID
+// is already linked to THIS actor, but a hard error when it is linked to a
+// DIFFERENT one — a conversation generation belongs to exactly one actor, and
+// silently ignoring a cross-actor relink (the old INSERT OR IGNORE) would let
+// agents.current_conv_id drift onto a conv owned by someone else. The check
+// is a SELECT before the INSERT, so on the conflict path it mutates nothing
+// and leaves the surrounding transaction usable.
 func linkConvTx(q dbExecQuerier, convID, agentID, role, reason string, now time.Time) error {
-	_, err := q.Exec(`INSERT OR IGNORE INTO agent_conversations
+	existing, err := agentIDForConvTx(q, convID)
+	if err != nil {
+		return err
+	}
+	if existing == agentID {
+		return nil // already ours — idempotent
+	}
+	if existing != "" {
+		return fmt.Errorf("linkConvToAgent: conv %s already belongs to agent %s (refusing to relink to %s)",
+			convID, existing, agentID)
+	}
+	_, err = q.Exec(`INSERT INTO agent_conversations
 		(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
 		convID, agentID, role, reason, now.Format(time.RFC3339Nano))
 	return err
+}
+
+// advanceAgentToNewConv is the rotation primitive: it links newConv as the
+// fresh head generation of agentID and advances the live pointer from oldConv
+// to newConv, demoting oldConv and carrying the display name onto the actor.
+//
+// It is deliberately best-effort and NON-ABORTING in its skip cases, so a
+// caller can run it inside a larger transaction (reincarnate / /clear) without
+// the dual-write ever rolling back the legacy work:
+//
+//   - returns (false, nil) — a clean skip — when newConv already belongs to a
+//     DIFFERENT actor, or when the CAS finds oldConv is no longer the live
+//     head (RowsAffected 0). Nothing past the skip point is mutated.
+//   - returns (true, nil) when the pointer moved and the demote/name-carry ran.
+//   - returns (_, err) only on a real DB error.
+//
+// The pointer move is a compare-and-swap on oldConv; the demote and name-carry
+// run only after it is known to have moved, so the actor never ends up with
+// two head rows or a name carried onto a pointer that did not advance.
+func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, carriedName string, now time.Time) (bool, error) {
+	existing, err := agentIDForConvTx(tx, newConv)
+	if err != nil {
+		return false, err
+	}
+	if existing != "" && existing != agentID {
+		return false, nil // successor already owned by another actor — skip cleanly
+	}
+	if existing == "" {
+		if _, err := tx.Exec(`INSERT INTO agent_conversations
+			(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
+			newConv, agentID, ConvRoleHead, reason, now.Format(time.RFC3339Nano)); err != nil {
+			return false, err
+		}
+	}
+	res, err := tx.Exec(`UPDATE agents SET current_conv_id = ?
+		WHERE agent_id = ? AND current_conv_id = ?`, newConv, agentID, oldConv)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil // oldConv was not the live head — leave the pointer alone
+	}
+	if _, err := tx.Exec(`UPDATE agent_conversations SET role = ?
+		WHERE conv_id = ? AND agent_id = ?`, ConvRoleGeneration, oldConv, agentID); err != nil {
+		return false, err
+	}
+	if carriedName != "" {
+		if _, err := tx.Exec(`UPDATE agents SET pending_name = ? WHERE agent_id = ?`,
+			carriedName, agentID); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func scanAgent(s rowScanner) (*Agent, error) {

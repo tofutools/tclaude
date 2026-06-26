@@ -102,18 +102,23 @@ func loadSuccessionMap(d *sql.DB) (map[string]string, error) {
 }
 
 // resolveHeadTx walks the succession map forward from conv to the chain head
-// (a conv with no successor). Mirrors ResolveLatestConv's 32-hop cycle guard
-// but runs against an in-memory map so it never re-enters Open().
+// (a conv with no successor). Runs against an in-memory map so it never
+// re-enters Open(). A `seen` set breaks on the first revisited node, so a
+// malformed cycle terminates deterministically instead of looping or
+// mis-resolving on a return-to-origin-only check. Real succession data is a
+// forest (every new_conv_id is freshly minted), so cycles never arise — this
+// is purely a corruption guard.
 func resolveHeadTx(conv string, succ map[string]string) string {
+	seen := map[string]bool{conv: true}
 	cur := conv
-	for range 64 {
+	for {
 		next, ok := succ[cur]
-		if !ok || next == conv {
+		if !ok || seen[next] {
 			return cur
 		}
+		seen[next] = true
 		cur = next
 	}
-	return cur
 }
 
 // ensureAgentForHeadTx returns the actor owning head, allocating one (with
@@ -141,7 +146,7 @@ func ensureAgentForHeadTx(d *sql.DB, head string, now time.Time) (string, error)
 		return "", err
 	}
 
-	created, via, retiredAt, retiredBy, retireReason, pendingName := headEnrollmentFacts(d, head)
+	created, via, retiredAt, retiredBy, retireReason, pendingName := headEnrollmentFacts(d, head, now)
 	agentID := newAgentID()
 	if _, err := d.Exec(`INSERT INTO agents
 		(agent_id, current_conv_id, created_at, created_via,
@@ -159,10 +164,15 @@ func ensureAgentForHeadTx(d *sql.DB, head string, now time.Time) (string, error)
 // headEnrollmentFacts reads the actor-level facts to seed an agent from its
 // head generation's agent_enrollment row. Falls back to sensible defaults
 // (created_at = now, created_via = "backfill") when the head has no
-// enrollment row — defensive: a conv referenced only by an identity table.
-func headEnrollmentFacts(d *sql.DB, head string) (createdAt, via, retiredAt, retiredBy, retireReason, pendingName string) {
+// enrollment row, or when agent_enrollment is absent entirely (a
+// partial-schema heal DB) — defensive: a conv referenced only by an identity
+// table still becomes an actor.
+func headEnrollmentFacts(d *sql.DB, head string, now time.Time) (createdAt, via, retiredAt, retiredBy, retireReason, pendingName string) {
 	via = "backfill"
-	createdAt = time.Now().Format(time.RFC3339Nano)
+	createdAt = now.Format(time.RFC3339Nano)
+	if ok, err := tableExists(d, "agent_enrollment"); err != nil || !ok {
+		return createdAt, via, "", "", "", ""
+	}
 	row := d.QueryRow(`SELECT enrolled_at, enrolled_via,
 		retired_at, retired_by, retire_reason, pending_name
 		FROM agent_enrollment WHERE conv_id = ?`, head)

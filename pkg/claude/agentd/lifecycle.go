@@ -2011,6 +2011,16 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // when it isn't a valid rename title, so the dashboard can show the intended
 // name during the brief window before the title materialises.
 func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *spawnFailure) {
+	// Stable agent-identity dual-write (JOH-26): a spawn is the birth of a new
+	// actor. Mint its agent_id BEFORE the group-add so created_via is the
+	// precise "spawn" rather than the "group" tag AddAgentGroupMember's own
+	// enrollment would otherwise stamp (EnrollAgent ensures an actor too, but
+	// it is a no-op once this conv is already linked). Idempotent.
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	if err != nil {
+		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
+	}
+
 	// Membership add. Permission gating already happened in the caller;
 	// this is just the DB write.
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
@@ -2021,14 +2031,6 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	}); err != nil {
 		return 0, &spawnFailure{http.StatusInternalServerError, "io",
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
-	}
-
-	// Stable agent-identity dual-write (JOH-26): a spawn is the birth of a
-	// new actor — give it an agent_id now so it shows on the agent-keyed
-	// roster the moment it spawns, not only on its first /v1 call. Idempotent.
-	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
-	if err != nil {
-		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
 	}
 
 	// Record the requested name as the agent's pending display name. Until
