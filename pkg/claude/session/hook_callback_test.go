@@ -728,14 +728,17 @@ func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, newConv, got.ConvID, "session row should follow the /clear rotation")
 
-	// Group membership migrated old → new.
+	// Group membership is agent-keyed (JOH-26): it was never rekeyed across the
+	// /clear — it belongs to the actor, reachable from the new conv (and from
+	// the old one, which is the same actor). No membership row moved.
 	newGroups, err := db.ListGroupsForConv(newConv)
 	require.NoError(t, err)
-	require.Len(t, newGroups, 1, "new conv should be the group member")
+	require.Len(t, newGroups, 1, "new conv resolves to the group member")
 	assert.Equal(t, "alpha", newGroups[0].Name)
 	oldGroups, err := db.ListGroupsForConv(oldConv)
 	require.NoError(t, err)
-	assert.Empty(t, oldGroups, "old conv should no longer be a member")
+	require.Len(t, oldGroups, 1, "the predecessor generation resolves to the same member actor")
+	assert.Equal(t, "alpha", oldGroups[0].Name)
 
 	// Old conv retired; succession edge recorded. We retire (not
 	// delete) the old enrollment so a human can reinstate the

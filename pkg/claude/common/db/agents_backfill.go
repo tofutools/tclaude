@@ -225,7 +225,12 @@ func collectAgentConvs(d *sql.DB) ([]string, error) {
 	}
 	var selects []string
 	for _, s := range sources {
-		ok, err := tableExists(d, s.table)
+		// Skip a source whose table or column is absent. The column guard
+		// matters AFTER the v73 cutover: the membership/owner/permission/sudo/
+		// notify tables become agent-keyed (no conv_id), and their actors
+		// already exist by construction, so they contribute nothing to a
+		// coverage backfill. Pre-v73 they still carry conv_id and are included.
+		ok, err := columnExists(d, s.table, s.col)
 		if err != nil {
 			return nil, err
 		}
@@ -259,6 +264,20 @@ func tableExists(d *sql.DB, name string) (bool, error) {
 	var n int
 	if err := d.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name,
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// columnExists reports whether `table` exists AND has a column named `col`.
+// pragma_table_info returns no rows for a missing table, so a single query
+// answers both. Used by the coverage backfill to tolerate the v73 cutover,
+// after which some source tables lose their conv_id column.
+func columnExists(d *sql.DB, table, col string) (bool, error) {
+	var n int
+	if err := d.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col,
 	).Scan(&n); err != nil {
 		return false, err
 	}

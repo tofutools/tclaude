@@ -30,13 +30,26 @@ func SetConvNotifyPref(convID, mode string) error {
 	if err != nil {
 		return err
 	}
+	// The pref is keyed on the stable agent_id (JOH-26) so a "mute this agent"
+	// choice follows the actor across conv rotations.
 	switch mode {
 	case "", NotifyPrefInherit:
-		_, err = db.Exec(`DELETE FROM agent_notify_prefs WHERE conv_id = ?`, convID)
+		agentID, aerr := AgentIDForConv(convID)
+		if aerr != nil {
+			return aerr
+		}
+		if agentID == "" {
+			return nil // no actor ⇒ nothing to clear
+		}
+		_, err = db.Exec(`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, agentID)
 		return err
 	case NotifyPrefOn, NotifyPrefOff:
-		_, err = db.Exec(`INSERT OR REPLACE INTO agent_notify_prefs (conv_id, mode, updated_at) VALUES (?, ?, ?)`,
-			convID, mode, time.Now().Format(time.RFC3339Nano))
+		agentID, _, aerr := EnsureAgentForConv(convID, "notify-pref")
+		if aerr != nil {
+			return aerr
+		}
+		_, err = db.Exec(`INSERT OR REPLACE INTO agent_notify_prefs (agent_id, mode, updated_at) VALUES (?, ?, ?)`,
+			agentID, mode, time.Now().Format(time.RFC3339Nano))
 		return err
 	default:
 		return fmt.Errorf("invalid notify pref %q (want %q, %q or %q)",
@@ -52,8 +65,15 @@ func GetConvNotifyPref(convID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return "", err
+	}
+	if agentID == "" {
+		return "", nil
+	}
 	var mode string
-	err = db.QueryRow(`SELECT mode FROM agent_notify_prefs WHERE conv_id = ?`, convID).Scan(&mode)
+	err = db.QueryRow(`SELECT mode FROM agent_notify_prefs WHERE agent_id = ?`, agentID).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -70,7 +90,9 @@ func ListConvNotifyPrefs() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT conv_id, mode FROM agent_notify_prefs`)
+	// Keyed by each actor's current conv for the display-facing map.
+	rows, err := db.Query(`SELECT ag.current_conv_id, n.mode
+		FROM agent_notify_prefs n JOIN agents ag ON ag.agent_id = n.agent_id`)
 	if err != nil {
 		return nil, err
 	}

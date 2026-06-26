@@ -81,9 +81,16 @@ func HasAgentPermissionRow(convID, slug string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if agentID == "" {
+		return false, nil
+	}
 	var n int
-	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE conv_id = ? AND slug = ? AND effect = ?`,
-		convID, slug, PermEffectGrant).Scan(&n)
+	err = db.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ? AND slug = ? AND effect = ?`,
+		agentID, slug, PermEffectGrant).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -99,8 +106,15 @@ func AgentPermissionOverride(convID, slug string) (effect string, ok bool, err e
 	if err != nil {
 		return "", false, err
 	}
-	err = db.QueryRow(`SELECT effect FROM agent_permissions WHERE conv_id = ? AND slug = ?`,
-		convID, slug).Scan(&effect)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return "", false, err
+	}
+	if agentID == "" {
+		return "", false, nil
+	}
+	err = db.QueryRow(`SELECT effect FROM agent_permissions WHERE agent_id = ? AND slug = ?`,
+		agentID, slug).Scan(&effect)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -120,8 +134,15 @@ func ListAgentPermissionsForConv(convID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT slug FROM agent_permissions WHERE conv_id = ? AND effect = ? ORDER BY slug`,
-		convID, PermEffectGrant)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return []string{}, nil
+	}
+	rows, err := db.Query(`SELECT slug FROM agent_permissions WHERE agent_id = ? AND effect = ? ORDER BY slug`,
+		agentID, PermEffectGrant)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +167,14 @@ func ListAgentPermissionOverridesForConv(convID string) (map[string]string, erro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT slug, effect FROM agent_permissions WHERE conv_id = ? ORDER BY slug`, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return map[string]string{}, nil
+	}
+	rows, err := db.Query(`SELECT slug, effect FROM agent_permissions WHERE agent_id = ? ORDER BY slug`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +199,11 @@ func ListAllAgentPermissions() (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT conv_id, slug FROM agent_permissions WHERE effect = ? ORDER BY conv_id, slug`,
+	// Keyed by the actor's CURRENT conv for display (the dashboard renders per
+	// live conv); the table is agent-keyed, so resolve through agents.
+	rows, err := db.Query(`SELECT ag.current_conv_id, p.slug
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
+		WHERE p.effect = ? ORDER BY ag.current_conv_id, p.slug`,
 		PermEffectGrant)
 	if err != nil {
 		return nil, err
@@ -197,7 +229,9 @@ func ListAllAgentPermissionOverrides() (map[string]map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT conv_id, slug, effect FROM agent_permissions ORDER BY conv_id, slug`)
+	rows, err := db.Query(`SELECT ag.current_conv_id, p.slug, p.effect
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
+		ORDER BY ag.current_conv_id, p.slug`)
 	if err != nil {
 		return nil, err
 	}
@@ -236,20 +270,29 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO agent_permissions
-		(conv_id, slug, effect, granted_at, granted_by)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(conv_id, slug) DO UPDATE SET
-			effect     = excluded.effect,
-			granted_at = excluded.granted_at,
-			granted_by = excluded.granted_by`,
-		convID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy)
+	// Holding a permission override (grant or deny) makes the conv an agent —
+	// a deny is still per-agent permission config. EnrollAgent also ensures
+	// the stable actor; we then key the override on agent_id (JOH-26) so it
+	// survives conv rotations without a rekey.
+	if err := EnrollAgent(convID, "grant"); err != nil {
+		return err
+	}
+	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return err
 	}
-	// Holding a permission override (grant or deny) makes the conv an
-	// agent — a deny is still per-agent permission config.
-	return EnrollAgent(convID, "grant")
+	if agentID == "" {
+		return fmt.Errorf("SetAgentPermissionOverride: no actor for conv %s", convID)
+	}
+	_, err = db.Exec(`INSERT INTO agent_permissions
+		(agent_id, slug, effect, granted_at, granted_by)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(agent_id, slug) DO UPDATE SET
+			effect     = excluded.effect,
+			granted_at = excluded.granted_at,
+			granted_by = excluded.granted_by`,
+		agentID, slug, effect, time.Now().Format(time.RFC3339Nano), grantedBy)
+	return err
 }
 
 // RevokeAgentPermission removes a single (convID, slug). Idempotent.
@@ -259,7 +302,14 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`DELETE FROM agent_permissions WHERE conv_id = ? AND slug = ?`, convID, slug)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	res, err := db.Exec(`DELETE FROM agent_permissions WHERE agent_id = ? AND slug = ?`, agentID, slug)
 	if err != nil {
 		return 0, err
 	}
@@ -275,7 +325,14 @@ func RevokeAllAgentPermissionsForConv(convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`DELETE FROM agent_permissions WHERE conv_id = ?`, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	res, err := db.Exec(`DELETE FROM agent_permissions WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -748,18 +805,27 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if m.JoinedAt.IsZero() {
 		m.JoinedAt = time.Now()
 	}
-	_, err = db.Exec(`INSERT OR REPLACE INTO agent_group_members
-		(group_id, conv_id, role, descr, joined_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		m.GroupID, m.ConvID, m.Role, m.Descr,
-		m.JoinedAt.Format(time.RFC3339Nano))
+	// Joining a group makes the conv an agent. EnrollAgent also ensures the
+	// stable actor; the membership is then keyed on agent_id (JOH-26) so it
+	// survives conv rotations without a rekey. Insert-only — a stray add never
+	// un-retires; the dashboard add-member flow reinstates retired targets
+	// explicitly.
+	if err := EnrollAgent(m.ConvID, "group"); err != nil {
+		return err
+	}
+	agentID, err := AgentIDForConv(m.ConvID)
 	if err != nil {
 		return err
 	}
-	// Joining a group makes the conv an agent. Insert-only — a stray
-	// add never un-retires; the dashboard add-member flow reinstates
-	// retired targets explicitly.
-	return EnrollAgent(m.ConvID, "group")
+	if agentID == "" {
+		return fmt.Errorf("AddAgentGroupMember: no actor for conv %s", m.ConvID)
+	}
+	_, err = db.Exec(`INSERT OR REPLACE INTO agent_group_members
+		(group_id, agent_id, role, descr, joined_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		m.GroupID, agentID, m.Role, m.Descr,
+		m.JoinedAt.Format(time.RFC3339Nano))
+	return err
 }
 
 // UpdateAgentGroupMember patches non-nil fields on an existing member.
@@ -783,12 +849,19 @@ func UpdateAgentGroupMember(groupID int64, convID string, role, descr *string) (
 	if len(sets) == 0 {
 		return 0, nil
 	}
-	args = append(args, groupID, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	args = append(args, groupID, agentID)
 	q := "UPDATE agent_group_members SET " + sets[0]
 	for i := 1; i < len(sets); i++ {
 		q += ", " + sets[i]
 	}
-	q += " WHERE group_id = ? AND conv_id = ?"
+	q += " WHERE group_id = ? AND agent_id = ?"
 	res, err := db.Exec(q, args...)
 	if err != nil {
 		return 0, err
@@ -803,8 +876,15 @@ func RemoveAgentGroupMember(groupID int64, convID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND conv_id = ?`,
-		groupID, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return err
+	}
+	if agentID == "" {
+		return nil
+	}
+	_, err = db.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND agent_id = ?`,
+		groupID, agentID)
 	return err
 }
 
@@ -828,25 +908,34 @@ type AgentDeletionCounts struct {
 	NotifyPrefs    int64 `json:"notify_prefs"`
 }
 
-// DeleteAgentByConvID purges every row that references convID across
-// the agent / conv / session tables. Single transaction — partial
-// failure rolls everything back.
+// DeleteAgentByConvID purges the conversation generation convID, plus —
+// when convID is its actor's live generation — the actor's identity. Single
+// transaction; partial failure rolls everything back.
 //
-// Tables hit (in dependency order):
+// Conv-scoped (always, keyed on convID — these belong to THIS generation):
 //
-//   - agent_group_members
-//   - agent_group_owners
 //   - agent_messages (from_conv = ? OR to_conv = ?)
-//   - agent_permissions
-//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades
-//     to agent_cron_runs via the FK.
-//   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?).
-//     Both sides — chain history of the deleted agent disappears.
+//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades to
+//     agent_cron_runs via the FK.
+//   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?)
 //   - conv_embeddings
 //   - conv_index
 //   - sessions
 //   - agent_enrollment
-//   - agent_notify_prefs
+//
+// Actor-scoped (keyed on the resolved agent_id) — ONLY when convID is the
+// actor's current_conv_id (its live generation):
+//
+//   - agent_group_members, agent_group_owners, agent_permissions,
+//     agent_notify_prefs
+//   - agents (cascades the remaining agent_conversations links)
+//
+// Deleting a PREDECESSOR generation (a reincarnate / Claude Code /clear keeps
+// the old conv around) instead only unlinks that one conv from its actor — the
+// live actor and its identity survive (JOH-26). When convID is the live
+// generation and the actor has older generations, those predecessors' own
+// conv-scoped rows + .jsonl are left behind (cleaning them up across an actor's
+// whole generation set is a later stage).
 //
 // Filesystem state (the .jsonl in ~/.claude/projects/... and the
 // ~/.claude/session-env/<convID> file) is the caller's
@@ -870,16 +959,21 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	type step struct {
+	agentID, err := agentIDForConvTx(tx, convID)
+	if err != nil {
+		return c, err
+	}
+
+	// Conv-scoped teardown: this conversation generation's runtime, history,
+	// index and message rows. Always removed — they belong to THIS generation,
+	// not to the actor as a whole.
+	type convStep struct {
 		stmt string
 		into *int64
 	}
-	steps := []step{
-		{`DELETE FROM agent_group_members WHERE conv_id = ?`, &c.GroupMembers},
-		{`DELETE FROM agent_group_owners WHERE conv_id = ?`, &c.GroupOwners},
+	for _, s := range []convStep{
 		{`DELETE FROM agent_messages WHERE from_conv = ?`, &c.MessagesFrom},
 		{`DELETE FROM agent_messages WHERE to_conv = ?`, &c.MessagesTo},
-		{`DELETE FROM agent_permissions WHERE conv_id = ?`, &c.Permissions},
 		{`DELETE FROM agent_cron_jobs WHERE owner_conv = ?`, &c.CronJobsOwned},
 		{`DELETE FROM agent_cron_jobs WHERE target_conv = ?`, &c.CronJobsTarget},
 		{`DELETE FROM agent_conv_succession WHERE old_conv_id = ?`, &c.SuccessionOld},
@@ -888,15 +982,65 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
 		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, &c.Enrollment},
-		{`DELETE FROM agent_notify_prefs WHERE conv_id = ?`, &c.NotifyPrefs},
-	}
-	for _, s := range steps {
+	} {
 		res, err := tx.Exec(s.stmt, convID)
 		if err != nil {
 			return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
 		}
 		n, _ := res.RowsAffected()
 		*s.into = n
+	}
+
+	// Actor-scoped teardown: the agent_id-keyed identity rows (memberships,
+	// ownerships, permission overrides, notify pref) and the actor row itself.
+	// Only when convID is the actor's CURRENT (live) generation. Under JOH-26 a
+	// reincarnate / Claude Code /clear leaves the old conv around as a past
+	// GENERATION of the same active actor — deleting one of those predecessors
+	// must NOT wipe the live actor's identity. So:
+	//   - current generation  → tear the whole actor down; the `agents` delete
+	//     cascades every remaining agent_conversations link.
+	//   - predecessor generation → unlink just this conv; the actor and its
+	//     identity (and other generations) stay put.
+	// agentID == "" means the conv is not an agent at all — nothing actor-level.
+	if agentID != "" {
+		var current string
+		switch err := tx.QueryRow(
+			`SELECT current_conv_id FROM agents WHERE agent_id = ?`, agentID).Scan(&current); {
+		case errors.Is(err, sql.ErrNoRows):
+			// Actor row already gone (e.g. an earlier partial delete) — clear any
+			// stale generation link this conv still holds.
+			if _, err := tx.Exec(`DELETE FROM agent_conversations WHERE conv_id = ?`, convID); err != nil {
+				return AgentDeletionCounts{}, fmt.Errorf("delete agent (unlink generation): %w", err)
+			}
+		case err != nil:
+			return c, err
+		case current == convID:
+			type actorStep struct {
+				stmt string
+				into *int64
+			}
+			for _, s := range []actorStep{
+				{`DELETE FROM agent_group_members WHERE agent_id = ?`, &c.GroupMembers},
+				{`DELETE FROM agent_group_owners WHERE agent_id = ?`, &c.GroupOwners},
+				{`DELETE FROM agent_permissions WHERE agent_id = ?`, &c.Permissions},
+				{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, &c.NotifyPrefs},
+				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
+			} {
+				res, err := tx.Exec(s.stmt, agentID)
+				if err != nil {
+					return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
+				}
+				if s.into != nil {
+					n, _ := res.RowsAffected()
+					*s.into = n
+				}
+			}
+		default:
+			// Predecessor generation: unlink just this conv; the actor lives on.
+			if _, err := tx.Exec(`DELETE FROM agent_conversations WHERE conv_id = ?`, convID); err != nil {
+				return AgentDeletionCounts{}, fmt.Errorf("delete agent (unlink generation): %w", err)
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentDeletionCounts{}, err
@@ -914,7 +1058,14 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`DELETE FROM agent_group_members WHERE conv_id = ?`, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	res, err := db.Exec(`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -922,15 +1073,17 @@ func RemoveAllAgentGroupMembershipsForConv(convID string) (int64, error) {
 	return n, nil
 }
 
-// ListAgentGroupMembers returns the members of a group, ordered by
-// joined_at then conv_id.
+// ListAgentGroupMembers returns the members of a group, ordered by joined_at
+// then conv_id. The membership is agent-keyed (JOH-26); the ConvID field is
+// resolved to each actor's CURRENT conv for display/delivery.
 func ListAgentGroupMembers(groupID int64) ([]*AgentGroupMember, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT group_id, conv_id, role, descr, joined_at
-		FROM agent_group_members WHERE group_id = ? ORDER BY joined_at, conv_id`, groupID)
+	rows, err := db.Query(`SELECT m.group_id, ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.group_id = ? ORDER BY m.joined_at, ag.current_conv_id`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -954,11 +1107,18 @@ func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
 	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
-		WHERE m.conv_id = ?
-		ORDER BY g.name`, convID)
+		WHERE m.agent_id = ?
+		ORDER BY g.name`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -984,10 +1144,13 @@ func GroupNamesByConv() (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT m.conv_id, g.name
+	// Membership is agent-keyed; resolve to each actor's current conv for the
+	// display-facing conv→group-names map.
+	rows, err := db.Query(`SELECT ag.current_conv_id, g.name
 		FROM agent_group_members m
+		JOIN agents ag ON ag.agent_id = m.agent_id
 		JOIN agent_groups g ON g.id = m.group_id
-		ORDER BY m.conv_id, g.name`)
+		ORDER BY ag.current_conv_id, g.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,11 +1174,22 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
+	agentA, err := AgentIDForConv(a)
+	if err != nil {
+		return nil, err
+	}
+	agentB, err := AgentIDForConv(b)
+	if err != nil {
+		return nil, err
+	}
+	if agentA == "" || agentB == "" {
+		return nil, nil
+	}
 	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
 		FROM agent_groups g
-		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.conv_id = ?
-		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.conv_id = ?
-		ORDER BY g.name`, a, b)
+		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.agent_id = ?
+		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.agent_id = ?
+		ORDER BY g.name`, agentA, agentB)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,8 +1213,16 @@ func FindMemberInGroup(groupID int64, convID string) (*AgentGroupMember, error) 
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT group_id, conv_id, role, descr, joined_at
-		FROM agent_group_members WHERE group_id = ? AND conv_id = ?`, groupID, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
+	row := db.QueryRow(`SELECT m.group_id, ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.group_id = ? AND m.agent_id = ?`, groupID, agentID)
 	m, err := scanAgentGroupMember(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -1127,15 +1309,23 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(
-		`INSERT OR IGNORE INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
-		 VALUES (?, ?, ?, ?)`,
-		groupID, convID, time.Now().Format(time.RFC3339Nano), grantedBy)
+	// Owning a group makes the conv an agent. EnrollAgent ensures the actor;
+	// ownership is then keyed on agent_id (JOH-26).
+	if err := EnrollAgent(convID, "group"); err != nil {
+		return err
+	}
+	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return err
 	}
-	// Owning a group makes the conv an agent.
-	return EnrollAgent(convID, "group")
+	if agentID == "" {
+		return fmt.Errorf("AddAgentGroupOwner: no actor for conv %s", convID)
+	}
+	_, err = d.Exec(
+		`INSERT OR IGNORE INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
+		 VALUES (?, ?, ?, ?)`,
+		groupID, agentID, time.Now().Format(time.RFC3339Nano), grantedBy)
+	return err
 }
 
 // RemoveAgentGroupOwner clears an ownership row. Returns the number
@@ -1145,9 +1335,16 @@ func RemoveAgentGroupOwner(groupID int64, convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
 	res, err := d.Exec(
-		`DELETE FROM agent_group_owners WHERE group_id = ? AND conv_id = ?`,
-		groupID, convID)
+		`DELETE FROM agent_group_owners WHERE group_id = ? AND agent_id = ?`,
+		groupID, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -1164,7 +1361,14 @@ func RemoveAllAgentGroupOwnershipsForConv(convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`DELETE FROM agent_group_owners WHERE conv_id = ?`, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
+	res, err := d.Exec(`DELETE FROM agent_group_owners WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -1172,17 +1376,25 @@ func RemoveAllAgentGroupOwnershipsForConv(convID string) (int64, error) {
 	return n, nil
 }
 
-// IsAgentGroupOwner returns true when (groupID, convID) is in
-// agent_group_owners.
+// IsAgentGroupOwner returns true when convID's actor owns groupID. Resolves
+// the conv to its stable agent_id (JOH-26), so ANY generation of the actor —
+// not just its current conv — answers correctly.
 func IsAgentGroupOwner(groupID int64, convID string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if agentID == "" {
+		return false, nil
+	}
 	var n int
 	err = d.QueryRow(
-		`SELECT COUNT(*) FROM agent_group_owners WHERE group_id = ? AND conv_id = ?`,
-		groupID, convID).Scan(&n)
+		`SELECT COUNT(*) FROM agent_group_owners WHERE group_id = ? AND agent_id = ?`,
+		groupID, agentID).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -1197,9 +1409,10 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT group_id, conv_id, granted_at, granted_by
-		 FROM agent_group_owners WHERE group_id = ?
-		 ORDER BY granted_at DESC`,
+		`SELECT o.group_id, ag.current_conv_id, o.granted_at, o.granted_by
+		 FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
+		 WHERE o.group_id = ?
+		 ORDER BY o.granted_at DESC`,
 		groupID)
 	if err != nil {
 		return nil, err
@@ -1229,7 +1442,14 @@ func ListGroupsOwnedBy(convID string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT group_id FROM agent_group_owners WHERE conv_id = ?`, convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
+	rows, err := d.Query(`SELECT group_id FROM agent_group_owners WHERE agent_id = ?`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1348,11 +1568,18 @@ func FindAgentMembersBySelector(selector string) ([]*AgentGroupMember, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT group_id, conv_id, role, descr, joined_at
-		FROM agent_group_members
-		WHERE conv_id = ?
-		   OR conv_id LIKE ?
-		ORDER BY joined_at DESC`
+	// Membership is agent-keyed; match the selector against ANY of the actor's
+	// conversation generations (agent_conversations), then return its rows with
+	// the actor's current conv for the ConvID field. The IN-subquery (rather
+	// than a JOIN on agent_conversations) avoids fan-out when a prefix matches
+	// several generations of the same actor.
+	q := `SELECT m.group_id, ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m
+		JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.agent_id IN (
+			SELECT agent_id FROM agent_conversations WHERE conv_id = ? OR conv_id LIKE ?
+		)
+		ORDER BY m.joined_at DESC`
 	rows, err := d.Query(q, selector, selector+"%")
 	if err != nil {
 		return nil, err

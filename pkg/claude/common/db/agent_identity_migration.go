@@ -10,12 +10,18 @@ import (
 // per-table count of rows rekeyed old → new, plus the agent's carried
 // display name. Items is a compact human-readable summary (only the
 // non-zero facets) for API responses and logs.
+//
+// As of the JOH-26 v73 cutover only CronJobs is ever populated: the identity
+// tables are agent-keyed and no longer rekeyed on rotation. The other count
+// fields are retained (so summarize/Items and any API shape stay stable) but
+// are always zero now; they go away with MigrateAgentIdentity itself in the
+// final stage.
 type AgentIdentityMigration struct {
-	GroupMembers int64  // agent_group_members rows rekeyed
-	Ownerships   int64  // agent_group_owners rows rekeyed
-	Permissions  int64  // agent_permissions rows rekeyed
+	GroupMembers int64  // always 0 post-v73 (agent-keyed, no rekey)
+	Ownerships   int64  // always 0 post-v73 (agent-keyed, no rekey)
+	Permissions  int64  // always 0 post-v73 (agent-keyed, no rekey)
 	CronJobs     int64  // agent_cron_jobs rows whose owner/target ref moved
-	NotifyPrefs  int64  // agent_notify_prefs rows rekeyed
+	NotifyPrefs  int64  // always 0 post-v73 (agent-keyed, no rekey)
 	CarriedName  string // the agent's display name, carried onto newConv
 	Items        []string
 }
@@ -49,14 +55,14 @@ func resolveCarriedName(oldConv string) string {
 	return ""
 }
 
-// MigrateAgentIdentity rekeys every conv-id-keyed agentd identity row
-// from oldConv onto newConv, in a SINGLE SQLite transaction:
+// MigrateAgentIdentity handles a conv-id rotation (reincarnate / /clear).
 //
-//   - agent_group_members  — group memberships
-//   - agent_group_owners   — group ownerships
-//   - agent_permissions    — per-conv permission overrides (grant AND deny)
-//   - agent_cron_jobs      — owner/target conv refs
-//   - agent_notify_prefs   — per-agent notification override
+// As of the JOH-26 agent-id cutover (v73), the identity-bearing tables —
+// group memberships, ownerships, permission overrides, sudo grants, notify
+// prefs — are keyed on the stable agent_id, so they need NO rekey: the actor
+// keeps its agent_id and only its live conv pointer advances (the agent
+// dual-write below). The single remaining conv-keyed rotation here is
+// agent_cron_jobs (owner/target conv refs), which is still rewritten old→new.
 //
 // Within the same transaction it records the succession edge
 // (agent_conv_succession: old → new, so stale references resolve
@@ -83,11 +89,9 @@ func resolveCarriedName(oldConv string) string {
 //
 // reason is the short succession tag ("reincarnate", "clear") — it is
 // stored on the succession row and used as newConv's enrollment `via`.
-// granter is the audit string written to the migrated permission /
-// ownership rows' granted_by column (e.g. "system:reincarnate",
-// "system:clear") — same convention clone / groups-create follow.
-// Group-membership rows are rekeyed pure (conv_id only): role, descr
-// and the original joined_at are preserved.
+// granter is the audit string (e.g. "system:reincarnate", "system:clear")
+// — retained for the audit-trail convention clone / groups-create follow,
+// though as of the cutover no per-row granted_by is rewritten here.
 //
 // The carried name is returned (AgentIdentityMigration.CarriedName) so
 // the caller can also restore it as a real conversation title — for
@@ -123,49 +127,17 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 	nowNano := now.Format(time.RFC3339Nano)
 	nowSec := now.UTC().Format(time.RFC3339)
 
-	// --- rekey conv-id-keyed identity rows old → new ---
+	// --- rekey the still-conv-keyed identity rows old → new ---
 	//
-	// `UPDATE OR REPLACE` so a (theoretical) pre-existing newConv row —
-	// newConv is a fresh conv-id in practice, so this never triggers —
-	// is resolved in favour of the migrated identity rather than
-	// aborting the whole transaction on the unique constraint. On the
-	// source side, joined_at / role / descr from oldConv's row carry
-	// onto newConv untouched; if a collision-resolved survivor exists
-	// (newConv had pre-existing rows), those columns reflect that
-	// survivor, not the source — fine in practice because newConv is
-	// always fresh here. Permission + ownership rows additionally
-	// re-stamp granted_by/granted_at, matching the audit convention the
-	// reincarnate / clone paths already use for daemon-performed grants.
-	memRes, err := tx.Exec(
-		`UPDATE OR REPLACE agent_group_members SET conv_id = ? WHERE conv_id = ?`,
-		newConv, oldConv)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: rekey memberships: %w", err)
-	}
-	out.GroupMembers, _ = memRes.RowsAffected()
-
-	ownRes, err := tx.Exec(
-		`UPDATE OR REPLACE agent_group_owners
-		    SET conv_id = ?, granted_by = ?, granted_at = ? WHERE conv_id = ?`,
-		newConv, granter, nowNano, oldConv)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: rekey ownerships: %w", err)
-	}
-	out.Ownerships, _ = ownRes.RowsAffected()
-
-	permRes, err := tx.Exec(
-		`UPDATE OR REPLACE agent_permissions
-		    SET conv_id = ?, granted_by = ?, granted_at = ? WHERE conv_id = ?`,
-		newConv, granter, nowNano, oldConv)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: rekey permissions: %w", err)
-	}
-	out.Permissions, _ = permRes.RowsAffected()
-
-	// cron jobs: an agent can be a job's owner, its target, or both —
-	// rewrite whichever side(s) reference oldConv. Mirrors
-	// db.MigrateCronJobConvRef (kept standalone for non-transactional
-	// callers).
+	// As of the JOH-26 cutover, group memberships, ownerships, permission
+	// overrides and the notify pref are keyed on the stable agent_id, so they
+	// need NO rekey — the actor's agent_id never moves, only its conv pointer
+	// does (the dual-write below advances it). cron jobs are still conv-keyed,
+	// so they remain the one thing this rotation rewrites.
+	//
+	// cron jobs: an agent can be a job's owner, its target, or both — rewrite
+	// whichever side(s) reference oldConv. Mirrors db.MigrateCronJobConvRef
+	// (kept standalone for non-transactional callers).
 	cronRes, err := tx.Exec(`UPDATE agent_cron_jobs
 		SET owner_conv  = CASE WHEN owner_conv  = ?1 THEN ?2 ELSE owner_conv END,
 		    target_conv = CASE WHEN target_conv = ?1 THEN ?2 ELSE target_conv END
@@ -174,17 +146,6 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 		return out, fmt.Errorf("MigrateAgentIdentity: rekey cron jobs: %w", err)
 	}
 	out.CronJobs, _ = cronRes.RowsAffected()
-
-	// notify pref: a human's "mute this agent" (or "keep it loud")
-	// choice follows the agent across the rotation, same as its
-	// permissions do.
-	npRes, err := tx.Exec(
-		`UPDATE OR REPLACE agent_notify_prefs SET conv_id = ? WHERE conv_id = ?`,
-		newConv, oldConv)
-	if err != nil {
-		return out, fmt.Errorf("MigrateAgentIdentity: rekey notify prefs: %w", err)
-	}
-	out.NotifyPrefs, _ = npRes.RowsAffected()
 
 	// --- succession edge old → new ---
 	// Mirrors db.RecordConvSuccession. Powers db.ResolveLatestConv, so a

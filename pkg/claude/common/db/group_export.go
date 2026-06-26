@@ -150,9 +150,13 @@ func inClause(ids []string) (string, []any) {
 }
 
 func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
+	// Membership is agent-keyed (JOH-26); export each member by its actor's
+	// current conv so re-import re-adds it by conv (which re-resolves to an
+	// actor on the target).
 	rows, err := d.Query(`
-		SELECT conv_id, role, descr, joined_at
-		FROM agent_group_members WHERE group_id = ? ORDER BY conv_id`, groupID)
+		SELECT ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.group_id = ? ORDER BY ag.current_conv_id`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("collect members: %w", err)
 	}
@@ -170,8 +174,9 @@ func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
 
 func collectOwners(d *sql.DB, groupID int64) ([]groupexport.Owner, error) {
 	rows, err := d.Query(`
-		SELECT conv_id, granted_at, granted_by
-		FROM agent_group_owners WHERE group_id = ? ORDER BY conv_id`, groupID)
+		SELECT ag.current_conv_id, o.granted_at, o.granted_by
+		FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
+		WHERE o.group_id = ? ORDER BY ag.current_conv_id`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("collect owners: %w", err)
 	}
@@ -278,8 +283,9 @@ func collectCronRuns(d *sql.DB, jobIDs []string) ([]groupexport.CronRun, error) 
 func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, slug, effect, granted_at, granted_by
-		FROM agent_permissions WHERE conv_id `+clause+` ORDER BY conv_id, slug`, args...)
+		SELECT ag.current_conv_id, p.slug, p.effect, p.granted_at, p.granted_by
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY ag.current_conv_id, p.slug`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect permissions: %w", err)
 	}
@@ -340,8 +346,9 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at
-		FROM agent_sudo_grants WHERE conv_id `+clause+` ORDER BY id`, args...)
+		SELECT ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect sudo grants: %w", err)
 	}
@@ -478,10 +485,10 @@ type GroupImportPlan struct {
 
 // GroupImportResult summarises a completed import.
 type GroupImportResult struct {
-	GroupID      int64
-	GroupName    string
-	AgentCount   int
-	MessageCount int
+	GroupID            int64
+	GroupName          string
+	AgentCount         int
+	MessageCount       int
 	HeadAliasesSkipped []string // handles skipped because they already existed locally
 }
 
@@ -648,10 +655,15 @@ func (c *importCtx) legacyDefaultModelProfile() error {
 
 func (c *importCtx) members() error {
 	for _, m := range c.exp.Members {
+		conv := c.rc(m.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: member %s actor: %w", m.ConvID, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
+			INSERT INTO agent_group_members (group_id, agent_id, role, descr, joined_at)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.newGroupID, c.rc(m.ConvID), m.Role, m.Descr, m.JoinedAt); err != nil {
+			c.newGroupID, agentID, m.Role, m.Descr, m.JoinedAt); err != nil {
 			return fmt.Errorf("import: member %s: %w", m.ConvID, err)
 		}
 	}
@@ -660,10 +672,15 @@ func (c *importCtx) members() error {
 
 func (c *importCtx) owners() error {
 	for _, o := range c.exp.Owners {
+		conv := c.rc(o.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: owner %s actor: %w", o.ConvID, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
+			INSERT INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
 			VALUES (?, ?, ?, ?)`,
-			c.newGroupID, c.rc(o.ConvID), o.GrantedAt, o.GrantedBy); err != nil {
+			c.newGroupID, agentID, o.GrantedAt, o.GrantedBy); err != nil {
 			return fmt.Errorf("import: owner %s: %w", o.ConvID, err)
 		}
 	}
@@ -684,10 +701,15 @@ func (c *importCtx) audit() error {
 
 func (c *importCtx) permissions() error {
 	for _, p := range c.exp.Permissions {
+		conv := c.rc(p.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: permission %s/%s actor: %w", p.ConvID, p.Slug, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_permissions (conv_id, slug, effect, granted_at, granted_by)
+			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.rc(p.ConvID), p.Slug, p.Effect, p.GrantedAt, p.GrantedBy); err != nil {
+			agentID, p.Slug, p.Effect, p.GrantedAt, p.GrantedBy); err != nil {
 			return fmt.Errorf("import: permission %s/%s: %w", p.ConvID, p.Slug, err)
 		}
 	}
@@ -726,11 +748,16 @@ func (c *importCtx) workdirs() error {
 
 func (c *importCtx) sudoGrants() error {
 	for _, s := range c.exp.SudoGrants {
+		conv := c.rc(s.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: sudo grant %s/%s actor: %w", s.ConvID, s.Slug, err)
+		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_sudo_grants
-				(conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
+				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			c.rc(s.ConvID), s.Slug, s.GrantedAt, s.ExpiresAt, s.GrantedBy,
+			agentID, s.Slug, s.GrantedAt, s.ExpiresAt, s.GrantedBy,
 			s.Reason, s.RevokedAt); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
