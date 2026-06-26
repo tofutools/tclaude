@@ -227,6 +227,8 @@ func enrollCallerOnce(convID string) {
 	if _, seen := enrolledCallers.LoadOrStore(convID, true); seen {
 		return
 	}
+	// EnrollAgent also ensures the conv's stable actor identity (JOH-26): a
+	// conv that talks to the daemon is, by that act, an agent. Idempotent.
 	if err := db.EnrollAgent(convID, "cli"); err != nil {
 		slog.Warn("identity: enroll caller failed", "conv", convID, "error", err)
 		enrolledCallers.Delete(convID) // let a later request retry

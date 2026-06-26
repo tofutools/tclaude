@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -57,10 +58,26 @@ func EnrollAgent(convID, via string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT OR IGNORE INTO agent_enrollment
+	if _, err = d.Exec(`INSERT OR IGNORE INTO agent_enrollment
 		(conv_id, enrolled_at, enrolled_via) VALUES (?, ?, ?)`,
-		convID, time.Now().Format(time.RFC3339Nano), via)
-	return err
+		convID, time.Now().Format(time.RFC3339Nano), via); err != nil {
+		return err
+	}
+	// Stable agent-identity dual-write (JOH-26): enrollment is the single
+	// chokepoint nearly every "this conv is an agent" path funnels through —
+	// group-add, permission/owner/sudo grants, clone, session-start,
+	// online-reconcile, the /v1 catch-all. Ensuring an actor HERE keeps the
+	// agents table in lockstep with enrollment, rather than relying on each
+	// caller to remember the second write. A rotated successor is linked to
+	// its predecessor's actor by the rotation path before it ever enrolls, so
+	// this never splits a replacement generation into a new actor. Best-effort
+	// and idempotent: a failure leaves enrollment intact (the additive layer
+	// re-syncs on the next enroll / the backfill) rather than failing the
+	// enrollment its callers depend on.
+	if _, _, eerr := EnsureAgentForConv(convID, via); eerr != nil {
+		slog.Warn("EnrollAgent: actor dual-write failed; enrollment kept", "conv", convID, "error", eerr)
+	}
+	return nil
 }
 
 // SetEnrollmentPendingName records convID's intended display name — the
@@ -113,6 +130,17 @@ func PromoteAgent(convID, via string) (prior string, err error) {
 			SET retired_at = '', retired_by = '', retire_reason = ''
 			WHERE conv_id = ?`, convID)
 	}
+	if err != nil {
+		return prior, err
+	}
+	// Stable agent-identity dual-write (JOH-26): promote/reinstate lands the
+	// conv active — mirror that onto its actor (ensure it exists, then clear
+	// any retire). Best-effort; the additive layer re-syncs if it fails.
+	if agentID, _, eerr := EnsureAgentForConv(convID, via); eerr != nil {
+		slog.Warn("PromoteAgent: actor ensure failed", "conv", convID, "error", eerr)
+	} else if _, rerr := ReinstateAgentByID(agentID); rerr != nil {
+		slog.Warn("PromoteAgent: actor reinstate failed", "conv", convID, "agent", agentID, "error", rerr)
+	}
 	return prior, err
 }
 
@@ -140,6 +168,19 @@ func RetireAgent(convID, by, reason string) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	// Stable agent-identity dual-write (JOH-26): a human retire of a live
+	// agent demotes the ACTOR. Mirror it onto the mapped actor row so the
+	// agent-keyed roster doesn't resurrect it after the cutover. NB: a
+	// rotation's predecessor retire goes through MigrateAgentIdentity's raw
+	// UPDATE, NOT this helper, so it correctly does NOT retire the actor (the
+	// actor lives on at the successor).
+	if n > 0 {
+		if agentID, _ := AgentIDForConv(convID); agentID != "" {
+			if _, rerr := RetireAgentByID(agentID, by, reason); rerr != nil {
+				slog.Warn("RetireAgent: actor retire failed", "conv", convID, "agent", agentID, "error", rerr)
+			}
+		}
+	}
 	return n > 0, nil
 }
 
@@ -163,6 +204,15 @@ func ReinstateAgent(convID string) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	// Stable agent-identity dual-write (JOH-26): mirror the reinstate onto the
+	// mapped actor so it returns to the active roster.
+	if n > 0 {
+		if agentID, _ := AgentIDForConv(convID); agentID != "" {
+			if _, rerr := ReinstateAgentByID(agentID); rerr != nil {
+				slog.Warn("ReinstateAgent: actor reinstate failed", "conv", convID, "agent", agentID, "error", rerr)
+			}
+		}
+	}
 	return n > 0, nil
 }
 

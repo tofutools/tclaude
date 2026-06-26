@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -206,6 +207,54 @@ func MigrateAgentIdentity(oldConv, newConv, reason, granter string) (AgentIdenti
 		(conv_id, enrolled_at, enrolled_via) VALUES (?, ?, ?)`,
 		newConv, nowNano, reason); err != nil {
 		return out, fmt.Errorf("MigrateAgentIdentity: enroll new conv: %w", err)
+	}
+
+	// --- stable agent-identity dual-write (JOH-26) ---
+	// A rotation (reincarnate / /clear) preserves the actor: link newConv to
+	// oldConv's agent_id as a fresh generation and advance the live pointer,
+	// carrying the display name onto the actor row too. The whole dual-write
+	// is BEST-EFFORT and non-aborting: it can skip (logged) but must never
+	// roll back the legacy conv-keyed rekey above, which is the
+	// behaviour-preserving contract of this additive release.
+	//
+	// It runs inside a SAVEPOINT so that a real DB error mid-dual-write rolls
+	// back ONLY its own partial writes (e.g. a stray agents row whose link
+	// never landed) — the legacy rekey stays committed-pending and the actor
+	// layer is left clean, to re-sync on the next enroll. A clean "skip"
+	// (successor owned elsewhere, or oldConv not the live head) is NOT an
+	// error: it is released, keeping the generation link. Authorization still
+	// reads the rekeyed rows; once authz cuts over to agent_id, this link is
+	// what makes the rekey unnecessary.
+	const dualWriteSP = "joh26_dualwrite"
+	if _, err := tx.Exec("SAVEPOINT " + dualWriteSP); err != nil {
+		slog.Warn("MigrateAgentIdentity: could not open dual-write savepoint; skipping actor dual-write",
+			"old", oldConv, "new", newConv, "error", err)
+	} else {
+		dwErr := func() error {
+			agentID, e := ensureAgentForConvTx(tx, oldConv, reason)
+			if e != nil {
+				return e
+			}
+			moved, e := advanceAgentToNewConv(tx, agentID, oldConv, newConv, reason, carriedName, now)
+			if e != nil {
+				return e
+			}
+			if !moved {
+				slog.Warn("MigrateAgentIdentity: actor pointer not advanced (successor owned elsewhere or oldConv not the live head)",
+					"old", oldConv, "new", newConv, "agent", agentID)
+			}
+			return nil
+		}()
+		if dwErr != nil {
+			slog.Warn("MigrateAgentIdentity: actor dual-write failed; rolling back dual-write only (legacy rekey unaffected)",
+				"old", oldConv, "new", newConv, "error", dwErr)
+			if _, e := tx.Exec("ROLLBACK TO " + dualWriteSP); e != nil {
+				return out, fmt.Errorf("MigrateAgentIdentity: rollback dual-write savepoint: %w", e)
+			}
+		}
+		if _, e := tx.Exec("RELEASE " + dualWriteSP); e != nil {
+			return out, fmt.Errorf("MigrateAgentIdentity: release dual-write savepoint: %w", e)
+		}
 	}
 
 	// --- carry the display name onto newConv.pending_name ---

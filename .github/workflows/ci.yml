@@ -4,7 +4,9 @@ on:
   pull_request:
     # main-codex is the long-lived harness-independence integration branch; gate
     # its increment PRs with the same CI as main. Drop it once main-codex→main lands.
-    branches: [main, main-codex]
+    # implement-stable-agent-identity is the long-lived JOH-26 integration branch
+    # (stable agent_id, decoupled from conv_id) — same deal; drop it once it→main lands.
+    branches: [main, main-codex, implement-stable-agent-identity]
 
 permissions:
   contents: read
