@@ -14,7 +14,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast in refresh.js.
 // Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, bindBackdropDiscard, confirmModal } from './refresh.js';
+import { refresh, toast, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -987,23 +987,17 @@ async function submitAgentSpawn() {
     }
   }
   // Require a name OR an initial description so the agent is identifiable.
-  // With both blank the agent would get an auto-generated label — usually a
-  // slip where the human typed only an initial message and forgot the name.
-  // Pop the shared confirm overlay (z-index 1000, so it stacks on top of this
-  // still-open modal) before going through with it. Its Esc / Cancel resolves
-  // false WITHOUT closing the spawn modal — so a cancel lands the human right
-  // back here with their fields intact to add a name/description and resubmit.
+  // Both blank is rejected outright — with neither, the agent would only get
+  // an auto-generated label, which is almost always a slip (the human typed an
+  // initial message and forgot the name). Surface it as an inline error (like
+  // the group/name checks above) and put the cursor in the Name field so a
+  // quick correction needs no mouse. Note `descr` already counts even when its
+  // value would normalize away as a name — a description is free-text, not a
+  // branch/title token, so any non-blank text satisfies the gate.
   if (!name && !descr) {
-    const proceed = await confirmModal({
-      title: 'Spawn without a name?',
-      body: 'No agent name or description was given, so this agent will get an auto-generated name. Add a name or description, or spawn anyway?',
-      okLabel: 'Spawn anyway',
-    });
-    if (!proceed) {
-      // Put the cursor in the Name field so a quick correction needs no mouse.
-      $('#agent-spawn-name').focus();
-      return;
-    }
+    showModalError(errEl, 'give the agent a name or an initial description');
+    $('#agent-spawn-name').focus();
+    return;
   }
   // Persist the checkbox so the human's choice sticks across spawns.
   try { dashPrefs.setItem('tclaude.dash.spawn.autofocus', autoFocus ? '1' : '0'); } catch (_) {}
