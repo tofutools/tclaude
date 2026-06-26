@@ -331,6 +331,11 @@
         </select>
         <span class="cfg-hint">The same indicator's style when the dashboard's casino <strong>slop</strong> mode (the 🎰 in the header) is on — chosen independently of regular mode, the way slop already swaps the state pill for a slot machine. Default <em>Pixel sprites</em> (the full dancing robots), but you can keep the emoji bots, or turn them off. (Reduced-motion browsers get the bots <em>without</em> animation either way.) Stored as <code>dashboard.activity_bots.slop</code>.</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Plugins tab</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-always-show-plugins" /> always show the Plugins tab, even with no plugins installed</label>
+        <span class="cfg-hint">The <strong>Plugins</strong> tab manages human-defined integration bundles (e.g. a docker-backed MCP server). By default it <em>auto-hides</em> when you have no plugins installed — most setups never define one, so the empty tab is just clutter. Enable this to keep it visible regardless, e.g. to reach the built-in catalog and install one from there. (A broken <code>plugins.json</code> always shows the tab so the error isn't hidden.) Off by default. Stored as <code>dashboard.always_show_plugins_tab</code>.</span>
+      </div>
     </div>
 
     <div class="cfg-section">

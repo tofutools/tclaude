@@ -536,6 +536,14 @@ type snapshotPayload struct {
 	// shows "registry broken: …" instead of a silently empty list. The
 	// poll itself stays 200 — one bad file must not take down every tab.
 	PluginsError string `json:"plugins_error,omitempty"`
+	// PluginsTabVisible drives the Plugins tab's auto-hide, mirroring the
+	// Costs tab's rule: true when at least one plugin is installed, OR
+	// plugins.json failed to read (so the error is never hidden), OR the
+	// human opted into always showing it (config
+	// dashboard.always_show_plugins_tab). When false the dashboard hides the
+	// Plugins nav button + section entirely — the "don't show an empty
+	// Plugins tab" rule for the majority of users who never define one.
+	PluginsTabVisible bool `json:"plugins_tab_visible"`
 	// UserDefaultModel is the "model" key from the user-level
 	// ~/.claude/settings.json — what every claude launched without
 	// --model falls back to. "" = unset (claude's built-in default).
@@ -1469,6 +1477,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.PluginsError = pluginsErr.Error()
 	}
 	out.PluginsCatalog = pluginCatalog()
+	// Plugins-tab visibility mirrors the Costs-tab rule: show it when there's
+	// something to manage (≥1 installed plugin), when plugins.json is broken
+	// (so the human can see + fix the error), or when they've opted to always
+	// keep it (config dashboard.always_show_plugins_tab — the escape hatch to
+	// the install-from-catalog UI). Otherwise hide the empty tab.
+	out.PluginsTabVisible = len(out.Plugins) > 0 || out.PluginsError != "" || cfg.ShowPluginsTabAlways()
 
 	// Display-only cost compensation, applied as the final step over the
 	// fully-assembled payload (cfg was loaded once at the top). The DB
