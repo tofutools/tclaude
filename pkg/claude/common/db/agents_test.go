@@ -2,10 +2,68 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// convRole reads agent_conversations.role for a conv (test helper).
+func convRole(t *testing.T, conv string) string {
+	t.Helper()
+	d, err := Open()
+	require.NoError(t, err)
+	var role string
+	require.NoError(t, d.QueryRow(`SELECT role FROM agent_conversations WHERE conv_id = ?`, conv).Scan(&role))
+	return role
+}
+
+// TestAdvanceAgentToNewConv_CASMissLinksGenerationNotHead pins the role
+// ordering fix: when the CAS misses (oldConv is not the live head), the
+// successor must be linked as a GENERATION, never a phantom second head, and
+// the live pointer must not move.
+func TestAdvanceAgentToNewConv_CASMissLinksGenerationNotHead(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "Open")
+
+	agentID, err := AllocateAgent("head0", "spawn")
+	require.NoError(t, err)
+
+	// Advance from a STALE old conv that isn't the current head → CAS misses.
+	moved, err := advanceAgentToNewConv(d, agentID, "stale-old", "succ", "reincarnate", "", time.Now())
+	require.NoError(t, err)
+	assert.False(t, moved, "a stale-head advance must not move the pointer")
+
+	assert.Equal(t, ConvRoleGeneration, convRole(t, "succ"),
+		"a missed CAS must leave the successor a generation, not a second head")
+	assert.Equal(t, ConvRoleHead, convRole(t, "head0"), "the real head keeps its role")
+	a, _ := GetAgent(agentID)
+	assert.Equal(t, "head0", a.CurrentConvID, "the live pointer is unchanged")
+}
+
+// TestAdvanceAgentToNewConv_PrelinkedGenerationPromoted: a successor already
+// linked to the SAME actor as a generation is correctly promoted to head on a
+// successful advance.
+func TestAdvanceAgentToNewConv_PrelinkedGenerationPromoted(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "Open")
+
+	agentID, err := AllocateAgent("c0", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, LinkConvToAgent("c1", agentID, ConvRoleGeneration, "prelink"))
+
+	moved, err := advanceAgentToNewConv(d, agentID, "c0", "c1", "reincarnate", "worker", time.Now())
+	require.NoError(t, err)
+	assert.True(t, moved)
+
+	assert.Equal(t, ConvRoleHead, convRole(t, "c1"), "the pre-linked successor is promoted to head")
+	assert.Equal(t, ConvRoleGeneration, convRole(t, "c0"), "the old head is demoted")
+	a, _ := GetAgent(agentID)
+	assert.Equal(t, "c1", a.CurrentConvID)
+	assert.Equal(t, "worker", a.PendingName, "the name is carried on a successful advance")
+}
 
 // TestAllocateAndResolveAgent covers the core actor-identity round trip:
 // minting an agent for a conv and resolving back to it from every angle.

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -70,8 +71,17 @@ func backfillAgents(d *sql.DB) error {
 		if conv == head {
 			role = ConvRoleHead
 		}
+		// Per-conv link is non-fatal: linkConvTx is conflict-aware and errors
+		// on a cross-actor relink, which can only arise from a CORRUPTED
+		// succession cycle (real succession data is a forest — every
+		// new_conv_id is freshly minted — so chain heads are consistent and
+		// this never fires). Degrade gracefully on such corruption: log and
+		// skip the offending conv rather than failing the whole v72 migration
+		// and wedging DB-open. A genuine DB error surfaces the same way — the
+		// conv is simply not backfilled and re-syncs on its next enroll.
 		if err := linkConvTx(d, conv, agentID, role, reason, now); err != nil {
-			return err
+			slog.Warn("backfillAgents: skipping conv with inconsistent actor mapping",
+				"conv", conv, "head", head, "agent", agentID, "error", err)
 		}
 	}
 	return nil

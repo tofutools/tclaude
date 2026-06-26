@@ -482,26 +482,33 @@ func linkConvTx(q dbExecQuerier, convID, agentID, role, reason string, now time.
 // the dual-write ever rolling back the legacy work:
 //
 //   - returns (false, nil) — a clean skip — when newConv already belongs to a
-//     DIFFERENT actor, or when the CAS finds oldConv is no longer the live
-//     head (RowsAffected 0). Nothing past the skip point is mutated.
-//   - returns (true, nil) when the pointer moved and the demote/name-carry ran.
+//     DIFFERENT actor (nothing is mutated), or when the CAS finds oldConv is
+//     no longer the live head (newConv is linked as a GENERATION so the
+//     successor is still owned by the actor, but no head/pointer change is
+//     made — there is never a second advisory head).
+//   - returns (true, nil) when the pointer moved; only then is newConv
+//     promoted to head, oldConv demoted, and the name carried.
 //   - returns (_, err) only on a real DB error.
 //
-// The pointer move is a compare-and-swap on oldConv; the demote and name-carry
-// run only after it is known to have moved, so the actor never ends up with
-// two head rows or a name carried onto a pointer that did not advance.
+// Role changes are sequenced strictly AFTER the compare-and-swap confirms the
+// pointer advanced, so a missed CAS can never leave the actor with two head
+// rows, and a same-actor pre-linked successor is correctly promoted to head on
+// a successful advance.
 func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, carriedName string, now time.Time) (bool, error) {
 	existing, err := agentIDForConvTx(tx, newConv)
 	if err != nil {
 		return false, err
 	}
 	if existing != "" && existing != agentID {
-		return false, nil // successor already owned by another actor — skip cleanly
+		return false, nil // successor already owned by another actor — skip cleanly, mutate nothing
 	}
+	// Link the successor as a GENERATION first. The head role is conferred
+	// only after the CAS below confirms the advance, so a missed CAS leaves a
+	// plain generation link (not a phantom second head).
 	if existing == "" {
 		if _, err := tx.Exec(`INSERT INTO agent_conversations
 			(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
-			newConv, agentID, ConvRoleHead, reason, now.Format(time.RFC3339Nano)); err != nil {
+			newConv, agentID, ConvRoleGeneration, reason, now.Format(time.RFC3339Nano)); err != nil {
 			return false, err
 		}
 	}
@@ -511,7 +518,13 @@ func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, 
 		return false, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return false, nil // oldConv was not the live head — leave the pointer alone
+		return false, nil // oldConv was not the live head — leave the pointer + roles alone
+	}
+	// The pointer advanced: promote newConv to head (covers a same-actor
+	// pre-linked generation too), demote oldConv, carry the display name.
+	if _, err := tx.Exec(`UPDATE agent_conversations SET role = ?
+		WHERE conv_id = ? AND agent_id = ?`, ConvRoleHead, newConv, agentID); err != nil {
+		return false, err
 	}
 	if _, err := tx.Exec(`UPDATE agent_conversations SET role = ?
 		WHERE conv_id = ? AND agent_id = ?`, ConvRoleGeneration, oldConv, agentID); err != nil {
