@@ -2,6 +2,8 @@ package agentd_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,4 +51,12 @@ func TestDashboardSnapshot_PluginsTabVisibilityRule(t *testing.T) {
 
 	snap = fetchDashSnapshot(t, mux)
 	assert.True(t, snap.PluginsTabVisible, "an installed plugin shows the Plugins tab even with the opt-in off")
+
+	// 4. A broken plugins.json (no installed plugins parse out, opt-in still
+	//    off) → visible, so the human can see + fix the parse error instead of
+	//    a silently empty/hidden tab. This is the branch the whole
+	//    PluginsError operand exists for.
+	require.NoError(t, os.WriteFile(filepath.Join(config.ConfigDir(), "plugins.json"), []byte("{ not valid json"), 0o600), "write a broken plugins.json")
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.True(t, snap.PluginsTabVisible, "a broken plugins.json keeps the Plugins tab visible so the error isn't hidden")
 }
