@@ -187,8 +187,10 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		}
 		// Best-effort nudge — flush only fires if the target is alive
 		// right now. Otherwise the message sits in the inbox until the
-		// next agent_messages-aware request from the target.
-		go flush(targetConv, realFlushSender)
+		// next agent_messages-aware request from the target. goBackground
+		// (not a bare `go`) so a flow test firing a cron job can drain the
+		// nudge before its cleanup restores the clcommon.Default tmux swap.
+		goBackground(func() { flush(targetConv, realFlushSender) })
 		return "ok"
 	}
 

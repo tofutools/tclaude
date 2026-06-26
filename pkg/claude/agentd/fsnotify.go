@@ -123,13 +123,24 @@ func (m *convMonitor) wait() {
 	<-m.done
 }
 
-// fireEvent is what a settled debounce timer enqueues onto the loop:
-// the path to re-index plus the timer that fired. Carrying the timer
-// lets the loop tell whether a later Write has since installed a fresh
-// timer for the same path (which it must not drop from the map).
-type fireEvent struct {
-	path  string
+// pendingTimer is one in-flight per-file debounce: the timer plus a stable
+// identity the fire callback can carry. A bare *time.Timer cannot serve as
+// that identity — the callback would have to read the very local the loop
+// goroutine is still assigning time.AfterFunc's result into, a data race.
+// The struct is allocated before the timer is armed, so the callback only
+// ever closes over this fixed pointer; timer itself is touched solely on the
+// loop goroutine.
+type pendingTimer struct {
 	timer *time.Timer
+}
+
+// fireEvent is what a settled debounce timer enqueues onto the loop: the
+// path to re-index plus the pendingTimer that fired. Carrying that identity
+// lets the loop tell whether a later Write has since installed a fresh timer
+// for the same path (which it must not drop from the map).
+type fireEvent struct {
+	path string
+	pt   *pendingTimer
 }
 
 // loop is the single event-loop goroutine. Every conv_index write
@@ -140,10 +151,10 @@ type fireEvent struct {
 func (m *convMonitor) loop() {
 	defer close(m.done)
 
-	timers := make(map[string]*time.Timer)
+	timers := make(map[string]*pendingTimer)
 	defer func() {
-		for _, t := range timers {
-			t.Stop()
+		for _, pt := range timers {
+			pt.timer.Stop()
 		}
 		_ = m.watcher.Close()
 	}()
@@ -174,10 +185,10 @@ func (m *convMonitor) loop() {
 			return
 		case fe := <-fireCh:
 			// Forget the timer only if it is still the current one for
-			// this path: a Write that arrived after fe.timer fired may
+			// this path: a Write that arrived after fe.pt fired may
 			// have installed a fresh timer that must stay tracked (so a
 			// later Write resets it, and shutdown still Stop()s it).
-			if timers[fe.path] == fe.timer {
+			if timers[fe.path] == fe.pt {
 				delete(timers, fe.path)
 			}
 			m.reindex(fe.path)
@@ -203,7 +214,7 @@ func (m *convMonitor) loop() {
 // handleEvent routes one raw fsnotify event. A new project dir gets
 // Add()'d (fsnotify is not recursive); a .jsonl create / remove /
 // rename re-indexes immediately; a .jsonl write is debounced per-file.
-func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*time.Timer, fireCh chan fireEvent, known map[string]bool) {
+func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*pendingTimer, fireCh chan fireEvent, known map[string]bool) {
 	path := event.Name
 
 	// A new directory directly under the projects root is a new project
@@ -240,8 +251,8 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*time.
 	// Remove / Rename: act now. ScanAndUpsertFile is self-cleaning — an
 	// os.Stat miss makes it delete the conv_index row.
 	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-		if t, ok := timers[path]; ok {
-			t.Stop()
+		if pt, ok := timers[path]; ok {
+			pt.timer.Stop()
 			delete(timers, path)
 		}
 		delete(known, path)
@@ -253,8 +264,8 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*time.
 	// brand-new conversation shows up without waiting out the debounce.
 	if event.Op&fsnotify.Create != 0 && !known[path] {
 		known[path] = true
-		if t, ok := timers[path]; ok {
-			t.Stop()
+		if pt, ok := timers[path]; ok {
+			pt.timer.Stop()
 			delete(timers, path)
 		}
 		m.reindex(path)
@@ -272,17 +283,20 @@ func (m *convMonitor) handleEvent(event fsnotify.Event, timers map[string]*time.
 		return
 	}
 	known[path] = true
-	if t, ok := timers[path]; ok {
-		t.Stop()
+	if pt, ok := timers[path]; ok {
+		pt.timer.Stop()
 	}
-	var t *time.Timer
-	t = time.AfterFunc(convMonitorDebounce, func() {
+	// Allocate the identity before arming the timer: the AfterFunc callback
+	// closes over this fixed pt, never the loop-goroutine-assigned pt.timer,
+	// so the fire path can't race the loop installing the timer.
+	pt := &pendingTimer{}
+	pt.timer = time.AfterFunc(convMonitorDebounce, func() {
 		select {
-		case fireCh <- fireEvent{path: path, timer: t}:
+		case fireCh <- fireEvent{path: path, pt: pt}:
 		case <-m.stop:
 		}
 	})
-	timers[path] = t
+	timers[path] = pt
 }
 
 // startupScan re-indexes every existing .jsonl under the projects root

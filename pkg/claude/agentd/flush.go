@@ -44,9 +44,13 @@ func maybeFlushUndelivered(convID string) {
 	}
 	flushDebounce[convID] = time.Now()
 	flushDebounceMu.Unlock()
-	go func() {
+	// goBackground, not a bare `go`: this flush touches sqlite + tmux and
+	// outlives the request that triggered it, so a flow test must be able to
+	// drain it (WaitForBackgroundForTest) before its cleanup restores the
+	// clcommon.Default tmux swap and tears down $HOME.
+	goBackground(func() {
 		_ = flush(convID, realFlushSender)
-	}()
+	})
 }
 
 // flush walks every undelivered message addressed to convID, claims
