@@ -193,9 +193,13 @@ func TestDashboardCosts_FromParam(t *testing.T) {
 // agents spent today on different models; a third spent more, but
 // days ago and its sessions row is long gone. Rows must come back
 // latest-activity-first (cost only breaks same-day ties — recency
-// outranks spend), today's agents must carry the model their session
-// reported, and the retired agent has no live session to resolve a
-// model from, so its model is empty.
+// outranks spend), and today's agents must carry the model their
+// session reported. A and B set their model AFTER the cost write, so
+// their daily row carries no denormalised model and they resolve via
+// the live-sessions fallback. C is a raw historical row with neither a
+// denormalised model nor a live session, so its model stays empty —
+// the pre-v71 case the denormalisation now prevents going forward (see
+// TestDashboardCosts_ModelSurvivesSessionDeletion).
 func TestDashboardCosts_AgentOrderingAndModels(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
@@ -231,7 +235,49 @@ func TestDashboardCosts_AgentOrderingAndModels(t *testing.T) {
 	assert.Equal(t, "Fable 5", out.Agents[1].Model)
 	assert.Equal(t, convC, out.Agents[2].ConvID, "older last-day sorts below today despite the larger spend")
 	assert.Equal(t, oldDay, out.Agents[2].LastDay)
-	assert.Empty(t, out.Agents[2].Model, "no live session row → no model to show")
+	assert.Empty(t, out.Agents[2].Model, "no denormalised model and no live session row → no model to show")
+}
+
+// Scenario: an agent reports its model, accrues cost, then its sessions
+// row is deleted — retired/killed, or the conv resumed under a fresh
+// session id. Before v71 the breakdown resolved the model with a LIVE
+// lookup against the sessions row, so deleting it blanked the MODEL
+// column even though the spend history survived (the "only the most
+// recent agents show a model" bug). Now the model is denormalised onto
+// session_cost_daily at cost-write time (the conv_id sibling), so a
+// retired agent keeps naming what it ran on.
+func TestDashboardCosts_ModelSurvivesSessionDeletion(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const convID = "wcmd-1111-2222-3333-4444"
+	const sessionID = "wcmd-s1"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          sessionID,
+		TmuxSession: "tmux-" + sessionID,
+		ConvID:      convID,
+		Cwd:         "/tmp/" + sessionID,
+		Status:      "idle",
+	}), "SaveSession")
+	// The statusbar hook records the model before cost on every tick, so
+	// the model is on the sessions row when the cost write denormalises it
+	// onto the daily snapshot.
+	require.NoError(t, db.UpdateSessionModel(sessionID, "Opus 4.8 (1M context)"), "model")
+	require.NoError(t, db.UpdateSessionCost(sessionID, 3.50), "cost")
+
+	// Retire the agent: the sessions row is gone, but its cost history —
+	// and now its model — lives on in session_cost_daily.
+	require.NoError(t, db.DeleteSession(sessionID), "DeleteSession")
+
+	from := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+
+	require.Len(t, out.Agents, 1, "one breakdown row for the retired conv")
+	assert.Equal(t, convID, out.Agents[0].ConvID)
+	assert.InDelta(t, 3.50, out.Agents[0].CostUSD, 1e-9, "spend survives deletion")
+	assert.Equal(t, "Opus 4.8 (1M context)", out.Agents[0].Model,
+		"model denormalised onto cost history survives the session row's deletion")
 }
 
 // Scenario: within a single day, the precise last-activity timestamp

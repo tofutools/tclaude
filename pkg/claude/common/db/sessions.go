@@ -604,9 +604,11 @@ func UpdateSessionModelID(sessionID, modelID string) error {
 
 // SessionModels returns the model display name of every session that
 // has reported one, keyed by session id — the Costs tab's per-agent
-// model lookup. Sessions whose row has since been deleted (kill,
-// agent delete) simply aren't in the map; their cost history keeps an
-// empty model.
+// model lookup. Since v71 the model is denormalised onto each
+// session_cost_daily row, so this is now only the FALLBACK for pre-v71
+// history of a still-alive session; a deleted session's history carries
+// its own denormalised model. Sessions whose row has since been deleted
+// simply aren't in the map.
 func SessionModels() (map[string]string, error) {
 	db, err := Open()
 	if err != nil {
@@ -698,9 +700,11 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// cost never decreases inside a session, but a stale render must
 	// never lower a recorded value), and the CASE keeps a previously
 	// recorded conv_id when the sessions row has since lost its own.
-	// conv_id is denormalised in at write time — the daily history must
-	// survive the sessions row being deleted later (session kill, agent
-	// delete).
+	// conv_id and model are denormalised in at write time — the daily
+	// history must survive the sessions row being deleted later (session
+	// kill, agent delete), and model is what the Costs tab's per-agent
+	// breakdown names; resolving it live against the sessions row blanked
+	// the column the instant that row was gone.
 	// updated_at stamps the wall-clock moment of the most recent spend
 	// on this (session, day) row: set on insert, and refreshed on
 	// conflict only when the new cumulative figure actually exceeds the
@@ -708,15 +712,20 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// activity for cost purposes only if it raised the total, so an idle
 	// session whose statusline keeps ticking never bumps its
 	// last-activity time. Powers the Costs tab's last-activity column.
+	// The model CASE mirrors conv_id: a render that carries no model
+	// (the empty-context ones before a turn's first response) keeps the
+	// last good value rather than blanking it.
 	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
-		SELECT id, ?, conv_id, ?, ? FROM sessions WHERE id = ?
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model)
+		SELECT id, ?, conv_id, ?, ?, model FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			cost_usd = MAX(session_cost_daily.cost_usd, excluded.cost_usd),
 			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END`,
+			                ELSE session_cost_daily.conv_id END,
+			model    = CASE WHEN excluded.model <> '' THEN excluded.model
+			                ELSE session_cost_daily.model END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
@@ -761,14 +770,16 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at)
-		SELECT id, ?, conv_id, ?, ? FROM sessions WHERE id = ?
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model)
+		SELECT id, ?, conv_id, ?, ?, model FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			virtual_cost_usd = MAX(session_cost_daily.virtual_cost_usd, excluded.virtual_cost_usd),
 			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END`,
+			                ELSE session_cost_daily.conv_id END,
+			model    = CASE WHEN excluded.model <> '' THEN excluded.model
+			                ELSE session_cost_daily.model END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
@@ -799,6 +810,12 @@ type CostDailyRow struct {
 	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
 	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
+	// Model is the LLM model display name the session reported, denormalised
+	// onto the row at write time (the model sibling of ConvID) so the Costs
+	// tab's per-agent breakdown keeps naming a retired agent's model after
+	// its sessions row is deleted. "" for pre-v71 history of an
+	// already-deleted session, or a session that never reported a model.
+	Model string
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
@@ -848,7 +865,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at
+	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, session_id`)
 	if err != nil {
@@ -858,7 +875,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt, &r.Model); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

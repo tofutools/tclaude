@@ -51,9 +51,10 @@ func TestMigrateV69toV70_AddsAuditLog(t *testing.T) {
 }
 
 // TestMigrateV69toV70_FreshSchema builds a fresh DB through the full
-// migrate() chain and asserts audit_log exists. v70 is head, so this is
-// where the literal currentVersion tripwire now lives — the next
-// migration's author moves it forward into their own v71 test.
+// migrate() chain and asserts audit_log exists. The literal
+// currentVersion tripwire moved forward to the v71 test
+// (TestMigrateV70toV71_FreshSchema), the migration that landed on top of
+// this one; this test now defers to head.
 func TestMigrateV69toV70_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -62,9 +63,6 @@ func TestMigrateV69toV70_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	// The literal currentVersion tripwire, moved forward from the v69 test —
-	// the next migration's author moves it into their own v71 test.
-	require.Equal(t, 70, currentVersion, "currentVersion is 70")
 
 	var haveTable int
 	require.NoError(t, d.QueryRow(
