@@ -516,6 +516,14 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	if err := db.EnrollAgent(newConv, "clone"); err != nil {
 		slog.Warn("clone: enroll new conv failed", "conv", newConv, "error", err)
 	}
+	// Stable agent-identity dual-write (JOH-26): a clone is a FORK, not a
+	// replacement — it gets its OWN new actor (no succession edge links it to
+	// the source). newConv is unlinked, so EnsureAgentForConv mints a fresh
+	// agent_id here rather than inheriting the source's. The identity copy
+	// below remains add-only and conv-keyed in this release.
+	if _, _, err := db.EnsureAgentForConv(newConv, "clone"); err != nil {
+		slog.Warn("clone: ensure agent identity failed", "conv", newConv, "error", err)
+	}
 
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —
 	// the original keeps every membership / permission / ownership it

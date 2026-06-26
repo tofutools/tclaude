@@ -2023,15 +2023,30 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
+	// Stable agent-identity dual-write (JOH-26): a spawn is the birth of a
+	// new actor — give it an agent_id now so it shows on the agent-keyed
+	// roster the moment it spawns, not only on its first /v1 call. Idempotent.
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	if err != nil {
+		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
+	}
+
 	// Record the requested name as the agent's pending display name. Until
 	// the title materialises (a tick later on the legacy path; at launch on
 	// the launch-enrollment path) the dashboard would otherwise show
 	// "(unknown)". agent.FreshTitle reads pending_name as a fallback; the
-	// real custom title supersedes it.
+	// real custom title supersedes it. Mirror it onto the actor row so the
+	// name survives rotations on the agent-keyed surfaces too.
 	if name := strings.TrimSpace(p.Name); name != "" {
 		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
 			slog.Warn("spawn: failed to record pending name",
 				"conv", convID, "name", name, "error", err)
+		}
+		if agentID != "" {
+			if err := db.SetAgentPendingName(agentID, name); err != nil {
+				slog.Warn("spawn: failed to record actor pending name",
+					"agent", agentID, "name", name, "error", err)
+			}
 		}
 	}
 

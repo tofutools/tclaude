@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 71
+const currentVersion = 72
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -457,6 +457,67 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 72 {
+		if err := migrateV71toV72(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV71toV72 introduces the stable agent-identity layer (JOH-26):
+// `agents` (the durable actor) + `agent_conversations` (every conversation
+// generation mapped to its actor). It decouples identity from the harness
+// conv-id, which today rotates on reincarnate and Claude Code's /clear and
+// forces db.MigrateAgentIdentity to physically rekey identity rows.
+//
+// This migration is ADDITIVE and behaviour-preserving: it stands up the
+// tables and backfills them from the current conv-keyed state. Authorization
+// still reads the conv-keyed identity tables unchanged — the cutover to
+// agent_id-keyed authz is a later, separate migration.
+//
+// Not wrapped in one transaction (mirrors migrateV29toV30): the CREATE TABLE
+// IF NOT EXISTS statements and backfillAgents are each idempotent, so a
+// crash mid-backfill leaves schema_version at 71 and the whole pass re-runs
+// and converges. agents.current_conv_id carries a UNIQUE constraint (each
+// conversation generation heads at most one actor); the backfill's orphan
+// guard keeps a re-run from colliding on it.
+func migrateV71toV72(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agents (
+			agent_id        TEXT PRIMARY KEY,
+			current_conv_id TEXT NOT NULL UNIQUE,
+			created_at      TEXT NOT NULL,
+			created_via     TEXT NOT NULL DEFAULT '',
+			retired_at      TEXT NOT NULL DEFAULT '',
+			retired_by      TEXT NOT NULL DEFAULT '',
+			retire_reason   TEXT NOT NULL DEFAULT '',
+			pending_name    TEXT NOT NULL DEFAULT ''
+		);
+		CREATE INDEX IF NOT EXISTS idx_agents_active
+			ON agents(agent_id) WHERE retired_at = '';
+
+		CREATE TABLE IF NOT EXISTS agent_conversations (
+			conv_id   TEXT PRIMARY KEY,
+			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			role      TEXT NOT NULL DEFAULT '',
+			reason    TEXT NOT NULL DEFAULT '',
+			linked_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_conversations_agent
+			ON agent_conversations(agent_id);
+	`); err != nil {
+		return fmt.Errorf("migrate v71→v72 (create): %w", err)
+	}
+
+	if err := backfillAgents(db); err != nil {
+		return fmt.Errorf("migrate v71→v72 (backfill): %w", err)
+	}
+
+	if _, err := db.Exec(`UPDATE schema_version SET version = 72`); err != nil {
+		return fmt.Errorf("migrate v71→v72 (version): %w", err)
+	}
 	return nil
 }
 

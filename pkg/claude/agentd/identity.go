@@ -230,6 +230,16 @@ func enrollCallerOnce(convID string) {
 	if err := db.EnrollAgent(convID, "cli"); err != nil {
 		slog.Warn("identity: enroll caller failed", "conv", convID, "error", err)
 		enrolledCallers.Delete(convID) // let a later request retry
+		return
+	}
+	// Stable agent-identity dual-write (JOH-26): a conv that talks to the
+	// daemon is an actor — make sure it has an agent_id. Idempotent; a
+	// rotated conv was already linked by the rotation path, so this never
+	// splits a replacement generation into its own actor. Additive in this
+	// release: nothing reads agent_id for authorization yet.
+	if _, _, err := db.EnsureAgentForConv(convID, "cli"); err != nil {
+		slog.Warn("identity: ensure agent failed", "conv", convID, "error", err)
+		enrolledCallers.Delete(convID) // let a later request retry both writes
 	}
 }
 
