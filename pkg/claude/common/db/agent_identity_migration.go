@@ -10,12 +10,18 @@ import (
 // per-table count of rows rekeyed old → new, plus the agent's carried
 // display name. Items is a compact human-readable summary (only the
 // non-zero facets) for API responses and logs.
+//
+// As of the JOH-26 v73 cutover only CronJobs is ever populated: the identity
+// tables are agent-keyed and no longer rekeyed on rotation. The other count
+// fields are retained (so summarize/Items and any API shape stay stable) but
+// are always zero now; they go away with MigrateAgentIdentity itself in the
+// final stage.
 type AgentIdentityMigration struct {
-	GroupMembers int64  // agent_group_members rows rekeyed
-	Ownerships   int64  // agent_group_owners rows rekeyed
-	Permissions  int64  // agent_permissions rows rekeyed
+	GroupMembers int64  // always 0 post-v73 (agent-keyed, no rekey)
+	Ownerships   int64  // always 0 post-v73 (agent-keyed, no rekey)
+	Permissions  int64  // always 0 post-v73 (agent-keyed, no rekey)
 	CronJobs     int64  // agent_cron_jobs rows whose owner/target ref moved
-	NotifyPrefs  int64  // agent_notify_prefs rows rekeyed
+	NotifyPrefs  int64  // always 0 post-v73 (agent-keyed, no rekey)
 	CarriedName  string // the agent's display name, carried onto newConv
 	Items        []string
 }

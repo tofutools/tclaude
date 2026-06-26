@@ -25,7 +25,11 @@ import (
 // conv-keyed rows through agent_conversations (conv_id → agent_id), then swapped
 // in. INSERT OR IGNORE collapses the (rare) case where two generations of the
 // same actor each carried a row for the same (group/slug) — they map to one
-// agent_id row, which is exactly right.
+// agent_id row, which is exactly right. The collapse is DETERMINISTIC: each
+// insert's ORDER BY puts the row that should survive first (permissions: DENY
+// over grant, then newest; the others: newest), so the outcome never depends on
+// scan order. (In a normally-migrated DB no collision arises — the pre-cutover
+// rotation kept each actor's rows on a single conv — so this is belt-and-braces.)
 //
 // Safety:
 //   - A VACUUM INTO snapshot is written before any destructive change, so the
@@ -42,14 +46,11 @@ func migrateV72toV73(db *sql.DB) error {
 	// Pre-cutover snapshot (best-effort).
 	vacuumBackup(db, ".pre-v73-agentkey.bak")
 
-	// Guarantee every conv referenced by the identity tables maps to an actor,
-	// so the conv_id → agent_id join below never drops a row. Idempotent.
-	if err := backfillAgents(db); err != nil {
-		return fmt.Errorf("migrate v72→v73 (coverage backfill): %w", err)
-	}
-
-	// agent_conversations is the join spine; absent only on a partial-schema
-	// heal DB, where there is nothing to cut over.
+	// agent_conversations is the join spine. Probe it FIRST: on a partial-schema
+	// heal DB that lacks it there is nothing to cut over, and running the
+	// coverage backfill (which INSERTs into agents/agent_conversations) would
+	// just error on the missing tables. Normally v72 created+populated both
+	// immediately before this runs, so the probe passes and we proceed.
 	if ok, err := tableExists(db, "agent_conversations"); err != nil {
 		return fmt.Errorf("migrate v72→v73 (probe agent_conversations): %w", err)
 	} else if !ok {
@@ -57,6 +58,30 @@ func migrateV72toV73(db *sql.DB) error {
 			return fmt.Errorf("migrate v72→v73 (version, no-op): %w", err)
 		}
 		return nil
+	}
+
+	// Guarantee every conv referenced by the identity tables maps to an actor,
+	// so the conv_id → agent_id join below never drops a row. Idempotent.
+	if err := backfillAgents(db); err != nil {
+		return fmt.Errorf("migrate v72→v73 (coverage backfill): %w", err)
+	}
+
+	// Strict coverage gate. The rebuilds below INNER JOIN each source table to
+	// agent_conversations and then DROP the originals, so any identity row whose
+	// conv has no actor mapping would be silently lost. backfillAgents above is
+	// meant to guarantee full coverage, but it degrades gracefully (logs + skips)
+	// on a corrupted succession mapping rather than wedging DB-open — a lenient
+	// posture that is right for the additive v72 backfill but wrong here, at the
+	// destructive cutover. So before touching anything we refuse to proceed if a
+	// single identity row would be dropped: the version stays at 72, the
+	// .pre-v73-agentkey.bak snapshot is intact, and the operator can investigate
+	// rather than discover missing authz state after the fact.
+	if unmapped, err := unmappedIdentityRows(db); err != nil {
+		return fmt.Errorf("migrate v72→v73 (coverage check): %w", err)
+	} else if len(unmapped) > 0 {
+		return fmt.Errorf("migrate v72→v73: refusing to cut over — identity rows have no agent mapping "+
+			"after backfill (would be dropped by the rebuild): %v; the pre-cutover DB is unchanged "+
+			"(snapshot at <db>.pre-v73-agentkey.bak)", unmapped)
 	}
 
 	tx, err := db.Begin()
@@ -76,11 +101,13 @@ func migrateV72toV73(db *sql.DB) error {
 				joined_at TEXT NOT NULL,
 				PRIMARY KEY (group_id, agent_id)
 			)`,
+			// Newest generation's role/descr wins a same-(group,agent) collapse.
 			insert: `INSERT OR IGNORE INTO agent_group_members_v73
 				(group_id, agent_id, role, descr, joined_at)
 				SELECT m.group_id, ac.agent_id, m.role, m.descr, m.joined_at
 				FROM agent_group_members m
-				JOIN agent_conversations ac ON ac.conv_id = m.conv_id`,
+				JOIN agent_conversations ac ON ac.conv_id = m.conv_id
+				ORDER BY m.joined_at DESC`,
 			indexes: []string{`CREATE INDEX IF NOT EXISTS idx_agent_group_members_agent
 				ON agent_group_members(agent_id)`},
 		},
@@ -93,11 +120,13 @@ func migrateV72toV73(db *sql.DB) error {
 				granted_by TEXT NOT NULL DEFAULT '',
 				PRIMARY KEY (group_id, agent_id)
 			)`,
+			// Newest grant wins a same-(group,agent) collapse.
 			insert: `INSERT OR IGNORE INTO agent_group_owners_v73
 				(group_id, agent_id, granted_at, granted_by)
 				SELECT o.group_id, ac.agent_id, o.granted_at, o.granted_by
 				FROM agent_group_owners o
-				JOIN agent_conversations ac ON ac.conv_id = o.conv_id`,
+				JOIN agent_conversations ac ON ac.conv_id = o.conv_id
+				ORDER BY o.granted_at DESC`,
 			indexes: []string{`CREATE INDEX IF NOT EXISTS idx_agent_group_owners_agent
 				ON agent_group_owners(agent_id)`},
 		},
@@ -111,11 +140,16 @@ func migrateV72toV73(db *sql.DB) error {
 				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')),
 				PRIMARY KEY (agent_id, slug)
 			)`,
+			// Security-relevant collapse: if two generations carried conflicting
+			// overrides for the same (agent, slug), DENY must win (it
+			// unconditionally overrides a grant), then the newest. ORDER BY puts
+			// the surviving row first so INSERT OR IGNORE keeps it.
 			insert: `INSERT OR IGNORE INTO agent_permissions_v73
 				(agent_id, slug, granted_at, granted_by, effect)
 				SELECT ac.agent_id, p.slug, p.granted_at, p.granted_by, p.effect
 				FROM agent_permissions p
-				JOIN agent_conversations ac ON ac.conv_id = p.conv_id`,
+				JOIN agent_conversations ac ON ac.conv_id = p.conv_id
+				ORDER BY CASE WHEN p.effect = 'deny' THEN 0 ELSE 1 END, p.granted_at DESC`,
 			indexes: []string{`CREATE INDEX IF NOT EXISTS idx_agent_permissions_slug
 				ON agent_permissions(slug)`},
 		},
@@ -149,11 +183,13 @@ func migrateV72toV73(db *sql.DB) error {
 				mode       TEXT NOT NULL CHECK (mode IN ('on', 'off')),
 				updated_at TEXT NOT NULL
 			)`,
+			// Newest pref wins a same-agent collapse.
 			insert: `INSERT OR IGNORE INTO agent_notify_prefs_v73
 				(agent_id, mode, updated_at)
 				SELECT ac.agent_id, n.mode, n.updated_at
 				FROM agent_notify_prefs n
-				JOIN agent_conversations ac ON ac.conv_id = n.conv_id`,
+				JOIN agent_conversations ac ON ac.conv_id = n.conv_id
+				ORDER BY n.updated_at DESC`,
 		},
 	}
 
@@ -209,6 +245,43 @@ func (rb agentKeyRebuild) run(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// unmappedIdentityRows reports, per source identity table, how many rows
+// reference a conv that has no agent_conversations mapping — i.e. rows the
+// destructive conv_id → agent_id rebuild would silently drop. An empty map
+// means full coverage (safe to cut over). Column-aware: a table that is absent
+// or already agent-keyed (no conv_id column) contributes nothing, so the check
+// is a no-op on a re-run or a partial-schema heal DB.
+func unmappedIdentityRows(d *sql.DB) (map[string]int, error) {
+	out := map[string]int{}
+	for _, table := range []string{
+		"agent_group_members",
+		"agent_group_owners",
+		"agent_permissions",
+		"agent_sudo_grants",
+		"agent_notify_prefs",
+	} {
+		ok, err := columnExists(d, table, "conv_id")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue // table missing or already agent-keyed — nothing to map
+		}
+		// conv_id is NOT NULL in every source table and is the PK of
+		// agent_conversations, so NOT IN carries no NULL-semantics surprise.
+		// The table name comes from the hardcoded list above, never user input.
+		var n int
+		if err := d.QueryRow(`SELECT COUNT(*) FROM ` + table +
+			` WHERE conv_id NOT IN (SELECT conv_id FROM agent_conversations)`).Scan(&n); err != nil {
+			return nil, fmt.Errorf("%s: %w", table, err)
+		}
+		if n > 0 {
+			out[table] = n
+		}
+	}
+	return out, nil
 }
 
 // vacuumBackup writes a consistent snapshot of the live DB to <dbpath><suffix>

@@ -908,25 +908,34 @@ type AgentDeletionCounts struct {
 	NotifyPrefs    int64 `json:"notify_prefs"`
 }
 
-// DeleteAgentByConvID purges every row that references convID across
-// the agent / conv / session tables. Single transaction — partial
-// failure rolls everything back.
+// DeleteAgentByConvID purges the conversation generation convID, plus —
+// when convID is its actor's live generation — the actor's identity. Single
+// transaction; partial failure rolls everything back.
 //
-// Tables hit (in dependency order):
+// Conv-scoped (always, keyed on convID — these belong to THIS generation):
 //
-//   - agent_group_members
-//   - agent_group_owners
 //   - agent_messages (from_conv = ? OR to_conv = ?)
-//   - agent_permissions
-//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades
-//     to agent_cron_runs via the FK.
-//   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?).
-//     Both sides — chain history of the deleted agent disappears.
+//   - agent_cron_jobs (owner_conv = ? OR target_conv = ?). Cascades to
+//     agent_cron_runs via the FK.
+//   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?)
 //   - conv_embeddings
 //   - conv_index
 //   - sessions
 //   - agent_enrollment
-//   - agent_notify_prefs
+//
+// Actor-scoped (keyed on the resolved agent_id) — ONLY when convID is the
+// actor's current_conv_id (its live generation):
+//
+//   - agent_group_members, agent_group_owners, agent_permissions,
+//     agent_notify_prefs
+//   - agents (cascades the remaining agent_conversations links)
+//
+// Deleting a PREDECESSOR generation (a reincarnate / Claude Code /clear keeps
+// the old conv around) instead only unlinks that one conv from its actor — the
+// live actor and its identity survive (JOH-26). When convID is the live
+// generation and the actor has older generations, those predecessors' own
+// conv-scoped rows + .jsonl are left behind (cleaning them up across an actor's
+// whole generation set is a later stage).
 //
 // Filesystem state (the .jsonl in ~/.claude/projects/... and the
 // ~/.claude/session-env/<convID> file) is the caller's
@@ -950,48 +959,87 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// The identity tables (members/owners/permissions/notify) are agent-keyed
-	// (JOH-26): resolve the conv to its actor and delete by agent_id. The rest
-	// stay conv-keyed (conversation generation / runtime / history). Deleting
-	// the agents row last cascades agent_conversations, fully removing the
-	// actor and all its generation links.
 	agentID, err := agentIDForConvTx(tx, convID)
 	if err != nil {
 		return c, err
 	}
-	type step struct {
+
+	// Conv-scoped teardown: this conversation generation's runtime, history,
+	// index and message rows. Always removed — they belong to THIS generation,
+	// not to the actor as a whole.
+	type convStep struct {
 		stmt string
-		arg  string // bind value: convID or the resolved agentID
-		into *int64 // nil ⇒ discard the count
+		into *int64
 	}
-	steps := []step{
-		{`DELETE FROM agent_group_members WHERE agent_id = ?`, agentID, &c.GroupMembers},
-		{`DELETE FROM agent_group_owners WHERE agent_id = ?`, agentID, &c.GroupOwners},
-		{`DELETE FROM agent_permissions WHERE agent_id = ?`, agentID, &c.Permissions},
-		{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, agentID, &c.NotifyPrefs},
-		{`DELETE FROM agent_messages WHERE from_conv = ?`, convID, &c.MessagesFrom},
-		{`DELETE FROM agent_messages WHERE to_conv = ?`, convID, &c.MessagesTo},
-		{`DELETE FROM agent_cron_jobs WHERE owner_conv = ?`, convID, &c.CronJobsOwned},
-		{`DELETE FROM agent_cron_jobs WHERE target_conv = ?`, convID, &c.CronJobsTarget},
-		{`DELETE FROM agent_conv_succession WHERE old_conv_id = ?`, convID, &c.SuccessionOld},
-		{`DELETE FROM agent_conv_succession WHERE new_conv_id = ?`, convID, &c.SuccessionNew},
-		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, convID, &c.Embeddings},
-		{`DELETE FROM conv_index WHERE conv_id = ?`, convID, &c.ConvIndex},
-		{`DELETE FROM sessions WHERE conv_id = ?`, convID, &c.Sessions},
-		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, convID, &c.Enrollment},
-		{`DELETE FROM agents WHERE agent_id = ?`, agentID, nil},
-	}
-	for _, s := range steps {
-		if s.arg == "" {
-			continue // no actor resolved ⇒ nothing agent-keyed to delete
-		}
-		res, err := tx.Exec(s.stmt, s.arg)
+	for _, s := range []convStep{
+		{`DELETE FROM agent_messages WHERE from_conv = ?`, &c.MessagesFrom},
+		{`DELETE FROM agent_messages WHERE to_conv = ?`, &c.MessagesTo},
+		{`DELETE FROM agent_cron_jobs WHERE owner_conv = ?`, &c.CronJobsOwned},
+		{`DELETE FROM agent_cron_jobs WHERE target_conv = ?`, &c.CronJobsTarget},
+		{`DELETE FROM agent_conv_succession WHERE old_conv_id = ?`, &c.SuccessionOld},
+		{`DELETE FROM agent_conv_succession WHERE new_conv_id = ?`, &c.SuccessionNew},
+		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
+		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
+		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
+		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, &c.Enrollment},
+	} {
+		res, err := tx.Exec(s.stmt, convID)
 		if err != nil {
 			return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
 		}
-		if s.into != nil {
-			n, _ := res.RowsAffected()
-			*s.into = n
+		n, _ := res.RowsAffected()
+		*s.into = n
+	}
+
+	// Actor-scoped teardown: the agent_id-keyed identity rows (memberships,
+	// ownerships, permission overrides, notify pref) and the actor row itself.
+	// Only when convID is the actor's CURRENT (live) generation. Under JOH-26 a
+	// reincarnate / Claude Code /clear leaves the old conv around as a past
+	// GENERATION of the same active actor — deleting one of those predecessors
+	// must NOT wipe the live actor's identity. So:
+	//   - current generation  → tear the whole actor down; the `agents` delete
+	//     cascades every remaining agent_conversations link.
+	//   - predecessor generation → unlink just this conv; the actor and its
+	//     identity (and other generations) stay put.
+	// agentID == "" means the conv is not an agent at all — nothing actor-level.
+	if agentID != "" {
+		var current string
+		switch err := tx.QueryRow(
+			`SELECT current_conv_id FROM agents WHERE agent_id = ?`, agentID).Scan(&current); {
+		case errors.Is(err, sql.ErrNoRows):
+			// Actor row already gone (e.g. an earlier partial delete) — clear any
+			// stale generation link this conv still holds.
+			if _, err := tx.Exec(`DELETE FROM agent_conversations WHERE conv_id = ?`, convID); err != nil {
+				return AgentDeletionCounts{}, fmt.Errorf("delete agent (unlink generation): %w", err)
+			}
+		case err != nil:
+			return c, err
+		case current == convID:
+			type actorStep struct {
+				stmt string
+				into *int64
+			}
+			for _, s := range []actorStep{
+				{`DELETE FROM agent_group_members WHERE agent_id = ?`, &c.GroupMembers},
+				{`DELETE FROM agent_group_owners WHERE agent_id = ?`, &c.GroupOwners},
+				{`DELETE FROM agent_permissions WHERE agent_id = ?`, &c.Permissions},
+				{`DELETE FROM agent_notify_prefs WHERE agent_id = ?`, &c.NotifyPrefs},
+				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
+			} {
+				res, err := tx.Exec(s.stmt, agentID)
+				if err != nil {
+					return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
+				}
+				if s.into != nil {
+					n, _ := res.RowsAffected()
+					*s.into = n
+				}
+			}
+		default:
+			// Predecessor generation: unlink just this conv; the actor lives on.
+			if _, err := tx.Exec(`DELETE FROM agent_conversations WHERE conv_id = ?`, convID); err != nil {
+				return AgentDeletionCounts{}, fmt.Errorf("delete agent (unlink generation): %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
