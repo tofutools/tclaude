@@ -13,8 +13,16 @@ import (
 )
 
 var (
-	once     sync.Once
+	// stateMu guards the singleton state below. A plain sync.Once is not
+	// enough: ResetForTest must be able to tear the singleton down while a
+	// background goroutine left over from a prior test (a daemon loop, a conv
+	// monitor mid-startup-scan) may still be calling Open(). Reassigning a
+	// sync.Once under such a concurrent caller is a data race that corrupts
+	// the Once's internal mutex and parks the next Open() forever (the macOS
+	// CI 10m timeout). The mutex makes init and reset mutually exclusive.
+	stateMu  sync.Mutex
 	globalDB *sql.DB
+	dbReady  bool
 	initErr  error
 )
 
@@ -28,55 +36,66 @@ func DBPath() string {
 }
 
 // Open returns the singleton database connection, creating and migrating
-// the database on first call.
+// the database on first call. Concurrent callers block until the first
+// initialization completes, then share its result (or its error).
 func Open() (*sql.DB, error) {
-	once.Do(func() {
-		dbPath := DBPath()
-		if dbPath == "" {
-			initErr = os.ErrNotExist
-			return
-		}
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-			initErr = err
-			return
-		}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if dbReady {
+		return globalDB, initErr
+	}
+	// Mark ready up front: even on an init error we cache the failed result
+	// (globalDB stays nil, initErr set) rather than retrying the full chain
+	// on every call — same memoization the previous sync.Once gave.
+	dbReady = true
 
-		// Test-only fast path: seed the db file from a cached, fully-migrated
-		// snapshot so the migrate() below short-circuits (the v0->vN chain
-		// costs ~290ms on pure-Go sqlite and the suite opens a fresh db per
-		// test). Inert in production. See migration_template.go.
-		seededFromTemplate := maybeSeedFromTemplate(dbPath)
+	dbPath := DBPath()
+	if dbPath == "" {
+		initErr = os.ErrNotExist
+		return globalDB, initErr
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		initErr = err
+		return globalDB, initErr
+	}
 
-		// PRAGMAs in the DSN are applied on every new pooled connection.
-		// `foreign_keys` in particular is per-connection in SQLite, so a
-		// one-shot db.Exec wouldn't survive when the pool opens new
-		// connections under load.
-		dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-		globalDB, initErr = sql.Open("sqlite", dsn)
-		if initErr != nil {
-			return
-		}
+	// Test-only fast path: seed the db file from a cached, fully-migrated
+	// snapshot so the migrate() below short-circuits (the v0->vN chain
+	// costs ~290ms on pure-Go sqlite and the suite opens a fresh db per
+	// test). Inert in production. See migration_template.go.
+	seededFromTemplate := maybeSeedFromTemplate(dbPath)
 
-		initErr = migrate(globalDB)
-		if initErr != nil {
-			_ = globalDB.Close()
-			globalDB = nil
-			return
-		}
+	// PRAGMAs in the DSN are applied on every new pooled connection.
+	// `foreign_keys` in particular is per-connection in SQLite, so a
+	// one-shot db.Exec wouldn't survive when the pool opens new
+	// connections under load.
+	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	globalDB, initErr = sql.Open("sqlite", dsn)
+	if initErr != nil {
+		return globalDB, initErr
+	}
 
-		// Test-only: capture the freshly-migrated empty schema so sibling
-		// tests in this process reuse it via the fast path above. No-op when
-		// we just seeded from the template or in production.
-		if !seededFromTemplate {
-			maybeCaptureTemplate(globalDB, dbPath)
-		}
-	})
+	initErr = migrate(globalDB)
+	if initErr != nil {
+		_ = globalDB.Close()
+		globalDB = nil
+		return globalDB, initErr
+	}
+
+	// Test-only: capture the freshly-migrated empty schema so sibling
+	// tests in this process reuse it via the fast path above. No-op when
+	// we just seeded from the template or in production.
+	if !seededFromTemplate {
+		maybeCaptureTemplate(globalDB, dbPath)
+	}
 	return globalDB, initErr
 }
 
 // Close closes the singleton database connection if it is open.
 // It is safe to call multiple times.
 func Close() {
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if globalDB != nil {
 		err := globalDB.Close()
 		if err != nil {
@@ -84,16 +103,22 @@ func Close() {
 		}
 		globalDB = nil
 	}
+	dbReady = false
+	initErr = nil
 }
 
 // ResetForTest allows tests to reset the singleton so Open() re-initializes.
-// Must only be called from tests.
+// Must only be called from tests. Safe to call while a leftover goroutine
+// from a prior test is concurrently in Open(): stateMu serializes the two so
+// the reset never races the init (see the stateMu comment above).
 func ResetForTest() {
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	if globalDB != nil {
 		_ = globalDB.Close()
 		globalDB = nil
 	}
-	once = sync.Once{}
+	dbReady = false
 	initErr = nil
 	// Arm the migration-template fast path. The first Open in this process
 	// pays the full migration cost and caches the result; every later
