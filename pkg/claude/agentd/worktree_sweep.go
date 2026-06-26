@@ -191,6 +191,9 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 					"retired agent "+agentNames(row.Agents)+" — safe to remove (reinstate-resume loses this dir)"
 			}
 		case len(row.Agents) > 0:
+			// At least one bound conv is not retired — a still-enrolled
+			// (merely-offline) agent, or a plain non-agent conversation.
+			// Either way its resume is cwd-bound, so protect the worktree.
 			row.Category, row.Checked, row.Reason = "agent", false,
 				"belongs to agent "+agentNames(row.Agents)+" — deleting breaks its resume"
 		default:
