@@ -169,13 +169,12 @@ func TestBackfillAgentsCoversIdentityOnlyConv(t *testing.T) {
 	require.NoError(t, err, "Open")
 	resetAgentLayer(t, d)
 
-	gid, err := CreateAgentGroup("bf-grp", "")
-	require.NoError(t, err)
-	mustExec(t, d, `DELETE FROM agent_conversations`)
-	mustExec(t, d, `DELETE FROM agents`)
-	mustExec(t, d, `DELETE FROM agent_enrollment`)
-	mustExec(t, d, `INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
-		VALUES (?, 'lonely', '', '', '2020-01-01T00:00:00Z')`, gid)
+	resetAgentLayer(t, d)
+	// A conv that appears only in a (still conv-keyed) agentic table, with no
+	// enrollment — the defensive coverage path. clone_history is one of the
+	// conv-keyed sources collectAgentConvs scans.
+	mustExec(t, d, `INSERT INTO agent_clone_history (source_conv_id, cloned_at)
+		VALUES ('lonely', '2020-01-01T00:00:00Z')`)
 
 	require.NoError(t, backfillAgents(d), "backfillAgents")
 

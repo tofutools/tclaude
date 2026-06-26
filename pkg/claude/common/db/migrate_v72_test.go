@@ -19,7 +19,7 @@ func TestMigrateV71toV72_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 72, currentVersion, "currentVersion is 72")
+	// (the literal currentVersion tripwire moved forward to the v73 test)
 
 	for _, table := range []string{"agents", "agent_conversations"} {
 		var n int

@@ -105,24 +105,29 @@ func TestClearRotation_MigratesAgentIdentityToNewConvID(t *testing.T) {
 	assert.Nil(t, findMember(members, c.OldConv),
 		"old conv-id must NOT linger as a member after /clear")
 
-	// Permission overrides — grant AND deny — moved to the new conv-id.
-	newPerms, err := db.ListAgentPermissionOverridesForConv(c.NewConv)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{
+	// Permission overrides — grant AND deny — belong to the stable actor
+	// (JOH-26), not a conv generation: they were never rekeyed, the rows stayed
+	// put on agent_id and only the conv pointer advanced. So they resolve from
+	// the new conv — AND from the old one, which is the same actor.
+	wantPerms := map[string]string{
 		"human.notify": db.PermEffectGrant,
 		"agent.spawn":  db.PermEffectDeny,
-	}, newPerms, "permission overrides should resolve under the new conv-id")
+	}
+	newPerms, err := db.ListAgentPermissionOverridesForConv(c.NewConv)
+	require.NoError(t, err)
+	assert.Equal(t, wantPerms, newPerms, "permission overrides resolve under the new conv-id")
 	oldPerms, err := db.ListAgentPermissionOverridesForConv(c.OldConv)
 	require.NoError(t, err)
-	assert.Empty(t, oldPerms, "old conv-id must retain no permission overrides")
+	assert.Equal(t, wantPerms, oldPerms,
+		"the predecessor generation resolves to the same actor, so it sees the same overrides")
 
-	// Ownership + membership rows: new yes, old no.
+	// Ownership is agent-keyed too: both generations report the actor's ownership.
 	ownNew, err := db.IsAgentGroupOwner(g.ID, c.NewConv)
 	require.NoError(t, err)
 	assert.True(t, ownNew, "new conv-id should own the group")
 	ownOld, err := db.IsAgentGroupOwner(g.ID, c.OldConv)
 	require.NoError(t, err)
-	assert.False(t, ownOld, "old conv-id must not still own the group")
+	assert.True(t, ownOld, "the predecessor generation resolves to the same owning actor")
 
 	// The old conv-id is retired (not deleted) — its enrollment row
 	// stays so a human can `tclaude agent promote` it later to
