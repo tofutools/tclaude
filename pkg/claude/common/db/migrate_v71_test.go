@@ -88,6 +88,41 @@ func TestMigrateV70toV71_HealsTablelessSchema(t *testing.T) {
 	assert.Equal(t, 71, ver, "version advances even with the table absent")
 }
 
+// TestMigrateV70toV71_HealsSessionlessSchema covers the inverse partial
+// schema: session_cost_daily is present but sessions is not. The column
+// add must still land, and the backfill (which reads sessions) must be
+// skipped rather than wedge on "no such table: sessions".
+func TestMigrateV70toV71_HealsSessionlessSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v70-sessionless.sqlite")
+	d, err := sql.Open("sqlite", path)
+	require.NoError(t, err, "open raw sqlite")
+	defer func() { _ = d.Close() }()
+
+	_, err = d.Exec(`
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version (version) VALUES (70);
+		CREATE TABLE session_cost_daily (
+			session_id TEXT NOT NULL,
+			day        TEXT NOT NULL,
+			conv_id    TEXT NOT NULL DEFAULT '',
+			cost_usd   REAL NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, day)
+		);
+		INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('s1', '2026-06-20', 'conv-1', 1.00);
+	`)
+	require.NoError(t, err, "seed sessionless v70 schema")
+
+	require.NoError(t, migrateV70toV71(d), "no sessions table → backfill skipped, not an error")
+
+	var ver int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
+	assert.Equal(t, 71, ver, "version advances")
+
+	var model string
+	require.NoError(t, d.QueryRow(`SELECT model FROM session_cost_daily WHERE session_id = 's1'`).Scan(&model))
+	assert.Empty(t, model, "column added with the empty default; no sessions to backfill from")
+}
+
 // TestMigrateV70toV71_FreshSchema builds a fresh DB through the full
 // migrate() chain and asserts session_cost_daily.model exists. v71 is
 // head, so this is where the literal currentVersion tripwire now lives —

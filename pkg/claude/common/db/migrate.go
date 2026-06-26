@@ -500,12 +500,21 @@ func migrateV70toV71(db *sql.DB) error {
 	).Scan(&haveTable); err != nil {
 		return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe table: %w", err)
 	}
-	var haveCol int
+	var haveCol, haveSessions int
 	if haveTable > 0 {
 		if err := tx.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('session_cost_daily') WHERE name = 'model'`,
 		).Scan(&haveCol); err != nil {
 			return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe column: %w", err)
+		}
+		// The backfill reads from sessions; in a real DB it always exists by
+		// here, but a partial-schema heal DB could have session_cost_daily
+		// without it, so probe and skip the backfill rather than wedge on
+		// "no such table: sessions".
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+		).Scan(&haveSessions); err != nil {
+			return fmt.Errorf("migrate v70→v71 (add session_cost_daily.model): probe sessions table: %w", err)
 		}
 	}
 	if haveTable > 0 && haveCol == 0 {
@@ -517,13 +526,15 @@ func migrateV70toV71(db *sql.DB) error {
 		// Backfill from the live sessions row where one still carries a
 		// model — the same source the per-agent breakdown read live until
 		// now. History whose session was already deleted keeps "".
-		if _, err := tx.Exec(`
-			UPDATE session_cost_daily SET model = (
-				SELECT s.model FROM sessions s WHERE s.id = session_cost_daily.session_id
-			)
-			WHERE session_id IN (SELECT id FROM sessions WHERE model <> '')`,
-		); err != nil {
-			return fmt.Errorf("migrate v70→v71 (backfill session_cost_daily.model): %w", err)
+		if haveSessions > 0 {
+			if _, err := tx.Exec(`
+				UPDATE session_cost_daily SET model = (
+					SELECT s.model FROM sessions s WHERE s.id = session_cost_daily.session_id
+				)
+				WHERE session_id IN (SELECT id FROM sessions WHERE model <> '')`,
+			); err != nil {
+				return fmt.Errorf("migrate v70→v71 (backfill session_cost_daily.model): %w", err)
+			}
 		}
 	}
 
