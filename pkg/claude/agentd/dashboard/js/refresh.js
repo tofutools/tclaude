@@ -1302,16 +1302,18 @@ async function openWorktreeCleanup(group) {
     hintEl.textContent = n === 0
       ? `No removable worktrees found in ${where}.`
       : `${n} removable worktree${n === 1 ? '' : 's'} in ${where}. `
-        + `Orphans (no agent) are pre-ticked; worktrees an agent still uses (resume-bound) and ones `
-        + `with uncommitted changes are left unticked for you to review. Only ticked worktrees are removed.`;
+        + `Orphans (no agent) and retired-agent leftovers are pre-ticked; worktrees a still-enrolled agent `
+        + `uses (resume-bound) and ones with uncommitted changes are left unticked for you to review. `
+        + `Only ticked worktrees are removed.`;
   }
 
   // Category mass-toggle chips: one per non-empty category (orphan /
-  // agent / live) plus a cross-cutting "uncommitted" chip. Each shows
-  // checked/total and flips its whole set at once (ignoring the filter —
-  // that's the point of a bulk toggle); .active marks a fully-ticked set.
+  // retired / agent / live) plus a cross-cutting "uncommitted" chip. Each
+  // shows checked/total and flips its whole set at once (ignoring the
+  // filter — that's the point of a bulk toggle); .active marks a
+  // fully-ticked set.
   function renderCats() {
-    const defs = [['orphan', 'orphans'], ['agent', 'agent-bound'], ['live', 'live']];
+    const defs = [['orphan', 'orphans'], ['retired', 'retired'], ['agent', 'agent-bound'], ['live', 'live']];
     let html = '';
     for (const [cat, label] of defs) {
       const rows = catRows(cat);

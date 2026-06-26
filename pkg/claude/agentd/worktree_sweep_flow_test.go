@@ -22,16 +22,18 @@ import (
 //	GET  /api/groups/{name}/worktrees   — discovery + classification
 //	POST /api/worktrees/cleanup         — explicit-path removal + prune
 //
-// The fake models one repo "/repo" with five worktrees: the main repo, a
-// live-agent worktree, an offline-agent worktree, a clean orphan and a
-// dirty orphan — one of each classification the modal renders.
+// The fake models one repo "/repo" with seven worktrees: the main repo, a
+// live-agent worktree, an offline (still-enrolled) agent worktree, a clean
+// orphan, a dirty orphan, a clean retired-agent worktree and a dirty
+// retired-agent worktree — one of each classification the modal renders.
 
 // --- wire shapes (mirror the unexported handler responses) -----------
 
 type sweepAgentWire struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Online bool   `json:"online"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Online  bool   `json:"online"`
+	Retired bool   `json:"retired"`
 }
 
 type sweepWorktreeWire struct {
@@ -170,22 +172,38 @@ func installFakeSweep(t *testing.T, f *fakeSweep) {
 func repoFixture(t *testing.T, f *testharness.Flow) *fakeSweep {
 	t.Helper()
 	const (
-		repo   = "/repo"
-		wtLive = "/repo-wt-live"
-		wtAgt  = "/repo-wt-agent"
-		wtOrph = "/repo-wt-orphan"
-		wtDrt  = "/repo-wt-dirty"
-		live   = "wliv-1111-2222-3333-4444"
-		agt    = "wagt-1111-2222-3333-4444"
+		repo    = "/repo"
+		wtLive  = "/repo-wt-live"
+		wtAgt   = "/repo-wt-agent"
+		wtOrph  = "/repo-wt-orphan"
+		wtDrt   = "/repo-wt-dirty"
+		wtRetC  = "/repo-wt-retired"
+		wtRetD  = "/repo-wt-retired-dirty"
+		live    = "wliv-1111-2222-3333-4444"
+		agt     = "wagt-1111-2222-3333-4444"
+		retCln  = "wrtc-1111-2222-3333-4444"
+		retDrty = "wrtd-1111-2222-3333-4444"
 	)
 	f.HaveConvWithTitle(live, "live-worker")
 	f.HaveConvWithTitle(agt, "offline-worker")
+	f.HaveConvWithTitle(retCln, "retired-clean")
+	f.HaveConvWithTitle(retDrty, "retired-dirty")
 	f.HaveAliveSession(live, "spwn-live", "tmux-live", wtLive)
 	f.HaveAliveSession(agt, "spwn-agt", "tmux-agt", wtAgt)
+	f.HaveAliveSession(retCln, "spwn-retc", "tmux-retc", wtRetC)
+	f.HaveAliveSession(retDrty, "spwn-retd", "tmux-retd", wtRetD)
 	f.MarkOffline("tmux-agt")
+	f.MarkOffline("tmux-retc")
+	f.MarkOffline("tmux-retd")
 	f.HaveGroup("squad")
 	f.HaveMember("squad", live)
 	f.HaveMember("squad", agt)
+	// The two retired agents are NOT group members (retire unjoins every
+	// group) — their worktrees still surface because `git worktree list` is
+	// repo-global and their session rows still pin a cwd. HaveRetiredAgent
+	// flips the enrollment to retired, the signal the classifier keys on.
+	f.HaveRetiredAgent(retCln)
+	f.HaveRetiredAgent(retDrty)
 	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
 	require.NoError(t, err, "set group default cwd")
 
@@ -196,6 +214,8 @@ func repoFixture(t *testing.T, f *testharness.Flow) *fakeSweep {
 			{Path: wtAgt, Branch: "agent"},
 			{Path: wtOrph, Branch: "orphan"},
 			{Path: wtDrt, Branch: "dirty"},
+			{Path: wtRetC, Branch: "retired"},
+			{Path: wtRetD, Branch: "retired-dirty"},
 		},
 		roots: map[string]string{
 			repo:   repo, // default_cwd resolves to the main repo root
@@ -208,8 +228,10 @@ func repoFixture(t *testing.T, f *testharness.Flow) *fakeSweep {
 			wtAgt:  {Root: wtAgt, Branch: "agent", Kind: "linked"},
 			wtOrph: {Root: wtOrph, Branch: "orphan", Kind: "linked"},
 			wtDrt:  {Root: wtDrt, Branch: "dirty", Kind: "linked"},
+			wtRetC: {Root: wtRetC, Branch: "retired", Kind: "linked"},
+			wtRetD: {Root: wtRetD, Branch: "retired-dirty", Kind: "linked"},
 		},
-		dirty:    map[string]bool{wtDrt: true},
+		dirty:    map[string]bool{wtDrt: true, wtRetD: true},
 		mainRepo: repo,
 	}
 	installFakeSweep(t, fs)
@@ -245,7 +267,7 @@ func TestWorktreeSweep_DiscoverClassifies(t *testing.T) {
 	mux := agentd.BuildDashboardHandlerForTest()
 	out := discoverWorktrees(t, mux, "squad")
 
-	require.Len(t, out.Worktrees, 5, "all five worktrees discovered")
+	require.Len(t, out.Worktrees, 7, "all seven worktrees discovered")
 	m := byPath(out.Worktrees)
 
 	assert.Equal(t, "main", m["/repo"].Category)
@@ -261,6 +283,7 @@ func TestWorktreeSweep_DiscoverClassifies(t *testing.T) {
 	assert.False(t, m["/repo-wt-agent"].Checked, "resume-bound worktree not pre-ticked")
 	require.Len(t, m["/repo-wt-agent"].Agents, 1)
 	assert.False(t, m["/repo-wt-agent"].Agents[0].Online)
+	assert.False(t, m["/repo-wt-agent"].Agents[0].Retired, "a still-enrolled agent is not retired")
 
 	assert.Equal(t, "orphan", m["/repo-wt-orphan"].Category)
 	assert.True(t, m["/repo-wt-orphan"].Checked, "clean orphan IS pre-ticked")
@@ -269,6 +292,20 @@ func TestWorktreeSweep_DiscoverClassifies(t *testing.T) {
 	assert.Equal(t, "orphan", m["/repo-wt-dirty"].Category)
 	assert.True(t, m["/repo-wt-dirty"].Dirty)
 	assert.False(t, m["/repo-wt-dirty"].Checked, "dirty orphan left for review, not pre-ticked")
+
+	// A clean worktree whose only bound agent is retired is its own
+	// category and IS pre-ticked — the janitor's prime cleanup target.
+	assert.Equal(t, "retired", m["/repo-wt-retired"].Category, "retired agent's worktree is its own category")
+	assert.True(t, m["/repo-wt-retired"].Checked, "clean retired-agent worktree IS pre-ticked")
+	assert.False(t, m["/repo-wt-retired"].Dirty)
+	require.Len(t, m["/repo-wt-retired"].Agents, 1)
+	assert.False(t, m["/repo-wt-retired"].Agents[0].Online)
+	assert.True(t, m["/repo-wt-retired"].Agents[0].Retired, "the bound agent is flagged retired")
+
+	// ...but a dirty one is held back for review, exactly like a dirty orphan.
+	assert.Equal(t, "retired", m["/repo-wt-retired-dirty"].Category)
+	assert.True(t, m["/repo-wt-retired-dirty"].Dirty)
+	assert.False(t, m["/repo-wt-retired-dirty"].Checked, "dirty retired worktree left for review, not pre-ticked")
 }
 
 // Scenario: the explicit-path cleanup removes the picked orphans (with
