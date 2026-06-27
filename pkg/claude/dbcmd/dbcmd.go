@@ -119,6 +119,9 @@ func printRelations(d *sql.DB) error {
 	printColumnList(convCols)
 	fmt.Printf("\nAgent-keyed columns (%d):\n", len(agentCols))
 	printColumnList(agentCols)
+	fmt.Print("\nScope: conv-id vs agent_id only. Columns keyed on other axes\n" +
+		"(session ids, group ids, plain identifiers) are intentionally not listed —\n" +
+		"they are not part of the conv-id -> agent_id migration. Use --json for every column.\n")
 	return nil
 }
 
