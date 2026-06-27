@@ -242,8 +242,12 @@ func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.AgentStateActive, oldState,
 		"the superseded predecessor %s resolves to the still-active actor", conv)
-	oldAgent, _ := db.AgentIDForConv(conv)
-	newAgent, _ := db.AgentIDForConv(r.NewConv)
+	oldAgent, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldAgent)
+	newAgent, err := db.AgentIDForConv(r.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, newAgent)
 	assert.Equal(t, oldAgent, newAgent, "both generations share one actor")
 }
 

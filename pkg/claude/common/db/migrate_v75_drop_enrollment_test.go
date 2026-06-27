@@ -99,12 +99,15 @@ func TestMigrateV74toV75_HealsDriftBeforeDrop(t *testing.T) {
 		mustExec(t, d, `INSERT INTO agent_enrollment
 			(conv_id, enrolled_at, enrolled_via, retired_at, retired_by, retire_reason)
 			VALUES ('r-conv', '2020-01-01T00:00:00Z', 'spawn', '2020-02-02T00:00:00Z', 'human', 'cleanup')`)
-		pre, _ := GetAgent(agentID)
+		pre, err := GetAgent(agentID)
+		require.NoError(t, err)
+		require.NotNil(t, pre)
 		require.True(t, pre.Active(), "precondition: actor still active (drift)")
 
 		require.NoError(t, migrateV74toV75(d), "migrateV74toV75")
 
-		a, _ := GetAgent(agentID)
+		a, err := GetAgent(agentID)
+		require.NoError(t, err)
 		require.NotNil(t, a)
 		assert.False(t, a.Active(), "the actor is synced to retired from its current enrollment")
 		assert.Equal(t, "human", a.RetiredBy, "audit fields carried too")
@@ -133,7 +136,8 @@ func TestMigrateV74toV75_HealsDriftBeforeDrop(t *testing.T) {
 
 		require.NoError(t, migrateV74toV75(d), "migrateV74toV75")
 
-		a, _ := GetAgent(agentID)
+		a, err := GetAgent(agentID)
+		require.NoError(t, err)
 		require.NotNil(t, a)
 		assert.True(t, a.Active(),
 			"the sync keys on the CURRENT generation — a retired predecessor enrollment must not retire the live actor")

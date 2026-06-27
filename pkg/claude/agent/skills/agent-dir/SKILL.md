@@ -82,8 +82,11 @@ it pops a window on their desktop. Don't call it speculatively.
 
 ## Manager pattern: another agent's directory
 
-Pass a selector — the peer's stable `agent_id` (preferred), title, or a
-conv-id / 8+-char prefix — to query a peer instead of yourself:
+Pass a selector — the peer's stable `agent_id` (preferred; full or a
+unique 8+-char prefix), title, or a conv-id (full or a unique 8+-char
+prefix) — to query a peer instead of yourself. A unique 8+-char prefix
+resolves either an `agent_id` or a conv-id, with the stable `agent_id`
+preferred:
 
 ```bash
 tclaude agent dir worker-1            # worker-1's current working dir
