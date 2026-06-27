@@ -52,29 +52,24 @@ func (j *AgentCronJob) IsGroupTarget() bool {
 // enrolling the conv as an agent when it is not already known (JOH-26 PR3a). A
 // job's owner schedules it and a conv-target receives it — both are addressable
 // agents, so they carry an actor like a group member does (mirrors
-// AddAgentGroupMember's EnrollAgent + AgentIDForConv). Keying owner/target on
-// agent_id means a reincarnate / Claude Code /clear no longer has to rewrite the
-// ref: the actor's id never moves, and the fire path resolves it back to the
-// actor's current conv at fire time. An empty conv — a group-target job, or a
+// AddAgentGroupMember's EnsureAgentForConv). Keying owner/target on agent_id
+// means a reincarnate / Claude Code /clear no longer has to rewrite the ref: the
+// actor's id never moves, and the fire path resolves it back to the actor's
+// current conv at fire time. An empty conv — a group-target job, or a
 // human-scheduled job with no owner attribution — maps to "" (no actor).
 func cronConvToAgent(convID string) (string, error) {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return "", nil
 	}
-	if err := EnrollAgent(convID, "cron"); err != nil {
-		return "", err
-	}
-	agentID, err := AgentIDForConv(convID)
+	agentID, _, err := EnsureAgentForConv(convID, "cron")
 	if err != nil {
 		return "", err
 	}
-	// EnrollAgent's actor dual-write is best-effort (it logs and returns nil on
-	// a transient failure), so a non-empty conv could still resolve to "". Treat
-	// that as an error rather than silently storing owner_agent/target_agent =
-	// '' (which would de-own / de-target the job) — the same guard
-	// AddAgentGroupMember uses, and the runtime twin of the migration's strict
-	// coverage gate.
+	// Defensive: a non-empty conv must resolve to a real actor — never silently
+	// store owner_agent/target_agent = '' (which would de-own / de-target the
+	// job). The same guard AddAgentGroupMember uses, and the runtime twin of the
+	// migration's strict coverage gate.
 	if agentID == "" {
 		return "", fmt.Errorf("cronConvToAgent: no actor for conv %s", convID)
 	}
@@ -85,7 +80,7 @@ func cronConvToAgent(convID string) (string, error) {
 // on agent_id (JOH-26 PR3a); each LEFT JOIN resolves the actor back to its
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
-// '') or an owner-less job keeps an empty string rather than dropping the row.
+// ”) or an owner-less job keeps an empty string rather than dropping the row.
 // The 13 projected columns match scanAgentCronJob's field order.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),

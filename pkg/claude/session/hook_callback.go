@@ -185,7 +185,7 @@ func inTaskRunnerHook() bool {
 // The (true, nil) conditions hold for the post-/clear SessionStart AND
 // for every later hook until the migration succeeds — so a migration
 // that fails on the SessionStart hook (a transient SQLite error) is
-// simply retried on the next hook (db.MigrateAgentIdentity is atomic +
+// simply retried on the next hook (db.RotateAgentConv is atomic +
 // idempotent: a failed attempt records no succession edge, so the
 // predicate stays true; a committed one records the edge, so it flips
 // false). The predicate IS the retry condition — no extra bookkeeping
@@ -202,18 +202,18 @@ func inTaskRunnerHook() bool {
 // migrates identity along — the agent follows its operator across the
 // switch.
 func needsIdentityMigration(oldConv, newConv string) (bool, error) {
-	oldEnr, err := db.EnrollmentState(oldConv)
+	oldState, err := db.AgentState(oldConv)
 	if err != nil {
 		return false, err
 	}
-	if oldEnr != db.EnrollmentActive {
+	if oldState != db.AgentStateActive {
 		return false, nil
 	}
-	newEnr, err := db.EnrollmentState(newConv)
+	newState, err := db.AgentState(newConv)
 	if err != nil {
 		return false, err
 	}
-	if newEnr == db.EnrollmentActive {
+	if newState == db.AgentStateActive {
 		return false, nil
 	}
 	succ, err := db.GetConvSuccessor(oldConv)
@@ -226,12 +226,12 @@ func needsIdentityMigration(oldConv, newConv string) (bool, error) {
 	return true, nil
 }
 
-// migrateAgentIdentity is the indirection seam test code uses to inject
-// a transient migration failure. Production code is the direct
-// db.MigrateAgentIdentity call; tests swap it via
-// SetMigrateAgentIdentityForTest (testhooks_test.go) to assert the retry
-// path described on needsIdentityMigration above.
-var migrateAgentIdentity = db.MigrateAgentIdentity
+// rotateAgentConv is the indirection seam test code uses to inject a
+// transient rotation failure. Production code is the direct
+// db.RotateAgentConv call; tests swap it via SetRotateAgentConvForTest
+// (testhooks.go) to assert the retry path described on
+// needsIdentityMigration above.
+var rotateAgentConv = db.RotateAgentConv
 
 // notifyOnStateTransition is the seam the hook callback notifies
 // through. Production is the direct notify.OnStateTransition (config +
@@ -240,22 +240,21 @@ var migrateAgentIdentity = db.MigrateAgentIdentity
 // suppression — without standing up a real notification backend.
 var notifyOnStateTransition = notify.OnStateTransition
 
-// migrateClearedIdentity migrates agent identity — group memberships,
-// ownerships, permission overrides, cron refs, the succession edge and
-// the display name — from a /clear'd conv-id onto the fresh one
-// (db.MigrateAgentIdentity, which also retires the old enrollment so
-// it lands on the retired-agents roster, reactivatable later for
-// knowledge pings), then restores the conversation title that /clear
-// wiped.
+// migrateClearedIdentity advances the actor across a /clear: it links the fresh
+// conv-id onto the same agent_id, moves the live pointer, records the succession
+// edge and carries the display name (db.RotateAgentConv — agents-table only
+// since JOH-26 PR3c, so no enrollment to retire; the predecessor is simply a
+// past generation of the still-active actor), then restores the conversation
+// title that /clear wiped.
 //
-// Returns true when the migration committed (the caller may then record
-// the new conv-id on the session row), false when it failed — in which
-// case the caller leaves the session row on the old conv-id so the next
-// hook retries (see needsIdentityMigration). The migration is atomic,
-// so a failure strands nothing: identity stays wholly on oldConv.
+// Returns true when the rotation committed (the caller may then record the new
+// conv-id on the session row), false when it failed — in which case the caller
+// leaves the session row on the old conv-id so the next hook retries (see
+// needsIdentityMigration). The rotation is atomic, so a failure strands nothing:
+// identity stays wholly on oldConv.
 func migrateClearedIdentity(state *SessionState, newConv string) bool {
 	// Freshen the old conv's conv_index from its .jsonl before the
-	// migration carries the display name. An agent's /rename of itself
+	// rotation carries the display name. An agent's /rename of itself
 	// lands as a customTitle turn in the .jsonl, and conv_index may not
 	// have been re-scanned since — without this the carried name (and
 	// so the /rename restore below) could miss a recent rename.
@@ -265,21 +264,20 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
 		}
 	}
-	mig, err := migrateAgentIdentity(state.ConvID, newConv, "clear", "system:clear")
+	carriedName, _, err := rotateAgentConv(state.ConvID, newConv, "clear")
 	if err != nil {
-		slog.Error("clear-migrate: agent identity migration failed (will retry on next hook)",
+		slog.Error("clear-migrate: agent identity rotation failed (will retry on next hook)",
 			"old_conv", state.ConvID, "new_conv", newConv, "error", err, "module", "hooks")
 		return false
 	}
-	slog.Info("clear-migrate: agent identity migrated across /clear",
-		"old_conv", state.ConvID, "new_conv", newConv,
-		"migrated", mig.Items, "module", "hooks")
-	// /clear wiped CC's conversation title. db.MigrateAgentIdentity
-	// already carried the name onto pending_name (so the dashboard shows
-	// it at once); inject /rename so the new conversation also regains a
-	// real customTitle turn — durable, visible in CC's own UI, and on
-	// every other surface.
-	restoreClearedTitle(state.TmuxSession, mig.CarriedName)
+	slog.Info("clear-migrate: agent identity advanced across /clear",
+		"old_conv", state.ConvID, "new_conv", newConv, "module", "hooks")
+	// /clear wiped CC's conversation title. db.RotateAgentConv already carried
+	// the name onto the actor's pending_name (so the dashboard shows it at
+	// once); inject /rename so the new conversation also regains a real
+	// customTitle turn — durable, visible in CC's own UI, and on every other
+	// surface.
+	restoreClearedTitle(state.TmuxSession, carriedName)
 	return true
 }
 
@@ -304,7 +302,7 @@ var clearInjectReadyDelay = 1 * time.Second
 // empty tmux session, an empty title, a title that fails the strict
 // rename charset gate, a dead pane, or a send-keys failure all just
 // fall through to the pending_name dashboard fallback that
-// db.MigrateAgentIdentity already set.
+// db.RotateAgentConv already carried onto the actor.
 //
 // Replicates injectTextAndSubmit's shape from
 // pkg/claude/agentd/handlers.go (text → 500 ms gap → Enter → 500 ms
@@ -929,9 +927,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// sweep still enrolls any genuinely live transitioned conv as the
 	// backstop, exactly as it does for sessions tclaude did not launch.
 	//
-	// INSERT OR IGNORE makes this idempotent and retirement-safe: a conv
-	// the migration above already enrolled, or one the human deliberately
-	// retired, is left untouched (a retired conv is never un-retired).
+	// EnsureAgentForConv makes this idempotent and retirement-safe: a conv
+	// the rotation above already linked to an actor, or one the human
+	// deliberately retired, is left untouched (a retired actor is never
+	// reinstated by an ensure).
 	//
 	// `tclaude task run` is exempt: its per-task conversations are
 	// throwaway task executions, not managed agents, so skip the INSTANT
@@ -943,8 +942,8 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// inTaskRunnerHook.
 	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) &&
 		envSessionID != "" && state.ConvID != "" && !inTaskRunnerHook() {
-		if err := db.EnrollAgent(state.ConvID, "session-start"); err != nil {
-			slog.Warn("failed to enroll launched session as agent",
+		if _, _, err := db.EnsureAgentForConv(state.ConvID, "session-start"); err != nil {
+			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
 		}
 	}

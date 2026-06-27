@@ -290,8 +290,8 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// administrative control over the group. Done only after the pane is alive so
 	// a clone that never comes up is never briefly a (dead) group member.
 	if sameGroup {
-		if err := db.EnrollAgent(newConv, "export-clone"); err != nil {
-			slog.Warn("export clone: enroll failed", "job", jobID, "conv", newConv, "error", err)
+		if _, _, err := db.EnsureAgentForConv(newConv, "export-clone"); err != nil {
+			slog.Warn("export clone: ensure actor failed", "job", jobID, "conv", newConv, "error", err)
 		}
 		members, perms := snapshotConvIdentity(originalConv)
 		applyClonedIdentity(newConv, "system:export-clone", members, perms, nil /* never inherit ownership */)
@@ -417,8 +417,8 @@ func retireSummaryWriterClone(cloneConv string) {
 		return
 	}
 	stopOneConv(cloneConv, true /* force kill — the clone is done */)
-	if err := db.EnrollAgent(cloneConv, "export-clone"); err != nil {
-		slog.Warn("export clone: enroll-before-retire failed", "conv", cloneConv, "error", err)
+	if _, _, err := db.EnsureAgentForConv(cloneConv, "export-clone"); err != nil {
+		slog.Warn("export clone: ensure-actor-before-retire failed", "conv", cloneConv, "error", err)
 	}
 	if _, _, err := retireAgentConv(cloneConv, "system:export-clone",
 		"export complete — retired to preserve cost"); err != nil {

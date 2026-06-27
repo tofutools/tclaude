@@ -679,11 +679,11 @@ func findConvJSONL(convID string) (string, bool) {
 }
 
 // convExistsLocally reports whether a conv-id is already known on this
-// machine — as an enrolled agent, a conv_index row, a group member, or a
-// .jsonl on disk. Any hit means an import must remap that conv-id rather
-// than collide with the existing conversation.
+// machine — as an agent, a conv_index row, a group member, or a .jsonl on
+// disk. Any hit means an import must remap that conv-id rather than collide
+// with the existing conversation.
 func convExistsLocally(convID string) bool {
-	if e, err := db.GetEnrollment(convID); err == nil && e != nil {
+	if a, err := db.GetAgentByConv(convID); err == nil && a != nil {
 		return true
 	}
 	if row, err := db.GetConvIndex(convID); err == nil && row != nil {

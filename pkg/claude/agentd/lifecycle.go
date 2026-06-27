@@ -511,15 +511,15 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // plan rides back on res.Worktree, and its one-line note is folded into
 // Detail so the CLI/table row says what happened.
 func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
-	state, serr := db.EnrollmentState(convID)
+	state, serr := db.AgentState(convID)
 	if serr != nil {
 		res.Action = "error"
-		res.Detail = "enrollment lookup: " + serr.Error()
+		res.Detail = "agent-state lookup: " + serr.Error()
 		return res, nil
 	}
-	if state != db.EnrollmentActive {
+	if state != db.AgentStateActive {
 		res.Action = "skipped:not_active_agent"
-		res.Detail = "enrollment: " + state
+		res.Detail = "state: " + state
 		return res, nil
 	}
 	outcome, ownerGroups, rerr := retireAgentConv(convID, by, reason)
@@ -2033,17 +2033,13 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
-	// Record the requested name as the agent's pending display name. Until
+	// Record the requested name as the actor's pending display name. Until
 	// the title materialises (a tick later on the legacy path; at launch on
 	// the launch-enrollment path) the dashboard would otherwise show
 	// "(unknown)". agent.FreshTitle reads pending_name as a fallback; the
-	// real custom title supersedes it. Mirror it onto the actor row so the
-	// name survives rotations on the agent-keyed surfaces too.
+	// real custom title supersedes it. Keyed on the actor so the name survives
+	// conv rotations.
 	if name := strings.TrimSpace(p.Name); name != "" {
-		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
-			slog.Warn("spawn: failed to record pending name",
-				"conv", convID, "name", name, "error", err)
-		}
 		if agentID != "" {
 			if err := db.SetAgentPendingName(agentID, name); err != nil {
 				slog.Warn("spawn: failed to record actor pending name",

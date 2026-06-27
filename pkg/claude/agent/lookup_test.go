@@ -275,23 +275,24 @@ func TestCachedTitle_SummaryFallback(t *testing.T) {
 }
 
 // TestCachedTitle_PendingNameWhenNotIndexed covers the freshly-spawned
-// agent: enrolled with its intended --name, but its .jsonl is not yet
+// agent: registered with its intended --name, but its .jsonl is not yet
 // in conv_index. CachedTitle has no row to read, so it must fall back
-// to the enrollment pending name rather than returning "(unknown)".
+// to the actor's pending name rather than returning "(unknown)".
 // This is the path that keeps the dashboard from blanking a just-
 // spawned agent in the gap before its first index event lands.
 func TestCachedTitle_PendingNameWhenNotIndexed(t *testing.T) {
 	setupTestDB(t)
 	const convID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	require.NoError(t, db.EnrollAgent(convID, "test"))
-	require.NoError(t, db.SetEnrollmentPendingName(convID, "spawned-worker"))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "spawned-worker"))
 
 	assert.Equal(t, "spawned-worker", CachedTitle(convID),
-		"with no conv_index row, CachedTitle must fall back to the enrollment pending name")
+		"with no conv_index row, CachedTitle must fall back to the actor's pending name")
 }
 
 // TestCachedTitle_UnknownWhenUnresolvable: no cached row and no
-// enrollment → the UnknownTitle placeholder, exactly as FreshTitle.
+// actor → the UnknownTitle placeholder, exactly as FreshTitle.
 func TestCachedTitle_UnknownWhenUnresolvable(t *testing.T) {
 	setupTestDB(t)
 	assert.Equal(t, UnknownTitle, CachedTitle("00000000-0000-0000-0000-000000000000"))

@@ -358,39 +358,38 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		armRemoteControlOnNewRow(label)
 	}
 
-	// 4. Migrate identity old → new — group memberships, ownerships,
-	// permission overrides, cron-job conv refs — plus the succession
-	// edge and the display-name carry. Shared with Claude Code's
-	// /clear path (issue #192); see db.MigrateAgentIdentity.
-	// Best-effort inside the migration: a per-row failure is logged,
-	// not fatal. A partial migration is recoverable (humans can use
-	// `tclaude agent permissions` / `groups add` to fix), whereas a
-	// hard abort would leave the new agent unprovisioned with no clean
-	// recovery.
+	// Audit trail: who triggered this reincarnation (self / cross-agent /
+	// via-sudo). The actor model no longer retires a predecessor row to stamp
+	// this on, so record it in the daemon log — the same forensic, surfaced
+	// alongside the other lifecycle ops.
 	granter := "system:reincarnate"
 	if caller != target {
 		granter = "system:reincarnate:by=" + auditedCaller(caller, perm)
 	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
 		granter = fmt.Sprintf("system:reincarnate:via-sudo:grant-id=%d", grantID)
 	}
-	mig, err := db.MigrateAgentIdentity(target, newConv, "reincarnate", granter)
-	if err != nil {
-		// db.MigrateAgentIdentity is atomic: an error means NOTHING
-		// committed (no membership / perm / owner / cron rekey, no
-		// succession edge, no enrollment touched). Carrying on from here
-		// would decommission the old pane (step 9: /exit + archive)
-		// while the new conv has no migrated identity, stranding the
-		// agent. Abort the request instead and leave the old pane alive
-		// with identity intact. The spawned successor stays around as
-		// an orphan tclaude session reachable via `attach_cmd` for
-		// manual cleanup.
-		slog.Error("reincarnate: identity migration failed; aborting orchestration",
+
+	// 4. Advance the actor old → new (db.RotateAgentConv): the agent_id never
+	// moves — every identity-bearing table is agent-keyed since JOH-26 — so this
+	// just links newConv as the fresh head generation, advances the live conv
+	// pointer, records the succession edge and carries the display name. Shared
+	// with Claude Code's /clear path (issue #192).
+	slog.Info("reincarnate: advancing actor to successor conversation",
+		"old", target, "new", newConv, "label", label, "granter", granter)
+	if _, _, err := db.RotateAgentConv(target, newConv, "reincarnate"); err != nil {
+		// db.RotateAgentConv is atomic: an error means NOTHING committed (no
+		// generation link, no pointer advance, no succession edge). Carrying on
+		// from here would decommission the old pane (step 9: /exit + archive)
+		// while the new conv has no migrated identity, stranding the agent. Abort
+		// the request instead and leave the old pane alive with identity intact.
+		// The spawned successor stays around as an orphan tclaude session
+		// reachable via `attach_cmd` for manual cleanup.
+		slog.Error("reincarnate: actor rotation failed; aborting orchestration",
 			"old", target, "new", newConv, "label", label, "error", err)
 		writeError(w, http.StatusInternalServerError, "identity_migration",
-			"failed to migrate agent identity to successor conversation: "+err.Error())
+			"failed to advance agent identity to successor conversation: "+err.Error())
 		return
 	}
-	migrated := mig.Items
 
 	// 5. Carry any tmux clients attached to the old session over to
 	// the new session BEFORE we /exit the old pane. Without this, the
@@ -473,12 +472,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// listing surfaces a way to detect the archived state. Idempotent:
 	// the rename skips when prevTitle is empty or already ends in
 	// `-x`; the column stamp is a single UPDATE.
-	// Visibility for the predecessor comes from the retired-agents tray
-	// now (db.MigrateAgentIdentity retired the enrollment in-transaction
-	// with the rekey + succession edge), not from conv_index.archived_at
-	// — keeping both would be contradictory (archived hides, retired
-	// shows). The Retired tray is the durable surface the human uses to
-	// reinstate the pre-rotation conv later for knowledge pings.
+	// The predecessor is now a past GENERATION of the still-active actor
+	// (db.RotateAgentConv advanced the actor's live pointer + recorded the
+	// succession edge), not a standalone retired or archived entry. It is
+	// excluded from the active roster (only the actor's current conv shows),
+	// the retired tray (the actor is active) and the plain-conversations list
+	// (ListAgentConvIDs covers every generation) — reachable via the
+	// succession edge / séance, which is why no conv_index.archived_at stamp
+	// is needed here.
 	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
 		_ = deliverRename(target, prevTitle+"-x")
 	}
@@ -496,7 +497,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		"label":            label,
 		"tmux_session":     newTmux,
 		"attach_cmd":       "tclaude session attach " + label,
-		"migrated":         migrated,
+		"migrated":         []string{},
 		"switched_clients": switchedClients,
 	}
 	if caller != target {

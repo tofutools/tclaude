@@ -9,9 +9,9 @@ import (
 )
 
 // TestMigrateV73toV74_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts the cron / spawn / clone tables came out agent-keyed. v74 is
-// head, so the literal currentVersion tripwire lives here now (moved forward
-// from the v73 test); the next migration's author moves it into their own test.
+// chain and asserts the cron / spawn / clone tables came out agent-keyed. The
+// literal currentVersion tripwire moved forward to the v75 test (head), per
+// convention.
 func TestMigrateV73toV74_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -20,7 +20,6 @@ func TestMigrateV73toV74_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 74, currentVersion, "tripwire: bump this and add a v74→v75 test when you add a migration")
 
 	// The cutover renamed each conv ref to its agent-keyed name.
 	for _, c := range []struct{ table, agentCol, convCol string }{

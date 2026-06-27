@@ -424,6 +424,141 @@ func listAgents(where string) ([]*Agent, error) {
 	return out, rows.Err()
 }
 
+// Agent states — the actor-table tri-state that replaced the removed
+// agent_enrollment tri-state (JOH-26 PR3c). A conversation is an agent exactly
+// when it has an agent_conversations row; the owning actor's retired_at then
+// decides active vs retired. A predecessor generation resolves to its (live)
+// actor, so it reads AgentStateActive — a past generation of an active agent,
+// never a standalone retired entry (the actor-level Retired-tray behaviour PR3b
+// shipped).
+const (
+	AgentStateNone    = "none"    // not an agent
+	AgentStateActive  = "active"  // live actor
+	AgentStateRetired = "retired" // actor explicitly retired
+)
+
+// AgentState returns AgentStateNone / Active / Retired for convID — the cheap
+// probe the read paths use to decide whether a conv belongs on the agent
+// roster. The actor-table successor to the removed db.EnrollmentState.
+func AgentState(convID string) (string, error) {
+	a, err := GetAgentByConv(convID)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case a == nil:
+		return AgentStateNone, nil
+	case a.Active():
+		return AgentStateActive, nil
+	default:
+		return AgentStateRetired, nil
+	}
+}
+
+// PromoteAgent makes convID's actor an active agent — the explicit, deliberate
+// path behind the dashboard "promote" / "reinstate" buttons and the
+// `tclaude agent promote` CLI. EnsureAgentForConv mints an actor for a
+// brand-new conv; a retired actor is reinstated. Returns the prior AgentState
+// so the caller can tell a promote ("none") from a reinstate ("retired") and
+// report a no-op ("active") honestly. Single source as of JOH-26 PR3c — the
+// agents table is the only roster, so there is no second write to diverge from.
+func PromoteAgent(convID, via string) (prior string, err error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return "", errors.New("PromoteAgent: conv_id required")
+	}
+	prior, err = AgentState(convID)
+	if err != nil {
+		return "", err
+	}
+	agentID, _, err := EnsureAgentForConv(convID, via)
+	if err != nil {
+		return prior, err
+	}
+	if prior == AgentStateRetired {
+		if _, err := ReinstateAgentByID(agentID); err != nil {
+			return prior, err
+		}
+	}
+	return prior, nil
+}
+
+// RetireAgent demotes convID's actor to a plain conversation: it sets the
+// actor's retired_at so the agent drops off every live surface. The
+// conversation data itself is untouched — this is the non-destructive half of
+// cleanup. Callers must first revoke the conv's group memberships and
+// permission grants; RetireAgent only flips the bit. Returns false (no error)
+// when convID was not an active agent, so a repeated cleanup is idempotent.
+//
+// Conv-keyed convenience over RetireAgentByID: it resolves convID to its stable
+// actor and retires that. A predecessor generation resolves to its live actor —
+// but in practice retire is only ever issued against an actor's current
+// generation (the resolved selector), so this retires exactly the intended
+// actor.
+func RetireAgent(convID, by, reason string) (bool, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return false, errors.New("RetireAgent: conv_id required")
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if agentID == "" {
+		return false, nil
+	}
+	return RetireAgentByID(agentID, by, reason)
+}
+
+// ReinstateAgent clears the retired flag on convID's actor, returning a retired
+// agent to active status. Its groups and grants do not come back — retire
+// stripped those — so a reinstated agent starts fresh. Returns false (no error)
+// when convID's actor was not retired. Conv-keyed convenience over
+// ReinstateAgentByID.
+func ReinstateAgent(convID string) (bool, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return false, errors.New("ReinstateAgent: conv_id required")
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if agentID == "" {
+		return false, nil
+	}
+	return ReinstateAgentByID(agentID)
+}
+
+// PendingNamesByConv returns conv_id → pending_name for every actor that
+// recorded a non-empty spawn-time name, keyed on the actor's CURRENT conv. It
+// is the bulk display-fallback counterpart to GetAgentByConv(...).PendingName,
+// for listing surfaces that need the designated agent name before the agent's
+// own title write has landed (e.g. a Codex agent) without a per-row query.
+// Actors with no pending name are simply absent from the map. Actor-keyed since
+// JOH-26 PR3c, so the fallback survives conv rotations.
+func PendingNamesByConv() (map[string]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT current_conv_id, pending_name FROM agents
+		WHERE pending_name IS NOT NULL AND pending_name != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]string)
+	for rows.Next() {
+		var convID, name string
+		if err := rows.Scan(&convID, &name); err != nil {
+			return nil, err
+		}
+		out[convID] = name
+	}
+	return out, rows.Err()
+}
+
 // --- transaction-scoped helpers (shared by the runtime API and the
 // migration backfill, which must operate on the migration's *sql.DB rather
 // than re-entering Open()) ---

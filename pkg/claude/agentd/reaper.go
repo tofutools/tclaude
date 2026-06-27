@@ -108,16 +108,16 @@ func startSessionReaper(stop <-chan struct{}) {
 // tmux-probe an online-but-otherwise-unrecorded session from inside a
 // SQL migration.
 //
-// Idempotent and retirement-safe: EnrollAgent is INSERT OR IGNORE, so a
-// conv that is already enrolled is left untouched and one the human
-// deliberately retired is never un-retired — a retired agent whose pane
-// is still alive stays retired.
+// Idempotent and retirement-safe: EnsureAgentForConv mints / links an actor
+// only when the conv is not already known, so a conv that already has an actor
+// is left untouched and one the human deliberately retired is never un-retired
+// — a retired agent whose pane is still alive stays retired.
 func enrollOnlineSession(st *session.SessionState) {
 	if st.ConvID == "" {
 		return
 	}
-	if err := db.EnrollAgent(st.ConvID, "online-reconcile"); err != nil {
-		slog.Warn("reaper: enroll online session failed", "conv", st.ConvID, "error", err)
+	if _, _, err := db.EnsureAgentForConv(st.ConvID, "online-reconcile"); err != nil {
+		slog.Warn("reaper: ensure online session actor failed", "conv", st.ConvID, "error", err)
 	}
 }
 

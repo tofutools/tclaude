@@ -41,7 +41,7 @@ func TestRetiredCleanup_DeletesLongRetired(t *testing.T) {
 	// conv retired ~now is comfortably before the cutoff and eligible.
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	assert.Nil(t, enr, "long-retired enrollment should be deleted")
 
@@ -64,7 +64,7 @@ func TestRetiredCleanup_KeepsRecentlyRetired(t *testing.T) {
 	// the cutoff and must be kept.
 	agentd.RunRetiredAgentCleanupForTest(time.Now())
 
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, enr, "a recently-retired agent must not be deleted")
 	assert.False(t, enr.Active(), "and it stays retired")
@@ -82,9 +82,9 @@ func TestRetiredCleanup_SkipsActiveAgents(t *testing.T) {
 
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
-	state, err := db.EnrollmentState(convID)
+	state, err := db.AgentState(convID)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "an active agent must never be reaped")
+	assert.Equal(t, db.AgentStateActive, state, "an active agent must never be reaped")
 }
 
 // End-to-end on-disk + cost behaviour: a long-retired conversation with a
@@ -111,7 +111,7 @@ func TestRetiredCleanup_RemovesJSONLButKeepsCost(t *testing.T) {
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
 	// Enrollment purged and the .jsonl gone from disk (conv ls can't see it).
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	assert.Nil(t, enr, "long-retired enrollment should be deleted")
 	f.AssertConvNotListed(convID, cwd)
@@ -146,7 +146,7 @@ func TestRetiredCleanup_SkipsOnlineRetired(t *testing.T) {
 
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	assert.NotNil(t, enr, "a still-online retired conv must be skipped, not deleted")
 }
@@ -163,7 +163,7 @@ func TestRetiredCleanup_DisabledByDefault(t *testing.T) {
 
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	assert.NotNil(t, enr, "with the sweep disabled, retired entities are kept forever")
 }
@@ -184,7 +184,7 @@ func TestRetiredCleanup_SkipsOnBrokenConfig(t *testing.T) {
 
 	agentd.RunRetiredAgentCleanupForTest(time.Now().AddDate(0, 0, 400))
 
-	enr, err := db.GetEnrollment(convID)
+	enr, err := db.GetAgentByConv(convID)
 	require.NoError(t, err)
 	assert.NotNil(t, enr, "a broken config must skip the sweep, not delete against a guess")
 }

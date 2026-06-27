@@ -162,15 +162,15 @@ func TestMigrateV53toV54_FreshSchemaRoundTrips(t *testing.T) {
 
 // TestNotifyPref_FollowsAgentLifecycle asserts the notify pref rides the
 // lifecycle paths. As of the JOH-26 agent-id cutover the pref is agent-keyed,
-// so a rotation (MigrateAgentIdentity) does NOT rekey it — it belongs to the
-// actor and is reachable from every conversation generation. DeleteAgentByConvID
+// so a rotation (RotateAgentConv) does NOT rekey it — it belongs to the actor
+// and is reachable from every conversation generation. DeleteAgentByConvID
 // removes it with the actor.
 func TestNotifyPref_FollowsAgentLifecycle(t *testing.T) {
 	setupTestDB(t)
 
 	require.NoError(t, SetConvNotifyPref("old-conv", NotifyPrefOff))
-	_, err := MigrateAgentIdentity("old-conv", "new-conv", "reincarnate", "system:test")
-	require.NoError(t, err, "MigrateAgentIdentity")
+	_, _, err := RotateAgentConv("old-conv", "new-conv", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
 
 	// Reachable from the successor conv...
 	mode, err := GetConvNotifyPref("new-conv")

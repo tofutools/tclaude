@@ -58,12 +58,9 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 	if g.GrantedAt.IsZero() {
 		g.GrantedAt = time.Now()
 	}
-	// A sudo elevation is granted to an agent — enroll it (and ensure its
-	// stable actor) if new, then key the grant on agent_id (JOH-26).
-	if eerr := EnrollAgent(g.ConvID, "grant"); eerr != nil {
-		return 0, eerr
-	}
-	agentID, err := AgentIDForConv(g.ConvID)
+	// A sudo elevation is granted to an agent — ensure its stable actor if new,
+	// then key the grant on agent_id (JOH-26).
+	agentID, _, err := EnsureAgentForConv(g.ConvID, "grant")
 	if err != nil {
 		return 0, err
 	}

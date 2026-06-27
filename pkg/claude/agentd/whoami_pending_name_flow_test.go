@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -54,8 +53,7 @@ func TestWhoami_FallsBackToPendingName(t *testing.T) {
 	f.HaveMember("tclaude-dev", convID) // enrolls the agent
 	// Spawn recorded the requested name as the pending name; no custom
 	// title exists yet (the out-of-band rename has not landed).
-	require.NoError(t, db.SetEnrollmentPendingName(convID, "testc"),
-		"SetEnrollmentPendingName")
+	f.HavePendingName(convID, "testc")
 
 	got := whoamiTitle(t, f, convID)
 	assert.Equal(t, "testc", got,
@@ -73,8 +71,7 @@ func TestWhoami_CustomTitleOutranksPending_AndUnnamedFallback(t *testing.T) {
 	f.HaveGroup("g")
 	f.HaveMember("g", named)
 	f.HaveConvWithTitle(named, "renamed-title")
-	require.NoError(t, db.SetEnrollmentPendingName(named, "stale-pending"),
-		"SetEnrollmentPendingName")
+	f.HavePendingName(named, "stale-pending")
 	assert.Equal(t, "renamed-title", whoamiTitle(t, f, named),
 		"custom title must outrank the pending name")
 

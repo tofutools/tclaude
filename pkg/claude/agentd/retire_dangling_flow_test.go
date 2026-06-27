@@ -43,9 +43,9 @@ func TestRetire_DanglingEntry_DashboardSignalsThenDeletes(t *testing.T) {
 
 	// Enroll WITHOUT any conversation data — the dangling state.
 	f.HaveEnrolledAgent(danglingConvID)
-	st, err := db.EnrollmentState(danglingConvID)
+	st, err := db.AgentState(danglingConvID)
 	require.NoError(t, err)
-	require.Equal(t, db.EnrollmentActive, st, "precondition: an active enrollment with no conv data")
+	require.Equal(t, db.AgentStateActive, st, "precondition: an active enrollment with no conv data")
 
 	dash := agentd.BuildDashboardHandlerForTest()
 
@@ -63,8 +63,8 @@ func TestRetire_DanglingEntry_DashboardSignalsThenDeletes(t *testing.T) {
 
 	// Retire must not have mutated the enrollment — the dangling signal is
 	// read-only; only the explicit DELETE removes anything.
-	st, _ = db.EnrollmentState(danglingConvID)
-	assert.Equal(t, db.EnrollmentActive, st, "dangling retire must not demote the enrollment")
+	st, _ = db.AgentState(danglingConvID)
+	assert.Equal(t, db.AgentStateActive, st, "dangling retire must not demote the enrollment")
 
 	// 2) The follow-up DELETE the confirm modal fires purges the orphan.
 	drec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodDelete,
@@ -73,8 +73,8 @@ func TestRetire_DanglingEntry_DashboardSignalsThenDeletes(t *testing.T) {
 		"delete dangling: code=%d body=%s", drec.Code, drec.Body.String())
 
 	// The entry is fully gone — no longer an agent at all.
-	st, _ = db.EnrollmentState(danglingConvID)
-	assert.Equal(t, db.EnrollmentNone, st, "dangling entry must be fully removed after delete")
+	st, _ = db.AgentState(danglingConvID)
+	assert.Equal(t, db.AgentStateNone, st, "dangling entry must be fully removed after delete")
 }
 
 // TestRetire_DanglingEntry_V1DispatcherSignals proves the /v1 dispatcher
@@ -109,8 +109,8 @@ func TestRetire_UnknownConvID_StaysNotFound(t *testing.T) {
 	_ = newFlow(t)
 
 	const unknown = "ffffffff-0000-1111-2222-333333333333"
-	st, _ := db.EnrollmentState(unknown)
-	require.Equal(t, db.EnrollmentNone, st, "precondition: not an agent")
+	st, _ := db.AgentState(unknown)
+	require.Equal(t, db.AgentStateNone, st, "precondition: not an agent")
 
 	dash := agentd.BuildDashboardHandlerForTest()
 	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
@@ -156,8 +156,8 @@ func TestRetire_DanglingEntry_RetiredAlsoOffered(t *testing.T) {
 
 	const conv = "cccccccc-2222-3333-4444-555555555555"
 	f.HaveRetiredAgent(conv) // enrolled then retired, no conversation data
-	st, _ := db.EnrollmentState(conv)
-	require.Equal(t, db.EnrollmentRetired, st, "precondition: a retired enrollment with no conv data")
+	st, _ := db.AgentState(conv)
+	require.Equal(t, db.AgentStateRetired, st, "precondition: a retired enrollment with no conv data")
 
 	dash := agentd.BuildDashboardHandlerForTest()
 	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
@@ -173,6 +173,6 @@ func TestRetire_DanglingEntry_RetiredAlsoOffered(t *testing.T) {
 		"/api/agents/"+conv, nil))
 	require.Truef(t, drec.Code == http.StatusNoContent || drec.Code == http.StatusOK,
 		"delete retired-dangling: code=%d body=%s", drec.Code, drec.Body.String())
-	st, _ = db.EnrollmentState(conv)
-	assert.Equal(t, db.EnrollmentNone, st, "retired dangling entry must be fully removed after delete")
+	st, _ = db.AgentState(conv)
+	assert.Equal(t, db.AgentStateNone, st, "retired dangling entry must be fully removed after delete")
 }
