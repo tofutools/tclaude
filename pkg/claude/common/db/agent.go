@@ -907,6 +907,25 @@ type AgentDeletionCounts struct {
 	NotifyPrefs    int64 `json:"notify_prefs"`
 }
 
+// Add accumulates o into c field-by-field. Used by the actor-level
+// cross-generation delete (conv.DeleteAgentAllGenerations, JOH-26 PR3d) to sum
+// each swept generation's per-table removals into one reported total.
+func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
+	c.GroupMembers += o.GroupMembers
+	c.GroupOwners += o.GroupOwners
+	c.MessagesFrom += o.MessagesFrom
+	c.MessagesTo += o.MessagesTo
+	c.Permissions += o.Permissions
+	c.CronJobsOwned += o.CronJobsOwned
+	c.CronJobsTarget += o.CronJobsTarget
+	c.SuccessionOld += o.SuccessionOld
+	c.SuccessionNew += o.SuccessionNew
+	c.Embeddings += o.Embeddings
+	c.ConvIndex += o.ConvIndex
+	c.Sessions += o.Sessions
+	c.NotifyPrefs += o.NotifyPrefs
+}
+
 // DeleteAgentByConvID purges the conversation generation convID, plus —
 // when convID is its actor's live generation — the actor's identity. Single
 // transaction; partial failure rolls everything back.

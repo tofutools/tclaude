@@ -108,12 +108,19 @@ func runRetiredAgentCleanup(now time.Time) {
 		// Log every deletion individually: the .jsonl is removed and there
 		// is no undo, so the daemon log is the sole forensic record of what
 		// was reaped (the aggregate line below is for at-a-glance volume).
-		if _, err := conv.DeleteConvByID(e.CurrentConvID); err != nil {
+		// Actor-aware (JOH-26 PR3d): a retired actor may carry predecessor
+		// generations (it was reincarnated / Claude Code /clear'd before
+		// retirement); DeleteAgentAllGenerations reaps EVERY generation's
+		// rows + .jsonl, so none orphan. `swept` is logged so the forensic
+		// record names each conv-id whose .jsonl was removed.
+		_, swept, err := conv.DeleteAgentAllGenerations(e.CurrentConvID)
+		if err != nil {
 			slog.Warn("retired cleanup: delete failed", "conv", e.CurrentConvID, "error", err)
 			continue
 		}
 		slog.Info("retired cleanup: deleted long-retired conversation",
-			"conv", e.CurrentConvID, "retired_at", e.RetiredAt.Format(time.RFC3339))
+			"conv", e.CurrentConvID, "retired_at", e.RetiredAt.Format(time.RFC3339),
+			"generations", swept)
 		deleted++
 	}
 	if deleted > 0 {

@@ -165,8 +165,14 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 	}
 
 	// Delegate to the comprehensive cleanup. Handles filesystem + DB
-	// union purge + session-env + sync tombstone in one place.
-	if _, err := DeleteConvByID(fullID); err != nil {
+	// union purge + session-env + sync tombstone in one place. Actor-aware
+	// (JOH-26 PR3d): when fullID is the head generation of a stable agent,
+	// every predecessor generation is swept too (rows + .jsonl together),
+	// so deleting an agent's live conversation can't orphan its prior
+	// generations into re-indexable .jsonl files. A plain conversation or a
+	// predecessor handle degrades to a single-conversation delete.
+	_, swept, err := DeleteAgentAllGenerations(fullID)
+	if err != nil {
 		fmt.Fprintf(stderr, "Error deleting conversation: %v\n", err)
 		return 1
 	}
@@ -176,6 +182,9 @@ func RunDelete(params *DeleteParams, stdout, stderr *os.File, stdin *os.File) in
 	_ = index
 
 	fmt.Fprintf(stdout, "Deleted conversation %s\n", fullID[:8])
+	if len(swept) > 1 {
+		fmt.Fprintf(stdout, "(also swept %d predecessor generation(s) of the same agent)\n", len(swept)-1)
+	}
 	return 0
 }
 
@@ -311,4 +320,99 @@ func DeleteConvByID(convID string) (db.AgentDeletionCounts, error) {
 		_ = RemoveSessionsIndexEntry(projectPath, fullID)
 	}
 	return counts, nil
+}
+
+// DeleteAgentAllGenerations is the actor-aware delete entry point: it removes a
+// conversation AND, when that conversation is the head (current) generation of a
+// stable agent (JOH-26), every OTHER generation of the same actor too — each
+// generation's conv-scoped DB rows AND its .jsonl / session-env files, together.
+//
+// Why this exists (JOH-26 PR3d): under the stable-agent-identity model an actor
+// accumulates conversation generations — a reincarnate / Claude Code /clear
+// advances the actor's live pointer and leaves the prior conv around as a past
+// generation. DeleteConvByID / db.DeleteAgentByConvID only ever touch ONE conv;
+// deleting the live generation tears the actor's identity down but ORPHANS every
+// predecessor generation's conv-scoped rows AND its .jsonl/session-env files. An
+// orphaned .jsonl is re-indexed by `conv ls` (it resurrects as a plain
+// conversation), so a DB-only cleanup is worse than none — the rows and the file
+// must move together. This walks the actor's whole generation set through
+// DeleteConvByID (which already removes rows+file as a unit per conv).
+//
+// Degrades safely to a single-conversation delete:
+//   - convID is not an agent conv → DeleteConvByID(convID).
+//   - convID is a PREDECESSOR generation (not its actor's head) → DeleteConvByID
+//     (convID) only. Deleting a stale/predecessor handle must never sweep the
+//     live actor's other generations — that is the existing JOH-26 predecessor
+//     semantics (db.DeleteAgentByConvID unlinks just that conv, the live actor
+//     and its identity survive), and DeleteConvByID preserves it. In practice
+//     the daemon resolves a predecessor selector forward to the head before it
+//     reaches here, so this branch is defensive (orphan / raw-conv-id deletes).
+//   - convID is the actor's HEAD generation → sweep every generation.
+//
+// Returns the summed per-table deletion counts across all generations swept and
+// the list of conv-ids actually deleted (head LAST), so callers can report scope
+// or log the forensic record of what was reaped.
+//
+// Partial-failure safety: predecessors are deleted first and the head LAST (the
+// head delete is the actor teardown). A failure part-way leaves the actor row
+// intact and recoverable — DeleteConvByID is idempotent, so re-invoking on the
+// same head converges (already-deleted generations are no-ops; the remaining
+// ones plus the head teardown complete).
+func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string, error) {
+	var counts db.AgentDeletionCounts
+	if convID == "" {
+		return counts, nil, fmt.Errorf("convID is required")
+	}
+
+	// Resolve the owning actor (nil ⇒ not an agent conv). A predecessor
+	// generation resolves to its actor too, so we additionally check the head
+	// pointer below to avoid letting a stale handle sweep the live actor.
+	actor, err := db.GetAgentByConv(convID)
+	if err != nil {
+		return counts, nil, fmt.Errorf("resolve agent for %s: %w", convID, err)
+	}
+
+	// Plain conversation, or a predecessor generation: delete just this one
+	// conv (rows + files), exactly as before.
+	if actor == nil || actor.CurrentConvID != convID {
+		c, err := DeleteConvByID(convID)
+		if err != nil {
+			return counts, nil, err
+		}
+		return c, []string{convID}, nil
+	}
+
+	// Head generation of a live actor: gather the whole generation set up front
+	// — the head delete cascades agent_conversations, so the set can't be
+	// re-queried mid-sweep — then delete every predecessor first and the head
+	// LAST. Doing the head last keeps the actor row (and so the predecessor
+	// unlinks) coherent throughout.
+	gens, err := db.ConvsForAgent(actor.AgentID)
+	if err != nil {
+		return counts, nil, fmt.Errorf("list generations of %s: %w", actor.AgentID, err)
+	}
+
+	var swept []string
+	for _, g := range gens {
+		if g == convID || g == "" {
+			continue // head deleted last; skip blanks defensively
+		}
+		c, err := DeleteConvByID(g)
+		if err != nil {
+			return counts, swept, fmt.Errorf("delete generation %s: %w", g, err)
+		}
+		counts.Add(c)
+		swept = append(swept, g)
+	}
+
+	// The head generation last — this is the actor teardown (memberships,
+	// permissions, cron, the agents row).
+	c, err := DeleteConvByID(convID)
+	if err != nil {
+		return counts, swept, fmt.Errorf("delete head generation %s: %w", convID, err)
+	}
+	counts.Add(c)
+	swept = append(swept, convID)
+
+	return counts, swept, nil
 }
