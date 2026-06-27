@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -128,10 +127,7 @@ func sendNudgeBracket(toConv string, msgID int64) bool {
 	if sess == nil {
 		return false
 	}
-	nudge := fmt.Sprintf(
-		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
-		msgID, msgID,
-	)
+	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false

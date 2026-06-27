@@ -256,17 +256,16 @@ func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, std
 	if d != nil && d.nudge != nil {
 		if sess, err := db.FindSessionByConvID(target.ConvID); err == nil && sess != nil && sess.TmuxSession != "" {
 			if session.IsTmuxSessionAlive(sess.TmuxSession) {
-				fromTitle := titleFor(fromID)
-				if fromTitle == "" {
-					fromTitle = "(unnamed)"
-				}
+				fromAgent, _ := db.AgentIDForConv(fromID)
+				sender := MessageSenderLabel(fromID, fromAgent)
+				replySel := shortAgentID(fromAgent, fromID)
 				subjectClause := ""
 				if p.Subject != "" {
 					subjectClause = fmt.Sprintf(" subject=%q", p.Subject)
 				}
 				nudge := fmt.Sprintf(
-					"[system: new agent message #%d from %s (%s) in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
-					id, fromTitle, short(fromID), via.Name, subjectClause, id, short(fromID),
+					"[system: new agent message #%d from %s in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
+					id, sender, via.Name, subjectClause, id, replySel,
 				)
 				if err := d.nudge(sess.TmuxSession, nudge); err != nil {
 					slog.Warn("failed to nudge target tmux session", "error", err, "session", sess.TmuxSession, "module", "agent")
@@ -367,6 +366,35 @@ func shortAgentID(agentID, convID string) string {
 		return agentID[:12]
 	}
 	return agentID
+}
+
+// ShortAgentID is the exported form of shortAgentID, for daemon-side
+// callers (e.g. the inbox/outbox list columns) that render a message's
+// actor in a wide table by its stable short id.
+func ShortAgentID(agentID, convID string) string {
+	return shortAgentID(agentID, convID)
+}
+
+// nudgeSenderNameMax bounds the (mutable) sender title injected into a tmux
+// nudge, so a pathologically long /rename can't blow up the bracketed line.
+// The stable short agent_id that follows is already length-bounded.
+const nudgeSenderNameMax = 32
+
+// MessageSenderLabel renders a message's sender for an incoming-message
+// tmux nudge as "name (agt_xxxxxxxx)" — the (truncated) current title plus
+// the stable short agent_id. The agent_id is the durable, rotation-immune
+// handle (JOH-27): unlike the old conv-id prefix it is safe to surface,
+// since it does not become stale on the sender's next reincarnate/clear.
+// The title is a friendly decoration, truncated so it can't dominate the
+// line. Falls back to the bare short id when the sender has no indexed
+// title, so the label is never empty.
+func MessageSenderLabel(fromConv, fromAgent string) string {
+	id := shortAgentID(fromAgent, fromConv)
+	name := truncate(TitleFor(fromConv), nudgeSenderNameMax)
+	if name == "" {
+		return id
+	}
+	return name + " (" + id + ")"
 }
 
 // onlineMark returns the single-cell glyph used in agent ls / groups

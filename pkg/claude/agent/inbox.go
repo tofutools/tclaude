@@ -288,8 +288,10 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	var m struct {
 		ID             int64           `json:"id"`
 		From           string          `json:"from"`
+		FromAgent      string          `json:"from_agent"`
 		FromTitle      string          `json:"from_title"`
 		To             string          `json:"to"`
+		ToAgent        string          `json:"to_agent"`
 		OriginalToConv string          `json:"original_to_conv,omitempty"`
 		Group          string          `json:"group"`
 		Subject        string          `json:"subject"`
@@ -318,11 +320,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 			fmt.Fprintf(stdout, "  In-Reply-To: %d\n", m.InReplyTo)
 		}
 	}
-	if m.FromTitle != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromTitle, m.From)
-	} else {
-		fmt.Fprintf(stdout, "  From:       %s\n", m.From)
-	}
+	fmt.Fprintf(stdout, "  From:       %s\n", actorHeader(m.FromTitle, m.FromAgent, m.From))
 	if len(m.ToRecipients) > 0 {
 		// Email-style audience: render the full To: list (and CC: if
 		// present) instead of the single per-row to_conv. Lets the
@@ -330,7 +328,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		// round-trip.
 		fmt.Fprintf(stdout, "  To:         %s\n", formatRecipientList(m.ToRecipients))
 	} else {
-		fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+		fmt.Fprintf(stdout, "  To:         %s\n", actorID(m.ToAgent, m.To))
 	}
 	if m.OriginalToConv != "" {
 		// The sender addressed a superseded conv-id; the daemon walked
@@ -357,7 +355,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt)
 	if m.ReplyTo != "" {
-		fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.ReplyTo)
+		fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.ReplyTo))
 	}
 	if m.ReplyCmd != "" {
 		fmt.Fprintf(stdout, "  Reply-Cmd:  %s\n", m.ReplyCmd)
@@ -366,6 +364,28 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)
 	return rcOK
+}
+
+// actorID is the identifier shown for a message actor in an inbox-read
+// header: the stable full agent_id (JOH-27) when present, else the conv-id
+// (a non-actor conv, or an older daemon that didn't send the agent field).
+// Inbox read is a single-message detail view, so the FULL id is used per
+// the display split — conv-id stays available in the daemon's JSON.
+func actorID(agentID, convID string) string {
+	if agentID != "" {
+		return agentID
+	}
+	return convID
+}
+
+// actorHeader renders a message actor as "name (agent_id)" for an
+// inbox-read From header, or just the id when no title is indexed.
+func actorHeader(title, agentID, convID string) string {
+	id := actorID(agentID, convID)
+	if title == "" {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", title, id)
 }
 
 func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
@@ -398,12 +418,8 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
-	if fromTitle != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", fromTitle, m.FromConv)
-	} else {
-		fmt.Fprintf(stdout, "  From:       %s\n", m.FromConv)
-	}
-	fmt.Fprintf(stdout, "  To:         %s\n", m.ToConv)
+	fmt.Fprintf(stdout, "  From:       %s\n", actorHeader(fromTitle, m.FromAgent, m.FromConv))
+	fmt.Fprintf(stdout, "  To:         %s\n", actorID(m.ToAgent, m.ToConv))
 	if m.OriginalToConv != "" {
 		fmt.Fprintf(stdout, "  Original-To: %s (superseded by current %s)\n",
 			short(m.OriginalToConv), short(m.ToConv))
@@ -413,7 +429,7 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.FromConv)
+	fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.FromConv))
 	fmt.Fprintf(stdout, "  Reply-Cmd:  tclaude agent reply %d \"<your reply body>\"\n", m.ID)
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
