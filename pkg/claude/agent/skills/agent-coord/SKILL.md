@@ -41,12 +41,15 @@ keeps the auth model honest.
 ## Discovering peers
 
 ```bash
-tclaude agent whoami      # who am I (conv-id and display name)?
+tclaude agent whoami      # who am I (stable agent_id and display name)?
 tclaude agent ls          # peers reachable via shared groups
 ```
 
-`ls` shows name, role, description, conv short ID, and which groups you
-share with each peer.
+`ls` shows name, role, description, the peer's **agent_id** (short form),
+and which groups you share with each peer. The `agent_id` (`agt_…`) is the
+**stable, canonical handle** — unlike a conv-id it never changes when the
+agent reincarnates or clones, so it's the right thing to copy when you want
+to address a peer.
 
 ## Reading a message you were nudged about
 
@@ -109,8 +112,11 @@ body
 EOF
 ```
 
-`<peer>` is the peer's display name, conv-id, or short ID. A peer in one
-of your groups always works. Messaging an agent outside your group needs
+`<peer>` is the peer's **stable `agent_id`** (full or a unique `agt_…`
+prefix — the preferred, rotation-immune handle), its display name, or a
+conv-id / short conv prefix (still accepted, but it changes when the peer
+reincarnates). A peer in one of your groups always works. Messaging an
+agent outside your group needs
 the `message.direct` permission — without it the send fails loudly,
 naming the slug; ask the human to grant it (or get a time-bounded grant
 via `tclaude agent sudo`).
@@ -266,8 +272,9 @@ one.
   the daemon. The CLI no longer falls back to direct DB access.
 - `not in a shared group` → ask the human to add you and the peer to
   the same group.
-- `selector matches multiple conversations` → use a conv-id prefix
-  (the short 8-character form) instead of the title.
+- `selector matches multiple conversations` → address the peer by its
+  stable `agent_id` (shown by `tclaude agent ls` / `whoami`), which is
+  unambiguous; a conv-id prefix also works but rotates on reincarnation.
 
 ## Installing the agent skills
 

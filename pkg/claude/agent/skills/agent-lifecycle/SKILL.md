@@ -365,8 +365,10 @@ as `agent-rename`.
 
 All four lifecycle verbs (`context-info`, `compact`, `reincarnate`,
 `clone`) accept an optional `--target <selector>` that swaps the action
-onto a peer instead of yourself. The selector is the same title /
-conv-id / 8+-char prefix the rest of `tclaude agent` accepts.
+onto a peer instead of yourself. The selector is the same one the rest of
+`tclaude agent` accepts: the peer's stable `agent_id` (full or `agt_…`
+prefix — preferred, since it survives the peer's own reincarnations), its
+title, or a conv-id / 8+-char conv prefix.
 
 ```bash
 # Read-only: check how full a worker's context window is BEFORE it

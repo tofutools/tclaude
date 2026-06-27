@@ -465,6 +465,56 @@ func TestResolveSelector_ByAgentID_Retired(t *testing.T) {
 	assert.Equal(t, conv, r.ConvID)
 }
 
+// TestRunWhoami_AgentShowsAgentID: once a conv is enrolled as an agent,
+// whoami leads with the stable agent_id, not the conv-id.
+func TestRunWhoami_AgentShowsAgentID(t *testing.T) {
+	setupTestDB(t)
+	const conv = "abcd1234-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "planner", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	t.Setenv("TCLAUDE_SESSION_ID", conv)
+
+	var stdout, stderr bytes.Buffer
+	rc := runWhoamiDirect(&stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, agentID, "whoami should lead with the stable agent_id")
+	assert.Contains(t, out, "planner")
+	assert.NotContains(t, out, conv, "the conv-id should not be the displayed identity for an agent")
+}
+
+// TestRenderPeers_ShowsShortAgentID: the `agent ls` ID column shows the
+// short agent_id, not the conv-id prefix.
+func TestRenderPeers_ShowsShortAgentID(t *testing.T) {
+	peers := []*peerEntry{{
+		AgentID: "agt_0123456789abcdef0123456789abcdef",
+		ConvID:  "abcd1234-2222-3333-4444-555555555555",
+		Title:   "worker",
+		Online:  true,
+	}}
+	var out bytes.Buffer
+	renderPeers(&lsParams{}, peers, &out)
+	s := out.String()
+	assert.Contains(t, s, "agt_01234567", "ID column should show the short agent_id")
+	assert.NotContains(t, s, "abcd1234", "conv-id should not appear in the ls table")
+}
+
+// TestShortAgentID covers the narrow-table form and the conv-id fallback.
+func TestShortAgentID(t *testing.T) {
+	assert.Equal(t, "agt_01234567", shortAgentID("agt_0123456789abcdef0123456789abcdef", "convconv"),
+		"agt_ + first 8 hex")
+	assert.Equal(t, "convconv", shortAgentID("", "convconv0000"),
+		"no agent_id → conv-id prefix fallback")
+}
+
+// TestLookupID: lookup prints the agent_id for an agent, the conv-id for a
+// plain conversation.
+func TestLookupID(t *testing.T) {
+	assert.Equal(t, "agt_abc", lookupID("agt_abc", "conv-1"), "agent → agent_id")
+	assert.Equal(t, "conv-1", lookupID("", "conv-1"), "plain conv → conv-id")
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")
