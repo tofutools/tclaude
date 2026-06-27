@@ -37,11 +37,11 @@ const (
 type AuditLogEntry struct {
 	ID          int64
 	At          time.Time
-	ActorKind  string // AuditActor*
-	ActorConv  string // conv-id when ActorKind == agent; empty for human
-	ActorAgent string // stable agent_id of the actor (PR4 dual-write); "" for human / non-actor conv
-	ActorLabel string // display-title snapshot of the actor
-	Verb       string // symbolic verb: spawn, message, reincarnate, rename, retire, delete, cron.add, …
+	ActorKind   string // AuditActor*
+	ActorConv   string // conv-id when ActorKind == agent; empty for human
+	ActorAgent  string // stable agent_id of the actor (PR4 dual-write); "" for human / non-actor conv
+	ActorLabel  string // display-title snapshot of the actor
+	Verb        string // symbolic verb: spawn, message, reincarnate, rename, retire, delete, cron.add, …
 	TargetConv  string // target conv-id when applicable
 	TargetAgent string // stable agent_id of the target (PR4 dual-write); "" when none
 	TargetLabel string // display-title snapshot of the target
