@@ -154,6 +154,20 @@ function bindFilter(tab) {
       rerender();
     });
   }
+  // Optional "show replaced generations" checkbox (groups tab only) —
+  // toggles the virtual Replaced-generations group (superseded past
+  // generations of agents). Defaults OFF (it's an archival, read-mostly
+  // list that grows over time) when the user has never touched it.
+  const replaced = $(`#filter-${tab}-replaced`);
+  if (replaced) {
+    const rgkey = `tclaude.dash.replaced.${tab}`;
+    const saved = dashPrefs.getItem(rgkey);
+    replaced.checked = saved === '1';
+    replaced.addEventListener('change', () => {
+      dashPrefs.setItem(rgkey, replaced.checked ? '1' : '0');
+      rerender();
+    });
+  }
   // Optional "show retired" checkbox (groups tab only) — toggles the
   // virtual Retired group. Defaults ON: a retired agent must stay
   // visible somewhere on the tab rather than silently disappearing.
@@ -187,6 +201,7 @@ function bindFilter(tab) {
       [`filter-${tab}-ungrouped`]: true,
       [`filter-${tab}-retired`]: true,
       [`filter-${tab}-conversations`]: false,
+      [`filter-${tab}-replaced`]: false,
     };
     const updateViewBadge = () => {
       let n = 0;

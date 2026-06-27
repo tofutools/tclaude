@@ -142,9 +142,43 @@ function virtualPendingGroup(pending) {
   };
 }
 
+// The virtual "Replaced generations" group — superseded predecessor
+// conversation generations of still-existing actors (a reincarnate /
+// Claude Code /clear advanced the actor's live pointer and left these
+// behind, JOH-26). Since the Retired tray became actor-level these no
+// longer surface anywhere, so this archival list brings them back so the
+// operator can see — and prune — them.
+const REPLACED_LABEL = 'Replaced generations';
+const REPLACED_VKEY = ' replaced-virtual';
+
+// virtualReplacedGroup builds the synthetic group from the snapshot's
+// replaced[] rows. The `replaced` flag is the discriminator renderGroups
+// keys off to pick the replaced-generation row renderer (view + delete).
+function virtualReplacedGroup(replaced) {
+  const rows = (replaced || []).slice();
+  return {
+    name: REPLACED_LABEL,
+    key: REPLACED_VKEY,
+    virtual: true,
+    replaced: true,
+    descr: 'superseded past generations of agents (reincarnate / /clear)',
+    members: rows,
+    online: rows.filter(r => r.online).length,
+  };
+}
+
+// replacedVisible reports the "show replaced generations" checkbox state.
+// Defaults to false — this is an archival, read-mostly list that grows
+// over an agent's life, so it is opt-in (like "show conversations").
+function replacedVisible() {
+  const el = $('#filter-groups-replaced');
+  return el ? el.checked : false;
+}
+
 export {
   virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,
+  virtualReplacedGroup, replacedVisible,
 };

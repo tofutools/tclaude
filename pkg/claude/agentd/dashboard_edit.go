@@ -50,6 +50,7 @@ const dashboardSudoGranter = "<human-dashboard>:proactive"
 func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardGroupRoutes(mux)
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
+	mux.HandleFunc("/api/agent-generations/", handleDashboardAgentGenerationDelete)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
 	mux.HandleFunc("/api/worktrees/cleanup", handleDashboardWorktreeCleanup)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
@@ -379,6 +380,11 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// long as it's UUID-shaped — needed for cleaning up orphans whose
 	// conv-index row is already gone. The raw path is gated on shape
 	// so we don't blindly run DELETE WHERE conv_id = '<arbitrary>'.
+	//
+	// NOTE: this path resolves a predecessor selector FORWARD to the actor's
+	// live head — deleting a specific past generation goes through the
+	// dedicated DELETE /api/agent-generations/{conv} endpoint instead, which
+	// never resolves forward and refuses the live head.
 	var convID string
 	if res, _, err := agent.ResolveSelector(convSelector); err == nil {
 		convID = res.ConvID
@@ -428,6 +434,82 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id":  convID,
 		"worktree": applyWorktreeCleanup(wt, true),
+	})
+}
+
+// handleDashboardAgentGenerationDelete deletes ONE replaced (predecessor)
+// conversation generation by its EXACT conv-id — the per-row delete behind the
+// dashboard's "Replaced generations" virtual group.
+//
+//	DELETE /api/agent-generations/{convID}
+//
+// Why a dedicated endpoint rather than /api/agents/{selector}: that resource
+// resolves a selector FORWARD to the actor's live head (agent.ResolveSelector →
+// ResolveLatestConv), so deleting a predecessor through it would delete the
+// LIVE actor. This endpoint deliberately does NOT resolve forward and REFUSES
+// the live head (409) — so "never delete the live generation here" is a tested
+// backend invariant, not a UI convention that a future refactor could break.
+//
+// Behaviour:
+//   - 400 if the conv-id isn't UUID-shaped (no blind DELETE on arbitrary input).
+//   - 404 if the conv-id isn't a linked generation of any actor (use the
+//     ordinary agent delete for plain conversations / orphans).
+//   - 409 if the conv-id IS the actor's current/live generation — the caller
+//     must use the agent delete (which tears the whole actor down).
+//   - otherwise: force-kill any (unexpected) live pane, then conv.DeleteConvByID
+//     removes exactly that generation's DB rows + .jsonl. Because it is a
+//     predecessor, db.DeleteAgentByConvID unlinks just this conv and leaves the
+//     live actor, its identity, and its other generations intact (JOH-26).
+func handleDashboardAgentGenerationDelete(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodDelete {
+		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
+		return
+	}
+	convID := strings.TrimPrefix(r.URL.Path, "/api/agent-generations/")
+	if u, err := url.PathUnescape(convID); err == nil {
+		convID = u
+	}
+	if !looksLikeConvID(convID) {
+		http.Error(w, "expected /api/agent-generations/{conv-id}", http.StatusBadRequest)
+		return
+	}
+
+	actor, err := db.GetAgentByConv(convID)
+	if err != nil {
+		http.Error(w, "resolve generation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if actor == nil {
+		http.Error(w, "not a linked generation; use the agent delete for plain conversations",
+			http.StatusNotFound)
+		return
+	}
+	if actor.CurrentConvID == convID {
+		http.Error(w, "that is the actor's live generation; delete the agent instead",
+			http.StatusConflict)
+		return
+	}
+
+	// A predecessor is offline by construction (a /clear shares the head's
+	// process; a reincarnate soft-exits the original), but force-kill any
+	// lingering pane before teardown — same discipline as the agent delete.
+	stopOneConv(convID, true /* force */)
+
+	// Exact, single-generation teardown: rows + .jsonl for THIS conv only.
+	// db.DeleteAgentByConvID takes the predecessor-unlink branch (this is not
+	// the actor's current_conv_id), so the live actor survives untouched.
+	counts, err := conv.DeleteConvByID(convID)
+	if err != nil {
+		http.Error(w, "delete generation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conv_id":   convID,
+		"action":    "deleted",
+		"db_counts": counts,
 	})
 }
 

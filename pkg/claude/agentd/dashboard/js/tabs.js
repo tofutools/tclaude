@@ -14,6 +14,7 @@ import {
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,
+  virtualReplacedGroup, replacedVisible,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
 import { sortGroupsByPref } from './group-reorder.js';
@@ -100,6 +101,13 @@ function renderGroupsTab() {
   // checkbox.
   if (conversationsVisible()) {
     list.push(virtualConversationsGroup(lastSnapshot.conversations || []));
+  }
+  // The virtual "Replaced generations" group sits at the very bottom — it's
+  // the most archival bucket (superseded past generations of agents, left
+  // behind by reincarnate / /clear). Opt-in via its checkbox (default off),
+  // like Conversations: it grows over an agent's life and is read-mostly.
+  if (replacedVisible()) {
+    list.push(virtualReplacedGroup(lastSnapshot.replaced || []));
   }
   const filtered = filterGroups(list, q);
   $('#groups-list').innerHTML = renderGroups(filtered);

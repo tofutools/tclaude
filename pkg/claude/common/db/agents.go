@@ -255,6 +255,44 @@ func ConvsForAgent(agentID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// GenerationsForAgent returns every conversation generation linked to agentID
+// as full AgentConversation rows (conv_id, role, reason, linked_at), oldest
+// link first. The richer twin of ConvsForAgent — used by surfaces that need to
+// annotate a generation with why/when it was linked (e.g. the dashboard's
+// "Replaced generations" view, which renders each predecessor with its
+// rotation reason and age). The current generation is agents.current_conv_id;
+// callers wanting only the superseded predecessors filter that out.
+func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id, role, reason, linked_at
+		FROM agent_conversations WHERE agent_id = ? ORDER BY linked_at, rowid`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AgentConversation
+	for rows.Next() {
+		var (
+			c        AgentConversation
+			linkedAt string
+		)
+		c.AgentID = agentID
+		if err := rows.Scan(&c.ConvID, &c.Role, &c.Reason, &linkedAt); err != nil {
+			return nil, err
+		}
+		c.LinkedAt, _ = time.Parse(time.RFC3339Nano, linkedAt)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // SetAgentCurrentConv advances an actor's live conversation pointer as a
 // compare-and-swap: it only moves the pointer when it currently equals
 // expectedOldConv. Returns true when the pointer moved. The CAS guard means

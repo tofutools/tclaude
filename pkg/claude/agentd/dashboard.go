@@ -488,6 +488,13 @@ type snapshotPayload struct {
 	// button. Kept separate from Agents so a retired agent never shows
 	// on the live roster.
 	Retired []dashboardRetiredAgent `json:"retired"`
+	// Replaced: every superseded predecessor conversation generation of a
+	// still-existing actor (a reincarnate / Claude Code /clear left it behind
+	// when it advanced the actor's live pointer — JOH-26). Powers the Groups
+	// tab's default-hidden "Replaced generations" virtual group. Each row is
+	// annotated with its owning actor + how/when it was replaced. Empty slice
+	// (not nil) so JS .map() / .length are safe.
+	Replaced []dashboardReplacedGen `json:"replaced"`
 	// Pending: dashboard spawns whose conv-id has not materialised yet
 	// (the pending_spawns table — JOH-205 inc2). A pending Codex agent
 	// has a live tmux pane but is stuck behind a startup gate (untrusted
@@ -858,6 +865,32 @@ type dashboardRetiredAgent struct {
 	RetiredAt    string `json:"retired_at,omitempty"`
 	RetiredBy    string `json:"retired_by,omitempty"`
 	RetireReason string `json:"retire_reason,omitempty"`
+}
+
+// dashboardReplacedGen is the snapshot view of one REPLACED (predecessor)
+// conversation generation — a past conv-id of a still-existing actor, left
+// behind when a reincarnate / Claude Code /clear advanced the actor's live
+// pointer (JOH-26). Rendered in the Groups tab's default-hidden "Replaced
+// generations" virtual group so the operator can see (and prune) the
+// generations the actor-level Retired tray no longer lists. Annotated with the
+// owning actor so a row points back to the live agent, and with how/when this
+// generation was superseded (the reason + timestamp of the generation that
+// replaced it). Leaner than a roster row — a predecessor has no live identity
+// state of its own.
+type dashboardReplacedGen struct {
+	ConvID string `json:"conv_id"` // this predecessor generation
+	Title  string `json:"title"`   // the predecessor's own title, else the actor's
+	// Reason / ReplacedAt describe how + when this generation was SUPERSEDED:
+	// the rotation reason ("reincarnate" | "clear" | …) and RFC3339 timestamp
+	// of the generation that replaced it.
+	Reason     string `json:"reason,omitempty"`
+	ReplacedAt string `json:"replaced_at,omitempty"`
+	Online     bool   `json:"online"` // ~always false — a predecessor has no live pane
+	// ActorConvID / ActorTitle point at the still-live (or retired) actor this
+	// generation belongs to, so the row can link back to the current agent.
+	ActorConvID  string `json:"actor_conv_id"`
+	ActorTitle   string `json:"actor_title"`
+	ActorRetired bool   `json:"actor_retired,omitempty"` // the owning actor is itself retired
 }
 
 // dashboardPending is the snapshot view of one not-yet-enrolled
@@ -1450,6 +1483,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	out.Conversations = collectConversationsSnapshot(aliveSessions)
 	out.Retired = collectRetiredSnapshot(retiredAgents, aliveSessions)
+	out.Replaced = collectReplacedGenerationsSnapshot(activeAgents, retiredAgents, aliveSessions)
 	out.Pending = collectPendingSnapshot(aliveSessions)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
@@ -1614,6 +1648,76 @@ func collectRetiredSnapshot(retired []*db.Agent, aliveSessions map[string]struct
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].RetiredAt > out[j].RetiredAt // newest first
+	})
+	return out
+}
+
+// collectReplacedGenerationsSnapshot builds the "Replaced generations" list:
+// every superseded predecessor conversation generation of a still-existing
+// actor (active OR retired). For each actor it walks db.GenerationsForAgent
+// (the rotation chain, oldest link first), skips the live head
+// (agents.current_conv_id — shown on the roster, not here), and emits one row
+// per predecessor. A predecessor's "replaced via / at" is taken from the NEXT
+// link in the chain — the generation that superseded it — since within one
+// actor the generations form a linear reincarnate/clear chain ordered by
+// linked_at. aliveSessions is the pre-fetched alive set (no per-row tmux
+// probe). Returns an empty slice (not nil) so JS .map() / .length are safe.
+//
+// No overlap with the Retired tray: that lists a retired actor's CURRENT conv;
+// this lists its (and every active actor's) PAST generations.
+func collectReplacedGenerationsSnapshot(active, retired []*db.Agent, aliveSessions map[string]struct{}) []dashboardReplacedGen {
+	out := []dashboardReplacedGen{}
+	emit := func(actors []*db.Agent, actorRetired bool) {
+		for _, a := range actors {
+			gens, err := db.GenerationsForAgent(a.AgentID)
+			if err != nil || len(gens) < 2 {
+				continue // only the head (or none) — no predecessors to show
+			}
+			actorTitle := agent.CachedTitle(a.CurrentConvID)
+			for i, g := range gens {
+				if g.ConvID == a.CurrentConvID {
+					continue // the live head — shown on the roster, not here
+				}
+				// The generation that REPLACED this one is the next link in the
+				// chain (ordered by linked_at); its reason + linked_at are how
+				// and when this generation was superseded. Fall back to the
+				// generation's own birth metadata if it is somehow the last
+				// link yet not the head (defensive — shouldn't happen).
+				reason, replacedAt := g.Reason, g.LinkedAt
+				if i+1 < len(gens) {
+					reason = gens[i+1].Reason
+					replacedAt = gens[i+1].LinkedAt
+				}
+				title := agent.CachedTitle(g.ConvID)
+				if title == "" {
+					title = actorTitle
+				}
+				ra := ""
+				if !replacedAt.IsZero() {
+					ra = replacedAt.Format(time.RFC3339)
+				}
+				out = append(out, dashboardReplacedGen{
+					ConvID:       g.ConvID,
+					Title:        title,
+					Reason:       reason,
+					ReplacedAt:   ra,
+					Online:       isConvOnlineIn(g.ConvID, aliveSessions),
+					ActorConvID:  a.CurrentConvID,
+					ActorTitle:   actorTitle,
+					ActorRetired: actorRetired,
+				})
+			}
+		}
+	}
+	emit(active, false)
+	emit(retired, true)
+	// Group a single actor's generations together (by the live actor's title),
+	// newest replacement first within each actor.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ActorTitle != out[j].ActorTitle {
+			return out[i].ActorTitle < out[j].ActorTitle
+		}
+		return out[i].ReplacedAt > out[j].ReplacedAt
 	})
 	return out
 }
