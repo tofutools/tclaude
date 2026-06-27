@@ -744,9 +744,11 @@ type dashboardLink struct {
 type dashboardCronJob struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name"`
+	OwnerAgent      string `json:"owner_agent,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
 	OwnerLabel      string `json:"owner_label"`
 	TargetKind      string `json:"target_kind"`
+	TargetAgent     string `json:"target_agent,omitempty"`
 	TargetConv      string `json:"target_conv,omitempty"`
 	TargetLabel     string `json:"target_label,omitempty"`
 	GroupID         int64  `json:"group_id"`
@@ -794,8 +796,12 @@ type dashboardGroup struct {
 //   - true on a row with Role=="owner" and no descr → a pure owner
 //     who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the member's stable actor key — the canonical, rotation-immune
+	// ID the roster leads with; ConvID is the live generation behind it (still
+	// the internal drag-and-drop / routing key).
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
 	// first .jsonl event's time), empty when unknown. Rendered as a
 	// relative "Age" column and the default sort key (newest first).
@@ -819,8 +825,11 @@ type dashboardMember struct {
 }
 
 type dashboardAgent struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the agent's stable actor key — the canonical, rotation-immune
+	// ID; ConvID is the live generation behind it (still the internal key).
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
@@ -931,7 +940,8 @@ type dashboardPending struct {
 // list across all agents for the dedicated tab).
 type dashboardSudoEntry struct {
 	ID               int64  `json:"id"`
-	ConvID           string `json:"conv_id,omitempty"` // omitted on agent[*].active_sudo (caller already knows)
+	AgentID          string `json:"agent_id,omitempty"` // stable actor key the grant is keyed on
+	ConvID           string `json:"conv_id,omitempty"`  // omitted on agent[*].active_sudo (caller already knows)
 	ConvTitle        string `json:"conv_title,omitempty"`
 	Slug             string `json:"slug"`
 	GrantedAt        string `json:"granted_at"`
@@ -1184,6 +1194,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		loc := locationView(convID)
 		a := &dashboardAgent{
+			AgentID:           peerAgentID(convID),
 			ConvID:            convID,
 			Title:             agent.CachedTitle(convID),
 			agentLocationView: loc,
@@ -1254,6 +1265,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			online := isConvOnlineIn(m.ConvID, aliveSessions)
 			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
+				AgentID:           peerAgentID(m.ConvID),
 				ConvID:            m.ConvID,
 				Title:             agent.CachedTitle(m.ConvID),
 				CreatedAt:         agent.CachedCreated(m.ConvID),
@@ -1286,6 +1298,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			online := isConvOnlineIn(ownerConv, aliveSessions)
 			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
+				AgentID:           peerAgentID(ownerConv),
 				ConvID:            ownerConv,
 				Title:             agent.CachedTitle(ownerConv),
 				CreatedAt:         agent.CachedCreated(ownerConv),
@@ -1391,6 +1404,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			topEntry := dashboardSudoEntry{
 				ID:               g.ID,
+				AgentID:          g.AgentID,
 				ConvID:           g.ConvID,
 				ConvTitle:        title,
 				Slug:             g.Slug,
@@ -1407,6 +1421,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			// readable in browser devtools.
 			rowEntry := topEntry
 			rowEntry.ConvID = ""
+			rowEntry.AgentID = "" // the agent row already identifies the holder
 			sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
 		}
 	}
@@ -1810,9 +1825,11 @@ func collectCronSnapshot() []dashboardCronJob {
 		row := dashboardCronJob{
 			ID:              j.ID,
 			Name:            j.Name,
+			OwnerAgent:      j.OwnerAgent,
 			OwnerConv:       j.OwnerConv,
 			OwnerLabel:      labelForConv(j.OwnerConv),
 			TargetKind:      j.TargetKind,
+			TargetAgent:     j.TargetAgent,
 			TargetConv:      j.TargetConv,
 			GroupID:         j.GroupID,
 			IntervalSeconds: j.IntervalSeconds,

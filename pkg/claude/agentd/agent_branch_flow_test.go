@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -171,6 +172,12 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 		}
 	}
 	require.NotNil(t, member, "conv missing from squad members")
+	// PR3c-web: the dashboard roster member row carries the stable agent_id it
+	// now leads with (conv_id stays as the internal/secondary key).
+	wantAgent, aerr := db.AgentIDForConv(conv)
+	require.NoError(t, aerr, "AgentIDForConv")
+	require.NotEmpty(t, wantAgent, "a group member is an enrolled actor")
+	assert.Equal(t, wantAgent, member.AgentID, "snapshot member carries the stable agent_id")
 	assert.Equal(t, "feature-x", member.Branch,
 		"dashboard groups-tab `branch` tracks the current branch after the switch")
 	assert.Equal(t, "main", member.StartupBranch,
