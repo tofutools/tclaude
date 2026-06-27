@@ -128,12 +128,20 @@ func TestFormatRecipientList(t *testing.T) {
 		want string
 	}{
 		{"empty", nil, ""},
-		{"title only", []recipientLine{{ConvID: "11111111-aaaa", Title: "planner"}}, "planner <11111111>"},
-		{"no title", []recipientLine{{ConvID: "22222222-bbbb"}}, "22222222"},
-		{"mixed", []recipientLine{
-			{ConvID: "11111111-aaaa", Title: "planner"},
+		// No agent_id (non-agent conv): falls back to the conv-id prefix.
+		{"title only, conv fallback", []recipientLine{{ConvID: "11111111-aaaa", Title: "planner"}}, "planner <11111111>"},
+		{"no title, conv fallback", []recipientLine{{ConvID: "22222222-bbbb"}}, "22222222"},
+		// Agent recipient: leads with the stable short agent_id (agt_ + 8).
+		{"agent id with title", []recipientLine{
+			{ConvID: "11111111-aaaa", AgentID: "agt_0123456789abcdef", Title: "planner"},
+		}, "planner <agt_01234567>"},
+		{"agent id no title", []recipientLine{
+			{ConvID: "22222222-bbbb", AgentID: "agt_0123456789abcdef"},
+		}, "agt_01234567"},
+		{"mixed agent + conv", []recipientLine{
+			{ConvID: "11111111-aaaa", AgentID: "agt_0123456789abcdef", Title: "planner"},
 			{ConvID: "22222222-bbbb"},
-		}, "planner <11111111>, 22222222"},
+		}, "planner <agt_01234567>, 22222222"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

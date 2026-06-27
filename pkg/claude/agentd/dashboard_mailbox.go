@@ -638,7 +638,7 @@ func (d *mailboxDecorator) recipients(ids []string) []recipientLine {
 	}
 	ls := make([]recipientLine, 0, len(ids))
 	for _, id := range ids {
-		ls = append(ls, recipientLine{ConvID: id, Title: d.titleOf(id)})
+		ls = append(ls, recipientLine{ConvID: id, AgentID: peerAgentID(id), Title: d.titleOf(id)})
 	}
 	return ls
 }
