@@ -761,6 +761,11 @@ func absorbBareSuccessorActorTx(tx dbExecQuerier, keepAgentID, newConv string) (
 		{`SELECT COUNT(*) FROM agent_sudo_grants WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_notify_prefs WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_agent = ? OR target_agent = ?`, []any{newOwner, newOwner}},
+		// agent-keyed rate-limit history (JOH-26 PR3a): an actor that has spawned
+		// or was cloned-from has mattered — these rows have no FK to agents, so
+		// absorbing the actor would orphan them.
+		{`SELECT COUNT(*) FROM agent_spawn_history WHERE spawner_agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_clone_history WHERE source_agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_conversations WHERE agent_id = ? AND conv_id != ?`, []any{newOwner, newConv}},
 	}
 	for _, g := range guards {

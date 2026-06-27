@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,4 +241,32 @@ func TestRotateAgentConv_RefusesNonBareSuccessor(t *testing.T) {
 	succ, err := GetConvSuccessor("old")
 	require.NoError(t, err)
 	assert.Empty(t, succ, "the succession edge rolled back with the failed rotation")
+}
+
+// TestRotateAgentConv_RefusesSuccessorWithSpawnHistory: the agent-keyed
+// spawn/clone rate-limit history is actor-scoped state with no FK to agents, so
+// a successor actor that has spawned (or was cloned-from) has "mattered" and
+// must NOT be absorbed — otherwise the history rows would be silently orphaned.
+func TestRotateAgentConv_RefusesSuccessorWithSpawnHistory(t *testing.T) {
+	setupTestDB(t)
+	_, err := Open()
+	require.NoError(t, err, "Open")
+
+	_, _, err = EnsureAgentForConv("old", "spawn")
+	require.NoError(t, err)
+	oldAgent, _ := AgentIDForConv("old")
+
+	// The successor self-registers a fresh actor and then records a spawn —
+	// actor-scoped history keyed on its agent_id.
+	newAgent, _, err := EnsureAgentForConv("new", "session-start")
+	require.NoError(t, err)
+	require.NoError(t, ClaimSpawnSlot("new", 10, time.Hour, time.Now()), "record spawn history")
+
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.Error(t, err, "a successor with spawn history is not bare → rotation fails, not a silent orphan")
+
+	stillNew, _ := GetAgent(newAgent)
+	assert.NotNil(t, stillNew, "the successor actor (with history) is not absorbed")
+	a, _ := GetAgent(oldAgent)
+	assert.Equal(t, "old", a.CurrentConvID, "the predecessor actor head did not move")
 }
