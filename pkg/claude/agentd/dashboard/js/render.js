@@ -204,7 +204,7 @@ function renderVirtualRetiredGroup(g) {
                 <td class="id">${esc(shortId(a.conv_id))}</td>
                 <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
                 <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
-                <td>${esc(a.retired_by || '')}</td>
+                <td${a.retired_by ? ` title="${esc(a.retired_by)}"` : ''}>${esc(a.retired_by_display || a.retired_by || '')}</td>
                 <td class="muted">${esc(a.retire_reason || '')}</td>
                 <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
               </tr>`).join('')}
