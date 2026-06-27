@@ -43,6 +43,13 @@ var ErrAmbiguous = errors.New("selector matches multiple conversations")
 // callers, which compare against this sentinel.
 var errAmbiguous = ErrAmbiguous
 
+// errNoAgentMatch tags the miss of an `agt_`-tagged selector. It is
+// terminal: unlike a conv-id / title miss, refreshing the conv index can
+// never make an agent appear (agents live in the agents table, not in conv
+// .jsonl files), so resolveSelector returns it straight through instead of
+// paying for a full ~/.claude/projects rescan-and-retry.
+var errNoAgentMatch = errors.New("no agent matches")
+
 // Resolved is a minimal handle to a conversation reachable by a selector.
 // Exported so the daemon (pkg/claude/agentd) can reuse the resolver.
 type Resolved struct {
@@ -83,7 +90,7 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 		selector = id
 	}
 
-	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) {
+	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) || errors.Is(err, errNoAgentMatch) {
 		return redirectResolvedToLatest(r), matches, err
 	}
 
@@ -156,7 +163,7 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 			row, _ := db.GetConvIndex(conv)
 			return &resolved{ConvID: conv, Row: row}, nil, nil
 		case 0:
-			return nil, nil, fmt.Errorf("no agent matches %q", selector)
+			return nil, nil, fmt.Errorf("%w %q", errNoAgentMatch, selector)
 		default:
 			cands := make([]*resolved, 0, len(matches))
 			for _, a := range matches {
@@ -244,7 +251,11 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 // and applying the per-file mtime check to refresh stale ones. Errors
 // are intentionally swallowed — the caller will surface a clearer
 // "no conversation matches" if the second tryResolve still fails.
-func refreshAllProjects() {
+//
+// Indirected through a var so tests can assert whether the rescan-and-retry
+// path fired: an `agt_` miss must skip it (terminal errNoAgentMatch), while
+// a conv-id / title miss must still trigger it.
+var refreshAllProjects = func() {
 	projectsDir := conv.ClaudeProjectsDir()
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {

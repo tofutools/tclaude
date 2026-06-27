@@ -386,13 +386,36 @@ func TestResolveSelector_AgentIDAmbiguous(t *testing.T) {
 }
 
 // TestResolveSelector_AgentIDNotFound: an `agt_`-tagged selector with no
-// matching actor is reported against the agent layer, not silently passed
-// through to the conv/title steps.
+// matching actor is reported against the agent layer (terminal
+// errNoAgentMatch), not silently passed through to the conv/title steps —
+// and it must NOT pay for the ~/.claude/projects rescan, since a rescan
+// can never make a missing agent appear.
 func TestResolveSelector_AgentIDNotFound(t *testing.T) {
 	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
 	_, _, err := resolveSelector("agt_0000000000000000000000000000beef")
 	require.Error(t, err, "expected error for missing agent_id")
-	assert.Contains(t, err.Error(), "no agent matches")
+	assert.True(t, errors.Is(err, errNoAgentMatch), "want errNoAgentMatch, got %v", err)
+	assert.Equal(t, 0, refreshed, "an agent miss must skip the project rescan")
+}
+
+// TestResolveSelector_ConvMissRefreshes is the contrast to the agent-miss
+// case: a plain conv/title miss is a genuine cache miss, so the resolver
+// still rescans-and-retries before giving up.
+func TestResolveSelector_ConvMissRefreshes(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := resolveSelector("nope-no-such-conv")
+	require.Error(t, err, "expected error for missing conv")
+	assert.Equal(t, 1, refreshed, "a conv/title miss must trigger the project rescan")
 }
 
 // TestResolveSelector_AgentIDSurvivesRotation is the headline guarantee: a
