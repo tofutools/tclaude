@@ -50,9 +50,13 @@ func UpsertAgentWorkspace(w AgentWorkspace) error {
 	if w.UpdatedAt.IsZero() {
 		w.UpdatedAt = time.Now()
 	}
+	// agent_id is dual-written: derived from conv_id via agent_conversations.
+	// excluded.agent_id on the conflict path re-derives it, so a row first
+	// written before the conv enrolled (agent_id '') self-heals on the next
+	// upsert once the agent exists.
 	_, err = conn.Exec(`INSERT INTO agent_workspace
-		(conv_id, cwd, branch, repo_url, default_branch, pr_number, pr_url, pr_state, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(conv_id, cwd, branch, repo_url, default_branch, pr_number, pr_url, pr_state, updated_at, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(conv_id) DO UPDATE SET
 			cwd            = excluded.cwd,
 			branch         = excluded.branch,
@@ -61,10 +65,11 @@ func UpsertAgentWorkspace(w AgentWorkspace) error {
 			pr_number      = excluded.pr_number,
 			pr_url         = excluded.pr_url,
 			pr_state       = excluded.pr_state,
-			updated_at     = excluded.updated_at`,
+			updated_at     = excluded.updated_at,
+			agent_id       = excluded.agent_id`,
 		w.ConvID, w.Cwd, w.Branch, w.RepoURL, w.DefaultBranch,
 		w.PRNumber, w.PRURL, w.PRState,
-		w.UpdatedAt.Format(time.RFC3339Nano))
+		w.UpdatedAt.Format(time.RFC3339Nano), w.ConvID)
 	return err
 }
 

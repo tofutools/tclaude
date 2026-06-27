@@ -609,10 +609,25 @@ func (c *importCtx) run() error {
 		c.members, c.owners, c.audit, c.permissions, c.enrollments,
 		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
-		c.transferLog,
+		c.transferLog, c.backfillAgentCompanions,
 	} {
 		if err := step(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// backfillAgentCompanions fills the v77 agent_id companion columns on the
+// just-imported rows, run last so every table is present and enrollments() has
+// rebuilt agent_conversations (the resolution spine) under the import's remapped
+// conv-ids. Mirrors the v76 message-import derivation, generalised to every v77
+// companion. onlyEmpty=true keeps it additive — it never blanks a pre-existing
+// local row whose actor has since been unmapped.
+func (c *importCtx) backfillAgentCompanions() error {
+	for _, spec := range v77AgentColumns {
+		if _, err := c.tx.Exec(backfillAgentColSQL(spec.table, spec.agentCol, spec.convCols, true)); err != nil {
+			return fmt.Errorf("import: backfill %s.%s: %w", spec.table, spec.agentCol, err)
 		}
 	}
 	return nil

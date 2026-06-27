@@ -35,14 +35,18 @@ func RecordConvSuccession(oldConv, newConv, reason string) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	// agent_id is dual-written from the edge's actor (resolved via the
+	// predecessor, which is always enrolled); excluded.agent_id re-derives it on
+	// conflict so a re-pointed successor stays correct.
 	_, err = d.Exec(`INSERT INTO agent_conv_succession
-		(old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES (?, ?, ?, ?)
+		(old_conv_id, new_conv_id, reason, succeeded_at, agent_id)
+		VALUES (?, ?, ?, ?, `+agentForSuccessionExpr+`)
 		ON CONFLICT(old_conv_id) DO UPDATE SET
 			new_conv_id = excluded.new_conv_id,
 			reason = excluded.reason,
-			succeeded_at = excluded.succeeded_at`,
-		oldConv, newConv, reason, now)
+			succeeded_at = excluded.succeeded_at,
+			agent_id = excluded.agent_id`,
+		oldConv, newConv, reason, now, newConv, oldConv)
 	if err != nil {
 		return err
 	}

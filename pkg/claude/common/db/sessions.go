@@ -78,9 +78,15 @@ func SaveSession(s *SessionRow) error {
 		harness = DefaultHarness
 	}
 
+	// agent_id is dual-written from conv_id. A session row is often created
+	// before its conv enrolls (the hook registers the agent slightly later), so
+	// this derivation yields '' at first insert; enrollment then fills it via
+	// propagateAgentCompanions. The conflict guard re-derives only when the new
+	// value is non-empty, so a later status-update upsert (whose conv may not
+	// resolve) never wipes an agent already known for this session.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -94,10 +100,11 @@ func SaveSession(s *SessionRow) error {
 			updated_at = excluded.updated_at,
 			last_hook = excluded.last_hook,
 			harness = excluded.harness,
-			sandbox_mode = excluded.sandbox_mode`,
+			sandbox_mode = excluded.sandbox_mode,
+			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode)
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.ConvID)
 	return err
 }
 
@@ -459,7 +466,11 @@ func SetSessionConvID(id, convID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE sessions SET conv_id = ? WHERE id = ?`, convID, id)
+	// Keep agent_id in step with conv_id, but never wipe a known agent with ''
+	// when the freshly-set conv has not enrolled yet (enrollment fills it).
+	_, err = d.Exec(`UPDATE sessions SET conv_id = ?,
+		agent_id = CASE WHEN `+agentForConvExpr+` <> '' THEN `+agentForConvExpr+` ELSE agent_id END
+		WHERE id = ?`, convID, convID, convID, id)
 	return err
 }
 
@@ -716,8 +727,12 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
 	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model)
-		SELECT id, ?, conv_id, ?, ?, model FROM sessions WHERE id = ?
+	// agent_id is denormalised in alongside conv_id, derived from the session's
+	// conv via agent_conversations, with the same keep-last-good CASE guard.
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, agent_id)
+		SELECT id, ?, conv_id, ?, ?, model,
+		       COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
@@ -725,7 +740,9 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
 			                ELSE session_cost_daily.conv_id END,
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
-			                ELSE session_cost_daily.model END`,
+			                ELSE session_cost_daily.model END,
+			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+			                ELSE session_cost_daily.agent_id END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
@@ -770,8 +787,10 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model)
-		SELECT id, ?, conv_id, ?, ?, model FROM sessions WHERE id = ?
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id)
+		SELECT id, ?, conv_id, ?, ?, model,
+		       COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
@@ -779,7 +798,9 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
 			                ELSE session_cost_daily.conv_id END,
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
-			                ELSE session_cost_daily.model END`,
+			                ELSE session_cost_daily.model END,
+			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+			                ELSE session_cost_daily.agent_id END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err

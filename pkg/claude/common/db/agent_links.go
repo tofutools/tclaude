@@ -55,9 +55,9 @@ func InsertAgentGroupLink(fromID, toID int64, mode, byConv string) (int64, error
 		return 0, err
 	}
 	res, err := d.Exec(
-		`INSERT INTO agent_group_links (from_group_id, to_group_id, mode, created_at, by_conv)
-		 VALUES (?, ?, ?, ?, ?)`,
-		fromID, toID, mode, time.Now().Format(time.RFC3339Nano), byConv)
+		`INSERT INTO agent_group_links (from_group_id, to_group_id, mode, created_at, by_conv, by_agent)
+		 VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
+		fromID, toID, mode, time.Now().Format(time.RFC3339Nano), byConv, byConv)
 	if err != nil {
 		if isUniqueConstraintErr(err) {
 			return 0, ErrLinkExists

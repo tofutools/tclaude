@@ -62,15 +62,21 @@ func insertAuditLog(x auditExecer, e AuditLogEntry) (int64, error) {
 	if at.IsZero() {
 		at = time.Now()
 	}
+	// actor_agent / target_agent are dual-written: derived from actor_conv /
+	// target_conv via agent_conversations (the same join the v77 backfill uses),
+	// so a freshly logged row carries the stable actor id. The actor of an
+	// audited action is already enrolled, so this resolves at write time.
 	res, err := x.Exec(`
 		INSERT INTO audit_log
 			(at, actor_kind, actor_conv, actor_label, verb,
 			 target_conv, target_label, group_name, detail,
-			 method, path, status, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 method, path, status, source,
+			 actor_agent, target_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`)`,
 		at.UTC().Format(time.RFC3339Nano), e.ActorKind, e.ActorConv, e.ActorLabel, e.Verb,
 		e.TargetConv, e.TargetLabel, e.GroupName, e.Detail,
-		e.Method, e.Path, e.Status, e.Source)
+		e.Method, e.Path, e.Status, e.Source,
+		e.ActorConv, e.TargetConv)
 	if err != nil {
 		return 0, fmt.Errorf("insert audit log: %w", err)
 	}
