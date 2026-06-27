@@ -455,6 +455,22 @@ func AgentState(convID string) (string, error) {
 	}
 }
 
+// IsLiveAgentConv reports whether convID is the CURRENT generation of an active
+// (non-retired) actor — a live agent addressable at this exact conv. A
+// superseded predecessor generation (resolves to the actor but is not its
+// current_conv) and a retired actor both return false. The retire path gates on
+// this so a stale / predecessor handle can never demote the live actor; in
+// normal operation every caller already resolves to the current generation
+// (agent.ResolveSelector redirects a predecessor forward to the chain head), so
+// this is the explicit, defensive twin of that invariant.
+func IsLiveAgentConv(convID string) (bool, error) {
+	a, err := GetAgentByConv(convID)
+	if err != nil || a == nil {
+		return false, err
+	}
+	return a.Active() && a.CurrentConvID == convID, nil
+}
+
 // PromoteAgent makes convID's actor an active agent — the explicit, deliberate
 // path behind the dashboard "promote" / "reinstate" buttons and the
 // `tclaude agent promote` CLI. EnsureAgentForConv mints an actor for a
@@ -699,6 +715,67 @@ func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, 
 			carriedName, agentID); err != nil {
 			return false, err
 		}
+	}
+	return true, nil
+}
+
+// absorbBareSuccessorActorTx resolves the reincarnate ordering hazard: a
+// reincarnate successor is spawned as a fresh tclaude session, and its
+// session-start hook self-registers its OWN actor for newConv
+// (EnsureAgentForConv) BEFORE the daemon's rotation links newConv to the
+// predecessor's actor. Left alone, advanceAgentToNewConv would clean-skip
+// (newConv is owned by a different actor) and the agent's identity — group
+// memberships, ownerships, permissions — would NOT carry across the
+// reincarnation. (A /clear does not hit this: its successor is an in-process
+// rotation whose session-start is a transition and is not self-registered.)
+//
+// When that self-registered actor is BARE — it holds no group membership /
+// ownership / permission / sudo / notify / cron identity and newConv is its only
+// generation — it is safe to absorb: delete it (ON DELETE CASCADE frees newConv)
+// so the caller can relink newConv onto keepAgentID and advance the live
+// pointer. A self-registered actor that has somehow already accrued real
+// identity is left untouched (returns false) — the caller then observes the
+// pointer did not advance and treats the rotation as failed rather than
+// destroying state.
+//
+// Returns true when an actor was absorbed (newConv is now unlinked, ready to
+// relink to keepAgentID).
+func absorbBareSuccessorActorTx(tx dbExecQuerier, keepAgentID, newConv string) (bool, error) {
+	newOwner, err := agentIDForConvTx(tx, newConv)
+	if err != nil {
+		return false, err
+	}
+	if newOwner == "" || newOwner == keepAgentID {
+		return false, nil // newConv unlinked, or already ours — nothing to absorb
+	}
+	// The successor's actor must own NOTHING but newConv to be safely absorbed.
+	// Any identity row, or any OTHER conversation generation, means it is not a
+	// fresh self-enroll and must not be destroyed.
+	guards := []struct {
+		q    string
+		args []any
+	}{
+		{`SELECT COUNT(*) FROM agent_group_members WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_group_owners WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_sudo_grants WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_notify_prefs WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_agent = ? OR target_agent = ?`, []any{newOwner, newOwner}},
+		{`SELECT COUNT(*) FROM agent_conversations WHERE agent_id = ? AND conv_id != ?`, []any{newOwner, newConv}},
+	}
+	for _, g := range guards {
+		var n int
+		if err := tx.QueryRow(g.q, g.args...).Scan(&n); err != nil {
+			return false, err
+		}
+		if n > 0 {
+			return false, nil // has real identity / other generations — don't absorb
+		}
+	}
+	// Bare: delete the actor. The agent_conversations FK cascades, dropping its
+	// newConv link, so newConv becomes unlinked and free to relink.
+	if _, err := tx.Exec(`DELETE FROM agents WHERE agent_id = ?`, newOwner); err != nil {
+		return false, err
 	}
 	return true, nil
 }

@@ -169,7 +169,7 @@ func TestNotifyPref_FollowsAgentLifecycle(t *testing.T) {
 	setupTestDB(t)
 
 	require.NoError(t, SetConvNotifyPref("old-conv", NotifyPrefOff))
-	_, _, err := RotateAgentConv("old-conv", "new-conv", "reincarnate")
+	_, err := RotateAgentConv("old-conv", "new-conv", "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
 
 	// Reachable from the successor conv...

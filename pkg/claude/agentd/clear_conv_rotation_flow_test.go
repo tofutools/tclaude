@@ -286,9 +286,9 @@ func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.
 
 	var calls int32
 	t.Cleanup(session.SetRotateAgentConvForTest(
-		func(oldConv, newConv, reason string) (string, bool, error) {
+		func(oldConv, newConv, reason string) (string, error) {
 			if atomic.AddInt32(&calls, 1) == 1 {
-				return "", false, errors.New("synthetic SQLite hiccup")
+				return "", errors.New("synthetic SQLite hiccup")
 			}
 			return db.RotateAgentConv(oldConv, newConv, reason)
 		}))

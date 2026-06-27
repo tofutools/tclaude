@@ -264,7 +264,7 @@ func migrateClearedIdentity(state *SessionState, newConv string) bool {
 			convops.ScanAndUpsertFile(filepath.Join(projectDir, state.ConvID+".jsonl"))
 		}
 	}
-	carriedName, _, err := rotateAgentConv(state.ConvID, newConv, "clear")
+	carriedName, err := rotateAgentConv(state.ConvID, newConv, "clear")
 	if err != nil {
 		slog.Error("clear-migrate: agent identity rotation failed (will retry on next hook)",
 			"old_conv", state.ConvID, "new_conv", newConv, "error", err, "module", "hooks")

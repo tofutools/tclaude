@@ -22,7 +22,7 @@ func TestDeleteAgentByConvID_PredecessorKeepsLiveActor(t *testing.T) {
 	// One actor, two generations: old → new (new is the live head).
 	_, _, err = EnsureAgentForConv("old", "spawn")
 	require.NoError(t, err, "EnsureAgentForConv")
-	_, _, err = RotateAgentConv("old", "new", "reincarnate")
+	_, err = RotateAgentConv("old", "new", "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
 
 	// Actor-level identity: a membership and a permission override.
@@ -83,7 +83,7 @@ func TestDeleteAgentByConvID_CronJobsActorScoped(t *testing.T) {
 	// One actor, two generations: old → new (new is the live head).
 	_, _, err = EnsureAgentForConv("old", "spawn")
 	require.NoError(t, err, "EnsureAgentForConv")
-	_, _, err = RotateAgentConv("old", "new", "reincarnate")
+	_, err = RotateAgentConv("old", "new", "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
 	actor, err := AgentIDForConv("new")
 	require.NoError(t, err)

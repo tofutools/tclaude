@@ -140,9 +140,8 @@ func TestRotateAgentConv_PreservesActorAndCarriesName(t *testing.T) {
 	require.NotEmpty(t, oldAgent)
 	require.NoError(t, SetAgentPendingName(oldAgent, "carried-worker"))
 
-	carriedName, moved, err := RotateAgentConv("old", "new", "reincarnate")
+	carriedName, err := RotateAgentConv("old", "new", "reincarnate")
 	require.NoError(t, err)
-	assert.True(t, moved, "the live pointer advanced")
 	assert.Equal(t, "carried-worker", carriedName)
 
 	newAgent, _ := AgentIDForConv("new")
@@ -161,4 +160,84 @@ func TestRotateAgentConv_PreservesActorAndCarriesName(t *testing.T) {
 	assert.Equal(t, AgentStateActive, st, "the predecessor generation resolves to the active actor")
 	stNew, _ := AgentState("new")
 	assert.Equal(t, AgentStateActive, stNew, "the successor is the live generation of the active actor")
+}
+
+// TestRotateAgentConv_AbsorbsBareSuccessorActor reproduces the reincarnate
+// ordering hazard: the successor's session-start hook self-registers its OWN
+// (bare) actor for newConv before the rotation runs. RotateAgentConv must absorb
+// that bare actor so identity still carries onto the predecessor's actor — the
+// case the simSpawner can't reproduce (it writes the SessionRow without the
+// session-start enroll), so it is pinned here at the db boundary.
+func TestRotateAgentConv_AbsorbsBareSuccessorActor(t *testing.T) {
+	setupTestDB(t)
+	_, err := Open()
+	require.NoError(t, err, "Open")
+
+	gid, err := CreateAgentGroup("rot-grp", "")
+	require.NoError(t, err)
+	// The predecessor actor, with real identity (a group membership).
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: gid, ConvID: "old", Role: "lead"}))
+	oldAgent, _ := AgentIDForConv("old")
+	require.NotEmpty(t, oldAgent)
+
+	// The successor self-registers its OWN bare actor (as the production
+	// session-start hook would), BEFORE the rotation.
+	newAgent, created, err := EnsureAgentForConv("new", "session-start")
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotEqual(t, oldAgent, newAgent, "successor starts on a separate actor")
+
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.NoError(t, err, "rotation absorbs the bare successor and advances")
+
+	// newConv now belongs to the PREDECESSOR's actor; the bare actor is gone.
+	resolved, _ := AgentIDForConv("new")
+	assert.Equal(t, oldAgent, resolved, "newConv was relinked onto the predecessor's actor")
+	gone, _ := GetAgent(newAgent)
+	assert.Nil(t, gone, "the bare self-registered actor was absorbed (deleted)")
+	a, _ := GetAgent(oldAgent)
+	require.NotNil(t, a)
+	assert.Equal(t, "new", a.CurrentConvID, "the live pointer advanced to the successor")
+
+	// Identity carried: the membership resolves from the new conv.
+	groups, err := ListGroupsForConv("new")
+	require.NoError(t, err)
+	require.Len(t, groups, 1, "the predecessor's group membership carried onto the successor")
+	assert.Equal(t, "rot-grp", groups[0].Name)
+}
+
+// TestRotateAgentConv_RefusesNonBareSuccessor: when the successor's conv is
+// already owned by an actor that holds real identity (NOT a bare
+// self-registration), the rotation must NOT destroy it — it fails (nothing
+// committed) so the lifecycle caller aborts / retries rather than silently
+// stranding the actor head.
+func TestRotateAgentConv_RefusesNonBareSuccessor(t *testing.T) {
+	setupTestDB(t)
+	_, err := Open()
+	require.NoError(t, err, "Open")
+
+	gid, err := CreateAgentGroup("rot-grp2", "")
+	require.NoError(t, err)
+	_, _, err = EnsureAgentForConv("old", "spawn")
+	require.NoError(t, err)
+	oldAgent, _ := AgentIDForConv("old")
+
+	// The successor's conv already belongs to a DIFFERENT actor with real
+	// identity (a membership) — not absorbable.
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: gid, ConvID: "new", Role: "lead"}))
+	newAgent, _ := AgentIDForConv("new")
+	require.NotEqual(t, oldAgent, newAgent)
+
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.Error(t, err, "a non-bare successor actor cannot be absorbed → rotation fails")
+
+	// Nothing committed: both actors survive, pointer unchanged, no edge.
+	a, _ := GetAgent(oldAgent)
+	require.NotNil(t, a)
+	assert.Equal(t, "old", a.CurrentConvID, "the predecessor actor head did not move")
+	stillNew, _ := AgentIDForConv("new")
+	assert.Equal(t, newAgent, stillNew, "the successor's actor is untouched")
+	succ, err := GetConvSuccessor("old")
+	require.NoError(t, err)
+	assert.Empty(t, succ, "the succession edge rolled back with the failed rotation")
 }

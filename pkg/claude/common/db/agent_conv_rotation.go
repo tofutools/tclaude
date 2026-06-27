@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -57,25 +59,29 @@ func resolveCarriedName(oldConv string) string {
 // reason is the short succession tag ("reincarnate", "clear") — it is stored on
 // the succession row and used as newConv's generation-link reason.
 //
-// Returns:
+// Returns carriedName — the agent's display name (also carried onto the actor)
+// — so the caller can restore it as a real conversation title; for /clear, by
+// injecting /rename, since /clear wipes CC's own title.
 //
-//   - carriedName — the agent's display name (also carried onto the actor), so
-//     the caller can restore it as a real conversation title; for /clear, by
-//     injecting /rename, since /clear wipes CC's own title.
-//   - moved — whether the actor's live pointer actually advanced. false is a
-//     clean skip (the successor is already owned by another actor, or oldConv is
-//     no longer the live head): the succession edge still commits so stale refs
-//     redirect, but the pointer/role advance is held back. Not an error.
+// Failure contract: an error means the rotation did NOT take effect and nothing
+// was committed (the whole transaction rolls back). In particular, if the
+// actor's live pointer cannot be advanced onto newConv — the successor already
+// owns an actor that is NOT a bare self-registration (so it cannot be safely
+// absorbed), or oldConv is no longer the actor's head and newConv is not already
+// the head — that is a FAILED rotation, not a silent partial one: it returns an
+// error rather than committing a succession edge whose actor head is elsewhere.
+// This makes the two lifecycle callers correct: reincarnate aborts (leaving the
+// old pane intact) and /clear retries on the next hook.
 //
 // Callers must ensure oldConv is genuinely an agent — RotateAgentConv links
 // newConv onto oldConv's actor unconditionally, so calling it for a plain
 // conversation would wrongly fork the successor onto a freshly-minted actor.
-func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, moved bool, err error) {
+func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, err error) {
 	if oldConv == "" || newConv == "" {
-		return "", false, fmt.Errorf("RotateAgentConv: oldConv and newConv must be non-empty")
+		return "", fmt.Errorf("RotateAgentConv: oldConv and newConv must be non-empty")
 	}
 	if oldConv == newConv {
-		return "", false, fmt.Errorf("RotateAgentConv: oldConv and newConv must differ")
+		return "", fmt.Errorf("RotateAgentConv: oldConv and newConv must differ")
 	}
 
 	// Resolve the display name before the transaction — it reads the old conv's
@@ -84,11 +90,11 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, moved
 
 	d, err := Open()
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	tx, err := d.Begin()
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -98,7 +104,7 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, moved
 	// --- succession edge old → new ---
 	// Mirrors db.RecordConvSuccession. Powers db.ResolveLatestConv, so a stale
 	// reference to oldConv (a queued message, a CLI selector) resolves forward to
-	// the live agent.
+	// the live agent. Committed only when the actor advance below also succeeds.
 	if _, err := tx.Exec(`INSERT INTO agent_conv_succession
 		(old_conv_id, new_conv_id, reason, succeeded_at)
 		VALUES (?, ?, ?, ?)
@@ -107,7 +113,7 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, moved
 			reason       = excluded.reason,
 			succeeded_at = excluded.succeeded_at`,
 		oldConv, newConv, reason, nowSec); err != nil {
-		return "", false, fmt.Errorf("RotateAgentConv: record succession: %w", err)
+		return "", fmt.Errorf("RotateAgentConv: record succession: %w", err)
 	}
 
 	// --- advance the actor ---
@@ -118,19 +124,47 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, moved
 	// has confirmed oldConv is a live agent.
 	agentID, err := ensureAgentForConvTx(tx, oldConv, reason)
 	if err != nil {
-		return "", false, fmt.Errorf("RotateAgentConv: resolve actor: %w", err)
+		return "", fmt.Errorf("RotateAgentConv: resolve actor: %w", err)
 	}
-	moved, err = advanceAgentToNewConv(tx, agentID, oldConv, newConv, reason, carriedName, now)
+	// Absorb a reincarnate successor's bare self-registered actor so newConv is
+	// free to link onto the predecessor's actor (see absorbBareSuccessorActorTx).
+	if absorbed, err := absorbBareSuccessorActorTx(tx, agentID, newConv); err != nil {
+		return "", fmt.Errorf("RotateAgentConv: absorb successor: %w", err)
+	} else if absorbed {
+		slog.Info("RotateAgentConv: absorbed the successor's bare self-registered actor",
+			"old", oldConv, "new", newConv, "agent", agentID)
+	}
+	moved, err := advanceAgentToNewConv(tx, agentID, oldConv, newConv, reason, carriedName, now)
 	if err != nil {
-		return "", false, fmt.Errorf("RotateAgentConv: advance actor: %w", err)
+		return "", fmt.Errorf("RotateAgentConv: advance actor: %w", err)
 	}
 	if !moved {
-		slog.Warn("RotateAgentConv: actor pointer not advanced (successor owned elsewhere or oldConv not the live head)",
-			"old", oldConv, "new", newConv, "agent", agentID)
+		// The pointer did not advance. Tolerate the idempotent already-done case
+		// (newConv is ALREADY this actor's live head — a re-run), but treat a
+		// genuine failure-to-advance as an error so the whole tx rolls back
+		// (succession edge included) rather than leaving the actor head elsewhere.
+		cur, err := currentConvForAgentTx(tx, agentID)
+		if err != nil {
+			return "", fmt.Errorf("RotateAgentConv: read actor head: %w", err)
+		}
+		if cur != newConv {
+			return "", fmt.Errorf("RotateAgentConv: actor %s did not advance to %s (head=%s) — successor owned elsewhere or oldConv not the live head",
+				agentID, newConv, cur)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", false, fmt.Errorf("RotateAgentConv: commit: %w", err)
+		return "", fmt.Errorf("RotateAgentConv: commit: %w", err)
 	}
-	return carriedName, moved, nil
+	return carriedName, nil
+}
+
+// currentConvForAgentTx reads an actor's live conv pointer inside a transaction.
+func currentConvForAgentTx(tx dbExecQuerier, agentID string) (string, error) {
+	var cur string
+	err := tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, agentID).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return cur, err
 }

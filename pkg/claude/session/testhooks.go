@@ -16,7 +16,7 @@ import (
 // to the same package's test binary. The "ForTest" suffix is the
 // contract that production code must not call this; the agentd
 // package mirrors the same convention (BuildHandlerForTest etc.).
-func SetRotateAgentConvForTest(fn func(oldConv, newConv, reason string) (string, bool, error)) func() {
+func SetRotateAgentConvForTest(fn func(oldConv, newConv, reason string) (string, error)) func() {
 	prev := rotateAgentConv
 	rotateAgentConv = fn
 	return func() { rotateAgentConv = prev }

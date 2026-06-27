@@ -511,13 +511,18 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // plan rides back on res.Worktree, and its one-line note is folded into
 // Detail so the CLI/table row says what happened.
 func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
-	state, serr := db.AgentState(convID)
+	// Gate on the LIVE generation (current conv of an active actor), not just
+	// "active": retire acts on the actor, so a superseded predecessor handle
+	// would demote the live agent. Members always come through as the current
+	// generation, so this is a defensive guard for the invariant.
+	live, serr := db.IsLiveAgentConv(convID)
 	if serr != nil {
 		res.Action = "error"
 		res.Detail = "agent-state lookup: " + serr.Error()
 		return res, nil
 	}
-	if state != db.AgentStateActive {
+	if !live {
+		state, _ := db.AgentState(convID)
 		res.Action = "skipped:not_active_agent"
 		res.Detail = "state: " + state
 		return res, nil
@@ -2011,11 +2016,11 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // when it isn't a valid rename title, so the dashboard can show the intended
 // name during the brief window before the title materialises.
 func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *spawnFailure) {
-	// Stable agent-identity dual-write (JOH-26): a spawn is the birth of a new
-	// actor. Mint its agent_id BEFORE the group-add so created_via is the
-	// precise "spawn" rather than the "group" tag AddAgentGroupMember's own
-	// enrollment would otherwise stamp (EnrollAgent ensures an actor too, but
-	// it is a no-op once this conv is already linked). Idempotent.
+	// Stable agent-identity (JOH-26): a spawn is the birth of a new actor. Mint
+	// its agent_id BEFORE the group-add so created_via is the precise "spawn"
+	// rather than the "group" tag AddAgentGroupMember's own EnsureAgentForConv
+	// would otherwise stamp (that call is a no-op once this conv is already
+	// linked). Idempotent.
 	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
 	if err != nil {
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)

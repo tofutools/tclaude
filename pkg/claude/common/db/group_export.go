@@ -756,6 +756,17 @@ func (c *importCtx) enrollments() error {
 		if err != nil {
 			return fmt.Errorf("import: enrollment %s actor: %w", e.ConvID, err)
 		}
+		// Restore the original creation timestamp (ensureAgentForConvTx — and the
+		// members import before it — stamp `now` for a freshly-minted actor) so
+		// the round-tripped agent keeps its birth time. Import is transactional
+		// to a remapped conv-id on a clean target, so the actor is always freshly
+		// created in this transaction; the archived timestamp is authoritative.
+		if e.EnrolledAt != "" {
+			if _, err := c.tx.Exec(`UPDATE agents SET created_at = ? WHERE agent_id = ?`,
+				e.EnrolledAt, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s created_at: %w", e.ConvID, err)
+			}
+		}
 		if e.PendingName != "" {
 			if _, err := c.tx.Exec(`UPDATE agents SET pending_name = ? WHERE agent_id = ?`,
 				e.PendingName, agentID); err != nil {

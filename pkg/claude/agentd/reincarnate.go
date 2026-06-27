@@ -376,14 +376,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// with Claude Code's /clear path (issue #192).
 	slog.Info("reincarnate: advancing actor to successor conversation",
 		"old", target, "new", newConv, "label", label, "granter", granter)
-	if _, _, err := db.RotateAgentConv(target, newConv, "reincarnate"); err != nil {
-		// db.RotateAgentConv is atomic: an error means NOTHING committed (no
-		// generation link, no pointer advance, no succession edge). Carrying on
-		// from here would decommission the old pane (step 9: /exit + archive)
-		// while the new conv has no migrated identity, stranding the agent. Abort
-		// the request instead and leave the old pane alive with identity intact.
-		// The spawned successor stays around as an orphan tclaude session
-		// reachable via `attach_cmd` for manual cleanup.
+	if _, err := db.RotateAgentConv(target, newConv, "reincarnate"); err != nil {
+		// db.RotateAgentConv is atomic and fail-closed: an error means NOTHING
+		// committed (no generation link, no pointer advance, no succession edge),
+		// including the case where the actor's pointer could not advance onto the
+		// successor. Carrying on from here would decommission the old pane (step
+		// 9: /exit + archive) while the new conv has no migrated identity,
+		// stranding the agent. Abort the request instead and leave the old pane
+		// alive with identity intact. The spawned successor stays around as an
+		// orphan tclaude session reachable via `attach_cmd` for manual cleanup.
 		slog.Error("reincarnate: actor rotation failed; aborting orchestration",
 			"old", target, "new", newConv, "label", label, "error", err)
 		writeError(w, http.StatusInternalServerError, "identity_migration",
