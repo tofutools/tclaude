@@ -466,9 +466,9 @@ func TestCleanup_Agents_DeleteRetiredAgent(t *testing.T) {
 
 	assert.Equal(t, 1, resp.Deleted, "retired agent purged")
 	f.AssertDeleted(conv)
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, state, "enrollment row gone after delete")
+	assert.Equal(t, db.AgentStateNone, state, "enrollment row gone after delete")
 }
 
 // Scenario: the delete tier also reaches a plain (never-enrolled)
@@ -510,9 +510,9 @@ func TestCleanup_Agents_ReinstateRetiredAgent(t *testing.T) {
 	assert.Equal(t, 1, resp.Reinstated, "retired agent reinstated")
 	require.Len(t, resp.Outcomes, 1)
 	assert.Equal(t, "reinstated", resp.Outcomes[0].Result)
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "back on the active roster")
+	assert.Equal(t, db.AgentStateActive, state, "back on the active roster")
 }
 
 // Scenario: reinstate is a graceful no-op skip for a target that isn't

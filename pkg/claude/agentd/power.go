@@ -309,7 +309,7 @@ func resolvePowerScope(w http.ResponseWriter, scope, group string) (resolvedGrou
 		}
 		ids := make([]string, 0, len(agents))
 		for _, a := range agents {
-			ids = append(ids, a.ConvID)
+			ids = append(ids, a.CurrentConvID)
 		}
 		return "", ids, true
 	default:

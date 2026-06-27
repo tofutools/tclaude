@@ -101,3 +101,52 @@ func TestImportGroup_V2ArchiveNoSynthesis(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, profs, "no spawn profile synthesized for a v2 archive")
 }
+
+// TestGroupExport_GroupTargetCronJob_RoundTrips covers the JOH-26 PR3a fix to
+// the cron export/import path: a group fan-out job (target_kind='group') must
+// round-trip as one. Before the fix the export dropped target_kind, so the
+// importer defaulted it to 'conv' and — now that a group job's target_agent is
+// '' — the job came back as a broken conv job addressed to the empty conv.
+func TestGroupExport_GroupTargetCronJob_RoundTrips(t *testing.T) {
+	setupTestDB(t)
+
+	srcID, err := CreateAgentGroup("src", "")
+	require.NoError(t, err, "CreateAgentGroup")
+
+	// A group fan-out cron job: the discriminator is target_kind='group', and
+	// group_id IS the target group (no per-conv target).
+	_, err = InsertAgentCronJob(&AgentCronJob{
+		Name: "team-ping", TargetKind: CronTargetGroup, GroupID: srcID,
+		IntervalSeconds: 600, Body: "standup", Enabled: true,
+	})
+	require.NoError(t, err, "InsertAgentCronJob")
+
+	exp, err := CollectGroupExport("src")
+	require.NoError(t, err, "CollectGroupExport")
+	require.Len(t, exp.CronJobs, 1, "the group job is exported")
+	assert.Equal(t, CronTargetGroup, exp.CronJobs[0].TargetKind,
+		"export carries the conv/group discriminator")
+
+	_, err = ImportGroup(GroupImportPlan{
+		Export: exp, TargetName: "dst", TargetCwd: "/tmp/import-target",
+		ConvRemap: map[string]string{},
+	})
+	require.NoError(t, err, "ImportGroup")
+
+	dst, err := GetAgentGroupByName("dst")
+	require.NoError(t, err, "GetAgentGroupByName")
+	require.NotNil(t, dst, "imported group exists")
+
+	jobs, err := ListAgentCronJobs()
+	require.NoError(t, err, "ListAgentCronJobs")
+	var imported *AgentCronJob
+	for _, j := range jobs {
+		if j.GroupID == dst.ID {
+			imported = j
+		}
+	}
+	require.NotNil(t, imported, "the cron job landed in the imported group")
+	assert.True(t, imported.IsGroupTarget(),
+		"a group fan-out job round-trips as group-target, not a broken conv job")
+	assert.Equal(t, CronTargetGroup, imported.TargetKind, "target_kind preserved")
+}

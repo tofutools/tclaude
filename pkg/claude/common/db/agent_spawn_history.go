@@ -51,6 +51,16 @@ func ClaimSpawnSlot(spawnerConvID string, maxPerWindow int, window time.Duration
 	if err != nil {
 		return err
 	}
+	// Key the rate limit on the caller's stable actor (JOH-26 PR3a), so a
+	// reincarnate / Claude Code /clear that rotates the conv-id can't reset the
+	// spawn window — the cap follows the actor across generations. The spawner
+	// is the requesting agent (already enrolled when it talks to the daemon);
+	// EnsureAgentForConv resolves it, allocating only in the pathological case
+	// of a not-yet-enrolled caller.
+	spawnerAgentID, _, err := EnsureAgentForConv(spawnerConvID, "spawn")
+	if err != nil {
+		return err
+	}
 	// Normalise to UTC so the stored timestamps and the WHERE-clause
 	// threshold are in one zone — RFC3339Nano strings only compare
 	// correctly when the offset is identical, and a caller may hand us
@@ -64,13 +74,13 @@ func ClaimSpawnSlot(spawnerConvID string, maxPerWindow int, window time.Duration
 	// as a single statement under the database write lock (WAL mode),
 	// so the read + write are atomic with respect to other writers.
 	res, err := d.Exec(`
-		INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
+		INSERT INTO agent_spawn_history (spawner_agent_id, spawned_at)
 		SELECT ?, ?
 		WHERE (
 			SELECT COUNT(*) FROM agent_spawn_history
-			WHERE spawner_conv_id = ? AND spawned_at > ?
+			WHERE spawner_agent_id = ? AND spawned_at > ?
 		) < ?`,
-		spawnerConvID, nowStr, spawnerConvID, threshold, maxPerWindow)
+		spawnerAgentID, nowStr, spawnerAgentID, threshold, maxPerWindow)
 	if err != nil {
 		return err
 	}
@@ -94,13 +104,23 @@ func CountSpawnsSince(spawnerConvID string, since time.Time) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// History is keyed on the caller's actor (JOH-26 PR3a); resolve the conv to
+	// its agent. An unmapped conv (never spawned, so never enrolled here) has no
+	// rows by construction.
+	spawnerAgentID, err := AgentIDForConv(spawnerConvID)
+	if err != nil {
+		return 0, err
+	}
+	if spawnerAgentID == "" {
+		return 0, nil
+	}
 	// UTC-normalise the threshold for the same reason ClaimSpawnSlot
 	// does — spawned_at is stored UTC, so the comparison must be too.
 	var n int
 	err = d.QueryRow(`
 		SELECT COUNT(*) FROM agent_spawn_history
-		WHERE spawner_conv_id = ? AND spawned_at > ?`,
-		spawnerConvID, since.UTC().Format(time.RFC3339Nano)).Scan(&n)
+		WHERE spawner_agent_id = ? AND spawned_at > ?`,
+		spawnerAgentID, since.UTC().Format(time.RFC3339Nano)).Scan(&n)
 	if err != nil {
 		return 0, err
 	}

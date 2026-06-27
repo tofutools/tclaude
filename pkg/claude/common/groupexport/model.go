@@ -205,8 +205,13 @@ type CloneHist struct {
 // the source autoincrement id — carried only so CronRun rows can be
 // re-linked after import assigns fresh ids.
 type CronJob struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// TargetKind discriminates a conv-target job from a group fan-out job
+	// (db.CronTargetConv / db.CronTargetGroup). Carried so a group-target job
+	// round-trips as one; empty in older archives, where the importer defaults
+	// it to "conv" (the v41 column default).
+	TargetKind      string `json:"target_kind,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
 	TargetConv      string `json:"target_conv"`
 	IntervalSeconds int64  `json:"interval_seconds"`

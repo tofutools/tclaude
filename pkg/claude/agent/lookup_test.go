@@ -275,23 +275,24 @@ func TestCachedTitle_SummaryFallback(t *testing.T) {
 }
 
 // TestCachedTitle_PendingNameWhenNotIndexed covers the freshly-spawned
-// agent: enrolled with its intended --name, but its .jsonl is not yet
+// agent: registered with its intended --name, but its .jsonl is not yet
 // in conv_index. CachedTitle has no row to read, so it must fall back
-// to the enrollment pending name rather than returning "(unknown)".
+// to the actor's pending name rather than returning "(unknown)".
 // This is the path that keeps the dashboard from blanking a just-
 // spawned agent in the gap before its first index event lands.
 func TestCachedTitle_PendingNameWhenNotIndexed(t *testing.T) {
 	setupTestDB(t)
 	const convID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	require.NoError(t, db.EnrollAgent(convID, "test"))
-	require.NoError(t, db.SetEnrollmentPendingName(convID, "spawned-worker"))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "spawned-worker"))
 
 	assert.Equal(t, "spawned-worker", CachedTitle(convID),
-		"with no conv_index row, CachedTitle must fall back to the enrollment pending name")
+		"with no conv_index row, CachedTitle must fall back to the actor's pending name")
 }
 
 // TestCachedTitle_UnknownWhenUnresolvable: no cached row and no
-// enrollment → the UnknownTitle placeholder, exactly as FreshTitle.
+// actor → the UnknownTitle placeholder, exactly as FreshTitle.
 func TestCachedTitle_UnknownWhenUnresolvable(t *testing.T) {
 	setupTestDB(t)
 	assert.Equal(t, UnknownTitle, CachedTitle("00000000-0000-0000-0000-000000000000"))
@@ -333,6 +334,187 @@ func TestResolveSelector_NoSuccession_LeavesAsIs(t *testing.T) {
 	require.NoError(t, err, "resolveSelector")
 	require.NotNil(t, r)
 	assert.Equal(t, id, r.ConvID)
+}
+
+// TestResolveSelector_ByAgentID: the stable agent_id resolves to the
+// actor's current conversation generation — the canonical, rotation-immune
+// handle this work makes a first-class selector.
+func TestResolveSelector_ByAgentID(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "resolveSelector by agent_id")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID, "agent_id should resolve to current_conv_id")
+}
+
+// TestResolveSelector_ByAgentIDPrefix: a shortened agent_id (the typing
+// convenience) resolves the same way when it's unique.
+func TestResolveSelector_ByAgentIDPrefix(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	// agent_id is "agt_" + 32 hex; a short unique prefix must still resolve.
+	r, _, err := resolveSelector(agentID[:12])
+	require.NoError(t, err, "resolveSelector by agent_id prefix")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID)
+}
+
+// TestResolveSelector_AgentIDAmbiguous: the bare "agt_" tag prefixes every
+// actor, so with two agents it surfaces as an ambiguity (candidates, no
+// silent pick).
+func TestResolveSelector_AgentIDAmbiguous(t *testing.T) {
+	setupTestDB(t)
+	upsertConvIndex(t, "aaaa1111-2222-3333-4444-555555555555", "a", "", "")
+	upsertConvIndex(t, "bbbb2222-2222-3333-4444-555555555555", "b", "", "")
+	_, _, errA := db.EnsureAgentForConv("aaaa1111-2222-3333-4444-555555555555", "spawn")
+	require.NoError(t, errA)
+	_, _, errB := db.EnsureAgentForConv("bbbb2222-2222-3333-4444-555555555555", "spawn")
+	require.NoError(t, errB)
+
+	_, matches, err := resolveSelector(db.AgentIDPrefix)
+	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v", err)
+	require.Len(t, matches, 2)
+}
+
+// TestResolveSelector_AgentIDNotFound: an `agt_`-tagged selector with no
+// matching actor is reported against the agent layer (terminal
+// errNoAgentMatch), not silently passed through to the conv/title steps —
+// and it must NOT pay for the ~/.claude/projects rescan, since a rescan
+// can never make a missing agent appear.
+func TestResolveSelector_AgentIDNotFound(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := resolveSelector("agt_0000000000000000000000000000beef")
+	require.Error(t, err, "expected error for missing agent_id")
+	assert.True(t, errors.Is(err, errNoAgentMatch), "want errNoAgentMatch, got %v", err)
+	assert.Equal(t, 0, refreshed, "an agent miss must skip the project rescan")
+}
+
+// TestResolveSelector_ConvMissRefreshes is the contrast to the agent-miss
+// case: a plain conv/title miss is a genuine cache miss, so the resolver
+// still rescans-and-retries before giving up.
+func TestResolveSelector_ConvMissRefreshes(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := resolveSelector("nope-no-such-conv")
+	require.Error(t, err, "expected error for missing conv")
+	assert.Equal(t, 1, refreshed, "a conv/title miss must trigger the project rescan")
+}
+
+// TestResolveSelector_AgentIDSurvivesRotation is the headline guarantee: a
+// reincarnation rotates the conv-id, but the SAME agent_id keeps resolving
+// to the live generation. This is the exact case where a conv-id selector
+// would land on a dead pane.
+func TestResolveSelector_AgentIDSurvivesRotation(t *testing.T) {
+	setupTestDB(t)
+	const convOld = "11111111-aaaa-bbbb-cccc-111111111111"
+	const convNew = "22222222-aaaa-bbbb-cccc-222222222222"
+	upsertConvIndex(t, convOld, "worker", "", "")
+	upsertConvIndex(t, convNew, "worker-r-1", "", "")
+
+	agentID, _, err := db.EnsureAgentForConv(convOld, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	// Reincarnate: link the fresh generation, then advance the live pointer.
+	require.NoError(t, db.LinkConvToAgent(convNew, agentID, db.ConvRoleHead, "reincarnate"), "LinkConvToAgent")
+	moved, err := db.SetAgentCurrentConv(agentID, convOld, convNew)
+	require.NoError(t, err, "SetAgentCurrentConv")
+	require.True(t, moved, "live pointer should have advanced")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "resolveSelector by agent_id after rotation")
+	require.NotNil(t, r)
+	assert.Equal(t, convNew, r.ConvID, "agent_id must follow the rotation to the live head")
+}
+
+// TestResolveSelector_ByAgentID_Retired pins the intended behaviour that a
+// retired actor is still addressable by its stable agent_id (resolving to its
+// last generation) — a stable id keeps referencing an agent even after it is
+// retired; display surfaces flag the retired state separately.
+func TestResolveSelector_ByAgentID_Retired(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	retired, err := db.RetireAgentByID(agentID, "operator", "done")
+	require.NoError(t, err, "RetireAgentByID")
+	require.True(t, retired, "agent should have been retired")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "a retired agent must still resolve by its stable id")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID)
+}
+
+// TestRunWhoami_AgentShowsAgentID: once a conv is enrolled as an agent,
+// whoami leads with the stable agent_id, not the conv-id.
+func TestRunWhoami_AgentShowsAgentID(t *testing.T) {
+	setupTestDB(t)
+	const conv = "abcd1234-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "planner", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	t.Setenv("TCLAUDE_SESSION_ID", conv)
+
+	var stdout, stderr bytes.Buffer
+	rc := runWhoamiDirect(&stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr = %q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, agentID, "whoami should lead with the stable agent_id")
+	assert.Contains(t, out, "planner")
+	assert.NotContains(t, out, conv, "the conv-id should not be the displayed identity for an agent")
+}
+
+// TestRenderPeers_ShowsShortAgentID: the `agent ls` ID column shows the
+// short agent_id, not the conv-id prefix.
+func TestRenderPeers_ShowsShortAgentID(t *testing.T) {
+	peers := []*peerEntry{{
+		AgentID: "agt_0123456789abcdef0123456789abcdef",
+		ConvID:  "abcd1234-2222-3333-4444-555555555555",
+		Title:   "worker",
+		Online:  true,
+	}}
+	var out bytes.Buffer
+	renderPeers(&lsParams{}, peers, &out)
+	s := out.String()
+	assert.Contains(t, s, "agt_01234567", "ID column should show the short agent_id")
+	assert.NotContains(t, s, "abcd1234", "conv-id should not appear in the ls table")
+}
+
+// TestShortAgentID covers the narrow-table form and the conv-id fallback.
+func TestShortAgentID(t *testing.T) {
+	assert.Equal(t, "agt_01234567", shortAgentID("agt_0123456789abcdef0123456789abcdef", "convconv"),
+		"agt_ + first 8 hex")
+	assert.Equal(t, "convconv", shortAgentID("", "convconv0000"),
+		"no agent_id → conv-id prefix fallback")
+	assert.Equal(t, "agt_short", shortAgentID("agt_short", "conv"),
+		"an agent_id shorter than 12 chars is returned as-is")
+}
+
+// TestLookupID: lookup prints the agent_id for an agent, the conv-id for a
+// plain conversation.
+func TestLookupID(t *testing.T) {
+	assert.Equal(t, "agt_abc", lookupID("agt_abc", "conv-1"), "agent → agent_id")
+	assert.Equal(t, "conv-1", lookupID("", "conv-1"), "plain conv → conv-id")
 }
 
 func TestRunLookup(t *testing.T) {

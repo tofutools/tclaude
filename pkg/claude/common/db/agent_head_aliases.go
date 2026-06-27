@@ -37,10 +37,11 @@ func SetHeadAlias(handle, anchorConvID, byConv string) error {
 	if err != nil {
 		return err
 	}
+	// by_agent / anchor_agent_id are dual-written from by_conv / anchor_conv_id.
 	_, err = d.Exec(`INSERT OR REPLACE INTO agent_head_aliases
-		(handle, anchor_conv_id, created_at, by_conv)
-		VALUES (?, ?, ?, ?)`,
-		handle, anchorConvID, time.Now().Format(time.RFC3339Nano), byConv)
+		(handle, anchor_conv_id, created_at, by_conv, by_agent, anchor_agent_id)
+		VALUES (?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`)`,
+		handle, anchorConvID, time.Now().Format(time.RFC3339Nano), byConv, byConv, anchorConvID)
 	return err
 }
 

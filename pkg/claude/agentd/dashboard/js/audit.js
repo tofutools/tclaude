@@ -11,7 +11,7 @@
 // activation + any filter/sort/page change + a slow re-poll while
 // visible; never on the 2s snapshot tick.
 
-import { $, esc, relTime, shortId } from './helpers.js';
+import { $, esc, relTime, shortAgentId } from './helpers.js';
 
 // View state. page/pageSize/sort/dir are sent to the server; total +
 // totalUnfiltered come back with each fetch and drive the pager + count.
@@ -93,8 +93,9 @@ function actorCell(e) {
     return `<span class="audit-actor human" title="the human operator">operator</span>`;
   }
   if (e.actor_kind === 'agent') {
+    const id = shortAgentId(e.actor_agent, e.actor_conv);
     return `<span class="rowname">${esc(e.actor_label || '(agent)')}</span>`
-      + (e.actor_conv ? ` <span class="id">${esc(shortId(e.actor_conv))}</span>` : '');
+      + (id ? ` <span class="id" title="${esc(e.actor_conv)}">${esc(id)}</span>` : '');
   }
   return `<span class="muted" title="caller identity could not be resolved">${esc(e.actor_label || 'unknown')}</span>`;
 }
@@ -112,7 +113,8 @@ function targetCell(e) {
 function actorTitle(e) {
   if (e.actor_kind === 'human') return 'the human operator';
   if (e.actor_kind === 'agent') {
-    return (e.actor_label || '(agent)') + (e.actor_conv ? ' ' + shortId(e.actor_conv) : '');
+    const id = shortAgentId(e.actor_agent, e.actor_conv);
+    return (e.actor_label || '(agent)') + (id ? ' ' + id : '');
   }
   return e.actor_label || 'unknown';
 }

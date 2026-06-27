@@ -30,6 +30,9 @@ import (
 // human can see which members succeeded, which were no-ops, and
 // which failed.
 type memberOpResult struct {
+	// AgentID is the member's stable actor key — the canonical ID the CLI
+	// leads with in the result table; ConvID is the live generation behind it.
+	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title,omitempty"`
 	Action  string `json:"action"`           // "soft_stopped", "killed", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
@@ -74,6 +77,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := stopOneConv(m.ConvID, force)
+		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
@@ -160,6 +164,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := resumeOneConv(m.ConvID)
+		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
@@ -448,7 +453,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 	eg.SetLimit(bulkRetireGroupConcurrency)
 	for i, m := range members {
 		eg.Go(func() error {
-			res := memberOpResult{ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+			res := memberOpResult{AgentID: peerAgentID(m.ConvID), ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
 			switch {
 			case m.ConvID == "":
 				res.Action = "skipped:no_conv_id"
@@ -511,15 +516,20 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // plan rides back on res.Worktree, and its one-line note is folded into
 // Detail so the CLI/table row says what happened.
 func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, res memberOpResult) (memberOpResult, []int64) {
-	state, serr := db.EnrollmentState(convID)
+	// Gate on the LIVE generation (current conv of an active actor), not just
+	// "active": retire acts on the actor, so a superseded predecessor handle
+	// would demote the live agent. Members always come through as the current
+	// generation, so this is a defensive guard for the invariant.
+	live, serr := db.IsLiveAgentConv(convID)
 	if serr != nil {
 		res.Action = "error"
-		res.Detail = "enrollment lookup: " + serr.Error()
+		res.Detail = "agent-state lookup: " + serr.Error()
 		return res, nil
 	}
-	if state != db.EnrollmentActive {
+	if !live {
+		state, _ := db.AgentState(convID)
 		res.Action = "skipped:not_active_agent"
-		res.Detail = "enrollment: " + state
+		res.Detail = "state: " + state
 		return res, nil
 	}
 	outcome, ownerGroups, rerr := retireAgentConv(convID, by, reason)
@@ -762,8 +772,13 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 
 	// Comprehensive cleanup: DB purge + filesystem + sync tombstone +
 	// session-env. Single source of truth shared with the dashboard
-	// `DELETE /api/agents/...` path and `tclaude conv rm`.
-	counts, err := conv.DeleteConvByID(targetConv)
+	// `DELETE /api/agents/...` path and `tclaude conv rm`. Actor-aware
+	// (JOH-26 PR3d): when targetConv is an agent's head generation, this
+	// also sweeps every predecessor generation's rows + .jsonl, so a
+	// multi-generation actor's delete leaves nothing orphaned. The selector
+	// resolves a predecessor forward to the head before it reaches here, so
+	// `targetConv` is the head in the agent-delete case.
+	counts, swept, err := conv.DeleteAgentAllGenerations(targetConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"delete failed: "+err.Error())
@@ -774,6 +789,11 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		"conv_id":   targetConv,
 		"action":    "deleted",
 		"db_counts": counts,
+	}
+	// Surface the full generation set reaped when more than the named conv
+	// went (a multi-generation actor) — otherwise it's just [targetConv].
+	if len(swept) > 1 {
+		resp["generations"] = swept
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller
@@ -2011,6 +2031,16 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // when it isn't a valid rename title, so the dashboard can show the intended
 // name during the brief window before the title materialises.
 func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *spawnFailure) {
+	// Stable agent-identity (JOH-26): a spawn is the birth of a new actor. Mint
+	// its agent_id BEFORE the group-add so created_via is the precise "spawn"
+	// rather than the "group" tag AddAgentGroupMember's own EnsureAgentForConv
+	// would otherwise stamp (that call is a no-op once this conv is already
+	// linked). Idempotent.
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	if err != nil {
+		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
+	}
+
 	// Membership add. Permission gating already happened in the caller;
 	// this is just the DB write.
 	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
@@ -2023,15 +2053,18 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
-	// Record the requested name as the agent's pending display name. Until
+	// Record the requested name as the actor's pending display name. Until
 	// the title materialises (a tick later on the legacy path; at launch on
 	// the launch-enrollment path) the dashboard would otherwise show
 	// "(unknown)". agent.FreshTitle reads pending_name as a fallback; the
-	// real custom title supersedes it.
+	// real custom title supersedes it. Keyed on the actor so the name survives
+	// conv rotations.
 	if name := strings.TrimSpace(p.Name); name != "" {
-		if err := db.SetEnrollmentPendingName(convID, name); err != nil {
-			slog.Warn("spawn: failed to record pending name",
-				"conv", convID, "name", name, "error", err)
+		if agentID != "" {
+			if err := db.SetAgentPendingName(agentID, name); err != nil {
+				slog.Warn("spawn: failed to record actor pending name",
+					"agent", agentID, "name", name, "error", err)
+			}
 		}
 	}
 

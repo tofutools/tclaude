@@ -576,6 +576,44 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'copy-generation-id': {
+          // The "Replaced generations" view's lightweight inspect: copy the
+          // dead generation's full conv-id so the operator can examine it
+          // out-of-band — `claude --resume <id>` from its dir, or
+          // `tclaude agent seance --target <id>`. A one-click in-dashboard
+          // open of the grave is a planned follow-up.
+          try {
+            await navigator.clipboard?.writeText(conv);
+            toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
+          } catch (_) {
+            toast(`conv-id: ${conv}`);
+          }
+          return;
+        }
+        case 'delete-generation': {
+          // Exact, single-generation delete via the dedicated endpoint, which
+          // refuses the actor's live head (409) — so pruning a past generation
+          // can never touch the live agent. Distinct from delete-agent (which
+          // tears the whole actor down).
+          const actor = btn.getAttribute('data-actor') || '';
+          if (!await confirmModal({
+            title: `Delete past generation?`,
+            body: `Permanently delete the superseded generation ${label}${actor ? ` of ${actor}` : ''}? `
+              + `This removes just this past generation (its transcript .jsonl + DB rows). `
+              + `The live agent and its other generations are NOT affected.`,
+            okLabel: 'delete generation',
+          })) {
+            return;
+          }
+          const r = await fetch(`/api/agent-generations/${encodeURIComponent(conv)}`, {
+            method: 'DELETE', credentials: 'same-origin',
+          });
+          ok = r.ok;
+          if (!ok) { toast(`Delete failed: ${await r.text()}`, true); break; }
+          toast(`deleted generation: ${label}`);
+          refresh();
+          return;
+        }
         case 'edit-role':
         case 'edit-member': {
           // The single per-agent edit panel: title (incl. the "auto"

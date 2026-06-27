@@ -115,7 +115,8 @@ const MEMBER_COLS = [
   { label: 'Description', col: 'descr' },
 ];
 const MEMBER_ACCESSORS = {
-  id:     m => m.conv_id,
+  // id sorts on the stable agent_id the column now displays (conv-id fallback).
+  id:     m => m.agent_id || m.conv_id,
   title:  m => m.title,
   state:  m => (m.state || {}).status,
   last:   m => (m.state || {}).last_hook,
@@ -145,8 +146,8 @@ const CRON_COLS = [
 const CRON_ACCESSORS = {
   id:     j => j.id,
   name:   j => j.name,
-  owner:  j => j.owner_label || j.owner_conv,
-  target: j => j.group_name || j.target_label || j.target_conv,
+  owner:  j => j.owner_label || j.owner_agent || j.owner_conv,
+  target: j => j.group_name || j.target_label || j.target_agent || j.target_conv,
   every:  j => j.interval_seconds,
   last:   j => j.last_run_at,
   status: j => j.last_run_status,
@@ -154,7 +155,7 @@ const CRON_ACCESSORS = {
 };
 
 const SUDO_COLS = [
-  { label: 'Conv', col: 'conv' },
+  { label: 'Agent', col: 'conv' },
   { label: 'Slug', col: 'slug' },
   { label: 'Granted at', col: 'granted' },
   { label: 'Expires in', col: 'expires' },
@@ -163,7 +164,7 @@ const SUDO_COLS = [
   { label: '' },
 ];
 const SUDO_ACCESSORS = {
-  conv:    r => r.conv_title || r.conv_id,
+  conv:    r => r.conv_title || r.agent_id || r.conv_id,
   slug:    r => r.slug,
   granted: r => r.granted_at,
   expires: r => r.remaining_seconds,

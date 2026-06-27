@@ -30,6 +30,16 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	assert.Equal(t, "po-pings", got.Name, "round-trip mismatch: %+v", got)
 	assert.Equal(t, "po-conv", got.OwnerConv, "round-trip mismatch: %+v", got)
 	assert.Equal(t, "worker-conv", got.TargetConv, "round-trip mismatch: %+v", got)
+	// PR3c: the job carries the stable owner/target agent_ids it is keyed on,
+	// so the `cron ls` TARGET column can render the rotation-immune handle.
+	ownerAgent, err := AgentIDForConv("po-conv")
+	require.NoError(t, err, "AgentIDForConv(po-conv)")
+	targetAgent, err := AgentIDForConv("worker-conv")
+	require.NoError(t, err, "AgentIDForConv(worker-conv)")
+	require.NotEmpty(t, ownerAgent, "owner conv should be minted as an actor")
+	require.NotEmpty(t, targetAgent, "target conv should be minted as an actor")
+	assert.Equal(t, ownerAgent, got.OwnerAgent, "job should carry the stable owner agent_id")
+	assert.Equal(t, targetAgent, got.TargetAgent, "job should carry the stable target agent_id")
 	assert.Equal(t, int64(600), got.IntervalSeconds, "interval")
 	assert.True(t, got.Enabled, "expected enabled=true")
 	assert.False(t, got.CreatedAt.IsZero(), "created_at should be stamped on insert")

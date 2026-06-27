@@ -4,7 +4,7 @@
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, shortId, relTime, syncBotAnimations } from './helpers.js';
+import { $, esc, shortAgentId, relTime, syncBotAnimations } from './helpers.js';
 import {
   sortHead, applySort, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
@@ -14,6 +14,7 @@ import {
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,
+  virtualReplacedGroup, replacedVisible,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
 import { sortGroupsByPref } from './group-reorder.js';
@@ -38,6 +39,7 @@ function filterGroups(groups, q) {
     const matchedMembers = (g.members || []).filter(m => {
       const state = m.state || {};
       return ((m.title || '').toLowerCase().includes(needle)) ||
+             ((m.agent_id || '').toLowerCase().includes(needle)) ||
              ((m.conv_id || '').toLowerCase().includes(needle)) ||
              ((m.role || '').toLowerCase().includes(needle)) ||
              ((m.descr || '').toLowerCase().includes(needle)) ||
@@ -101,6 +103,13 @@ function renderGroupsTab() {
   if (conversationsVisible()) {
     list.push(virtualConversationsGroup(lastSnapshot.conversations || []));
   }
+  // The virtual "Replaced generations" group sits at the very bottom — it's
+  // the most archival bucket (superseded past generations of agents, left
+  // behind by reincarnate / /clear). Opt-in via its checkbox (default off),
+  // like Conversations: it grows over an agent's life and is read-mostly.
+  if (replacedVisible()) {
+    list.push(virtualReplacedGroup(lastSnapshot.replaced || []));
+  }
   const filtered = filterGroups(list, q);
   $('#groups-list').innerHTML = renderGroups(filtered);
   // Re-phase the activity-bot animations to wall-clock so this wholesale
@@ -138,7 +147,12 @@ function cronTargetCell(j) {
     return `<span class="tag">group:${esc(j.group_name || ('#' + j.group_id))}</span>`;
   }
   if (j.target_conv) {
-    return `<span class="rowname">${esc(j.target_label || j.target_conv.slice(0, 8))}</span>`;
+    // Lead with the stable agent_id (the cutover); keep the conv title as a
+    // muted second line so the human-readable name isn't lost (the cron tab
+    // has no separate name column like the roster does). conv_id stays the
+    // hover title for inspectability, matching the other roster cells.
+    return `<span class="rowname" title="${esc(j.target_conv)}">${esc(shortAgentId(j.target_agent, j.target_conv))}</span>`
+      + (j.target_label ? `<div class="muted">${esc(j.target_label)}</div>` : '');
   }
   return '<span class="muted">(no target)</span>';
 }
@@ -176,7 +190,7 @@ function renderCron(jobs) {
               <td>${enabledDot}</td>
               <td class="id">${j.id}</td>
               <td><div class="rowname">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
-              <td><span class="muted">${esc(j.owner_label || j.owner_conv.slice(0, 8))}</span></td>
+              <td><span class="muted" title="${esc(j.owner_conv)}">${esc(shortAgentId(j.owner_agent, j.owner_conv))}</span>${j.owner_label ? `<div class="muted">${esc(j.owner_label)}</div>` : ''}</td>
               <td>${cronTargetCell(j)}</td>
               <td><span class="id">${esc(formatInterval(j.interval_seconds))}</span></td>
               <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
@@ -197,7 +211,9 @@ function filterCron(jobs, q) {
   return jobs.filter(j =>
     ((j.name || '').toLowerCase().includes(needle)) ||
     ((j.owner_label || '').toLowerCase().includes(needle)) ||
+    ((j.owner_agent || '').toLowerCase().includes(needle)) ||
     ((j.target_label || '').toLowerCase().includes(needle)) ||
+    ((j.target_agent || '').toLowerCase().includes(needle)) ||
     ((j.group_name || '').toLowerCase().includes(needle)) ||
     ((j.subject || '').toLowerCase().includes(needle)) ||
     ((j.body || '').toLowerCase().includes(needle))
@@ -235,6 +251,7 @@ function filterSudo(rows, q) {
   return rows.filter(r =>
     (r.conv_title || '').toLowerCase().includes(needle) ||
     (r.conv_id || '').toLowerCase().includes(needle) ||
+    (r.agent_id || '').toLowerCase().includes(needle) ||
     (r.slug || '').toLowerCase().includes(needle) ||
     (r.reason || '').toLowerCase().includes(needle));
 }
@@ -251,7 +268,7 @@ function renderSudo(rows) {
           <tr>
             <td>
               <span class="rowname">${esc(r.conv_title || '(unknown)')}</span>
-              <span class="id">${esc(shortId(r.conv_id))}</span>
+              <span class="id" title="${esc(r.conv_id)}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>
             </td>
             <td><span class="tag slug">${esc(r.slug)}</span></td>
             <td><span class="last-hook">${esc(relTime(r.granted_at))}</span></td>

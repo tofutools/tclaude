@@ -509,12 +509,16 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	}
 
 	// A clone is an agent in its own right. The identity copy below
-	// enrolls it via the group/grant DB hooks when the original had
+	// registers it via the group/grant DB hooks when the original had
 	// any, but a clone of a bare ungrouped agent would otherwise only
-	// enroll on its first /v1 call — make it explicit so it shows on
-	// the roster the moment it spawns.
-	if err := db.EnrollAgent(newConv, "clone"); err != nil {
-		slog.Warn("clone: enroll new conv failed", "conv", newConv, "error", err)
+	// get an actor on its first /v1 call — make it explicit so it shows
+	// on the roster the moment it spawns.
+	// Stable agent-identity (JOH-26): a clone gets its OWN fresh agent_id here —
+	// a clone is a FORK (no succession edge links it to the source), and newConv
+	// is unlinked, so EnsureAgentForConv mints a new actor rather than inheriting
+	// the source's.
+	if _, _, err := db.EnsureAgentForConv(newConv, "clone"); err != nil {
+		slog.Warn("clone: ensure new actor failed", "conv", newConv, "error", err)
 	}
 
 	// 3. Copy identity to the new conv. Crucially, this is ADD-only —

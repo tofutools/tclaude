@@ -105,52 +105,62 @@ func TestClearRotation_MigratesAgentIdentityToNewConvID(t *testing.T) {
 	assert.Nil(t, findMember(members, c.OldConv),
 		"old conv-id must NOT linger as a member after /clear")
 
-	// Permission overrides — grant AND deny — moved to the new conv-id.
-	newPerms, err := db.ListAgentPermissionOverridesForConv(c.NewConv)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{
+	// Permission overrides — grant AND deny — belong to the stable actor
+	// (JOH-26), not a conv generation: they were never rekeyed, the rows stayed
+	// put on agent_id and only the conv pointer advanced. So they resolve from
+	// the new conv — AND from the old one, which is the same actor.
+	wantPerms := map[string]string{
 		"human.notify": db.PermEffectGrant,
 		"agent.spawn":  db.PermEffectDeny,
-	}, newPerms, "permission overrides should resolve under the new conv-id")
+	}
+	newPerms, err := db.ListAgentPermissionOverridesForConv(c.NewConv)
+	require.NoError(t, err)
+	assert.Equal(t, wantPerms, newPerms, "permission overrides resolve under the new conv-id")
 	oldPerms, err := db.ListAgentPermissionOverridesForConv(c.OldConv)
 	require.NoError(t, err)
-	assert.Empty(t, oldPerms, "old conv-id must retain no permission overrides")
+	assert.Equal(t, wantPerms, oldPerms,
+		"the predecessor generation resolves to the same actor, so it sees the same overrides")
 
-	// Ownership + membership rows: new yes, old no.
+	// Ownership is agent-keyed too: both generations report the actor's ownership.
 	ownNew, err := db.IsAgentGroupOwner(g.ID, c.NewConv)
 	require.NoError(t, err)
 	assert.True(t, ownNew, "new conv-id should own the group")
 	ownOld, err := db.IsAgentGroupOwner(g.ID, c.OldConv)
 	require.NoError(t, err)
-	assert.False(t, ownOld, "old conv-id must not still own the group")
+	assert.True(t, ownOld, "the predecessor generation resolves to the same owning actor")
 
-	// The old conv-id is retired (not deleted) — its enrollment row
-	// stays so a human can `tclaude agent promote` it later to
-	// reinstate it as an active agent for knowledge pings. The
-	// `active`-state read paths use `retired_at = ''` as their filter,
-	// so the retired old conv still drops off live agent surfaces.
-	oldEnr, err := db.EnrollmentState(c.OldConv)
+	// Both conv-ids are generations of ONE still-active actor (JOH-26 PR3c):
+	// the actor's live pointer advanced old→new, but the predecessor is a past
+	// generation, NOT a standalone retired entry — both resolve to the same
+	// active agent. (The actor is reachable from the old conv via the
+	// succession edge / séance.)
+	oldState, err := db.AgentState(c.OldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, oldEnr,
-		"old conv-id should retire so it stays reinstatable for knowledge pings")
-	newEnr, err := db.EnrollmentState(c.NewConv)
+	assert.Equal(t, db.AgentStateActive, oldState,
+		"the predecessor generation resolves to the still-active actor")
+	newState, err := db.AgentState(c.NewConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, newEnr,
-		"new conv-id should be an active agent")
+	assert.Equal(t, db.AgentStateActive, newState,
+		"new conv-id is the live generation of the active agent")
+	oldAgent, err := db.AgentIDForConv(c.OldConv)
+	require.NoError(t, err)
+	newAgent, err := db.AgentIDForConv(c.NewConv)
+	require.NoError(t, err)
+	assert.Equal(t, oldAgent, newAgent, "both generations share one actor")
 
 	// Succession edge old→new — what powers ResolveLatestConv routing.
 	succ, err := db.GetConvSuccessor(c.OldConv)
 	require.NoError(t, err)
 	assert.Equal(t, c.NewConv, succ, "a succession edge old→new must be recorded")
 
-	// The agent's display name carried onto pending_name — the dashboard
-	// fallback that shows the name immediately, before the /rename
+	// The agent's display name carried onto the actor's pending_name — the
+	// dashboard fallback that shows the name immediately, before the /rename
 	// injection lands and is scanned into conv_index.
-	newEnrRow, err := db.GetEnrollment(c.NewConv)
+	actor, err := db.GetAgentByConv(c.NewConv)
 	require.NoError(t, err)
-	require.NotNil(t, newEnrRow)
-	assert.Equal(t, clearAgentTitle, newEnrRow.PendingName,
-		"pending_name on the new conv should carry the agent's display name")
+	require.NotNil(t, actor)
+	assert.Equal(t, clearAgentTitle, actor.PendingName,
+		"pending_name on the actor should carry the agent's display name")
 
 	// The hook injected /rename so the new conversation also regains a
 	// real customTitle — what makes the name durable across rescans and
@@ -234,14 +244,14 @@ func TestClearRotation_PlainConversationNotPromotedToAgent(t *testing.T) {
 		plainCwd   = "/tmp/plainwork"
 	)
 	f.HaveAliveSession(plainConv, plainLabel, plainTmux, plainCwd)
-	require.Equal(t, db.EnrollmentNone, mustEnrollmentState(t, plainConv),
+	require.Equal(t, db.AgentStateNone, mustAgentState(t, plainConv),
 		"precondition: the conv is a plain conversation, not an agent")
 
 	c := f.Clear(plainLabel)
 
-	assert.Equal(t, db.EnrollmentNone, mustEnrollmentState(t, c.NewConv),
+	assert.Equal(t, db.AgentStateNone, mustAgentState(t, c.NewConv),
 		"/clear of a plain conversation must not promote the successor to an agent")
-	assert.Equal(t, db.EnrollmentNone, mustEnrollmentState(t, c.OldConv),
+	assert.Equal(t, db.AgentStateNone, mustAgentState(t, c.OldConv),
 		"the old plain conversation must stay un-enrolled")
 
 	succ, err := db.GetConvSuccessor(c.OldConv)
@@ -264,23 +274,23 @@ func TestClearRotation_PlainConversationNotPromotedToAgent(t *testing.T) {
 // This is the retry condition that lives on needsIdentityMigration's
 // (true, nil) predicate: as long as oldConv is still an active agent
 // and no succession edge has been recorded, the predicate keeps
-// firing across hooks. db.MigrateAgentIdentity is atomic, so a failed
+// firing across hooks. db.RotateAgentConv is atomic, so a failed
 // attempt strands nothing — the next attempt is a clean retry. The
-// fault is injected via session.SetMigrateAgentIdentityForTest (a
+// fault is injected via session.SetRotateAgentConvForTest (a
 // counter-keyed wrapper that returns an error once, then falls
-// through to the real migration), which is the cleanest seam for a
+// through to the real rotation), which is the cleanest seam for a
 // "one-shot transient SQLite error" model.
 func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.T) {
 	f := newFlow(t)
 	g := setupClearedAgent(t, f)
 
 	var calls int32
-	t.Cleanup(session.SetMigrateAgentIdentityForTest(
-		func(oldConv, newConv, reason, granter string) (db.AgentIdentityMigration, error) {
+	t.Cleanup(session.SetRotateAgentConvForTest(
+		func(oldConv, newConv, reason string) (string, error) {
 			if atomic.AddInt32(&calls, 1) == 1 {
-				return db.AgentIdentityMigration{}, errors.New("synthetic SQLite hiccup")
+				return "", errors.New("synthetic SQLite hiccup")
 			}
-			return db.MigrateAgentIdentity(oldConv, newConv, reason, granter)
+			return db.RotateAgentConv(oldConv, newConv, reason)
 		}))
 
 	c := f.Clear(clearAgentLabel)
@@ -301,9 +311,9 @@ func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.
 
 	// Old conv still active — atomic migration means failure strands
 	// nothing; identity is still wholly on the old conv-id.
-	oldEnr, err := db.EnrollmentState(c.OldConv)
+	oldEnr, err := db.AgentState(c.OldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, oldEnr,
+	assert.Equal(t, db.AgentStateActive, oldEnr,
 		"old conv must remain an active agent until the migration commits")
 
 	// Identity rows have NOT moved yet — the old conv still owns the
@@ -347,21 +357,22 @@ func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.
 	assert.Nil(t, findMember(members, c.OldConv),
 		"old conv-id must no longer be a member after retry")
 
-	// Old conv retired (not deleted) — same outcome as the happy
-	// path, since MigrateAgentIdentity's transaction is the same.
-	oldEnr2, err := db.EnrollmentState(c.OldConv)
+	// Old conv is a past generation of the still-active actor (not a retired
+	// entry) — same outcome as the happy path, since RotateAgentConv's
+	// transaction is the same.
+	oldState2, err := db.AgentState(c.OldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, oldEnr2,
-		"after retry, old conv-id should retire so it stays reinstatable")
+	assert.Equal(t, db.AgentStateActive, oldState2,
+		"after retry, the predecessor resolves to the still-active actor")
 
 	// We expect exactly two migration attempts: one failure, one success.
 	assert.Equal(t, int32(2), atomic.LoadInt32(&calls),
 		"migration should be attempted twice: one transient failure, one retry")
 }
 
-func mustEnrollmentState(t *testing.T, conv string) string {
+func mustAgentState(t *testing.T, conv string) string {
 	t.Helper()
-	s, err := db.EnrollmentState(conv)
+	s, err := db.AgentState(conv)
 	require.NoError(t, err)
 	return s
 }

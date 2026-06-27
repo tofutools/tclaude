@@ -125,11 +125,11 @@ func retiredAgentConvs() (map[string]struct{}, []string, error) {
 	set := make(map[string]struct{}, len(rows))
 	ids := make([]string, 0, len(rows))
 	for _, e := range rows {
-		if e.ConvID == "" {
+		if e.CurrentConvID == "" {
 			continue
 		}
-		set[e.ConvID] = struct{}{}
-		ids = append(ids, e.ConvID)
+		set[e.CurrentConvID] = struct{}{}
+		ids = append(ids, e.CurrentConvID)
 	}
 	return set, ids, nil
 }
@@ -210,7 +210,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	if active, err := db.ListActiveAgents(); err == nil {
 		for _, e := range active {
-			convSet[e.ConvID] = struct{}{}
+			convSet[e.CurrentConvID] = struct{}{}
 		}
 	}
 
@@ -638,7 +638,7 @@ func (d *mailboxDecorator) recipients(ids []string) []recipientLine {
 	}
 	ls := make([]recipientLine, 0, len(ids))
 	for _, id := range ids {
-		ls = append(ls, recipientLine{ConvID: id, Title: d.titleOf(id)})
+		ls = append(ls, recipientLine{ConvID: id, AgentID: peerAgentID(id), Title: d.titleOf(id)})
 	}
 	return ls
 }

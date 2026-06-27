@@ -16,6 +16,12 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function shortId(id) { return (id || '').slice(0, 8); }
+// shortAgentId is the narrow-table form of a stable agent_id: the `agt_` tag
+// plus the first 8 hex of the suffix (12 chars) — the rotation-immune handle
+// the roster + audit/sudo/cron surfaces lead with. Falls back to the conv-id
+// prefix when the row carries no agent_id (a plain conversation, a group
+// target, or an older daemon that didn't send the field).
+function shortAgentId(agentId, convId) { return agentId ? agentId.slice(0, 12) : shortId(convId); }
 
 // linkify turns bare http(s) URLs in a plain-text string into clickable
 // <a> links and escapes everything else, so the result is safe to drop
@@ -1391,7 +1397,7 @@ function syncBotAnimations() {
 // composition details of the exported builders above.
 export {
   syncBotAnimations,
-  $, $$, esc, linkify, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,

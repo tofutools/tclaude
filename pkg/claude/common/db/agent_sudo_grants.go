@@ -12,14 +12,18 @@ import (
 // the future AND RevokedAt is zero. Audit-friendly fields
 // (GrantedBy, Reason) carry context for forensics.
 type SudoGrant struct {
-	ID         int64
-	ConvID     string
-	Slug       string
-	GrantedAt  time.Time
-	ExpiresAt  time.Time
-	GrantedBy  string
-	Reason     string
-	RevokedAt  time.Time
+	ID int64
+	// AgentID is the stable actor key the grant is keyed on (JOH-26) — the
+	// canonical, rotation-immune identity to display. ConvID is the actor's
+	// current generation, resolved at read time.
+	AgentID   string
+	ConvID    string
+	Slug      string
+	GrantedAt time.Time
+	ExpiresAt time.Time
+	GrantedBy string
+	Reason    string
+	RevokedAt time.Time
 }
 
 // IsActive returns true when the grant is still in force at `now`:
@@ -58,20 +62,25 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 	if g.GrantedAt.IsZero() {
 		g.GrantedAt = time.Now()
 	}
+	// A sudo elevation is granted to an agent — ensure its stable actor if new,
+	// then key the grant on agent_id (JOH-26).
+	agentID, _, err := EnsureAgentForConv(g.ConvID, "grant")
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, fmt.Errorf("InsertSudoGrant: no actor for conv %s", g.ConvID)
+	}
 	res, err := d.Exec(`INSERT INTO agent_sudo_grants
-		(conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
+		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		g.ConvID, g.Slug,
+		agentID, g.Slug,
 		g.GrantedAt.Format(time.RFC3339Nano),
 		g.ExpiresAt.Format(time.RFC3339Nano),
 		g.GrantedBy, g.Reason,
 		formatTimeOrEmpty(g.RevokedAt))
 	if err != nil {
 		return 0, err
-	}
-	// A sudo elevation is granted to an agent — enroll it if new.
-	if eerr := EnrollAgent(g.ConvID, "grant"); eerr != nil {
-		return 0, eerr
 	}
 	return res.LastInsertId()
 }
@@ -82,8 +91,9 @@ func GetSudoGrant(id int64) (*SudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT id, conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at
-		FROM agent_sudo_grants WHERE id = ?`, id)
+	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
+		WHERE s.id = ?`, id)
 	g, err := scanSudoGrant(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -102,11 +112,18 @@ func HasActiveSudoGrant(convID, slug string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if agentID == "" {
+		return false, nil
+	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
 	var n int
 	err = d.QueryRow(`SELECT COUNT(*) FROM agent_sudo_grants
-		WHERE conv_id = ? AND slug = ? AND revoked_at = '' AND expires_at > ?`,
-		convID, slug, cutoff).Scan(&n)
+		WHERE agent_id = ? AND slug = ? AND revoked_at = '' AND expires_at > ?`,
+		agentID, slug, cutoff).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -132,13 +149,20 @@ func LookupActiveSudoGrantID(convID, slug string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
 	var id int64
 	err = d.QueryRow(`SELECT id FROM agent_sudo_grants
-		WHERE conv_id = ? AND slug = ? AND revoked_at = '' AND expires_at > ?
+		WHERE agent_id = ? AND slug = ? AND revoked_at = '' AND expires_at > ?
 		ORDER BY expires_at ASC LIMIT 1`,
-		convID, slug, cutoff).Scan(&id)
-	if err == sql.ErrNoRows {
+		agentID, slug, cutoff).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
@@ -158,11 +182,18 @@ func ListActiveSudoGrants(convID string) ([]*SudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if agentID == "" {
+		return nil, nil
+	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
-	rows, err := d.Query(`SELECT id, conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at
-		FROM agent_sudo_grants
-		WHERE conv_id = ? AND revoked_at = '' AND expires_at > ?
-		ORDER BY expires_at ASC`, convID, cutoff)
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
+		WHERE s.agent_id = ? AND s.revoked_at = '' AND s.expires_at > ?
+		ORDER BY s.expires_at ASC`, agentID, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -188,10 +219,10 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
-	rows, err := d.Query(`SELECT id, conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at
-		FROM agent_sudo_grants
-		WHERE revoked_at = '' AND expires_at > ?
-		ORDER BY conv_id ASC, expires_at ASC`, cutoff)
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
+		WHERE s.revoked_at = '' AND s.expires_at > ?
+		ORDER BY ag.current_conv_id ASC, s.expires_at ASC`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -236,9 +267,16 @@ func RevokeSudoGrantsByConv(convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return 0, err
+	}
+	if agentID == "" {
+		return 0, nil
+	}
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := d.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?
-		WHERE conv_id = ? AND revoked_at = ''`, now, convID)
+		WHERE agent_id = ? AND revoked_at = ''`, now, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -267,7 +305,7 @@ func RevokeAllActiveSudoGrants() (int64, error) {
 func scanSudoGrant(s rowScanner) (*SudoGrant, error) {
 	var g SudoGrant
 	var grantedAt, expiresAt, revokedAt string
-	if err := s.Scan(&g.ID, &g.ConvID, &g.Slug,
+	if err := s.Scan(&g.ID, &g.AgentID, &g.ConvID, &g.Slug,
 		&grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &revokedAt); err != nil {
 		return nil, err
 	}

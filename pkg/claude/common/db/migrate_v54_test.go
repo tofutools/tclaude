@@ -160,28 +160,30 @@ func TestMigrateV53toV54_FreshSchemaRoundTrips(t *testing.T) {
 	assert.Error(t, SetConvNotifyPref("conv-1", "bogus"), "unknown mode rejected")
 }
 
-// TestNotifyPref_FollowsAgentLifecycle asserts the pref rides the two
-// lifecycle paths that rekey or purge conv-id-keyed identity rows:
-// MigrateAgentIdentity (reincarnate / clear) carries it to the new
-// conv-id, and DeleteAgentByConvID removes it.
+// TestNotifyPref_FollowsAgentLifecycle asserts the notify pref rides the
+// lifecycle paths. As of the JOH-26 agent-id cutover the pref is agent-keyed,
+// so a rotation (RotateAgentConv) does NOT rekey it — it belongs to the actor
+// and is reachable from every conversation generation. DeleteAgentByConvID
+// removes it with the actor.
 func TestNotifyPref_FollowsAgentLifecycle(t *testing.T) {
 	setupTestDB(t)
 
 	require.NoError(t, SetConvNotifyPref("old-conv", NotifyPrefOff))
-	mig, err := MigrateAgentIdentity("old-conv", "new-conv", "reincarnate", "system:test")
-	require.NoError(t, err, "MigrateAgentIdentity")
-	assert.Equal(t, int64(1), mig.NotifyPrefs, "one pref row rekeyed")
+	_, err := RotateAgentConv("old-conv", "new-conv", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
 
+	// Reachable from the successor conv...
 	mode, err := GetConvNotifyPref("new-conv")
 	require.NoError(t, err)
-	assert.Equal(t, NotifyPrefOff, mode, "the mute followed the agent")
+	assert.Equal(t, NotifyPrefOff, mode, "the mute is reachable from the successor conv")
+	// ...and from the predecessor — both generations are the same actor.
 	mode, err = GetConvNotifyPref("old-conv")
 	require.NoError(t, err)
-	assert.Empty(t, mode, "nothing left on the old conv")
+	assert.Equal(t, NotifyPrefOff, mode, "and from the predecessor — same actor, same pref")
 
 	counts, err := DeleteAgentByConvID("new-conv")
 	require.NoError(t, err, "DeleteAgentByConvID")
-	assert.Equal(t, int64(1), counts.NotifyPrefs, "delete purges the pref row")
+	assert.Equal(t, int64(1), counts.NotifyPrefs, "delete purges the actor's pref row")
 	mode, err = GetConvNotifyPref("new-conv")
 	require.NoError(t, err)
 	assert.Empty(t, mode)

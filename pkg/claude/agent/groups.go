@@ -464,8 +464,10 @@ func groupsMembersCmd() *cobra.Command {
 }
 
 type memberEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the stable actor key — the canonical ID shown for a member.
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339); the
 	// listing defaults to newest-first on it, surfaced as the AGE column.
 	CreatedAt string `json:"created_at,omitempty"`
@@ -526,7 +528,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "AGE", Width: 7},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
@@ -545,10 +547,10 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		} else if m.Owner && role == "" {
 			role = "owner"
 		}
-		// NAME is the conv's display title — an agent's single name.
+		// ID is the stable agent_id (short form); NAME is the display title.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(m.Online),
-			short(m.ConvID),
+			shortAgentID(m.AgentID, m.ConvID),
 			m.Title,
 			relTimeAgo(m.CreatedAt),
 			role,
@@ -828,6 +830,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		Group   string `json:"group"`
 		Action  string `json:"action"`
 		Members []struct {
+			AgentID string `json:"agent_id,omitempty"`
 			ConvID  string `json:"conv_id"`
 			Title   string `json:"title,omitempty"`
 			Action  string `json:"action"`
@@ -846,7 +849,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	tbl := table.New(
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
@@ -858,7 +861,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 			name = "(unnamed)"
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			short(m.ConvID), name, m.Action, m.Detail,
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
 		}})
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
@@ -877,6 +880,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		Group   string `json:"group"`
 		Action  string `json:"action"`
 		Members []struct {
+			AgentID string `json:"agent_id,omitempty"`
 			ConvID  string `json:"conv_id"`
 			Title   string `json:"title,omitempty"`
 			Action  string `json:"action"`
@@ -894,7 +898,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		return rcOK
 	}
 	tbl := table.New(
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
@@ -906,7 +910,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 			name = "(unnamed)"
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			short(m.ConvID), name, m.Action, m.Detail,
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
 		}})
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)

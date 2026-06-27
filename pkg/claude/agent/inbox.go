@@ -106,7 +106,7 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
-		table.Column{Header: "FROM", Width: 8},
+		table.Column{Header: "FROM", Width: 12},
 		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
 	)
@@ -191,7 +191,7 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "ST", Width: 3},
 		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
-		table.Column{Header: "TO", Width: 8},
+		table.Column{Header: "TO", Width: 12},
 		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
 	)
@@ -260,21 +260,28 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 }
 
 // recipientLine mirrors the daemon's response shape for the audience
-// arrays (to_recipients / cc_recipients on /v1/messages/{id}).
+// arrays (to_recipients / cc_recipients on /v1/messages/{id}). AgentID is
+// the recipient's stable agent_id (JOH-27 PR3b-2); empty for a non-agent
+// conv, where the renderer falls back to the conv-id prefix.
 type recipientLine struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	ConvID  string `json:"conv_id"`
+	AgentID string `json:"agent_id"`
+	Title   string `json:"title"`
 }
 
 // formatRecipientList renders a recipient list as comma-separated
-// "title <prefix>" entries (or just the prefix when no title is known).
+// "title <agent_id>" entries (or just the short id when no title is
+// known), leading with the stable agent_id so the audience reads by the
+// rotation-immune handle, falling back to the conv-id prefix for a
+// non-agent recipient.
 func formatRecipientList(rs []recipientLine) string {
 	parts := make([]string, 0, len(rs))
 	for _, r := range rs {
+		id := shortAgentID(r.AgentID, r.ConvID)
 		if r.Title != "" {
-			parts = append(parts, fmt.Sprintf("%s <%s>", r.Title, short(r.ConvID)))
+			parts = append(parts, fmt.Sprintf("%s <%s>", r.Title, id))
 		} else {
-			parts = append(parts, short(r.ConvID))
+			parts = append(parts, id)
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -288,8 +295,10 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	var m struct {
 		ID             int64           `json:"id"`
 		From           string          `json:"from"`
+		FromAgent      string          `json:"from_agent"`
 		FromTitle      string          `json:"from_title"`
 		To             string          `json:"to"`
+		ToAgent        string          `json:"to_agent"`
 		OriginalToConv string          `json:"original_to_conv,omitempty"`
 		Group          string          `json:"group"`
 		Subject        string          `json:"subject"`
@@ -318,11 +327,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 			fmt.Fprintf(stdout, "  In-Reply-To: %d\n", m.InReplyTo)
 		}
 	}
-	if m.FromTitle != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", m.FromTitle, m.From)
-	} else {
-		fmt.Fprintf(stdout, "  From:       %s\n", m.From)
-	}
+	fmt.Fprintf(stdout, "  From:       %s\n", actorHeader(m.FromTitle, m.FromAgent, m.From))
 	if len(m.ToRecipients) > 0 {
 		// Email-style audience: render the full To: list (and CC: if
 		// present) instead of the single per-row to_conv. Lets the
@@ -330,7 +335,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		// round-trip.
 		fmt.Fprintf(stdout, "  To:         %s\n", formatRecipientList(m.ToRecipients))
 	} else {
-		fmt.Fprintf(stdout, "  To:         %s\n", m.To)
+		fmt.Fprintf(stdout, "  To:         %s\n", actorID(m.ToAgent, m.To))
 	}
 	if m.OriginalToConv != "" {
 		// The sender addressed a superseded conv-id; the daemon walked
@@ -357,7 +362,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt)
 	if m.ReplyTo != "" {
-		fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.ReplyTo)
+		fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.ReplyTo))
 	}
 	if m.ReplyCmd != "" {
 		fmt.Fprintf(stdout, "  Reply-Cmd:  %s\n", m.ReplyCmd)
@@ -366,6 +371,28 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)
 	return rcOK
+}
+
+// actorID is the identifier shown for a message actor in an inbox-read
+// header: the stable full agent_id (JOH-27) when present, else the conv-id
+// (a non-actor conv, or an older daemon that didn't send the agent field).
+// Inbox read is a single-message detail view, so the FULL id is used per
+// the display split — conv-id stays available in the daemon's JSON.
+func actorID(agentID, convID string) string {
+	if agentID != "" {
+		return agentID
+	}
+	return convID
+}
+
+// actorHeader renders a message actor as "name (agent_id)" for an
+// inbox-read From header, or just the id when no title is indexed.
+func actorHeader(title, agentID, convID string) string {
+	id := actorID(agentID, convID)
+	if title == "" {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", title, id)
 }
 
 func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) int {
@@ -398,12 +425,8 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
-	if fromTitle != "" {
-		fmt.Fprintf(stdout, "  From:       %s <%s>\n", fromTitle, m.FromConv)
-	} else {
-		fmt.Fprintf(stdout, "  From:       %s\n", m.FromConv)
-	}
-	fmt.Fprintf(stdout, "  To:         %s\n", m.ToConv)
+	fmt.Fprintf(stdout, "  From:       %s\n", actorHeader(fromTitle, m.FromAgent, m.FromConv))
+	fmt.Fprintf(stdout, "  To:         %s\n", actorID(m.ToAgent, m.ToConv))
 	if m.OriginalToConv != "" {
 		fmt.Fprintf(stdout, "  Original-To: %s (superseded by current %s)\n",
 			short(m.OriginalToConv), short(m.ToConv))
@@ -413,7 +436,7 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(stdout, "  Reply-To:   %s\n", m.FromConv)
+	fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.FromConv))
 	fmt.Fprintf(stdout, "  Reply-Cmd:  tclaude agent reply %d \"<your reply body>\"\n", m.ID)
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
@@ -506,4 +529,3 @@ func runInboxPrune(p *inboxPruneParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Pruned %d %s message(s) older than %s\n", resp.Deleted, scope, d)
 	return rcOK
 }
-

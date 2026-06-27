@@ -290,8 +290,8 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// administrative control over the group. Done only after the pane is alive so
 	// a clone that never comes up is never briefly a (dead) group member.
 	if sameGroup {
-		if err := db.EnrollAgent(newConv, "export-clone"); err != nil {
-			slog.Warn("export clone: enroll failed", "job", jobID, "conv", newConv, "error", err)
+		if _, _, err := db.EnsureAgentForConv(newConv, "export-clone"); err != nil {
+			slog.Warn("export clone: ensure actor failed", "job", jobID, "conv", newConv, "error", err)
 		}
 		members, perms := snapshotConvIdentity(originalConv)
 		applyClonedIdentity(newConv, "system:export-clone", members, perms, nil /* never inherit ownership */)
@@ -404,11 +404,12 @@ func failExportJobAndReap(jobID int64, cloneConv, reason string) {
 // is what lets the Costs line show the clone's title instead of the `(unknown)`
 // placeholder, and the clone shows up in the dashboard's "Retired" group.
 //
-// EnrollAgent first (INSERT OR IGNORE — a same_group clone is already enrolled;
-// a standalone one is not) so RetireAgent has an active row to flip. Retire is
-// non-destructive, so a same_group clone's peer agent_messages / history rows are
-// left behind (delete would have purged them) — harmless residue, and the reason
-// a retired same_group clone can appear as a Retired mailbox folder.
+// EnsureAgentForConv first (a same_group clone already has an actor; a
+// standalone one is minted here) so RetireAgent has an active actor to flip.
+// Retire is non-destructive, so a same_group clone's peer agent_messages /
+// history rows are left behind (delete would have purged them) — harmless
+// residue, and the reason a retired same_group clone can appear as a Retired
+// mailbox folder.
 //
 // Best-effort and idempotent. NEVER call with the original conv-id: callers guard
 // worker_conv_id != conv_id so the original is never touched.
@@ -417,8 +418,8 @@ func retireSummaryWriterClone(cloneConv string) {
 		return
 	}
 	stopOneConv(cloneConv, true /* force kill — the clone is done */)
-	if err := db.EnrollAgent(cloneConv, "export-clone"); err != nil {
-		slog.Warn("export clone: enroll-before-retire failed", "conv", cloneConv, "error", err)
+	if _, _, err := db.EnsureAgentForConv(cloneConv, "export-clone"); err != nil {
+		slog.Warn("export clone: ensure-actor-before-retire failed", "conv", cloneConv, "error", err)
 	}
 	if _, _, err := retireAgentConv(cloneConv, "system:export-clone",
 		"export complete — retired to preserve cost"); err != nil {

@@ -81,11 +81,11 @@ func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, err
 // (nothing references convID as an agent) returns false, so callers
 // never offer to "clean up" an arbitrary unknown conv-id.
 func isDanglingAgentEntry(convID string) bool {
-	state, err := db.EnrollmentState(convID)
+	state, err := db.AgentState(convID)
 	if err != nil {
 		return false
 	}
-	return state == db.EnrollmentActive || state == db.EnrollmentRetired
+	return state == db.AgentStateActive || state == db.AgentStateRetired
 }
 
 // writeDanglingAgentResponse signals a dangling agent entry to the
@@ -161,14 +161,20 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	if !ok {
 		return
 	}
-	state, err := db.EnrollmentState(convID)
+	// Gate on the LIVE generation, not just "active": retiring acts on the
+	// actor, so accepting a superseded predecessor handle would demote the live
+	// agent. Every normal caller already resolves to the current generation
+	// (agent.ResolveSelector redirects a predecessor to the chain head); this is
+	// the explicit guard for that invariant.
+	live, err := db.IsLiveAgentConv(convID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	if state != db.EnrollmentActive {
+	if !live {
+		state, _ := db.AgentState(convID)
 		writeError(w, http.StatusConflict, "conflict",
-			fmt.Sprintf("conv %s is not an active agent (enrollment: %s) — nothing to retire", short8(convID), state))
+			fmt.Sprintf("conv %s is not a live agent at this generation (state: %s) — nothing to retire", short8(convID), state))
 		return
 	}
 	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
@@ -231,7 +237,7 @@ func handleAgentPromote(w http.ResponseWriter, r *http.Request, convID string) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id":     convID,
 		"prior_state": prior,
-		"state":       db.EnrollmentActive,
+		"state":       db.AgentStateActive,
 	})
 }
 
@@ -253,14 +259,14 @@ func handleAgentReinstate(w http.ResponseWriter, r *http.Request, convID string)
 		return
 	}
 	if !did {
-		state, _ := db.EnrollmentState(convID)
+		state, _ := db.AgentState(convID)
 		writeError(w, http.StatusConflict, "conflict",
-			fmt.Sprintf("conv %s is not retired (enrollment: %s) — nothing to reinstate", short8(convID), state))
+			fmt.Sprintf("conv %s is not retired (state: %s) — nothing to reinstate", short8(convID), state))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id": convID,
-		"state":   db.EnrollmentActive,
+		"state":   db.AgentStateActive,
 	})
 }
 

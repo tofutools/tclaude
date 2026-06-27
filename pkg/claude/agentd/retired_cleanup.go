@@ -88,31 +88,39 @@ func runRetiredAgentCleanup(now time.Time) {
 		if e.RetiredAt.IsZero() || !e.RetiredAt.Before(cutoff) {
 			continue
 		}
-		if isConvOnline(e.ConvID) {
-			slog.Info("retired cleanup: skipping still-online retired conv", "conv", e.ConvID)
+		if isConvOnline(e.CurrentConvID) {
+			slog.Info("retired cleanup: skipping still-online retired conv", "conv", e.CurrentConvID)
 			continue
 		}
-		// Re-read the row's state immediately before the irreversible
+		// Re-read the actor's state immediately before the irreversible
 		// delete. ListRetiredAgents above is a one-shot snapshot; between it
 		// and this delete a concurrent reinstate (the dashboard's
-		// "reinstate" button → db.ReinstateAgent / PromoteAgent) could have
-		// flipped this row retired→active. isConvOnline wouldn't catch a
-		// just-reinstated-but-still-offline agent, so without this recheck
-		// the sweep could permanently delete a freshly reinstated agent. On
-		// any error (or any non-retired state) we skip — never delete on an
-		// uncertain state. Cheap insurance on a no-undo path.
-		if st, err := db.EnrollmentState(e.ConvID); err != nil || st != db.EnrollmentRetired {
+		// "reinstate" button → db.ReinstateAgent / PromoteAgent, which clears
+		// agents.retired_at) could have flipped this actor retired→active.
+		// isConvOnline wouldn't catch a just-reinstated-but-still-offline
+		// agent, so without this recheck the sweep could permanently delete a
+		// freshly reinstated agent. On any error, a vanished actor, or an
+		// active state we skip — never delete on an uncertain state. Cheap
+		// insurance on a no-undo path.
+		if a, err := db.GetAgent(e.AgentID); err != nil || a == nil || a.Active() {
 			continue
 		}
 		// Log every deletion individually: the .jsonl is removed and there
 		// is no undo, so the daemon log is the sole forensic record of what
 		// was reaped (the aggregate line below is for at-a-glance volume).
-		if _, err := conv.DeleteConvByID(e.ConvID); err != nil {
-			slog.Warn("retired cleanup: delete failed", "conv", e.ConvID, "error", err)
+		// Actor-aware (JOH-26 PR3d): a retired actor may carry predecessor
+		// generations (it was reincarnated / Claude Code /clear'd before
+		// retirement); DeleteAgentAllGenerations reaps EVERY generation's
+		// rows + .jsonl, so none orphan. `swept` is logged so the forensic
+		// record names each conv-id whose .jsonl was removed.
+		_, swept, err := conv.DeleteAgentAllGenerations(e.CurrentConvID)
+		if err != nil {
+			slog.Warn("retired cleanup: delete failed", "conv", e.CurrentConvID, "error", err)
 			continue
 		}
 		slog.Info("retired cleanup: deleted long-retired conversation",
-			"conv", e.ConvID, "retired_at", e.RetiredAt.Format(time.RFC3339))
+			"conv", e.CurrentConvID, "retired_at", e.RetiredAt.Format(time.RFC3339),
+			"generations", swept)
 		deleted++
 	}
 	if deleted > 0 {

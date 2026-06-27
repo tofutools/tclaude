@@ -105,9 +105,9 @@ func TestGroupRetire_HumanRetiresEveryMember(t *testing.T) {
 	assert.Equal(t, "retired", retireMemberAction(resp, convB), "members=%+v", resp.Members)
 
 	for _, c := range []string{convA, convB} {
-		state, err := db.EnrollmentState(c)
+		state, err := db.AgentState(c)
 		require.NoError(t, err)
-		assert.Equal(t, db.EnrollmentRetired, state, "%s must be retired", c)
+		assert.Equal(t, db.AgentStateRetired, state, "%s must be retired", c)
 		assert.False(t, flowGroupHasMember(f, group, c), "%s must leave the group on retire", c)
 		// Conversation data survives — the non-destructive half.
 		row, err := db.GetConvIndex(c)
@@ -148,9 +148,9 @@ func TestGroupRetire_AgentWithoutSlugRefused(t *testing.T) {
 
 	// The worker is untouched: still an active agent, still a member,
 	// still online.
-	state, err := db.EnrollmentState(worker)
+	state, err := db.AgentState(worker)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "a refused retire must not demote anyone")
+	assert.Equal(t, db.AgentStateActive, state, "a refused retire must not demote anyone")
 	assert.True(t, flowGroupHasMember(f, group, worker), "membership must survive a refused retire")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-nswk"), "a refused retire must not stop sessions")
 }
@@ -189,17 +189,17 @@ func TestGroupRetire_AgentWithSlugSkipsSelf(t *testing.T) {
 	assert.Equal(t, "retired", retireMemberAction(resp, workerB), "members=%+v", resp.Members)
 
 	// The caller is untouched: still active, still a member, still online.
-	callerState, err := db.EnrollmentState(caller)
+	callerState, err := db.AgentState(caller)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, callerState, "the caller stays an active agent")
+	assert.Equal(t, db.AgentStateActive, callerState, "the caller stays an active agent")
 	assert.True(t, flowGroupHasMember(f, group, caller), "the caller stays a member")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-sfcl"), "the caller's own pane is never /exit'd")
 
 	// The workers are retired and stopped.
 	for _, c := range []string{workerA, workerB} {
-		state, err := db.EnrollmentState(c)
+		state, err := db.AgentState(c)
 		require.NoError(t, err)
-		assert.Equal(t, db.EnrollmentRetired, state, "%s must be retired", c)
+		assert.Equal(t, db.AgentStateRetired, state, "%s must be retired", c)
 	}
 	assert.False(t, f.World.Tmux.IsAlive("tmux-sfwa"), "worker-a's pane is soft-exited")
 	assert.False(t, f.World.Tmux.IsAlive("tmux-sfwb"), "worker-b's pane is soft-exited")
@@ -222,9 +222,9 @@ func TestGroupRetire_NoShutdownKeepsSessionsAlive(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "retired", retireMemberAction(resp, conv), "members=%+v", resp.Members)
 
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, state, "the member is still demoted")
+	assert.Equal(t, db.AgentStateRetired, state, "the member is still demoted")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-nsdn"),
 		"shutdown=0 must leave the running session alive")
 }
@@ -293,16 +293,16 @@ func TestGroupRetire_StatusFilterIdleOnly(t *testing.T) {
 	assert.Len(t, resp.Members, 1, "status=idle must list only the idle cohort; members=%+v", resp.Members)
 
 	// The idle member is demoted + soft-exited.
-	idleState, err := db.EnrollmentState(idleConv)
+	idleState, err := db.AgentState(idleConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, idleState, "the idle member must be retired")
+	assert.Equal(t, db.AgentStateRetired, idleState, "the idle member must be retired")
 	assert.False(t, f.World.Tmux.IsAlive("tmux-idle"), "the idle member's pane is soft-exited")
 
 	// The working + offline members are completely untouched.
 	for _, c := range []string{workConv, offConv} {
-		state, err := db.EnrollmentState(c)
+		state, err := db.AgentState(c)
 		require.NoError(t, err)
-		assert.Equal(t, db.EnrollmentActive, state, "%s must stay active under a status=idle retire", c)
+		assert.Equal(t, db.AgentStateActive, state, "%s must stay active under a status=idle retire", c)
 		assert.True(t, flowGroupHasMember(f, group, c), "%s must stay a member", c)
 	}
 	assert.True(t, f.World.Tmux.IsAlive("tmux-work"), "a working member's pane must not be touched")
@@ -334,13 +334,13 @@ func TestGroupRetire_StatusFilterOffline(t *testing.T) {
 		"an online member must be filtered out of a status=offline retire; members=%+v", resp.Members)
 	assert.Len(t, resp.Members, 1, "status=offline must list only the offline cohort; members=%+v", resp.Members)
 
-	offState, err := db.EnrollmentState(offConv)
+	offState, err := db.AgentState(offConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, offState, "the offline member must be retired")
+	assert.Equal(t, db.AgentStateRetired, offState, "the offline member must be retired")
 
-	onlineState, err := db.EnrollmentState(onlineConv)
+	onlineState, err := db.AgentState(onlineConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, onlineState, "the online member must stay active")
+	assert.Equal(t, db.AgentStateActive, onlineState, "the online member must stay active")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-onln"), "the online member's pane must not be touched")
 }
 
@@ -377,12 +377,12 @@ func TestDashboardGroupRetire_StatusFilterIdle(t *testing.T) {
 	assert.Equal(t, "retired", retireMemberAction(resp, idleConv), "members=%+v", resp.Members)
 	assert.Len(t, resp.Members, 1, "the dashboard route must apply the idle filter; members=%+v", resp.Members)
 
-	idleState, err := db.EnrollmentState(idleConv)
+	idleState, err := db.AgentState(idleConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, idleState, "the idle member must be retired via the dashboard route")
-	workState, err := db.EnrollmentState(workConv)
+	assert.Equal(t, db.AgentStateRetired, idleState, "the idle member must be retired via the dashboard route")
+	workState, err := db.AgentState(workConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, workState, "the working member must stay active")
+	assert.Equal(t, db.AgentStateActive, workState, "the working member must stay active")
 }
 
 // Scenario: the dashboard retire-preview path posts an EXPLICIT conv-id
@@ -434,14 +434,14 @@ func TestDashboardGroupRetire_ExplicitConvsSelection(t *testing.T) {
 	assert.Len(t, resp.Members, 2, "only the two selected convs are acted on; members=%+v", resp.Members)
 
 	for _, c := range []string{pickIdle, pickWork} {
-		state, err := db.EnrollmentState(c)
+		state, err := db.AgentState(c)
 		require.NoError(t, err)
-		assert.Equal(t, db.EnrollmentRetired, state, "%s must be retired", c)
+		assert.Equal(t, db.AgentStateRetired, state, "%s must be retired", c)
 	}
 	// The unselected member is fully intact: active, still a member, still online.
-	keepState, err := db.EnrollmentState(keep)
+	keepState, err := db.AgentState(keep)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, keepState, "the unselected member stays active")
+	assert.Equal(t, db.AgentStateActive, keepState, "the unselected member stays active")
 	assert.True(t, flowGroupHasMember(f, group, keep), "the unselected member stays in the group")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-epkp"), "the unselected member's pane must not be touched")
 	// shutdown:true soft-exits the two selected panes.
@@ -477,9 +477,9 @@ func TestDashboardGroupRetire_ExplicitConvsOverrideStatusQuery(t *testing.T) {
 
 	assert.Equal(t, "retired", retireMemberAction(resp, conv),
 		"the explicit selection wins over ?status=idle; members=%+v", resp.Members)
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, state, "the picked member must be retired")
+	assert.Equal(t, db.AgentStateRetired, state, "the picked member must be retired")
 }
 
 // Scenario: a conv-id in the explicit `convs` list that is NOT a member
@@ -493,7 +493,7 @@ func TestDashboardGroupRetire_ExplicitConvsIgnoresNonMember(t *testing.T) {
 	f := newFlow(t)
 
 	const group = "dash-nonmember"
-	const member = "nmem-1111-2222-3333-4444"  // in the group, selected
+	const member = "nmem-1111-2222-3333-4444"   // in the group, selected
 	const outsider = "nout-1111-2222-3333-4444" // active agent, NOT in the group
 	f.HaveGroup(group)
 	f.HaveGroup("other-team")
@@ -519,9 +519,9 @@ func TestDashboardGroupRetire_ExplicitConvsIgnoresNonMember(t *testing.T) {
 	assert.Len(t, resp.Members, 1, "only the real member is acted on; members=%+v", resp.Members)
 
 	// The outsider is fully intact: still an active agent, still online.
-	state, err := db.EnrollmentState(outsider)
+	state, err := db.AgentState(outsider)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "a non-member must stay an active agent")
+	assert.Equal(t, db.AgentStateActive, state, "a non-member must stay an active agent")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-nout"), "a non-member's pane must not be touched")
 }
 
@@ -548,9 +548,9 @@ func TestDashboardGroupRetire_EmptyConvsRejected(t *testing.T) {
 		"an explicit empty convs list must be a 400, never a retire-everyone; body=%s", rec.Body.String())
 
 	// The member is untouched: a rejected request must demote nobody.
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "an empty-convs 400 must not demote anyone")
+	assert.Equal(t, db.AgentStateActive, state, "an empty-convs 400 must not demote anyone")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-ecnv"), "an empty-convs 400 must not stop sessions")
 }
 
@@ -574,9 +574,9 @@ func TestGroupRetire_UnknownStatusRejected(t *testing.T) {
 		"an unknown status token must be 400, not a silent no-op")
 
 	// The member is untouched: still an active agent, still online.
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "a rejected retire must not demote anyone")
+	assert.Equal(t, db.AgentStateActive, state, "a rejected retire must not demote anyone")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-ukst"), "a rejected retire must not stop sessions")
 }
 

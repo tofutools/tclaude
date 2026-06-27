@@ -387,35 +387,50 @@ func (f *Flow) HaveMemberWithRole(group, convID, role string) {
 	}
 }
 
-// HaveEnrolledAgent marks convID as an active agent in
-// agent_enrollment — the explicit "this conv is an agent" record. Use
-// it for an UNGROUPED agent in a test; a grouped conv auto-enrolls via
-// HaveMember (AddAgentGroupMember fires EnrollAgent).
+// HaveEnrolledAgent marks convID as an active agent — it mints the actor
+// (agents + agent_conversations) the way the production catch-all does. Use
+// it for an UNGROUPED agent in a test; a grouped conv auto-registers via
+// HaveMember (AddAgentGroupMember calls EnsureAgentForConv).
 func (f *Flow) HaveEnrolledAgent(convID string) {
 	f.T.Helper()
-	if err := db.EnrollAgent(convID, "test"); err != nil {
+	if _, _, err := db.EnsureAgentForConv(convID, "test"); err != nil {
 		f.T.Fatalf("HaveEnrolledAgent(%q): %v", convID, err)
 	}
 }
 
-// HaveRetiredAgent enrolls convID and then retires it the way production
-// does — unjoining every group membership before flipping the enrollment
-// bit — leaving a retired enrollment row with no group ties. Mirroring the
-// real retire path (retireAgentConv unjoins all groups, then RetireAgent)
+// HaveRetiredAgent registers convID as an agent and then retires it the way
+// production does — unjoining every group membership before flipping the
+// actor's retire bit — leaving a retired actor with no group ties. Mirroring
+// the real retire path (retireAgentConv unjoins all groups, then RetireAgent)
 // matters: a retired ex-member must drop out of the live membership
 // (ListAgentGroupMembers), so a test that retires a current member
 // exercises the same "membership row is gone" state the dashboard's
 // retired-aware nesting has to reconstruct from message history.
 func (f *Flow) HaveRetiredAgent(convID string) {
 	f.T.Helper()
-	if err := db.EnrollAgent(convID, "test"); err != nil {
-		f.T.Fatalf("HaveRetiredAgent enroll(%q): %v", convID, err)
+	if _, _, err := db.EnsureAgentForConv(convID, "test"); err != nil {
+		f.T.Fatalf("HaveRetiredAgent register(%q): %v", convID, err)
 	}
 	if _, err := db.RemoveAllAgentGroupMembershipsForConv(convID); err != nil {
 		f.T.Fatalf("HaveRetiredAgent unjoin(%q): %v", convID, err)
 	}
 	if _, err := db.RetireAgent(convID, "test", "test retire"); err != nil {
 		f.T.Fatalf("HaveRetiredAgent retire(%q): %v", convID, err)
+	}
+}
+
+// HavePendingName records convID's actor's spawn-time display name — the
+// agents.pending_name fallback agent.FreshTitle reads before a real custom
+// title lands. The conv must already be an agent (HaveMember /
+// HaveEnrolledAgent register the actor first).
+func (f *Flow) HavePendingName(convID, name string) {
+	f.T.Helper()
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		f.T.Fatalf("HavePendingName(%q): conv has no actor (register it first): %v", convID, err)
+	}
+	if err := db.SetAgentPendingName(agentID, name); err != nil {
+		f.T.Fatalf("HavePendingName(%q): %v", convID, err)
 	}
 }
 

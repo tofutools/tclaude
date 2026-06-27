@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, esc, shortId, shortAgentId, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
@@ -67,7 +67,7 @@ function memberRowHTML(m, ctx) {
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
                 <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
-                <td class="id">${esc(shortId(m.conv_id))}</td>
+                <td class="id" title="${esc(m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                 </td>
@@ -216,6 +216,61 @@ function renderVirtualRetiredGroup(g) {
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
         <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
+      </summary>
+      <div class="subtable">
+        ${body}
+      </div>
+    </details>
+  `;
+}
+
+// renderVirtualReplacedGroup renders the synthetic "Replaced generations"
+// group — superseded predecessor conversation generations of still-existing
+// actors (a reincarnate / Claude Code /clear advanced the actor's live pointer
+// and left these behind, JOH-26). Since the Retired tray became actor-level
+// these no longer surface anywhere, so this archival, read-mostly list brings
+// them back. It is inert as a group and is NOT a drag source/target. Each row
+// links back to its owning live actor and offers two actions: copy the
+// generation's conv-id (to inspect it out-of-band via `claude --resume <id>`
+// from its dir, or `tclaude agent seance --target <id>`), and an EXACT delete
+// of just that generation. The delete hits the dedicated
+// /api/agent-generations endpoint, which refuses the actor's live head — so it
+// can never touch the live agent.
+function renderVirtualReplacedGroup(g) {
+  const members = g.members || [];
+  const key = g.key || g.name;
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
+  const body = members.length === 0
+    ? '<div class="muted">(no replaced generations)</div>'
+    : `
+        <table>
+          <thead><tr><th></th><th>conv</th><th>title</th><th>of agent</th><th>replaced</th><th></th></tr></thead>
+          <tbody>
+            ${members.map(a => {
+              const actorName = a.actor_title || shortId(a.actor_conv_id);
+              const replacedVia = a.reason || 'replaced';
+              const replacedAge = a.replaced_at ? ' · ' + relTime(a.replaced_at) : '';
+              return `
+              <tr>
+                <td>${onlineDot(a.online)}</td>
+                <td class="id">${esc(shortId(a.conv_id))}</td>
+                <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
+                <td><span class="muted" title="${esc((a.actor_title || a.actor_conv_id) + (a.actor_retired ? ' (retired actor)' : ''))}">${esc(actorName)}${a.actor_retired ? ' 🪦' : ''}</span></td>
+                <td><span class="last-hook" title="${esc(a.replaced_at || '')}">${esc(replacedVia)}${esc(replacedAge)}</span></td>
+                <td><div class="row-actions">
+                  <button data-act="copy-generation-id" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Copy this generation's full conv-id — inspect it out-of-band with 'claude --resume <id>' from its dir, or 'tclaude agent seance --target <id>'">copy id</button>
+                  <button class="danger" data-act="delete-generation" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" data-actor="${esc(actorName)}" title="Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.">delete generation</button>
+                </div></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+  return `
+    <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
+      <summary>
+        <strong class="group-name">${esc(g.name)}</strong>
+        <span class="group-virtual-badge" title="A virtual group, not a real one — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.">virtual</span>
+        <span class="muted">— ${members.length} replaced generation${members.length === 1 ? '' : 's'}</span>
       </summary>
       <div class="subtable">
         ${body}
@@ -388,6 +443,7 @@ function renderGroups(groups) {
   return groups.map(g => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
       : g.retired ? renderVirtualRetiredGroup(g)
+      : g.replaced ? renderVirtualReplacedGroup(g)
       : g.pending ? renderVirtualPendingGroup(g)
       : renderVirtualGroup(g);
     const members = g.members || [];

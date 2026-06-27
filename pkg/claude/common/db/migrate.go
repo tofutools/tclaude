@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 71
+const currentVersion = 77
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -457,6 +457,95 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 72 {
+		if err := migrateV71toV72(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 73 {
+		if err := migrateV72toV73(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 74 {
+		if err := migrateV73toV74(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 75 {
+		if err := migrateV74toV75(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 76 {
+		if err := migrateV75toV76(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 77 {
+		if err := migrateV76toV77(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV71toV72 introduces the stable agent-identity layer (JOH-26):
+// `agents` (the durable actor) + `agent_conversations` (every conversation
+// generation mapped to its actor). It decouples identity from the harness
+// conv-id, which today rotates on reincarnate and Claude Code's /clear and
+// forces db.MigrateAgentIdentity to physically rekey identity rows.
+//
+// This migration is ADDITIVE and behaviour-preserving: it stands up the
+// tables and backfills them from the current conv-keyed state. Authorization
+// still reads the conv-keyed identity tables unchanged — the cutover to
+// agent_id-keyed authz is a later, separate migration.
+//
+// Not wrapped in one transaction (mirrors migrateV29toV30): the CREATE TABLE
+// IF NOT EXISTS statements and backfillAgents are each idempotent, so a
+// crash mid-backfill leaves schema_version at 71 and the whole pass re-runs
+// and converges. agents.current_conv_id carries a UNIQUE constraint (each
+// conversation generation heads at most one actor); the backfill's orphan
+// guard keeps a re-run from colliding on it.
+func migrateV71toV72(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS agents (
+			agent_id        TEXT PRIMARY KEY,
+			current_conv_id TEXT NOT NULL UNIQUE,
+			created_at      TEXT NOT NULL,
+			created_via     TEXT NOT NULL DEFAULT '',
+			retired_at      TEXT NOT NULL DEFAULT '',
+			retired_by      TEXT NOT NULL DEFAULT '',
+			retire_reason   TEXT NOT NULL DEFAULT '',
+			pending_name    TEXT NOT NULL DEFAULT ''
+		);
+
+		CREATE TABLE IF NOT EXISTS agent_conversations (
+			conv_id   TEXT PRIMARY KEY,
+			agent_id  TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			role      TEXT NOT NULL DEFAULT '',
+			reason    TEXT NOT NULL DEFAULT '',
+			linked_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_agent_conversations_agent
+			ON agent_conversations(agent_id);
+	`); err != nil {
+		return fmt.Errorf("migrate v71→v72 (create): %w", err)
+	}
+
+	if err := backfillAgents(db); err != nil {
+		return fmt.Errorf("migrate v71→v72 (backfill): %w", err)
+	}
+
+	if _, err := db.Exec(`UPDATE schema_version SET version = 72`); err != nil {
+		return fmt.Errorf("migrate v71→v72 (version): %w", err)
+	}
 	return nil
 }
 
@@ -2432,29 +2521,57 @@ func migrateV29toV30(db *sql.DB) error {
 // which the outer SELECT and WHERE then filter on. Split out from the
 // migration so it is independently testable.
 func backfillAgentEnrollment(db *sql.DB) error {
-	now := time.Now().Format(time.RFC3339Nano)
-	_, err := db.Exec(`
-		INSERT OR IGNORE INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
-		SELECT conv_id, ?, 'migration' FROM (
-			      SELECT conv_id        FROM agent_group_members
-			UNION SELECT conv_id        FROM agent_group_owners
-			UNION SELECT conv_id        FROM agent_permissions
-			UNION SELECT conv_id        FROM agent_sudo_grants
-			UNION SELECT anchor_conv_id FROM agent_head_aliases
-			UNION SELECT new_conv_id    FROM agent_conv_succession
-			UNION SELECT source_conv_id FROM agent_clone_history
-			UNION SELECT owner_conv     FROM agent_cron_jobs
-			UNION SELECT target_conv    FROM agent_cron_jobs
-			UNION SELECT conv_id        FROM agent_workdir
-			UNION SELECT from_conv      FROM agent_messages
-			UNION SELECT to_conv        FROM agent_messages
-		)
-		WHERE conv_id IS NOT NULL AND conv_id != ''
-		  AND conv_id NOT IN (
+	// Source the conv UNION column-aware: after the JOH-26 cutovers the
+	// membership/owner/permission/sudo tables (v73) and the clone history + cron
+	// owner/target columns (v74) become agent-keyed (no conv_id / *_conv), so
+	// their SELECT would otherwise fail with "no such column". Those convs are
+	// already agents by then, so dropping them from the coverage UNION is
+	// correct. backfillAgentEnrollment only runs at v30 in production, where they
+	// still carry the conv column; the column guard just keeps it (and its test)
+	// robust against the head schema.
+	sources := []struct{ table, col string }{
+		{"agent_group_members", "conv_id"},
+		{"agent_group_owners", "conv_id"},
+		{"agent_permissions", "conv_id"},
+		{"agent_sudo_grants", "conv_id"},
+		{"agent_head_aliases", "anchor_conv_id"},
+		{"agent_conv_succession", "new_conv_id"},
+		{"agent_clone_history", "source_conv_id"},
+		{"agent_cron_jobs", "owner_conv"},
+		{"agent_cron_jobs", "target_conv"},
+		{"agent_workdir", "conv_id"},
+		{"agent_messages", "from_conv"},
+		{"agent_messages", "to_conv"},
+	}
+	var selects []string
+	for _, s := range sources {
+		ok, err := columnExists(db, s.table, s.col)
+		if err != nil {
+			return err
+		}
+		if ok {
+			selects = append(selects, "SELECT "+s.col+" AS conv_id FROM "+s.table)
+		}
+	}
+	if len(selects) == 0 {
+		return nil
+	}
+	// Exclude superseded conversations (succession old_conv_id) only when the
+	// succession table is present.
+	exclude := ""
+	if ok, err := tableExists(db, "agent_conv_succession"); err != nil {
+		return err
+	} else if ok {
+		exclude = ` AND conv_id NOT IN (
 			SELECT old_conv_id FROM agent_conv_succession
 			WHERE old_conv_id IS NOT NULL AND old_conv_id != ''
-		  );
-	`, now)
+		)`
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	q := `INSERT OR IGNORE INTO agent_enrollment (conv_id, enrolled_at, enrolled_via)
+		SELECT conv_id, ?, 'migration' FROM (` + strings.Join(selects, " UNION ") + `)
+		WHERE conv_id IS NOT NULL AND conv_id != ''` + exclude
+	_, err := db.Exec(q, now)
 	return err
 }
 

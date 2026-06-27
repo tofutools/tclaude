@@ -88,15 +88,18 @@ func InsertExportJob(j *ExportJob) (int64, error) {
 	if status == "" {
 		status = ExportStatusRequested
 	}
+	// agent_id / worker_agent_id are dual-written from conv_id / worker_conv_id.
+	// worker_conv_id is usually empty at request time (a worker is assigned later
+	// via SetExportJobWorker), so worker_agent_id fills in then.
 	res, err := d.Exec(`
 		INSERT INTO export_jobs
 			(conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
 			 artifact_path, artifact_name, artifact_size, content_type,
-			 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 created_at, updated_at, agent_id, worker_agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`)`,
 		j.ConvID, j.WorkerConvID, j.GroupName, j.Title, j.Instructions, j.Preset, status, j.Error,
 		j.ArtifactPath, j.ArtifactName, j.ArtifactSize, j.ContentType,
-		created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano))
+		created.Format(time.RFC3339Nano), updated.Format(time.RFC3339Nano), j.ConvID, j.WorkerConvID)
 	if err != nil {
 		return 0, fmt.Errorf("insert export job: %w", err)
 	}
@@ -142,9 +145,10 @@ func SetExportJobWorkerConv(id int64, workerConvID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Keep worker_agent_id in step with worker_conv_id (derived from it).
 	res, err := d.Exec(
-		`UPDATE export_jobs SET worker_conv_id = ?, updated_at = ? WHERE id = ?`,
-		workerConvID, time.Now().Format(time.RFC3339Nano), id)
+		`UPDATE export_jobs SET worker_conv_id = ?, worker_agent_id = `+agentForConvExpr+`, updated_at = ? WHERE id = ?`,
+		workerConvID, workerConvID, time.Now().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return false, fmt.Errorf("set export job worker conv: %w", err)
 	}

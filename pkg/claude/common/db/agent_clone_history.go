@@ -47,6 +47,15 @@ func ClaimCloneSlot(sourceConvID string, cooldown time.Duration, now time.Time) 
 	if err != nil {
 		return err
 	}
+	// Key the cooldown on the source's stable actor (JOH-26 PR3a), so a
+	// reincarnate / Claude Code /clear that rotates the source conv-id can't
+	// bypass the per-source cooldown — it follows the actor across generations.
+	// The clone source is an existing agent; EnsureAgentForConv resolves it,
+	// allocating only in the pathological not-yet-enrolled case.
+	sourceAgentID, _, err := EnsureAgentForConv(sourceConvID, "clone")
+	if err != nil {
+		return err
+	}
 	threshold := now.Add(-cooldown).Format(time.RFC3339Nano)
 	nowStr := now.Format(time.RFC3339Nano)
 
@@ -55,13 +64,13 @@ func ClaimCloneSlot(sourceConvID string, cooldown time.Duration, now time.Time) 
 	// single statement under the database write lock (WAL mode), so
 	// the read + write are atomic with respect to other writers.
 	res, err := d.Exec(`
-		INSERT INTO agent_clone_history (source_conv_id, cloned_at)
+		INSERT INTO agent_clone_history (source_agent_id, cloned_at)
 		SELECT ?, ?
 		WHERE NOT EXISTS (
 			SELECT 1 FROM agent_clone_history
-			WHERE source_conv_id = ? AND cloned_at > ?
+			WHERE source_agent_id = ? AND cloned_at > ?
 		)`,
-		sourceConvID, nowStr, sourceConvID, threshold)
+		sourceAgentID, nowStr, sourceAgentID, threshold)
 	if err != nil {
 		return err
 	}
@@ -83,12 +92,21 @@ func LatestCloneAt(sourceConvID string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	// History is keyed on the source's actor (JOH-26 PR3a); resolve the conv.
+	// An unmapped conv (never cloned, so never enrolled here) has no rows.
+	sourceAgentID, err := AgentIDForConv(sourceConvID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if sourceAgentID == "" {
+		return time.Time{}, nil
+	}
 	var s string
 	err = d.QueryRow(`
 		SELECT cloned_at FROM agent_clone_history
-		WHERE source_conv_id = ?
+		WHERE source_agent_id = ?
 		ORDER BY cloned_at DESC
-		LIMIT 1`, sourceConvID).Scan(&s)
+		LIMIT 1`, sourceAgentID).Scan(&s)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}

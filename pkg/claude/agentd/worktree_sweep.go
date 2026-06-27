@@ -320,14 +320,26 @@ func liveAgentWorktreeRoots() map[string]bool {
 	return roots
 }
 
-// convRetired reports whether convID is a retired agent enrollment — the
-// signal that distinguishes a "retired" worktree (a cleanup target) from
-// an "agent" one (a still-enrolled, merely-offline agent we must protect).
-// A read error or a non-agent / active conv is treated as not-retired, so
-// the classifier fails safe to the protective "agent"/"orphan" path.
+// convRetired reports whether convID's worktree is reclaimable — the signal
+// that distinguishes a "retired" worktree (a cleanup target) from an "agent"
+// one (a still-active, merely-offline agent we must protect). A conv is
+// reclaimable when its actor is retired OR when it is a SUPERSEDED PREDECESSOR
+// generation: a reincarnate / Claude Code /clear advanced the actor to a newer
+// conv, so this generation is no longer where the live agent runs (the actor's
+// current_conv moved on). Both cases mean "no live agent here." A read error or
+// a non-agent / current-generation conv is treated as not-reclaimable, so the
+// classifier fails safe to the protective "agent"/"orphan" path.
+//
+// NB: db.AgentState alone is insufficient here — it resolves a predecessor to
+// its (active) actor and so reads "active"; the current_conv comparison is what
+// recovers the predecessor-is-stale signal the conv-keyed enrollment encoded as
+// "retired".
 func convRetired(convID string) bool {
-	state, err := db.EnrollmentState(convID)
-	return err == nil && state == db.EnrollmentRetired
+	a, err := db.GetAgentByConv(convID)
+	if err != nil || a == nil {
+		return false
+	}
+	return !a.Active() || a.CurrentConvID != convID
 }
 
 // allRetiredAgents reports whether every bound agent is retired (and there

@@ -35,22 +35,29 @@ func RecordConvSuccession(oldConv, newConv, reason string) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	// agent_id is dual-written from the edge's actor (resolved via the
+	// predecessor, which is always enrolled); excluded.agent_id re-derives it on
+	// conflict so a re-pointed successor stays correct.
 	_, err = d.Exec(`INSERT INTO agent_conv_succession
-		(old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES (?, ?, ?, ?)
+		(old_conv_id, new_conv_id, reason, succeeded_at, agent_id)
+		VALUES (?, ?, ?, ?, `+agentForSuccessionExpr+`)
 		ON CONFLICT(old_conv_id) DO UPDATE SET
 			new_conv_id = excluded.new_conv_id,
 			reason = excluded.reason,
-			succeeded_at = excluded.succeeded_at`,
-		oldConv, newConv, reason, now)
+			succeeded_at = excluded.succeeded_at,
+			agent_id = excluded.agent_id`,
+		oldConv, newConv, reason, now, newConv, oldConv)
 	if err != nil {
 		return err
 	}
 	// The successor in a succession edge (a reincarnated instance) is
-	// an agent — enroll it so it shows on the roster without waiting
-	// for its first /v1 call. The predecessor keeps whatever
-	// enrollment it already had; v1 does not auto-retire it.
-	return EnrollAgent(newConv, "reincarnate")
+	// an agent — ensure its actor so it shows on the roster without
+	// waiting for its first /v1 call. The predecessor's actor is
+	// untouched; this does not auto-retire it.
+	if _, _, eerr := EnsureAgentForConv(newConv, "reincarnate"); eerr != nil {
+		return eerr
+	}
+	return nil
 }
 
 // GetConvSuccessor returns the direct successor of convID, or "" if
@@ -206,45 +213,4 @@ func ListAgentConvSuccessions() ([]*AgentConvSuccession, error) {
 		out = append(out, &s)
 	}
 	return out, rows.Err()
-}
-
-// MigrateCronJobConvRef rewrites every agent_cron_jobs row referencing
-// oldConv (as either owner or target) to point at newConv instead.
-// Returns the number of rows updated. Called by the reincarnate
-// orchestrator to keep cron jobs pointing at the live conv.
-//
-// This is an OPTIMIZATION, not a correctness dependency: fireCronJob
-// walks the succession chain (walkSuccession) for a conv target before
-// delivery, so a job is delivered to the live successor even if this
-// best-effort rewrite was skipped or missed a row. Keeping target_conv
-// current still pays off — it keeps the dashboard / `cron ls` rows
-// showing the live conv, and shortens the chain walk on every fire.
-//
-// Why this and not a generic "migrate every reference" pass: each
-// table's foreign-key story is different (some tables already get
-// migrated by the reincarnate flow's group/permission code path, some
-// like agent_messages we deliberately don't rewrite for audit). Cron
-// jobs are a clean case — the references should always track the
-// live conv.
-func MigrateCronJobConvRef(oldConv, newConv string) (int64, error) {
-	if oldConv == "" || newConv == "" {
-		return 0, errors.New("MigrateCronJobConvRef: oldConv and newConv must be non-empty")
-	}
-	if oldConv == newConv {
-		return 0, nil
-	}
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	res, err := d.Exec(`UPDATE agent_cron_jobs
-		SET owner_conv  = CASE WHEN owner_conv  = ?1 THEN ?2 ELSE owner_conv END,
-		    target_conv = CASE WHEN target_conv = ?1 THEN ?2 ELSE target_conv END
-		WHERE owner_conv = ?1 OR target_conv = ?1`,
-		oldConv, newConv)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
 }

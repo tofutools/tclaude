@@ -18,7 +18,7 @@ import (
 // restoreClearedTitle types `/rename <carried-name>` into a tmux pane
 // via send-keys; the carried name comes from
 // conv_index.custom_title (verbatim from the .jsonl) or
-// agent_enrollment.pending_name (stored even when invalid), neither
+// agents.pending_name (stored even when invalid), neither
 // pre-checked by the strict gate. This unit test locks down the
 // charset rules for the cases that matter at this seam — newlines,
 // slashes, control chars, length cap, double-spaces, unicode — so a
@@ -641,6 +641,14 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 		"idle_prompt must clear the stale status_detail (e.g. 'UserPromptSubmit')")
 }
 
+// mustEnsureAgent registers conv as an agent (the catch-all ensure), failing
+// the test on error. The actor-table successor to the old db.EnrollAgent.
+func mustEnsureAgent(t *testing.T, conv string) {
+	t.Helper()
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+}
+
 // TestNeedsIdentityMigration pins the predicate that decides whether a
 // conv-id rotation should migrate agent identity — and, crucially, that
 // it stays true until the migration actually commits (the retry
@@ -651,7 +659,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("active agent, fresh new conv, no edge -> migrate", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
-		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		mustEnsureAgent(t, "conv-old")
 		got, err := needsIdentityMigration("conv-old", "conv-new")
 		require.NoError(t, err)
 		assert.True(t, got)
@@ -666,7 +674,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("retired old agent -> no migration", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
-		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		mustEnsureAgent(t, "conv-old")
 		_, err := db.RetireAgent("conv-old", "test", "test")
 		require.NoError(t, err)
 		got, err := needsIdentityMigration("conv-old", "conv-new")
@@ -676,7 +684,7 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("succession edge already recorded -> no retry", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
-		require.NoError(t, db.EnrollAgent("conv-old", "test"))
+		mustEnsureAgent(t, "conv-old")
 		require.NoError(t, db.RecordConvSuccession("conv-old", "conv-new", "clear"))
 		got, err := needsIdentityMigration("conv-old", "conv-new")
 		require.NoError(t, err)
@@ -686,8 +694,8 @@ func TestNeedsIdentityMigration(t *testing.T) {
 	t.Run("new conv is already an agent -> no migration (collision guard)", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		db.ResetForTest()
-		require.NoError(t, db.EnrollAgent("conv-old", "test"))
-		require.NoError(t, db.EnrollAgent("conv-new", "test"))
+		mustEnsureAgent(t, "conv-old")
+		mustEnsureAgent(t, "conv-new")
 		got, err := needsIdentityMigration("conv-old", "conv-new")
 		require.NoError(t, err)
 		assert.False(t, got, "must not migrate onto a conv that already owns an identity")
@@ -728,21 +736,30 @@ func TestRunHookCallback_ClearMigratesAgentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, newConv, got.ConvID, "session row should follow the /clear rotation")
 
-	// Group membership migrated old → new.
+	// Group membership is agent-keyed (JOH-26): it was never rekeyed across the
+	// /clear — it belongs to the actor, reachable from the new conv (and from
+	// the old one, which is the same actor). No membership row moved.
 	newGroups, err := db.ListGroupsForConv(newConv)
 	require.NoError(t, err)
-	require.Len(t, newGroups, 1, "new conv should be the group member")
+	require.Len(t, newGroups, 1, "new conv resolves to the group member")
 	assert.Equal(t, "alpha", newGroups[0].Name)
 	oldGroups, err := db.ListGroupsForConv(oldConv)
 	require.NoError(t, err)
-	assert.Empty(t, oldGroups, "old conv should no longer be a member")
+	require.Len(t, oldGroups, 1, "the predecessor generation resolves to the same member actor")
+	assert.Equal(t, "alpha", oldGroups[0].Name)
 
-	// Old conv retired; succession edge recorded. We retire (not
-	// delete) the old enrollment so a human can reinstate the
-	// pre-rotation agent later for knowledge pings.
-	oldEnr, err := db.EnrollmentState(oldConv)
+	// The predecessor stays a generation of the still-active actor (actor-level
+	// model, JOH-26 PR3c): both old and new resolve to the same live agent —
+	// the old conv is NOT a standalone retired entry, it is reachable via the
+	// succession edge / séance. The succession edge old→new is still recorded.
+	oldState, err := db.AgentState(oldConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, oldEnr, "old conv should retire (not vanish) so it can be reinstated for knowledge pings")
+	assert.Equal(t, db.AgentStateActive, oldState, "the predecessor resolves to the still-active actor, not a retired entry")
+	oldAgent, err := db.AgentIDForConv(oldConv)
+	require.NoError(t, err)
+	newAgent, err := db.AgentIDForConv(newConv)
+	require.NoError(t, err)
+	assert.Equal(t, oldAgent, newAgent, "both generations resolve to the same actor")
 	succ, err := db.GetConvSuccessor(oldConv)
 	require.NoError(t, err)
 	assert.Equal(t, newConv, succ, "succession edge old→new should be recorded")
@@ -763,9 +780,9 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 		Status: StatusIdle,
 	}))
 
-	pre, err := db.EnrollmentState("conv-start")
+	pre, err := db.AgentState("conv-start")
 	require.NoError(t, err)
-	require.Equal(t, db.EnrollmentNone, pre, "pre: a plain conversation, not yet an agent")
+	require.Equal(t, db.AgentStateNone, pre, "pre: a plain conversation, not yet an agent")
 
 	feedHook(t, "start-sess", map[string]any{
 		"session_id":      "conv-start",
@@ -774,9 +791,9 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	post, err := db.EnrollmentState("conv-start")
+	post, err := db.AgentState("conv-start")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, post,
+	assert.Equal(t, db.AgentStateActive, post,
 		"a SessionStart from a tclaude-launched session must instant-enroll the conv as an agent")
 }
 
@@ -794,7 +811,7 @@ func TestRunHookCallback_SessionStartDoesNotResurrectRetired(t *testing.T) {
 		ConvID: "conv-retd",
 		Status: StatusIdle,
 	}))
-	require.NoError(t, db.EnrollAgent("conv-retd", "test"))
+	mustEnsureAgent(t, "conv-retd")
 	_, err := db.RetireAgent("conv-retd", "human", "no thanks")
 	require.NoError(t, err)
 
@@ -805,9 +822,9 @@ func TestRunHookCallback_SessionStartDoesNotResurrectRetired(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	post, err := db.EnrollmentState("conv-retd")
+	post, err := db.AgentState("conv-retd")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, post,
+	assert.Equal(t, db.AgentStateRetired, post,
 		"a retired conv must stay retired across a SessionStart — instant enroll is INSERT OR IGNORE")
 }
 
@@ -834,9 +851,9 @@ func TestRunHookCallback_SubagentSessionStartDoesNotEnroll(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	post, err := db.EnrollmentState("conv-sub")
+	post, err := db.AgentState("conv-sub")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, post,
+	assert.Equal(t, db.AgentStateNone, post,
 		"a subagent SessionStart (agent_id set) must not enroll the main conv on its own")
 }
 
@@ -862,9 +879,9 @@ func TestRunHookCallback_NonSessionStartDoesNotEnroll(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	post, err := db.EnrollmentState("conv-mid")
+	post, err := db.AgentState("conv-mid")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, post,
+	assert.Equal(t, db.AgentStateNone, post,
 		"only SessionStart instant-enrolls; a mid-turn hook must not")
 }
 
@@ -940,9 +957,9 @@ func TestRunHookCallback_TaskRunnerSessionStartDoesNotEnroll(t *testing.T) {
 		"cwd":             dir,
 	})
 
-	post, err := db.EnrollmentState("conv-task2")
+	post, err := db.AgentState("conv-task2")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, post,
+	assert.Equal(t, db.AgentStateNone, post,
 		"a task-runner per-task conv must not be instant-enrolled as an agent")
 }
 
@@ -1010,8 +1027,8 @@ func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) 
 		TmuxSession: "tasks-mig", // a migration would send-keys into this pane
 		Status:      StatusWorking,
 	}))
-	// Simulate the reaper having enrolled task 1's conv as a live agent.
-	require.NoError(t, db.EnrollAgent("conv-task1", "online-reconcile"))
+	// Simulate the reaper having registered task 1's conv as a live agent.
+	mustEnsureAgent(t, "conv-task1")
 
 	feedHook(t, "tasks-mig", map[string]any{
 		"session_id":      "conv-task2",
@@ -1024,9 +1041,9 @@ func TestRunHookCallback_TaskRunnerRotationDoesNotMigrateIdentity(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, "conv-task2", got.ConvID, "the rotation must plain-advance the row")
 
-	oldEnr, err := db.EnrollmentState("conv-task1")
+	oldEnr, err := db.AgentState("conv-task1")
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, oldEnr,
+	assert.Equal(t, db.AgentStateActive, oldEnr,
 		"a task rotation must NOT retire the old conv — it is not an identity migration")
 
 	succ, err := db.GetConvSuccessor("conv-task1")

@@ -32,9 +32,11 @@ type auditEntryView struct {
 	At          string `json:"at"`
 	ActorKind   string `json:"actor_kind"`
 	ActorConv   string `json:"actor_conv,omitempty"`
+	ActorAgent  string `json:"actor_agent,omitempty"`
 	ActorLabel  string `json:"actor_label"`
 	Verb        string `json:"verb"`
 	TargetConv  string `json:"target_conv,omitempty"`
+	TargetAgent string `json:"target_agent,omitempty"`
 	TargetLabel string `json:"target_label,omitempty"`
 	GroupName   string `json:"group_name,omitempty"`
 	Detail      string `json:"detail,omitempty"`
@@ -132,9 +134,11 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 			At:          e.At.Format(time.RFC3339),
 			ActorKind:   e.ActorKind,
 			ActorConv:   e.ActorConv,
+			ActorAgent:  e.ActorAgent,
 			ActorLabel:  e.ActorLabel,
 			Verb:        e.Verb,
 			TargetConv:  e.TargetConv,
+			TargetAgent: e.TargetAgent,
 			TargetLabel: e.TargetLabel,
 			GroupName:   e.GroupName,
 			Detail:      e.Detail,

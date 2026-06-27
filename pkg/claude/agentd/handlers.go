@@ -41,7 +41,8 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 
 type whoamiResp struct {
 	IsHuman bool     `json:"is_human"`
-	ConvID  string   `json:"conv_id,omitempty"`
+	AgentID string   `json:"agent_id,omitempty"` // stable actor key — the canonical identity
+	ConvID  string   `json:"conv_id,omitempty"`  // live generation behind it (rotates)
 	Title   string   `json:"title,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
 }
@@ -66,7 +67,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Resolve the agent's name through FreshTitle so it picks up the
-	// spawn-time pending_name (agent_enrollment) when no custom title has
+	// spawn-time pending_name (agents.pending_name) when no custom title has
 	// landed yet — the same priority (custom → pending → summary → first
 	// prompt) the dashboard and conv-listing surfaces use. A bare
 	// DisplayTitle would skip the pending name, which is the bug for a
@@ -87,7 +88,8 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		gs = append(gs, g.Name)
 	}
-	writeJSON(w, http.StatusOK, whoamiResp{ConvID: p.ConvID, Title: title, Groups: gs})
+	agentID, _ := db.AgentIDForConv(p.ConvID)
+	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs})
 }
 
 // --- /v1/lookup ---
@@ -119,16 +121,23 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	agentID, _ := db.AgentIDForConv(res.ConvID)
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "agent_id": agentID})
 }
 
 // --- /v1/peers ---
 
 type peerEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// AgentID is the stable, rotation-immune actor key — the canonical
+	// way to reference an agent. The agent CLI leads with it; ConvID is
+	// the live generation behind it (which rotates on reincarnate/clone).
+	// Empty only for a resolved candidate that isn't an agent. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Descr   string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
@@ -192,6 +201,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				// member shows its real name and branch instead of stale
 				// values.
 				pe = &peerEntry{
+					AgentID:           peerAgentID(m.ConvID),
 					ConvID:            m.ConvID,
 					Title:             agent.FreshTitle(m.ConvID),
 					Role:              m.Role,
@@ -217,20 +227,22 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	// relies on. ListActiveAgents excludes retired agents.
 	if active, err := db.ListActiveAgents(); err == nil {
 		for _, e := range active {
-			if e.ConvID == "" || e.ConvID == myID {
+			conv := e.CurrentConvID
+			if conv == "" || conv == myID {
 				continue
 			}
-			if _, exists := byConv[e.ConvID]; exists {
+			if _, exists := byConv[conv]; exists {
 				continue
 			}
-			if groups, gerr := db.ListGroupsForConv(e.ConvID); gerr != nil || len(groups) > 0 {
+			if groups, gerr := db.ListGroupsForConv(conv); gerr != nil || len(groups) > 0 {
 				continue
 			}
-			byConv[e.ConvID] = &peerEntry{
-				ConvID:            e.ConvID,
-				Title:             agent.FreshTitle(e.ConvID),
-				agentLocationView: locationView(e.ConvID),
-				Online:            isConvOnlineIn(e.ConvID, aliveSessions),
+			byConv[conv] = &peerEntry{
+				AgentID:           e.AgentID,
+				ConvID:            conv,
+				Title:             agent.FreshTitle(conv),
+				agentLocationView: locationView(conv),
+				Online:            isConvOnlineIn(conv, aliveSessions),
 			}
 		}
 	}
@@ -249,12 +261,21 @@ func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 			title = agent.DisplayTitle(r.Row)
 		}
 		out = append(out, &peerEntry{
+			AgentID:           peerAgentID(r.ConvID),
 			ConvID:            r.ConvID,
 			Title:             title,
 			agentLocationView: locationView(r.ConvID),
 		})
 	}
 	return out
+}
+
+// peerAgentID resolves a conv to its stable agent_id for display, or ""
+// when the conv is not (yet) an agent. A miss is non-fatal — the row just
+// shows no stable id.
+func peerAgentID(conv string) string {
+	id, _ := db.AgentIDForConv(conv)
+	return id
 }
 
 // --- /v1/messages (POST), /v1/messages/{id} (GET) ---
@@ -269,7 +290,8 @@ type sendReq struct {
 	// case-insensitively. It is an error on a 1:1 (non-group:) target.
 	Role string `json:"role,omitempty"`
 	// Members, when non-empty on a "group:" multicast, narrows the
-	// fan-out to exactly the listed conv-ids — the dashboard's
+	// fan-out to the listed members — addressed by stable agent_id (the
+	// canonical key, JOH-27) or conv-id (back-compat). The dashboard's
 	// group-scoped message modal sets it when the human ticks a subset
 	// of a group's members. Like Role it is applied AFTER the live
 	// roster is read, so it can only shrink the recipient set, never
@@ -306,7 +328,13 @@ type sendResp struct {
 }
 
 type recipient struct {
-	ConvID    string `json:"conv_id"`
+	ConvID string `json:"conv_id"`
+	// AgentID is the recipient's stable agent_id (JOH-27 PR3b-2), resolved
+	// from ConvID at send time so the sender's receipt names each recipient
+	// by the rotation-immune handle instead of a conv-id prefix. Empty when
+	// the recipient is not (yet) an enrolled agent — the receipt then falls
+	// back to the conv-id.
+	AgentID   string `json:"agent_id,omitempty"`
 	Title     string `json:"title,omitempty"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
@@ -617,6 +645,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	primaryDelivered := nudgeIfAlive(primaryID, primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
 		ConvID:         primaryConv,
+		AgentID:        peerAgentID(primaryConv),
 		Title:          primaryTitle,
 		MessageID:      primaryID,
 		Delivered:      primaryDelivered,
@@ -641,6 +670,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 				"to", r.ConvID, "error", err)
 			out.Recipients = append(out.Recipients, recipient{
 				ConvID:    r.ConvID,
+				AgentID:   peerAgentID(r.ConvID),
 				Title:     r.Title,
 				MessageID: 0,
 				Delivered: false,
@@ -650,6 +680,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		delivered := nudgeIfAlive(id, r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         r.ConvID,
+			AgentID:        peerAgentID(r.ConvID),
 			Title:          r.Title,
 			MessageID:      id,
 			Delivered:      delivered,
@@ -807,8 +838,9 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 // the rest of the fan-out. roleFilter, when non-empty, narrows the
 // recipient set case-insensitively AFTER membership is read — it can
 // only shrink reach, never widen it. memberFilter, when non-empty,
-// narrows it the same way: only members whose conv-id appears in the
-// list receive the message. The two filters compose (a member must
+// narrows it the same way: only members named in the list — by their
+// stable agent_id (the canonical key) or conv-id (back-compat) — receive
+// the message. The two filters compose (a member must
 // clear both); an id in memberFilter that is not a current member
 // matches nothing, so the filter can never widen reach.
 //
@@ -823,24 +855,33 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 		return nil, err
 	}
 	roleFilter = strings.TrimSpace(roleFilter)
-	// memberFilter narrows the fan-out to the listed conv-ids. Each
-	// entry is resolved to its live successor up front, and matched
-	// below against the likewise successor-walked roster id — so a
-	// subset that named a member who has since reincarnated still
-	// reaches the live agent (the dashboard builds the subset list from
-	// a point-in-time snapshot that can lag the roster).
+	// memberFilter narrows the fan-out to the listed members. The
+	// canonical key is the stable agent_id (JOH-27): an `agt_`-prefixed
+	// entry matches a member by its rotation-immune id, so a subset that
+	// named a member who reincarnated between the dashboard's snapshot and
+	// the send still reaches the live agent. A conv-id entry stays
+	// accepted (back-compat with the dashboard's current snapshot, and
+	// 1:1 selector parity): it is resolved to its live successor up front
+	// and matched against the likewise successor-walked roster id.
 	//
 	// hasMemberFilter — whether the caller passed any memberFilter at
-	// all, NOT whether memberSet ended up non-empty — is what arms the
+	// all, NOT whether the want-sets ended up non-empty — is what arms the
 	// filter. A caller that passed a non-empty list asked to narrow, so
 	// a list whose entries all trim away ({"members":[" "]}) must match
 	// NOBODY, never fall back to a full-group broadcast: the filter can
 	// only ever shrink reach.
 	hasMemberFilter := len(memberFilter) > 0
-	memberSet := make(map[string]bool, len(memberFilter))
+	wantAgents := make(map[string]bool, len(memberFilter))
+	wantConvs := make(map[string]bool, len(memberFilter))
 	for _, c := range memberFilter {
-		if c = strings.TrimSpace(c); c != "" {
-			memberSet[db.ResolveLatestConv(c)] = true
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if strings.HasPrefix(c, db.AgentIDPrefix) {
+			wantAgents[c] = true
+		} else {
+			wantConvs[db.ResolveLatestConv(c)] = true
 		}
 	}
 	out := []recipient{}
@@ -865,12 +906,22 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			// manager-pattern edge case); skip the self-send.
 			continue
 		}
-		// Member filter: skip members the caller did not select. Matched
-		// on the successor-walked id against the likewise-resolved
-		// memberSet, so neither a stale roster row nor a stale id in the
-		// caller's list causes a false miss.
-		if hasMemberFilter && !memberSet[finalConv] {
-			continue
+		// Member filter: skip members the caller did not select. A member
+		// is kept when its stable agent_id was listed (the canonical key),
+		// or — back-compat — when its successor-walked conv-id matches a
+		// likewise-resolved conv entry. Resolving both sides means neither
+		// a stale roster row nor a stale id in the caller's list causes a
+		// false miss.
+		if hasMemberFilter {
+			matched := wantConvs[finalConv]
+			if !matched {
+				if a := peerAgentID(finalConv); a != "" {
+					matched = wantAgents[a]
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		id, err := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:        g.ID,
@@ -888,6 +939,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 				"group", g.Name, "to", finalConv, "error", err)
 			out = append(out, recipient{
 				ConvID:         finalConv,
+				AgentID:        peerAgentID(finalConv),
 				Title:          agent.TitleFor(finalConv),
 				MessageID:      0,
 				Delivered:      false,
@@ -898,6 +950,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 		delivered := nudgeIfAlive(id, finalConv)
 		out = append(out, recipient{
 			ConvID:         finalConv,
+			AgentID:        peerAgentID(finalConv),
 			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
 			Delivered:      delivered,
@@ -905,6 +958,26 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 		})
 	}
 	return out, nil
+}
+
+// messageNudgeText builds the bracketed tmux nudge for a delivered agent
+// message, naming the sender by stable identity (JOH-27 PR3b) — the
+// agent_id is rotation-immune, so it is safe to surface in the receiver's
+// transcript where a conv-id prefix would have gone stale. On a read miss
+// it degrades to the terse, senderless form. Shared by nudgeIfAlive (live
+// delivery) and sendNudgeBracket (deferred flush) so the wording lives in
+// one place.
+func messageNudgeText(msgID int64) string {
+	if m, err := db.GetAgentMessage(msgID); err == nil && m != nil {
+		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
+			return fmt.Sprintf(
+				"[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]",
+				msgID, sender, msgID)
+		}
+	}
+	return fmt.Sprintf(
+		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
+		msgID, msgID)
 }
 
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends
@@ -934,15 +1007,14 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 	if sess == nil {
 		return false
 	}
-	// Minimal nudge: just announce the message. Sender, subject, group,
-	// reply addressing — all of that lives in the message itself, fetched
-	// via `tclaude agent inbox read <id>`. Keeping the bracket text terse
-	// avoids leaking ephemeral details (short conv-id prefixes,
-	// title-of-the-moment) into the receiver's transcript.
-	nudge := fmt.Sprintf(
-		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
-		msgID, msgID,
-	)
+	// Announce the message, naming the sender by stable identity (JOH-27
+	// PR3b). Subject, group and reply addressing still live in the message
+	// itself (fetched via `tclaude agent inbox read <id>`) so the line stays
+	// short. The earlier form was deliberately senderless to avoid leaking
+	// *ephemeral* details — but the agent_id is rotation-immune, so unlike a
+	// conv-id prefix it does not go stale on the sender's next reincarnate;
+	// the title is truncated so it cannot dominate the line.
+	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
 		return false
@@ -1891,8 +1963,10 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"id":         m.ID,
 		"from":       m.FromConv,
+		"from_agent": m.FromAgent,
 		"from_title": agent.TitleFor(m.FromConv),
 		"to":         m.ToConv,
+		"to_agent":   m.ToAgent,
 		"group":      groupName,
 		"subject":    m.Subject,
 		"body":       m.Body,
@@ -2015,11 +2089,11 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		}
 		if outbox {
 			item.To = m.ToConv
-			item.ToShort = agent.ShortID(m.ToConv)
+			item.ToShort = agent.ShortAgentID(m.ToAgent, m.ToConv)
 			item.Delivered = !m.DeliveredAt.IsZero()
 		} else {
 			item.From = m.FromConv
-			item.FromShort = agent.ShortID(m.FromConv)
+			item.FromShort = agent.ShortAgentID(m.FromAgent, m.FromConv)
 		}
 		out = append(out, item)
 	}
@@ -2077,24 +2151,28 @@ func bodyPreview(s string) string {
 }
 
 // recipientLine pairs a conv-id with the friendly label resolved for it
-// (the conv-index title, else empty). Returned as part of
-// /v1/messages/{id} so `inbox read` can render "To: alice <abcd1234>"
-// without a second round-trip.
+// (the conv-index title, else empty) and the recipient's stable agent_id
+// (JOH-27 PR3b-2; empty when the conv is not an enrolled agent). Returned
+// as part of /v1/messages/{id} so `inbox read` can render the To:/CC:
+// audience as "alice (agt_xxxxxxxx)" without a second round-trip.
 type recipientLine struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title,omitempty"`
+	ConvID  string `json:"conv_id"`
+	AgentID string `json:"agent_id,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // decorateRecipients turns a recipients array (conv-ids only, as stored
-// in agent_messages) into a labelled list. Best-effort lookup: a conv
-// without an index row just gets ConvID set, so the renderer can fall
+// in agent_messages) into a labelled list, resolving each conv to its
+// title and stable agent_id. Best-effort lookup: a conv without an index
+// row / agent enrollment just gets ConvID set, so the renderer can fall
 // back to the short prefix.
 func decorateRecipients(ids []string) []recipientLine {
 	out := make([]recipientLine, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, recipientLine{
-			ConvID: id,
-			Title:  agent.TitleFor(id),
+			ConvID:  id,
+			AgentID: peerAgentID(id),
+			Title:   agent.TitleFor(id),
 		})
 	}
 	return out
@@ -2779,8 +2857,12 @@ func remoteControlPolicyToWire(p *bool) string {
 }
 
 type memberJSON struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the member's stable actor key — the canonical ID the
+	// agent CLI leads with; ConvID is the live generation behind it. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
 	// first .jsonl event's time), empty when unknown. The dashboard
 	// renders it as a relative "Age", and it is the default sort key
@@ -2842,6 +2924,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	for _, m := range members {
 		memberSet[m.ConvID] = true
 		out = append(out, memberJSON{
+			AgentID:           peerAgentID(m.ConvID),
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
 			CreatedAt:         agent.FreshCreated(m.ConvID),
@@ -2860,6 +2943,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			continue
 		}
 		out = append(out, memberJSON{
+			AgentID:           peerAgentID(ownerConv),
 			ConvID:            ownerConv,
 			Title:             agent.FreshTitle(ownerConv),
 			CreatedAt:         agent.FreshCreated(ownerConv),
@@ -2997,6 +3081,9 @@ func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.Age
 }
 
 type ownerJSON struct {
+	// AgentID is the owner's stable actor key — the canonical ID the CLI
+	// leads with; ConvID is the live generation behind it.
+	AgentID   string `json:"agent_id,omitempty"`
 	ConvID    string `json:"conv_id"`
 	Title     string `json:"title"`
 	Online    bool   `json:"online"`
@@ -3019,9 +3106,10 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
 		entry := ownerJSON{
-			ConvID: o.ConvID,
-			Title:  agent.FreshTitle(o.ConvID),
-			Online: isConvOnlineIn(o.ConvID, aliveSessions),
+			AgentID: o.AgentID,
+			ConvID:  o.ConvID,
+			Title:   agent.FreshTitle(o.ConvID),
+			Online:  isConvOnlineIn(o.ConvID, aliveSessions),
 		}
 		if !o.GrantedAt.IsZero() {
 			entry.GrantedAt = o.GrantedAt.Format(time.RFC3339)
@@ -3065,8 +3153,9 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"group":   g.Name,
-		"conv_id": res.ConvID,
+		"group":    g.Name,
+		"agent_id": peerAgentID(res.ConvID),
+		"conv_id":  res.ConvID,
 	})
 }
 

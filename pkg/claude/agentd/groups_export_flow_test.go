@@ -153,6 +153,22 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	require.Len(t, owners, 1)
 	assert.Equal(t, aConv, owners[0].ConvID, "owner restored as the same conv-id")
 
+	// Messages keep their stable actor refs across import (JOH-27 PR3a): the
+	// imported rows carry from_agent/to_agent resolved to the imported agents,
+	// not left empty — the same denormalisation the send path and v76 backfill
+	// produce.
+	agA, err := db.GetAgentByConv(aConv)
+	require.NoError(t, err)
+	require.NotNil(t, agA, "agent restored for aConv")
+	agB, err := db.GetAgentByConv(bConv)
+	require.NoError(t, err)
+	require.NotNil(t, agB, "agent restored for bConv")
+	toB, err := db.ListAgentMessagesForConv(bConv, 10) // the parent (a→b)
+	require.NoError(t, err)
+	require.NotEmpty(t, toB, "the parent message survives import")
+	assert.Equal(t, agA.AgentID, toB[0].FromAgent, "imported message keeps the sender's stable agent_id")
+	assert.Equal(t, agB.AgentID, toB[0].ToAgent, "imported message keeps the recipient's stable agent_id")
+
 	// Permissions — both the grant and the deny.
 	permA, err := db.ListAgentPermissionOverridesForConv(aConv)
 	require.NoError(t, err)
@@ -493,15 +509,18 @@ func remapSource(remap map[string]string, fresh string) string {
 }
 
 // wipeForFreshImport simulates moving to a clean machine: it deletes the
-// group and every trace of the listed convs — enrollment, conv_index,
+// group and every trace of the listed convs — actor identity, conv_index,
 // permissions and the .jsonl files — so a subsequent import sees no
 // collision and preserves the original conv-ids.
 func wipeForFreshImport(t *testing.T, group string, convs []string, cwd, home string) {
 	t.Helper()
 	require.NoError(t, db.DeleteAgentGroup(group))
 	for _, c := range convs {
-		if _, err := db.DeleteEnrollment(c); err != nil {
-			t.Fatalf("wipe: delete enrollment %s: %v", c, err)
+		// DeleteAgentByConvID tears down the actor + its conv-scoped DB rows
+		// (conv_index, sessions, permissions via the actor) — the agents-table
+		// successor to deleting the enrollment row (JOH-26 PR3c).
+		if _, err := db.DeleteAgentByConvID(c); err != nil {
+			t.Fatalf("wipe: delete agent %s: %v", c, err)
 		}
 		if err := db.DeleteConvIndex(c); err != nil {
 			t.Fatalf("wipe: delete conv_index %s: %v", c, err)

@@ -208,18 +208,18 @@ func withIdentity(h http.Handler) http.Handler {
 	})
 }
 
-// enrolledCallers remembers conv-ids already run through EnrollAgent
+// enrolledCallers remembers conv-ids already run through EnsureAgentForConv
 // this daemon lifetime, so the per-request identity middleware does at
-// most one enrollment write per conv. EnrollAgent itself is idempotent
-// (INSERT OR IGNORE); the cache just spares a chatty agent a DB
-// round-trip on every subsequent /v1 call.
+// most one actor-ensure write per conv. EnsureAgentForConv itself is
+// idempotent; the cache just spares a chatty agent a DB round-trip on every
+// subsequent /v1 call.
 var enrolledCallers sync.Map
 
-// enrollCallerOnce enrolls a conv that is talking to the daemon as an
+// enrollCallerOnce registers a conv that is talking to the daemon as an
 // agent. Running any `tclaude agent` command is, by that act, agentic
-// behaviour — this is the catch-all enrollment trigger for agents that
-// were never spawned into a group or granted a permission. Insert-only:
-// it never un-retires a conv the human deliberately retired.
+// behaviour — this is the catch-all trigger for agents that were never
+// spawned into a group or granted a permission. Ensure-only: it mints / links
+// an actor but never reinstates a conv the human deliberately retired.
 func enrollCallerOnce(convID string) {
 	if convID == "" {
 		return
@@ -227,8 +227,11 @@ func enrollCallerOnce(convID string) {
 	if _, seen := enrolledCallers.LoadOrStore(convID, true); seen {
 		return
 	}
-	if err := db.EnrollAgent(convID, "cli"); err != nil {
-		slog.Warn("identity: enroll caller failed", "conv", convID, "error", err)
+	// EnsureAgentForConv mints / links the conv's stable actor identity
+	// (JOH-26): a conv that talks to the daemon is, by that act, an agent.
+	// Idempotent.
+	if _, _, err := db.EnsureAgentForConv(convID, "cli"); err != nil {
+		slog.Warn("identity: ensure caller actor failed", "conv", convID, "error", err)
 		enrolledCallers.Delete(convID) // let a later request retry
 	}
 }

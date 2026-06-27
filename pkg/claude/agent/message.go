@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -98,6 +99,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		RedirectedFrom string `json:"redirected_from,omitempty"`
 		Recipients     []struct {
 			ConvID         string `json:"conv_id"`
+			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
 			MessageID      int64  `json:"message_id"`
 			Delivered      bool   `json:"delivered"`
@@ -179,7 +181,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				// were typing a stale UUID.
 				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
 			}
-			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, short(rcp.ConvID), name, state, redirect)
+			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, shortAgentID(rcp.AgentID, rcp.ConvID), name, state, redirect)
 		}
 		return rcOK
 	}
@@ -256,17 +258,16 @@ func runMessageDirect(p *messageParams, d *messageDeps, body string, stdout, std
 	if d != nil && d.nudge != nil {
 		if sess, err := db.FindSessionByConvID(target.ConvID); err == nil && sess != nil && sess.TmuxSession != "" {
 			if session.IsTmuxSessionAlive(sess.TmuxSession) {
-				fromTitle := titleFor(fromID)
-				if fromTitle == "" {
-					fromTitle = "(unnamed)"
-				}
+				fromAgent, _ := db.AgentIDForConv(fromID)
+				sender := MessageSenderLabel(fromID, fromAgent)
+				replySel := shortAgentID(fromAgent, fromID)
 				subjectClause := ""
 				if p.Subject != "" {
 					subjectClause = fmt.Sprintf(" subject=%q", p.Subject)
 				}
 				nudge := fmt.Sprintf(
-					"[system: new agent message #%d from %s (%s) in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
-					id, fromTitle, short(fromID), via.Name, subjectClause, id, short(fromID),
+					"[system: new agent message #%d from %s in group %q.%s read with: tclaude agent inbox read %d. reply with: tclaude agent message %s \"...\".]",
+					id, sender, via.Name, subjectClause, id, replySel,
 				)
 				if err := d.nudge(sess.TmuxSession, nudge); err != nil {
 					slog.Warn("failed to nudge target tmux session", "error", err, "session", sess.TmuxSession, "module", "agent")
@@ -351,6 +352,68 @@ func short(convID string) string {
 		return convID[:8]
 	}
 	return convID
+}
+
+// shortAgentID is the narrow-table form of a stable agent_id: the `agt_`
+// tag plus the first 8 hex of the suffix (12 chars). The full id is the
+// canonical, copy-pasteable handle (shown in JSON / single-value outputs);
+// this is the superficial display form used only where a wide column would
+// wreck a multi-column table. Falls back to the conv-id prefix when the row
+// carries no agent_id (a resolved candidate that isn't an agent).
+func shortAgentID(agentID, convID string) string {
+	if agentID == "" {
+		return short(convID)
+	}
+	if len(agentID) >= 12 {
+		return agentID[:12]
+	}
+	return agentID
+}
+
+// ShortAgentID is the exported form of shortAgentID, for daemon-side
+// callers (e.g. the inbox/outbox list columns) that render a message's
+// actor in a wide table by its stable short id.
+func ShortAgentID(agentID, convID string) string {
+	return shortAgentID(agentID, convID)
+}
+
+// nudgeSenderNameMax bounds the (mutable) sender title injected into a tmux
+// nudge, so a pathologically long /rename can't blow up the bracketed line.
+// The stable short agent_id that follows is already length-bounded.
+const nudgeSenderNameMax = 32
+
+// MessageSenderLabel renders a message's sender for an incoming-message
+// tmux nudge as "name (agt_xxxxxxxx)" — the (truncated) current title plus
+// the stable short agent_id. The agent_id is the durable, rotation-immune
+// handle (JOH-27): unlike the old conv-id prefix it is safe to surface,
+// since it does not become stale on the sender's next reincarnate/clear.
+// The title is a friendly decoration, truncated so it can't dominate the
+// line. Falls back to the bare short id when the sender has no indexed
+// title, so the label is never empty.
+func MessageSenderLabel(fromConv, fromAgent string) string {
+	id := shortAgentID(fromAgent, fromConv)
+	name := truncate(sanitizeNudgeTitle(TitleFor(fromConv)), nudgeSenderNameMax)
+	if name == "" {
+		return id
+	}
+	return name + " (" + id + ")"
+}
+
+// sanitizeNudgeTitle strips control characters from a title before it is
+// interpolated into a send-keys nudge. send-keys is an injection sink:
+// CustomTitle is charset-gated at the /rename boundary, but the Summary /
+// FirstPrompt fallbacks displayTitle can return are NOT — a freshly spawned
+// agent that messages before its /rename lands carries a (often multi-line)
+// spawn brief as its title, and a raw newline would submit a premature Enter
+// in the recipient's pane. Control runes collapse to a space; surrounding
+// space is trimmed. Length is bounded separately by truncate().
+func sanitizeNudgeTitle(s string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s))
 }
 
 // onlineMark returns the single-cell glyph used in agent ls / groups

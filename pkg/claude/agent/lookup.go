@@ -43,6 +43,13 @@ var ErrAmbiguous = errors.New("selector matches multiple conversations")
 // callers, which compare against this sentinel.
 var errAmbiguous = ErrAmbiguous
 
+// errNoAgentMatch tags the miss of an `agt_`-tagged selector. It is
+// terminal: unlike a conv-id / title miss, refreshing the conv index can
+// never make an agent appear (agents live in the agents table, not in conv
+// .jsonl files), so resolveSelector returns it straight through instead of
+// paying for a full ~/.claude/projects rescan-and-retry.
+var errNoAgentMatch = errors.New("no agent matches")
+
 // Resolved is a minimal handle to a conversation reachable by a selector.
 // Exported so the daemon (pkg/claude/agentd) can reuse the resolver.
 type Resolved struct {
@@ -83,7 +90,7 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 		selector = id
 	}
 
-	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) {
+	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) || errors.Is(err, errNoAgentMatch) {
 		return redirectResolvedToLatest(r), matches, err
 	}
 
@@ -130,6 +137,41 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 	if head, err := db.ResolveHeadAlias(selector); err == nil && head != "" {
 		row, _ := db.GetConvIndex(head)
 		return &resolved{ConvID: head, Row: row}, nil, nil
+	}
+
+	// 0.5) stable agent_id — the canonical, rotation-immune handle. A
+	//      selector tagged `agt_` is taken as an explicit agent_id and
+	//      resolved straight to the actor's current generation
+	//      (agents.current_conv_id), regardless of how many times the
+	//      agent has reincarnated. Retired actors resolve too (to their
+	//      last generation) so a stable id can still reference them.
+	//      Full id or unique prefix resolves; several matches surface as
+	//      an ambiguity; zero is reported against the agent layer rather
+	//      than falling through — the `agt_` tag is an explicit "this is
+	//      an agent id", so a mistyped id gets a precise error instead of
+	//      a generic miss. (The corner of a conversation deliberately
+	//      titled `agt_…` is therefore not reachable by that title; an
+	//      acceptable trade for the precise error on the common path.)
+	if strings.HasPrefix(selector, db.AgentIDPrefix) {
+		matches, err := db.FindAgentsByIDPrefix(selector)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch len(matches) {
+		case 1:
+			conv := matches[0].CurrentConvID
+			row, _ := db.GetConvIndex(conv)
+			return &resolved{ConvID: conv, Row: row}, nil, nil
+		case 0:
+			return nil, nil, fmt.Errorf("%w %q", errNoAgentMatch, selector)
+		default:
+			cands := make([]*resolved, 0, len(matches))
+			for _, a := range matches {
+				row, _ := db.GetConvIndex(a.CurrentConvID)
+				cands = append(cands, &resolved{ConvID: a.CurrentConvID, Row: row})
+			}
+			return nil, cands, errAmbiguous
+		}
 	}
 
 	// 1) full UUID match
@@ -209,7 +251,11 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 // and applying the per-file mtime check to refresh stale ones. Errors
 // are intentionally swallowed — the caller will surface a clearer
 // "no conversation matches" if the second tryResolve still fails.
-func refreshAllProjects() {
+//
+// Indirected through a var so tests can assert whether the rescan-and-retry
+// path fired: an `agt_` miss must skip it (terminal errNoAgentMatch), while
+// a conv-id / title miss must still trigger it.
+var refreshAllProjects = func() {
 	projectsDir := conv.ClaudeProjectsDir()
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -321,7 +367,7 @@ const UnknownTitle = "(unknown)"
 //     daemon injects just after spawn) is the authoritative name.
 //   - When none exists yet — a freshly-spawned agent in the gap before
 //     its /rename lands — the pending name recorded at spawn time
-//     (agent_enrollment.pending_name, the `--name` argument) stands in,
+//     (agents.pending_name, the `--name` argument) stands in,
 //     so the dashboard shows the intended name rather than "(unknown)".
 //     It deliberately outranks summary / first-prompt: the human-given
 //     --name is a stronger identity signal than an auto-summary or an
@@ -403,16 +449,16 @@ func FreshCreated(convID string) string {
 	return ""
 }
 
-// pendingName returns the intended display name recorded for convID at
-// spawn time (agent_enrollment.pending_name), or "" when the conv was
-// not spawned with a name or is not an agent. Errors are swallowed — a
-// pending name is a best-effort display fallback, never load-bearing.
+// pendingName returns the intended display name recorded for convID's actor at
+// spawn time (agents.pending_name), or "" when the conv was not spawned with a
+// name or is not an agent. Errors are swallowed — a pending name is a
+// best-effort display fallback, never load-bearing.
 func pendingName(convID string) string {
-	e, err := db.GetEnrollment(convID)
-	if err != nil || e == nil {
+	a, err := db.GetAgentByConv(convID)
+	if err != nil || a == nil {
 		return ""
 	}
-	return e.PendingName
+	return a.PendingName
 }
 
 // FreshConvTitle resolves convID to the canonical "[title]: prompt"
@@ -614,6 +660,7 @@ func runWhoami(stdout, stderr io.Writer) int {
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
 		IsHuman bool   `json:"is_human"`
+		AgentID string `json:"agent_id"`
 		ConvID  string `json:"conv_id"`
 		Title   string `json:"title"`
 	}
@@ -629,7 +676,13 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	if title == "" {
 		title = "(unnamed)"
 	}
-	fmt.Fprintf(stdout, "%s\t%s\n", resp.ConvID, title)
+	// Lead with the stable agent_id; fall back to conv-id only if the
+	// caller isn't enrolled as an agent yet.
+	id := resp.AgentID
+	if id == "" {
+		id = resp.ConvID
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
 	return rcOK
 }
 
@@ -652,7 +705,13 @@ func runWhoamiDirect(stdout, stderr io.Writer) int {
 			title = t
 		}
 	}
-	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
+	// Lead with the stable agent_id when this conv is enrolled; otherwise
+	// fall back to the conv-id (the direct path can run before enrollment).
+	display := id
+	if aid, _ := db.AgentIDForConv(id); aid != "" {
+		display = aid
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", display, title)
 	return rcOK
 }
 
@@ -665,7 +724,7 @@ type lookupParams struct {
 func lookupCmd() *cobra.Command {
 	return boa.CmdT[lookupParams]{
 		Use:         "lookup",
-		Short:       "Resolve an agent name (or ID prefix) to a full conversation ID",
+		Short:       "Resolve an agent name (or ID prefix) to its stable agent_id",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *lookupParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -686,7 +745,8 @@ func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
 
 func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
 	var resp struct {
-		ConvID string `json:"conv_id"`
+		ConvID  string `json:"conv_id"`
+		AgentID string `json:"agent_id"`
 	}
 	err := DaemonGet("/v1/lookup?selector="+url.QueryEscape(p.Selector), &resp)
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
@@ -699,7 +759,7 @@ func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintln(stdout, resp.ConvID)
+	fmt.Fprintln(stdout, lookupID(resp.AgentID, resp.ConvID))
 	return rcOK
 }
 
@@ -713,8 +773,19 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	fmt.Fprintln(stdout, r.ConvID)
+	agentID, _ := db.AgentIDForConv(r.ConvID)
+	fmt.Fprintln(stdout, lookupID(agentID, r.ConvID))
 	return rcOK
+}
+
+// lookupID is what `tclaude agent lookup` prints: the stable agent_id when
+// the target is an agent (the canonical reference), else the conv-id for a
+// plain conversation. Either is a valid selector for the rest of the CLI.
+func lookupID(agentID, convID string) string {
+	if agentID != "" {
+		return agentID
+	}
+	return convID
 }
 
 // --- ls (peers in my groups) ---
@@ -740,10 +811,13 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// AgentID is the stable, rotation-immune actor key — what `agent ls`
+	// shows as the canonical ID. ConvID is the live generation behind it.
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Descr   string `json:"descr,omitempty"`
 	// Branch is the git branch / worktree the agent is working on, as
 	// recorded in its conv_index row (Claude Code stamps gitBranch into
 	// every .jsonl turn). Empty when the conv isn't indexed yet or the
@@ -798,7 +872,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
@@ -807,10 +881,11 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, pe := range peers {
-		// NAME is the conv's display title — an agent's single name.
+		// ID is the stable agent_id (short form for the table); NAME is the
+		// conv's display title. conv-id is available via --json.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(pe.Online),
-			short(pe.ConvID),
+			shortAgentID(pe.AgentID, pe.ConvID),
 			pe.Title,
 			pe.Role,
 			strings.Join(pe.Groups, ","),

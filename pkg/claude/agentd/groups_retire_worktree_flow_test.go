@@ -106,9 +106,9 @@ func TestDashboardGroupRetire_DeleteWorktreeRemovesEach(t *testing.T) {
 		assert.Equal(t, "removed", wtAction, "%s's already-offline worktree is removed inline", c.conv)
 		assert.True(t, fw.wasRemoved(c.cwd), "%s's linked worktree must be removed", c.conv)
 		assert.Contains(t, fw.branchesRemoved(), c.branch, "%s's branch must be deleted", c.conv)
-		state, err := db.EnrollmentState(c.conv)
+		state, err := db.AgentState(c.conv)
 		require.NoError(t, err)
-		assert.Equal(t, db.EnrollmentRetired, state, "%s must be retired", c.conv)
+		assert.Equal(t, db.AgentStateRetired, state, "%s must be retired", c.conv)
 	}
 }
 
@@ -200,9 +200,9 @@ func TestDashboardGroupRetire_DeleteWorktreeKeepsMainAndShared(t *testing.T) {
 	assert.False(t, fw.wasRemoved(cwdShared), "the shared worktree must be kept while a survivor uses it")
 
 	// The unselected survivor is fully intact.
-	survState, err := db.EnrollmentState(survive)
+	survState, err := db.AgentState(survive)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, survState, "the unselected survivor stays active")
+	assert.Equal(t, db.AgentStateActive, survState, "the unselected survivor stays active")
 	assert.True(t, f.World.Tmux.IsAlive("tmux-bwsv"), "the survivor's pane must not be touched")
 }
 

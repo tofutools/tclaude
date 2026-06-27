@@ -20,6 +20,7 @@ type dashSnapshot struct {
 	Ungrouped            []dashAgent        `json:"ungrouped"`
 	Conversations        []dashConversation `json:"conversations"`
 	Retired              []dashRetired      `json:"retired"`
+	Replaced             []dashReplaced     `json:"replaced"`
 	Pending              []dashPending      `json:"pending"`
 	Usage                dashUsage          `json:"usage"`
 	Harnesses            []dashHarness      `json:"harnesses"`
@@ -54,6 +55,19 @@ type dashRetired struct {
 	RetireReason string `json:"retire_reason,omitempty"`
 }
 
+// dashReplaced mirrors agentd.dashboardReplacedGen — one superseded
+// predecessor generation on the snapshot's replaced[] list.
+type dashReplaced struct {
+	ConvID       string `json:"conv_id"`
+	Title        string `json:"title"`
+	Reason       string `json:"reason,omitempty"`
+	ReplacedAt   string `json:"replaced_at,omitempty"`
+	Online       bool   `json:"online"`
+	ActorConvID  string `json:"actor_conv_id"`
+	ActorTitle   string `json:"actor_title"`
+	ActorRetired bool   `json:"actor_retired,omitempty"`
+}
+
 // dashPending mirrors agentd.dashboardPending — a not-yet-enrolled
 // dashboard spawn surfaced on the snapshot's pending[] list (JOH-205).
 type dashPending struct {
@@ -77,6 +91,7 @@ type dashGroup struct {
 }
 
 type dashMember struct {
+	AgentID         string    `json:"agent_id,omitempty"`
 	ConvID          string    `json:"conv_id"`
 	Title           string    `json:"title"`
 	CreatedAt       string    `json:"created_at,omitempty"`

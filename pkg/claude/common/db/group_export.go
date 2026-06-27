@@ -28,7 +28,7 @@ var ErrGroupNotFound = errors.New("group not found")
 //
 // Tables carried (every table keyed to the group or to a member's
 // conv-id): agent_groups, agent_group_members, agent_group_owners,
-// agent_group_audit, agent_permissions, agent_enrollment, agent_workdir,
+// agent_group_audit, agent_permissions, agents (as enrollments), agent_workdir,
 // agent_sudo_grants, agent_head_aliases, agent_conv_succession,
 // agent_spawn_history, agent_clone_history, agent_cron_jobs,
 // agent_cron_runs, agent_messages. Deliberately NOT carried: conv_index
@@ -150,9 +150,13 @@ func inClause(ids []string) (string, []any) {
 }
 
 func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
+	// Membership is agent-keyed (JOH-26); export each member by its actor's
+	// current conv so re-import re-adds it by conv (which re-resolves to an
+	// actor on the target).
 	rows, err := d.Query(`
-		SELECT conv_id, role, descr, joined_at
-		FROM agent_group_members WHERE group_id = ? ORDER BY conv_id`, groupID)
+		SELECT ag.current_conv_id, m.role, m.descr, m.joined_at
+		FROM agent_group_members m JOIN agents ag ON ag.agent_id = m.agent_id
+		WHERE m.group_id = ? ORDER BY ag.current_conv_id`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("collect members: %w", err)
 	}
@@ -170,8 +174,9 @@ func collectMembers(d *sql.DB, groupID int64) ([]groupexport.Member, error) {
 
 func collectOwners(d *sql.DB, groupID int64) ([]groupexport.Owner, error) {
 	rows, err := d.Query(`
-		SELECT conv_id, granted_at, granted_by
-		FROM agent_group_owners WHERE group_id = ? ORDER BY conv_id`, groupID)
+		SELECT ag.current_conv_id, o.granted_at, o.granted_by
+		FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
+		WHERE o.group_id = ? ORDER BY ag.current_conv_id`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("collect owners: %w", err)
 	}
@@ -229,10 +234,18 @@ func collectMessages(d *sql.DB, groupID int64) ([]groupexport.Message, error) {
 }
 
 func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string, error) {
+	// owner/target are agent-keyed (JOH-26 PR3a); resolve each back to its
+	// actor's CURRENT conv so the export stays conv-portable. LEFT JOIN +
+	// COALESCE keeps a group-target job (target_agent '') or an owner-less job
+	// rather than dropping it.
 	rows, err := d.Query(`
-		SELECT id, name, owner_conv, target_conv, interval_seconds, subject, body,
-		       enabled, created_at, last_run_at, last_run_status
-		FROM agent_cron_jobs WHERE group_id = ? ORDER BY id`, groupID)
+		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
+		       j.interval_seconds, j.subject, j.body,
+		       j.enabled, j.created_at, j.last_run_at, j.last_run_status
+		FROM agent_cron_jobs j
+		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
+		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
+		WHERE j.group_id = ? ORDER BY j.id`, groupID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("collect cron jobs: %w", err)
 	}
@@ -241,7 +254,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	var ids []string
 	for rows.Next() {
 		var j groupexport.CronJob
-		if err := rows.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetConv,
+		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
 			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.CreatedAt,
 			&j.LastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
@@ -278,8 +291,9 @@ func collectCronRuns(d *sql.DB, jobIDs []string) ([]groupexport.CronRun, error) 
 func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, slug, effect, granted_at, granted_by
-		FROM agent_permissions WHERE conv_id `+clause+` ORDER BY conv_id, slug`, args...)
+		SELECT ag.current_conv_id, p.slug, p.effect, p.granted_at, p.granted_by
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY ag.current_conv_id, p.slug`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect permissions: %w", err)
 	}
@@ -295,12 +309,20 @@ func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, 
 	return out, rows.Err()
 }
 
+// collectEnrollments emits one Enrollment record per exported member conv,
+// sourced from the actor layer (JOH-26 PR3c removed agent_enrollment). The
+// archive keeps the legacy `enrollments` shape for cross-version compatibility:
+// an older importer still reads it into agent_enrollment, and a current importer
+// translates it back onto the actor. Actor facts (created_via, retire state,
+// pending_name) are carried on the actor's CURRENT conv.
 func collectEnrollments(d *sql.DB, convIDs []string) ([]groupexport.Enrollment, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, enrolled_at, enrolled_via, retired_at, retired_by,
-		       retire_reason, pending_name
-		FROM agent_enrollment WHERE conv_id `+clause+` ORDER BY conv_id`, args...)
+		SELECT ac.conv_id, ag.created_at, ag.created_via, ag.retired_at,
+		       ag.retired_by, ag.retire_reason, ag.pending_name
+		FROM agent_conversations ac
+		JOIN agents ag ON ag.agent_id = ac.agent_id
+		WHERE ac.conv_id `+clause+` ORDER BY ac.conv_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect enrollments: %w", err)
 	}
@@ -340,8 +362,9 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at
-		FROM agent_sudo_grants WHERE conv_id `+clause+` ORDER BY id`, args...)
+		SELECT ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect sudo grants: %w", err)
 	}
@@ -404,9 +427,13 @@ func collectSuccessions(d *sql.DB, convIDs []string) ([]groupexport.Succession, 
 
 func collectSpawnHist(d *sql.DB, convIDs []string) ([]groupexport.SpawnHist, error) {
 	clause, args := inClause(convIDs)
+	// spawner is agent-keyed (JOH-26 PR3a); resolve to the actor's current conv
+	// and filter against the member conv set (current convs), mirroring
+	// collectPermissions.
 	rows, err := d.Query(`
-		SELECT spawner_conv_id, spawned_at
-		FROM agent_spawn_history WHERE spawner_conv_id `+clause+` ORDER BY spawned_at`, args...)
+		SELECT ag.current_conv_id, h.spawned_at
+		FROM agent_spawn_history h JOIN agents ag ON ag.agent_id = h.spawner_agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY h.spawned_at`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect spawn history: %w", err)
 	}
@@ -424,9 +451,12 @@ func collectSpawnHist(d *sql.DB, convIDs []string) ([]groupexport.SpawnHist, err
 
 func collectCloneHist(d *sql.DB, convIDs []string) ([]groupexport.CloneHist, error) {
 	clause, args := inClause(convIDs)
+	// source is agent-keyed (JOH-26 PR3a); resolve to the actor's current conv
+	// and filter against the member conv set, mirroring collectPermissions.
 	rows, err := d.Query(`
-		SELECT source_conv_id, cloned_at
-		FROM agent_clone_history WHERE source_conv_id `+clause+` ORDER BY cloned_at`, args...)
+		SELECT ag.current_conv_id, h.cloned_at
+		FROM agent_clone_history h JOIN agents ag ON ag.agent_id = h.source_agent_id
+		WHERE ag.current_conv_id `+clause+` ORDER BY h.cloned_at`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect clone history: %w", err)
 	}
@@ -478,10 +508,10 @@ type GroupImportPlan struct {
 
 // GroupImportResult summarises a completed import.
 type GroupImportResult struct {
-	GroupID      int64
-	GroupName    string
-	AgentCount   int
-	MessageCount int
+	GroupID            int64
+	GroupName          string
+	AgentCount         int
+	MessageCount       int
 	HeadAliasesSkipped []string // handles skipped because they already existed locally
 }
 
@@ -579,10 +609,25 @@ func (c *importCtx) run() error {
 		c.members, c.owners, c.audit, c.permissions, c.enrollments,
 		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
-		c.transferLog,
+		c.transferLog, c.backfillAgentCompanions,
 	} {
 		if err := step(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// backfillAgentCompanions fills the v77 agent_id companion columns on the
+// just-imported rows, run last so every table is present and enrollments() has
+// rebuilt agent_conversations (the resolution spine) under the import's remapped
+// conv-ids. Mirrors the v76 message-import derivation, generalised to every v77
+// companion. onlyEmpty=true keeps it additive — it never blanks a pre-existing
+// local row whose actor has since been unmapped.
+func (c *importCtx) backfillAgentCompanions() error {
+	for _, spec := range v77AgentColumns {
+		if _, err := c.tx.Exec(backfillAgentColSQL(spec.table, spec.agentCol, spec.convCols, true)); err != nil {
+			return fmt.Errorf("import: backfill %s.%s: %w", spec.table, spec.agentCol, err)
 		}
 	}
 	return nil
@@ -648,10 +693,15 @@ func (c *importCtx) legacyDefaultModelProfile() error {
 
 func (c *importCtx) members() error {
 	for _, m := range c.exp.Members {
+		conv := c.rc(m.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: member %s actor: %w", m.ConvID, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_group_members (group_id, conv_id, role, descr, joined_at)
+			INSERT INTO agent_group_members (group_id, agent_id, role, descr, joined_at)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.newGroupID, c.rc(m.ConvID), m.Role, m.Descr, m.JoinedAt); err != nil {
+			c.newGroupID, agentID, m.Role, m.Descr, m.JoinedAt); err != nil {
 			return fmt.Errorf("import: member %s: %w", m.ConvID, err)
 		}
 	}
@@ -660,10 +710,15 @@ func (c *importCtx) members() error {
 
 func (c *importCtx) owners() error {
 	for _, o := range c.exp.Owners {
+		conv := c.rc(o.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: owner %s actor: %w", o.ConvID, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_group_owners (group_id, conv_id, granted_at, granted_by)
+			INSERT INTO agent_group_owners (group_id, agent_id, granted_at, granted_by)
 			VALUES (?, ?, ?, ?)`,
-			c.newGroupID, c.rc(o.ConvID), o.GrantedAt, o.GrantedBy); err != nil {
+			c.newGroupID, agentID, o.GrantedAt, o.GrantedBy); err != nil {
 			return fmt.Errorf("import: owner %s: %w", o.ConvID, err)
 		}
 	}
@@ -684,26 +739,61 @@ func (c *importCtx) audit() error {
 
 func (c *importCtx) permissions() error {
 	for _, p := range c.exp.Permissions {
+		conv := c.rc(p.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: permission %s/%s actor: %w", p.ConvID, p.Slug, err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_permissions (conv_id, slug, effect, granted_at, granted_by)
+			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by)
 			VALUES (?, ?, ?, ?, ?)`,
-			c.rc(p.ConvID), p.Slug, p.Effect, p.GrantedAt, p.GrantedBy); err != nil {
+			agentID, p.Slug, p.Effect, p.GrantedAt, p.GrantedBy); err != nil {
 			return fmt.Errorf("import: permission %s/%s: %w", p.ConvID, p.Slug, err)
 		}
 	}
 	return nil
 }
 
+// enrollments translates the archive's legacy enrollment records onto the actor
+// layer (JOH-26 PR3c). Each becomes an ensure-actor plus a carry of the actor
+// facts the membership/permission imports don't cover: the spawn-time
+// pending_name and, defensively, any retire state. ensureAgentForConvTx is
+// idempotent, so it composes with the actor the members/permissions imports
+// already created for this conv.
 func (c *importCtx) enrollments() error {
 	for _, e := range c.exp.Enrollments {
-		if _, err := c.tx.Exec(`
-			INSERT INTO agent_enrollment
-				(conv_id, enrolled_at, enrolled_via, retired_at, retired_by,
-				 retire_reason, pending_name)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			c.rc(e.ConvID), e.EnrolledAt, e.EnrolledVia, e.RetiredAt,
-			e.RetiredBy, e.RetireReason, e.PendingName); err != nil {
-			return fmt.Errorf("import: enrollment %s: %w", e.ConvID, err)
+		conv := c.rc(e.ConvID)
+		via := e.EnrolledVia
+		if via == "" {
+			via = "import"
+		}
+		agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+		if err != nil {
+			return fmt.Errorf("import: enrollment %s actor: %w", e.ConvID, err)
+		}
+		// Restore the original creation timestamp (ensureAgentForConvTx — and the
+		// members import before it — stamp `now` for a freshly-minted actor) so
+		// the round-tripped agent keeps its birth time. Import is transactional
+		// to a remapped conv-id on a clean target, so the actor is always freshly
+		// created in this transaction; the archived timestamp is authoritative.
+		if e.EnrolledAt != "" {
+			if _, err := c.tx.Exec(`UPDATE agents SET created_at = ? WHERE agent_id = ?`,
+				e.EnrolledAt, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s created_at: %w", e.ConvID, err)
+			}
+		}
+		if e.PendingName != "" {
+			if _, err := c.tx.Exec(`UPDATE agents SET pending_name = ? WHERE agent_id = ?`,
+				e.PendingName, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s pending_name: %w", e.ConvID, err)
+			}
+		}
+		if e.RetiredAt != "" {
+			if _, err := c.tx.Exec(`UPDATE agents
+				SET retired_at = ?, retired_by = ?, retire_reason = ? WHERE agent_id = ?`,
+				e.RetiredAt, e.RetiredBy, e.RetireReason, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s retire: %w", e.ConvID, err)
+			}
 		}
 	}
 	return nil
@@ -726,11 +816,16 @@ func (c *importCtx) workdirs() error {
 
 func (c *importCtx) sudoGrants() error {
 	for _, s := range c.exp.SudoGrants {
+		conv := c.rc(s.ConvID)
+		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		if err != nil {
+			return fmt.Errorf("import: sudo grant %s/%s actor: %w", s.ConvID, s.Slug, err)
+		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_sudo_grants
-				(conv_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
+				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			c.rc(s.ConvID), s.Slug, s.GrantedAt, s.ExpiresAt, s.GrantedBy,
+			agentID, s.Slug, s.GrantedAt, s.ExpiresAt, s.GrantedBy,
 			s.Reason, s.RevokedAt); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
@@ -778,10 +873,16 @@ func (c *importCtx) successions() error {
 }
 
 func (c *importCtx) spawnHist() error {
+	// History is keyed on the spawner's actor (JOH-26 PR3a); resolve the
+	// remapped conv to its agent, mirroring members()/permissions().
 	for _, s := range c.exp.SpawnHist {
+		agentID, err := ensureAgentForConvTx(c.tx, c.rc(s.SpawnerConvID), "import")
+		if err != nil {
+			return fmt.Errorf("import: spawn history actor: %w", err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_spawn_history (spawner_conv_id, spawned_at)
-			VALUES (?, ?)`, c.rc(s.SpawnerConvID), s.SpawnedAt); err != nil {
+			INSERT INTO agent_spawn_history (spawner_agent_id, spawned_at)
+			VALUES (?, ?)`, agentID, s.SpawnedAt); err != nil {
 			return fmt.Errorf("import: spawn history: %w", err)
 		}
 	}
@@ -789,14 +890,33 @@ func (c *importCtx) spawnHist() error {
 }
 
 func (c *importCtx) cloneHist() error {
+	// History is keyed on the source's actor (JOH-26 PR3a); resolve the
+	// remapped conv to its agent.
 	for _, h := range c.exp.CloneHist {
+		agentID, err := ensureAgentForConvTx(c.tx, c.rc(h.SourceConvID), "import")
+		if err != nil {
+			return fmt.Errorf("import: clone history actor: %w", err)
+		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_clone_history (source_conv_id, cloned_at)
-			VALUES (?, ?)`, c.rc(h.SourceConvID), h.ClonedAt); err != nil {
+			INSERT INTO agent_clone_history (source_agent_id, cloned_at)
+			VALUES (?, ?)`, agentID, h.ClonedAt); err != nil {
 			return fmt.Errorf("import: clone history: %w", err)
 		}
 	}
 	return nil
+}
+
+// rcToAgent remaps an exported conv (c.rc) then resolves it to its owning
+// actor, returning "" for an empty conv (a group-target or owner-less cron ref)
+// so the agent-keyed column stays empty rather than minting a bogus actor for
+// "". Used by the cron import to populate owner_agent / target_agent (JOH-26
+// PR3a).
+func (c *importCtx) rcToAgent(convID string) (string, error) {
+	conv := c.rc(convID)
+	if conv == "" {
+		return "", nil
+	}
+	return ensureAgentForConvTx(c.tx, conv, "import")
 }
 
 func (c *importCtx) cronJobsAndRuns() error {
@@ -805,12 +925,27 @@ func (c *importCtx) cronJobsAndRuns() error {
 	// to the run rows.
 	jobIDMap := make(map[int64]int64, len(c.exp.CronJobs))
 	for _, j := range c.exp.CronJobs {
+		ownerAgent, err := c.rcToAgent(j.OwnerConv)
+		if err != nil {
+			return fmt.Errorf("import: cron job %q owner actor: %w", j.Name, err)
+		}
+		targetAgent, err := c.rcToAgent(j.TargetConv)
+		if err != nil {
+			return fmt.Errorf("import: cron job %q target actor: %w", j.Name, err)
+		}
+		// Preserve the conv/group discriminator so a group fan-out job doesn't
+		// round-trip as a (broken, empty-target) conv job. Older archives carry
+		// no target_kind — default it to the v41 column default ("conv").
+		kind := j.TargetKind
+		if kind == "" {
+			kind = CronTargetConv
+		}
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_cron_jobs
-				(name, owner_conv, target_conv, group_id, interval_seconds,
+				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
 				 subject, body, enabled, created_at, last_run_at, last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			j.Name, c.rc(j.OwnerConv), c.rc(j.TargetConv), c.newGroupID,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
 			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.CreatedAt,
 			j.LastRunAt, j.LastRunStatus)
 		if err != nil {
@@ -843,14 +978,24 @@ func (c *importCtx) messages() error {
 	// collapses to 0 ("top of thread").
 	msgIDMap := make(map[int64]int64, len(c.exp.Messages))
 	for _, m := range c.exp.Messages {
+		// Derive the actor refs from the REMAPPED convs, the same COALESCE
+		// join InsertAgentMessage and migrateV75toV76 use — so an imported
+		// message agrees with a freshly-sent one. agent_conversations is
+		// already populated for this import: enrollments() (+ successions())
+		// run before messages() and ensureAgentForConvTx every imported conv,
+		// so a message whose remapped conv is an actor resolves here; a
+		// non-actor conv falls through COALESCE to ''.
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_messages
-				(group_id, from_conv, to_conv, subject, body, created_at,
+				(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, created_at,
 				 delivered_at, read_at, parent_id, to_recipients, cc_recipients,
 				 original_to_conv)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), m.Subject, m.Body,
-			m.CreatedAt, m.DeliveredAt, m.ReadAt, c.rl(m.ToRecipients),
+			VALUES (?, ?, ?,
+			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+			 ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), c.rc(m.FromConv), c.rc(m.ToConv),
+			m.Subject, m.Body, m.CreatedAt, m.DeliveredAt, m.ReadAt, c.rl(m.ToRecipients),
 			c.rl(m.CcRecipients), c.rc(m.OriginalToConv))
 		if err != nil {
 			return fmt.Errorf("import: message %d: %w", m.ID, err)

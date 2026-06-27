@@ -488,6 +488,13 @@ type snapshotPayload struct {
 	// button. Kept separate from Agents so a retired agent never shows
 	// on the live roster.
 	Retired []dashboardRetiredAgent `json:"retired"`
+	// Replaced: every superseded predecessor conversation generation of a
+	// still-existing actor (a reincarnate / Claude Code /clear left it behind
+	// when it advanced the actor's live pointer — JOH-26). Powers the Groups
+	// tab's default-hidden "Replaced generations" virtual group. Each row is
+	// annotated with its owning actor + how/when it was replaced. Empty slice
+	// (not nil) so JS .map() / .length are safe.
+	Replaced []dashboardReplacedGen `json:"replaced"`
 	// Pending: dashboard spawns whose conv-id has not materialised yet
 	// (the pending_spawns table — JOH-205 inc2). A pending Codex agent
 	// has a live tmux pane but is stuck behind a startup gate (untrusted
@@ -737,9 +744,11 @@ type dashboardLink struct {
 type dashboardCronJob struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name"`
+	OwnerAgent      string `json:"owner_agent,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
 	OwnerLabel      string `json:"owner_label"`
 	TargetKind      string `json:"target_kind"`
+	TargetAgent     string `json:"target_agent,omitempty"`
 	TargetConv      string `json:"target_conv,omitempty"`
 	TargetLabel     string `json:"target_label,omitempty"`
 	GroupID         int64  `json:"group_id"`
@@ -787,8 +796,12 @@ type dashboardGroup struct {
 //   - true on a row with Role=="owner" and no descr → a pure owner
 //     who isn't a member (so the list stays comprehensive).
 type dashboardMember struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the member's stable actor key — the canonical, rotation-immune
+	// ID the roster leads with; ConvID is the live generation behind it (still
+	// the internal drag-and-drop / routing key).
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
 	// first .jsonl event's time), empty when unknown. Rendered as a
 	// relative "Age" column and the default sort key (newest first).
@@ -812,8 +825,11 @@ type dashboardMember struct {
 }
 
 type dashboardAgent struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the agent's stable actor key — the canonical, rotation-immune
+	// ID; ConvID is the live generation behind it (still the internal key).
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
@@ -860,6 +876,32 @@ type dashboardRetiredAgent struct {
 	RetireReason string `json:"retire_reason,omitempty"`
 }
 
+// dashboardReplacedGen is the snapshot view of one REPLACED (predecessor)
+// conversation generation — a past conv-id of a still-existing actor, left
+// behind when a reincarnate / Claude Code /clear advanced the actor's live
+// pointer (JOH-26). Rendered in the Groups tab's default-hidden "Replaced
+// generations" virtual group so the operator can see (and prune) the
+// generations the actor-level Retired tray no longer lists. Annotated with the
+// owning actor so a row points back to the live agent, and with how/when this
+// generation was superseded (the reason + timestamp of the generation that
+// replaced it). Leaner than a roster row — a predecessor has no live identity
+// state of its own.
+type dashboardReplacedGen struct {
+	ConvID string `json:"conv_id"` // this predecessor generation
+	Title  string `json:"title"`   // the predecessor's own title, else the actor's
+	// Reason / ReplacedAt describe how + when this generation was SUPERSEDED:
+	// the rotation reason ("reincarnate" | "clear" | …) and RFC3339 timestamp
+	// of the generation that replaced it.
+	Reason     string `json:"reason,omitempty"`
+	ReplacedAt string `json:"replaced_at,omitempty"`
+	Online     bool   `json:"online"` // ~always false — a predecessor has no live pane
+	// ActorConvID / ActorTitle point at the still-live (or retired) actor this
+	// generation belongs to, so the row can link back to the current agent.
+	ActorConvID  string `json:"actor_conv_id"`
+	ActorTitle   string `json:"actor_title"`
+	ActorRetired bool   `json:"actor_retired,omitempty"` // the owning actor is itself retired
+}
+
 // dashboardPending is the snapshot view of one not-yet-enrolled
 // dashboard spawn (a pending_spawns row). It carries what the dashboard
 // needs to render the pending agent and drive its focus button: the
@@ -898,7 +940,8 @@ type dashboardPending struct {
 // list across all agents for the dedicated tab).
 type dashboardSudoEntry struct {
 	ID               int64  `json:"id"`
-	ConvID           string `json:"conv_id,omitempty"` // omitted on agent[*].active_sudo (caller already knows)
+	AgentID          string `json:"agent_id,omitempty"` // stable actor key the grant is keyed on
+	ConvID           string `json:"conv_id,omitempty"`  // omitted on agent[*].active_sudo (caller already knows)
 	ConvTitle        string `json:"conv_title,omitempty"`
 	Slug             string `json:"slug"`
 	GrantedAt        string `json:"granted_at"`
@@ -1151,6 +1194,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		loc := locationView(convID)
 		a := &dashboardAgent{
+			AgentID:           peerAgentID(convID),
 			ConvID:            convID,
 			Title:             agent.CachedTitle(convID),
 			agentLocationView: loc,
@@ -1221,6 +1265,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			online := isConvOnlineIn(m.ConvID, aliveSessions)
 			loc := locationView(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
+				AgentID:           peerAgentID(m.ConvID),
 				ConvID:            m.ConvID,
 				Title:             agent.CachedTitle(m.ConvID),
 				CreatedAt:         agent.CachedCreated(m.ConvID),
@@ -1253,6 +1298,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			online := isConvOnlineIn(ownerConv, aliveSessions)
 			ownerLoc := locationView(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
+				AgentID:           peerAgentID(ownerConv),
 				ConvID:            ownerConv,
 				Title:             agent.CachedTitle(ownerConv),
 				CreatedAt:         agent.CachedCreated(ownerConv),
@@ -1297,36 +1343,36 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Permissions.Overrides[convID] = copyMap
 	}
 
-	// Every active enrolled agent — the canonical roster. Unlike the
-	// old "online ungrouped session" probe, this includes OFFLINE
-	// agents: a conv that was an agent yesterday keeps showing after
-	// its tmux pane closed, instead of silently vanishing. Plain
-	// conversations that were never promoted are not here — they
-	// surface in out.Conversations as promotion candidates.
+	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
+	// agent-level roster, one row per live actor at its current conv). Unlike
+	// the old "online ungrouped session" probe, this includes OFFLINE agents: a
+	// conv that was an agent yesterday keeps showing after its tmux pane closed,
+	// instead of silently vanishing. Plain conversations that were never
+	// promoted are not here — they surface in out.Conversations.
 	activeAgents, _ := db.ListActiveAgents()
 	for _, e := range activeAgents {
-		addAgent(e.ConvID)
+		addAgent(e.CurrentConvID)
 	}
 
-	// Retired agents are demoted — they must never reach out.Agents.
-	// Retire revokes group membership and grants, so a retired conv
-	// normally can't arrive via the group/grant passes above anyway;
-	// retiredSet is the belt-and-braces guard for a partially-applied
-	// retire, and feeds the dedicated out.Retired list below.
+	// Retired ACTORS are demoted — they must never reach out.Agents. The
+	// actor-level roster is keyed on agents.retired_at, which only a human
+	// retire sets (a reincarnate / Claude Code /clear predecessor stays a
+	// generation of its active actor, so it is NOT here). retiredSet is the
+	// belt-and-braces guard for a partially-applied retire, and feeds the
+	// dedicated out.Retired list below.
 	retiredAgents, _ := db.ListRetiredAgents()
 	retiredSet := make(map[string]bool, len(retiredAgents))
 	for _, e := range retiredAgents {
-		retiredSet[e.ConvID] = true
+		retiredSet[e.CurrentConvID] = true
 	}
 
-	// Superseded conversations — the predecessors of a reincarnation
-	// chain — are NOT agents: their identity moved to the chain head.
-	// The v29→v30 enrollment backfill used to mis-enroll them as active
-	// agents (migrateV30toV31 cleans existing DBs; the fixed backfill
-	// prevents new ones). supersededSet is the read-time belt-and-
-	// braces guard — symmetric with retiredSet — so a ghost predecessor
-	// never reaches out.Agents / out.Ungrouped even if a partially
-	// applied reincarnate left a stale enrollment row behind.
+	// Superseded conversations — the predecessors of a reincarnation chain —
+	// are NOT agents: their identity moved to the chain head. The actor-level
+	// roster already excludes them (a predecessor is never an active actor's
+	// current conv), so supersededSet is now a redundant read-time belt-and-
+	// braces guard — symmetric with retiredSet — kept so a ghost predecessor
+	// never reaches out.Agents / out.Ungrouped even under a partially-applied
+	// rotation.
 	supersededSet := map[string]bool{}
 	if successions, err := db.ListAgentConvSuccessions(); err == nil {
 		for _, s := range successions {
@@ -1358,6 +1404,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			topEntry := dashboardSudoEntry{
 				ID:               g.ID,
+				AgentID:          g.AgentID,
 				ConvID:           g.ConvID,
 				ConvTitle:        title,
 				Slug:             g.Slug,
@@ -1374,6 +1421,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			// readable in browser devtools.
 			rowEntry := topEntry
 			rowEntry.ConvID = ""
+			rowEntry.AgentID = "" // the agent row already identifies the holder
 			sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
 		}
 	}
@@ -1448,8 +1496,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return out.Ungrouped[i].Title < out.Ungrouped[j].Title
 	})
 
-	out.Conversations = collectConversationsSnapshot(activeAgents, retiredAgents, aliveSessions)
+	out.Conversations = collectConversationsSnapshot(aliveSessions)
 	out.Retired = collectRetiredSnapshot(retiredAgents, aliveSessions)
+	out.Replaced = collectReplacedGenerationsSnapshot(activeAgents, retiredAgents, aliveSessions)
 	out.Pending = collectPendingSnapshot(aliveSessions)
 	out.Cron = collectCronSnapshot()
 	out.Links = collectLinksSnapshot()
@@ -1544,14 +1593,17 @@ const (
 // lists. aliveSessions is the snapshot-shaped alive set the caller
 // pre-fetched; this function never spawns its own tmux probe.
 // Returns an empty slice (not nil) so the JS .map() is safe.
-func collectConversationsSnapshot(active, retired []*db.AgentEnrollment, aliveSessions map[string]struct{}) []dashboardConversation {
+func collectConversationsSnapshot(aliveSessions map[string]struct{}) []dashboardConversation {
 	out := []dashboardConversation{}
-	enrolled := make(map[string]bool, len(active)+len(retired))
-	for _, e := range active {
-		enrolled[e.ConvID] = true
-	}
-	for _, e := range retired {
-		enrolled[e.ConvID] = true
+	// Exclude EVERY agent generation — active, retired, and superseded
+	// predecessors alike — from the plain-conversations list. The actor rosters
+	// expose only each actor's CURRENT conv, so without the full
+	// agent_conversations set a predecessor generation would leak in as a bogus
+	// promotion candidate (JOH-26 PR3b). On a read error, return empty rather
+	// than risk surfacing agents as plain conversations.
+	agentConvs, err := db.ListAgentConvIDs()
+	if err != nil {
+		return out
 	}
 	rows, err := db.ListRecentConvIndex(conversationsScanLimit)
 	if err != nil {
@@ -1561,7 +1613,10 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment, aliveSe
 		if len(out) >= conversationsListMax {
 			break
 		}
-		if row.ConvID == "" || enrolled[row.ConvID] {
+		if row.ConvID == "" {
+			continue
+		}
+		if _, isAgent := agentConvs[row.ConvID]; isAgent {
 			continue
 		}
 		// Plain conversations are non-agents — never /rename'd — so
@@ -1590,7 +1645,7 @@ func collectConversationsSnapshot(active, retired []*db.AgentEnrollment, aliveSe
 // an empty slice (not nil) so the JS .map() is safe. aliveSessions is
 // the snapshot-shaped alive set the caller pre-fetched; this function
 // never spawns its own tmux probe.
-func collectRetiredSnapshot(retired []*db.AgentEnrollment, aliveSessions map[string]struct{}) []dashboardRetiredAgent {
+func collectRetiredSnapshot(retired []*db.Agent, aliveSessions map[string]struct{}) []dashboardRetiredAgent {
 	out := make([]dashboardRetiredAgent, 0, len(retired))
 	for _, e := range retired {
 		retiredAt := ""
@@ -1598,9 +1653,9 @@ func collectRetiredSnapshot(retired []*db.AgentEnrollment, aliveSessions map[str
 			retiredAt = e.RetiredAt.Format(time.RFC3339)
 		}
 		out = append(out, dashboardRetiredAgent{
-			ConvID:       e.ConvID,
-			Title:        agent.CachedTitle(e.ConvID),
-			Online:       isConvOnlineIn(e.ConvID, aliveSessions),
+			ConvID:       e.CurrentConvID,
+			Title:        agent.CachedTitle(e.CurrentConvID),
+			Online:       isConvOnlineIn(e.CurrentConvID, aliveSessions),
 			RetiredAt:    retiredAt,
 			RetiredBy:    e.RetiredBy,
 			RetireReason: e.RetireReason,
@@ -1608,6 +1663,76 @@ func collectRetiredSnapshot(retired []*db.AgentEnrollment, aliveSessions map[str
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].RetiredAt > out[j].RetiredAt // newest first
+	})
+	return out
+}
+
+// collectReplacedGenerationsSnapshot builds the "Replaced generations" list:
+// every superseded predecessor conversation generation of a still-existing
+// actor (active OR retired). For each actor it walks db.GenerationsForAgent
+// (the rotation chain, oldest link first), skips the live head
+// (agents.current_conv_id — shown on the roster, not here), and emits one row
+// per predecessor. A predecessor's "replaced via / at" is taken from the NEXT
+// link in the chain — the generation that superseded it — since within one
+// actor the generations form a linear reincarnate/clear chain ordered by
+// linked_at. aliveSessions is the pre-fetched alive set (no per-row tmux
+// probe). Returns an empty slice (not nil) so JS .map() / .length are safe.
+//
+// No overlap with the Retired tray: that lists a retired actor's CURRENT conv;
+// this lists its (and every active actor's) PAST generations.
+func collectReplacedGenerationsSnapshot(active, retired []*db.Agent, aliveSessions map[string]struct{}) []dashboardReplacedGen {
+	out := []dashboardReplacedGen{}
+	emit := func(actors []*db.Agent, actorRetired bool) {
+		for _, a := range actors {
+			gens, err := db.GenerationsForAgent(a.AgentID)
+			if err != nil || len(gens) < 2 {
+				continue // only the head (or none) — no predecessors to show
+			}
+			actorTitle := agent.CachedTitle(a.CurrentConvID)
+			for i, g := range gens {
+				if g.ConvID == a.CurrentConvID {
+					continue // the live head — shown on the roster, not here
+				}
+				// The generation that REPLACED this one is the next link in the
+				// chain (ordered by linked_at); its reason + linked_at are how
+				// and when this generation was superseded. Fall back to the
+				// generation's own birth metadata if it is somehow the last
+				// link yet not the head (defensive — shouldn't happen).
+				reason, replacedAt := g.Reason, g.LinkedAt
+				if i+1 < len(gens) {
+					reason = gens[i+1].Reason
+					replacedAt = gens[i+1].LinkedAt
+				}
+				title := agent.CachedTitle(g.ConvID)
+				if title == "" {
+					title = actorTitle
+				}
+				ra := ""
+				if !replacedAt.IsZero() {
+					ra = replacedAt.Format(time.RFC3339)
+				}
+				out = append(out, dashboardReplacedGen{
+					ConvID:       g.ConvID,
+					Title:        title,
+					Reason:       reason,
+					ReplacedAt:   ra,
+					Online:       isConvOnlineIn(g.ConvID, aliveSessions),
+					ActorConvID:  a.CurrentConvID,
+					ActorTitle:   actorTitle,
+					ActorRetired: actorRetired,
+				})
+			}
+		}
+	}
+	emit(active, false)
+	emit(retired, true)
+	// Group a single actor's generations together (by the live actor's title),
+	// newest replacement first within each actor.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ActorTitle != out[j].ActorTitle {
+			return out[i].ActorTitle < out[j].ActorTitle
+		}
+		return out[i].ReplacedAt > out[j].ReplacedAt
 	})
 	return out
 }
@@ -1700,9 +1825,11 @@ func collectCronSnapshot() []dashboardCronJob {
 		row := dashboardCronJob{
 			ID:              j.ID,
 			Name:            j.Name,
+			OwnerAgent:      j.OwnerAgent,
 			OwnerConv:       j.OwnerConv,
 			OwnerLabel:      labelForConv(j.OwnerConv),
 			TargetKind:      j.TargetKind,
+			TargetAgent:     j.TargetAgent,
 			TargetConv:      j.TargetConv,
 			GroupID:         j.GroupID,
 			IntervalSeconds: j.IntervalSeconds,

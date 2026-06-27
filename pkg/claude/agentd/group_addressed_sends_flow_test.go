@@ -25,9 +25,11 @@ import (
 // the role filter only ever shrinks the recipient set after the gate.
 
 // mcastRecipientView is the per-recipient subset of the /v1/messages
-// multicast response the tests assert on.
+// multicast response the tests assert on. AgentID is the stable id the
+// receipt names each recipient by (JOH-27 PR3b-2).
 type mcastRecipientView struct {
 	ConvID    string `json:"conv_id"`
+	AgentID   string `json:"agent_id"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
 }
