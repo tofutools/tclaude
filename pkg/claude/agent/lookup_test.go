@@ -421,6 +421,27 @@ func TestResolveSelector_AgentIDSurvivesRotation(t *testing.T) {
 	assert.Equal(t, convNew, r.ConvID, "agent_id must follow the rotation to the live head")
 }
 
+// TestResolveSelector_ByAgentID_Retired pins the intended behaviour that a
+// retired actor is still addressable by its stable agent_id (resolving to its
+// last generation) — a stable id keeps referencing an agent even after it is
+// retired; display surfaces flag the retired state separately.
+func TestResolveSelector_ByAgentID_Retired(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	retired, err := db.RetireAgentByID(agentID, "operator", "done")
+	require.NoError(t, err, "RetireAgentByID")
+	require.True(t, retired, "agent should have been retired")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "a retired agent must still resolve by its stable id")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID)
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")

@@ -133,14 +133,18 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 	}
 
 	// 0.5) stable agent_id — the canonical, rotation-immune handle. A
-	//      selector tagged `agt_` is unambiguously an agent_id: it can't
-	//      collide with a conv UUID (dashes) or a display title, so we
-	//      resolve it straight to the actor's live generation
-	//      (agents.current_conv_id) regardless of how many times the agent
-	//      has reincarnated. Full id or unique prefix resolves; several
-	//      matches surface as an ambiguity; zero is reported against the
-	//      agent layer rather than falling through to the conv/title steps
-	//      (which can never match an `agt_` string anyway).
+	//      selector tagged `agt_` is taken as an explicit agent_id and
+	//      resolved straight to the actor's current generation
+	//      (agents.current_conv_id), regardless of how many times the
+	//      agent has reincarnated. Retired actors resolve too (to their
+	//      last generation) so a stable id can still reference them.
+	//      Full id or unique prefix resolves; several matches surface as
+	//      an ambiguity; zero is reported against the agent layer rather
+	//      than falling through — the `agt_` tag is an explicit "this is
+	//      an agent id", so a mistyped id gets a precise error instead of
+	//      a generic miss. (The corner of a conversation deliberately
+	//      titled `agt_…` is therefore not reachable by that title; an
+	//      acceptable trade for the precise error on the common path.)
 	if strings.HasPrefix(selector, db.AgentIDPrefix) {
 		matches, err := db.FindAgentsByIDPrefix(selector)
 		if err != nil {
