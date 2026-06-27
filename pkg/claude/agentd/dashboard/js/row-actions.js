@@ -582,12 +582,21 @@ function bindRowActions() {
           // out-of-band — `claude --resume <id>` from its dir, or
           // `tclaude agent seance --target <id>`. A one-click in-dashboard
           // open of the grave is a planned follow-up.
-          try {
-            await navigator.clipboard?.writeText(conv);
-            toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
-          } catch (_) {
-            toast(`conv-id: ${conv}`);
+          // Only claim "copied" when the clipboard API exists AND the write
+          // resolves. `navigator.clipboard?.writeText(...)` returns undefined
+          // (not a rejection) when clipboard is missing — awaiting that would
+          // still hit the success toast without anything being written. So gate
+          // on the API first, and fall back to the conv-id toast otherwise.
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+              await navigator.clipboard.writeText(conv);
+              toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
+              return;
+            } catch (_) {
+              // fall through to the conv-id toast below
+            }
           }
+          toast(`conv-id: ${conv}`);
           return;
         }
         case 'delete-generation': {
