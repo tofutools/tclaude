@@ -2053,6 +2053,17 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 	}
 
+	// If the up-front EnsureAgentForConv failed transiently, AddAgentGroupMember's
+	// own EnsureAgentForConv may have minted the actor anyway (stamped "group").
+	// Re-resolve so a successful spawn still records its pending name below.
+	if agentID == "" {
+		if id, rErr := db.AgentIDForConv(convID); rErr != nil {
+			slog.Warn("spawn: failed to re-resolve actor after group add", "conv", convID, "error", rErr)
+		} else {
+			agentID = id
+		}
+	}
+
 	// Record the requested name as the actor's pending display name. Until
 	// the title materialises (a tick later on the legacy path; at launch on
 	// the launch-enrollment path) the dashboard would otherwise show
