@@ -181,7 +181,7 @@ function bindFilter(tab) {
       rerender();
     });
   }
-  // Optional ▾ view popover (groups tab only) — collapses the four
+  // Optional ▾ view popover (groups tab only) — collapses the five
   // "show X" checkboxes above behind a single button so the filter
   // bar stays compact. Restoration of each checkbox's state has
   // already happened above; this only wires the trigger + open/close
@@ -193,9 +193,9 @@ function bindFilter(tab) {
   const viewBadge = $(`#filter-${tab}-view-badge`);
   if (viewBtn && viewMenu && viewBadge) {
     // Defaults match the `checked` attributes in dashboard.html. The
-    // first three default ON (showing everything); 'conversations'
-    // defaults OFF since there are usually many. Edit BOTH places
-    // together if the defaults ever change.
+    // first three default ON (showing everything); 'conversations' and
+    // 'replaced' default OFF (each can grow large / is archival). Edit
+    // BOTH places together if the defaults ever change.
     const viewDefaults = {
       [`filter-${tab}-offline`]: true,
       [`filter-${tab}-ungrouped`]: true,
