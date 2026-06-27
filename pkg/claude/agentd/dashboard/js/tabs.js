@@ -47,7 +47,13 @@ function filterGroups(groups, q) {
              ((m.startup_branch || '').toLowerCase().includes(needle)) ||
              ((state.cwd || '').toLowerCase().includes(needle)) ||
              ((m.startup_dir || '').toLowerCase().includes(needle)) ||
-             ((m.current_dir || '').toLowerCase().includes(needle));
+             ((m.current_dir || '').toLowerCase().includes(needle)) ||
+             // Replaced-generation rows (virtual "Replaced" group) carry the
+             // owning actor's context + replacement reason — match those too so
+             // an owner name or a `reincarnate`/`/clear` reason finds the row.
+             ((m.actor_title || '').toLowerCase().includes(needle)) ||
+             ((m.actor_conv_id || '').toLowerCase().includes(needle)) ||
+             ((m.reason || '').toLowerCase().includes(needle));
     });
     if (nameHit || descrHit) {
       // Group name / descr matched: keep all members so the user can
@@ -212,8 +218,12 @@ function filterCron(jobs, q) {
     ((j.name || '').toLowerCase().includes(needle)) ||
     ((j.owner_label || '').toLowerCase().includes(needle)) ||
     ((j.owner_agent || '').toLowerCase().includes(needle)) ||
+    // conv_id stays a supported selector (still shown in row tooltips), so keep
+    // matching it after the agent_id cutover.
+    ((j.owner_conv || '').toLowerCase().includes(needle)) ||
     ((j.target_label || '').toLowerCase().includes(needle)) ||
     ((j.target_agent || '').toLowerCase().includes(needle)) ||
+    ((j.target_conv || '').toLowerCase().includes(needle)) ||
     ((j.group_name || '').toLowerCase().includes(needle)) ||
     ((j.subject || '').toLowerCase().includes(needle)) ||
     ((j.body || '').toLowerCase().includes(needle))

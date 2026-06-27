@@ -64,6 +64,12 @@ func schemaCmd() *cobra.Command {
 }
 
 func runSchema(p *SchemaParams) error {
+	// --json and --relations are alternate output modes; reject both together
+	// rather than silently letting --json win and making --relations a no-op.
+	if p.JSON && p.Relations {
+		return fmt.Errorf("--json and --relations are mutually exclusive")
+	}
+
 	d, err := db.Open()
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
