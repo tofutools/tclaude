@@ -535,7 +535,16 @@ function bindCopy() {
     const t = e.target.closest('[data-copy]');
     if (!t) return;
     const cmd = t.getAttribute('data-copy');
-    navigator.clipboard?.writeText(cmd).then(() => {
+    // Gate on the clipboard API before calling. When `navigator.clipboard` is
+    // entirely absent the `?.` already short-circuits the whole chain harmlessly,
+    // but when `clipboard` is present while `writeText` is missing (some
+    // non-secure / partial-support contexts) the chain does NOT short-circuit and
+    // `.writeText(cmd)` throws a synchronous TypeError before the trailing
+    // `.catch()` is even attached. The explicit guard covers both; the inline
+    // "✓ copied" feedback then only fires on an actual successful write.
+    // (Mirrors JOH-294's row-actions.js guard.)
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
+    navigator.clipboard.writeText(cmd).then(() => {
       const orig = t.textContent;
       t.textContent = '✓ copied: ' + cmd;
       setTimeout(() => { t.textContent = orig; }, 1200);
