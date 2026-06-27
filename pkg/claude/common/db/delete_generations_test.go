@@ -138,3 +138,71 @@ func TestDeleteAgentByConvID_CronJobsActorScoped(t *testing.T) {
 	}
 	assert.Zero(t, countRuns(), "cron runs cascade-delete with their jobs (FK preserved)")
 }
+
+// TestDeleteAgentByConvID_ActorKeyedHistoryActorScoped guards the JOH-26 PR3d
+// teardown completeness: the agent-keyed tables with NO FK to agents —
+// agent_sudo_grants, agent_spawn_history, agent_clone_history — are torn down
+// with the ACTOR (its current-generation delete), not on a predecessor delete,
+// and not left orphaned when the `agents` row is deleted. (The `agents` delete
+// cascades agent_conversations but NOT these FK-less tables, so they must be
+// deleted explicitly — otherwise they become invisible residue the export/count
+// paths can no longer see.)
+func TestDeleteAgentByConvID_ActorKeyedHistoryActorScoped(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "Open")
+
+	// One actor, two generations: old → new (new is the live head).
+	_, _, err = EnsureAgentForConv("old", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
+	actor, err := AgentIDForConv("new")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	now := time.Now().UTC()
+	// A sudo grant on the live generation, a spawn-history row, and a
+	// clone-history row — all keyed (after resolution) on the actor's agent_id,
+	// none with an FK to agents.
+	_, err = InsertSudoGrant(&SudoGrant{
+		ConvID: "new", Slug: "agent.spawn", GrantedAt: now,
+		ExpiresAt: now.Add(time.Hour), GrantedBy: "human",
+	})
+	require.NoError(t, err, "insert sudo grant")
+	require.NoError(t, ClaimSpawnSlot("new", 10, time.Hour, now), "claim spawn slot")
+	require.NoError(t, ClaimCloneSlot("new", time.Minute, now), "claim clone slot")
+
+	countAll := func() (sudo, spawn, clone int) {
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_sudo_grants WHERE agent_id = ?`, actor).Scan(&sudo))
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_spawn_history WHERE spawner_agent_id = ?`, actor).Scan(&spawn))
+		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_clone_history WHERE source_agent_id = ?`, actor).Scan(&clone))
+		return
+	}
+	if s, sp, cl := countAll(); !assert.Equal(t, []int{1, 1, 1}, []int{s, sp, cl}, "one of each seeded") {
+		t.FailNow()
+	}
+
+	// --- Delete the PREDECESSOR generation: history must be untouched. ---
+	counts, err := DeleteAgentByConvID("old")
+	require.NoError(t, err, "delete predecessor")
+	assert.Zero(t, counts.SudoGrants, "predecessor delete leaves sudo grants")
+	assert.Zero(t, counts.SpawnHistory, "predecessor delete leaves spawn history")
+	assert.Zero(t, counts.CloneHistory, "predecessor delete leaves clone history")
+	s, sp, cl := countAll()
+	assert.Equal(t, 1, s, "sudo grant survives a predecessor delete")
+	assert.Equal(t, 1, sp, "spawn history survives a predecessor delete")
+	assert.Equal(t, 1, cl, "clone history survives a predecessor delete")
+
+	// --- Delete the LIVE generation: the actor's grants + history are torn
+	// down (and not orphaned behind the deleted agents row). ---
+	counts, err = DeleteAgentByConvID("new")
+	require.NoError(t, err, "delete live generation")
+	assert.Equal(t, int64(1), counts.SudoGrants, "live-gen delete removes the sudo grant")
+	assert.Equal(t, int64(1), counts.SpawnHistory, "live-gen delete removes the spawn-history row")
+	assert.Equal(t, int64(1), counts.CloneHistory, "live-gen delete removes the clone-history row")
+	s, sp, cl = countAll()
+	assert.Zero(t, s, "no sudo grant remains once the actor is gone")
+	assert.Zero(t, sp, "no spawn-history row remains once the actor is gone")
+	assert.Zero(t, cl, "no clone-history row remains once the actor is gone")
+}
