@@ -567,6 +567,37 @@ type importCtx struct {
 	exp            *groupexport.Export
 	newGroupID     int64
 	skippedAliases []string
+	// createdActors tracks the actor ids freshly minted by THIS import, so the
+	// enrollment metadata replay only restores archived facts (created_at,
+	// pending_name, retire triple) onto rows this import created — never onto a
+	// pre-existing local actor. Collision detection remaps every locally-present
+	// conv to a fresh id, so in practice every resolved actor is import-created;
+	// this guard makes that invariant load-bearing rather than incidental, and
+	// closes the check/import TOCTOU window where a conv could appear locally
+	// between the daemon's pre-flight scan and this transaction.
+	createdActors map[string]bool
+}
+
+// ensureActor resolves (allocating when absent) the actor owning conv, recording
+// in createdActors whether THIS import minted it. All import steps that touch an
+// actor route through here so that by the time enrollments() replays archived
+// metadata, createdActors is complete — see the importCtx.createdActors note.
+func (c *importCtx) ensureActor(conv, via string) (string, error) {
+	pre, err := agentIDForConvTx(c.tx, conv)
+	if err != nil {
+		return "", err
+	}
+	agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+	if err != nil {
+		return "", err
+	}
+	if pre == "" && agentID != "" {
+		if c.createdActors == nil {
+			c.createdActors = map[string]bool{}
+		}
+		c.createdActors[agentID] = true
+	}
+	return agentID, nil
 }
 
 // rc remaps a single conv-id through the plan (identity when absent).
@@ -694,7 +725,7 @@ func (c *importCtx) legacyDefaultModelProfile() error {
 func (c *importCtx) members() error {
 	for _, m := range c.exp.Members {
 		conv := c.rc(m.ConvID)
-		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
 			return fmt.Errorf("import: member %s actor: %w", m.ConvID, err)
 		}
@@ -711,7 +742,7 @@ func (c *importCtx) members() error {
 func (c *importCtx) owners() error {
 	for _, o := range c.exp.Owners {
 		conv := c.rc(o.ConvID)
-		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
 			return fmt.Errorf("import: owner %s actor: %w", o.ConvID, err)
 		}
@@ -740,7 +771,7 @@ func (c *importCtx) audit() error {
 func (c *importCtx) permissions() error {
 	for _, p := range c.exp.Permissions {
 		conv := c.rc(p.ConvID)
-		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
 			return fmt.Errorf("import: permission %s/%s actor: %w", p.ConvID, p.Slug, err)
 		}
@@ -767,15 +798,20 @@ func (c *importCtx) enrollments() error {
 		if via == "" {
 			via = "import"
 		}
-		agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+		agentID, err := c.ensureActor(conv, via)
 		if err != nil {
 			return fmt.Errorf("import: enrollment %s actor: %w", e.ConvID, err)
 		}
-		// Restore the original creation timestamp (ensureAgentForConvTx — and the
-		// members import before it — stamp `now` for a freshly-minted actor) so
-		// the round-tripped agent keeps its birth time. Import is transactional
-		// to a remapped conv-id on a clean target, so the actor is always freshly
-		// created in this transaction; the archived timestamp is authoritative.
+		// Restore the archived actor facts onto the row — but ONLY when this
+		// import minted it. ensureActor (and the members import before it) stamp
+		// `now` / "import" for a freshly-created actor, so the archived
+		// created_at / pending_name / retire triple are authoritative for it.
+		// For a pre-existing local actor — reachable only via the check/import
+		// TOCTOU, since collision detection remaps every locally-present conv to a
+		// fresh id — these UPDATEs would clobber live metadata, so skip them.
+		if !c.createdActors[agentID] {
+			continue
+		}
 		if e.EnrolledAt != "" {
 			if _, err := c.tx.Exec(`UPDATE agents SET created_at = ? WHERE agent_id = ?`,
 				e.EnrolledAt, agentID); err != nil {
@@ -817,7 +853,7 @@ func (c *importCtx) workdirs() error {
 func (c *importCtx) sudoGrants() error {
 	for _, s := range c.exp.SudoGrants {
 		conv := c.rc(s.ConvID)
-		agentID, err := ensureAgentForConvTx(c.tx, conv, "import")
+		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s actor: %w", s.ConvID, s.Slug, err)
 		}
@@ -876,7 +912,7 @@ func (c *importCtx) spawnHist() error {
 	// History is keyed on the spawner's actor (JOH-26 PR3a); resolve the
 	// remapped conv to its agent, mirroring members()/permissions().
 	for _, s := range c.exp.SpawnHist {
-		agentID, err := ensureAgentForConvTx(c.tx, c.rc(s.SpawnerConvID), "import")
+		agentID, err := c.ensureActor(c.rc(s.SpawnerConvID), "import")
 		if err != nil {
 			return fmt.Errorf("import: spawn history actor: %w", err)
 		}
@@ -893,7 +929,7 @@ func (c *importCtx) cloneHist() error {
 	// History is keyed on the source's actor (JOH-26 PR3a); resolve the
 	// remapped conv to its agent.
 	for _, h := range c.exp.CloneHist {
-		agentID, err := ensureAgentForConvTx(c.tx, c.rc(h.SourceConvID), "import")
+		agentID, err := c.ensureActor(c.rc(h.SourceConvID), "import")
 		if err != nil {
 			return fmt.Errorf("import: clone history actor: %w", err)
 		}
@@ -916,7 +952,7 @@ func (c *importCtx) rcToAgent(convID string) (string, error) {
 	if conv == "" {
 		return "", nil
 	}
-	return ensureAgentForConvTx(c.tx, conv, "import")
+	return c.ensureActor(conv, "import")
 }
 
 func (c *importCtx) cronJobsAndRuns() error {

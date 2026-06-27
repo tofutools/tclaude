@@ -106,7 +106,7 @@ func TestImportGroup_V2ArchiveNoSynthesis(t *testing.T) {
 // the cron export/import path: a group fan-out job (target_kind='group') must
 // round-trip as one. Before the fix the export dropped target_kind, so the
 // importer defaulted it to 'conv' and — now that a group job's target_agent is
-// '' — the job came back as a broken conv job addressed to the empty conv.
+// empty — the job came back as a broken conv job addressed to the empty conv.
 func TestGroupExport_GroupTargetCronJob_RoundTrips(t *testing.T) {
 	setupTestDB(t)
 
@@ -149,4 +149,109 @@ func TestGroupExport_GroupTargetCronJob_RoundTrips(t *testing.T) {
 	assert.True(t, imported.IsGroupTarget(),
 		"a group fan-out job round-trips as group-target, not a broken conv job")
 	assert.Equal(t, CronTargetGroup, imported.TargetKind, "target_kind preserved")
+}
+
+// actorMeta is the raw agents-table metadata the import's enrollment replay
+// touches, read as stored strings (no time-parse coupling).
+type actorMeta struct {
+	createdAt, createdVia, retiredAt, retiredBy, retireReason, pendingName string
+}
+
+func readActorMeta(t *testing.T, agentID string) actorMeta {
+	t.Helper()
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	var m actorMeta
+	require.NoError(t, d.QueryRow(`SELECT created_at, created_via, retired_at,
+		retired_by, retire_reason, pending_name FROM agents WHERE agent_id = ?`, agentID).Scan(
+		&m.createdAt, &m.createdVia, &m.retiredAt, &m.retiredBy, &m.retireReason, &m.pendingName),
+		"read actor metadata")
+	return m
+}
+
+// TestImportGroup_PreexistingActorMetadataPreserved pins JOH-289: when a plan's
+// ConvRemap resolves a source conv onto an actor that ALREADY exists locally,
+// the enrollment metadata replay must NOT clobber that actor's created_at /
+// created_via / retire triple / pending_name. Production collision detection
+// remaps every locally-present conv to a fresh id, so this state is only
+// reachable via the check/import TOCTOU — but the importer must stay
+// non-destructive if it ever does. A hand-built colliding plan is the only way
+// to exercise the guard, since the daemon never constructs one.
+func TestImportGroup_PreexistingActorMetadataPreserved(t *testing.T) {
+	setupTestDB(t)
+
+	// A pre-existing local actor with its own metadata.
+	localAgent, _, err := EnsureAgentForConv("conv-local", "spawn")
+	require.NoError(t, err, "seed local actor")
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	_, err = d.Exec(`UPDATE agents SET created_at = '2020-01-01T00:00:00Z',
+		retired_at = '2021-01-01T00:00:00Z', retired_by = 'local-human',
+		retire_reason = 'local-reason', pending_name = 'local-pending'
+		WHERE agent_id = ?`, localAgent)
+	require.NoError(t, err, "stamp local metadata")
+
+	// Import a plan whose member conv remaps ONTO conv-local, carrying an
+	// enrollment with conflicting metadata the pre-fix code wrote over the row.
+	_, err = ImportGroup(GroupImportPlan{
+		Export: &groupexport.Export{
+			FormatVersion: groupexport.FormatVersion,
+			SourceGroup:   "src",
+			Group:         groupexport.Group{Descr: "imported"},
+			Members:       []groupexport.Member{{ConvID: "conv-src", Role: "member", JoinedAt: "2026-01-01T00:00:00Z"}},
+			Enrollments: []groupexport.Enrollment{{
+				ConvID: "conv-src", EnrolledAt: "2099-01-01T00:00:00Z", EnrolledVia: "import",
+				RetiredAt: "2099-02-02T00:00:00Z", RetiredBy: "import-human",
+				RetireReason: "import-reason", PendingName: "import-pending",
+			}},
+		},
+		TargetName: "imported-team",
+		TargetCwd:  "/tmp/imported",
+		ConvRemap:  map[string]string{"conv-src": "conv-local"},
+	})
+	require.NoError(t, err, "ImportGroup")
+
+	got := readActorMeta(t, localAgent)
+	assert.Equal(t, "2020-01-01T00:00:00Z", got.createdAt, "created_at not clobbered")
+	assert.Equal(t, "spawn", got.createdVia, "created_via not clobbered")
+	assert.Equal(t, "2021-01-01T00:00:00Z", got.retiredAt, "retired_at not clobbered")
+	assert.Equal(t, "local-human", got.retiredBy, "retired_by not clobbered")
+	assert.Equal(t, "local-reason", got.retireReason, "retire_reason not clobbered")
+	assert.Equal(t, "local-pending", got.pendingName, "pending_name not clobbered")
+}
+
+// TestImportGroup_FreshActorMetadataRestored is the other half of JOH-289: an
+// enrollment for a conv THIS import freshly creates DOES get its archived facts
+// restored — the round-trip the guard must not break.
+func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
+	setupTestDB(t)
+
+	_, err := ImportGroup(GroupImportPlan{
+		Export: &groupexport.Export{
+			FormatVersion: groupexport.FormatVersion,
+			SourceGroup:   "src2",
+			Group:         groupexport.Group{Descr: "imported"},
+			Members:       []groupexport.Member{{ConvID: "conv-fresh", Role: "member", JoinedAt: "2026-01-01T00:00:00Z"}},
+			Enrollments: []groupexport.Enrollment{{
+				ConvID: "conv-fresh", EnrolledAt: "2022-03-03T00:00:00Z", EnrolledVia: "spawn",
+				RetiredAt: "2022-04-04T00:00:00Z", RetiredBy: "src-human",
+				RetireReason: "src-reason", PendingName: "src-pending",
+			}},
+		},
+		TargetName: "fresh-team",
+		TargetCwd:  "/tmp/fresh",
+		ConvRemap:  map[string]string{}, // identity: conv-fresh does not exist locally
+	})
+	require.NoError(t, err, "ImportGroup")
+
+	actor, err := GetAgentByConv("conv-fresh")
+	require.NoError(t, err, "GetAgentByConv")
+	require.NotNil(t, actor, "actor created by import")
+
+	got := readActorMeta(t, actor.AgentID)
+	assert.Equal(t, "2022-03-03T00:00:00Z", got.createdAt, "archived created_at restored")
+	assert.Equal(t, "2022-04-04T00:00:00Z", got.retiredAt, "archived retired_at restored")
+	assert.Equal(t, "src-human", got.retiredBy, "archived retired_by restored")
+	assert.Equal(t, "src-reason", got.retireReason, "archived retire_reason restored")
+	assert.Equal(t, "src-pending", got.pendingName, "archived pending_name restored")
 }

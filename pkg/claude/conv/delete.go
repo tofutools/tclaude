@@ -404,10 +404,25 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 		return counts, nil, fmt.Errorf("list generations of %s: %w", actor.AgentID, err)
 	}
 
+	// Re-resolve the live head immediately before sweeping. The initial
+	// GetAgentByConv and this ConvsForAgent are two separate reads; if a
+	// rotation (reincarnate / clear) advanced the actor's head in the window
+	// between them, the newly-current conv now appears in `gens`, and sweeping
+	// it as a "predecessor" would destroy the live conversation. Skip whatever
+	// is the live head now, in addition to convID (torn down last). A vanished
+	// actor (cur == nil) leaves liveHead = convID and the gens list is already
+	// stale orphans, which DeleteConvByID no-ops over idempotently.
+	liveHead := convID
+	if cur, err := db.GetAgentByConv(convID); err != nil {
+		return counts, nil, fmt.Errorf("re-resolve head of %s: %w", convID, err)
+	} else if cur != nil {
+		liveHead = cur.CurrentConvID
+	}
+
 	var swept []string
 	for _, g := range gens {
-		if g == convID || g == "" {
-			continue // head deleted last; skip blanks defensively
+		if g == convID || g == liveHead || g == "" {
+			continue // head deleted last; never sweep the live head; skip blanks
 		}
 		c, err := DeleteConvByID(g)
 		if err != nil {
