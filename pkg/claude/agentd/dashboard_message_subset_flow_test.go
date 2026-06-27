@@ -273,6 +273,142 @@ func TestMulticast_MembersSubset_OnAgentMessagesEndpoint(t *testing.T) {
 	assert.Empty(t, bRows, "the unlisted member is not reached")
 }
 
+// Scenario: the `members` subset can be keyed by the stable agent_id —
+// the canonical key per JOH-27 (conv-ids stay accepted for back-compat).
+// A list naming a member by its agent_id reaches exactly that member, and
+// the send receipt names each recipient by its agent_id. This is the
+// backend half of the agent-primary multicast keying; the dashboard modal
+// switches to sending agent_ids in the -web follow-up.
+func TestDashboardMessage_GroupSubset_KeyedByAgentID(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const sender = "daid-send-bbbb-cccc-000000000001"
+	const memberA = "daid-aaaa-bbbb-cccc-000000000002"
+	const memberB = "daid-bbbb-bbbb-cccc-000000000003"
+	f.HaveMember("team", sender)
+	f.HaveMember("team", memberA)
+	f.HaveMember("team", memberB)
+
+	// Joining the group enrolled each member as an actor — resolve A's
+	// stable agent_id and address the subset by it, not its conv-id.
+	agentA, err := db.AgentIDForConv(memberA)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentA, "a group member is minted as an actor")
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"from": sender, "to": "group:team", "body": "by agent id",
+		"members": []string{agentA},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeMcast(t, rec)
+	assert.ElementsMatch(t, []string{memberA}, recipientConvIDs(resp),
+		"an agent_id-keyed subset reaches exactly the named member")
+	// Receipt carries the stable agent_id for each recipient.
+	require.Len(t, resp.Recipients, 1)
+	assert.Equal(t, agentA, resp.Recipients[0].AgentID,
+		"the send receipt names the recipient by its stable agent_id")
+
+	bRows, err := db.ListAgentMessagesForConv(memberB, 100)
+	require.NoError(t, err)
+	assert.Empty(t, bRows, "a member not named (by agent_id) is not reached")
+}
+
+// Scenario: addressing the subset by agent_id is rotation-immune — the
+// headline reason for keying on it. A member named by its stable agent_id
+// is reached even after it reincarnates to a fresh conv-id between the
+// dashboard snapshot and the send. Unlike the conv-id path (which has to
+// walk the succession chain), the agent_id never changed, so the match is
+// direct.
+func TestDashboardMessage_GroupSubset_AgentIDSurvivesReincarnation(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const sender = "dais-send-bbbb-cccc-000000000001"
+	const oldX = "dais-oldx-bbbb-cccc-000000000002"
+	f.HaveMember("team", sender)
+	f.HaveConvWithTitle(oldX, "worker")
+	f.HaveMember("team", oldX)
+	f.HaveAliveSession(oldX, "spwn-dais-x", "tclaude-spwn-dais-x", "/tmp/work")
+
+	// Capture the stable agent_id BEFORE reincarnation; it must stay valid
+	// across the rotation.
+	agentX, err := db.AgentIDForConv(oldX)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentX)
+
+	r := f.Reincarnate(oldX, "fresh start")
+	newY := r.NewConv
+	require.NotEqual(t, oldX, newY, "reincarnation produced a fresh conv-id")
+	// The agent_id is unchanged by reincarnation.
+	agentY, err := db.AgentIDForConv(newY)
+	require.NoError(t, err)
+	assert.Equal(t, agentX, agentY, "agent_id is stable across reincarnation")
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"from": sender, "to": "group:team", "body": "by stable id",
+		"members": []string{agentX},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeMcast(t, rec)
+	assert.ElementsMatch(t, []string{newY}, recipientConvIDs(resp),
+		"an agent_id-keyed subset lands on the live successor after reincarnation")
+
+	newRows, err := db.ListAgentMessagesForConv(newY, 100)
+	require.NoError(t, err)
+	matched := 0
+	for _, m := range newRows {
+		if m.Body == "by stable id" {
+			matched++
+		}
+	}
+	assert.Equal(t, 1, matched, "the reincarnated successor received the subset message exactly once")
+	oldRows, err := db.ListAgentMessagesForConv(oldX, 100)
+	require.NoError(t, err)
+	assert.Empty(t, oldRows, "nothing landed in the superseded conv")
+}
+
+// Scenario: a `members` list may MIX keys — an agent_id for one member and
+// a conv-id for another — and both are reached. Confirms the two match
+// paths coexist (so the dashboard can migrate to agent_ids incrementally
+// without a flag-day cutover).
+func TestDashboardMessage_GroupSubset_MixedAgentIDAndConvID(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const sender = "dmix-send-bbbb-cccc-000000000001"
+	const memberA = "dmix-aaaa-bbbb-cccc-000000000002"
+	const memberB = "dmix-bbbb-bbbb-cccc-000000000003"
+	const memberC = "dmix-cccc-bbbb-cccc-000000000004"
+	f.HaveMember("team", sender)
+	f.HaveMember("team", memberA)
+	f.HaveMember("team", memberB)
+	f.HaveMember("team", memberC)
+
+	agentA, err := db.AgentIDForConv(memberA)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentA)
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"from": sender, "to": "group:team", "body": "mixed keys",
+		// A by agent_id, B by conv-id; C named by neither.
+		"members": []string{agentA, memberB},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeMcast(t, rec)
+	assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
+		"a mixed agent_id + conv_id list reaches both named members")
+	cRows, err := db.ListAgentMessagesForConv(memberC, 100)
+	require.NoError(t, err)
+	assert.Empty(t, cRows, "the unnamed member is not reached")
+}
+
 // Scenario: a `members` list whose entries are all blank narrows to
 // NOBODY — it does not fall back to a full-group broadcast. A caller
 // that passed a non-empty members list asked to narrow; a list with no

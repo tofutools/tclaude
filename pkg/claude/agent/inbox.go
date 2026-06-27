@@ -260,21 +260,28 @@ func runInboxRead(p *inboxReadParams, stdout, stderr io.Writer) int {
 }
 
 // recipientLine mirrors the daemon's response shape for the audience
-// arrays (to_recipients / cc_recipients on /v1/messages/{id}).
+// arrays (to_recipients / cc_recipients on /v1/messages/{id}). AgentID is
+// the recipient's stable agent_id (JOH-27 PR3b-2); empty for a non-agent
+// conv, where the renderer falls back to the conv-id prefix.
 type recipientLine struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	ConvID  string `json:"conv_id"`
+	AgentID string `json:"agent_id"`
+	Title   string `json:"title"`
 }
 
 // formatRecipientList renders a recipient list as comma-separated
-// "title <prefix>" entries (or just the prefix when no title is known).
+// "title <agent_id>" entries (or just the short id when no title is
+// known), leading with the stable agent_id so the audience reads by the
+// rotation-immune handle, falling back to the conv-id prefix for a
+// non-agent recipient.
 func formatRecipientList(rs []recipientLine) string {
 	parts := make([]string, 0, len(rs))
 	for _, r := range rs {
+		id := shortAgentID(r.AgentID, r.ConvID)
 		if r.Title != "" {
-			parts = append(parts, fmt.Sprintf("%s <%s>", r.Title, short(r.ConvID)))
+			parts = append(parts, fmt.Sprintf("%s <%s>", r.Title, id))
 		} else {
-			parts = append(parts, short(r.ConvID))
+			parts = append(parts, id)
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -522,4 +529,3 @@ func runInboxPrune(p *inboxPruneParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Pruned %d %s message(s) older than %s\n", resp.Deleted, scope, d)
 	return rcOK
 }
-

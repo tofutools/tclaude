@@ -99,6 +99,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		RedirectedFrom string `json:"redirected_from,omitempty"`
 		Recipients     []struct {
 			ConvID         string `json:"conv_id"`
+			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
 			MessageID      int64  `json:"message_id"`
 			Delivered      bool   `json:"delivered"`
@@ -180,7 +181,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 				// were typing a stale UUID.
 				redirect = fmt.Sprintf("  [redirected from %s, superseded]", short(rcp.RedirectedFrom))
 			}
-			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, short(rcp.ConvID), name, state, redirect)
+			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, shortAgentID(rcp.AgentID, rcp.ConvID), name, state, redirect)
 		}
 		return rcOK
 	}
