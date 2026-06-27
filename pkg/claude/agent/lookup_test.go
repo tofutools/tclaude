@@ -336,6 +336,135 @@ func TestResolveSelector_NoSuccession_LeavesAsIs(t *testing.T) {
 	assert.Equal(t, id, r.ConvID)
 }
 
+// TestResolveSelector_ByAgentID: the stable agent_id resolves to the
+// actor's current conversation generation — the canonical, rotation-immune
+// handle this work makes a first-class selector.
+func TestResolveSelector_ByAgentID(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "resolveSelector by agent_id")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID, "agent_id should resolve to current_conv_id")
+}
+
+// TestResolveSelector_ByAgentIDPrefix: a shortened agent_id (the typing
+// convenience) resolves the same way when it's unique.
+func TestResolveSelector_ByAgentIDPrefix(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	// agent_id is "agt_" + 32 hex; a short unique prefix must still resolve.
+	r, _, err := resolveSelector(agentID[:12])
+	require.NoError(t, err, "resolveSelector by agent_id prefix")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID)
+}
+
+// TestResolveSelector_AgentIDAmbiguous: the bare "agt_" tag prefixes every
+// actor, so with two agents it surfaces as an ambiguity (candidates, no
+// silent pick).
+func TestResolveSelector_AgentIDAmbiguous(t *testing.T) {
+	setupTestDB(t)
+	upsertConvIndex(t, "aaaa1111-2222-3333-4444-555555555555", "a", "", "")
+	upsertConvIndex(t, "bbbb2222-2222-3333-4444-555555555555", "b", "", "")
+	_, _, errA := db.EnsureAgentForConv("aaaa1111-2222-3333-4444-555555555555", "spawn")
+	require.NoError(t, errA)
+	_, _, errB := db.EnsureAgentForConv("bbbb2222-2222-3333-4444-555555555555", "spawn")
+	require.NoError(t, errB)
+
+	_, matches, err := resolveSelector(db.AgentIDPrefix)
+	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v", err)
+	require.Len(t, matches, 2)
+}
+
+// TestResolveSelector_AgentIDNotFound: an `agt_`-tagged selector with no
+// matching actor is reported against the agent layer (terminal
+// errNoAgentMatch), not silently passed through to the conv/title steps —
+// and it must NOT pay for the ~/.claude/projects rescan, since a rescan
+// can never make a missing agent appear.
+func TestResolveSelector_AgentIDNotFound(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := resolveSelector("agt_0000000000000000000000000000beef")
+	require.Error(t, err, "expected error for missing agent_id")
+	assert.True(t, errors.Is(err, errNoAgentMatch), "want errNoAgentMatch, got %v", err)
+	assert.Equal(t, 0, refreshed, "an agent miss must skip the project rescan")
+}
+
+// TestResolveSelector_ConvMissRefreshes is the contrast to the agent-miss
+// case: a plain conv/title miss is a genuine cache miss, so the resolver
+// still rescans-and-retries before giving up.
+func TestResolveSelector_ConvMissRefreshes(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := resolveSelector("nope-no-such-conv")
+	require.Error(t, err, "expected error for missing conv")
+	assert.Equal(t, 1, refreshed, "a conv/title miss must trigger the project rescan")
+}
+
+// TestResolveSelector_AgentIDSurvivesRotation is the headline guarantee: a
+// reincarnation rotates the conv-id, but the SAME agent_id keeps resolving
+// to the live generation. This is the exact case where a conv-id selector
+// would land on a dead pane.
+func TestResolveSelector_AgentIDSurvivesRotation(t *testing.T) {
+	setupTestDB(t)
+	const convOld = "11111111-aaaa-bbbb-cccc-111111111111"
+	const convNew = "22222222-aaaa-bbbb-cccc-222222222222"
+	upsertConvIndex(t, convOld, "worker", "", "")
+	upsertConvIndex(t, convNew, "worker-r-1", "", "")
+
+	agentID, _, err := db.EnsureAgentForConv(convOld, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	// Reincarnate: link the fresh generation, then advance the live pointer.
+	require.NoError(t, db.LinkConvToAgent(convNew, agentID, db.ConvRoleHead, "reincarnate"), "LinkConvToAgent")
+	moved, err := db.SetAgentCurrentConv(agentID, convOld, convNew)
+	require.NoError(t, err, "SetAgentCurrentConv")
+	require.True(t, moved, "live pointer should have advanced")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "resolveSelector by agent_id after rotation")
+	require.NotNil(t, r)
+	assert.Equal(t, convNew, r.ConvID, "agent_id must follow the rotation to the live head")
+}
+
+// TestResolveSelector_ByAgentID_Retired pins the intended behaviour that a
+// retired actor is still addressable by its stable agent_id (resolving to its
+// last generation) — a stable id keeps referencing an agent even after it is
+// retired; display surfaces flag the retired state separately.
+func TestResolveSelector_ByAgentID_Retired(t *testing.T) {
+	setupTestDB(t)
+	const conv = "aaaa1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(conv, "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+
+	retired, err := db.RetireAgentByID(agentID, "operator", "done")
+	require.NoError(t, err, "RetireAgentByID")
+	require.True(t, retired, "agent should have been retired")
+
+	r, _, err := resolveSelector(agentID)
+	require.NoError(t, err, "a retired agent must still resolve by its stable id")
+	require.NotNil(t, r)
+	assert.Equal(t, conv, r.ConvID)
+}
+
 func TestRunLookup(t *testing.T) {
 	setupTestDB(t)
 	upsertConvIndex(t, "abcd1234-2222-3333-4444-555555555555", "planner", "", "")

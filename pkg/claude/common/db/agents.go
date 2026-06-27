@@ -36,10 +36,12 @@ import (
 // Authorization still reads the conv-keyed identity tables unchanged; the
 // cutover to agent_id-keyed authz lands in a later stage.
 
-// agentIDPrefix tags a stable agent id so it is unmistakable next to a
+// AgentIDPrefix tags a stable agent id so it is unmistakable next to a
 // conv-id (a bare UUID) in logs and the DB. 16 random bytes ≈ 128 bits of
-// entropy — collision-free for this single-operator tool.
-const agentIDPrefix = "agt_"
+// entropy — collision-free for this single-operator tool. Exported so the
+// selector resolver can recognise an `agt_`-tagged selector and route it
+// straight to the actor layer.
+const AgentIDPrefix = "agt_"
 
 // Agent is a row in `agents` — the durable actor identity. Retire fields,
 // created_via and pending_name carry the actor-level facts that used to live
@@ -87,7 +89,7 @@ func newAgentID() string {
 	if _, err := rand.Read(b[:]); err != nil {
 		panic("db: crypto/rand failed generating agent_id: " + err.Error())
 	}
-	return agentIDPrefix + hex.EncodeToString(b[:])
+	return AgentIDPrefix + hex.EncodeToString(b[:])
 }
 
 // AllocateAgent mints a brand-new actor whose first (and current)
@@ -225,6 +227,42 @@ func GetAgentByConv(convID string) (*Agent, error) {
 		return nil, err
 	}
 	return GetAgent(agentID)
+}
+
+// FindAgentsByIDPrefix returns every actor whose agent_id begins with prefix,
+// oldest first. The selector resolver uses it to accept a (possibly shortened)
+// stable agent_id — the canonical, rotation-immune way to name an agent. The
+// caller decides 0 / 1 / many handling: a unique match resolves; several are
+// surfaced as an ambiguity.
+//
+// The agent-id tag `agt_` contains a literal underscore, which is a LIKE
+// wildcard, so the prefix is escaped (unlike FindConvIndexByPrefix, whose
+// conv-ids are bare UUIDs with no LIKE-special characters).
+func FindAgentsByIDPrefix(prefix string) ([]*Agent, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT agent_id, current_conv_id, created_at, created_via,
+		retired_at, retired_by, retire_reason, pending_name
+		FROM agents WHERE agent_id LIKE ? ESCAPE '\' ORDER BY created_at, rowid`, likeEscape(prefix)+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*Agent
+	for rows.Next() {
+		a, serr := scanAgent(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ConvsForAgent returns every conversation generation linked to agentID,
