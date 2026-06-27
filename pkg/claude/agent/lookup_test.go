@@ -506,6 +506,8 @@ func TestShortAgentID(t *testing.T) {
 		"agt_ + first 8 hex")
 	assert.Equal(t, "convconv", shortAgentID("", "convconv0000"),
 		"no agent_id → conv-id prefix fallback")
+	assert.Equal(t, "agt_short", shortAgentID("agt_short", "conv"),
+		"an agent_id shorter than 12 chars is returned as-is")
 }
 
 // TestLookupID: lookup prints the agent_id for an agent, the conv-id for a

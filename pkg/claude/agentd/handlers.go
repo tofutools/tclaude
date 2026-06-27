@@ -129,9 +129,10 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 
 type peerEntry struct {
 	// AgentID is the stable, rotation-immune actor key — the canonical
-	// way to reference an agent. Display surfaces lead with it; ConvID is
+	// way to reference an agent. The agent CLI leads with it; ConvID is
 	// the live generation behind it (which rotates on reincarnate/clone).
-	// Empty only for a resolved candidate that isn't an agent.
+	// Empty only for a resolved candidate that isn't an agent. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
@@ -2799,8 +2800,9 @@ func remoteControlPolicyToWire(p *bool) string {
 }
 
 type memberJSON struct {
-	// AgentID is the member's stable actor key — the canonical ID the CLI
-	// and dashboard lead with; ConvID is the live generation behind it.
+	// AgentID is the member's stable actor key — the canonical ID the
+	// agent CLI leads with; ConvID is the live generation behind it. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
 	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
