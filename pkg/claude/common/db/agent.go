@@ -990,6 +990,26 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		return c, err
 	}
 
+	// Capture this conv's succession neighbours BEFORE the conv-scoped loop
+	// below wipes its edges. If convID turns out to be a MIDDLE predecessor
+	// generation (it has BOTH a predecessor and a successor), deleting it
+	// removes pred→convID and convID→succ, which would strand any OLDER
+	// generation's stale-id forwarding (ResolveLatestConv walks
+	// agent_conv_succession, not agent_conversations). The predecessor branch
+	// below re-links pred→succ so an ancestor still resolves forward to the
+	// live head. bridgeReason carries the incoming edge's reason (how the
+	// predecessor was superseded). Both empty for a head / genesis / non-agent.
+	var bridgeOld, bridgeNew, bridgeReason string
+	if err := tx.QueryRow(`SELECT old_conv_id, reason FROM agent_conv_succession
+		WHERE new_conv_id = ? ORDER BY succeeded_at DESC, rowid DESC LIMIT 1`, convID).
+		Scan(&bridgeOld, &bridgeReason); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return c, err
+	}
+	if err := tx.QueryRow(`SELECT new_conv_id FROM agent_conv_succession
+		WHERE old_conv_id = ?`, convID).Scan(&bridgeNew); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return c, err
+	}
+
 	// Conv-scoped teardown: this conversation generation's runtime, history,
 	// index and message rows. Always removed — they belong to THIS generation,
 	// not to the actor as a whole.
@@ -1081,6 +1101,26 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 			// Predecessor generation: unlink just this conv; the actor lives on.
 			if _, err := tx.Exec(`DELETE FROM agent_conversations WHERE conv_id = ?`, convID); err != nil {
 				return AgentDeletionCounts{}, fmt.Errorf("delete agent (unlink generation): %w", err)
+			}
+			// Heal the succession chain when this was a MIDDLE generation: the
+			// conv-scoped loop above removed its incoming (pred→convID) and
+			// outgoing (convID→succ) edges, so re-link pred→succ. Without this a
+			// stale reference to an ANCESTOR the caller did NOT delete would stop
+			// forwarding to the live head. Idempotent upsert on old_conv_id (the
+			// chain holds one successor per old conv). Skipped for a genesis
+			// (no predecessor) or a pre-head (no successor) generation.
+			if bridgeOld != "" && bridgeNew != "" && bridgeOld != bridgeNew {
+				if _, err := tx.Exec(`INSERT INTO agent_conv_succession
+					(old_conv_id, new_conv_id, reason, succeeded_at)
+					VALUES (?, ?, ?, ?)
+					ON CONFLICT(old_conv_id) DO UPDATE SET
+						new_conv_id = excluded.new_conv_id,
+						reason = excluded.reason,
+						succeeded_at = excluded.succeeded_at`,
+					bridgeOld, bridgeNew, bridgeReason,
+					time.Now().UTC().Format(time.RFC3339)); err != nil {
+					return AgentDeletionCounts{}, fmt.Errorf("delete agent (bridge succession): %w", err)
+				}
 			}
 		}
 	}

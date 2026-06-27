@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -134,4 +135,62 @@ func TestReplacedGenerations_SnapshotAndExactDelete(t *testing.T) {
 		"/api/agent-generations/dddddddd-2222-3333-4444-555555555555", nil)
 	assert.Equal(t, http.StatusNotFound, testharness.Serve(mux, ghostReq).Code,
 		"a conv-id that is not a linked generation must 404")
+}
+
+// Scenario (cold-review hazard): deleting a MIDDLE generation must not strand an
+// OLDER generation's stale-id forwarding. Stale references forward through the
+// succession chain (agent_conv_succession), so removing generation B from a
+// chain A → B → C has to re-link A → C — otherwise a reference to the genesis A
+// would stop resolving to the live head C.
+func TestReplacedGenerations_DeleteMiddleBridgesSuccession(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+
+	const (
+		group = "alpha"
+		convA = "aaaa2222-3333-4444-5555-666666666666"
+		label = "spwn-rg2-001"
+		tmux  = "tclaude-spwn-rg2-001"
+		cwd   = "/tmp/rg2work"
+	)
+
+	f.HaveGroup(group)
+	f.HaveAliveSession(convA, label, tmux, cwd)
+	f.HaveMember(group, convA)
+
+	// Two rotations → A (genesis) → B → C (live head).
+	c1 := f.Clear(label)
+	convB := c1.NewConv
+	c2 := f.Clear(label)
+	require.Equal(t, convB, c2.OldConv)
+	convC := c2.NewConv
+
+	// Precondition: the genesis forwards to the live head.
+	require.Equal(t, convC, db.ResolveLatestConv(convA), "A forwards to head before delete")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// Delete the MIDDLE generation B via the dedicated endpoint.
+	req, _ := http.NewRequest(http.MethodDelete, "/api/agent-generations/"+convB, nil)
+	rec := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, "delete middle generation body=%s", rec.Body.String())
+
+	// B is gone; the chain is healed so A still forwards to the live head C.
+	bAgent, err := db.AgentIDForConv(convB)
+	require.NoError(t, err)
+	assert.Empty(t, bAgent, "the middle generation is unlinked")
+	assert.Equal(t, convC, db.ResolveLatestConv(convA),
+		"the genesis still forwards to the live head after the middle delete")
+	res, _, err := agent.ResolveSelector(convA)
+	require.NoError(t, err)
+	assert.Equal(t, convC, res.ConvID, "ResolveSelector(genesis) resolves to the live head")
+
+	// A is still a replaced generation of the live actor; B has dropped off.
+	snap := fetchDashSnapshot(t, mux)
+	repA := findDashReplaced(snap, convA)
+	require.NotNil(t, repA, "the genesis generation still appears under replaced[]")
+	assert.Equal(t, convC, repA.ActorConvID, "and still points at the live head")
+	assert.Nil(t, findDashReplaced(snap, convB), "the deleted middle generation drops off replaced[]")
 }
