@@ -52,20 +52,22 @@ func TestConvDisplayTitle_PendingNameFallback(t *testing.T) {
 		convDisplayTitle(SessionEntry{SessionID: "x", FirstPrompt: "just a prompt"}, nil))
 }
 
-// PendingNamesByConv returns only enrollments that recorded a non-empty
-// spawn-time name, keyed by conv id.
+// PendingNamesByConv returns only actors that recorded a non-empty spawn-time
+// name, keyed by their current conv id.
 func TestPendingNamesByConv_RoundTrip(t *testing.T) {
 	setupHarnessTestHome(t) // temp HOME + fresh DB
 
 	const named = "11111111-1111-1111-1111-111111111111"
 	const unnamed = "22222222-2222-2222-2222-222222222222"
-	require.NoError(t, db.EnrollAgent(named, "test"))
-	require.NoError(t, db.SetEnrollmentPendingName(named, "codex-worker"))
-	require.NoError(t, db.EnrollAgent(unnamed, "test")) // no pending name
+	namedAgent, _, err := db.EnsureAgentForConv(named, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(namedAgent, "codex-worker"))
+	_, _, err = db.EnsureAgentForConv(unnamed, "test") // no pending name
+	require.NoError(t, err)
 
 	got, err := db.PendingNamesByConv()
 	require.NoError(t, err)
-	assert.Equal(t, "codex-worker", got[named], "named enrollment is returned")
+	assert.Equal(t, "codex-worker", got[named], "named actor is returned")
 	_, ok := got[unnamed]
-	assert.False(t, ok, "an enrollment with no pending name is absent from the map")
+	assert.False(t, ok, "an actor with no pending name is absent from the map")
 }

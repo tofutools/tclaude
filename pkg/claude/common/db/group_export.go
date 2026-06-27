@@ -28,7 +28,7 @@ var ErrGroupNotFound = errors.New("group not found")
 //
 // Tables carried (every table keyed to the group or to a member's
 // conv-id): agent_groups, agent_group_members, agent_group_owners,
-// agent_group_audit, agent_permissions, agent_enrollment, agent_workdir,
+// agent_group_audit, agent_permissions, agents (as enrollments), agent_workdir,
 // agent_sudo_grants, agent_head_aliases, agent_conv_succession,
 // agent_spawn_history, agent_clone_history, agent_cron_jobs,
 // agent_cron_runs, agent_messages. Deliberately NOT carried: conv_index
@@ -309,12 +309,20 @@ func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, 
 	return out, rows.Err()
 }
 
+// collectEnrollments emits one Enrollment record per exported member conv,
+// sourced from the actor layer (JOH-26 PR3c removed agent_enrollment). The
+// archive keeps the legacy `enrollments` shape for cross-version compatibility:
+// an older importer still reads it into agent_enrollment, and a current importer
+// translates it back onto the actor. Actor facts (created_via, retire state,
+// pending_name) are carried on the actor's CURRENT conv.
 func collectEnrollments(d *sql.DB, convIDs []string) ([]groupexport.Enrollment, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT conv_id, enrolled_at, enrolled_via, retired_at, retired_by,
-		       retire_reason, pending_name
-		FROM agent_enrollment WHERE conv_id `+clause+` ORDER BY conv_id`, args...)
+		SELECT ac.conv_id, ag.created_at, ag.created_via, ag.retired_at,
+		       ag.retired_by, ag.retire_reason, ag.pending_name
+		FROM agent_conversations ac
+		JOIN agents ag ON ag.agent_id = ac.agent_id
+		WHERE ac.conv_id `+clause+` ORDER BY ac.conv_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("collect enrollments: %w", err)
 	}
@@ -731,16 +739,46 @@ func (c *importCtx) permissions() error {
 	return nil
 }
 
+// enrollments translates the archive's legacy enrollment records onto the actor
+// layer (JOH-26 PR3c). Each becomes an ensure-actor plus a carry of the actor
+// facts the membership/permission imports don't cover: the spawn-time
+// pending_name and, defensively, any retire state. ensureAgentForConvTx is
+// idempotent, so it composes with the actor the members/permissions imports
+// already created for this conv.
 func (c *importCtx) enrollments() error {
 	for _, e := range c.exp.Enrollments {
-		if _, err := c.tx.Exec(`
-			INSERT INTO agent_enrollment
-				(conv_id, enrolled_at, enrolled_via, retired_at, retired_by,
-				 retire_reason, pending_name)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			c.rc(e.ConvID), e.EnrolledAt, e.EnrolledVia, e.RetiredAt,
-			e.RetiredBy, e.RetireReason, e.PendingName); err != nil {
-			return fmt.Errorf("import: enrollment %s: %w", e.ConvID, err)
+		conv := c.rc(e.ConvID)
+		via := e.EnrolledVia
+		if via == "" {
+			via = "import"
+		}
+		agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+		if err != nil {
+			return fmt.Errorf("import: enrollment %s actor: %w", e.ConvID, err)
+		}
+		// Restore the original creation timestamp (ensureAgentForConvTx — and the
+		// members import before it — stamp `now` for a freshly-minted actor) so
+		// the round-tripped agent keeps its birth time. Import is transactional
+		// to a remapped conv-id on a clean target, so the actor is always freshly
+		// created in this transaction; the archived timestamp is authoritative.
+		if e.EnrolledAt != "" {
+			if _, err := c.tx.Exec(`UPDATE agents SET created_at = ? WHERE agent_id = ?`,
+				e.EnrolledAt, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s created_at: %w", e.ConvID, err)
+			}
+		}
+		if e.PendingName != "" {
+			if _, err := c.tx.Exec(`UPDATE agents SET pending_name = ? WHERE agent_id = ?`,
+				e.PendingName, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s pending_name: %w", e.ConvID, err)
+			}
+		}
+		if e.RetiredAt != "" {
+			if _, err := c.tx.Exec(`UPDATE agents
+				SET retired_at = ?, retired_by = ?, retire_reason = ? WHERE agent_id = ?`,
+				e.RetiredAt, e.RetiredBy, e.RetireReason, agentID); err != nil {
+				return fmt.Errorf("import: enrollment %s retire: %w", e.ConvID, err)
+			}
 		}
 	}
 	return nil

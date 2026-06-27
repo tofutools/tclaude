@@ -321,7 +321,7 @@ const UnknownTitle = "(unknown)"
 //     daemon injects just after spawn) is the authoritative name.
 //   - When none exists yet — a freshly-spawned agent in the gap before
 //     its /rename lands — the pending name recorded at spawn time
-//     (agent_enrollment.pending_name, the `--name` argument) stands in,
+//     (agents.pending_name, the `--name` argument) stands in,
 //     so the dashboard shows the intended name rather than "(unknown)".
 //     It deliberately outranks summary / first-prompt: the human-given
 //     --name is a stronger identity signal than an auto-summary or an
@@ -403,16 +403,16 @@ func FreshCreated(convID string) string {
 	return ""
 }
 
-// pendingName returns the intended display name recorded for convID at
-// spawn time (agent_enrollment.pending_name), or "" when the conv was
-// not spawned with a name or is not an agent. Errors are swallowed — a
-// pending name is a best-effort display fallback, never load-bearing.
+// pendingName returns the intended display name recorded for convID's actor at
+// spawn time (agents.pending_name), or "" when the conv was not spawned with a
+// name or is not an agent. Errors are swallowed — a pending name is a
+// best-effort display fallback, never load-bearing.
 func pendingName(convID string) string {
-	e, err := db.GetEnrollment(convID)
-	if err != nil || e == nil {
+	a, err := db.GetAgentByConv(convID)
+	if err != nil || a == nil {
 		return ""
 	}
-	return e.PendingName
+	return a.PendingName
 }
 
 // FreshConvTitle resolves convID to the canonical "[title]: prompt"

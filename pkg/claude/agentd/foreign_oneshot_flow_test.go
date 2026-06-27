@@ -44,16 +44,16 @@ func TestForeignOneShot_DoesNotStealAgentIdentity(t *testing.T) {
 
 	// Identity untouched: still an active agent, no succession edge,
 	// and the foreign conv was not promoted to anything.
-	enr, err := db.EnrollmentState(clearAgentConv)
+	enr, err := db.AgentState(clearAgentConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, enr,
+	assert.Equal(t, db.AgentStateActive, enr,
 		"the agent must NOT be retired by a foreign process's SessionEnd")
 	succ, err := db.GetConvSuccessor(clearAgentConv)
 	require.NoError(t, err)
 	assert.Empty(t, succ, "no succession edge onto the foreign conv")
-	foreignEnr, err := db.EnrollmentState(foreignConv)
+	foreignEnr, err := db.AgentState(foreignConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentNone, foreignEnr,
+	assert.Equal(t, db.AgentStateNone, foreignEnr,
 		"the foreign conv must not inherit the agent's enrollment")
 
 	// The session row: conv-id untouched, and not marked exited (the

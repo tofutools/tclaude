@@ -20,7 +20,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -199,16 +198,6 @@ func runServe(p *serveParams) error {
 	// terminal detection now, at startup, so every later agent spawn
 	// opens a window with no fresh PATH / bundle / osascript lookups.
 	resolveTerminalPreference(p.Terminal)
-
-	// Heal any drift between the legacy agent_enrollment roster and the
-	// actor-level agents roster the dashboard now reads (JOH-26 PR3b). Best
-	// effort + idempotent: a transient dual-write failure on a head DB would
-	// otherwise leave an agent stuck off the roster (or in the wrong bucket)
-	// until the next migration. Logged, never fatal — the daemon must start
-	// regardless.
-	if err := db.ReconcileAgentRoster(); err != nil {
-		slog.Warn("agent roster reconcile failed; continuing", "error", err)
-	}
 
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.

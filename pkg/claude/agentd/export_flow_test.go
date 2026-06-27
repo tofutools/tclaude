@@ -176,7 +176,7 @@ func assertCloneRetired(t *testing.T, workerConv string, timeout time.Duration) 
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if st, _ := db.EnrollmentState(workerConv); st == db.EnrollmentRetired {
+		if st, _ := db.AgentState(workerConv); st == db.AgentStateRetired {
 			// Kept, not purged: the session row and the conv_index row (which
 			// supplies the cost line's title) both survive the teardown.
 			rows, _ := db.FindSessionsByConvID(workerConv)
@@ -187,7 +187,7 @@ func assertCloneRetired(t *testing.T, workerConv string, timeout time.Duration) 
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	st, _ := db.EnrollmentState(workerConv)
+	st, _ := db.AgentState(workerConv)
 	t.Fatalf("export clone %s was not retired within %s; enrollment state = %q",
 		workerConv, timeout, st)
 }

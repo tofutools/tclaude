@@ -66,7 +66,7 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Resolve the agent's name through FreshTitle so it picks up the
-	// spawn-time pending_name (agent_enrollment) when no custom title has
+	// spawn-time pending_name (agents.pending_name) when no custom title has
 	// landed yet — the same priority (custom → pending → summary → first
 	// prompt) the dashboard and conv-listing surfaces use. A bare
 	// DisplayTitle would skip the pending name, which is the bug for a

@@ -215,10 +215,9 @@ func TestEnrollment_CleanupRetireSkipsOnline(t *testing.T) {
 	assert.True(t, agentInSnap(post.Agents, conv), "online agent stays on the roster")
 }
 
-// Scenario: reincarnation preserves agentic status — the successor is
-// enrolled as an active agent, and the superseded predecessor is
-// retired so it leaves live agent surfaces but remains reinstatable
-// for knowledge pings.
+// Scenario: reincarnation preserves agentic status — the successor and the
+// superseded predecessor are two generations of ONE actor, both resolving to
+// the same active agent (the actor-level model, JOH-26 PR3c).
 func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -231,15 +230,21 @@ func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 	r := f.Reincarnate(conv, "carry on")
 	require.NotEmpty(t, r.NewConv, "reincarnate should return a new conv-id")
 
-	newState, err := db.EnrollmentState(r.NewConv)
+	newState, err := db.AgentState(r.NewConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, newState,
+	assert.Equal(t, db.AgentStateActive, newState,
 		"the reincarnated successor %s must be an active agent", r.NewConv)
 
-	oldState, err := db.EnrollmentState(conv)
+	// Actor-level model (JOH-26 PR3c): the predecessor is a past GENERATION of
+	// the still-active actor — both generations resolve to the same live agent,
+	// so the predecessor reads Active, not a standalone retired entry.
+	oldState, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, oldState,
-		"the superseded predecessor %s must be retired (reinstatable for knowledge pings)", conv)
+	assert.Equal(t, db.AgentStateActive, oldState,
+		"the superseded predecessor %s resolves to the still-active actor", conv)
+	oldAgent, _ := db.AgentIDForConv(conv)
+	newAgent, _ := db.AgentIDForConv(r.NewConv)
+	assert.Equal(t, oldAgent, newAgent, "both generations share one actor")
 }
 
 // TestEnrollment_ReincarnatePredecessorNotOnRetiredRoster pins the JOH-26 PR3b
@@ -263,10 +268,11 @@ func TestEnrollment_ReincarnatePredecessorNotOnRetiredRoster(t *testing.T) {
 	r := f.Reincarnate(conv, "carry on")
 	require.NotEmpty(t, r.NewConv, "reincarnate returns a new conv-id")
 
-	// Precondition: the predecessor's ENROLLMENT is retired (the legacy bit),
-	// but the ACTOR is not — only its live conv pointer advanced.
-	oldState, _ := db.EnrollmentState(conv)
-	require.Equal(t, db.EnrollmentRetired, oldState, "predecessor enrollment is retired")
+	// Precondition: the predecessor is a generation of the still-active actor —
+	// only the actor's live conv pointer advanced, so the predecessor resolves
+	// to the active actor (it is NOT a standalone retired entry).
+	oldState, _ := db.AgentState(conv)
+	require.Equal(t, db.AgentStateActive, oldState, "predecessor resolves to the active actor")
 
 	snap := fetchDashSnapshot(t, mux)
 	assert.True(t, agentInSnap(snap.Agents, r.NewConv),
@@ -294,14 +300,14 @@ func TestEnrollment_ClonePreservesAgentStatus(t *testing.T) {
 	c := f.CloneFresh(conv)
 	require.NotEmpty(t, c.NewConv, "clone should return a new conv-id")
 
-	cloneState, err := db.EnrollmentState(c.NewConv)
+	cloneState, err := db.AgentState(c.NewConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, cloneState,
+	assert.Equal(t, db.AgentStateActive, cloneState,
 		"the clone %s must be an active agent", c.NewConv)
 
-	origState, err := db.EnrollmentState(conv)
+	origState, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, origState,
+	assert.Equal(t, db.AgentStateActive, origState,
 		"the original %s stays an active agent after cloning", conv)
 }
 
@@ -350,11 +356,11 @@ func TestEnrollment_SupersededPredecessorIsNotAnAgent(t *testing.T) {
 	const head = "head-1111-2222-3333-4444"
 	f.HaveConvWithTitle(pred, "old-incarnation")
 	f.HaveConvWithTitle(head, "live-incarnation")
-	// pred reincarnated into head. RecordConvSuccession enrols head.
+	// pred reincarnated into head. RecordConvSuccession registers head's actor.
 	require.NoError(t, db.RecordConvSuccession(pred, head, "reincarnate"))
-	// Simulate the buggy backfill: pred got an enrollment row too, even
-	// though its identity has moved to head.
-	require.NoError(t, db.EnrollAgent(pred, "migration"))
+	// Simulate the buggy backfill: pred got its own actor too, even though its
+	// identity has moved to head.
+	f.HaveEnrolledAgent(pred)
 
 	snap := fetchDashSnapshot(t, mux)
 	assert.False(t, agentInSnap(snap.Agents, pred),
@@ -389,9 +395,9 @@ func TestEnrollment_AddToGroupPromotes(t *testing.T) {
 	post := fetchDashSnapshot(t, mux)
 	assert.True(t, agentInSnap(post.Agents, conv),
 		"adding a conversation to a group must promote it to an agent")
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state, "the conv must be an active enrolled agent")
+	assert.Equal(t, db.AgentStateActive, state, "the conv must be an active enrolled agent")
 }
 
 // Scenario: the dashboard's "drag a retired agent onto a group" gesture
@@ -432,9 +438,9 @@ func TestEnrollment_ReinstateThenJoinGroup(t *testing.T) {
 	assert.True(t, flowGroupHasMember(f, "beta", conv),
 		"reinstated agent must be a member of the drop-target group")
 
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state,
+	assert.Equal(t, db.AgentStateActive, state,
 		"reinstated + joined agent must be active-enrolled, not a retired ghost")
 }
 
@@ -468,9 +474,9 @@ func TestEnrollment_LiveTerminalConvBecomesUngroupedAgent(t *testing.T) {
 	reaped := agentd.NewSessionReaperForTest(0, func(string, string) {}).Tick()
 	require.Equal(t, 0, reaped, "a live session is enrolled, never reaped")
 
-	state, err := db.EnrollmentState(conv)
+	state, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentActive, state,
+	assert.Equal(t, db.AgentStateActive, state,
 		"a live terminal-launched conv must be enrolled as an active agent")
 
 	// Post: on the roster, surfaced in the virtual Ungrouped group, and
@@ -497,14 +503,14 @@ func TestEnrollment_ReaperDoesNotResurrectRetiredLiveAgent(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", "/tmp/retd")
 	f.HaveRetiredAgent(conv) // enrolled, then retired by the human
 
-	preState, err := db.EnrollmentState(conv)
+	preState, err := db.AgentState(conv)
 	require.NoError(t, err)
-	require.Equal(t, db.EnrollmentRetired, preState, "pre: agent is retired")
+	require.Equal(t, db.AgentStateRetired, preState, "pre: agent is retired")
 
 	agentd.NewSessionReaperForTest(0, func(string, string) {}).Tick()
 
-	postState, err := db.EnrollmentState(conv)
+	postState, err := db.AgentState(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.EnrollmentRetired, postState,
+	assert.Equal(t, db.AgentStateRetired, postState,
 		"a retired agent with a live pane must stay retired across a reaper sweep")
 }

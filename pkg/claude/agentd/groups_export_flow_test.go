@@ -493,15 +493,18 @@ func remapSource(remap map[string]string, fresh string) string {
 }
 
 // wipeForFreshImport simulates moving to a clean machine: it deletes the
-// group and every trace of the listed convs — enrollment, conv_index,
+// group and every trace of the listed convs — actor identity, conv_index,
 // permissions and the .jsonl files — so a subsequent import sees no
 // collision and preserves the original conv-ids.
 func wipeForFreshImport(t *testing.T, group string, convs []string, cwd, home string) {
 	t.Helper()
 	require.NoError(t, db.DeleteAgentGroup(group))
 	for _, c := range convs {
-		if _, err := db.DeleteEnrollment(c); err != nil {
-			t.Fatalf("wipe: delete enrollment %s: %v", c, err)
+		// DeleteAgentByConvID tears down the actor + its conv-scoped DB rows
+		// (conv_index, sessions, permissions via the actor) — the agents-table
+		// successor to deleting the enrollment row (JOH-26 PR3c).
+		if _, err := db.DeleteAgentByConvID(c); err != nil {
+			t.Fatalf("wipe: delete agent %s: %v", c, err)
 		}
 		if err := db.DeleteConvIndex(c); err != nil {
 			t.Fatalf("wipe: delete conv_index %s: %v", c, err)

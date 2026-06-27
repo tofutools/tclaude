@@ -271,10 +271,10 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 		return err
 	}
 	// Holding a permission override (grant or deny) makes the conv an agent —
-	// a deny is still per-agent permission config. EnrollAgent also ensures
-	// the stable actor; we then key the override on agent_id (JOH-26) so it
-	// survives conv rotations without a rekey.
-	if err := EnrollAgent(convID, "grant"); err != nil {
+	// a deny is still per-agent permission config. EnsureAgentForConv mints /
+	// links the stable actor; we then key the override on agent_id (JOH-26) so
+	// it survives conv rotations without a rekey.
+	if _, _, err := EnsureAgentForConv(convID, "grant"); err != nil {
 		return err
 	}
 	agentID, err := AgentIDForConv(convID)
@@ -805,12 +805,12 @@ func AddAgentGroupMember(m *AgentGroupMember) error {
 	if m.JoinedAt.IsZero() {
 		m.JoinedAt = time.Now()
 	}
-	// Joining a group makes the conv an agent. EnrollAgent also ensures the
-	// stable actor; the membership is then keyed on agent_id (JOH-26) so it
+	// Joining a group makes the conv an agent. EnsureAgentForConv mints / links
+	// the stable actor; the membership is then keyed on agent_id (JOH-26) so it
 	// survives conv rotations without a rekey. Insert-only — a stray add never
 	// un-retires; the dashboard add-member flow reinstates retired targets
 	// explicitly.
-	if err := EnrollAgent(m.ConvID, "group"); err != nil {
+	if _, _, err := EnsureAgentForConv(m.ConvID, "group"); err != nil {
 		return err
 	}
 	agentID, err := AgentIDForConv(m.ConvID)
@@ -904,7 +904,6 @@ type AgentDeletionCounts struct {
 	Embeddings     int64 `json:"embeddings"`
 	ConvIndex      int64 `json:"conv_index"`
 	Sessions       int64 `json:"sessions"`
-	Enrollment     int64 `json:"enrollment"`
 	NotifyPrefs    int64 `json:"notify_prefs"`
 }
 
@@ -919,7 +918,6 @@ type AgentDeletionCounts struct {
 //   - conv_embeddings
 //   - conv_index
 //   - sessions
-//   - agent_enrollment
 //
 // Actor-scoped (keyed on the resolved agent_id) — ONLY when convID is the
 // actor's current_conv_id (its live generation):
@@ -979,7 +977,6 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
-		{`DELETE FROM agent_enrollment WHERE conv_id = ?`, &c.Enrollment},
 	} {
 		res, err := tx.Exec(s.stmt, convID)
 		if err != nil {
@@ -1314,9 +1311,9 @@ func AddAgentGroupOwner(groupID int64, convID, grantedBy string) error {
 	if err != nil {
 		return err
 	}
-	// Owning a group makes the conv an agent. EnrollAgent ensures the actor;
-	// ownership is then keyed on agent_id (JOH-26).
-	if err := EnrollAgent(convID, "group"); err != nil {
+	// Owning a group makes the conv an agent. EnsureAgentForConv mints / links
+	// the actor; ownership is then keyed on agent_id (JOH-26).
+	if _, _, err := EnsureAgentForConv(convID, "group"); err != nil {
 		return err
 	}
 	agentID, err := AgentIDForConv(convID)

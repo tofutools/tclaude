@@ -11,15 +11,47 @@ import (
 // resetAgentLayer clears the freshly-migrated (empty) agent-identity tables
 // and the enrollment roster so a test can stage a pre-v72 DB state with raw
 // INSERTs, then drive backfillAgents over it. Mirrors the raw-insert
-// technique TestBackfillAgentEnrollment uses to dodge the Go-level triggers.
+// technique the v30 backfill test used to dodge the Go-level triggers.
+//
+// agent_enrollment is dropped at head (JOH-26 PR3c v75), but backfillAgents
+// still consults it WHEN PRESENT for an old DB upgrading through the chain
+// (collectAgentConvs / headEnrollmentFacts guard on its existence). These unit
+// tests drive backfillAgents directly on a head DB, so they re-stand-up the
+// table to exercise that enrollment-source path.
 func resetAgentLayer(t *testing.T, d *sql.DB) {
 	t.Helper()
 	mustExec(t, d, `DELETE FROM agent_conversations`)
 	mustExec(t, d, `DELETE FROM agents`)
+	ensureEnrollmentTableForTest(t, d)
 	mustExec(t, d, `DELETE FROM agent_enrollment`)
 }
 
-// enroll raw-inserts an agent_enrollment row (bypassing EnrollAgent so no
+// mustExec runs a statement and fails the test on error. Shared by the
+// migration / backfill tests that hand-seed raw rows.
+func mustExec(t *testing.T, d *sql.DB, q string, args ...any) {
+	t.Helper()
+	_, err := d.Exec(q, args...)
+	require.NoError(t, err, "exec failed: %s", q)
+}
+
+// ensureEnrollmentTableForTest recreates the v30-era agent_enrollment schema so
+// a backfill test can seed it as a source. Production drops it at v75; a unit
+// test that drives the v30/v72 backfill directly re-stands it up. IF NOT EXISTS
+// so it composes with a DB that still has it (mid-chain).
+func ensureEnrollmentTableForTest(t *testing.T, d *sql.DB) {
+	t.Helper()
+	mustExec(t, d, `CREATE TABLE IF NOT EXISTS agent_enrollment (
+		conv_id       TEXT PRIMARY KEY,
+		enrolled_at   TEXT NOT NULL,
+		enrolled_via  TEXT NOT NULL DEFAULT '',
+		retired_at    TEXT NOT NULL DEFAULT '',
+		retired_by    TEXT NOT NULL DEFAULT '',
+		retire_reason TEXT NOT NULL DEFAULT '',
+		pending_name  TEXT NOT NULL DEFAULT ''
+	)`)
+}
+
+// enroll raw-inserts an agent_enrollment row (bypassing the ensure path so no
 // agent is auto-allocated), so a test can pin the actor facts the backfill
 // must carry from the chain head.
 func enroll(t *testing.T, d *sql.DB, conv, via, pendingName, retiredAt string) {

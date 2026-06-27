@@ -20,9 +20,10 @@ func TestDeleteAgentByConvID_PredecessorKeepsLiveActor(t *testing.T) {
 	require.NoError(t, err, "CreateAgentGroup")
 
 	// One actor, two generations: old → new (new is the live head).
-	require.NoError(t, EnrollAgent("old", "spawn"))
-	_, err = MigrateAgentIdentity("old", "new", "reincarnate", "system:test")
-	require.NoError(t, err, "MigrateAgentIdentity")
+	_, _, err = EnsureAgentForConv("old", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
 
 	// Actor-level identity: a membership and a permission override.
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: "new", Role: "lead"}))
@@ -80,9 +81,10 @@ func TestDeleteAgentByConvID_CronJobsActorScoped(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	// One actor, two generations: old → new (new is the live head).
-	require.NoError(t, EnrollAgent("old", "spawn"))
-	_, err = MigrateAgentIdentity("old", "new", "reincarnate", "system:test")
-	require.NoError(t, err, "MigrateAgentIdentity")
+	_, _, err = EnsureAgentForConv("old", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("old", "new", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
 	actor, err := AgentIDForConv("new")
 	require.NoError(t, err)
 	require.NotEmpty(t, actor)
