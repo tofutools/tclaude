@@ -189,13 +189,16 @@ that happens to descend from a non-Claude `node` process is classified
 agent-side, not human, and the token won't rescue it — run operator
 commands from a clean terminal, or use the dashboard.
 
-`tclaude agent whoami` reports the resolved identity — an agent's
-conv-id, `<human>`, or neither if the daemon couldn't confirm the
+`tclaude agent whoami` reports the resolved identity — an agent's stable
+`agent_id`, `<human>`, or neither if the daemon couldn't confirm the
 caller.
 
-Most commands accept a *selector* wherever they take an agent: a full
-conv-id, an 8+-char conv-id prefix, a global head alias, or a current
-display title.
+Most commands accept a *selector* wherever they take an agent: the stable
+`agent_id` (full or a unique `agt_…` prefix — the canonical,
+rotation-immune handle), a full conv-id, an 8+-char conv-id prefix, a
+global head alias, or a current display title. Prefer the `agent_id`: a
+conv-id rotates when the agent reincarnates or clones, the `agent_id`
+never does.
 
 ## Commands
 
@@ -206,9 +209,9 @@ they're for.
 ### whoami / lookup / ls
 
 ```bash
-tclaude agent whoami           # who am I (or <human>)
-tclaude agent lookup <name>    # resolve prefix / title to a full conv-id
-tclaude agent ls               # peers in any group I'm in (online indicator + groups)
+tclaude agent whoami           # who am I (stable agent_id + name, or <human>)
+tclaude agent lookup <name>    # resolve prefix / title to the stable agent_id
+tclaude agent ls               # peers in any group I'm in (ID = agent_id; online indicator + groups)
 tclaude agent ls --json
 ```
 

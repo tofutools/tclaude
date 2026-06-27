@@ -40,9 +40,10 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 // --- /v1/whoami ---
 
 type whoamiResp struct {
-	IsHuman bool     `json:"is_human"`
-	ConvID  string   `json:"conv_id,omitempty"`
-	Title   string   `json:"title,omitempty"`
+	IsHuman bool   `json:"is_human"`
+	AgentID string `json:"agent_id,omitempty"` // stable actor key — the canonical identity
+	ConvID  string `json:"conv_id,omitempty"`  // live generation behind it (rotates)
+	Title   string `json:"title,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
 }
 
@@ -87,7 +88,8 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	for _, g := range groups {
 		gs = append(gs, g.Name)
 	}
-	writeJSON(w, http.StatusOK, whoamiResp{ConvID: p.ConvID, Title: title, Groups: gs})
+	agentID, _ := db.AgentIDForConv(p.ConvID)
+	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs})
 }
 
 // --- /v1/lookup ---
@@ -119,16 +121,23 @@ func handleLookup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	agentID, _ := db.AgentIDForConv(res.ConvID)
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID, "agent_id": agentID})
 }
 
 // --- /v1/peers ---
 
 type peerEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// AgentID is the stable, rotation-immune actor key — the canonical
+	// way to reference an agent. The agent CLI leads with it; ConvID is
+	// the live generation behind it (which rotates on reincarnate/clone).
+	// Empty only for a resolved candidate that isn't an agent. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Descr   string `json:"descr,omitempty"`
 	// agentLocationView carries `branch` (current branch) plus the
 	// startup/current directory split — see agent_location_view.go.
 	agentLocationView
@@ -192,6 +201,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				// member shows its real name and branch instead of stale
 				// values.
 				pe = &peerEntry{
+					AgentID:           peerAgentID(m.ConvID),
 					ConvID:            m.ConvID,
 					Title:             agent.FreshTitle(m.ConvID),
 					Role:              m.Role,
@@ -228,6 +238,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			byConv[conv] = &peerEntry{
+				AgentID:           e.AgentID,
 				ConvID:            conv,
 				Title:             agent.FreshTitle(conv),
 				agentLocationView: locationView(conv),
@@ -250,12 +261,21 @@ func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 			title = agent.DisplayTitle(r.Row)
 		}
 		out = append(out, &peerEntry{
+			AgentID:           peerAgentID(r.ConvID),
 			ConvID:            r.ConvID,
 			Title:             title,
 			agentLocationView: locationView(r.ConvID),
 		})
 	}
 	return out
+}
+
+// peerAgentID resolves a conv to its stable agent_id for display, or ""
+// when the conv is not (yet) an agent. A miss is non-fatal — the row just
+// shows no stable id.
+func peerAgentID(conv string) string {
+	id, _ := db.AgentIDForConv(conv)
+	return id
 }
 
 // --- /v1/messages (POST), /v1/messages/{id} (GET) ---
@@ -2780,8 +2800,12 @@ func remoteControlPolicyToWire(p *bool) string {
 }
 
 type memberJSON struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the member's stable actor key — the canonical ID the
+	// agent CLI leads with; ConvID is the live generation behind it. (The
+	// dashboard still keys on conv_id — a separate follow-up.)
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339 — the
 	// first .jsonl event's time), empty when unknown. The dashboard
 	// renders it as a relative "Age", and it is the default sort key
@@ -2843,6 +2867,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	for _, m := range members {
 		memberSet[m.ConvID] = true
 		out = append(out, memberJSON{
+			AgentID:           peerAgentID(m.ConvID),
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
 			CreatedAt:         agent.FreshCreated(m.ConvID),
@@ -2861,6 +2886,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 			continue
 		}
 		out = append(out, memberJSON{
+			AgentID:           peerAgentID(ownerConv),
 			ConvID:            ownerConv,
 			Title:             agent.FreshTitle(ownerConv),
 			CreatedAt:         agent.FreshCreated(ownerConv),

@@ -660,6 +660,7 @@ func runWhoami(stdout, stderr io.Writer) int {
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
 		IsHuman bool   `json:"is_human"`
+		AgentID string `json:"agent_id"`
 		ConvID  string `json:"conv_id"`
 		Title   string `json:"title"`
 	}
@@ -675,7 +676,13 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	if title == "" {
 		title = "(unnamed)"
 	}
-	fmt.Fprintf(stdout, "%s\t%s\n", resp.ConvID, title)
+	// Lead with the stable agent_id; fall back to conv-id only if the
+	// caller isn't enrolled as an agent yet.
+	id := resp.AgentID
+	if id == "" {
+		id = resp.ConvID
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
 	return rcOK
 }
 
@@ -698,7 +705,13 @@ func runWhoamiDirect(stdout, stderr io.Writer) int {
 			title = t
 		}
 	}
-	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
+	// Lead with the stable agent_id when this conv is enrolled; otherwise
+	// fall back to the conv-id (the direct path can run before enrollment).
+	display := id
+	if aid, _ := db.AgentIDForConv(id); aid != "" {
+		display = aid
+	}
+	fmt.Fprintf(stdout, "%s\t%s\n", display, title)
 	return rcOK
 }
 
@@ -711,7 +724,7 @@ type lookupParams struct {
 func lookupCmd() *cobra.Command {
 	return boa.CmdT[lookupParams]{
 		Use:         "lookup",
-		Short:       "Resolve an agent name (or ID prefix) to a full conversation ID",
+		Short:       "Resolve an agent name (or ID prefix) to its stable agent_id",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *lookupParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -732,7 +745,8 @@ func runLookup(p *lookupParams, stdout, stderr io.Writer) int {
 
 func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
 	var resp struct {
-		ConvID string `json:"conv_id"`
+		ConvID  string `json:"conv_id"`
+		AgentID string `json:"agent_id"`
 	}
 	err := DaemonGet("/v1/lookup?selector="+url.QueryEscape(p.Selector), &resp)
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
@@ -745,7 +759,7 @@ func runLookupDaemon(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintln(stdout, resp.ConvID)
+	fmt.Fprintln(stdout, lookupID(resp.AgentID, resp.ConvID))
 	return rcOK
 }
 
@@ -759,8 +773,19 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	fmt.Fprintln(stdout, r.ConvID)
+	agentID, _ := db.AgentIDForConv(r.ConvID)
+	fmt.Fprintln(stdout, lookupID(agentID, r.ConvID))
 	return rcOK
+}
+
+// lookupID is what `tclaude agent lookup` prints: the stable agent_id when
+// the target is an agent (the canonical reference), else the conv-id for a
+// plain conversation. Either is a valid selector for the rest of the CLI.
+func lookupID(agentID, convID string) string {
+	if agentID != "" {
+		return agentID
+	}
+	return convID
 }
 
 // --- ls (peers in my groups) ---
@@ -786,10 +811,13 @@ func lsCmd() *cobra.Command {
 }
 
 type peerEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
-	Role   string `json:"role,omitempty"`
-	Descr  string `json:"descr,omitempty"`
+	// AgentID is the stable, rotation-immune actor key — what `agent ls`
+	// shows as the canonical ID. ConvID is the live generation behind it.
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Descr   string `json:"descr,omitempty"`
 	// Branch is the git branch / worktree the agent is working on, as
 	// recorded in its conv_index row (Claude Code stamps gitBranch into
 	// every .jsonl turn). Empty when the conv isn't indexed yet or the
@@ -844,7 +872,7 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
@@ -853,10 +881,11 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, pe := range peers {
-		// NAME is the conv's display title — an agent's single name.
+		// ID is the stable agent_id (short form for the table); NAME is the
+		// conv's display title. conv-id is available via --json.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(pe.Online),
-			short(pe.ConvID),
+			shortAgentID(pe.AgentID, pe.ConvID),
 			pe.Title,
 			pe.Role,
 			strings.Join(pe.Groups, ","),

@@ -353,6 +353,22 @@ func short(convID string) string {
 	return convID
 }
 
+// shortAgentID is the narrow-table form of a stable agent_id: the `agt_`
+// tag plus the first 8 hex of the suffix (12 chars). The full id is the
+// canonical, copy-pasteable handle (shown in JSON / single-value outputs);
+// this is the superficial display form used only where a wide column would
+// wreck a multi-column table. Falls back to the conv-id prefix when the row
+// carries no agent_id (a resolved candidate that isn't an agent).
+func shortAgentID(agentID, convID string) string {
+	if agentID == "" {
+		return short(convID)
+	}
+	if len(agentID) >= 12 {
+		return agentID[:12]
+	}
+	return agentID
+}
+
 // onlineMark returns the single-cell glyph used in agent ls / groups
 // members tables to flag online (live tmux session) conversations.
 func onlineMark(online bool) string {

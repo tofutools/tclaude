@@ -464,8 +464,10 @@ func groupsMembersCmd() *cobra.Command {
 }
 
 type memberEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	// AgentID is the stable actor key — the canonical ID shown for a member.
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 	// CreatedAt is the conversation's creation timestamp (RFC3339); the
 	// listing defaults to newest-first on it, surfaced as the AGE column.
 	CreatedAt string `json:"created_at,omitempty"`
@@ -526,7 +528,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "AGE", Width: 7},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
@@ -545,10 +547,10 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		} else if m.Owner && role == "" {
 			role = "owner"
 		}
-		// NAME is the conv's display title — an agent's single name.
+		// ID is the stable agent_id (short form); NAME is the display title.
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(m.Online),
-			short(m.ConvID),
+			shortAgentID(m.AgentID, m.ConvID),
 			m.Title,
 			relTimeAgo(m.CreatedAt),
 			role,
