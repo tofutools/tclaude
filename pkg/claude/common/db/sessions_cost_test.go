@@ -169,6 +169,63 @@ func TestUpdateSessionVirtualCost_WritesVirtualColumnOnly(t *testing.T) {
 	assert.Zero(t, total, "month-to-date real spend ignores virtual cost")
 }
 
+// TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
+// snapshot's agent_id is taken from the session's PERSISTED agent_id column
+// first, falling back to the live agent_conversations lookup only when that
+// column is empty. A /clear or clone can move the conv's actor mapping out from
+// under the live lookup while the persisted column still names the owning actor
+// — the snapshot must keep that attribution rather than blanking it.
+func TestUpdateSessionCost_PrefersPersistedAgentID(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+
+	// A session whose conv has NO agent_conversations mapping (the live lookup
+	// yields ''), but whose persisted agent_id names the owning actor.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "j288", TmuxSession: "tmux-j288", ConvID: "conv-j288", Cwd: "/tmp/j288", Status: "idle",
+	}), "SaveSession")
+	_, err = d.Exec(`UPDATE sessions SET agent_id = 'agt_persisted' WHERE id = 'j288'`)
+	require.NoError(t, err, "stamp persisted agent_id")
+
+	require.NoError(t, UpdateSessionCost("j288", 1.00), "UpdateSessionCost")
+
+	var agentID string
+	require.NoError(t, d.QueryRow(
+		`SELECT agent_id FROM session_cost_daily WHERE session_id = 'j288'`).Scan(&agentID),
+		"read daily agent_id")
+	assert.Equal(t, "agt_persisted", agentID,
+		"daily snapshot prefers the session's persisted agent_id over the empty conv lookup")
+}
+
+// TestUpdateSessionCost_FallsBackToConvLookupForAgentID is the other half of
+// JOH-288: when the session carries no persisted agent_id, the snapshot still
+// derives it from agent_conversations, preserving the pre-fix behaviour.
+func TestUpdateSessionCost_FallsBackToConvLookupForAgentID(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+
+	// Map the conv to an actor, then blank the session's persisted column so the
+	// only path to a non-empty agent_id is the agent_conversations fallback.
+	agentID, _, err := EnsureAgentForConv("conv-j288b", "test")
+	require.NoError(t, err, "EnsureAgentForConv")
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "j288b", TmuxSession: "tmux-j288b", ConvID: "conv-j288b", Cwd: "/tmp/j288b", Status: "idle",
+	}), "SaveSession")
+	_, err = d.Exec(`UPDATE sessions SET agent_id = '' WHERE id = 'j288b'`)
+	require.NoError(t, err, "blank persisted agent_id")
+
+	require.NoError(t, UpdateSessionCost("j288b", 1.00), "UpdateSessionCost")
+
+	var got string
+	require.NoError(t, d.QueryRow(
+		`SELECT agent_id FROM session_cost_daily WHERE session_id = 'j288b'`).Scan(&got),
+		"read daily agent_id")
+	assert.Equal(t, agentID, got,
+		"falls back to the agent_conversations lookup when the persisted column is empty")
+}
+
 // TestUpdateSessionVirtualCost_UnknownSessionWritesNothing mirrors the
 // real-cost INSERT…SELECT guard: a virtual cost write keyed to a session id
 // with no sessions row must not mint an orphan daily row.

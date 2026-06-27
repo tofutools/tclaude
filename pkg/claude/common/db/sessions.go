@@ -727,11 +727,16 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// (the empty-context ones before a turn's first response) keeps the
 	// last good value rather than blanking it.
 	now := time.Now()
-	// agent_id is denormalised in alongside conv_id, derived from the session's
-	// conv via agent_conversations, with the same keep-last-good CASE guard.
+	// agent_id is denormalised in alongside conv_id, with the same keep-last-good
+	// CASE guard. Prefer the session's persisted agent_id (the v77 companion,
+	// propagated by enrollment) and fall back to deriving it from the session's
+	// conv via agent_conversations — the persisted column survives a /clear or
+	// clone that moves the conv's actor mapping, which the live conv lookup alone
+	// would miss.
 	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, agent_id)
 		SELECT id, ?, conv_id, ?, ?, model,
-		       COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		       COALESCE(NULLIF(sessions.agent_id, ''),
+		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
 		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
@@ -789,7 +794,8 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 	now := time.Now()
 	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id)
 		SELECT id, ?, conv_id, ?, ?, model,
-		       COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		       COALESCE(NULLIF(sessions.agent_id, ''),
+		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
 		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
