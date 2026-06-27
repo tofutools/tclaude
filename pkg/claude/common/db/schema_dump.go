@@ -3,43 +3,91 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 )
 
 // SchemaSQL returns the canonical SQLite CREATE statements for the database —
 // the `.schema` equivalent: every table / index / view / trigger we define,
-// ordered deterministically so the output is a stable, diffable artifact.
-// Foreign-key REFERENCES clauses show inline in each CREATE. Auto-created
-// sqlite_* objects (e.g. sqlite_sequence, sqlite_autoindex_*) are excluded.
+// with foreign-key REFERENCES inline. Auto-created sqlite_* objects (e.g.
+// sqlite_sequence, sqlite_autoindex_*) are excluded.
+//
+// Ordering: tables (and views) appear in creation order — i.e. the order the
+// migration chain created them, read from sqlite_master.rowid — which is a
+// valid order to recreate them in (a referenced table is always created before
+// the table that references it; a fresh migration has zero FK forward
+// references). Each table's own indexes and triggers are grouped immediately
+// after it rather than scattered by global creation order, so the dump reads
+// per-table. This is deterministic for a freshly-migrated DB; VACUUM would
+// renumber rowids, but neither the live command nor the golden snapshot
+// VACUUMs (the golden builds via a direct migrate()).
 //
 // Used by `tclaude db schema` (against the live DB) and by the golden
 // schema-snapshot test (against a fresh fully-migrated DB).
 func SchemaSQL(d *sql.DB) (string, error) {
 	rows, err := d.Query(`
-		SELECT sql FROM sqlite_master
+		SELECT type, name, tbl_name, sql FROM sqlite_master
 		WHERE type IN ('table','index','view','trigger')
 		  AND name NOT LIKE 'sqlite_%'
 		  AND sql IS NOT NULL
-		ORDER BY type, name`)
+		ORDER BY rowid`)
 	if err != nil {
 		return "", fmt.Errorf("query sqlite_master: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var b strings.Builder
+	// Parents = tables/views (their tbl_name equals their own name); children =
+	// indexes/triggers (tbl_name points at their parent table). Both kept in
+	// the rowid encounter order = creation order.
+	var parentOrder []string
+	parentSQL := map[string]string{}
+	children := map[string][]string{}
+	isParent := map[string]bool{}
+
 	for rows.Next() {
-		var stmt string
-		if err := rows.Scan(&stmt); err != nil {
+		var typ, name, tbl, stmt string
+		if err := rows.Scan(&typ, &name, &tbl, &stmt); err != nil {
 			return "", fmt.Errorf("scan schema row: %w", err)
 		}
-		// SQLite stores the CREATE text verbatim (minus the trailing
-		// semicolon); re-add it and a blank line so multi-line CREATEs
-		// stay visually separated in the golden file and in diffs.
-		b.WriteString(strings.TrimRight(stmt, "\n"))
-		b.WriteString(";\n\n")
+		if name == tbl { // table or view — owns itself
+			parentOrder = append(parentOrder, name)
+			parentSQL[name] = stmt
+			isParent[name] = true
+		} else { // index or trigger — belongs to tbl
+			children[tbl] = append(children[tbl], stmt)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("iterate schema rows: %w", err)
+	}
+
+	var b strings.Builder
+	emit := func(stmt string) {
+		// SQLite stores the CREATE text verbatim (minus the trailing
+		// semicolon); re-add it and a blank line so multi-line CREATEs stay
+		// visually separated in the golden file and in diffs.
+		b.WriteString(strings.TrimRight(stmt, "\n"))
+		b.WriteString(";\n\n")
+	}
+	for _, p := range parentOrder {
+		emit(parentSQL[p])
+		for _, c := range children[p] {
+			emit(c)
+		}
+	}
+	// Defensive: a child whose parent table wasn't emitted (should never
+	// happen). Emit in sorted order so the fallback stays deterministic.
+	var orphans []string
+	for tbl := range children {
+		if !isParent[tbl] {
+			orphans = append(orphans, tbl)
+		}
+	}
+	sort.Strings(orphans)
+	for _, tbl := range orphans {
+		for _, c := range children[tbl] {
+			emit(c)
+		}
 	}
 	return b.String(), nil
 }

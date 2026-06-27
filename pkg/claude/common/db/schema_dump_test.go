@@ -12,14 +12,20 @@ import (
 // from a fresh fully-migrated DB. See TestSchemaSnapshot.
 const schemaGoldenPath = "schema.sql"
 
-// freshMigratedDB resets to a clean temp $HOME and opens (thus migrates) a
-// brand-new DB, returning its handle at currentVersion.
+// freshMigratedDB builds a brand-new DB by running the migration chain
+// directly, returning its handle at currentVersion.
+//
+// It deliberately bypasses Open()'s VACUUM-template fast-path: VACUUM renumbers
+// sqlite_master.rowid, which would scramble the creation-order ordering that
+// SchemaSQL (and thus the golden snapshot) depends on. A direct migrate()
+// preserves true creation order and is deterministic across runs.
 func freshMigratedDB(t *testing.T) *sql.DB {
 	t.Helper()
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-	require.NotNil(t, d, "Open returned nil")
+	path := t.TempDir() + "/schema.sqlite"
+	d, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	require.NoError(t, err, "open")
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, migrate(d), "migrate")
 	return d
 }
 
