@@ -70,6 +70,65 @@ func TestDeleteAgentByConvID_PredecessorKeepsLiveActor(t *testing.T) {
 	assert.Empty(t, members, "no memberships remain once the actor is gone")
 }
 
+// TestDeleteAgentByConvID_BridgesMiddleGenerationSuccession guards the routing
+// invariant that deleting a MIDDLE predecessor generation must not strand an
+// OLDER generation's stale-id forwarding. Stale ids forward through
+// agent_conv_succession (not agent_conversations), so when generation B is
+// removed from a chain A → B → C the deletion of the A→B and B→C edges has to be
+// healed with a fresh A→C bridge — otherwise ResolveLatestConv(A) would return A
+// instead of the live head C.
+func TestDeleteAgentByConvID_BridgesMiddleGenerationSuccession(t *testing.T) {
+	setupTestDB(t)
+
+	// One actor, three generations: A → B → C (C the live head).
+	_, _, err := EnsureAgentForConv("A", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("A", "B", "clear")
+	require.NoError(t, err, "rotate A→B")
+	_, err = RotateAgentConv("B", "C", "reincarnate")
+	require.NoError(t, err, "rotate B→C")
+
+	// Precondition: every generation's stale id forwards to the live head.
+	require.Equal(t, "C", ResolveLatestConv("A"), "A forwards to head before any delete")
+	require.Equal(t, "C", ResolveLatestConv("B"), "B forwards to head before any delete")
+
+	actor, err := AgentIDForConv("C")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	// --- Delete the MIDDLE generation B. ---
+	_, err = DeleteAgentByConvID("B")
+	require.NoError(t, err, "delete middle generation")
+
+	// B is gone; A stays linked to the actor.
+	bAgent, err := AgentIDForConv("B")
+	require.NoError(t, err)
+	assert.Empty(t, bAgent, "the middle generation is unlinked")
+	aAgent, err := AgentIDForConv("A")
+	require.NoError(t, err)
+	assert.Equal(t, actor, aAgent, "the older generation stays linked to the actor")
+
+	// The chain is healed: A still forwards to the live head C.
+	assert.Equal(t, "C", ResolveLatestConv("A"), "A still forwards to the live head after the middle delete")
+	succ, err := GetConvSuccessor("A")
+	require.NoError(t, err)
+	assert.Equal(t, "C", succ, "an A→C bridge edge was recorded")
+
+	// No dangling edges reference the deleted middle generation.
+	bs, err := GetConvSuccessor("B")
+	require.NoError(t, err)
+	assert.Empty(t, bs, "no edge out of the deleted generation")
+	bp, err := GetConvPredecessor("B")
+	require.NoError(t, err)
+	assert.Empty(t, bp, "no edge into the deleted generation")
+
+	// The live head and actor are untouched.
+	head, err := GetAgent(actor)
+	require.NoError(t, err)
+	require.NotNil(t, head)
+	assert.Equal(t, "C", head.CurrentConvID, "the live head is unchanged")
+}
+
 // TestDeleteAgentByConvID_CronJobsActorScoped guards the JOH-26 PR3a delete
 // move: cron jobs are agent-keyed (owner_agent / target_agent), so they are
 // torn down with the ACTOR (its current-generation delete), not on a
