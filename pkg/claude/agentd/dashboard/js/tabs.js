@@ -146,7 +146,12 @@ function cronTargetCell(j) {
     return `<span class="tag">group:${esc(j.group_name || ('#' + j.group_id))}</span>`;
   }
   if (j.target_conv) {
-    return `<span class="rowname" title="${esc(j.target_conv)}">${esc(j.target_label || shortAgentId(j.target_agent, j.target_conv))}</span>`;
+    // Lead with the stable agent_id (the cutover); keep the conv title as a
+    // muted second line so the human-readable name isn't lost (the cron tab
+    // has no separate name column like the roster does). conv_id stays the
+    // hover title for inspectability, matching the other roster cells.
+    return `<span class="rowname" title="${esc(j.target_conv)}">${esc(shortAgentId(j.target_agent, j.target_conv))}</span>`
+      + (j.target_label ? `<div class="muted">${esc(j.target_label)}</div>` : '');
   }
   return '<span class="muted">(no target)</span>';
 }
@@ -184,7 +189,7 @@ function renderCron(jobs) {
               <td>${enabledDot}</td>
               <td class="id">${j.id}</td>
               <td><div class="rowname">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
-              <td><span class="muted" title="${esc(j.owner_conv)}">${esc(j.owner_label || shortAgentId(j.owner_agent, j.owner_conv))}</span></td>
+              <td><span class="muted" title="${esc(j.owner_conv)}">${esc(shortAgentId(j.owner_agent, j.owner_conv))}</span>${j.owner_label ? `<div class="muted">${esc(j.owner_label)}</div>` : ''}</td>
               <td>${cronTargetCell(j)}</td>
               <td><span class="id">${esc(formatInterval(j.interval_seconds))}</span></td>
               <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>

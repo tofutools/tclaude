@@ -170,6 +170,17 @@ func runSudoLs(p *sudoLsParams, stdout, stderr io.Writer) int {
 	if p.JSON {
 		return writeJSONIndentSudo(stdout, rows)
 	}
+	return renderSudoGrants(rows, stdout)
+}
+
+// renderSudoGrants writes the human-readable `sudo ls` output: one block
+// per agent, grouped by the stable agent_id (rotation-immune) so an actor's
+// generations collapse into a single block, with a conv-id fallback for a
+// non-actor grant. Each block is headed by lookupID(agent_id, conv) + the
+// conv title, then the agent's currently-elevated slugs. Extracted from
+// runSudoLs so the grouping/header rendering is unit-testable without a
+// live daemon.
+func renderSudoGrants(rows []sudoGrantJSON, stdout io.Writer) int {
 	if len(rows) == 0 {
 		fmt.Fprintln(stdout, "No active sudo grants.")
 		return rcOK
