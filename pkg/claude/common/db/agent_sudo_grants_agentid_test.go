@@ -18,7 +18,7 @@ func TestSudoGrant_AgentIDPopulated(t *testing.T) {
 	// local-tz cutoff string, and RFC3339Nano TEXT only orders correctly when
 	// the offsets match (the known DB sort hazard).
 	now := time.Now()
-	_, err := InsertSudoGrant(&SudoGrant{
+	id, err := InsertSudoGrant(&SudoGrant{
 		ConvID: "worker", Slug: "groups.spawn", GrantedAt: now,
 		ExpiresAt: now.Add(time.Hour), GrantedBy: "human",
 	})
@@ -40,4 +40,13 @@ func TestSudoGrant_AgentIDPopulated(t *testing.T) {
 	require.NoError(t, err, "ListAllActiveSudoGrants")
 	require.Len(t, all, 1, "expected one active grant daemon-wide")
 	assert.Equal(t, wantAgent, all[0].AgentID, "--all list should carry the stable agent_id")
+
+	// Single-grant projection (GetSudoGrant) has its own column order, so
+	// cover it directly — a drift in that SELECT wouldn't show up in the
+	// list-query assertions above.
+	got, err := GetSudoGrant(id)
+	require.NoError(t, err, "GetSudoGrant")
+	require.NotNil(t, got, "expected the inserted grant")
+	assert.Equal(t, wantAgent, got.AgentID, "get should carry the stable agent_id")
+	assert.Equal(t, "worker", got.ConvID, "get should resolve the current conv")
 }

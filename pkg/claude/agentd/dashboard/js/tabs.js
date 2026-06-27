@@ -39,6 +39,7 @@ function filterGroups(groups, q) {
     const matchedMembers = (g.members || []).filter(m => {
       const state = m.state || {};
       return ((m.title || '').toLowerCase().includes(needle)) ||
+             ((m.agent_id || '').toLowerCase().includes(needle)) ||
              ((m.conv_id || '').toLowerCase().includes(needle)) ||
              ((m.role || '').toLowerCase().includes(needle)) ||
              ((m.descr || '').toLowerCase().includes(needle)) ||
