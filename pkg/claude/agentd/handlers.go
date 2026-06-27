@@ -928,6 +928,26 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 	return out, nil
 }
 
+// messageNudgeText builds the bracketed tmux nudge for a delivered agent
+// message, naming the sender by stable identity (JOH-27 PR3b) — the
+// agent_id is rotation-immune, so it is safe to surface in the receiver's
+// transcript where a conv-id prefix would have gone stale. On a read miss
+// it degrades to the terse, senderless form. Shared by nudgeIfAlive (live
+// delivery) and sendNudgeBracket (deferred flush) so the wording lives in
+// one place.
+func messageNudgeText(msgID int64) string {
+	if m, err := db.GetAgentMessage(msgID); err == nil && m != nil {
+		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
+			return fmt.Sprintf(
+				"[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]",
+				msgID, sender, msgID)
+		}
+	}
+	return fmt.Sprintf(
+		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
+		msgID, msgID)
+}
+
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends
 // the bracketed system-style nudge. Returns true on successful delivery.
 //
@@ -955,15 +975,14 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 	if sess == nil {
 		return false
 	}
-	// Minimal nudge: just announce the message. Sender, subject, group,
-	// reply addressing — all of that lives in the message itself, fetched
-	// via `tclaude agent inbox read <id>`. Keeping the bracket text terse
-	// avoids leaking ephemeral details (short conv-id prefixes,
-	// title-of-the-moment) into the receiver's transcript.
-	nudge := fmt.Sprintf(
-		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
-		msgID, msgID,
-	)
+	// Announce the message, naming the sender by stable identity (JOH-27
+	// PR3b). Subject, group and reply addressing still live in the message
+	// itself (fetched via `tclaude agent inbox read <id>`) so the line stays
+	// short. The earlier form was deliberately senderless to avoid leaking
+	// *ephemeral* details — but the agent_id is rotation-immune, so unlike a
+	// conv-id prefix it does not go stale on the sender's next reincarnate;
+	// the title is truncated so it cannot dominate the line.
+	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
 		return false
@@ -1912,8 +1931,10 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"id":         m.ID,
 		"from":       m.FromConv,
+		"from_agent": m.FromAgent,
 		"from_title": agent.TitleFor(m.FromConv),
 		"to":         m.ToConv,
+		"to_agent":   m.ToAgent,
 		"group":      groupName,
 		"subject":    m.Subject,
 		"body":       m.Body,
@@ -2036,11 +2057,11 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 		}
 		if outbox {
 			item.To = m.ToConv
-			item.ToShort = agent.ShortID(m.ToConv)
+			item.ToShort = agent.ShortAgentID(m.ToAgent, m.ToConv)
 			item.Delivered = !m.DeliveredAt.IsZero()
 		} else {
 			item.From = m.FromConv
-			item.FromShort = agent.ShortID(m.FromConv)
+			item.FromShort = agent.ShortAgentID(m.FromAgent, m.FromConv)
 		}
 		out = append(out, item)
 	}
