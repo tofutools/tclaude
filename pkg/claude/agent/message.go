@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"unicode"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -390,11 +391,28 @@ const nudgeSenderNameMax = 32
 // title, so the label is never empty.
 func MessageSenderLabel(fromConv, fromAgent string) string {
 	id := shortAgentID(fromAgent, fromConv)
-	name := truncate(TitleFor(fromConv), nudgeSenderNameMax)
+	name := truncate(sanitizeNudgeTitle(TitleFor(fromConv)), nudgeSenderNameMax)
 	if name == "" {
 		return id
 	}
 	return name + " (" + id + ")"
+}
+
+// sanitizeNudgeTitle strips control characters from a title before it is
+// interpolated into a send-keys nudge. send-keys is an injection sink:
+// CustomTitle is charset-gated at the /rename boundary, but the Summary /
+// FirstPrompt fallbacks displayTitle can return are NOT — a freshly spawned
+// agent that messages before its /rename lands carries a (often multi-line)
+// spawn brief as its title, and a raw newline would submit a premature Enter
+// in the recipient's pane. Control runes collapse to a space; surrounding
+// space is trimmed. Length is bounded separately by truncate().
+func sanitizeNudgeTitle(s string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s))
 }
 
 // onlineMark returns the single-cell glyph used in agent ls / groups

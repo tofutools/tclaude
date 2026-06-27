@@ -106,7 +106,7 @@ func renderInbox(p *inboxLsParams, out []inboxEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
 		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
-		table.Column{Header: "FROM", Width: 8},
+		table.Column{Header: "FROM", Width: 12},
 		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
 	)
@@ -191,7 +191,7 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "ST", Width: 3},
 		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
-		table.Column{Header: "TO", Width: 8},
+		table.Column{Header: "TO", Width: 12},
 		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "SUBJECT", MinWidth: 10, Weight: 1.6, Truncate: true},
 	)

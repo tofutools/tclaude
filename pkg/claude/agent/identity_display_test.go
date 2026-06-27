@@ -2,6 +2,7 @@ package agent
 
 import (
 	"testing"
+	"unicode"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,4 +82,24 @@ func TestMessageSenderLabel_TruncatesLongName(t *testing.T) {
 	assert.LessOrEqual(t, len(name), nudgeSenderNameMax, "name capped at nudgeSenderNameMax")
 	assert.Contains(t, name, "...", "truncated name carries an ellipsis")
 	assert.Contains(t, label, "("+agentID[:12]+")", "stable short id survives intact")
+}
+
+// TestMessageSenderLabel_SanitizesControlChars pins the send-keys safety
+// invariant: a title carrying control characters (a newline/tab — possible
+// from the un-charset-gated Summary/FirstPrompt title fallback, e.g. a
+// multi-line spawn brief used before /rename lands) must not survive into the
+// nudge label, or it would inject a premature Enter into the recipient's pane.
+func TestMessageSenderLabel_SanitizesControlChars(t *testing.T) {
+	setupTestDB(t)
+
+	const senderConv = "dddddddd-1111-2222-3333-444444444444"
+	upsertConvIndex(t, senderConv, "line one\nline two\twith tab", "", "")
+	agentID, _, err := db.EnsureAgentForConv(senderConv, "spawn")
+	require.NoError(t, err)
+
+	label := MessageSenderLabel(senderConv, agentID)
+	for _, r := range label {
+		require.Falsef(t, unicode.IsControl(r), "control rune %q survived into label %q", r, label)
+	}
+	assert.Contains(t, label, "("+agentID[:12]+")", "stable short id intact after sanitization")
 }
