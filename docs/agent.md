@@ -19,8 +19,9 @@ gated by a permission model the human curates.
 daemon) over a Unix socket. The daemon owns the database, tmux nudges,
 and permission gating; the CLI is a thin client. The daemon resolves
 every caller from the connecting socket peer: a caller running inside
-a Claude Code session is an *agent*, identified by its conv-id (re-read
-on every request, so `/fork` and `/resume` keep working); the *human operator*
+a Claude Code session is an *agent*, identified by a stable `agent_id`
+the daemon resolves from its live conv-id (re-read on every request, so
+`/fork` and `/resume` keep working); the *human operator*
 authenticates with an operator token. A caller it can confirm as
 neither is refused. See [Identity](#identity).
 
@@ -132,8 +133,10 @@ checks the request for an operator token. The verdict is one of:
   tree. The daemon resolves that ancestor's current conv-id — from
   `~/.claude/sessions/<pid>.json` (the `sessionId` Claude Code is
   *currently* on, so it follows `/fork` and `/resume`), falling back
-  to the daemon's own `sessions` table keyed by host PID. That conv-id
-  is the agent's identity, and the agent is gated by the
+  to the daemon's own `sessions` table keyed by host PID. It then maps
+  that live conv-id to the agent's stable `agent_id` — the
+  rotation-immune identity that outlives any conv-id rotation
+  (reincarnate, `/clear`) — and gates the agent by the
   [permission model](#permission-model).
 - **Human** — the operator. There are two ways to reach this class:
   a CLI caller with **no** `claude`/`node` ancestor that presents a

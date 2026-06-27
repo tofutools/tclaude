@@ -109,7 +109,7 @@ func TestFindAgentsByIDPrefix(t *testing.T) {
 
 	a1, err := AllocateAgent("conv-1", "spawn")
 	require.NoError(t, err)
-	_, err = AllocateAgent("conv-2", "spawn")
+	a2, err := AllocateAgent("conv-2", "spawn")
 	require.NoError(t, err)
 
 	// Full id → exactly one.
@@ -118,8 +118,18 @@ func TestFindAgentsByIDPrefix(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, a1, got[0].AgentID)
 
-	// Unique short prefix ("agt_" + 8 hex) → exactly one.
-	got, err = FindAgentsByIDPrefix(a1[:12])
+	// Unique prefix → exactly one. Derive the shortest prefix of a1 that a2
+	// does not share (the first hex position where the two random ids diverge),
+	// so the single-match assertion is deterministic — a fixed-length prefix
+	// like a1[:12] keeps only 8 random hex chars and can collide with a2.
+	prefix := a1
+	for i := len(AgentIDPrefix); i < len(a1) && i < len(a2); i++ {
+		if a1[i] != a2[i] {
+			prefix = a1[:i+1]
+			break
+		}
+	}
+	got, err = FindAgentsByIDPrefix(prefix)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, a1, got[0].AgentID)

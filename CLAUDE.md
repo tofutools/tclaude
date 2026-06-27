@@ -107,6 +107,8 @@ clcommon.Default = m.Tmux
 t.Cleanup(func() { clcommon.Default = prevTmux })
 ```
 
+**In-process `session` seams (a distinct, narrow category).** The "(and only these)" rule above scopes the *subprocess* boundaries. The `session` package additionally exports a couple of in-process `…ForTest` swaps — `SetRotateAgentConvForTest` (inject a one-shot transient `db.RotateAgentConv` failure to drive the post-`/clear` identity-migration retry path) and `SetClearInjectTimingsForTest` (shrink the `/clear` readiness-poll knobs so flow tests don't sit on the production delay). They live in a regular `.go` file (not `_test.go`) only because `_test.go` exports reach just the same package's test binary, and these are exercised from `agentd` flow tests in another package. They are **fault-injection / timing knobs, not subprocess mocks**, and are sanctioned for that use — keep any new ones rare, `…ForTest`-suffixed, and production-unreachable.
+
 **Simulators** under `pkg/testharness/`:
 
 - **`CCSim`** owns a real `.jsonl` under `~/.claude/projects/<encoded-cwd>/<convID>.jsonl`. Receives keystrokes via `Receive(text)`, buffers until `"Enter"` arrives, then dispatches through a handler list. Default handlers cover `/rename` (writes a `customTitle` turn), `/exit` (final user turn + flips alive=false), `/compact` (summary turn), and a fallback that writes a user turn. Tests register custom behaviors via `cc.OnInput(prefix, handler)` and async-process delays via `cc.SetCommandDelay(prefix, dur)`. Zero DB writes — CC's job is the `.jsonl`; the daemon owns SQLite.

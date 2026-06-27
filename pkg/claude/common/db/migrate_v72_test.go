@@ -56,16 +56,21 @@ func TestMigrateV71toV72_BackfillsExistingAgents(t *testing.T) {
 	assert.Equal(t, 72, ver)
 
 	// solo is its own actor; old+new collapse to one.
-	solo, _ := AgentIDForConv("solo")
-	oldA, _ := AgentIDForConv("old")
-	newA, _ := AgentIDForConv("new")
+	solo, err := AgentIDForConv("solo")
+	require.NoError(t, err)
+	oldA, err := AgentIDForConv("old")
+	require.NoError(t, err)
+	newA, err := AgentIDForConv("new")
+	require.NoError(t, err)
 	require.NotEmpty(t, solo)
 	require.NotEmpty(t, oldA)
 	assert.Equal(t, oldA, newA, "the reincarnation chain is one actor")
 	assert.NotEqual(t, solo, oldA, "the standalone agent is distinct")
 	assert.Equal(t, 2, countAgents(t, d))
 
-	a, _ := GetAgent(newA)
+	a, err := GetAgent(newA)
+	require.NoError(t, err)
+	require.NotNil(t, a)
 	assert.Equal(t, "new", a.CurrentConvID, "current conv is the chain head")
 	assert.Equal(t, "live-name", a.PendingName)
 }

@@ -516,6 +516,15 @@ func wipeForFreshImport(t *testing.T, group string, convs []string, cwd, home st
 	t.Helper()
 	require.NoError(t, db.DeleteAgentGroup(group))
 	for _, c := range convs {
+		// Revoke permissions FIRST, while the conv still resolves to its actor.
+		// RevokeAllAgentPermissionsForConv looks the actor up through the
+		// conv→agent link; DeleteAgentByConvID below only *unlinks* a rotated
+		// predecessor generation (it leaves the live actor's permission rows
+		// untouched), so a revoke run afterwards would resolve to no actor and
+		// silently no-op, stranding actor-scoped rows.
+		if _, err := db.RevokeAllAgentPermissionsForConv(c); err != nil {
+			t.Fatalf("wipe: revoke permissions %s: %v", c, err)
+		}
 		// DeleteAgentByConvID tears down the actor + its conv-scoped DB rows
 		// (conv_index, sessions, permissions via the actor) — the agents-table
 		// successor to deleting the enrollment row (JOH-26 PR3c).
@@ -524,9 +533,6 @@ func wipeForFreshImport(t *testing.T, group string, convs []string, cwd, home st
 		}
 		if err := db.DeleteConvIndex(c); err != nil {
 			t.Fatalf("wipe: delete conv_index %s: %v", c, err)
-		}
-		if _, err := db.RevokeAllAgentPermissionsForConv(c); err != nil {
-			t.Fatalf("wipe: revoke permissions %s: %v", c, err)
 		}
 		_ = os.Remove(convJSONLPath(home, cwd, c))
 	}
