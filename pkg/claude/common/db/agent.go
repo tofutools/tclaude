@@ -369,14 +369,24 @@ type AgentMessage struct {
 	// read` can render an `Original-To: <id>` header. Empty for the
 	// usual case where ToConv was already canonical.
 	OriginalToConv string
-	Subject        string
-	Body           string
-	ParentID       int64
-	CreatedAt      time.Time
-	DeliveredAt    time.Time
-	ReadAt         time.Time
-	ToRecipients   []string
-	CcRecipients   []string
+	// FromAgent / ToAgent are the stable agent_id of the sender and
+	// recipient (JOH-27 PR3a), denormalised alongside From/ToConv so a
+	// message renders `name (agent_id)` without a conv→agent lookup and
+	// stays attributable after the conv is pruned. They are DERIVED on
+	// write: InsertAgentMessage always recomputes them from From/ToConv
+	// (any value preset on the struct is ignored), and they are '' when
+	// the conv is not an actor (a plain conv, or a since-deleted agent).
+	// On read, scanAgentMessage fills them from the stored columns.
+	FromAgent    string
+	ToAgent      string
+	Subject      string
+	Body         string
+	ParentID     int64
+	CreatedAt    time.Time
+	DeliveredAt  time.Time
+	ReadAt       time.Time
+	ToRecipients []string
+	CcRecipients []string
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -1324,12 +1334,23 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}
+	// Dual-write the stable actor refs (JOH-27 PR3a): from_agent / to_agent are
+	// DERIVED from from_conv / to_conv via agent_conversations (conv_id is its
+	// PK, so each correlated subquery returns at most one row). COALESCE(...,'')
+	// keeps a non-actor conv — a plain conv, or one with no actor row yet — as ''
+	// rather than NULL. This is the same join migrateV75toV76 backfilled with, so
+	// existing and freshly-inserted rows agree. Any FromAgent/ToAgent preset on
+	// the struct is intentionally ignored: the conv columns are the source of
+	// truth, so the denormalised actor refs can never drift from them.
 	res, err := db.Exec(`INSERT INTO agent_messages
-		(group_id, from_conv, to_conv, subject, body, parent_id,
+		(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		 created_at, delivered_at, read_at,
 		 to_recipients, cc_recipients, original_to_conv)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.GroupID, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
+		VALUES (?, ?, ?,
+		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+		 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.GroupID, m.FromConv, m.ToConv, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
 		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
@@ -1712,7 +1733,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages
@@ -1801,7 +1822,7 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages WHERE id = ?`, id)
@@ -1842,7 +1863,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC`
@@ -2188,7 +2209,7 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, subject, body, parent_id,
+	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
 		to_recipients, cc_recipients, original_to_conv
 		FROM agent_messages`
@@ -2497,6 +2518,7 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var createdAt, deliveredAt, readAt string
 	var toRecipients, ccRecipients string
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
+		&m.FromAgent, &m.ToAgent,
 		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt,
 		&toRecipients, &ccRecipients, &m.OriginalToConv); err != nil {

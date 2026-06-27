@@ -963,14 +963,24 @@ func (c *importCtx) messages() error {
 	// collapses to 0 ("top of thread").
 	msgIDMap := make(map[int64]int64, len(c.exp.Messages))
 	for _, m := range c.exp.Messages {
+		// Derive the actor refs from the REMAPPED convs, the same COALESCE
+		// join InsertAgentMessage and migrateV75toV76 use — so an imported
+		// message agrees with a freshly-sent one. agent_conversations is
+		// already populated for this import: enrollments() (+ successions())
+		// run before messages() and ensureAgentForConvTx every imported conv,
+		// so a message whose remapped conv is an actor resolves here; a
+		// non-actor conv falls through COALESCE to ''.
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_messages
-				(group_id, from_conv, to_conv, subject, body, created_at,
+				(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, created_at,
 				 delivered_at, read_at, parent_id, to_recipients, cc_recipients,
 				 original_to_conv)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), m.Subject, m.Body,
-			m.CreatedAt, m.DeliveredAt, m.ReadAt, c.rl(m.ToRecipients),
+			VALUES (?, ?, ?,
+			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+			 ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), c.rc(m.FromConv), c.rc(m.ToConv),
+			m.Subject, m.Body, m.CreatedAt, m.DeliveredAt, m.ReadAt, c.rl(m.ToRecipients),
 			c.rl(m.CcRecipients), c.rc(m.OriginalToConv))
 		if err != nil {
 			return fmt.Errorf("import: message %d: %w", m.ID, err)
