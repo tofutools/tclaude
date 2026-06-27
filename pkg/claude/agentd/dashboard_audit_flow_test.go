@@ -29,8 +29,10 @@ type auditEntryResp struct {
 	ID          int64  `json:"id"`
 	At          string `json:"at"`
 	ActorKind   string `json:"actor_kind"`
+	ActorAgent  string `json:"actor_agent"`
 	ActorLabel  string `json:"actor_label"`
 	Verb        string `json:"verb"`
+	TargetAgent string `json:"target_agent"`
 	TargetLabel string `json:"target_label"`
 	GroupName   string `json:"group_name"`
 	Detail      string `json:"detail"`
@@ -95,6 +97,34 @@ func TestAuditEndpoint_ListsFiltersAndRetention(t *testing.T) {
 	require.Len(t, search.Entries, 1)
 	assert.Equal(t, "message", search.Entries[0].Verb)
 	assert.Equal(t, 3, search.TotalUnfiltered, "total_unfiltered counts all rows even while searching")
+}
+
+// Scenario (PR3c-web): the Audit tab surfaces the stable agent_id of an
+// enrolled actor/target, so the dashboard renders the command trail by the
+// rotation-immune handle instead of a conv-id prefix.
+func TestAuditEndpoint_SurfacesAgentID(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	const actorConv = "audit-actor-1111"
+	const targetConv = "audit-target-2222"
+	actorAgent, _, err := db.EnsureAgentForConv(actorConv, "spawn")
+	require.NoError(t, err)
+	targetAgent, _, err := db.EnsureAgentForConv(targetConv, "spawn")
+	require.NoError(t, err)
+
+	_, err = db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind: db.AuditActorAgent, ActorConv: actorConv, ActorLabel: "po",
+		Verb: "message", TargetConv: targetConv, TargetLabel: "worker",
+		Status: 200, Source: db.AuditSourceCLI,
+	})
+	require.NoError(t, err)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	got := fetchAudit(t, mux, "")
+	require.Len(t, got.Entries, 1)
+	assert.Equal(t, actorAgent, got.Entries[0].ActorAgent, "actor agent_id on the wire")
+	assert.Equal(t, targetAgent, got.Entries[0].TargetAgent, "target agent_id on the wire")
 }
 
 // The endpoint pages and sorts server-side: a page_size of 1 returns one

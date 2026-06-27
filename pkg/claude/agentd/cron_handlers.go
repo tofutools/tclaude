@@ -45,8 +45,10 @@ import (
 type jobJSON struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name,omitempty"`
+	OwnerAgent      string `json:"owner_agent,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
 	TargetKind      string `json:"target_kind"`
+	TargetAgent     string `json:"target_agent,omitempty"`
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
@@ -63,8 +65,10 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 	out := jobJSON{
 		ID:              j.ID,
 		Name:            j.Name,
+		OwnerAgent:      j.OwnerAgent,
 		OwnerConv:       j.OwnerConv,
 		TargetKind:      j.TargetKind,
+		TargetAgent:     j.TargetAgent,
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
 		IntervalSeconds: j.IntervalSeconds,

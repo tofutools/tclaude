@@ -3045,6 +3045,9 @@ func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.Age
 }
 
 type ownerJSON struct {
+	// AgentID is the owner's stable actor key — the canonical ID the CLI
+	// leads with; ConvID is the live generation behind it.
+	AgentID   string `json:"agent_id,omitempty"`
 	ConvID    string `json:"conv_id"`
 	Title     string `json:"title"`
 	Online    bool   `json:"online"`
@@ -3067,9 +3070,10 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 	out := make([]ownerJSON, 0, len(owners))
 	for _, o := range owners {
 		entry := ownerJSON{
-			ConvID: o.ConvID,
-			Title:  agent.FreshTitle(o.ConvID),
-			Online: isConvOnlineIn(o.ConvID, aliveSessions),
+			AgentID: o.AgentID,
+			ConvID:  o.ConvID,
+			Title:   agent.FreshTitle(o.ConvID),
+			Online:  isConvOnlineIn(o.ConvID, aliveSessions),
 		}
 		if !o.GrantedAt.IsZero() {
 			entry.GrantedAt = o.GrantedAt.Format(time.RFC3339)
@@ -3113,8 +3117,9 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"group":   g.Name,
-		"conv_id": res.ConvID,
+		"group":    g.Name,
+		"agent_id": peerAgentID(res.ConvID),
+		"conv_id":  res.ConvID,
 	})
 }
 

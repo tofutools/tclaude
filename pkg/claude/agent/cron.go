@@ -42,8 +42,10 @@ func cronCmd() *cobra.Command {
 type cronJobJSON struct {
 	ID              int64  `json:"id"`
 	Name            string `json:"name,omitempty"`
+	OwnerAgent      string `json:"owner_agent,omitempty"`
 	OwnerConv       string `json:"owner_conv"`
 	TargetKind      string `json:"target_kind"`
+	TargetAgent     string `json:"target_agent,omitempty"`
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
@@ -115,7 +117,8 @@ func runCronLs(stdout, stderr io.Writer) int {
 
 // cronTargetLabel renders a job's target for the ls TARGET column:
 // "group:<name>" (falling back to "group:#<id>") for a group-target
-// job, else the short conv id.
+// job, else the target actor's short stable agent_id (falling back to
+// the conv-id prefix for a target that isn't an enrolled agent).
 func cronTargetLabel(j cronJobJSON) string {
 	if j.TargetKind == "group" {
 		if j.GroupName != "" {
@@ -123,7 +126,7 @@ func cronTargetLabel(j cronJobJSON) string {
 		}
 		return "group:#" + strconv.FormatInt(j.GroupID, 10)
 	}
-	return short(j.TargetConv)
+	return shortAgentID(j.TargetAgent, j.TargetConv)
 }
 
 // ---- add ----

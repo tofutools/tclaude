@@ -16,6 +16,7 @@ import (
 
 // ownerEntry mirrors the daemon's ownerJSON payload for /v1/groups/<g>/owners.
 type ownerEntry struct {
+	AgentID   string `json:"agent_id,omitempty"`
 	ConvID    string `json:"conv_id"`
 	Title     string `json:"title"`
 	Online    bool   `json:"online"`
@@ -73,7 +74,7 @@ func runGroupsOwners(p *groupsOwnersParams, stdout, stderr io.Writer) int {
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "TITLE", MinWidth: 8, Weight: 1, Truncate: true},
 		table.Column{Header: "GRANTED", MinWidth: 10, Weight: 0.6, Truncate: true},
 	)
@@ -81,7 +82,7 @@ func runGroupsOwners(p *groupsOwnersParams, stdout, stderr io.Writer) int {
 	for _, o := range owners {
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(o.Online),
-			short(o.ConvID),
+			shortAgentID(o.AgentID, o.ConvID),
 			o.Title,
 			o.GrantedAt,
 		}})
@@ -136,15 +137,16 @@ func runGroupsGrantOwner(p *groupsGrantOwnerParams, stdout, stderr io.Writer) in
 	}
 	body := map[string]string{"conv": p.Conv}
 	var resp struct {
-		Group  string `json:"group"`
-		ConvID string `json:"conv_id"`
+		Group   string `json:"group"`
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Group) + "/owners"
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Granted ownership of %q to %s\n", resp.Group, short(resp.ConvID))
+	fmt.Fprintf(stdout, "Granted ownership of %q to %s\n", resp.Group, lookupID(resp.AgentID, resp.ConvID))
 	return rcOK
 }
 

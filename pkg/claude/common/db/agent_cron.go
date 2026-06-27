@@ -25,8 +25,14 @@ const (
 // AgentCronJob is a row in agent_cron_jobs. Recurring scheduled
 // task that the agentd scheduler fires on a wall-clock interval.
 type AgentCronJob struct {
-	ID              int64
-	Name            string
+	ID   int64
+	Name string
+	// OwnerAgent / TargetAgent are the stable actor keys the job is keyed on
+	// (JOH-26) — the canonical, rotation-immune identities to display.
+	// OwnerConv / TargetConv are the actors' current generations, resolved at
+	// read time. TargetAgent is "" for a group-target job (no single actor).
+	OwnerAgent      string
+	TargetAgent     string
 	OwnerConv       string
 	TargetKind      string // CronTargetConv | CronTargetGroup
 	TargetConv      string // recipient when TargetKind == CronTargetConv
@@ -81,11 +87,13 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 13 projected columns match scanAgentCronJob's field order.
+// The 15 projected columns match scanAgentCronJob's field order. owner_agent /
+// target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
+// resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
-	j.last_run_at, j.last_run_status
+	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -382,7 +390,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
-		&lastRun, &j.LastRunStatus)
+		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent)
 	if err != nil {
 		return nil, err
 	}
