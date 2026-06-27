@@ -74,7 +74,7 @@ func TestAllocateAndResolveAgent(t *testing.T) {
 
 	agentID, err := AllocateAgent("conv-a", "spawn")
 	require.NoError(t, err, "AllocateAgent")
-	assert.True(t, len(agentID) > len(agentIDPrefix) && agentID[:len(agentIDPrefix)] == agentIDPrefix,
+	assert.True(t, len(agentID) > len(AgentIDPrefix) && agentID[:len(AgentIDPrefix)] == AgentIDPrefix,
 		"agent_id should carry the agt_ prefix, got %q", agentID)
 
 	got, err := AgentIDForConv("conv-a")
@@ -96,6 +96,43 @@ func TestAllocateAndResolveAgent(t *testing.T) {
 	convs, err := ConvsForAgent(agentID)
 	require.NoError(t, err, "ConvsForAgent")
 	assert.Equal(t, []string{"conv-a"}, convs)
+}
+
+// TestFindAgentsByIDPrefix covers the selector-resolver lookup: full id,
+// unique prefix, the bare "agt_" tag (matches all actors), and a no-match
+// prefix. The `agt_` tag contains an underscore (a LIKE wildcard), so this
+// also guards the metacharacter escaping.
+func TestFindAgentsByIDPrefix(t *testing.T) {
+	setupTestDB(t)
+	_, err := Open()
+	require.NoError(t, err, "Open")
+
+	a1, err := AllocateAgent("conv-1", "spawn")
+	require.NoError(t, err)
+	_, err = AllocateAgent("conv-2", "spawn")
+	require.NoError(t, err)
+
+	// Full id → exactly one.
+	got, err := FindAgentsByIDPrefix(a1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, a1, got[0].AgentID)
+
+	// Unique short prefix ("agt_" + 8 hex) → exactly one.
+	got, err = FindAgentsByIDPrefix(a1[:12])
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, a1, got[0].AgentID)
+
+	// The bare tag prefixes every actor.
+	got, err = FindAgentsByIDPrefix(AgentIDPrefix)
+	require.NoError(t, err)
+	assert.Len(t, got, 2, "the `agt_` tag should match both agents")
+
+	// A well-formed but unmatched id → empty, no error.
+	got, err = FindAgentsByIDPrefix("agt_0000000000000000000000000000beef")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 // TestAgentIDForConvUnknown: an unmapped conv resolves to "".

@@ -132,6 +132,37 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 		return &resolved{ConvID: head, Row: row}, nil, nil
 	}
 
+	// 0.5) stable agent_id — the canonical, rotation-immune handle. A
+	//      selector tagged `agt_` is unambiguously an agent_id: it can't
+	//      collide with a conv UUID (dashes) or a display title, so we
+	//      resolve it straight to the actor's live generation
+	//      (agents.current_conv_id) regardless of how many times the agent
+	//      has reincarnated. Full id or unique prefix resolves; several
+	//      matches surface as an ambiguity; zero is reported against the
+	//      agent layer rather than falling through to the conv/title steps
+	//      (which can never match an `agt_` string anyway).
+	if strings.HasPrefix(selector, db.AgentIDPrefix) {
+		matches, err := db.FindAgentsByIDPrefix(selector)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch len(matches) {
+		case 1:
+			conv := matches[0].CurrentConvID
+			row, _ := db.GetConvIndex(conv)
+			return &resolved{ConvID: conv, Row: row}, nil, nil
+		case 0:
+			return nil, nil, fmt.Errorf("no agent matches %q", selector)
+		default:
+			cands := make([]*resolved, 0, len(matches))
+			for _, a := range matches {
+				row, _ := db.GetConvIndex(a.CurrentConvID)
+				cands = append(cands, &resolved{ConvID: a.CurrentConvID, Row: row})
+			}
+			return nil, cands, errAmbiguous
+		}
+	}
+
 	// 1) full UUID match
 	if row, err := db.GetConvIndex(selector); err == nil && row != nil {
 		return &resolved{ConvID: row.ConvID, Row: row}, nil, nil
