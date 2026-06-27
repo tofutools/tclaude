@@ -723,10 +723,14 @@ func linkConvTx(q dbExecQuerier, convID, agentID, role, reason string, now time.
 		return fmt.Errorf("linkConvToAgent: conv %s already belongs to agent %s (refusing to relink to %s)",
 			convID, existing, agentID)
 	}
-	_, err = q.Exec(`INSERT INTO agent_conversations
+	if _, err = q.Exec(`INSERT INTO agent_conversations
 		(conv_id, agent_id, role, reason, linked_at) VALUES (?, ?, ?, ?, ?)`,
-		convID, agentID, role, reason, now.Format(time.RFC3339Nano))
-	return err
+		convID, agentID, role, reason, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	// Fill owner rows written before this conv enrolled (a sessions row predates
+	// the hook that links the agent). Insert-time dual-write covers the rest.
+	return propagateAgentCompanions(q, convID, agentID)
 }
 
 // advanceAgentToNewConv is the rotation primitive: it links newConv as the
@@ -767,6 +771,11 @@ func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, 
 			newConv, agentID, ConvRoleGeneration, reason, now.Format(time.RFC3339Nano)); err != nil {
 			return false, err
 		}
+	}
+	// newConv now belongs to agentID; fill any owner rows already keyed on it
+	// (a sessions row for the successor can be registered before this link).
+	if err := propagateAgentCompanions(tx, newConv, agentID); err != nil {
+		return false, err
 	}
 	res, err := tx.Exec(`UPDATE agents SET current_conv_id = ?
 		WHERE agent_id = ? AND current_conv_id = ?`, newConv, agentID, oldConv)

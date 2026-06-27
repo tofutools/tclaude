@@ -9,9 +9,9 @@ import (
 )
 
 // TestMigrateV75toV76_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts agent_messages came out with the actor columns. v76 is head,
-// so the literal currentVersion tripwire lives here now (moved forward from the
-// v75 test); the next migration's author moves it into their own test.
+// chain and asserts agent_messages came out with the actor columns. (The
+// literal currentVersion tripwire moved forward to the v77 test, which is now
+// head.)
 func TestMigrateV75toV76_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -20,7 +20,6 @@ func TestMigrateV75toV76_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 76, currentVersion, "tripwire: bump this and add a v76→v77 test when you add a migration")
 
 	for _, col := range []string{"from_agent", "to_agent"} {
 		has, err := columnExists(d, "agent_messages", col)

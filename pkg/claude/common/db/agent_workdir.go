@@ -47,12 +47,15 @@ func UpsertAgentWorkdir(convID, dir, worktreeRoot, branch string) error {
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(`INSERT INTO agent_workdir (conv_id, dir, worktree_root, branch, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+	// agent_id is dual-written from conv_id; excluded.agent_id re-derives on
+	// conflict so a row first written before the conv enrolled self-heals.
+	_, err = conn.Exec(`INSERT INTO agent_workdir (conv_id, dir, worktree_root, branch, updated_at, agent_id)
+		VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(conv_id) DO UPDATE SET
 			dir = excluded.dir, worktree_root = excluded.worktree_root,
-			branch = excluded.branch, updated_at = excluded.updated_at`,
-		convID, dir, worktreeRoot, branch, time.Now().Format(time.RFC3339Nano))
+			branch = excluded.branch, updated_at = excluded.updated_at,
+			agent_id = excluded.agent_id`,
+		convID, dir, worktreeRoot, branch, time.Now().Format(time.RFC3339Nano), convID)
 	return err
 }
 

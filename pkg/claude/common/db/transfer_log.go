@@ -59,12 +59,12 @@ func insertTransferLog(x execer, e TransferLogEntry) (int64, error) {
 		INSERT INTO agent_transfer_log
 			(kind, at, format_version, source_group, source_home, source_os,
 			 result_group, target_dir, conv_remaps, agent_count, message_count,
-			 by_conv, note)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 by_conv, note, by_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
 		e.Kind, at.Format(time.RFC3339Nano), e.FormatVersion,
 		e.SourceGroup, e.SourceHome, e.SourceOS,
 		e.ResultGroup, e.TargetDir, e.ConvRemaps,
-		e.AgentCount, e.MessageCount, e.ByConv, e.Note)
+		e.AgentCount, e.MessageCount, e.ByConv, e.Note, e.ByConv)
 	if err != nil {
 		return 0, fmt.Errorf("insert transfer log: %w", err)
 	}

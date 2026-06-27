@@ -106,13 +106,14 @@ func RotateAgentConv(oldConv, newConv, reason string) (carriedName string, err e
 	// reference to oldConv (a queued message, a CLI selector) resolves forward to
 	// the live agent. Committed only when the actor advance below also succeeds.
 	if _, err := tx.Exec(`INSERT INTO agent_conv_succession
-		(old_conv_id, new_conv_id, reason, succeeded_at)
-		VALUES (?, ?, ?, ?)
+		(old_conv_id, new_conv_id, reason, succeeded_at, agent_id)
+		VALUES (?, ?, ?, ?, `+agentForSuccessionExpr+`)
 		ON CONFLICT(old_conv_id) DO UPDATE SET
 			new_conv_id  = excluded.new_conv_id,
 			reason       = excluded.reason,
-			succeeded_at = excluded.succeeded_at`,
-		oldConv, newConv, reason, nowSec); err != nil {
+			succeeded_at = excluded.succeeded_at,
+			agent_id     = excluded.agent_id`,
+		oldConv, newConv, reason, nowSec, newConv, oldConv); err != nil {
 		return "", fmt.Errorf("RotateAgentConv: record succession: %w", err)
 	}
 

@@ -692,9 +692,9 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 		// No-op: idempotent same-name. Still record the audit row so a
 		// human can see they tried — useful when chasing typos.
 		if _, err := tx.Exec(
-			`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano)); err != nil {
+			`INSERT INTO agent_group_audit (group_id, old_name, new_name, by_conv, at, by_agent)
+			 VALUES (?, ?, ?, ?, ?, `+agentForConvExpr+`)`,
+			g.ID, oldName, newName, byConv, time.Now().Format(time.RFC3339Nano), byConv); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -1121,14 +1121,15 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 			// (no predecessor) or a pre-head (no successor) generation.
 			if bridgeOld != "" && bridgeNew != "" && bridgeOld != bridgeNew {
 				if _, err := tx.Exec(`INSERT INTO agent_conv_succession
-					(old_conv_id, new_conv_id, reason, succeeded_at)
-					VALUES (?, ?, ?, ?)
+					(old_conv_id, new_conv_id, reason, succeeded_at, agent_id)
+					VALUES (?, ?, ?, ?, `+agentForSuccessionExpr+`)
 					ON CONFLICT(old_conv_id) DO UPDATE SET
 						new_conv_id = excluded.new_conv_id,
 						reason = excluded.reason,
-						succeeded_at = excluded.succeeded_at`,
+						succeeded_at = excluded.succeeded_at,
+						agent_id = excluded.agent_id`,
 					bridgeOld, bridgeNew, bridgeReason,
-					time.Now().UTC().Format(time.RFC3339)); err != nil {
+					time.Now().UTC().Format(time.RFC3339), bridgeNew, bridgeOld); err != nil {
 					return AgentDeletionCounts{}, fmt.Errorf("delete agent (bridge succession): %w", err)
 				}
 			}

@@ -61,14 +61,18 @@ func SetAskThread(termKey, cwd, convID, harness string) error {
 		return err
 	}
 	now := time.Now().Format(time.RFC3339Nano)
+	// agent_id is dual-written from conv_id; excluded.agent_id re-derives it on
+	// conflict so a thread that moves to a new conv (or whose conv enrolls later)
+	// tracks the right actor.
 	_, err = db.Exec(
-		`INSERT INTO ask_threads (term_key, cwd, conv_id, harness, created_at, updated_at)
-		      VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO ask_threads (term_key, cwd, conv_id, harness, created_at, updated_at, agent_id)
+		      VALUES (?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		 ON CONFLICT(term_key, cwd) DO UPDATE SET
 		      conv_id    = excluded.conv_id,
 		      harness    = excluded.harness,
-		      updated_at = excluded.updated_at`,
-		termKey, cwd, convID, harness, now, now)
+		      updated_at = excluded.updated_at,
+		      agent_id   = excluded.agent_id`,
+		termKey, cwd, convID, harness, now, now, convID)
 	return err
 }
 

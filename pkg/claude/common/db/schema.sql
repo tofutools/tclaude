@@ -11,7 +11,7 @@ CREATE TABLE sessions (
 			auto_registered INTEGER NOT NULL DEFAULT 0,
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0);
+		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_sessions_conv_id ON sessions(conv_id);
 
@@ -117,7 +117,7 @@ CREATE TABLE agent_conv_succession (
 			new_conv_id   TEXT NOT NULL,
 			reason        TEXT NOT NULL DEFAULT '',
 			succeeded_at  TEXT NOT NULL
-		);
+		, agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_conv_succession_new
 			ON agent_conv_succession(new_conv_id);
@@ -137,7 +137,7 @@ CREATE TABLE agent_group_audit (
 			new_name   TEXT NOT NULL,
 			by_conv    TEXT NOT NULL DEFAULT '',
 			at         TEXT NOT NULL
-		);
+		, by_agent TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_group_audit_group
 			ON agent_group_audit(group_id, at);
@@ -147,7 +147,7 @@ CREATE TABLE agent_head_aliases (
 			anchor_conv_id TEXT NOT NULL,
 			created_at     TEXT NOT NULL,
 			by_conv        TEXT NOT NULL DEFAULT ''
-		);
+		, by_agent TEXT NOT NULL DEFAULT '', anchor_agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_head_aliases_anchor
 			ON agent_head_aliases(anchor_conv_id);
@@ -158,7 +158,7 @@ CREATE TABLE agent_group_links (
 			to_group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 			mode            TEXT    NOT NULL,
 			created_at      TEXT    NOT NULL,
-			by_conv         TEXT    NOT NULL DEFAULT '',
+			by_conv         TEXT    NOT NULL DEFAULT '', by_agent TEXT NOT NULL DEFAULT '',
 			UNIQUE (from_group_id, to_group_id, mode)
 		);
 
@@ -172,7 +172,7 @@ CREATE TABLE agent_workdir (
 			conv_id    TEXT PRIMARY KEY,
 			dir        TEXT NOT NULL,
 			updated_at TEXT NOT NULL
-		, worktree_root TEXT NOT NULL DEFAULT '', branch        TEXT NOT NULL DEFAULT '');
+		, worktree_root TEXT NOT NULL DEFAULT '', branch        TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE agent_spawn_history (
 			spawner_agent_id TEXT NOT NULL,
@@ -219,7 +219,7 @@ CREATE TABLE agent_transfer_log (
 			message_count  INTEGER NOT NULL DEFAULT 0,
 			by_conv        TEXT NOT NULL DEFAULT '',
 			note           TEXT NOT NULL DEFAULT ''
-		);
+		, by_agent TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_transfer_log_at
 			ON agent_transfer_log(at);
@@ -286,13 +286,13 @@ CREATE TABLE agent_workspace (
 			pr_url         TEXT NOT NULL DEFAULT '',
 			pr_state       TEXT NOT NULL DEFAULT '',
 			updated_at     TEXT NOT NULL DEFAULT ''
-		);
+		, agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE session_cost_daily (
 			session_id TEXT NOT NULL,
 			day        TEXT NOT NULL,
 			conv_id    TEXT NOT NULL DEFAULT '',
-			cost_usd   REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
+			cost_usd   REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (session_id, day)
 		);
 
@@ -346,7 +346,7 @@ CREATE TABLE ask_threads (
 			conv_id    TEXT NOT NULL,
 			harness    TEXT NOT NULL DEFAULT 'claude',
 			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (term_key, cwd)
 		);
 
@@ -365,7 +365,7 @@ CREATE TABLE export_jobs (
 			content_type  TEXT NOT NULL DEFAULT '',
 			created_at    TEXT NOT NULL,
 			updated_at    TEXT NOT NULL
-		, worker_conv_id TEXT NOT NULL DEFAULT '');
+		, worker_conv_id TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', worker_agent_id TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_export_jobs_conv
 			ON export_jobs(conv_id);
@@ -385,7 +385,7 @@ CREATE TABLE audit_log (
 			path         TEXT NOT NULL DEFAULT '',
 			status       INTEGER NOT NULL DEFAULT 0,
 			source       TEXT NOT NULL DEFAULT ''
-		);
+		, actor_agent TEXT NOT NULL DEFAULT '', target_agent TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_audit_log_at
 			ON audit_log(at);
