@@ -164,6 +164,27 @@ func TestDualWrite_Succession(t *testing.T) {
 	assert.Equal(t, agentA, succAgent, "succession agent_id derived via the enrolled predecessor")
 }
 
+// TestDualWrite_GroupRenameAudit pins by_agent dual-write on the REAL-rename
+// branch of RenameAgentGroup (a cold-review catch — the no-op same-name branch
+// was updated but the actual rename insert had been missed).
+func TestDualWrite_GroupRenameAudit(t *testing.T) {
+	setupTestDB(t)
+
+	renamer, _, err := EnsureAgentForConv("renamerConv", "spawn")
+	require.NoError(t, err)
+	_, err = CreateAgentGroup("g1", "")
+	require.NoError(t, err)
+	_, err = RenameAgentGroup("g1", "g2", "renamerConv")
+	require.NoError(t, err, "RenameAgentGroup")
+
+	d, err := Open()
+	require.NoError(t, err)
+	var byAgent string
+	require.NoError(t, d.QueryRow(
+		`SELECT by_agent FROM agent_group_audit WHERE new_name = 'g2'`).Scan(&byAgent))
+	assert.Equal(t, renamer, byAgent, "real group rename dual-writes by_agent")
+}
+
 // TestPropagation_Sessions pins the enrollment-time propagation: a session row
 // written before its conv enrolls has agent_id '' at insert, then gets filled
 // when EnsureAgentForConv links the conv.
