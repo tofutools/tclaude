@@ -8,9 +8,8 @@ import (
 )
 
 // TestMigrateV74toV75_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts agent_enrollment is gone at head. v75 is head, so the
-// literal currentVersion tripwire lives here now (moved forward from the v74
-// test); the next migration's author moves it into their own test.
+// chain and asserts agent_enrollment is gone at head. The literal currentVersion
+// tripwire moved forward to the v76 test (head), per convention.
 func TestMigrateV74toV75_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -19,7 +18,6 @@ func TestMigrateV74toV75_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 75, currentVersion, "tripwire: bump this and add a v75→v76 test when you add a migration")
 
 	exists, err := tableExists(d, "agent_enrollment")
 	require.NoError(t, err)
