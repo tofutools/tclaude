@@ -1704,7 +1704,10 @@ func collectReplacedGenerationsSnapshot(active, retired []*db.Agent, aliveSessio
 					replacedAt = gens[i+1].LinkedAt
 				}
 				title := agent.CachedTitle(g.ConvID)
-				if title == "" {
+				if title == "" || title == agent.UnknownTitle {
+					// CachedTitle returns the non-empty "(unknown)" sentinel when
+					// the predecessor's own index row is gone; treat it as missing
+					// and fall back to the live actor title.
 					title = actorTitle
 				}
 				ra := ""

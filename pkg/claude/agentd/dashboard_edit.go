@@ -405,8 +405,22 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	var wt agentWorktreeView
 	if delWorktree {
 		wt = inspectAgentWorktree(convID)
-		wt.Shared = wt.Path != "" &&
-			otherAgentWorktreeRoots(map[string]bool{convID: true})[wt.Path]
+		// DeleteAgentAllGenerations sweeps EVERY generation of this actor, not
+		// just convID. Exclude them all from the shared-check — otherwise a
+		// predecessor generation that shares this worktree would flag it
+		// "shared" (and leave it behind) even though it is about to be swept
+		// too. Resolve the generation set the same way the sweep does.
+		excluding := map[string]bool{convID: true}
+		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
+			if gens, gErr := db.ConvsForAgent(agentID); gErr == nil {
+				for _, g := range gens {
+					if g != "" {
+						excluding[g] = true
+					}
+				}
+			}
+		}
+		wt.Shared = wt.Path != "" && otherAgentWorktreeRoots(excluding)[wt.Path]
 	}
 
 	// Dashboard deletes always force-kill any alive tmux session for
