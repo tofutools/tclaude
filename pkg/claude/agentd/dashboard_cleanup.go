@@ -219,9 +219,10 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //     intact and the agent can be reinstated. The non-destructive
 //     soft-delete. Unless shutdown is false, a retired agent whose
 //     tmux session is still alive is also soft-exited (force=false).
-//   - delete — a full purge via conv.DeleteConvByID (the per-agent
-//     delete button's path), which unlinks the .jsonl and cascades
-//     every group/owner/perm/enrollment row. Irreversible. Works on
+//   - delete — a full purge via conv.DeleteAgentAllGenerations (the
+//     per-agent delete button's path), which unlinks the .jsonl and cascades
+//     every group/owner/perm row, and for an agent's head generation sweeps
+//     its predecessor generations too (JOH-26 PR3d). Irreversible. Works on
 //     any conversation, agent or not.
 //   - reinstate — the inverse of retire: db.ReinstateAgent clears the
 //     retired flag on a retired enrollment, returning it to the active
@@ -395,7 +396,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// is normally a no-op; kept for parity with the per-agent
 			// delete button, which force-kills any lingering pane.
 			stopOneConv(tg.convID, true)
-			counts, derr := conv.DeleteConvByID(tg.convID)
+			// Actor-aware (JOH-26 PR3d): an agent's head-generation delete
+			// also sweeps its predecessor generations' rows + .jsonl.
+			counts, _, derr := conv.DeleteAgentAllGenerations(tg.convID)
 			if derr != nil {
 				out.Result, out.Detail = "failed", "delete: "+derr.Error()
 				resp.Failed++

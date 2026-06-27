@@ -255,9 +255,10 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
 //
 // Behaviour:
-//   - If the conv still exists in conv_index, runs conv.DeleteConvByID
-//     (unlinks .jsonl, drops conv_index row, strips sessions-index.json,
-//     writes sync tombstone).
+//   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
+//     row, strips sessions-index.json, writes sync tombstone) — and when the
+//     conv is an agent's head generation, sweeps its predecessor generations
+//     too (JOH-26 PR3d), so a multi-generation actor leaves nothing orphaned.
 //   - Always: drops every agent_group_members / agent_group_owners /
 //     agent_permissions row referencing this conv-id, so the dashboard
 //     listing actually drops the row instead of leaving a "(unknown)"
@@ -410,8 +411,10 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 
 	// Single source of truth for the comprehensive cleanup: filesystem
 	// + DB union purge across every conv-id-referencing table +
-	// session-env + sync tombstone.
-	if _, err := conv.DeleteConvByID(convID); err != nil {
+	// session-env + sync tombstone. Actor-aware (JOH-26 PR3d): deleting an
+	// agent's head generation also sweeps its predecessor generations'
+	// rows + .jsonl, so a multi-generation actor leaves nothing orphaned.
+	if _, _, err := conv.DeleteAgentAllGenerations(convID); err != nil {
 		http.Error(w, "delete conv: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

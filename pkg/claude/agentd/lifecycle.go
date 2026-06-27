@@ -767,8 +767,13 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 
 	// Comprehensive cleanup: DB purge + filesystem + sync tombstone +
 	// session-env. Single source of truth shared with the dashboard
-	// `DELETE /api/agents/...` path and `tclaude conv rm`.
-	counts, err := conv.DeleteConvByID(targetConv)
+	// `DELETE /api/agents/...` path and `tclaude conv rm`. Actor-aware
+	// (JOH-26 PR3d): when targetConv is an agent's head generation, this
+	// also sweeps every predecessor generation's rows + .jsonl, so a
+	// multi-generation actor's delete leaves nothing orphaned. The selector
+	// resolves a predecessor forward to the head before it reaches here, so
+	// `targetConv` is the head in the agent-delete case.
+	counts, swept, err := conv.DeleteAgentAllGenerations(targetConv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"delete failed: "+err.Error())
@@ -779,6 +784,11 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		"conv_id":   targetConv,
 		"action":    "deleted",
 		"db_counts": counts,
+	}
+	// Surface the full generation set reaped when more than the named conv
+	// went (a multi-generation actor) — otherwise it's just [targetConv].
+	if len(swept) > 1 {
+		resp["generations"] = swept
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller

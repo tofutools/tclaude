@@ -905,6 +905,31 @@ type AgentDeletionCounts struct {
 	ConvIndex      int64 `json:"conv_index"`
 	Sessions       int64 `json:"sessions"`
 	NotifyPrefs    int64 `json:"notify_prefs"`
+	SudoGrants     int64 `json:"sudo_grants"`
+	SpawnHistory   int64 `json:"spawn_history"`
+	CloneHistory   int64 `json:"clone_history"`
+}
+
+// Add accumulates o into c field-by-field. Used by the actor-level
+// cross-generation delete (conv.DeleteAgentAllGenerations, JOH-26 PR3d) to sum
+// each swept generation's per-table removals into one reported total.
+func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
+	c.GroupMembers += o.GroupMembers
+	c.GroupOwners += o.GroupOwners
+	c.MessagesFrom += o.MessagesFrom
+	c.MessagesTo += o.MessagesTo
+	c.Permissions += o.Permissions
+	c.CronJobsOwned += o.CronJobsOwned
+	c.CronJobsTarget += o.CronJobsTarget
+	c.SuccessionOld += o.SuccessionOld
+	c.SuccessionNew += o.SuccessionNew
+	c.Embeddings += o.Embeddings
+	c.ConvIndex += o.ConvIndex
+	c.Sessions += o.Sessions
+	c.NotifyPrefs += o.NotifyPrefs
+	c.SudoGrants += o.SudoGrants
+	c.SpawnHistory += o.SpawnHistory
+	c.CloneHistory += o.CloneHistory
 }
 
 // DeleteAgentByConvID purges the conversation generation convID, plus —
@@ -923,9 +948,12 @@ type AgentDeletionCounts struct {
 // actor's current_conv_id (its live generation):
 //
 //   - agent_group_members, agent_group_owners, agent_permissions,
-//     agent_notify_prefs
+//     agent_notify_prefs, agent_sudo_grants
 //   - agent_cron_jobs (owner_agent = ? OR target_agent = ?), agent-keyed since
 //     JOH-26 PR3a. Each delete cascades to agent_cron_runs via the FK.
+//   - agent_spawn_history (spawner_agent_id), agent_clone_history
+//     (source_agent_id) — agent-keyed rate-limit history with no FK to agents,
+//     so deleted explicitly here rather than via cascade.
 //   - agents (cascades the remaining agent_conversations links)
 //
 // Deleting a PREDECESSOR generation (a reincarnate / Claude Code /clear keeps
@@ -1026,6 +1054,18 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 				// agent_cron_runs via the FK.
 				{`DELETE FROM agent_cron_jobs WHERE owner_agent = ?`, &c.CronJobsOwned},
 				{`DELETE FROM agent_cron_jobs WHERE target_agent = ?`, &c.CronJobsTarget},
+				// Sudo grants and the agent-keyed spawn/clone rate-limit history
+				// (JOH-26 PR2/PR3a) are keyed on agent_id but have NO FK to
+				// agents, so the `agents` delete below does not cascade them.
+				// Tear them down explicitly with the actor — otherwise they
+				// orphan (the group export / count paths JOIN through agents, so
+				// orphaned rows become invisible residue). Actor-scoped: a
+				// predecessor delete leaves the live actor's grants + history
+				// intact. This delete-set mirrors the identity-bearing set
+				// absorbBareSuccessorActorTx guards on.
+				{`DELETE FROM agent_sudo_grants WHERE agent_id = ?`, &c.SudoGrants},
+				{`DELETE FROM agent_spawn_history WHERE spawner_agent_id = ?`, &c.SpawnHistory},
+				{`DELETE FROM agent_clone_history WHERE source_agent_id = ?`, &c.CloneHistory},
 				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
 			} {
 				res, err := tx.Exec(s.stmt, agentID)
