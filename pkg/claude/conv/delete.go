@@ -358,8 +358,20 @@ func DeleteConvByID(convID string) (db.AgentDeletionCounts, error) {
 // intact and recoverable — DeleteConvByID is idempotent, so re-invoking on the
 // same head converges (already-deleted generations are no-ops; the remaining
 // ones plus the head teardown complete).
+//
+// Liveness is the caller's policy: an agent-delete caller stops the NAMED
+// target's tmux pane first (handleAgentDelete refuses-while-alive / force-kills,
+// retired cleanup skips a still-online actor). The swept predecessor generations
+// are offline by construction — a /clear shares the head's process, and a
+// reincarnate soft-exits the original — so the sweep never pulls a .jsonl out
+// from under a live pane in any normal flow.
 func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string, error) {
 	var counts db.AgentDeletionCounts
+	// Canonicalize: GetAgentByConv resolves through a trimmed conv-id, so trim
+	// here too — otherwise a whitespace-padded id would resolve the actor yet
+	// fail the `CurrentConvID != convID` head check and wrongly degrade to a
+	// single-conv delete. Real callers pass canonical UUIDs; this is defensive.
+	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return counts, nil, fmt.Errorf("convID is required")
 	}
