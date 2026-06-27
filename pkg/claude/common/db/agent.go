@@ -1396,7 +1396,10 @@ func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly boo
 // themselves. Distinct from membership so the "X is an owner but
 // not a peer" case is representable.
 type AgentGroupOwner struct {
-	GroupID   int64
+	GroupID int64
+	// AgentID is the owner's stable actor key — ownership is keyed on it
+	// (JOH-26), so it is the canonical, rotation-immune identity to display.
+	AgentID   string
 	ConvID    string
 	GrantedAt time.Time
 	GrantedBy string
@@ -1513,7 +1516,7 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT o.group_id, ag.current_conv_id, o.granted_at, o.granted_by
+		`SELECT o.group_id, o.agent_id, ag.current_conv_id, o.granted_at, o.granted_by
 		 FROM agent_group_owners o JOIN agents ag ON ag.agent_id = o.agent_id
 		 WHERE o.group_id = ?
 		 ORDER BY o.granted_at DESC`,
@@ -1526,7 +1529,7 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 	for rows.Next() {
 		var o AgentGroupOwner
 		var grantedAt string
-		if err := rows.Scan(&o.GroupID, &o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
+		if err := rows.Scan(&o.GroupID, &o.AgentID, &o.ConvID, &grantedAt, &o.GrantedBy); err != nil {
 			return nil, err
 		}
 		o.GrantedAt = parseTimeOrZero(grantedAt)

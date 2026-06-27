@@ -30,6 +30,9 @@ import (
 // human can see which members succeeded, which were no-ops, and
 // which failed.
 type memberOpResult struct {
+	// AgentID is the member's stable actor key — the canonical ID the CLI
+	// leads with in the result table; ConvID is the live generation behind it.
+	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title,omitempty"`
 	Action  string `json:"action"`           // "soft_stopped", "killed", "resumed", "skipped:already_online", "skipped:no_conv_id", "error"
@@ -74,6 +77,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := stopOneConv(m.ConvID, force)
+		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
@@ -160,6 +164,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	for _, m := range members {
 		res := resumeOneConv(m.ConvID)
+		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
@@ -448,7 +453,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 	eg.SetLimit(bulkRetireGroupConcurrency)
 	for i, m := range members {
 		eg.Go(func() error {
-			res := memberOpResult{ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
+			res := memberOpResult{AgentID: peerAgentID(m.ConvID), ConvID: m.ConvID, Title: agent.FreshTitle(m.ConvID)}
 			switch {
 			case m.ConvID == "":
 				res.Action = "skipped:no_conv_id"

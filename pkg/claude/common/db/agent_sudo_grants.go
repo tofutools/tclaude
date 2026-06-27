@@ -12,7 +12,11 @@ import (
 // the future AND RevokedAt is zero. Audit-friendly fields
 // (GrantedBy, Reason) carry context for forensics.
 type SudoGrant struct {
-	ID        int64
+	ID int64
+	// AgentID is the stable actor key the grant is keyed on (JOH-26) — the
+	// canonical, rotation-immune identity to display. ConvID is the actor's
+	// current generation, resolved at read time.
+	AgentID   string
 	ConvID    string
 	Slug      string
 	GrantedAt time.Time
@@ -87,7 +91,7 @@ func GetSudoGrant(id int64) (*SudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT s.id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.id = ?`, id)
 	g, err := scanSudoGrant(row)
@@ -186,7 +190,7 @@ func ListActiveSudoGrants(convID string) ([]*SudoGrant, error) {
 		return nil, nil
 	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
-	rows, err := d.Query(`SELECT s.id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.agent_id = ? AND s.revoked_at = '' AND s.expires_at > ?
 		ORDER BY s.expires_at ASC`, agentID, cutoff)
@@ -215,7 +219,7 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := time.Now().Format(time.RFC3339Nano)
-	rows, err := d.Query(`SELECT s.id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.revoked_at = '' AND s.expires_at > ?
 		ORDER BY ag.current_conv_id ASC, s.expires_at ASC`, cutoff)
@@ -301,7 +305,7 @@ func RevokeAllActiveSudoGrants() (int64, error) {
 func scanSudoGrant(s rowScanner) (*SudoGrant, error) {
 	var g SudoGrant
 	var grantedAt, expiresAt, revokedAt string
-	if err := s.Scan(&g.ID, &g.ConvID, &g.Slug,
+	if err := s.Scan(&g.ID, &g.AgentID, &g.ConvID, &g.Slug,
 		&grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &revokedAt); err != nil {
 		return nil, err
 	}

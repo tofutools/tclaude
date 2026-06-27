@@ -207,6 +207,7 @@ type sudoRequestBody struct {
 
 type sudoGrantJSON struct {
 	ID        int64  `json:"id"`
+	AgentID   string `json:"agent_id,omitempty"`
 	ConvID    string `json:"conv_id"`
 	ConvTitle string `json:"conv_title,omitempty"`
 	Slug      string `json:"slug"`
@@ -559,6 +560,7 @@ func sudoGrantsToJSON(rows []*db.SudoGrant, now time.Time) []sudoGrantJSON {
 		}
 		entry := sudoGrantJSON{
 			ID:        g.ID,
+			AgentID:   g.AgentID,
 			ConvID:    g.ConvID,
 			ConvTitle: title,
 			Slug:      g.Slug,

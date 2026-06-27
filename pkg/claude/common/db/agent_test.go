@@ -202,6 +202,12 @@ func TestAgentGroupOwnerCRUD(t *testing.T) {
 	require.NoError(t, err, "ListAgentGroupOwners")
 	require.Len(t, owners, 1, "ListAgentGroupOwners")
 	assert.Equal(t, "boss", owners[0].ConvID, "ListAgentGroupOwners")
+	// PR3c: the owner row carries the stable agent_id it is keyed on, so the
+	// roster display can lead with the rotation-immune handle.
+	bossAgent, err := AgentIDForConv("boss")
+	require.NoError(t, err, "AgentIDForConv(boss)")
+	require.NotEmpty(t, bossAgent, "owning a group should mint an actor for boss")
+	assert.Equal(t, bossAgent, owners[0].AgentID, "owner row should carry the stable agent_id")
 
 	groups, err := ListGroupsOwnedBy("boss")
 	require.NoError(t, err, "ListGroupsOwnedBy")

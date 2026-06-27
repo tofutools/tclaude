@@ -51,6 +51,7 @@ func sudoCmd() *cobra.Command {
 
 type sudoGrantJSON struct {
 	ID               int64  `json:"id"`
+	AgentID          string `json:"agent_id,omitempty"`
 	ConvID           string `json:"conv_id"`
 	ConvTitle        string `json:"conv_title,omitempty"`
 	Slug             string `json:"slug"`
@@ -173,24 +174,30 @@ func runSudoLs(p *sudoLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "No active sudo grants.")
 		return rcOK
 	}
-	// Group by conv-id for readable output: one block per agent
-	// listing its currently-elevated slugs.
-	byConv := map[string][]sudoGrantJSON{}
-	convOrder := []string{}
+	// Group by the stable agent_id for readable output: one block per
+	// agent listing its currently-elevated slugs. Keying on agent_id (not
+	// the rotation-prone conv-id) collapses an actor's generations into a
+	// single block; a non-actor grant (no agent_id) falls back to its conv.
+	byAgent := map[string][]sudoGrantJSON{}
+	agentOrder := []string{}
 	for _, g := range rows {
-		if _, ok := byConv[g.ConvID]; !ok {
-			convOrder = append(convOrder, g.ConvID)
+		key := g.AgentID
+		if key == "" {
+			key = g.ConvID
 		}
-		byConv[g.ConvID] = append(byConv[g.ConvID], g)
+		if _, ok := byAgent[key]; !ok {
+			agentOrder = append(agentOrder, key)
+		}
+		byAgent[key] = append(byAgent[key], g)
 	}
-	sort.Strings(convOrder)
-	for _, conv := range convOrder {
-		gs := byConv[conv]
+	sort.Strings(agentOrder)
+	for _, key := range agentOrder {
+		gs := byAgent[key]
 		title := gs[0].ConvTitle
 		if title == "" {
 			title = "(no title)"
 		}
-		fmt.Fprintf(stdout, "%s  %s\n", short(conv), title)
+		fmt.Fprintf(stdout, "%s  %s\n", lookupID(gs[0].AgentID, gs[0].ConvID), title)
 		for _, g := range gs {
 			remain := time.Duration(g.RemainingSeconds) * time.Second
 			fmt.Fprintf(stdout, "  #%-5d %-30s %s remaining   %q\n",

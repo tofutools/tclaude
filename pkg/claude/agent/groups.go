@@ -830,6 +830,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		Group   string `json:"group"`
 		Action  string `json:"action"`
 		Members []struct {
+			AgentID string `json:"agent_id,omitempty"`
 			ConvID  string `json:"conv_id"`
 			Title   string `json:"title,omitempty"`
 			Action  string `json:"action"`
@@ -848,7 +849,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 	tbl := table.New(
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
@@ -860,7 +861,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 			name = "(unnamed)"
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			short(m.ConvID), name, m.Action, m.Detail,
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
 		}})
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
@@ -879,6 +880,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		Group   string `json:"group"`
 		Action  string `json:"action"`
 		Members []struct {
+			AgentID string `json:"agent_id,omitempty"`
 			ConvID  string `json:"conv_id"`
 			Title   string `json:"title,omitempty"`
 			Action  string `json:"action"`
@@ -896,7 +898,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		return rcOK
 	}
 	tbl := table.New(
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
 		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
 		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
@@ -908,7 +910,7 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 			name = "(unnamed)"
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			short(m.ConvID), name, m.Action, m.Detail,
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
 		}})
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)

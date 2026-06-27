@@ -9,6 +9,31 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+// TestCronTargetLabel covers the `cron ls` TARGET column rendering (PR3c): a
+// group target shows "group:<name>", a solo target shows the target actor's
+// short stable agent_id, falling back to the conv-id prefix when the target
+// isn't an enrolled agent.
+func TestCronTargetLabel(t *testing.T) {
+	const agentID = "agt_0123456789abcdef0123456789abcdef"
+	const convID = "11112222-3333-4444-5555-666677778888"
+
+	assert.Equal(t, agentID[:12], cronTargetLabel(cronJobJSON{
+		TargetKind: "conv", TargetAgent: agentID, TargetConv: convID,
+	}), "solo target → short stable agent_id")
+
+	assert.Equal(t, convID[:8], cronTargetLabel(cronJobJSON{
+		TargetKind: "conv", TargetConv: convID,
+	}), "no agent_id → conv-id prefix fallback")
+
+	assert.Equal(t, "group:devs", cronTargetLabel(cronJobJSON{
+		TargetKind: "group", GroupName: "devs", GroupID: 7,
+	}), "group target → group:<name>")
+
+	assert.Equal(t, "group:#7", cronTargetLabel(cronJobJSON{
+		TargetKind: "group", GroupID: 7,
+	}), "group target without a resolved name → group:#<id>")
+}
+
 // TestActorID covers the inbox-header identifier helper: stable agent_id when
 // present, conv-id otherwise (a non-actor conv, or an older daemon that didn't
 // send the agent field).

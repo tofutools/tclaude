@@ -62,6 +62,23 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	ok, err := db.HasActiveSudoGrant(conv, "groups.spawn")
 	require.NoError(t, err, "HasActiveSudoGrant")
 	assert.True(t, ok, "HasActiveSudoGrant must return true for the freshly-granted slug")
+
+	// PR3c: the listing endpoint (`sudo ls`) surfaces the stable agent_id so
+	// the CLI groups + labels its blocks by the rotation-immune handle.
+	wantAgent, err := db.AgentIDForConv(conv)
+	require.NoError(t, err, "AgentIDForConv")
+	require.NotEmpty(t, wantAgent, "a granted conv should be minted as an actor")
+	listReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodGet, "/v1/sudo", nil), conv)
+	listRec := testharness.Serve(f.Mux, listReq)
+	require.Equal(t, http.StatusOK, listRec.Code, "GET /v1/sudo body=%s", listRec.Body.String())
+	var listed []struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &listed), "decode /v1/sudo")
+	require.Len(t, listed, 1, "one active grant in the listing")
+	assert.Equal(t, wantAgent, listed[0].AgentID, "listing should carry the stable agent_id")
 }
 
 // Scenario: popup denies; no rows are inserted. Pins the explicit
