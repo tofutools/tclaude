@@ -365,3 +365,54 @@ func TestAgentWindows_RejectsBadDirectionAndScope(t *testing.T) {
 			"body %+v should be rejected; got %d %s", body, rec.Code, rec.Body.String())
 	}
 }
+
+// Scenario (JOH-327): the window selection modal now submits stable
+// agent_ids (the conv_id phase-out). selectWindowTargets must resolve
+// each selector back to the conv-id the universe is keyed on, accepting
+// an agt_ id OR a raw conv-id, while still bounding the result to the
+// scope. Here one member is ticked by its agt_ id, one by its raw
+// conv-id (the conv-keyed back-compat path), member B is left unticked,
+// and an out-of-group agent — smuggled in by its agt_ id — is dropped
+// because its conv is outside the group universe.
+func TestAgentWindows_NarrowedSelectionAcceptsAgentIDs(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+	rec := newWinRecorder()
+	rec.installFocus(t)
+
+	const group = "tclaude-dev"
+	const convA = "waia-1111-2222-3333-4444"    // ticked by agent_id
+	const convB = "waib-1111-2222-3333-4444"    // unticked
+	const convC = "waic-1111-2222-3333-4444"    // ticked by raw conv-id
+	const outsider = "waio-1111-2222-3333-4444" // alive, NOT in the group
+	f.HaveGroup(group)
+	for _, c := range []string{convA, convB, convC, outsider} {
+		f.HaveConvWithTitle(c, "w-"+c[:4])
+		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], "/tmp/"+c[:4])
+	}
+	f.HaveMember(group, convA)
+	f.HaveMember(group, convB)
+	f.HaveMember(group, convC)
+	f.HaveEnrolledAgent(outsider)
+
+	agentA, err := db.AgentIDForConv(convA)
+	require.NoError(t, err)
+	require.Contains(t, agentA, "agt_", "convA must resolve to an agt_ id")
+	agentOut, err := db.AgentIDForConv(outsider)
+	require.NoError(t, err)
+	require.Contains(t, agentOut, "agt_", "outsider must resolve to an agt_ id")
+
+	// A and C ticked (A by agent_id, C by raw conv-id), B unticked, plus an
+	// out-of-group agent_id a tampered request might smuggle in.
+	code, resp := postAgentWindows(t, mux, map[string]any{
+		"direction": "focus", "scope": "group", "group": group,
+		"convs": []string{agentA, convC, agentOut},
+	})
+	require.Equal(t, http.StatusOK, code)
+
+	assert.Equal(t, 2, resp.Targeted,
+		"only the in-scope ticked agents are acted on; agents=%+v", resp.Agents)
+	assert.Equal(t, []string{convA, convC}, rec.focusedSet(),
+		"agt_-selected A and conv-id-selected C focus; unticked B and out-of-group outsider are excluded")
+}

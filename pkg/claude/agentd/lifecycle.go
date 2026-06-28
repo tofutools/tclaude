@@ -544,6 +544,28 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 	}
 	by := enrollmentActor(caller)
 
+	// Normalize an explicit selection to canonical conv-ids. The dashboard
+	// now submits agent_ids (the conv_id phase-out), but a selector may be
+	// an agt_ id, a live conv-id, or a UUID-shaped reference to a dangling
+	// agent. resolveCleanupConv maps agt_/conv to the conv-id the member
+	// universe (m.ConvID) is keyed on, and KEEPS a raw UUID-shaped fallback
+	// so a dangling agent — actor row broken/unresolvable — stays retirable
+	// by its conv-id (the recovery escape hatch D2's cold review pinned,
+	// PR #628). An entry that resolves to nothing AND isn't UUID-shaped is
+	// dropped: it can match no member, and the explicit set only ever
+	// NARROWS the authoritative membership table (never widens it). Runs
+	// only on the dashboard's explicit-selection path; the /v1 status-filter
+	// path passes selected==nil and is untouched.
+	if selected != nil {
+		canon := make(map[string]struct{}, len(selected))
+		for sel := range selected {
+			if convID, ok := resolveCleanupConv(sel); ok {
+				canon[convID] = struct{}{}
+			}
+		}
+		selected = canon
+	}
+
 	// The status filter needs live tmux state; fetch it once
 	// (snapshot-shaped) and share the read-only map across workers.
 	// Skipped entirely when no filter is active OR an explicit selection

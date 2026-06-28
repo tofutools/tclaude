@@ -72,7 +72,7 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 		t.Fatal("refresh.js: could not bound openRetirePreview")
 	}
 	for _, needle := range []string{
-		"candidates.filter(c => c.checked).map(c => c.conv_id)", // the ticked list
+		"candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id)",                      // the ticked list (agent_id, conv_id fallback)
 		"JSON.stringify({ convs, shutdown: shutdownCb.checked, delete_worktree: deleteWorktree })", // posted verbatim in the body
 		"/api/groups/${encodeURIComponent(group)}/retire",                                          // to the group retire route
 	} {
@@ -92,8 +92,8 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 	//    on the error paths.
 	for _, needle := range []string{
 		`submitBtn.setAttribute('aria-busy', 'true')`, // busy flag on click
-		`class="btn-spinner"`,                          // in-button spinner
-		`submitBtn.removeAttribute('aria-busy')`,       // cleared when ready again
+		`class="btn-spinner"`,                         // in-button spinner
+		`submitBtn.removeAttribute('aria-busy')`,      // cleared when ready again
 	} {
 		if !strings.Contains(fnBody, needle) {
 			t.Errorf("openRetirePreview: missing %q — submit must give in-flight feedback", needle)
@@ -118,8 +118,8 @@ func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
 	//    `deleteWorktree`, which is guarded so a box disabled by an unticked
 	//    shutdown never sends delete_worktree.
 	for _, needle := range []string{
-		"wtCb.checked = true; // worktree delete defaults ON", // default ON on open
-		"const syncWtCoupling = () => {",                       // shutdown→worktree coupling
+		"wtCb.checked = true; // worktree delete defaults ON",    // default ON on open
+		"const syncWtCoupling = () => {",                         // shutdown→worktree coupling
 		"const deleteWorktree = wtCb.checked && !wtCb.disabled;", // disabled box never opts in
 		"shutdownCb.addEventListener('change', syncWtCoupling)",  // coupling is wired live
 	} {
