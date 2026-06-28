@@ -1814,21 +1814,23 @@
     <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. The live hint below explains the selected mode.">
       <span class="cron-create-label">Sandbox</span>
       <div class="cron-create-target">
-        <select id="agent-spawn-sandbox"></select>
+        <select id="agent-spawn-sandbox" aria-describedby="agent-spawn-sandbox-hint"></select>
         <!-- Live help for the selected mode (esp. agentd reachability),
              set from the harness catalog's sandbox_mode_help by
-             applySpawnSandboxHint(). -->
-        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
+             applySpawnSandboxHint(). aria-live so a screen reader announces the
+             ⚠ caveat when the selection changes. -->
+        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">
       <span class="cron-create-label">Permission mode</span>
       <div class="cron-create-target">
-        <select id="agent-spawn-approval"></select>
+        <select id="agent-spawn-approval" aria-describedby="agent-spawn-approval-hint"></select>
         <!-- Live help for the selected mode (esp. detached-agent safety),
              set from the harness catalog's approval_mode_help by
-             applySpawnApprovalHint(). -->
-        <div id="agent-spawn-approval-hint" class="spawn-field-hint"></div>
+             applySpawnApprovalHint(). aria-live so a screen reader announces the
+             ⚠ caveat when the selection changes. -->
+        <div id="agent-spawn-approval-hint" class="spawn-field-hint" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">

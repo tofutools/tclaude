@@ -109,21 +109,29 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 		}
 	}
 
-	// on → a --settings payload enabling the sandbox AND preserving agentd
-	// reachability (the socket allowlist) so the agent can still coordinate.
-	onCmd := spawn("on")
-	onJSON := extractSettingsJSON(t, onCmd)
-	if enabled := onJSON["sandbox"].(map[string]any)["enabled"]; enabled != true {
-		t.Fatalf("on must set sandbox.enabled=true, got %v in %q", enabled, onCmd)
-	}
-	if !strings.Contains(onCmd, "agentd.sock") {
-		t.Fatalf("on must allowlist the agentd socket so the agent can run `tclaude agent`, got %q", onCmd)
+	// on / off → the command carries a --settings flag. The payload itself is
+	// verified via claudeSandboxSettingsJSON below rather than by re-parsing the
+	// shell-quoted command arg (whose escaping is quoting-style-specific and
+	// fragile to assert against).
+	for _, mode := range []string{"on", "off"} {
+		if got := spawn(mode); !strings.Contains(got, "--settings ") {
+			t.Fatalf("mode %q must emit --settings, got %q", mode, got)
+		}
 	}
 
-	// off → a --settings payload disabling the sandbox.
-	offJSON := extractSettingsJSON(t, spawn("off"))
-	if enabled := offJSON["sandbox"].(map[string]any)["enabled"]; enabled != false {
-		t.Fatalf("off must set sandbox.enabled=false, got %v", enabled)
+	// on enables the sandbox AND preserves agentd reachability (the socket
+	// allowlist) so the agent can still coordinate.
+	on := sandboxBlock(t, "on")
+	if on["enabled"] != true {
+		t.Fatalf("on must set sandbox.enabled=true, got %v", on["enabled"])
+	}
+	if !strings.Contains(claudeSandboxSettingsJSON("on"), "agentd.sock") {
+		t.Fatal("on must allowlist the agentd socket so the agent can run `tclaude agent`")
+	}
+
+	// off disables the sandbox.
+	if off := sandboxBlock(t, "off"); off["enabled"] != false {
+		t.Fatalf("off must set sandbox.enabled=false, got %v", off["enabled"])
 	}
 }
 
@@ -157,32 +165,23 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	}
 }
 
-// extractSettingsJSON pulls the JSON argument of `--settings '<json>'` out of a
-// built command string and parses it. It tolerates either quote style the
-// shell-quoter may emit.
-func extractSettingsJSON(t *testing.T, cmd string) map[string]any {
+// sandboxBlock parses claudeSandboxSettingsJSON(mode) and returns its inner
+// `sandbox` block. Asserting against the builder's output directly — rather than
+// re-parsing the shell-quoted BuildCommand arg — keeps the test robust to the
+// command's quoting style (single vs double quotes, escaping). The command's job
+// is just to carry this payload as one `--settings` arg, checked separately.
+func sandboxBlock(t *testing.T, mode string) map[string]any {
 	t.Helper()
-	_, rest, found := strings.Cut(cmd, "--settings ")
-	if !found {
-		t.Fatalf("no --settings in %q", cmd)
+	payload := claudeSandboxSettingsJSON(mode)
+	var wrap map[string]any
+	if err := json.Unmarshal([]byte(payload), &wrap); err != nil {
+		t.Fatalf("claudeSandboxSettingsJSON(%q) is not valid JSON (%v): %q", mode, err, payload)
 	}
-	if len(rest) == 0 {
-		t.Fatalf("empty --settings arg in %q", cmd)
+	block, ok := wrap["sandbox"].(map[string]any)
+	if !ok {
+		t.Fatalf("claudeSandboxSettingsJSON(%q) missing a sandbox block: %v", mode, wrap)
 	}
-	quote := rest[0]
-	if quote != '\'' && quote != '"' {
-		t.Fatalf("--settings arg not shell-quoted in %q", cmd)
-	}
-	end := strings.IndexByte(rest[1:], quote)
-	if end < 0 {
-		t.Fatalf("unterminated --settings quote in %q", cmd)
-	}
-	payload := rest[1 : 1+end]
-	var out map[string]any
-	if err := json.Unmarshal([]byte(payload), &out); err != nil {
-		t.Fatalf("--settings payload is not valid JSON (%v): %q", err, payload)
-	}
-	return out
+	return block
 }
 
 func equalStrings(a, b []string) bool {
