@@ -603,6 +603,7 @@ func humanMailboxMessages() []mailboxMessage {
 			ID:        m.ID,
 			Direction: "in",
 			FromConv:  m.FromConv,
+			FromAgent: m.FromAgent,
 			FromTitle: m.FromTitle,
 			Group:     m.Group,
 			Subject:   m.Subject,

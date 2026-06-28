@@ -8,8 +8,8 @@ import (
 )
 
 // TestMigrateV79toV80_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts the pin_gen column is present. v80 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v79).
+// chain and asserts the pin_gen column is present. (The currentVersion tripwire
+// has moved forward to the v81 test — v81 is head now.)
 func TestMigrateV79toV80_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -18,7 +18,6 @@ func TestMigrateV79toV80_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 80, currentVersion, "tripwire: bump this and add a v80→v81 test when you add a migration")
 
 	has, err := columnExists(d, "agent_messages", "pin_gen")
 	require.NoError(t, err, "columnExists agent_messages.pin_gen")

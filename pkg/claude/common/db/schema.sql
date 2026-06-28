@@ -260,7 +260,7 @@ CREATE TABLE human_messages (
 			body        TEXT NOT NULL,
 			created_at  TEXT NOT NULL,
 			read_at     TEXT NOT NULL DEFAULT ''
-		);
+		, from_agent TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_human_messages_created
 			ON human_messages(created_at);
@@ -319,7 +319,7 @@ CREATE TABLE pending_spawns (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL
-		);
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE spawn_profiles (
 			id                            INTEGER PRIMARY KEY AUTOINCREMENT,

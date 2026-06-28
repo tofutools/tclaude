@@ -16,11 +16,17 @@ import (
 // blank an old message. FromConv is kept raw so the tab's focus button
 // can raise that conversation's terminal window.
 //
+// FromAgent is the stable agent_id companion of FromConv (JOH-321 F2),
+// DERIVED from it at insert via agent_conversations — the pruning-immune
+// sender attribution the Messages tab leads with, falling back to the
+// FromConv resolution for old rows / a non-actor sender (empty FromAgent).
+//
 // ReadAt is the zero time while the message is unread, and the time the
 // human marked it read otherwise.
 type HumanMessage struct {
 	ID        int64
 	FromConv  string
+	FromAgent string
 	FromTitle string
 	GroupName string
 	Subject   string
@@ -47,11 +53,17 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 	if !m.ReadAt.IsZero() {
 		readAt = m.ReadAt.Format(time.RFC3339Nano)
 	}
+	// Dual-write the stable sender ref (JOH-321 F2): from_agent is DERIVED from
+	// from_conv via agent_conversations (agentForConvExpr), the same boundary the
+	// v81 backfill used, so existing and freshly-inserted rows agree. A non-actor
+	// / empty sender (the human-initiated path) resolves to ''. Any FromAgent
+	// preset on the struct is intentionally ignored — from_conv is the source of
+	// truth, so the denormalised ref can never drift from it.
 	res, err := d.Exec(`
 		INSERT INTO human_messages
-			(from_conv, from_title, group_name, subject, body, created_at, read_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
+			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at)
+		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?)`,
+		m.FromConv, m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
 		created.Format(time.RFC3339Nano), readAt)
 	if err != nil {
 		return 0, fmt.Errorf("insert human message: %w", err)
@@ -78,7 +90,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT id, from_conv, from_title, group_name, subject, body, created_at, read_at
+		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at
 		FROM human_messages
 		ORDER BY id DESC`)
 	if err != nil {
@@ -90,7 +102,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 	for rows.Next() {
 		var m HumanMessage
 		var created, readAt string
-		if err := rows.Scan(&m.ID, &m.FromConv, &m.FromTitle, &m.GroupName,
+		if err := rows.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
 			&m.Subject, &m.Body, &created, &readAt); err != nil {
 			return nil, err
 		}
