@@ -1759,6 +1759,46 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	return out, rows.Err()
 }
 
+// ListDeliveredUnreadAgentMessages returns every message that has been
+// delivered (delivered_at set — the recipient was nudged at least once) but
+// not yet read (read_at empty), across all recipients, oldest first. Rows
+// with an empty to_conv (a group-broadcast bookkeeping record, not addressed
+// to any single agent) are excluded. This is the candidate set the unread-
+// reminder sweep walks: a message the agent was told about but hasn't opened.
+//
+// Undelivered messages are deliberately NOT included — first delivery is the
+// flush-on-online path's job; this sweep only re-nudges about already-
+// delivered traffic, so "reminder" means exactly that.
+//
+// Ordering is by id (insertion order), NOT created_at, for the same
+// RFC3339Nano lexical-sort reason ListUndeliveredAgentMessagesFor documents.
+func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
+		created_at, delivered_at, read_at,
+		to_recipients, cc_recipients, original_to_conv
+		FROM agent_messages
+		WHERE to_conv != '' AND delivered_at != '' AND read_at = ''
+		ORDER BY id ASC`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ClaimAgentMessageDelivery atomically marks a message as delivered
 // IF it wasn't already. Returns true when this caller won the race —
 // in that case the caller is responsible for actually delivering the
