@@ -29,11 +29,12 @@ func TestDashboardHTML_SpawnAttachmentsUI(t *testing.T) {
 	present(`function removeSpawnAttachment(`, "removes one attachment")
 	present(`function clearSpawnAttachments(`, "clears + revokes object URLs on open/close")
 	present(`function handleSpawnPaste(`, "captures pasted clipboard files/images")
-	// Dedup guard (JOH-307): keyboard auto-repeat on ⌘/Ctrl-V fires repeated
-	// paste events; addSpawnAttachments must skip a file already pending so each
-	// file/screenshot attaches once. attachKey is the content-identity used for it.
-	present(`function attachKey(`, "content-identity key used to dedupe attachments")
-	present(`spawnAttachments.some(a => a.key === key)`, "skips files already pending (keyboard-repeat dedup)")
+	// Keyboard-repeat guard (JOH-307): holding ⌘/Ctrl-V auto-repeats the paste
+	// event; handleSpawnPaste drops a file that repeats the previous paste within
+	// a short burst window, scoped to paste so picker/drag stay un-deduped.
+	present(`function attachKey(`, "per-file signature used by the key-repeat guard")
+	present(`SPAWN_PASTE_REPEAT_MS`, "the key-repeat burst window")
+	present(`lastSpawnPasteKeys`, "tracks the previous paste's files to detect repeats")
 	present(`function bindSpawnDragDrop(`, "wires Finder/Explorer drag-and-drop onto the dialog")
 	present(`bindSpawnDragDrop();`, "drag-and-drop is wired at bind time")
 	present(`function uploadSpawnAttachments(`, "uploads to /api/spawn-attachments")

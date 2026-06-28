@@ -674,32 +674,11 @@ function fmtAttachSize(n) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-// attachKey is the content-identity of a file/blob, used to dedupe attachments
-// so each distinct file attaches exactly once: a Finder copy exposed in both
-// clipboardData.files and .items, a held-down ⌘/Ctrl-V firing repeated paste
-// events (keyboard auto-repeat), or a paste-then-drag of the same file.
-// lastModified is deliberately omitted — some browsers stamp a fresh
-// lastModified on every clipboard read, so a pasted screenshot would look "new"
-// on each keyboard repeat; name+size+type stays stable across repeats while
-// still telling genuinely different files apart in practice. (Two distinct files
-// with identical name+size+type would collide, but the server already de-collides
-// same-name uploads and identical byte sizes across different files are rare.)
-function attachKey(f) {
-  return `${f.name || ''}|${f.size}|${f.type || ''}`;
-}
-
 // addSpawnAttachments appends Files/Blobs to the pending list and re-renders.
 // A blob with no name (a raw pasted image) is given a generated PNG name.
 function addSpawnAttachments(files) {
   for (const f of files) {
     if (!f) continue;
-    // Skip a file already pending. Holding ⌘/Ctrl-V triggers keyboard
-    // auto-repeat, firing one paste event per repeat with identical clipboard
-    // contents — without this guard the same file/screenshot would attach over
-    // and over (JOH-307). The key is content-identity, so this also collapses
-    // a paste-then-drag of the same file.
-    const key = attachKey(f);
-    if (spawnAttachments.some(a => a.key === key)) continue;
     let name = f.name;
     if (!name) {
       const ext = (f.type && f.type.split('/')[1]) || 'png';
@@ -708,7 +687,6 @@ function addSpawnAttachments(files) {
     const isImage = (f.type || '').startsWith('image/');
     spawnAttachments.push({
       id: ++spawnAttachSeq,
-      key,
       file: f,
       name,
       size: f.size,
@@ -755,6 +733,31 @@ function renderSpawnAttachments() {
   }).join('');
 }
 
+// attachKey is a per-file signature (name|size|type) used two ways below: to
+// collapse the SAME physical file showing up in both clipboardData.files and
+// .items, and to recognise a file repeated across a key-repeat burst. It is NOT
+// a global dedupe key — lastModified is omitted (some browsers stamp a fresh one
+// on every clipboard read, so a pasted screenshot would look "new" each repeat),
+// which makes it too weak to safely reject genuinely-distinct files. The burst
+// window below is what keeps it from collapsing distinct attachments.
+function attachKey(f) {
+  return `${f.name || ''}|${f.size}|${f.type || ''}`;
+}
+
+// Keyboard-repeat guard for pasted files (JOH-307). Holding ⌘/Ctrl-V triggers
+// the OS key-repeat, which fires one `paste` event per repeat, each re-reading
+// the SAME clipboard — so the same file/screenshot was attaching over and over.
+// Auto-repeat events arrive in a tight burst (the key-repeat interval is at most
+// ~0.5s); a deliberate re-paste of the same file comes only after the user
+// releases and presses again, well outside that. So we drop a pasted file only
+// when it repeats the immediately-preceding paste within this window — scoping
+// the dedupe to true key-repeat bursts. Distinct content (a different key) is
+// always kept, and the picker / drag-drop paths (which never auto-repeat) stay
+// untouched.
+const SPAWN_PASTE_REPEAT_MS = 1000;
+let lastSpawnPasteAt = 0;
+let lastSpawnPasteKeys = new Set();
+
 // handleSpawnPaste captures files pasted anywhere in the dialog: a screenshot
 // taken to the clipboard ("⌘V" of raw image data) AND a file copied in Finder /
 // Explorer ("⌘C" on a file, then ⌘V). It reads both clipboard surfaces and
@@ -783,11 +786,21 @@ function handleSpawnPaste(e) {
       if (dt.items[i].kind === 'file') add(dt.items[i].getAsFile());
     }
   }
-  if (!collected.length) return;
+  if (!collected.length) return; // no file data — a plain text paste; leave it
   // We consumed file data — stop the default so a contenteditable / textarea
   // doesn't also try to handle it.
   e.preventDefault();
-  addSpawnAttachments(collected);
+  // Drop files that merely repeat the previous paste within the key-repeat
+  // window (a held ⌘/Ctrl-V auto-repeats the SAME clipboard). The window/keys
+  // are refreshed from the full burst so a continuous hold keeps matching.
+  const now = (typeof performance !== 'undefined' ? performance.now() : 0);
+  const isRepeat = now - lastSpawnPasteAt < SPAWN_PASTE_REPEAT_MS;
+  const fresh = isRepeat
+    ? collected.filter(f => !lastSpawnPasteKeys.has(attachKey(f)))
+    : collected;
+  lastSpawnPasteAt = now;
+  lastSpawnPasteKeys = new Set(collected.map(attachKey));
+  if (fresh.length) addSpawnAttachments(fresh);
 }
 
 // bindSpawnDragDrop wires Finder/Explorer drag-and-drop onto the spawn dialog.
