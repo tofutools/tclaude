@@ -6,13 +6,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// uniqueCloneTitle always appends `-c-N` (the shortened suffix scheme;
-// `-c-` pairs with `-r-` for reincarnations). N is the smallest
-// integer not already used by any conv_index.custom_title matching the
-// new prefix; clone-of-a-clone strips the existing `-c-N` (or legacy
-// `-clone-N`) before recomputing. Mirrors uniqueReincarnateTitle's
-// contract exactly, just on the `-c-` namespace. The upsertCustomTitle
-// helper lives in reincarnate_test.go (same package).
+// uniqueCloneTitle always appends `-c-N` (the shortened suffix scheme).
+// N is the smallest integer not already used by any
+// conv_index.custom_title matching the new prefix; clone-of-a-clone
+// strips the existing `-c-N` (or legacy `-clone-N`) before recomputing.
+// The upsertCustomTitle helper lives in reincarnate_test.go (same
+// package).
 
 func TestUniqueCloneTitle_NoExistingCloneStartsAt1(t *testing.T) {
 	setupTestDB(t)
@@ -49,8 +48,7 @@ func TestUniqueCloneTitle_CloneOfACloneStripsSuffix(t *testing.T) {
 	// don't nest into `worker-c-3-c-1`), but the new N is MONOTONIC
 	// w.r.t. the previous clone: prevN=3 → start at 4. We don't loop
 	// back to a "free" 1/2 even when their conv_index rows are missing
-	// — chronological lineage matters more than slot economy. Same
-	// policy as uniqueReincarnateTitle.
+	// — chronological lineage matters more than slot economy.
 	setupTestDB(t)
 	upsertCustomTitle(t, "a", "worker")
 	upsertCustomTitle(t, "b", "worker-c-3")

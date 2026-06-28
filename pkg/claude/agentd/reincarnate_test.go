@@ -8,13 +8,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// uniqueReincarnateTitle always returns `<base>-r-N` (the shortened
-// suffix scheme; `-r-` pairs with `-c-` for clones). N is the
-// smallest integer not already used by any conv_index.custom_title
-// matching the new prefix; reincarnating-a-reincarnate strips the
-// existing `-r-N` (or legacy `-reincarnate-N`) before recomputing.
-// Mirrors uniqueCloneTitle's contract exactly, just on a different
-// namespace.
+// JOH-319 naming: the living successor keeps its plain base name, and the
+// retiring predecessor gets the `-x` archive marker — `<prev>-x`, or
+// `<prev>-x-<N>` (N >= 2) when an earlier retired generation already holds
+// the bare form. The `-r-<N>` scheme (the OLD successor marker) is gone.
 
 func upsertCustomTitle(t *testing.T, convID, title string) {
 	t.Helper()
@@ -24,138 +21,111 @@ func upsertCustomTitle(t *testing.T, convID, title string) {
 	}), "UpsertConvIndex(%q)", convID)
 }
 
-func TestUniqueReincarnateTitle_NoExistingStartsAt1(t *testing.T) {
+// reincarnateBase strips a legacy `-r-<N>` / `-reincarnate-<N>` successor
+// suffix so a transition living name falls back to its plain base; a
+// title with no such suffix (including a hand-numbered `worker-1`) is
+// unchanged.
+func TestReincarnateBase(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"worker", "worker"},
+		{"worker-r-6", "worker"},
+		{"worker-reincarnate-3", "worker"},
+		{"worker-1", "worker-1"}, // plain numeric tail is NOT a -r-N suffix
+		{"worker-x", "worker-x"}, // archive marker is not stripped
+		{"", ""},
+	}
+	for _, c := range cases {
+		assert.Equalf(t, c.want, reincarnateBase(c.in), "reincarnateBase(%q)", c.in)
+	}
+}
+
+func TestRetiredGenerationTitle_FirstRetirementKeepsBareX(t *testing.T) {
 	setupTestDB(t)
+	// The living gen `worker` is being retired; no prior archive exists.
 	upsertCustomTitle(t, "a", "worker")
 
-	got := uniqueReincarnateTitle("worker")
-	assert.Equal(t, "worker-r-1", got, "first reincarnation")
+	got, ok := retiredGenerationTitle("worker")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-x", got, "first retirement keeps the historical bare -x form")
 }
 
-func TestUniqueReincarnateTitle_GlobalCounter(t *testing.T) {
+func TestRetiredGenerationTitle_RepeatRetirementAddsCounter(t *testing.T) {
 	setupTestDB(t)
-	upsertCustomTitle(t, "a", "worker")
-	upsertCustomTitle(t, "b", "worker-r-1")
-	upsertCustomTitle(t, "c", "worker-r-2")
+	// A prior generation already retired as `worker-x`; the living gen
+	// keeps the base name, so this retirement collides on the bare form
+	// and must take the next free `-x-<N>`.
+	upsertCustomTitle(t, "old1", "worker-x")
 
-	got := uniqueReincarnateTitle("worker")
-	assert.Equal(t, "worker-r-3", got, "global counter")
+	got, ok := retiredGenerationTitle("worker")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-x-2", got, "second retirement disambiguates with -x-2")
 }
 
-func TestUniqueReincarnateTitle_FillsHoles(t *testing.T) {
+func TestRetiredGenerationTitle_CounterFindsSmallestFree(t *testing.T) {
 	setupTestDB(t)
-	upsertCustomTitle(t, "a", "worker-r-1")
-	upsertCustomTitle(t, "b", "worker-r-3")
+	upsertCustomTitle(t, "old1", "worker-x")
+	upsertCustomTitle(t, "old2", "worker-x-2")
+	upsertCustomTitle(t, "old4", "worker-x-4") // a hole at 3
 
-	got := uniqueReincarnateTitle("worker")
-	assert.Equal(t, "worker-r-2", got, "hole-filling")
+	got, ok := retiredGenerationTitle("worker")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-x-3", got, "the counter fills the smallest free slot")
 }
 
-func TestUniqueReincarnateTitle_StripsExistingSuffix(t *testing.T) {
-	// Reincarnating `worker-r-3` strips the suffix to anchor the base
-	// (so we don't nest into `worker-r-3-r-1`), but the new N is
-	// MONOTONIC w.r.t. the previous instance: prevN=3 → start at 4.
-	// We don't loop back to a "free" 1/2 even when their conv_index
-	// rows are missing — chronological lineage matters more than slot
-	// economy.
+// A legacy old-scheme living name (`worker-r-6`, seen only during the
+// changeover) keeps its FULL title and just gains `-x` — byte-identical
+// to the pre-JOH-319 predecessor naming, so the transition is seamless.
+func TestRetiredGenerationTitle_LegacyNumberedPredecessorKeepsItsName(t *testing.T) {
 	setupTestDB(t)
-	upsertCustomTitle(t, "a", "worker")
-	upsertCustomTitle(t, "b", "worker-r-3")
+	upsertCustomTitle(t, "a", "worker-r-6")
 
-	got := uniqueReincarnateTitle("worker-r-3")
-	assert.Equal(t, "worker-r-4", got, "reincarnate-of-reincarnate")
+	got, ok := retiredGenerationTitle("worker-r-6")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-r-6-x", got, "legacy numbered predecessor archives as <prev>-x")
 }
 
-// TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor pins the
-// real bug we hit in production: prev was `tclaude-dev-r-2`, but the
-// `-r-1` row was no longer in conv_index (pruned / retitled), so the
-// old smallest-free policy reused N=1 — the new instance got titled
-// `r-1` even though it's a descendant of `r-2`. Monotonic-from-prev
-// makes the result `r-3` regardless of what's missing.
-func TestUniqueReincarnateTitle_MonotonicFromPrev_PrunedAncestor(t *testing.T) {
+// Independent bases don't share a counter namespace: `frontend-x` rows
+// must not push `worker`'s first retirement off the bare form.
+func TestRetiredGenerationTitle_DifferentBasesIndependent(t *testing.T) {
 	setupTestDB(t)
-	// Only the parent's row is in conv_index; the "r-1" ancestor that
-	// chronologically came before is gone.
-	upsertCustomTitle(t, "parent", "tclaude-dev-r-2")
+	upsertCustomTitle(t, "f1", "frontend-x")
+	upsertCustomTitle(t, "f2", "frontend-x-2")
 
-	got := uniqueReincarnateTitle("tclaude-dev-r-2")
-	assert.Equal(t, "tclaude-dev-r-3", got, "monotonic-from-prev")
+	got, ok := retiredGenerationTitle("worker")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-x", got, "another base's archives don't reserve worker's slot")
 }
 
-func TestUniqueReincarnateTitle_EmptyPrevUsesPrefix(t *testing.T) {
+// A hand-numbered worker (`worker-1`) is a base in its own right: its
+// trailing `-1` is not a `-r-N` suffix, so it archives as `worker-1-x`.
+func TestRetiredGenerationTitle_NumericBaseName(t *testing.T) {
 	setupTestDB(t)
-	upsertCustomTitle(t, "a", "r-1")
+	upsertCustomTitle(t, "a", "worker-1")
 
-	got := uniqueReincarnateTitle("")
-	assert.Equal(t, "r-2", got, "empty base")
+	got, ok := retiredGenerationTitle("worker-1")
+	assert.True(t, ok)
+	assert.Equal(t, "worker-1-x", got, "the -1 is part of the base, not a successor suffix")
 }
 
-func TestUniqueReincarnateTitle_DifferentBasesIndependent(t *testing.T) {
+func TestRetiredGenerationTitle_EmptyTitleSkipsRename(t *testing.T) {
 	setupTestDB(t)
-	upsertCustomTitle(t, "a", "frontend-r-1")
-	upsertCustomTitle(t, "b", "frontend-r-2")
-
-	got := uniqueReincarnateTitle("worker")
-	assert.Equal(t, "worker-r-1", got, "base independence")
+	_, ok := retiredGenerationTitle("")
+	assert.False(t, ok, "an untitled predecessor has nothing to archive-mark")
 }
 
-// TestUniqueReincarnateTitle_LegacyFormStripsCleanlyOnReincarnateOfReincarnate
-// covers the changeover guarantee: reincarnating a legacy
-// `-reincarnate-<N>` title strips the legacy suffix and produces a
-// NEW `-r-<N>` title rather than nesting
-// (`worker-reincarnate-3-r-1`). Without the alternation in
-// reincarnateSuffixRegex the legacy form would not be stripped.
-//
-// Note on N: prev was `-reincarnate-3` so prevN=3, and the monotonic
-// floor lifts the new N to 4. We treat the legacy suffix's N as
-// chronologically meaningful even though it lived in a different
-// namespace — the alternative ("legacy resets to 1") was a holdover
-// from the pre-monotonic policy and would visibly under-count the
-// lineage on the rare migration paths still in flight.
-func TestUniqueReincarnateTitle_LegacyFormStripsCleanlyOnReincarnateOfReincarnate(t *testing.T) {
+// A LIVING gen named with a trailing `-x` (unusual — `-x` is the archive
+// marker) still archives: appending `-x` yields a title distinct from the
+// successor's un-suffixed base name, so the retiring predecessor never
+// collides with the live successor.
+func TestRetiredGenerationTitle_XEndingNameStillArchivesWithoutCollision(t *testing.T) {
 	setupTestDB(t)
-	got := uniqueReincarnateTitle("worker-reincarnate-3")
-	assert.Equal(t, "worker-r-4", got, "legacy-form reincarnate-of-reincarnate")
-}
+	upsertCustomTitle(t, "a", "project-x")
 
-// TestUniqueReincarnateTitle_LegacyTitlesDoNotReserveNewN documents
-// the "two namespaces, no cross-reservation" rule: existing legacy
-// `-reincarnate-<N>` titles do NOT block matching `-r-<N>` numbers
-// in the new scheme. This avoids surprising holes immediately
-// after a changeover (everyone starts cleanly at -r-1).
-func TestUniqueReincarnateTitle_LegacyTitlesDoNotReserveNewN(t *testing.T) {
-	setupTestDB(t)
-	upsertCustomTitle(t, "a", "worker-reincarnate-1")
-	upsertCustomTitle(t, "b", "worker-reincarnate-2")
-
-	got := uniqueReincarnateTitle("worker")
-	assert.Equal(t, "worker-r-1", got, "legacy titles must not reserve new N")
-}
-
-// TestUniqueReincarnateTitle_NumericSuffixInBaseName covers the
-// gotcha: titles like `worker-1`, `worker-2` (common when humans
-// hand-name multiple workers) must NOT have their trailing `-N`
-// mistaken for a `-r-N` suffix. The regex requires `-r-` or
-// `-reincarnate-` literal between the base and the digits, so
-// `worker-1` (just `dash + digit`) doesn't match and the base
-// stays whole. Each numbered worker gets its own independent
-// `-r-N` counter.
-func TestUniqueReincarnateTitle_NumericSuffixInBaseName(t *testing.T) {
-	setupTestDB(t)
-
-	// First reincarnation of worker-1 keeps the "1" as part of the base.
-	got := uniqueReincarnateTitle("worker-1")
-	assert.Equal(t, "worker-1-r-1", got, "worker-1 first reincarnation")
-
-	// After one reincarnation: the "-r-1" IS recognised and stripped, so
-	// the next bump still anchors on `worker-1` as base.
-	upsertCustomTitle(t, "a", "worker-1-r-1")
-	got = uniqueReincarnateTitle("worker-1-r-1")
-	assert.Equal(t, "worker-1-r-2", got, "worker-1 second reincarnation")
-
-	// worker-2's namespace is independent from worker-1's. The
-	// `worker-1-r-1` row sitting in the DB doesn't reserve N=1 for
-	// `worker-2-r-N`.
-	got = uniqueReincarnateTitle("worker-2")
-	assert.Equal(t, "worker-2-r-1", got, "worker-2 first reincarnation")
+	got, ok := retiredGenerationTitle("project-x")
+	assert.True(t, ok, "a -x-ending predecessor is still archived")
+	assert.Equal(t, "project-x-x", got)
+	// The invariant that matters: the retired title differs from the base
+	// name the living successor keeps.
+	assert.NotEqual(t, reincarnateBase("project-x"), got,
+		"retired predecessor title must differ from the successor's base name")
 }

@@ -16,84 +16,99 @@ import (
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
-// either the current short form `-r-<digits>` or the legacy long
-// form `-reincarnate-<digits>`. Recognising both lets a legacy
-// `worker-reincarnate-3` cleanly transition to `worker-r-1` (rather
-// than nesting as `worker-reincarnate-3-r-1`) the next time it
-// reincarnates. Same idea for cloneSuffixRegex.
+// either the short form `-r-<digits>` or the long form
+// `-reincarnate-<digits>`. Pre-JOH-319 this was the LIVING successor's
+// marker; now reincarnateBase uses it to strip such a suffix off an
+// old-scheme living name (`worker-r-6`) during the changeover so the
+// successor falls back to the plain base `worker`. cloneSuffixRegex is
+// the still-live `-c-<N>` sibling for clones.
 var reincarnateSuffixRegex = regexp.MustCompile(`^(.*?)-(?:r|reincarnate)-\d+$`)
 
-// uniqueReincarnateTitle picks the new instance's CC title in the
-// pattern `<base>-r-<N>` (or `r-<N>` when the previous instance had
-// no title). base is prevTitle with any existing `-r-<digits>` /
-// `-reincarnate-<digits>` stripped. The short `-r-` is paired with
-// `-c-` for clones — distinct enough at a glance, short enough to
-// tile in tmux pane headers.
+// reincarnateBase strips any trailing `-r-<digits>` / `-reincarnate-<digits>`
+// suffix from a title and returns the stable base name. Post-JOH-319 the
+// living generation keeps this base name (the `-r-<N>` was the OLD
+// successor marker — see the doc on runReincarnationOrchestration). A
+// title with no such suffix is returned unchanged.
 //
-// N is monotonically larger than the previous instance's N: we start
-// the search at `prevN + 1`, then advance to the smallest free slot
-// from that floor. Without the floor, a previously-used N whose
-// conv_index row has since disappeared (pruned, retitled, file
-// deleted) gets recycled — so a chain like r-1 → r-2 → r-3 could
-// surprise-reset back to r-1 on the next reincarnation. Anchoring on
-// prevN keeps the lineage chronologically readable. The "used" set
-// only scans the new short prefix; legacy `-reincarnate-N` titles
-// don't reserve a number in the new namespace.
+// It is the successor's title: a steady-state living name (`worker`)
+// passes through untouched, while a legacy old-scheme living name from
+// the changeover window (`worker-r-6`) sheds its suffix back to `worker`
+// rather than carrying it forward.
+func reincarnateBase(title string) string {
+	if m := reincarnateSuffixRegex.FindStringSubmatch(title); m != nil {
+		return m[1]
+	}
+	return title
+}
+
+// retiredGenerationTitle computes the title to stamp on a reincarnation's
+// RETIRING predecessor, plus whether a rename should happen at all.
 //
-// Lookup error → fall back to `prevN + 1` (or 1 when prevN is 0).
-func uniqueReincarnateTitle(prevTitle string) string {
-	base := prevTitle
-	prevN := 0
-	if m := reincarnateSuffixRegex.FindStringSubmatch(base); m != nil {
-		base = m[1]
-		// Re-extract N from the original suffix; the capture group only
-		// pins the base, so we have to re-parse to recover the digits.
-		// Splitting on "-" is safe: the regex anchors `-r-\d+$` (or the
-		// legacy `-reincarnate-\d+$`), so the trailing token is always
-		// the integer.
-		if i := strings.LastIndex(prevTitle, "-"); i >= 0 {
-			if n, err := strconv.Atoi(prevTitle[i+1:]); err == nil {
-				prevN = n
-			}
-		}
+// The archive convention is unchanged from before JOH-319: the
+// predecessor's current title gets the `-x` archive marker appended
+// (`convops.IsArchivedTitle` then hides it from `conv ls` etc.). What
+// changed is only that the living successor no longer carries an
+// incrementing `-r-<N>` — it keeps its plain base name — so every
+// retirement of `worker` now arrives at `worker-x` instead of a distinct
+// `worker-r-<N>-x`. uniqueArchiveTitle therefore appends a `-<N>` counter
+// when an earlier retired generation already holds the bare `-x` form:
+//
+//	reincarnation #1 retires:  worker      -> worker-x
+//	reincarnation #2 retires:  worker      -> worker-x-2
+//	reincarnation #3 retires:  worker      -> worker-x-3
+//
+// A legacy old-scheme predecessor (`worker-r-6`, seen only during the
+// changeover) keeps its full title and just gains `-x` -> `worker-r-6-x`,
+// byte-identical to the pre-JOH-319 naming.
+//
+// An empty title yields ok=false (nothing to mark). A title that already
+// ends in `-x` is unusual for a LIVING gen — `-x` is the archive marker —
+// but still gets archived (`project-x` -> `project-x-x`): the successor
+// keeps the un-suffixed base name, so appending `-x` here always yields a
+// title distinct from the successor's, never a collision.
+func retiredGenerationTitle(prevTitle string) (title string, ok bool) {
+	if prevTitle == "" {
+		return "", false
 	}
-	prefix := "r-"
-	if base != "" {
-		prefix = base + "-r-"
+	return uniqueArchiveTitle(prevTitle), true
+}
+
+// uniqueArchiveTitle returns `<prevTitle>-x`, or — when that exact title
+// is already taken by an earlier retired generation — the smallest free
+// `<prevTitle>-x-<N>` (N >= 2). The bare `-x` form is kept for the first
+// retirement (the historical convention); the counter only appears on
+// repeat retirements of the same base, which now happen on every
+// reincarnation because the living generation keeps its base name.
+func uniqueArchiveTitle(prevTitle string) string {
+	first := prevTitle + "-x"
+	taken := customTitlesInUse()
+	if !taken[first] {
+		return first
 	}
-	used := scanReincarnateSuffixes(prefix)
-	start := prevN + 1
-	if start < 1 {
-		start = 1
-	}
-	for n := start; ; n++ {
-		if !used[n] {
-			return prefix + strconv.Itoa(n)
+	for n := 2; ; n++ {
+		cand := first + "-" + strconv.Itoa(n)
+		if !taken[cand] {
+			return cand
 		}
 	}
 }
 
-// scanReincarnateSuffixes walks every conv_index row and returns the
-// set of integers N where some custom_title equals `<prefix><N>`.
-// Used by uniqueReincarnateTitle to pick the smallest free N.
-func scanReincarnateSuffixes(prefix string) map[int]bool {
-	used := map[int]bool{}
+// customTitlesInUse returns the set of every non-empty conv_index
+// custom_title. Used by uniqueArchiveTitle to find a free archive name.
+// A lookup error yields an empty set (fail-open): a collision then keeps
+// the bare `-x` form, no worse than the pre-JOH-319 behaviour.
+func customTitlesInUse() map[string]bool {
+	inUse := map[string]bool{}
 	rows, err := db.ListAllConvIndex()
 	if err != nil {
-		return used
+		return inUse
 	}
 	for _, r := range rows {
-		if !strings.HasPrefix(r.CustomTitle, prefix) {
-			continue
+		if r.CustomTitle != "" {
+			inUse[r.CustomTitle] = true
 		}
-		suffix := strings.TrimPrefix(r.CustomTitle, prefix)
-		n, err := strconv.Atoi(suffix)
-		if err != nil {
-			continue
-		}
-		used[n] = true
 	}
-	return used
+	return inUse
 }
 
 // waitForConvAlive polls for newConv's tmux pane to come online,
@@ -143,10 +158,12 @@ func waitForConvAlive(newConv string) bool {
 //
 // Identity is preserved; task state is *not* migrated — the agent is
 // expected to persist work-in-progress to disk before calling, per
-// the agent-lifecycle skill. Conversation title is auto-renamed to
-// `<prev>-reincarnate-<N>` (smallest free N globally across
-// conv_index.custom_title); the rename is injected BEFORE the
-// follow-up so the new pane shows the proper title from the start.
+// the agent-lifecycle skill. Naming (JOH-319): the living successor
+// KEEPS the plain base name (`<prev>` with any legacy `-r-<N>` stripped)
+// and is renamed to it BEFORE the follow-up so the new pane shows the
+// proper title from the start; the RETIRING predecessor gets the
+// unchanged `-x` archive marker — `<prev>-x`, or `<prev>-x-<N>` when an
+// earlier retired generation already holds the bare form.
 
 // reincarnateSpawnTimeout caps how long we wait for the new tclaude
 // session's conv-id to materialise. Mirrors handleGroupSpawn's
@@ -400,14 +417,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// response is the fallback.
 	switchedClients := switchTmuxClients(oldSess.TmuxSession, newTmux)
 
-	// 6. Compute the new instance's CC title — `<prev>-reincarnate-<N>`,
-	// global N across all conv_index rows. Done here (before /exit on
-	// the old pane below) so the lookup of prevTitle still resolves
-	// cleanly. FreshConvRowAt scans the parent's .jsonl when conv_index
-	// has no row for it — required for back-to-back reincarnations
-	// where the parent itself was just spawned and never indexed yet
-	// (otherwise prevTitle would be "" and we'd produce `reincarnate-1`
-	// instead of `<parent>-reincarnate-N`).
+	// 6. Compute the two generation titles (JOH-319). The living
+	// successor keeps the plain base name; the retiring predecessor gets
+	// the `-x` archive marker (`<prev>-x`, or `<prev>-x-<N>` on a repeat).
+	// Done here (before /exit on the old pane below) so the lookup of
+	// prevTitle still resolves cleanly. FreshConvRowAt scans the parent's
+	// .jsonl when conv_index has no row for it — required for back-to-back
+	// reincarnations where the parent itself was just spawned and never
+	// indexed yet (otherwise prevTitle would be "" and the successor would
+	// come up unnamed / the predecessor un-archived).
 	// A non-CC harness (Codex) keeps its title in its own store
 	// (threads.title), not the conv_index the CC path reads — source it
 	// through the harness ConvStore so the carry survives. CC falls through
@@ -418,7 +436,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	} else if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
 		prevTitle = agent.DisplayTitle(row)
 	}
-	newTitle := uniqueReincarnateTitle(prevTitle)
+	// successorTitle is the stable base name the living generation keeps
+	// (any legacy `-r-<N>` on prevTitle is stripped); retiredTitle /
+	// retiredRename describe the archive rename of the outgoing pane.
+	successorTitle := reincarnateBase(prevTitle)
+	retiredTitle, retiredRename := retiredGenerationTitle(prevTitle)
 
 	// 7. Queue the follow-up as an agent_messages row BEFORE the
 	// post-spawn goroutine runs — the row is written so the rename can
@@ -452,37 +474,39 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// this, the rename and the handoff nudge race and the user briefly
 	// sees the wrong title in the new pane.
 	goBackground(func() {
-		runReincarnatePostSpawn(newConv, newTitle)
+		runReincarnatePostSpawn(newConv, successorTitle)
 	})
 
-	// 9. Mark the old conv as archived (soft-deleted), then soft-stop.
+	// 9. Archive-rename the retiring predecessor, then soft-stop it.
 	//
-	// Two writes happen here, in this order:
+	// Inject `/rename <prev>-x` (or `<prev>-x-<N>`) into the old pane,
+	// writing a custom-title record to the .jsonl before /exit closes
+	// the pane. The `-x` is the archive marker so the dead conv shows up
+	// as archived in tmux pane titles + tools that read .jsonl directly
+	// (e.g. `conv ls` hides it by default). The `-<N>` counter only
+	// appears when an earlier retired generation already holds the bare
+	// `-x` form — which now happens on every reincarnation, because
+	// post-JOH-319 the living successor keeps its plain base name rather
+	// than carrying an incrementing `-r-<N>`. The watch model /
+	// FreshConvRow refresh picks it up on mtime. retiredGenerationTitle
+	// returns ok=false when there is nothing to base a name on (empty
+	// title) or the predecessor is already `-x`-marked; rename is skipped.
 	//
-	//   a. Stamp `conv_index.archived_at = now` on the old conv
-	//      (canonical signal — survives renames, tool-poking, etc.).
-	//      Listing surfaces filter on this column primarily.
-	//   b. Inject `/rename <prevTitle>-x` into the old pane, writing
-	//      a custom-title record to the .jsonl before /exit closes
-	//      the pane. Cosmetic UX cue so the dead conv shows up as
-	//      `<prev>-x` in tmux pane titles + tools that read .jsonl
-	//      directly. The watch model / FreshConvRow refresh picks
-	//      it up on mtime.
+	// Renaming the predecessor BEFORE the successor's async base-name
+	// rename (step 8 runs after wait-for-alive) is also what keeps the
+	// base title unambiguous: the predecessor sheds `<base>` for
+	// `<base>-x` here, well before the successor claims `<base>`.
 	//
-	// Either write failing is non-fatal — the other still gives
-	// listing surfaces a way to detect the archived state. Idempotent:
-	// the rename skips when prevTitle is empty or already ends in
-	// `-x`; the column stamp is a single UPDATE.
-	// The predecessor is now a past GENERATION of the still-active actor
-	// (db.RotateAgentConv advanced the actor's live pointer + recorded the
-	// succession edge), not a standalone retired or archived entry. It is
-	// excluded from the active roster (only the actor's current conv shows),
-	// the retired tray (the actor is active) and the plain-conversations list
-	// (ListAgentConvIDs covers every generation) — reachable via the
-	// succession edge / séance, which is why no conv_index.archived_at stamp
-	// is needed here.
-	if prevTitle != "" && !strings.HasSuffix(prevTitle, "-x") {
-		_ = deliverRename(target, prevTitle+"-x")
+	// The rename failing is non-fatal. The predecessor is now a past
+	// GENERATION of the still-active actor (db.RotateAgentConv advanced
+	// the actor's live pointer + recorded the succession edge), not a
+	// standalone retired or archived entry. It is excluded from the active
+	// roster (only the actor's current conv shows), the retired tray (the
+	// actor is active) and the plain-conversations list (ListAgentConvIDs
+	// covers every generation) — reachable via the succession edge /
+	// séance, which is why no conv_index.archived_at stamp is needed here.
+	if retiredRename {
+		_ = deliverRename(target, retiredTitle)
 	}
 	// Soft-stop the old pane via the harness's exit command. A harness
 	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
@@ -494,7 +518,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	resp := map[string]any{
 		"old_conv":         target,
 		"new_conv":         newConv,
-		"new_title":        newTitle,
+		"new_title":        successorTitle,
+		"retired_title":    retiredTitle,
 		"label":            label,
 		"tmux_session":     newTmux,
 		"attach_cmd":       "tclaude session attach " + label,
@@ -513,14 +538,25 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	default:
 		carry = fmt.Sprintf("%d tmux clients carried over to the new session", switchedClients)
 	}
+	// Name both ends of the handoff in the note, but only mention the
+	// predecessor's archive title when one was actually applied (an
+	// untitled predecessor is left as-is, retiredRename == false).
+	keptAs := ""
+	if retiredRename {
+		keptAs = fmt.Sprintf(" (kept as %q)", retiredTitle)
+	}
+	renamedTo := "the base name"
+	if successorTitle != "" {
+		renamedTo = fmt.Sprintf("%q", successorTitle)
+	}
 	resp["follow_up"] = followUp
 	if msgID > 0 {
 		resp["message_id"] = msgID
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q then receive message #%d",
-			short8(target), carry, newTitle, msgID)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane will be /renamed to %s then receive message #%d",
+			short8(target), keptAs, carry, renamedTo, msgID)
 	} else {
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit; %s; new pane will be /renamed to %q; WARNING: the handoff message failed to queue (see daemon logs)",
-			short8(target), carry, newTitle)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane will be /renamed to %s; WARNING: the handoff message failed to queue (see daemon logs)",
+			short8(target), keptAs, carry, renamedTo)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -528,14 +564,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 // runReincarnatePostSpawn is the single goroutine that handles
 // post-spawn injection in deterministic order: wait-for-alive →
 // /rename → flush the handoff. Renaming first means the new pane's CC
-// title shows the proper `<prev>-reincarnate-<N>` immediately, before
-// any work output starts streaming.
+// title shows the proper base name (JOH-319: the living successor keeps
+// the plain `<base>` name) immediately, before any work output starts
+// streaming.
 //
 // The handoff follow-up was already written as an agent_messages row
 // before this goroutine fired (group_id 0 for a solo successor); flush
 // delivers it through the normal nudge pipeline. Skips rename when
-// newTitle == "" (defensive — uniqueReincarnateTitle always returns a
-// non-empty string in practice).
+// newTitle == "" — the base name is empty only when the predecessor was
+// itself untitled, in which case the successor derives a title from its
+// first turn rather than being renamed to a blank.
 func runReincarnatePostSpawn(newConv, newTitle string) {
 	if !waitForConvAlive(newConv) {
 		slog.Warn("reincarnate: new conv never came online; rename + handoff abandoned", "conv", newConv)

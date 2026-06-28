@@ -95,10 +95,13 @@ func TestSessionEntry_HasTitle(t *testing.T) {
 
 // TestIsArchivedTitle locks in the suffix detection used by listing
 // surfaces (conv ls, dashboard) to default-hide reincarnated old
-// convs. Edge case: names like `unix` (no hyphen before x) must NOT
-// match — only the literal `-x` suffix counts. Pairs conceptually
-// with `groups archive` on the group side; both are soft-delete
-// markers.
+// convs. The marker is the literal `-x` suffix, optionally followed by
+// a `-<N>` disambiguation counter (JOH-319: a repeat retirement of the
+// same base — the living gen keeps its name, so `worker-x` recurs and a
+// counter is appended). Edge cases: names like `unix` (no hyphen before
+// x) or `foo-x2` (no hyphen before the digit) must NOT match. Pairs
+// conceptually with `groups archive` on the group side; both are
+// soft-delete markers.
 func TestIsArchivedTitle(t *testing.T) {
 	cases := map[string]bool{
 		"":             false, // empty
@@ -106,7 +109,10 @@ func TestIsArchivedTitle(t *testing.T) {
 		"unix":         false, // ends in x but no hyphen — not a marker
 		"x":            false, // single 'x' isn't `-x`
 		"foo-x":        true,  // simplest match
-		"worker-r-1-x": true,  // archived reincarnate-1 form
+		"worker-x-2":   true,  // disambiguated repeat-retirement form (JOH-319)
+		"worker-x-12":  true,  // multi-digit counter
+		"foo-x2":       false, // no hyphen before the digit — not a counter
+		"worker-r-1-x": true,  // legacy archived reincarnate form
 		"worker-c-2-x": true,  // archived clone form (unusual but possible)
 		"foo-x-x":      true,  // already-archived-twice (edge case; reincarnate skips this but still detected)
 		"foo-extra":    false, // ends in something other than -x
