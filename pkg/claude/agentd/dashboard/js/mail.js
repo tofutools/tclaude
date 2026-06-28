@@ -318,8 +318,20 @@ async function reloadMail() {
 function pruneSelections() {
   const agentIds = new Set(
     mail.mailboxes.filter(mb => mb.kind === 'agent').map(mb => mb.id));
+  // While "show previous generations" is off, predecessor folders have no
+  // visible row but DO stay in the server roster (the filter is client-side),
+  // so the agentIds check alone won't drop a wipe selection on one. Compute the
+  // hidden-predecessor set once and use it both to prune those box selections
+  // and to snap an open predecessor folder below.
+  const hiddenPrev = mail.showPrevGens ? null : prevGenConvSet();
   for (const c of [...mail.selectedBoxes]) {
-    if (!agentIds.has(c)) mail.selectedBoxes.delete(c);
+    // Drop a checked mailbox that left the roster, OR a predecessor that is
+    // currently hidden — e.g. a live agent ticked for wipe that then
+    // reincarnated / cleared on a background refresh, entering replaced[]:
+    // leaving it checked would let the wipe-bar count (and a wipe touch) a row
+    // the operator can no longer see. The live-refresh twin of
+    // setShowPrevGens's toggle-time cleanup.
+    if (!agentIds.has(c) || (hiddenPrev && hiddenPrev.has(c))) mail.selectedBoxes.delete(c);
   }
   // Snap an orphaned folder selection back to the firehose: if the open
   // folder (agent OR group) is no longer in the roster — e.g. a retired
@@ -337,8 +349,9 @@ function pruneSelections() {
   // previous generations" is off it has no visible sidebar row, so a
   // persisted / deep-linked selection on one would strand the same way. Treat
   // a hidden predecessor as not-visible here (the initial-load twin of
-  // setShowPrevGens's toggle-time snap).
-  const hiddenPrevGen = !mail.showPrevGens && prevGenConvSet().has(mail.selected);
+  // setShowPrevGens's toggle-time snap). Reuses the hiddenPrev set computed
+  // above (null when the toggle is on — nothing is hidden).
+  const hiddenPrevGen = !!hiddenPrev && hiddenPrev.has(mail.selected);
   const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected) && !hiddenPrevGen;
   if (mail.mailboxes.length
       && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
