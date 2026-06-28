@@ -52,6 +52,10 @@ header .meta { color: #7d8590; font-size: 12px; }
 footer {
   position: fixed;
   left: 0; right: 0; bottom: 0;
+  /* Pin the rendered height to --footer-h so it can never desync from the
+     bottom space the page reserves below — the bar holds a single short
+     line, so a fixed height won't clip anything. */
+  height: var(--footer-h);
   z-index: 40;
   background: #161b22;
   border-top: 1px solid #2a3340;
@@ -1859,7 +1863,8 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 1px 5px; font-size: 10px; color: #c9d1d9;
 }
 .toast {
-  position: fixed; bottom: 24px; right: 24px;
+  /* Clear the fixed footer bar (var(--footer-h)) so toasts never overlap it. */
+  position: fixed; bottom: calc(var(--footer-h) + 16px); right: 24px;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
   border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
   font-size: 13px; max-width: 360px; z-index: 200;
