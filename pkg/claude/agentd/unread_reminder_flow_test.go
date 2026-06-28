@@ -90,6 +90,28 @@ func TestUnreadReminder_FiresAfterInterval(t *testing.T) {
 	f.AssertSentContains(urTarget, "inbox read", time.Second)
 }
 
+// TestUnreadReminder_RestartFloorDefersBacklog pins the restart-herd guard: a
+// message delivered BEFORE the daemon (here, the sweep epoch) started is not
+// due until a full interval after startup — not a full interval after its
+// original delivery — so a restart can't re-nudge an old backlog on its first
+// tick. The epoch is set 5 min after delivery; without the floor the message
+// would be due at delivery+10, but the floor pushes it to epoch+10.
+func TestUnreadReminder_RestartFloorDefersBacklog(t *testing.T) {
+	f, _ := haveUnreadMessage(t, "delivered before restart")
+	st := agentd.NewUnreadReminderStateForTest()
+	base := time.Now() // ~ delivery time
+	agentd.SeedUnreadReminderEpochForTest(st, base.Add(5*time.Minute))
+
+	// base+12m is past delivery+10m (would fire without the floor) but short
+	// of epoch+10m = base+15m, so the floor defers it.
+	agentd.RunUnreadReminderTickForTest(base.Add(12*time.Minute), st)
+	assertNoReminder(t, f)
+
+	// base+16m is past epoch+10m → the deferred reminder fires.
+	agentd.RunUnreadReminderTickForTest(base.Add(16*time.Minute), st)
+	f.AssertSentContains(urTarget, "reminder —", time.Second)
+}
+
 // TestUnreadReminder_RepeatsEveryInterval pins the cadence: after the first
 // reminder, the recipient is re-nudged only once per interval, not every tick.
 func TestUnreadReminder_RepeatsEveryInterval(t *testing.T) {

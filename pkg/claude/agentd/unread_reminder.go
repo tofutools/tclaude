@@ -28,7 +28,8 @@ const unreadReminderSweepInterval = 1 * time.Minute
 // unreadReminderState tracks, per recipient conv, when that agent was last
 // reminded about its unread mail. It is the in-memory cadence clock: a
 // recipient is due again unreadReminderInterval after its last reminder (or,
-// before the first reminder, after its oldest unread message was delivered).
+// before the first reminder, after its oldest unread message was delivered —
+// floored at `epoch`, see below).
 //
 // In-memory (not a DB column) is a deliberate, low-risk choice: a reminder is
 // best-effort UX, the map is tiny (one entry per agent with outstanding mail),
@@ -39,10 +40,22 @@ const unreadReminderSweepInterval = 1 * time.Minute
 type unreadReminderState struct {
 	mu         sync.Mutex
 	remindedAt map[string]time.Time // to_conv → last reminder time
+	// epoch is the floor a never-yet-reminded conv's reference is clamped to:
+	// the time the sweep started observing. A message delivered before this
+	// process started is therefore not due until a full interval AFTER
+	// startup, so a daemon restart can't re-nudge a backlog of long-delivered
+	// mail on its first ticks. Zero ⇒ no floor (the tests' default).
+	epoch time.Time
 }
 
 func newUnreadReminderState() *unreadReminderState {
 	return &unreadReminderState{remindedAt: map[string]time.Time{}}
+}
+
+func (st *unreadReminderState) setEpoch(t time.Time) {
+	st.mu.Lock()
+	st.epoch = t
+	st.mu.Unlock()
 }
 
 // the daemon's single sweep state, shared by the goroutine and the ForTest
@@ -55,12 +68,15 @@ var unreadReminders = newUnreadReminderState()
 // for unreadReminderInterval. Returns when stop is closed (the daemon-wide
 // quit channel) — it shares cronStop with the other housekeeping sweeps.
 //
-// Unlike the cron scheduler, the first tick is NOT fired immediately on
-// startup: a freshly-started daemon has an empty cadence clock, so an
-// immediate sweep would re-nudge every agent with old unread mail at once.
-// Waiting one interval lets the clock settle (and gives a just-restarted
-// agent a moment to read its own backlog) before the first reminder.
+// The sweep's start time is recorded as the cadence-clock epoch: a message
+// delivered before this process started is not due until a full interval
+// AFTER startup, so a daemon restart never re-nudges a backlog of long-
+// delivered mail on its first tick. (Messages delivered while the daemon runs
+// are unaffected — their own delivery time already follows the epoch.) Unlike
+// the cron scheduler, the first tick is therefore not fired immediately; one
+// sweep interval later is soon enough and keeps startup uncontended.
 func startUnreadReminderSweep(stop <-chan struct{}) {
+	unreadReminders.setEpoch(time.Now())
 	go func() {
 		t := time.NewTicker(unreadReminderSweepInterval)
 		defer t.Stop()
@@ -104,24 +120,27 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		byConv[m.ToConv] = append(byConv[m.ToConv], m)
 	}
 
+	// Decide which recipients are due, and prune clock entries for recipients
+	// with nothing outstanding (mail read or deleted since last tick). Both
+	// touch the cadence map, so do them under the lock — then release it
+	// before any DB / tmux I/O, so the map is never held across blocking work.
 	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	// Drop clock entries for recipients with nothing outstanding (mail read
-	// or deleted since last tick) so the map can't grow unbounded.
 	for conv := range st.remindedAt {
 		if _, still := byConv[conv]; !still {
 			delete(st.remindedAt, conv)
 		}
 	}
-
+	due := make([]string, 0, len(order))
 	for _, conv := range order {
-		list := byConv[conv]
-		if !st.dueLocked(conv, list, now) {
-			continue
+		if st.dueLocked(conv, byConv[conv], now) {
+			due = append(due, conv)
 		}
-		// Due. Gate on the recipient actually being a live, idle, non-retired
-		// agent before we touch its pane.
+	}
+	st.mu.Unlock()
+
+	for _, conv := range due {
+		// Gate on the recipient actually being a live, idle, non-retired agent
+		// before we touch its pane.
 		sess := pickAliveSession(conv)
 		if sess == nil {
 			continue // offline — nothing to nudge; reconsider next tick
@@ -130,30 +149,40 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 			continue // permission/elicitation dialog up — noop, retry next tick
 		}
 		if live, err := db.IsLiveAgentConv(conv); err != nil || !live {
-			// Retired, a superseded predecessor generation, or not an agent
-			// at all. Per the brief, reminders apply only to live agents.
+			// Retired, a superseded predecessor generation, or not an agent at
+			// all. Per the brief, reminders apply only to live agents. A real
+			// DB error is logged (and retried next tick) rather than buried.
+			if err != nil {
+				slog.Debug("unread-reminder: liveness check failed", "error", err, "conv", conv)
+			}
 			continue
 		}
-		if err := injectTextAndSubmit(sess.TmuxSession+":0.0", unreadReminderText(list)); err != nil {
+		if err := injectTextAndSubmit(sess.TmuxSession+":0.0", unreadReminderText(byConv[conv])); err != nil {
 			slog.Warn("unread-reminder: inject failed",
 				"error", err, "tmux", sess.TmuxSession, "conv", conv)
 			continue // leave the clock unadvanced so we retry next tick
 		}
+		st.mu.Lock()
 		st.remindedAt[conv] = now
-		slog.Info("unread-reminder: nudged", "conv", conv, "unread", len(list))
+		st.mu.Unlock()
+		slog.Info("unread-reminder: nudged", "conv", conv, "unread", len(byConv[conv]))
 	}
 }
 
 // dueLocked reports whether `conv` is due for a reminder at `now`. The caller
 // holds st.mu. The reference point is the last time we reminded this conv, or
-// — before any reminder — the earliest delivery among its unread messages, so
-// the first reminder lands one full interval after delivery.
+// — before any reminder — the earliest delivery among its unread messages,
+// floored at st.epoch so a freshly-restarted daemon doesn't treat a long-
+// delivered backlog as instantly due.
 func (st *unreadReminderState) dueLocked(conv string, list []*db.AgentMessage, now time.Time) bool {
 	ref, ok := st.remindedAt[conv]
 	if !ok {
 		ref = earliestDelivered(list)
 		if ref.IsZero() {
 			return false // no usable delivery timestamp; skip defensively
+		}
+		if !st.epoch.IsZero() && ref.Before(st.epoch) {
+			ref = st.epoch
 		}
 	}
 	return !now.Before(ref.Add(unreadReminderInterval))
@@ -189,7 +218,8 @@ func isTmuxInputBlocked(status string) bool {
 // recipient's pane. A single outstanding message names its sender (stable
 // agent_id, like messageNudgeText) and points at `inbox read`; several
 // collapse to a count + oldest id pointing at `inbox ls`, so a backlog is one
-// terse line rather than a flood.
+// terse line rather than a flood. list is id-ordered, so list[0] is the
+// lowest-id (oldest-sent) unread message.
 func unreadReminderText(list []*db.AgentMessage) string {
 	if len(list) == 1 {
 		m := list[0]

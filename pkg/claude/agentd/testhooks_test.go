@@ -63,6 +63,12 @@ func RunUnreadReminderTickForTest(now time.Time, st *unreadReminderState) {
 // state never leaks between scenarios in the shared package test binary.
 func NewUnreadReminderStateForTest() *unreadReminderState { return newUnreadReminderState() }
 
+// SeedUnreadReminderEpochForTest sets the cadence-clock epoch (the floor a
+// never-yet-reminded conv's first reminder is clamped to), so a test can model
+// a daemon that started AFTER a message was delivered and prove the restart
+// floor defers that message's first reminder to epoch+interval.
+func SeedUnreadReminderEpochForTest(st *unreadReminderState, t time.Time) { st.setEpoch(t) }
+
 // SetUnreadReminderIntervalForTest overrides the per-message reminder cadence
 // for the duration of a test. Returns a restore closure for t.Cleanup.
 func SetUnreadReminderIntervalForTest(d time.Duration) func() {
