@@ -601,7 +601,11 @@ async function runDndRemoveFromGroup(payload) {
 // button.
 async function runDndRetire(payload) {
   const {conv, label} = payload;
-  const sel = payload.agent || conv;
+  // Retire stays conv-keyed (unlike the other runDnd* endpoint calls): the
+  // server's dangling-agent recovery only triggers for a UUID-shaped
+  // selector that fails to resolve, so sending the stable agent_id would
+  // silently demote a dangling orphan instead of offering to remove it
+  // (JOH-322). See row-actions.js's retire-agent case.
   // The retire runs inside retireConfirm's `perform`, so the confirm modal
   // keeps a spinner on its OK button while the POST is in flight (same as
   // the per-row retire and the bulk-retire preview). close() dismisses the
@@ -609,19 +613,19 @@ async function runDndRetire(payload) {
   // finally re-syncs either way — and on the cancel branch (perform never
   // ran, choice is null) the refresh below undoes the optimistic dragend.
   const choice = await retireConfirm({
-    label, conv: sel,
+    label, conv,
     perform: async (ch, close) => {
       try {
         const q = `?shutdown=${ch.shutdown ? 1 : 0}`
           + (ch.deleteWorktree ? '&delete_worktree=1' : '');
-        const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/retire${q}`, {
+        const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
           close();
           // A dangling entry (conversation gone) can't be retired — offer
           // to remove it instead. The finally below re-syncs.
-          if (await maybeHandleDanglingRetire(r, sel, label)) return;
+          if (await maybeHandleDanglingRetire(r, conv, label)) return;
           toast(`retire ${label} failed: ${await r.text()}`, true);
           return;
         }

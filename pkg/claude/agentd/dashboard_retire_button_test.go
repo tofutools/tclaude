@@ -86,8 +86,8 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	if next := strings.Index(caseBody[len("case 'retire-agent': {"):], "\n        case "); next >= 0 {
 		caseBody = caseBody[:len("case 'retire-agent': {")+next]
 	}
-	if !strings.Contains(caseBody, "retireAgentInteractive(agent, label)") {
-		t.Error("retire-agent case: must delegate to retireAgentInteractive(agent, label)")
+	if !strings.Contains(caseBody, "retireAgentInteractive(conv, label)") {
+		t.Error("retire-agent case: must delegate to retireAgentInteractive(conv, label)")
 	}
 
 	// 4. The shared retireAgentInteractive gates the retire on retireConfirm

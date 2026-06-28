@@ -467,12 +467,15 @@ function buildCommands() {
   for (const a of (snap.agents || [])) {
     const label = a.title || (a.conv_id || '').slice(0, 8);
     const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
-    const sel = a.agent_id || a.conv_id;
     cmds.push({
       icon: '♻', label: `Retire agent: ${label}`,
       hint: `demote to a plain conversation (${status})`,
       keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status,
-      run: () => retireAgentInteractive(sel, label),
+      // Retire stays conv-keyed (not agent_id): the server's dangling-agent
+      // recovery only triggers for a UUID-shaped selector that fails to
+      // resolve, so a stable agent_id would silently demote a dangling
+      // orphan instead of offering to remove it (JOH-322).
+      run: () => retireAgentInteractive(a.conv_id, label),
     });
   }
 

@@ -553,8 +553,13 @@ function bindRowActions() {
         case 'retire-agent': {
           // The whole confirm → POST → dangling-recovery → toast → refresh
           // flow lives in refresh.js so the command palette's "Retire
-          // agent: <name>" runs the identical path.
-          await retireAgentInteractive(agent, label);
+          // agent: <name>" runs the identical path. Retire stays conv-keyed
+          // (uses `conv`, not `agent`): the dashboardEnrollmentVerb dangling
+          // path only fires for a UUID-shaped selector that FAILS to resolve
+          // (a dangling agent whose conversation is gone); a stable agent_id
+          // resolves successfully even then and would silently demote the
+          // orphan instead of offering to remove it (JOH-322).
+          await retireAgentInteractive(conv, label);
           return;
         }
         case 'reinstate-agent': {

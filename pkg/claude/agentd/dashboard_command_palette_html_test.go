@@ -132,7 +132,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
 	must("label: `Retire agent: ${label}`", "the palette offers a per-agent retire")
-	must("retireAgentInteractive(sel, label)",
+	must("retireAgentInteractive(a.conv_id, label)",
 		"per-agent retire reuses the shared confirm + POST flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")

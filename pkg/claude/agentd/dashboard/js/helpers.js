@@ -1073,7 +1073,7 @@ function editMemberButton(g, m) {
 function ownerToggleButton(g, m) {
   return m.owner
     ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
-    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
+    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this agent an owner of the group">make owner</button>`;
 }
 function removeMemberButton(g, m) {
   return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
@@ -1092,7 +1092,13 @@ function removeMemberButton(g, m) {
 // `danger` delete. Always present and enabled — retiring an offline
 // agent is valid (shutdown is then a no-op), matching the drag gesture.
 function retireMemberButton(m) {
-  return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).">retire</button>`;
+  // NB: retire intentionally stays conv-keyed (no data-agent). The retire
+  // endpoint resolves a UUID-shaped conv-id that FAILS to resolve into the
+  // "dangling agent entry" 409-recovery path (enrollment_handlers.go); a
+  // stable agent_id resolves successfully even when the conversation is
+  // gone, which would silently demote the orphan instead of offering to
+  // remove it. So retire is a conv-keyed KEEP — see row-actions.js (JOH-322).
+  return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).">retire</button>`;
 }
 
 // ungroupedMemberActions renders the per-row action cell for a row in
