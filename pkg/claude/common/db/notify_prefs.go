@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -59,18 +60,29 @@ func SetConvNotifyPref(convID, mode string) error {
 
 // GetConvNotifyPref returns the per-agent notification override for a
 // conv-id: NotifyPrefOn, NotifyPrefOff, or "" when no override exists
-// (inherit).
+// (inherit). conv_id is only the resolution input — it resolves to the
+// stable actor and delegates to GetAgentNotifyPref, so the override
+// follows the agent across conv rotations.
 func GetConvNotifyPref(convID string) (string, error) {
-	db, err := Open()
-	if err != nil {
-		return "", err
-	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return "", err
 	}
+	return GetAgentNotifyPref(agentID)
+}
+
+// GetAgentNotifyPref returns the per-agent notification override keyed
+// directly on the stable agent_id: NotifyPrefOn, NotifyPrefOff, or ""
+// when no override exists (inherit) or the agent is unknown/empty. This
+// is the agent-keyed primitive behind GetConvNotifyPref.
+func GetAgentNotifyPref(agentID string) (string, error) {
+	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return "", nil
+	}
+	db, err := Open()
+	if err != nil {
+		return "", err
 	}
 	var mode string
 	err = db.QueryRow(`SELECT mode FROM agent_notify_prefs WHERE agent_id = ?`, agentID).Scan(&mode)

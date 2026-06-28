@@ -1218,18 +1218,28 @@ func ListAgentGroupMembers(groupID int64) ([]*AgentGroupMember, error) {
 }
 
 // ListGroupsForConv returns all groups that include the given conv_id,
-// ordered by group name.
+// ordered by group name. conv_id is only the resolution input — it
+// resolves to the stable actor and delegates to ListGroupsForAgent, so
+// membership is read by agent and survives conv rotations.
 func ListGroupsForConv(convID string) ([]*AgentGroup, error) {
-	db, err := Open()
-	if err != nil {
-		return nil, err
-	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return nil, err
 	}
+	return ListGroupsForAgent(agentID)
+}
+
+// ListGroupsForAgent returns all groups that include the given stable
+// agent_id, ordered by group name. This is the agent-keyed primitive
+// behind ListGroupsForConv; the empty/unknown agent has no groups.
+func ListGroupsForAgent(agentID string) ([]*AgentGroup, error) {
+	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
 	}
 	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
 		FROM agent_groups g
