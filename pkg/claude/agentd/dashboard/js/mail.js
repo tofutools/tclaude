@@ -23,6 +23,17 @@
 //                             an empty mailbox are likewise hidden until
 //                             the #mail-show-empty toggle opts them in
 //                             (include_empty, server-side, roster only).
+//                             Predecessor ("previous") generations of an
+//                             actor — past conv-ids left behind by a
+//                             reincarnate / Claude Code /clear, recovered
+//                             from the snapshot's replaced[] (the same
+//                             source the Groups tab uses) — are hidden from
+//                             the agent listing, flat AND nested, until the
+//                             #mail-show-prev-gens footer toggle opts them
+//                             in. Purely a client-side roster filter: it
+//                             hides only the left-pane folders, never any
+//                             message — the "all" firehose still counts a
+//                             predecessor's traffic.
 //   list    (#mail-list)    → the selected folder's messages, newest
 //                             first, filtered by #filter-messages. Each
 //                             row has a select checkbox and a delete
@@ -84,6 +95,13 @@ const SHOW_RETIRED_KEY = 'tclaude.dash.mail.showretired';
 // clutter until the operator asks for it. Roster-only: an empty mailbox
 // has no messages, so unlike retired it never touches the firehose.
 const SHOW_EMPTY_KEY = 'tclaude.dash.mail.showempty';
+// Whether the sidebar lists folders for predecessor ("previous")
+// generations of an actor — past conv-ids left behind by a reincarnate /
+// /clear. Off by default — these are archival; their folder is clutter
+// until the operator asks for it. Purely a client-side roster filter
+// (derived from the snapshot's replaced[]): it hides only the left-pane
+// folder, never any message — the "all" firehose still counts the traffic.
+const SHOW_PREV_GENS_KEY = 'tclaude.dash.mail.showprevgens';
 // Per-group sidebar expand state: a group row can expand to reveal its
 // member agent folders nested beneath it. Keyed by group name under a
 // mail-specific prefix so it stays independent of the Groups tab's own
@@ -137,6 +155,11 @@ const mail = {
   // showEmpty drives the include_empty param on the roster fetch only.
   // Sticky so the operator's choice survives a reload.
   showEmpty: dashPrefs.getItem(SHOW_EMPTY_KEY) === '1',
+  // showPrevGens governs whether predecessor-generation folders appear in
+  // the agent listing. Client-side roster filter (no server param) — the
+  // sidebar paint reads it; the snapshot's replaced[] names the convs.
+  // Sticky so the operator's choice survives a reload.
+  showPrevGens: dashPrefs.getItem(SHOW_PREV_GENS_KEY) === '1',
   messages: [],
   selectedMsgId: null,
   selectedMsgs: new Set(),
@@ -182,6 +205,22 @@ function onlineConvs() {
   const snap = lastSnapshot || {};
   (snap.agents || []).concat(snap.ungrouped || [])
     .forEach(a => { if (a && a.online) set.add(a.conv_id); });
+  return set;
+}
+
+// prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
+// generations of a still-existing actor — a reincarnate / Claude Code
+// /clear advanced the actor's live pointer and left these behind (JOH-26).
+// Read straight from the main snapshot's replaced[] (the same list the
+// Groups tab's "show replaced generations" group renders), so the Messages
+// tab hides the same archival folders by default. The snapshot is refreshed
+// every 2s tick regardless of the active tab, so this stays current without
+// its own round-trip. Returns an empty Set until the snapshot first loads —
+// fail-open, showing every folder until we actually know which are stale.
+function prevGenConvSet() {
+  const set = new Set();
+  const snap = lastSnapshot || {};
+  (snap.replaced || []).forEach(r => { if (r && r.conv_id) set.add(r.conv_id); });
   return set;
 }
 
@@ -292,7 +331,15 @@ function pruneSelections() {
   // loaded roster (the pinned all / human folders mean a real roster always
   // has entries) so a transient empty fetch can't bounce a valid selection;
   // clearMessages lets the next load fill in the firehose.
-  const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected);
+  //
+  // A predecessor folder still lives in the server roster (the prev-gens
+  // filter is client-side), so it stays a "valid" folder — but while "show
+  // previous generations" is off it has no visible sidebar row, so a
+  // persisted / deep-linked selection on one would strand the same way. Treat
+  // a hidden predecessor as not-visible here (the initial-load twin of
+  // setShowPrevGens's toggle-time snap).
+  const hiddenPrevGen = !mail.showPrevGens && prevGenConvSet().has(mail.selected);
+  const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected) && !hiddenPrevGen;
   if (mail.mailboxes.length
       && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
       && !validFolder) {
@@ -480,6 +527,39 @@ function setShowEmpty(on) {
   reloadMail();
 }
 
+// setShowPrevGens flips the "show previous generations" toggle and persists
+// it. Unlike setShowRetired / setShowEmpty this is a pure client-side roster
+// filter — the predecessor convs are already in the cached roster + snapshot,
+// so there is no server param to re-fetch; it just repaints. When hiding
+// predecessor folders it first drops any from the wipe selection (so the
+// wipe-bar count can't reference a row that's no longer visible) and snaps a
+// predecessor folder that happens to be open back to the firehose — the same
+// stranding guard the other two toggles apply.
+function setShowPrevGens(on) {
+  if (on === mail.showPrevGens || mail.busy) return;
+  mail.showPrevGens = on;
+  if (on) dashPrefs.setItem(SHOW_PREV_GENS_KEY, '1');
+  else dashPrefs.removeItem(SHOW_PREV_GENS_KEY);
+  if (!on) {
+    const prev = prevGenConvSet();
+    for (const c of [...mail.selectedBoxes]) {
+      if (prev.has(c)) mail.selectedBoxes.delete(c);
+    }
+    if (prev.has(mail.selected)) {
+      mail.selected = ALL_ID;
+      mail.selectedMsgId = null;
+      mail.selectedMsgs.clear();
+      mail.page = 1;
+      dashPrefs.setItem(SELECTED_KEY, ALL_ID);
+      // The open folder changed (predecessor → firehose), so its messages
+      // must be re-fetched; loadMessages repaints when it lands.
+      loadMessages().then(() => { pruneSelections(); paintMail(); });
+      return;
+    }
+  }
+  paintMail();
+}
+
 function mailboxLabel(mb) {
   if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
@@ -504,7 +584,10 @@ function mailboxMatchesFilter(mb, q) {
 // or agent folder. nested=true marks a member-agent row shown beneath an
 // expanded group: it indents and drops the bulk-wipe checkbox (the
 // canonical checkbox lives on the flat Agents row for that same conv).
-function mailboxRowHTML(mb, nested = false) {
+// prevGen=true marks a predecessor-generation folder (shown only when the
+// "show previous generations" toggle is on): it tags + dims the row so it
+// reads as a superseded past generation, not the live agent.
+function mailboxRowHTML(mb, nested = false, prevGen = false) {
   const active = mb.id === mail.selected;
   const unread = mb.unread
     ? `<span class="mailbox-unread">${mb.unread > 99 ? '99+' : mb.unread}</span>`
@@ -516,13 +599,16 @@ function mailboxRowHTML(mb, nested = false) {
     : `${mb.in} received · ${mb.out} sent`;
   const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
   // Retired folders only appear when the toggle is on; tag them so they
-  // read as demoted rather than a live agent.
+  // read as demoted rather than a live agent. Predecessor generations get
+  // their own tag (the two are disjoint — a predecessor is never the live
+  // conv a retired actor is keyed on).
   const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
+  const prevTag = prevGen ? '<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>' : '';
   const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
     data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
     <span class="mailbox-icon">${mailboxIcon(mb)}</span>
     <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
-    ${tag}${count}${unread}
+    ${tag}${prevTag}${count}${unread}
   </button>`;
   // Lead column. A flat agent row gets the bulk-wipe checkbox; a group row
   // gets an expand caret (toggles its nested member folders); everything
@@ -548,7 +634,7 @@ function mailboxRowHTML(mb, nested = false) {
   // global empty-state placeholder class (centered, 24px padding), which
   // would otherwise hijack the row's layout.
   const empty = mb.kind === 'agent' && !mb.total;
-  const cls = `mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}${nested ? ' nested' : ''}`;
+  const cls = `mailbox-row${mb.retired ? ' retired' : ''}${empty ? ' empty-box' : ''}${prevGen ? ' prev-gen' : ''}${nested ? ' nested' : ''}`;
   return `<div class="${cls}">${lead}${btn}</div>`;
 }
 
@@ -570,12 +656,20 @@ function paintSidebar() {
   // sections; the pinned "all"/"human" folders need none.
   const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
   const groups = boxes.filter(mb => mb.kind === 'group');
-  const agents = boxes.filter(mb => mb.kind === 'agent');
+  // Predecessor ("previous") generations are archival: hidden from the agent
+  // listing — flat AND nested — until the operator ticks "show previous
+  // generations". Filtering the flat list here is what drops them from the
+  // nested member lists too: those resolve through agentById (built from this
+  // same filtered set just below), so a conv kept out of `agents` simply can't
+  // nest, exactly the way the retired / empty / text filters already work.
+  const prevGens = prevGenConvSet();
+  const agents = boxes.filter(mb =>
+    mb.kind === 'agent' && (mail.showPrevGens || !prevGens.has(mb.id)));
   // Index the filtered agent folders so an expanded group nests the SAME
   // folders its members map to — selecting a nested row opens the identical
   // conv folder as the flat Agents entry. A member hidden by the retired /
-  // empty / text filters simply doesn't nest, exactly as it's absent from
-  // the flat list.
+  // empty / prev-gen / text filters simply doesn't nest, exactly as it's
+  // absent from the flat list.
   const agentById = new Map(agents.map(mb => [mb.id, mb]));
 
   let html = pinned.map(mb => mailboxRowHTML(mb)).join('');
@@ -594,14 +688,14 @@ function paintSidebar() {
       // lists them in member_convs when "show retired agents" is on, and then
       // their flat folder is shown too. Keep the placeholder neutral.
       html += members.length
-        ? members.map(mb => mailboxRowHTML(mb, true)).join('')
+        ? members.map(mb => mailboxRowHTML(mb, true, prevGens.has(mb.id))).join('')
         : '<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span>'
           + '<div class="mailbox-nested-empty">no member folders shown</div></div>';
     }
   }
   if (agents.length) {
     html += '<div class="mailbox-section">Agents</div>';
-    html += agents.map(mb => mailboxRowHTML(mb)).join('');
+    html += agents.map(mb => mailboxRowHTML(mb, false, prevGens.has(mb.id))).join('');
   }
   el.innerHTML = html;
 }
@@ -1379,6 +1473,19 @@ function initMail() {
     showEmpty.addEventListener('change', () => {
       if (mail.busy) { showEmpty.checked = mail.showEmpty; return; }
       setShowEmpty(showEmpty.checked);
+    });
+  }
+  // "Show previous generations" sidebar toggle — predecessor conv
+  // generations left behind by a reincarnate / /clear. A pure client-side
+  // roster filter (no re-fetch), so its handler just repaints via
+  // setShowPrevGens; same static-checkbox + mid-bulk-op resync rationale as
+  // the two toggles above.
+  const showPrevGens = $('#mail-show-prev-gens');
+  if (showPrevGens) {
+    showPrevGens.checked = mail.showPrevGens;
+    showPrevGens.addEventListener('change', () => {
+      if (mail.busy) { showPrevGens.checked = mail.showPrevGens; return; }
+      setShowPrevGens(showPrevGens.checked);
     });
   }
   // Load immediately when the human switches TO the Messages tab, rather
