@@ -868,12 +868,21 @@ type dashboardConversation struct {
 // button. Carries the retire audit fields so the human can see who
 // demoted it and why.
 type dashboardRetiredAgent struct {
-	ConvID       string `json:"conv_id"`
-	Title        string `json:"title"`
-	Online       bool   `json:"online"`
-	RetiredAt    string `json:"retired_at,omitempty"`
-	RetiredBy    string `json:"retired_by,omitempty"`
-	RetireReason string `json:"retire_reason,omitempty"`
+	ConvID    string `json:"conv_id"`
+	Title     string `json:"title"`
+	Online    bool   `json:"online"`
+	RetiredAt string `json:"retired_at,omitempty"`
+	// RetiredBy is the RAW audit value the retire recorded — a conv-id when an
+	// agent performed the retire, or a literal ("human", "system:export-clone").
+	// Kept for provenance (the JS surfaces it as the cell's hover title);
+	// RetiredByDisplay is what the column actually renders.
+	RetiredBy string `json:"retired_by,omitempty"`
+	// RetiredByDisplay is the resolved, human-readable retirer (JOH-306): the
+	// retirer's current name plus stable short agent_id ("name (agt_xxxxxxxx)"),
+	// the bare short agent_id when the name can't be resolved, or the raw
+	// RetiredBy literal when there is no stable companion at all.
+	RetiredByDisplay string `json:"retired_by_display,omitempty"`
+	RetireReason     string `json:"retire_reason,omitempty"`
 }
 
 // dashboardReplacedGen is the snapshot view of one REPLACED (predecessor)
@@ -1653,18 +1662,50 @@ func collectRetiredSnapshot(retired []*db.Agent, aliveSessions map[string]struct
 			retiredAt = e.RetiredAt.Format(time.RFC3339)
 		}
 		out = append(out, dashboardRetiredAgent{
-			ConvID:       e.CurrentConvID,
-			Title:        agent.CachedTitle(e.CurrentConvID),
-			Online:       isConvOnlineIn(e.CurrentConvID, aliveSessions),
-			RetiredAt:    retiredAt,
-			RetiredBy:    e.RetiredBy,
-			RetireReason: e.RetireReason,
+			ConvID:           e.CurrentConvID,
+			Title:            agent.CachedTitle(e.CurrentConvID),
+			Online:           isConvOnlineIn(e.CurrentConvID, aliveSessions),
+			RetiredAt:        retiredAt,
+			RetiredBy:        e.RetiredBy,
+			RetiredByDisplay: resolveRetiredByDisplay(e.RetiredBy, e.RetiredByAgent),
+			RetireReason:     e.RetireReason,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].RetiredAt > out[j].RetiredAt // newest first
 	})
 	return out
+}
+
+// resolveRetiredByDisplay renders the dashboard's retired "by" column from the
+// retire audit fields (JOH-306). retiredBy is the RAW value (a conv-id when an
+// agent performed the retire, or a literal like "human" / "system:export-clone");
+// retiredByAgent is the stable agent_id companion (db.RetireAgentByID derives it,
+// the v78 backfill fills historical rows). agent_id is the source of truth, so:
+//
+//   - With a companion, name the retirer by its CURRENT title plus stable short
+//     agent_id — "name (agt_xxxxxxxx)", the roster style (PR3c) — which is
+//     rotation-immune (always the retirer's live name, not a stale generation's).
+//     When the name can't be resolved, fall back to the bare short agent_id.
+//   - Without a companion (a human/system literal, or a pre-v78 row whose
+//     retired_by didn't resolve), show the raw retiredBy value unchanged.
+//
+// It never returns a bare conv-id for an agent retirer — that was the bug.
+func resolveRetiredByDisplay(retiredBy, retiredByAgent string) string {
+	retiredBy = strings.TrimSpace(retiredBy)
+	retiredByAgent = strings.TrimSpace(retiredByAgent)
+	if retiredByAgent == "" {
+		return retiredBy // literal, or unresolvable — show the raw audit value
+	}
+	shortID := agent.ShortAgentID(retiredByAgent, "")
+	name := ""
+	if a, _ := db.GetAgent(retiredByAgent); a != nil {
+		name = agent.CachedTitle(a.CurrentConvID)
+	}
+	if name == "" || name == agent.UnknownTitle {
+		return shortID // name gone — the stable agent_id is the durable fallback
+	}
+	return name + " (" + shortID + ")"
 }
 
 // collectReplacedGenerationsSnapshot builds the "Replaced generations" list:

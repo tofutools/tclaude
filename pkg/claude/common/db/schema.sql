@@ -399,7 +399,7 @@ CREATE TABLE agents (
 			retired_by      TEXT NOT NULL DEFAULT '',
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
-		);
+		, retired_by_agent TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE agent_conversations (
 			conv_id   TEXT PRIMARY KEY,

@@ -53,7 +53,14 @@ type Agent struct {
 	CreatedVia    string    // spawn | clone | reincarnate | clear | cli | group | grant | promote | backfill | …
 	RetiredAt     time.Time // zero ⇒ active
 	RetiredBy     string
-	RetireReason  string
+	// RetiredByAgent is the stable agent_id of the actor that performed the
+	// retire (JOH-306), the durable companion to RetiredBy. RetiredBy keeps
+	// the raw audit/snapshot value — a conv-id when an agent retired this one,
+	// or a literal ("human", "system:export-clone") — while this column carries
+	// the rotation-immune actor key derived from it. Empty when the retirer was
+	// not an agent (a human/system literal) or its conv could not be resolved.
+	RetiredByAgent string
+	RetireReason   string
 	// PendingName is the actor's intended display name (the spawn-time
 	// `--name`), the rescan-immune fallback agent.FreshTitle consults before
 	// a real /rename has landed. Actor-level: it survives every rotation.
@@ -210,7 +217,7 @@ func GetAgent(agentID string) (*Agent, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`SELECT agent_id, current_conv_id, created_at, created_via,
-		retired_at, retired_by, retire_reason, pending_name
+		retired_at, retired_by, retire_reason, pending_name, retired_by_agent
 		FROM agents WHERE agent_id = ?`, agentID)
 	a, err := scanAgent(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -248,7 +255,7 @@ func FindAgentsByIDPrefix(prefix string) ([]*Agent, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT agent_id, current_conv_id, created_at, created_via,
-		retired_at, retired_by, retire_reason, pending_name
+		retired_at, retired_by, retire_reason, pending_name, retired_by_agent
 		FROM agents WHERE agent_id LIKE ? ESCAPE '\' ORDER BY created_at, rowid`, likeEscape(prefix)+"%")
 	if err != nil {
 		return nil, err
@@ -405,10 +412,24 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Derive the retirer's stable agent_id from `by` and dual-write it to the
+	// retired_by_agent companion (JOH-306). `by` is either a literal ("human",
+	// "system:export-clone") or the retirer's conv-id (enrollmentActor). The
+	// same agent_conversations lookup the v78 backfill uses resolves a conv-id
+	// to its owning actor; a literal matches no row, so the companion stays ''.
+	// Deriving here (rather than threading a separate param) keeps
+	// retired_by_agent consistent with retired_by by construction, and makes
+	// freshly-written rows agree with backfilled ones.
+	//
+	// Best-effort: a failed/empty resolution must never block the retire — the
+	// companion is an audit decoration, not a precondition. On any error or a
+	// non-actor `by`, the companion stays '' and the display falls back to the
+	// raw retired_by value.
+	byAgent, _ := agentIDForConvTx(d, by)
 	res, err := d.Exec(`UPDATE agents
-		SET retired_at = ?, retired_by = ?, retire_reason = ?
+		SET retired_at = ?, retired_by = ?, retire_reason = ?, retired_by_agent = ?
 		WHERE agent_id = ? AND retired_at = ''`,
-		time.Now().Format(time.RFC3339Nano), by, reason, agentID)
+		time.Now().Format(time.RFC3339Nano), by, reason, byAgent, agentID)
 	if err != nil {
 		return false, err
 	}
@@ -428,7 +449,7 @@ func ReinstateAgentByID(agentID string) (bool, error) {
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE agents
-		SET retired_at = '', retired_by = '', retire_reason = ''
+		SET retired_at = '', retired_by = '', retire_reason = '', retired_by_agent = ''
 		WHERE agent_id = ? AND retired_at != ''`, agentID)
 	if err != nil {
 		return false, err
@@ -483,7 +504,7 @@ func listAgents(where string) ([]*Agent, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`SELECT agent_id, current_conv_id, created_at, created_via,
-		retired_at, retired_by, retire_reason, pending_name
+		retired_at, retired_by, retire_reason, pending_name, retired_by_agent
 		FROM agents WHERE ` + where + ` ORDER BY created_at, rowid`)
 	if err != nil {
 		return nil, err
@@ -874,7 +895,7 @@ func scanAgent(s rowScanner) (*Agent, error) {
 	var a Agent
 	var createdAt, retiredAt string
 	if err := s.Scan(&a.AgentID, &a.CurrentConvID, &createdAt, &a.CreatedVia,
-		&retiredAt, &a.RetiredBy, &a.RetireReason, &a.PendingName); err != nil {
+		&retiredAt, &a.RetiredBy, &a.RetireReason, &a.PendingName, &a.RetiredByAgent); err != nil {
 		return nil, err
 	}
 	a.CreatedAt = parseTimeOrZero(createdAt)
