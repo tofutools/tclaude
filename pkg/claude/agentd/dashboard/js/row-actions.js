@@ -301,6 +301,19 @@ function bindRowActions() {
     e.preventDefault();
     const group = btn.getAttribute('data-group');
     const conv = btn.getAttribute('data-conv');
+    // `agent` is the per-agent action SELECTOR: the rotation-immune stable
+    // agent_id when the row carries one (data-agent, = agent_id || conv-id
+    // at render time), falling back to the conv-id otherwise. The server
+    // endpoints below resolve it through agent.ResolveSelector, which takes
+    // an `agt_` id OR a conv-id — so routing per-agent actions by `agent`
+    // targets the actor across reincarnation/`/clear`, while a pre-identity
+    // or plain-conversation row (no data-agent) still resolves by conv-id
+    // (JOH-322). The conv-keyed cases that legitimately target a specific
+    // conversation generation (copy/delete-generation), a plain conversation
+    // (promote), a conv-keyed mailbox folder (view-agent-messages) or the
+    // conv-keyed permissions/sudo snapshot (perm-edit / sudo-grant, D3) keep
+    // using `conv`.
+    const agent = btn.getAttribute('data-agent') || conv;
     const label = btn.getAttribute('data-label') || conv;
     try {
       let ok = false;
@@ -325,7 +338,7 @@ function bindRowActions() {
             okLabel: 'Remove',
           });
           if (!confirmed) return;
-          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {
             method: 'DELETE', credentials: 'same-origin',
           });
           ok = r.ok;
@@ -338,7 +351,7 @@ function bindRowActions() {
           const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conv }),
+            body: JSON.stringify({ conv: agent }),
           });
           ok = r.ok;
           if (!ok) toast(`Grant owner failed: ${await r.text()}`, true);
@@ -364,7 +377,7 @@ function bindRowActions() {
           // cycle pattern, but persisted daemon-side).
           const cur = btn.getAttribute('data-mode') || 'inherit';
           const next = cur === 'inherit' ? 'off' : cur === 'off' ? 'on' : 'inherit';
-          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/notify`, {
+          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/notify`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: next }),
@@ -382,7 +395,7 @@ function bindRowActions() {
           // refresh below — the harness has no readback, so the state is
           // best-known, not authoritative. (JOH-259)
           const intent = btn.getAttribute('data-intent') || 'toggle';
-          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/remote-control`, {
+          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/remote-control`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ intent }),
@@ -397,7 +410,7 @@ function bindRowActions() {
         }
         case 'jump': {
           // Non-destructive; no confirm modal, just fire-and-toast.
-          const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
           });
           ok = r.ok;
@@ -413,7 +426,7 @@ function bindRowActions() {
           // running, so no confirm modal and no dashboard-state change.
           // Idempotent server-side: an already-detached agent reports
           // detached:0 — a clean no-op, toasted as "already hidden".
-          const r = await fetch(`/api/hide/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/hide/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
           });
           if (!r.ok) { toast(`Hide failed: ${await r.text()}`, true); return; }
@@ -429,7 +442,7 @@ function bindRowActions() {
           // dashboard state, so skip the refresh.
           const which = await termDirModal({ label });
           if (!which) return;
-          const r = await fetch(`/api/term/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ which }),
@@ -444,7 +457,7 @@ function bindRowActions() {
           // Open a terminal attached to the agent's live session — the
           // explicit way to get a console. Non-destructive, changes no
           // dashboard state, so skip the refresh.
-          const r = await fetch(`/api/open-window/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
@@ -471,7 +484,7 @@ function bindRowActions() {
           // specific directory, so open a terminal there straight
           // away, skipping the term button's 3-way picker modal.
           const which = btn.getAttribute('data-which') || 'current';
-          const r = await fetch(`/api/term/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ which }),
@@ -540,12 +553,17 @@ function bindRowActions() {
         case 'retire-agent': {
           // The whole confirm → POST → dangling-recovery → toast → refresh
           // flow lives in refresh.js so the command palette's "Retire
-          // agent: <name>" runs the identical path.
+          // agent: <name>" runs the identical path. Retire stays conv-keyed
+          // (uses `conv`, not `agent`): the dashboardEnrollmentVerb dangling
+          // path only fires for a UUID-shaped selector that FAILS to resolve
+          // (a dangling agent whose conversation is gone); a stable agent_id
+          // resolves successfully even then and would silently demote the
+          // orphan instead of offering to remove it (JOH-322).
           await retireAgentInteractive(conv, label);
           return;
         }
         case 'reinstate-agent': {
-          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
+          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/reinstate`, {
             method: 'POST', credentials: 'same-origin',
           });
           ok = r.ok;
@@ -554,10 +572,10 @@ function bindRowActions() {
           break;
         }
         case 'delete-agent': {
-          const choice = await deleteAgentModal(conv, label);
+          const choice = await deleteAgentModal(agent, label);
           if (!choice) return;
           const q = choice.deleteWorktree ? '?delete_worktree=1' : '';
-          const r = await fetch(`/api/agents/${encodeURIComponent(conv)}${q}`, {
+          const r = await fetch(`/api/agents/${encodeURIComponent(agent)}${q}`, {
             method: 'DELETE', credentials: 'same-origin',
           });
           ok = r.ok;
@@ -642,6 +660,10 @@ function bindRowActions() {
             descr: btn.getAttribute('data-descr') || '',
             owner: btn.getAttribute('data-owner') === '1',
             focusRole: act === 'edit-role',
+            // openPermEditModal pre-fills from the conv-keyed permissions
+            // snapshot, so it keeps the conv-id (the agent-id keying of the
+            // permissions surface is D3); the rename / membership / owner
+            // writes below route by the stable `agent`.
             openPerms: () => openPermEditModal(conv, label),
           });
           if (result === null) return; // cancelled
@@ -651,7 +673,7 @@ function bindRowActions() {
           }
           let anyOk = false;
           if (result.rename) {
-            const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+            const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/rename`, {
               method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(result.rename),
@@ -669,7 +691,7 @@ function bindRowActions() {
             const body = {};
             if ('role' in result) body.role = result.role;
             if ('descr' in result) body.descr = result.descr;
-            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(conv)}`, {
+            const r = await fetch(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(agent)}`, {
               method: 'PATCH', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
@@ -692,9 +714,9 @@ function bindRowActions() {
               ? await fetch(`/api/groups/${encodeURIComponent(group)}/owners`, {
                   method: 'POST', credentials: 'same-origin',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ conv }),
+                  body: JSON.stringify({ conv: agent }),
                 })
-              : await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(conv)}`, {
+              : await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(agent)}`, {
                   method: 'DELETE', credentials: 'same-origin',
                 });
             if (r.ok) {
@@ -727,12 +749,12 @@ function bindRowActions() {
           // online is read from data-* set by agentStatusDot.
           const online = btn.getAttribute('data-online') === '1';
           if (!online) {
-            await resumeAgentReq(conv, label);
+            await resumeAgentReq(agent, label);
             return;
           }
           const choice = await shutdownConfirm({label});
           if (!choice) return;
-          await stopAgentReq(conv, label, choice === 'force');
+          await stopAgentReq(agent, label, choice === 'force');
           return;
         }
         case 'add-member': {
@@ -753,14 +775,14 @@ function bindRowActions() {
           // Open the clone modal pre-populated with this agent. The
           // modal handles the POST + refresh. data-cwd seeds the
           // worktree picker with the source agent's repo.
-          openCloneAgentModal(conv, label, btn.getAttribute('data-cwd') || '');
+          openCloneAgentModal(agent, label, btn.getAttribute('data-cwd') || '');
           return;
         }
         case 'reincarnate': {
           // Open the reincarnate modal pre-populated with this
           // agent. The modal enforces the required follow_up and
           // handles the POST + refresh.
-          openReincarnateAgentModal(conv, label);
+          openReincarnateAgentModal(agent, label);
           return;
         }
         case 'export-summary': {
@@ -768,7 +790,7 @@ function bindRowActions() {
           // shareable artifact, then polls + downloads it. The button is
           // disabled while the agent is offline, so a click means it was
           // online at render; the daemon re-checks and fast-fails if not.
-          openExportModal(conv, label);
+          openExportModal(agent, label);
           return;
         }
         case 'rename-name': {
@@ -786,7 +808,7 @@ function bindRowActions() {
             onSave: async (raw) => {
               const title = raw.trim();
               if (title === '' || title === oldTitle) return 'revert';
-              const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/rename`, {
+              const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/rename`, {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title }),
@@ -1261,7 +1283,7 @@ function bindRowActions() {
             okLabel: 'Revoke',
           });
           if (!confirmed) return;
-          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(conv)}`, {
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/owners/${encodeURIComponent(agent)}`, {
             method: 'DELETE', credentials: 'same-origin',
           });
           ok = r.ok;

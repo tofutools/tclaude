@@ -364,7 +364,7 @@ function agentStatusDot(m) {
   else cls = 'status-dot status-dot-offline';
   const glyph = online ? '●' : '○';
   return `<button type="button" class="${cls}" data-act="dot-toggle"` +
-    ` data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"` +
+    ` data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"` +
     ` data-online="${online ? '1' : '0'}"` +
     ` title="${esc(tip)}" aria-label="${esc(tip)}">${glyph}</button>`;
 }
@@ -848,7 +848,7 @@ function roleCell(m, g) {
     return esc(m.role || '');
   }
   const attrs = `data-act="edit-role" data-group="${esc(g.name)}"`
-    + ` data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}"`
+    + ` data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}"`
     + ` data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}"`
     + ` data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}"`;
   const inner = hasRole
@@ -883,7 +883,7 @@ function notifyMenuItem(m) {
     text = `${glyph} notify: inherit (${effective ? 'on' : 'off'})`;
     tip = `notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`;
   }
-  return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+  return `<button data-act="toggle-agent-notify" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-mode="${esc(mode)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
 // remoteControlMenuItem renders the ⚙-menu "toggle Remote Access" item — the
@@ -907,7 +907,7 @@ function remoteControlMenuItem(m, canRemote) {
   const tip = on
     ? `Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`
     : `Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`;
-  return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
+  return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
 // memberActions renders the per-row action cell for a real group
@@ -931,7 +931,7 @@ function memberActions(g, m, canRemote) {
 function cloneAgentButton(m) {
   const label = m.title || m.conv_id;
   const cwd = (m.state && m.state.cwd) || m.cwd || '';
-  return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
+  return `<button data-act="clone" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" data-cwd="${esc(cwd)}" title="Fork a sibling that inherits identity (groups, perms, ownership). The original keeps running.">clone</button>`;
 }
 // reincarnateAgentButton renders a "reincarnate" button for any row
 // that represents a single agent. The modal it opens defaults to
@@ -939,7 +939,7 @@ function cloneAgentButton(m) {
 // a force mode does the immediate daemon-driven reincarnation.
 function reincarnateAgentButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.">reincarnate</button>`;
+  return `<button data-act="reincarnate" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.">reincarnate</button>`;
 }
 function sudoMemberButton(m) {
   return `<button data-act="sudo-grant" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Grant a time-bounded sudo elevation to this agent">+ sudo</button>`;
@@ -957,7 +957,7 @@ function exportAgentButton(m) {
   const why = m.online
     ? 'Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.'
     : 'Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.';
-  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">📋 summary…</button>`;
+  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">📋 summary…</button>`;
 }
 // permMemberButton renders the per-row "permissions" affordance —
 // opens the permanent-permission editor (grant / deny / default per
@@ -995,7 +995,7 @@ function viewMessagesButton(m) {
 // agent's tmux pane is currently alive.
 function termButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
+  return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
 }
 
 // openWindowButton renders the explicit "open a terminal attached to
@@ -1006,7 +1006,7 @@ function termButton(m) {
 // a windowless agent). Needs the agent online (404s without a live session).
 function openWindowButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open a terminal window attached to this agent's live session (its Claude Code TUI)">open window</button>`;
+  return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal window attached to this agent's live session (its Claude Code TUI)">open window</button>`;
 }
 
 // Eye glyphs for the focus / hide window buttons — an open eye for
@@ -1037,8 +1037,8 @@ function focusHideButtons(m) {
   // needed in row-actions.js.
   const dis = m.online ? '' : ' disabled';
   const why = m.online ? '' : ' — unavailable while the agent is offline';
-  return `<button class="icon-btn" data-act="jump" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window${why}" aria-label="Focus window"${dis}>${EYE_OPEN_SVG}</button>`
-    + `<button class="icon-btn" data-act="hide" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${why}" aria-label="Hide window"${dis}>${EYE_OFF_SVG}</button>`;
+  return `<button class="icon-btn" data-act="jump" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window${why}" aria-label="Focus window"${dis}>${EYE_OPEN_SVG}</button>`
+    + `<button class="icon-btn" data-act="hide" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${why}" aria-label="Hide window"${dis}>${EYE_OFF_SVG}</button>`;
 }
 
 // actionCog renders the ⚙ "more actions" cog and its collapsed
@@ -1079,15 +1079,15 @@ function actionCog(act, items) {
 // its group role and its group description. data-current carries the
 // title so the modal opens pre-filled.
 function editMemberButton(g, m) {
-  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
+  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
 }
 function ownerToggleButton(g, m) {
   return m.owner
-    ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
-    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this conv an owner of the group">make owner</button>`;
+    ? `<button class="warn" data-act="revoke-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Revoke owner status">revoke owner</button>`
+    : `<button data-act="grant-owner" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Make this agent an owner of the group">make owner</button>`;
 }
 function removeMemberButton(g, m) {
-  return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
+  return `<button class="danger" data-act="remove-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Remove from group">remove</button>`;
 }
 // retireMemberButton renders the "retire" lifecycle action — the
 // ⚙-menu twin of dragging the row onto the virtual Retired group.
@@ -1103,6 +1103,12 @@ function removeMemberButton(g, m) {
 // `danger` delete. Always present and enabled — retiring an offline
 // agent is valid (shutdown is then a no-op), matching the drag gesture.
 function retireMemberButton(m) {
+  // NB: retire intentionally stays conv-keyed (no data-agent). The retire
+  // endpoint resolves a UUID-shaped conv-id that FAILS to resolve into the
+  // "dangling agent entry" 409-recovery path (enrollment_handlers.go); a
+  // stable agent_id resolves successfully even when the conversation is
+  // gone, which would silently demote the orphan instead of offering to
+  // remove it. So retire is a conv-keyed KEEP — see row-actions.js (JOH-322).
   return `<button class="warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).">retire</button>`;
 }
 
@@ -1120,7 +1126,7 @@ function ungroupedMemberActions(m, canRemote) {
   const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
     + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m)
     + retireMemberButton(m)
-    + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
+    + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 
@@ -1178,9 +1184,10 @@ function cwdCell(m) {
   const startup = m.startup_dir || (m.state || {}).cwd || '';
   const current = m.current_dir || '';
   const conv = m.conv_id || '';
+  const agent = m.agent_id || m.conv_id || '';
   const fmt = (d, which) => {
     if (!d) return '<span class="cwd">—</span>';
-    return `<span class="cwd cwd-link" data-act="term-dir" data-conv="${esc(conv)}" data-which="${which}" title="Open a terminal here — ${esc(d)}">${esc(shortCwd(d))}</span>`;
+    return `<span class="cwd cwd-link" data-act="term-dir" data-conv="${esc(conv)}" data-agent="${esc(agent)}" data-which="${which}" title="Open a terminal here — ${esc(d)}">${esc(shortCwd(d))}</span>`;
   };
   const differ = !!current && !!startup && current !== startup;
   return stackedLoc(fmt(startup, 'start'), fmt(current, 'worktree'), differ);

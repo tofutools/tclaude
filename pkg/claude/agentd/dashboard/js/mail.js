@@ -972,9 +972,17 @@ function readerHeaderRow(label, valueHTML) {
 // the msg-focus handler in row-actions.js (jump + mark read).
 function humanFocusButton(m) {
   if (!m.from_conv) return '';
+  // Liveness stays keyed on the conv-id (onlineConvs is the set of live
+  // tmux windows), but the focus TARGET sent to /api/jump leads with the
+  // sender's stable agent_id so a sender that has rotated since the message
+  // was written still resolves (jump goes through agent.ResolveSelector,
+  // which takes an `agt_` id OR a conv-id). from_agent is only populated on
+  // human-folder messages once their from_agent companion lands (JOH-316
+  // F2); until then this degrades to from_conv, the same fallback the
+  // reader's From line already uses (shortAgentId).
   const focusable = onlineConvs().has(m.from_conv);
   const label = m.from_title || m.from_conv;
-  return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
+  return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_agent || m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
 }
 
 function paintReader() {

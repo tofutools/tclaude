@@ -2440,12 +2440,17 @@ function addMemberModal(groupName) {
     async function addOne(idx) {
       const cand = candidates[idx];
       if (!cand) return;
+      // Hybrid picker: an agent candidate carries its rotation-immune stable
+      // agent_id, a plain-conversation candidate (promoted on add) carries
+      // none — send agent_id when present, conv-id otherwise. The membership
+      // POST resolves either via agent.ResolveSelector (JOH-322).
+      const sel = cand.agent_id || cand.conv_id;
       let r;
       try {
         r = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
           method: 'POST', credentials: 'same-origin',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({conv: cand.conv_id}),
+          body: JSON.stringify({conv: sel}),
         });
       } catch (e) {
         toast(`add failed: ${e && e.message || e}`, true);

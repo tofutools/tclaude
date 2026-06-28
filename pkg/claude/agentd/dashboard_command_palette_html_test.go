@@ -117,10 +117,10 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
 	must("label: `Stop agent: ${label}`", "the palette offers a per-agent stop")
-	must("stopAgentInteractive(a.conv_id, label)",
+	must("stopAgentInteractive(sel, label)",
 		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
 	must("label: `Resume agent: ${label}`", "the palette offers a per-agent resume")
-	must("resumeAgentReq(a.conv_id, label)", "per-agent resume reuses resumeAgentReq")
+	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
