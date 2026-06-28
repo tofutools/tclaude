@@ -431,6 +431,10 @@ function populateConfigForm(cfg) {
   // (the tab auto-hides when empty); lives in the dashboard block.
   $('#cfg-dashboard-always-show-plugins').checked = !!(cfg.dashboard && cfg.dashboard.always_show_plugins_tab);
 
+  // Horizontal-scroll chrome-bar mode. Default follow (checked); only an
+  // explicit dashboard.hscroll_follow:false (static) unchecks it.
+  $('#cfg-dashboard-hscroll-follow').checked = !(cfg.dashboard && cfg.dashboard.hscroll_follow === false);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -592,6 +596,10 @@ function assembleConfig() {
   // the omitempty default) so an all-default dashboard block doesn't marshal a
   // spurious key.
   if ($('#cfg-dashboard-always-show-plugins').checked) dashboard.always_show_plugins_tab = true; else delete dashboard.always_show_plugins_tab;
+  // hscroll_follow: follow is the default, so store only the NON-default
+  // static (false) and drop the key when following — mirrors the Go *bool
+  // omitempty + default-true resolver.
+  if (!$('#cfg-dashboard-hscroll-follow').checked) dashboard.hscroll_follow = false; else delete dashboard.hscroll_follow;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field
