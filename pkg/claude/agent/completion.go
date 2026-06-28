@@ -262,7 +262,12 @@ func completeInboxMessageIDs(_ *cobra.Command, _ []string, toComplete string) []
 	if err != nil || myID == "" {
 		return nil
 	}
-	msgs, err := db.ListAgentMessagesForConv(myID, 50)
+	// Complete IDs from the whole agent inbox — across every generation — so
+	// completion keeps working after a reincarnate / /clear (JOH-317), the
+	// same actor-keyed view /v1/inbox serves. A conv with no actor row resolves
+	// its agent to "" and is matched by conv alone.
+	agentID, _ := db.AgentIDForConv(myID)
+	msgs, err := db.ListInboxForActor(myID, agentID, 50)
 	if err != nil {
 		return nil
 	}
