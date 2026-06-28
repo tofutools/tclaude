@@ -24,8 +24,9 @@ func findDashHarness(snap dashSnapshot, name string) *dashHarness {
 // (JOH-162). The catalog must list both spawnable harnesses with the right
 // menu values and capability flags — in particular the subtle pair the
 // per-row controls gate on: Codex CAN rename (via its ConvStore, even with
-// no in-pane /rename) but CANNOT compact, and it alone takes a launch
-// sandbox.
+// no in-pane /rename) but CANNOT compact. Both harnesses expose a sandbox
+// selector now — Codex's native `--sandbox` modes and Claude Code's
+// inherit/on/off `--settings` override — with their own mode sets + help.
 func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -41,8 +42,29 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotEmpty(t, claude.EffortLevels, "claude offers effort levels")
 	assert.True(t, claude.CanRename, "claude renames in-pane")
 	assert.True(t, claude.CanCompact, "claude compacts in-pane")
-	assert.False(t, claude.CanSandbox, "claude has no launch sandbox flag")
-	assert.Empty(t, claude.SandboxModes, "claude exposes no sandbox modes")
+	// Claude Code's OS sandbox is a settings.json block (no `--sandbox` flag),
+	// but tclaude exposes a per-session inherit/on/off override delivered via
+	// `--settings`, so the dialog DOES show a sandbox selector for claude.
+	assert.True(t, claude.CanSandbox, "claude exposes a per-session sandbox override")
+	assert.Equal(t, []string{"inherit", "on", "off"}, claude.SandboxModes)
+	assert.Equal(t, "inherit", claude.DefaultSandbox, "inherit (= no override) is pre-selected")
+	require.NotNil(t, claude.SandboxModeHelp, "claude exposes per-mode sandbox help")
+	for _, m := range claude.SandboxModes {
+		assert.NotEmpty(t, claude.SandboxModeHelp[m], "help text for mode %q", m)
+	}
+	assert.NotContains(t, claude.SandboxModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
+	assert.Contains(t, claude.SandboxModeHelp["off"], "⚠", "off flags its sandbox-disabled caveat")
+	// Claude Code surfaces its --permission-mode values as the dialog's
+	// "Permission mode" dropdown (the approval axis), inherit-first.
+	assert.True(t, claude.CanApproval, "claude exposes a permission-mode (approval) catalog")
+	assert.Equal(t, []string{"inherit", "plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}, claude.ApprovalModes)
+	assert.Equal(t, "inherit", claude.DefaultApproval, "inherit (= no override) is pre-selected")
+	require.NotNil(t, claude.ApprovalModeHelp, "claude exposes per-mode approval help")
+	for _, m := range claude.ApprovalModes {
+		assert.NotEmpty(t, claude.ApprovalModeHelp[m], "help text for permission mode %q", m)
+	}
+	assert.NotContains(t, claude.ApprovalModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
+	assert.Contains(t, claude.ApprovalModeHelp["bypassPermissions"], "⚠", "bypassPermissions flags its no-guardrails caveat")
 	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
 
 	codex := findDashHarness(snap, "codex")
@@ -68,6 +90,11 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	}
 	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
 	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
+	// Codex supports approval (the daemon's non-escalating default + the CLI),
+	// but surfaces NO dialog modes yet — the "Claude only" scope. So its
+	// approval row stays hidden (the dialog gates on a non-empty ApprovalModes).
+	assert.True(t, codex.CanApproval, "codex supports approval (daemon default + CLI)")
+	assert.Empty(t, codex.ApprovalModes, "codex surfaces no dialog approval modes yet (Claude-only scope)")
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to
@@ -151,4 +178,38 @@ func TestDashboardSpawn_HarnessAndSandboxBodyContract(t *testing.T) {
 	require.True(t, ok, "spawner recorded a sandbox for the new conv")
 	assert.Equal(t, "read-only", got,
 		"the dialog's {harness, sandbox} body must thread the explicit sandbox to the spawner")
+}
+
+// Scenario: the Claude Code spawn dialog forwards the chosen sandbox + permission
+// mode in the POST body as {"sandbox", "approval"} (modal-spawn.js). This pins
+// that body contract end-to-end for the new Claude launch-containment fields: a
+// default-harness (Claude) spawn with those keys threads the explicit sandbox
+// mode AND the permission mode through to the spawner (which renders them as a
+// `--settings` override + `--permission-mode`). Guards against a key-name drift
+// between the dialog and the daemon's spawn request.
+func TestDashboardSpawn_ClaudeSandboxAndApprovalBodyContract(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+
+	// No "harness" key → the default (Claude Code), exactly as a plain CC spawn
+	// from the dialog omits it.
+	spawn := f.SpawnWith("squad", map[string]any{
+		"name":     "cc-locked",
+		"sandbox":  "on",
+		"approval": "plan",
+	})
+	require.Equal(t, 200, spawn.Code, "spawn body=%s", string(spawn.Raw))
+	require.NotEmpty(t, spawn.ConvID, "spawn returned a conv id")
+
+	gotSandbox, ok := f.World.SpawnSandbox(spawn.ConvID)
+	require.True(t, ok, "spawner recorded a sandbox for the new conv")
+	assert.Equal(t, "on", gotSandbox,
+		"the dialog's {sandbox} body must thread the Claude sandbox mode to the spawner")
+
+	gotApproval, ok := f.World.SpawnApproval(spawn.ConvID)
+	require.True(t, ok, "spawner recorded an approval/permission mode for the new conv")
+	assert.Equal(t, "plan", gotApproval,
+		"the dialog's {approval} body must thread the Claude permission mode to the spawner")
 }

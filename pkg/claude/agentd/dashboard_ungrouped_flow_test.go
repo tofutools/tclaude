@@ -136,9 +136,13 @@ type dashHarness struct {
 	SandboxModes     []string          `json:"sandbox_modes"`
 	DefaultSandbox   string            `json:"default_sandbox"`
 	SandboxModeHelp  map[string]string `json:"sandbox_mode_help"`
+	ApprovalModes    []string          `json:"approval_modes"`
+	DefaultApproval  string            `json:"default_approval"`
+	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
 	CanRename        bool              `json:"can_rename"`
 	CanCompact       bool              `json:"can_compact"`
 	CanSandbox       bool              `json:"can_sandbox"`
+	CanApproval      bool              `json:"can_approval"`
 	CanRemoteControl bool              `json:"can_remote_control"`
 }
 

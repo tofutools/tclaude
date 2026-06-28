@@ -667,19 +667,33 @@ type dashboardHarness struct {
 	// ascending order. Both harnesses share tclaude's levels today.
 	EffortLevels []string `json:"effort_levels"`
 	// SandboxModes lists the launch-time OS-sandbox modes this harness
-	// accepts (Codex: read-only / workspace-write / danger-full-access).
-	// Empty for a harness whose sandbox is configured out of band (Claude
-	// Code) — the dialog hides the sandbox selector for it.
+	// accepts for the spawn dialog's Sandbox selector (Codex: tclaude-agent /
+	// workspace-write / read-only / danger-full-access; Claude Code:
+	// inherit / on / off). Empty only for a harness with no sandbox catalog.
 	SandboxModes []string `json:"sandbox_modes"`
-	// DefaultSandbox is the secure default mode the spawn dialog
-	// pre-selects (Codex: the managed tclaude-agent profile). "" when
-	// SandboxModes is empty.
+	// DefaultSandbox is the recommended default mode the spawn dialog
+	// pre-selects (Codex: the managed tclaude-agent profile; Claude Code:
+	// inherit). "" when SandboxModes is empty.
 	DefaultSandbox string `json:"default_sandbox"`
 	// SandboxModeHelp maps each sandbox mode value to a one-line description
 	// the dialog shows as a live hint for the selected option (notably its
 	// agentd-socket reachability). {} (not null) when the harness has no
 	// launch sandbox, so the JS lookup is always safe.
 	SandboxModeHelp map[string]string `json:"sandbox_mode_help"`
+	// ApprovalModes lists the launch-time approval/permission modes this
+	// harness surfaces as a dropdown (Claude Code: inherit + its
+	// --permission-mode values). Empty for a harness whose approval is not
+	// surfaced as a dialog dropdown (Codex — CLI/profile-only for now), so the
+	// dialog hides the approval selector for it. The ApprovalCatalog parallel
+	// to SandboxModes.
+	ApprovalModes []string `json:"approval_modes"`
+	// DefaultApproval is the recommended approval mode the dialog pre-selects
+	// (Claude Code: inherit). "" when ApprovalModes is empty.
+	DefaultApproval string `json:"default_approval"`
+	// ApprovalModeHelp maps each approval mode to a one-line hint (notably
+	// whether it is safe for a detached agent). {} (not null) when the harness
+	// surfaces no approval modes, so the JS lookup is always safe.
+	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
 	// CanRename / CanCompact mirror Harness.CanRename / CanCompact — the
 	// deliverable-action predicates the per-row controls gate on. Note
 	// CanRename is true for Codex (it renames via its ConvStore even
@@ -690,6 +704,12 @@ type dashboardHarness struct {
 	// the same condition as a non-empty SandboxModes, surfaced explicitly
 	// so the dialog has a single boolean to gate the sandbox row on.
 	CanSandbox bool `json:"can_sandbox"`
+	// CanApproval reports whether the harness has a launch approval/permission
+	// catalog. The dialog's approval row additionally gates on a non-empty
+	// ApprovalModes (so Codex — which supports approval but surfaces no dialog
+	// modes yet — keeps the row hidden), mirroring how the sandbox row gates on
+	// can_sandbox && sandbox_modes.length.
+	CanApproval bool `json:"can_approval"`
 	// CanRemoteControl mirrors Harness.CanRemoteControl — true only for a
 	// harness with a built-in Remote Access toggle (Claude Code), false for
 	// one without it (Codex). The per-row remote-control toggle gates on
@@ -717,6 +737,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanRename:        h.CanRename(),
 			CanCompact:       h.CanCompact(),
 			CanSandbox:       h.SupportsSandbox(),
+			CanApproval:      h.SupportsApproval(),
 			CanRemoteControl: h.CanRemoteControl(),
 		}
 		if dh.Models == nil {
@@ -731,6 +752,21 @@ func buildHarnessCatalog() []dashboardHarness {
 			}
 		} else {
 			dh.SandboxModes = []string{}
+		}
+		// Approval modes mirror the sandbox block. A harness can SupportApproval
+		// yet surface no dialog modes (Codex: Modes() returns nil — CLI-only),
+		// so the dialog gates its row on a non-empty ApprovalModes, not just
+		// CanApproval.
+		dh.ApprovalModeHelp = map[string]string{}
+		dh.ApprovalModes = []string{}
+		if h.SupportsApproval() {
+			if modes := h.Approval.Modes(); len(modes) > 0 {
+				dh.ApprovalModes = modes
+				dh.DefaultApproval = h.Approval.DefaultPolicy()
+				for _, m := range modes {
+					dh.ApprovalModeHelp[m] = h.Approval.ModeHelp(m)
+				}
+			}
 		}
 		out = append(out, dh)
 	}
@@ -1036,9 +1072,9 @@ type agentState struct {
 	// Surfaced regardless of liveness — a dead Codex agent is still Codex.
 	Harness string `json:"harness,omitempty"`
 	// SandboxMode is the launch-time OS-sandbox mode the agent was spawned
-	// under (Codex: read-only / workspace-write / danger-full-access), or
-	// "" for a harness with no launch sandbox (Claude Code) — the dashboard
-	// renders no sandbox badge for "". Surfaced regardless of liveness.
+	// under (Codex: read-only / workspace-write / danger-full-access; Claude
+	// Code: on / off — its `inherit` default normalizes to "" and records
+	// nothing). "" renders no sandbox badge. Surfaced regardless of liveness.
 	SandboxMode string `json:"sandbox_mode,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a

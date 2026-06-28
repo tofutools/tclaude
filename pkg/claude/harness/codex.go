@@ -34,6 +34,11 @@ func init() {
 		Life:        codexLifecycle{},
 		Sandbox:     codexSandbox{},
 		Approval:    codexApproval{},
+		// Codex has a guardian/reviewer subagent the experimental --auto-review
+		// opt-in can route approval prompts to (approvals_reviewer=auto_review).
+		// Claude Code has no such reviewer, so only Codex sets this; it is the
+		// gate for --auto-review, distinct from the Approval catalog. JOH-200 pt2.
+		ApprovalsReviewer: true,
 		// Codex's TUI scrolls through the terminal rather than rendering its
 		// own scrollback, so a tmux pane needs mouse mode on for the wheel to
 		// reach history (Claude Code, which owns its scrollback, leaves this

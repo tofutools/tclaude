@@ -1250,13 +1250,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	// Resolve the sandbox mode for the chosen harness: a Codex agent gets
-	// its secure default (the managed tclaude-agent profile) when unset, an explicit mode is
-	// validated, and a harness with no launch sandbox flag (Claude Code)
-	// rejects a non-empty mode. Then the cwd-safety guard: a writable Codex
-	// sandbox confines writes to the cwd subtree, so a cwd at/above $HOME
-	// would expose ~/.tclaude / ~/.codex / ~/.claude — refuse here with a
-	// clean 400 rather than after the forked session times out.
+	// Resolve the sandbox mode for the chosen harness: a Codex agent gets its
+	// secure default (the managed tclaude-agent profile) when unset, a Claude
+	// agent gets its inherit default (normalized to "" — no `--settings`
+	// override), and an explicit mode is validated per-harness. Then the
+	// cwd-safety guard: a writable Codex sandbox confines writes to the cwd
+	// subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
+	// ~/.claude — refuse here with a clean 400 rather than after the forked
+	// session times out. (Claude's `on` block protects those dirs via settings,
+	// so this Codex-specific guard doesn't apply to it.)
 	sandboxMode, sbErr := harness.ResolveSandboxMode(h, body.SandboxMode)
 	if sbErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
@@ -1271,12 +1273,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	// Resolve the approval policy for the chosen harness: a Codex agent gets
-	// its non-escalating default (never) when unset, an explicit policy is
-	// validated, and a harness with no launch approval flag (Claude Code)
-	// rejects a non-empty policy. The default is what stops a detached,
-	// unattended Codex pane from deadlocking on an approval prompt no human
-	// can answer (JOH-200) — safe because the agent is sandbox-confined above.
+	// Resolve the approval/permission posture for the chosen harness: a Codex
+	// agent gets its non-escalating default (never) when unset, a Claude agent
+	// gets its inherit default (normalized to "" — no `--permission-mode`), and
+	// an explicit value is validated per-harness (Codex's policy vs Claude's
+	// permission mode). The Codex default is what stops a detached, unattended
+	// pane from deadlocking on an approval prompt no human can answer (JOH-200)
+	// — safe because the agent is sandbox-confined above; Claude's approval
+	// prompts are handled out-of-band by the agentd popup, so inherit is safe.
 	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
 	if apErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_approval", apErr.Error())
@@ -2928,11 +2932,13 @@ func appendPermissionProfileFlag(args []string, profile string) []string {
 }
 
 // appendApprovalFlag adds `--ask-for-approval <policy>` to a `tclaude session
-// new` argv when a policy is set. "" omits it (no approval handling — Claude
-// Code, or a caller that didn't resolve one). The policy is a validated enum
+// new` argv when a policy is set. "" omits it (no override — e.g. a Claude
+// inherit, or a caller that didn't resolve one). `--ask-for-approval` is the
+// harness-agnostic session-new flag name; the forked `session new` re-validates
+// it per-harness (a Codex policy vs a Claude --permission-mode value) and the
+// spawner emits the harness-appropriate flag. The value is a validated enum
 // resolved at the spawn boundary (harness.ResolveApprovalPolicy), never user
-// free-text, so it is safe as a bare arg. The forked `tclaude session new`
-// re-validates. See JOH-200.
+// free-text, so it is safe as a bare arg. See JOH-200.
 func appendApprovalFlag(args []string, policy string) []string {
 	if policy != "" {
 		args = append(args, "--ask-for-approval", policy)

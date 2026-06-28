@@ -1343,9 +1343,13 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="profile-editor-sandbox-row" style="display:none" title="Launch sandbox (Codex). Pre-selected to the harness's secure default.">
+    <label class="cron-create-row" id="profile-editor-sandbox-row" style="display:none" title="Launch sandbox the profile pre-fills into the spawn dialog. Modes are per-harness (Codex: tclaude-agent / workspace-write / read-only / danger-full-access; Claude Code: inherit / on / off). Pre-selected to the harness's recommended default.">
       <span class="cron-create-label">Sandbox</span>
       <select id="profile-editor-sandbox"></select>
+    </label>
+    <label class="cron-create-row" id="profile-editor-approval-row" style="display:none" title="Permission mode the profile pre-fills into the spawn dialog (Claude Code). inherit (recommended) adds no override; the explicit modes map to `claude --permission-mode` (plan / acceptEdits / default / auto / dontAsk / bypassPermissions).">
+      <span class="cron-create-label">Permission mode</span>
+      <select id="profile-editor-approval"></select>
     </label>
     <label class="cron-create-row" id="profile-editor-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex (writes ~/.codex/config.toml). Default leaves it unset.">
       <span class="cron-create-label">Trust dir</span>
@@ -1781,7 +1785,7 @@
       <span class="cron-create-label">Descr</span>
       <input id="agent-spawn-descr" type="text" placeholder="optional — short one-line description shown on the dashboard" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row" id="agent-spawn-harness-row" title="Coding harness for the new agent. Claude Code is the default; Codex (OpenAI) is the other driver. The harness switches the Model + Effort menus to that harness's valid values and shows the Sandbox selector for harnesses that take a launch sandbox (Codex).">
+    <label class="cron-create-row" id="agent-spawn-harness-row" title="Coding harness for the new agent. Claude Code is the default; Codex (OpenAI) is the other driver. The harness switches the Model + Effort menus — and the Sandbox selector's modes — to that harness's valid values (both harnesses offer a launch sandbox; the mode sets differ).">
       <span class="cron-create-label">Harness</span>
       <select id="agent-spawn-harness"></select>
     </label>
@@ -1816,14 +1820,26 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent (Codex). tclaude-agent (the recommended default) runs under tclaude's managed permission profile: workspace-write containment PLUS access to the agentd socket, so the agent can still coordinate via `tclaude agent`. The raw Codex --sandbox modes do NOT get that socket access: workspace-write confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
+    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. The live hint below explains the selected mode.">
       <span class="cron-create-label">Sandbox</span>
       <div class="cron-create-target">
-        <select id="agent-spawn-sandbox"></select>
+        <select id="agent-spawn-sandbox" aria-describedby="agent-spawn-sandbox-hint"></select>
         <!-- Live help for the selected mode (esp. agentd reachability),
              set from the harness catalog's sandbox_mode_help by
-             applySpawnSandboxHint(). -->
-        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
+             applySpawnSandboxHint(). aria-live so a screen reader announces the
+             ⚠ caveat when the selection changes. -->
+        <div id="agent-spawn-sandbox-hint" class="spawn-field-hint" aria-live="polite"></div>
+      </div>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">
+      <span class="cron-create-label">Permission mode</span>
+      <div class="cron-create-target">
+        <select id="agent-spawn-approval" aria-describedby="agent-spawn-approval-hint"></select>
+        <!-- Live help for the selected mode (esp. detached-agent safety),
+             set from the harness catalog's approval_mode_help by
+             applySpawnApprovalHint(). aria-live so a screen reader announces the
+             ⚠ caveat when the selection changes. -->
+        <div id="agent-spawn-approval-hint" class="spawn-field-hint" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">

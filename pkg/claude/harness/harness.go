@@ -123,6 +123,19 @@ type Harness struct {
 	// "id only appears after a seeded first turn" (Codex) — the two are mutually
 	// exclusive in practice.
 	SeedsFirstTurn bool
+
+	// ApprovalsReviewer marks a harness exposing the experimental `--auto-review`
+	// opt-in — a routable guardian that auto-decides approval *prompts* in the
+	// human's place: Codex's `approvals_reviewer=auto_review`. It is a DISTINCT
+	// axis from Approval: a harness can have a launch approval/permission catalog
+	// yet no such `--auto-review`-style toggle. Claude Code is exactly that case
+	// — its `auto` permission mode IS a supervisor model that approves/blocks
+	// actions, but that lives inside the permission catalog (selected via
+	// --permission-mode), not as a separate routable `--auto-review` flag — so it
+	// leaves this false and `--auto-review` stays rejected for it
+	// (SupportsAutoReview gates on this, NOT on SupportsApproval). Codex sets it
+	// true. See JOH-200 part 2.
+	ApprovalsReviewer bool
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
@@ -260,21 +273,33 @@ func (h *Harness) NeedsSpawnSeed() bool {
 	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
 }
 
-// SupportsSandbox reports whether the harness takes a launch-time sandbox
-// mode (Codex's --sandbox). Callers gate sandbox handling on this; a
-// harness that leaves Sandbox nil (Claude Code) keeps its out-of-band
-// (settings.json) sandbox untouched and rejects an explicit --sandbox.
+// SupportsSandbox reports whether the harness has a launch-time sandbox
+// catalog. Callers gate sandbox handling on this. Both harnesses set it now:
+// Codex via its native --sandbox modes, Claude Code via the inherit/on/off
+// modes its spawner delivers as a `--settings` override. A harness that left
+// Sandbox nil would keep its sandbox out of band and reject an explicit mode.
 func (h *Harness) SupportsSandbox() bool {
 	return h != nil && h.Sandbox != nil
 }
 
-// SupportsApproval reports whether the harness takes a launch-time approval
-// policy (Codex's --ask-for-approval). Callers gate approval handling on this;
-// a harness that leaves Approval nil (Claude Code) keeps its out-of-band
-// (settings.json) approval behaviour untouched and rejects an explicit
-// --ask-for-approval. See JOH-200.
+// SupportsApproval reports whether the harness has a launch-time approval /
+// permission catalog. Callers gate approval handling on this. Both harnesses
+// set it now: Codex via --ask-for-approval, Claude Code via its
+// --permission-mode enum (carried through the same Approval field). A harness
+// that left Approval nil would keep its approval out of band and reject an
+// explicit policy. NOTE: this does NOT imply a guardian reviewer — that is the
+// separate SupportsAutoReview axis. See JOH-200.
 func (h *Harness) SupportsApproval() bool {
 	return h != nil && h.Approval != nil
+}
+
+// SupportsAutoReview reports whether the harness has a guardian/reviewer
+// subagent the experimental `--auto-review` opt-in can route approval prompts
+// to (Codex only). It is gated on the ApprovalsReviewer descriptor flag, NOT on
+// SupportsApproval: Claude Code has an approval (permission-mode) catalog but no
+// guardian, so it must still reject `--auto-review`. See JOH-200 part 2.
+func (h *Harness) SupportsAutoReview() bool {
+	return h != nil && h.ApprovalsReviewer
 }
 
 // SupportsHooks reports whether this build can install tclaude hooks for

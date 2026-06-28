@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -19,28 +20,21 @@ import (
 //
 // It is a faithful copy of that doc's recommended config block — the
 // doc is the source of truth, so this must be kept in lockstep with it.
-// The block is intentionally cross-platform: it lists both the
-// macOS-only per-path `allowUnixSockets` and the Linux/WSL2-only
-// `allowAllUnixSockets`, so one settings.json works on either platform
-// (the inert key is harmless — the doc explains why).
+// The `sandbox` sub-tree comes from harness.ClaudeSandboxOnBlock(), the
+// SAME block the per-session `--sandbox on` spawn mode injects via
+// `--settings`, so the global hardening and the per-session override can
+// never drift. That block is intentionally cross-platform (it lists both
+// the macOS-only per-path `allowUnixSockets` and the Linux/WSL2-only
+// `allowAllUnixSockets`). The `permissions` deny-list below is hardening-
+// only — a global settings concern, not a per-session sandbox knob — so it
+// stays here.
 //
 // Arrays are []any (not []string) so the merge engine compares and
 // appends them uniformly against values decoded from the user's file,
 // where every JSON array is a []any.
 func sandboxHardeningSpec() map[string]any {
 	return map[string]any{
-		"sandbox": map[string]any{
-			"enabled": true,
-			"network": map[string]any{
-				"allowUnixSockets":    []any{"~/.tclaude/agentd.sock"},
-				"allowAllUnixSockets": true,
-			},
-			"filesystem": map[string]any{
-				"denyWrite": []any{"~/.tclaude", "~/.claude/sessions"},
-				"denyRead":  []any{"~/.tclaude", "~/.claude/sessions"},
-				"allowRead": []any{"~/.tclaude/agentd.sock"},
-			},
-		},
+		"sandbox": harness.ClaudeSandboxOnBlock(),
 		"permissions": map[string]any{
 			"deny": []any{
 				"Edit(~/.tclaude/**)",
@@ -82,10 +76,10 @@ func (r *hardeningReport) changed() bool { return len(r.added) > 0 }
 // hardeningResult is the outcome of applySandboxHardening: the report
 // plus the file-level side effects the caller turns into output.
 type hardeningResult struct {
-	report     *hardeningReport
+	report       *hardeningReport
 	settingsPath string
-	backupPath string // path of the timestamped backup, or "" if none was made
-	wrote      bool   // true if the settings file was rewritten
+	backupPath   string // path of the timestamped backup, or "" if none was made
+	wrote        bool   // true if the settings file was rewritten
 }
 
 // mergeHardening recursively merges the desired spec sub-tree into the
