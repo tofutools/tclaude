@@ -15,6 +15,11 @@
 </head>
 <body>
 <header>
+  <!-- .bar-inner pins the header's content to the viewport width so its
+       right-aligned controls don't fly off when the bar is widened to the
+       scrollable content width (JOH-313). In follow mode it's sticky-left
+       so the controls stay usable while the page is scrolled sideways. -->
+  <div class="bar-inner header-inner">
   <h1>🤝 tclaude agent dashboard</h1>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
        across every group + the ungrouped bucket (render.js
@@ -25,6 +30,14 @@
        styles are "off". -->
   <span class="global-activity" id="global-activity" aria-label="Activity across all groups"></span>
   <span class="meta" id="meta">loading…</span>
+  <!-- Horizontal-scroll mode toggle (JOH-313). Only shown when the page is
+       wide enough to scroll sideways (body.hscroll-overflow). Flips between
+       follow mode (bars stay pinned to the viewport, controls usable while
+       scrolled) and static mode (bars fill the width, content scrolls off
+       with the page). Sits in the left cluster, so it's visible at rest and
+       (in follow mode) at any scroll; in static mode it scrolls off with
+       the rest of the header, so flip it back from the unscrolled view. -->
+  <button id="hscroll-toggle" type="button" aria-pressed="true" title="Horizontal scroll mode"></button>
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <!-- Master OS-notification bell + per-type popover. The bell glyph
        mirrors config.notifications.enabled (the switch ABOVE the
@@ -95,6 +108,7 @@
   <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
   <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
   <button id="shutdown-all-btn" data-act="shutdown-all" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown all</button>
+  </div>
 </header>
 <!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via
      CSS unless body.slop is set. Always present in the DOM so toggling
@@ -103,6 +117,7 @@
   <div id="slop-marquee-track"><span id="slop-marquee-text">🎰 The slop machine</span></div>
 </div>
 <nav title="Tip: cycle tabs with [ and ] (or ←/→ while the tab bar is focused)" aria-keyshortcuts="[ ]">
+  <div class="bar-inner nav-inner">
   <button class="active" data-tab="groups">Groups</button>
   <button data-tab="cron">Cron</button>
   <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
@@ -114,6 +129,7 @@
   <!-- Vegas — the slop-mode soundtrack tab. CSS-hidden unless body.slop
        is set (see dashboard.css); vegas.js owns the player inside it. -->
   <button data-tab="vegas">🎰 Vegas</button>
+  </div>
 </nav>
 <main>
   <section id="tab-groups" class="active">
