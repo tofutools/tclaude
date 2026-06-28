@@ -29,7 +29,9 @@
        (CSS :empty) when there are zero members, or when both modes'
        styles are "off". -->
   <span class="global-activity" id="global-activity" aria-label="Activity across all groups"></span>
-  <span class="meta" id="meta">loading…</span>
+  <!-- The base URL + last-refresh heartbeat (#meta) used to sit here, but it
+       crowded the title row's prime space; it now lives in the bottom footer
+       bar (see <footer> below). refresh.js still writes the same #meta node. -->
   <!-- Horizontal-scroll mode toggle (JOH-313). Only shown when the page is
        wide enough to scroll sideways (body.hscroll-overflow). Flips between
        follow mode (bars stay pinned to the viewport, controls usable while
@@ -843,6 +845,20 @@
     <div id="vegas-leaderboard" class="vegas-leaderboard"></div>
   </section>
 </main>
+<!-- Footer bar — the dashboard's base URL + last-refresh heartbeat (#meta),
+     moved out of the header so they stop crowding the title row's prime
+     horizontal space. It's position:fixed to the viewport bottom so the
+     "is it live?" heartbeat stays glanceable on every tab and at any scroll
+     position, without stealing header room. Being viewport-pinned it sits
+     OUTSIDE the JOH-313 horizontal-scroll widening (unlike header/nav it has
+     no .bar-inner): it always spans the visible viewport, never ragged. The
+     page reserves --footer-h of bottom space so no content hides behind it.
+     refresh.js writes the same #meta node it always did. -->
+<footer>
+  <div class="footer-inner">
+    <span class="meta" id="meta">loading…</span>
+  </div>
+</footer>
 <!-- Slop-mode side pull-lever — a casino lever pinned to the right edge,
      CSS-hidden unless body.slop AND the Groups tab is active (it's the
      only tab the per-row slot machines live on). slop-spectacle.js wires

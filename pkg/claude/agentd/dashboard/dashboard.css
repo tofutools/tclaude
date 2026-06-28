@@ -37,6 +37,37 @@ header {
 }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; }
 header .meta { color: #7d8590; font-size: 12px; }
+/* Footer — a slim bar pinned to the viewport bottom, holding the base URL +
+   last-refresh heartbeat that used to crowd the header's title row.
+   position:fixed keeps it glanceable on every tab and at any scroll
+   position, with no flow/flex restructuring. Unlike header/nav it stays
+   OUT of the JOH-313 horizontal-scroll widening: left/right:0 keep it
+   spanning the visible viewport at all times, so it's never ragged when the
+   page scrolls sideways (and needs no .bar-inner). z-index sits above
+   <main> but below dropdowns (50+), modals (100+) and tooltips so an open
+   menu/dialog near the bottom is never hidden behind it. --footer-h is the
+   bar's height; the page reserves that much bottom space (below) so no
+   content ever hides behind the fixed bar. */
+:root { --footer-h: 29px; }
+footer {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 40;
+  background: #161b22;
+  border-top: 1px solid #2a3340;
+}
+.footer-inner {
+  padding: 6px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+footer .meta { color: #7d8590; font-size: 12px; }
+/* Reserve the fixed footer's height at the page bottom so scrolling to the
+   end never leaves the last row hidden behind the bar. The Messages tab
+   pins body to the viewport height and scrolls internally, so it shrinks
+   the app-shell by --footer-h instead (see the body:has rule below). */
+body { padding-bottom: var(--footer-h); }
 nav { background: #161b22; border-bottom: 1px solid #2a3340; }
 .nav-inner { display: flex; gap: 4px; padding: 0 24px; }
 /* When the page can scroll sideways, JS sizes .bar-inner to the viewport
@@ -2904,6 +2935,11 @@ body.slop nav button.active {
   color: #ffe88c;
   border-bottom-color: #ffd700;
 }
+body.slop footer {
+  background: #2a0808;
+  border-top: 1px solid #ffd700;
+}
+body.slop footer .meta { color: #ffe88c; opacity: 0.85; }
 /* Section content keeps default colors — only the casino chrome
    changes — but state pills get a gold edge so they still pop on
    the new background. */
