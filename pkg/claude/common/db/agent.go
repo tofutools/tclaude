@@ -1797,7 +1797,7 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
 		FROM agent_messages
 		WHERE to_conv != '' AND delivered_at != '' AND read_at = ''
 		ORDER BY id ASC`
