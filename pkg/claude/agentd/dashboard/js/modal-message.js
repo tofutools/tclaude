@@ -211,9 +211,19 @@ async function submitMessageForm() {
       const recipients = resp.recipients || [];
       const n = recipients.length;
       const live = recipients.filter(x => x.delivered).length;
+      // Members blocked on a human are held, not nudged — call them out
+      // separately so "nudged live" isn't conflated with offline-queued.
+      const held = recipients.filter(x => x.held).length;
+      const heldNote = held ? `, ${held} held (awaiting human input)` : '';
       toast(n
-        ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || to} (${live} nudged live)`
+        ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || to} (${live} nudged live${heldNote})`
         : `no recipients reached in ${resp.via_group || to} — nothing sent`);
+    } else if (resp.held) {
+      // Recipient is alive but blocked on a human (a permission prompt or
+      // elicitation dialog), so we deliberately did NOT nudge — the
+      // keystrokes would be captured as the human's answer. It delivers
+      // once they resume.
+      toast('message placed in mailbox — recipient is waiting on human input, delivers when they resume');
     } else {
       toast(resp.delivered
         ? 'message sent — recipient nudged live'

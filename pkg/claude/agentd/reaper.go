@@ -70,6 +70,18 @@ func defaultReaperNotify(st *session.SessionState, prevStatus string) {
 	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID), st.Harness)
 }
 
+// RunReaperTickForTest runs a single session-reaper sweep synchronously and
+// returns the number of sessions reaped. It exists so a flow test can drive
+// the reaper's resume-delivery backstop (maybeFlushUndelivered per alive
+// session) without standing up the 30s ticker goroutine. Production drives
+// tick from startSessionReaper. The flush it triggers is still
+// goBackground + debounced, so drain with WaitForBackgroundForTest before
+// asserting delivery. Not reachable from production — a sanctioned …ForTest
+// entry into the real reaper path.
+func RunReaperTickForTest(now time.Time) int {
+	return newSessionReaper().tick(now)
+}
+
 // startSessionReaper runs the reaper in its own goroutine, ticking
 // every sessionReaperInterval until stop is closed (the daemon-wide
 // quit channel). The first sweep fires immediately so a restart picks
@@ -146,6 +158,18 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// terminal-launched conversation surfaces on the dashboard
 			// like a web-UI spawn does. See enrollOnlineSession.
 			enrollOnlineSession(st)
+			// Backstop delivery for this alive agent: flush any undelivered
+			// mail it has queued. This was added for the mail-hold release
+			// (a message held while the agent was blocked on a human is
+			// delivered within ~one reaper interval of it resuming, even if
+			// the agent makes no `tclaude agent` call of its own), but it is
+			// not limited to that — it also proactively delivers ORDINARY
+			// offline-queued mail that previously waited for the recipient's
+			// next request. flush() self-gates (no-ops for an empty inbox or
+			// a recipient still awaiting human input) and maybeFlushUndelivered
+			// debounces per-conv, so this is a cheap, idempotent complement to
+			// the request-driven flush in the identity middleware.
+			maybeFlushUndelivered(st.ConvID)
 			continue
 		}
 		// Looks dead. A row created within the grace window may just be

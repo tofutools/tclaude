@@ -1183,20 +1183,33 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 			"queue self-reincarnate request: "+err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(id, target)
+	outcome := nudgeIfAlive(id, target)
+	delivered := outcome.delivered()
 	note := fmt.Sprintf("asked %s to reincarnate itself; instruction delivered to its inbox as "+
 		"message #%d — it will write its own handoff and reincarnate at a clean point",
 		short8(target), id)
 	if !delivered {
+		// Two distinct not-delivered cases: offline (picks it up when it
+		// next comes online) vs held because the target is mid-question with
+		// a human (it IS online — picks it up when it resumes). Tailor both
+		// the reason and the closing clause so the held line doesn't read as
+		// "offline".
+		reason := "target offline or busy"
+		tail := "comes online"
+		if outcome.held() {
+			reason = "target is waiting on human input; held in its mailbox"
+			tail = "resumes"
+		}
 		note = fmt.Sprintf("asked %s to reincarnate itself; instruction queued in its inbox as "+
-			"message #%d (target offline or busy) — it will pick the request up when it next "+
-			"comes online", short8(target), id)
+			"message #%d (%s) — it will pick the request up when it next %s",
+			short8(target), id, reason, tail)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode":       reincarnateModeSelf,
 		"conv_id":    target,
 		"message_id": id,
 		"delivered":  delivered,
+		"held":       outcome.held(),
 		"note":       note,
 	})
 }
