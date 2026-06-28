@@ -148,7 +148,13 @@ func handleAgentDir(w http.ResponseWriter, r *http.Request, convID string) {
 		if !ok {
 			return
 		}
-		if !isHuman && callerConv != convID {
+		// "Only for itself" is matched on the stable actor (JOH-323): a
+		// caller naming any of its own generations is still itself, so the
+		// gate compares agents, not the exact conv generation. sameActor
+		// only ever widens "self" to the same agent's generations — it
+		// never lets one agent open a terminal targeting a different agent
+		// (distinct agent_ids), so the human-only cross-agent rule holds.
+		if !isHuman && !sameActor(callerConv, convID) {
 			writeError(w, http.StatusForbidden, "permission",
 				"an agent may open a terminal only for itself; cross-agent terminal spawn is human-only")
 			return

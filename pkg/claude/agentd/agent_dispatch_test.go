@@ -109,6 +109,74 @@ func TestOwnerOfGroupContaining(t *testing.T) {
 		"non-owner should return false")
 }
 
+// TestOwnerOfGroupContaining_RotationImmune pins the JOH-323 behaviour: the
+// membership match resolves the target to its stable agent, so a member named
+// by ANY of its generations is recognised. The pre-JOH-323 conv-literal scan
+// (m.ConvID == targetConv) only matched the member's CURRENT conv, so naming
+// the predecessor generation returned false — this asserts both generations
+// now resolve true.
+func TestOwnerOfGroupContaining_RotationImmune(t *testing.T) {
+	setupTestDB(t)
+	gID, _ := db.CreateAgentGroup("team", "")
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker-old"}), "add member")
+	require.NoError(t, db.AddAgentGroupOwner(gID, "manager", "<test>"), "add owner")
+
+	// The worker reincarnates: worker-new becomes the live generation of the
+	// same actor; worker-old is now a predecessor conv of that same agent.
+	_, err := db.RotateAgentConv("worker-old", "worker-new", "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
+
+	assert.True(t, ownerOfGroupContaining("manager", "worker-new"),
+		"current generation of the member resolves to the member's agent")
+	assert.True(t, ownerOfGroupContaining("manager", "worker-old"),
+		"predecessor generation still resolves to the same agent (rotation-immune)")
+	assert.False(t, ownerOfGroupContaining("manager", "stranger"),
+		"unrelated conv is still not a member")
+}
+
+// TestSameActor exercises the rotation-immune actor-equality primitive that
+// backs the JOH-323 self-checks. It must (1) treat two generations of one
+// agent as equal, (2) keep distinct agents distinct, and (3) preserve the
+// non-agent semantics of the old conv-literal compare — a plain conversation
+// (no actor row) matches only itself, never another conv and never an agent.
+func TestSameActor(t *testing.T) {
+	setupTestDB(t)
+
+	// Agent A across two generations (a /clear or reincarnate rotation).
+	_, _, err := db.EnsureAgentForConv("a-gen1", "test")
+	require.NoError(t, err, "enrol a-gen1")
+	_, err = db.RotateAgentConv("a-gen1", "a-gen2", "reincarnate")
+	require.NoError(t, err, "rotate a-gen1 -> a-gen2")
+
+	// A separate agent B.
+	_, _, err = db.EnsureAgentForConv("b-gen1", "test")
+	require.NoError(t, err, "enrol b-gen1")
+
+	// Same conv-id → equal (cheap short-circuit, no DB hit needed).
+	assert.True(t, sameActor("a-gen1", "a-gen1"), "identical conv is the same actor")
+	assert.True(t, sameActor("plain-1", "plain-1"), "identical non-agent conv is the same actor")
+
+	// Two generations of the SAME agent → equal (the rotation-immune case).
+	assert.True(t, sameActor("a-gen1", "a-gen2"), "two generations of agent A are the same actor")
+	assert.True(t, sameActor("a-gen2", "a-gen1"), "order does not matter")
+
+	// Distinct agents → NOT equal (no over-authorization).
+	assert.False(t, sameActor("a-gen1", "b-gen1"), "agent A and agent B are different actors")
+	assert.False(t, sameActor("a-gen2", "b-gen1"), "any generation of A differs from B")
+
+	// Non-agent conv vs anything but itself → NOT equal (preserves the old
+	// conv-literal semantics; no plain conversation collisions).
+	assert.False(t, sameActor("plain-1", "plain-2"), "two distinct non-agent convs are not the same actor")
+	assert.False(t, sameActor("a-gen1", "plain-1"), "an agent never matches a non-agent conv")
+	assert.False(t, sameActor("plain-1", "a-gen1"), "a non-agent conv never matches an agent")
+
+	// Empty conv-id is "no actor" → fail-closed, never equal to anything
+	// (including another empty), regardless of the a == b short-circuit.
+	assert.False(t, sameActor("", ""), "two empty conv-ids are not the same actor")
+	assert.False(t, sameActor("", "a-gen1"), "empty conv never matches an agent")
+	assert.False(t, sameActor("a-gen1", ""), "an agent never matches an empty conv")
+}
+
 func TestHandleAgentByConv_BadPath(t *testing.T) {
 	setupTestDB(t)
 	cases := []string{
