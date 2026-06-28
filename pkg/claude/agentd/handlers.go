@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -1074,6 +1075,50 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 	return true
 }
 
+// paneInjectMu guards paneInjectLocks. paneInjectLocks holds one mutex
+// per tmux pane target, serializing send-keys injection into that pane
+// (JOH-310).
+//
+// Every channel through which the daemon types into a CC pane — live
+// inbox nudges (nudgeIfAlive), flushed/queued nudges (sendNudgeBracket),
+// slash commands (/rename, /compact, soft-exit), the welcome prompt,
+// export nudges, and the remote-access toggle — runs a MULTI-STEP
+// send-keys sequence (text → settle → Enter → settle → Enter, or a full
+// menu walk). Those steps are NOT atomic at the tmux layer, so two
+// sequences racing on the same pane interleave: the text from one and
+// the Enter from another land in the same input box, submitting a
+// garbled or merged prompt (and a nudge can be lost).
+//
+// This bites in practice when several agents message ONE target agent at
+// once — each POST /v1/messages runs nudgeIfAlive on its own HTTP
+// goroutine against the same pane. Serializing per pane (one CC pane per
+// agent) gives each agent a single-file inbox-nudge queue.
+//
+// The map gains one entry per distinct pane target the daemon ever
+// injects into (bounded by total agents launched this daemon life) and
+// is never pruned — a handful of bytes per ever-seen pane, negligible at
+// personal scale and not worth the lock churn of cleanup.
+var (
+	paneInjectMu    sync.Mutex
+	paneInjectLocks = map[string]*sync.Mutex{}
+)
+
+// paneInjectLock returns the mutex serializing send-keys injection into
+// tmuxTarget, creating it on first use. Hold it for the WHOLE injection
+// sequence (text + both Enters, or a full menu walk) — never just a
+// single send-keys call — so the sequence is atomic against other
+// injectors hitting the same pane.
+func paneInjectLock(tmuxTarget string) *sync.Mutex {
+	paneInjectMu.Lock()
+	defer paneInjectMu.Unlock()
+	mu := paneInjectLocks[tmuxTarget]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		paneInjectLocks[tmuxTarget] = mu
+	}
+	return mu
+}
+
 // injectTextAndSubmit types `text` into a CC pane and submits it as a
 // fresh prompt. Splits the text and the submit Enter into separate
 // `send-keys` calls with a 500 ms gap so CC's bracketed-paste mode
@@ -1089,7 +1134,14 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // The trailing Enter is sent twice (belt-and-suspenders); the second
 // is a no-op if the first already submitted. Caller must have verified
 // the tmux pane is alive.
+//
+// The whole sequence runs under the pane's injection lock so two
+// injectors targeting the same pane single-file instead of interleaving
+// their send-keys (JOH-310 — see paneInjectLock).
 func injectTextAndSubmit(tmuxTarget, text string) error {
+	mu := paneInjectLock(tmuxTarget)
+	mu.Lock()
+	defer mu.Unlock()
 	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, text).Run(); err != nil {
 		return fmt.Errorf("send-keys text: %w", err)
 	}
@@ -1121,7 +1173,15 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 // SetInjectSettleDelayForTest); only the menu-render and per-key settles are
 // parameters, since those are remote-control-specific. Caller must have
 // verified the pane is alive and that the command opens a menu.
+//
+// Like injectTextAndSubmit, the whole toggle+menu-walk runs under the
+// pane's injection lock so a concurrent nudge can't slip a send-keys
+// into the middle of the menu navigation (JOH-310 — see paneInjectLock).
+// It does NOT call injectTextAndSubmit, so there is no re-entrant lock.
 func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay, stepDelay time.Duration) error {
+	mu := paneInjectLock(tmuxTarget)
+	mu.Lock()
+	defer mu.Unlock()
 	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, toggle).Run(); err != nil {
 		return fmt.Errorf("send-keys toggle: %w", err)
 	}
