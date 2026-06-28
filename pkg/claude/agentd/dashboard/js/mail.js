@@ -55,7 +55,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
-import { $, $$, esc, linkify, relTime, shortId, withPreservedFocus } from './helpers.js';
+import { $, $$, esc, linkify, relTime, shortId, shortAgentId, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
@@ -635,9 +635,9 @@ function paintWipeBar() {
 // "(unknown sender)". Mirrors allSenderLabel + the reader's omitted "From".
 function counterparty(m) {
   if (m.direction === 'out') {
-    return m.to_title || shortId(m.to_conv) || '(unknown)';
+    return m.to_title || shortAgentId(m.to_agent, m.to_conv) || '(unknown)';
   }
-  return m.from_title || shortId(m.from_conv);
+  return m.from_title || shortAgentId(m.from_agent, m.from_conv);
 }
 
 // allSenderLabel names a row's sender in the aggregate "all" view, or ''
@@ -649,17 +649,17 @@ function counterparty(m) {
 // the truly-sender-less rows lose the party. Mirrors the reader pane, which
 // already omits the "From" header entirely for these.
 function allSenderLabel(m) {
-  return m.from_title || shortId(m.from_conv);
+  return m.from_title || shortAgentId(m.from_agent, m.from_conv);
 }
 
 // allRecipientLabel names a row's recipient in the aggregate "all" view,
 // collapsing a multicast to "first +N".
 function allRecipientLabel(m) {
   if (m.to_title) return m.to_title;
-  if (m.to_conv) return shortId(m.to_conv);
+  if (m.to_conv) return shortAgentId(m.to_agent, m.to_conv);
   const rs = m.to_recipients || [];
   if (rs.length) {
-    const first = rs[0].title || shortId(rs[0].conv_id);
+    const first = rs[0].title || shortAgentId(rs[0].agent_id, rs[0].conv_id);
     return rs.length > 1 ? `${first} +${rs.length - 1}` : first;
   }
   return '(group)';
@@ -716,12 +716,15 @@ function paintList() {
       // The firehose has no "self" to be relative to — render from→to. A
       // sender-less row (human/operator) drops the empty party and reads as a
       // bare "→ recipient" rather than "(unknown) → recipient".
+      // The row leads with each party's name (agt-id fallback when nameless);
+      // the conv-id it used rides along as a hover (the auditable snapshot).
+      // A multicast recipient ("first +N") has no single conv to hover.
       const sender = allSenderLabel(m);
       const fromHTML = sender
-        ? `<span class="mail-row-party">${esc(sender)}</span>`
+        ? `<span class="mail-row-party"${m.from_conv ? ` title="${esc(m.from_conv)}"` : ''}>${esc(sender)}</span>`
         : '';
       head = `${fromHTML}<span class="mail-row-arrow">→</span>
-        <span class="mail-row-party">${esc(allRecipientLabel(m))}</span>`;
+        <span class="mail-row-party"${m.to_conv ? ` title="${esc(m.to_conv)}"` : ''}>${esc(allRecipientLabel(m))}</span>`;
     } else {
       const arrow = m.direction === 'out'
         ? '<span class="mail-dir out" title="sent">→</span>'
@@ -730,8 +733,11 @@ function paintList() {
       // brief) has no party to name — show just the arrow, the way the "all"
       // firehose drops an empty sender, instead of "(unknown sender)".
       const party = counterparty(m);
+      // The other party's conv-id (recipient for a sent row, sender for a
+      // received one) is the hover snapshot behind the name / agt-id.
+      const partyConv = m.direction === 'out' ? m.to_conv : m.from_conv;
       const partyHTML = party
-        ? `<span class="mail-row-party">${esc(party)}</span>`
+        ? `<span class="mail-row-party"${partyConv ? ` title="${esc(partyConv)}"` : ''}>${esc(party)}</span>`
         : '';
       head = `${arrow}${partyHTML}`;
     }
@@ -818,13 +824,17 @@ function paintPager() {
   bar.innerHTML = `${nav}<span class="grow"></span>${sizeSel}`;
 }
 
-// recipientNames renders a decorated recipients array ([{conv_id,title}])
-// as "name <abcd1234>, …" for the reader headers.
+// recipientNames renders a decorated recipients array
+// ([{conv_id,agent_id,title}]) as "name <agt_xxxxxxxx>, …" for the reader
+// headers — leading with the stable agent_id (the conv-id prefix is the
+// fallback when a recipient was never an agent), with the conv-id it used as
+// the hover snapshot.
 function recipientNames(rs) {
   if (!rs || !rs.length) return '';
-  return rs.map(r => r.title
-    ? `${esc(r.title)} <span class="mail-cid">${esc(shortId(r.conv_id))}</span>`
-    : `<span class="mail-cid">${esc(shortId(r.conv_id))}</span>`).join(', ');
+  return rs.map(r => {
+    const id = `<span class="mail-cid" title="${esc(r.conv_id)}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`;
+    return r.title ? `${esc(r.title)} ${id}` : id;
+  }).join(', ');
 }
 
 function readerHeaderRow(label, valueHTML) {
@@ -851,16 +861,22 @@ function paintReader() {
     return;
   }
   const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
-  const fromHTML = m.from_title
-    ? `${esc(m.from_title)} <span class="mail-cid">${esc(shortId(m.from_conv))}</span>`
-    : (m.from_conv ? `<span class="mail-cid">${esc(shortId(m.from_conv))}</span>` : '');
+  // From / To lead with the stable agent_id (name + agt_xxxxxxxx), with the
+  // conv-id snapshot on hover — the same handle the roster/audit surfaces
+  // lead with. shortAgentId falls back to the conv-id prefix for a party
+  // that was never an agent.
+  const fromIdHTML = m.from_conv
+    ? `<span class="mail-cid" title="${esc(m.from_conv)}">${esc(shortAgentId(m.from_agent, m.from_conv))}</span>`
+    : '';
+  const fromHTML = m.from_title ? `${esc(m.from_title)} ${fromIdHTML}` : fromIdHTML;
   // To: prefer the full recipients array (multicasts carry every
   // addressee); fall back to the single to_conv for a plain 1:1.
   let toHTML = recipientNames(m.to_recipients);
   if (!toHTML && (m.to_title || m.to_conv)) {
-    toHTML = m.to_title
-      ? `${esc(m.to_title)} <span class="mail-cid">${esc(shortId(m.to_conv))}</span>`
-      : `<span class="mail-cid">${esc(shortId(m.to_conv))}</span>`;
+    const toIdHTML = m.to_conv
+      ? `<span class="mail-cid" title="${esc(m.to_conv)}">${esc(shortAgentId(m.to_agent, m.to_conv))}</span>`
+      : '';
+    toHTML = m.to_title ? `${esc(m.to_title)} ${toIdHTML}` : toIdHTML;
   }
   const stateBits = [];
   stateBits.push(m.read ? 'read' : '<span class="mail-state-unread">unread</span>');
