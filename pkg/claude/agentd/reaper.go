@@ -146,6 +146,16 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// terminal-launched conversation surfaces on the dashboard
 			// like a web-UI spawn does. See enrollOnlineSession.
 			enrollOnlineSession(st)
+			// Backstop the mail-hold release: deliver any queued mail now
+			// that this agent is alive. flush() self-gates — it no-ops for
+			// an empty inbox or a recipient still awaiting human input — so
+			// this is a cheap, idempotent complement to the request-driven
+			// maybeFlushUndelivered. It is the time-bounded guarantee that a
+			// message held while the agent was blocked on a human gets
+			// delivered within ~one reaper interval of it resuming, even if
+			// the agent makes no `tclaude agent` call of its own. Debounced
+			// per-conv inside maybeFlushUndelivered.
+			maybeFlushUndelivered(st.ConvID)
 			continue
 		}
 		// Looks dead. A row created within the grace window may just be

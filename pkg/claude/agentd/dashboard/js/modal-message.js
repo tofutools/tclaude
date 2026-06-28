@@ -205,6 +205,12 @@ async function submitMessageForm() {
       toast(n
         ? `multicast reached ${n} member${n === 1 ? '' : 's'} of ${resp.via_group || to} (${live} nudged live)`
         : `no recipients reached in ${resp.via_group || to} — nothing sent`);
+    } else if (resp.held) {
+      // Recipient is alive but blocked on a human (a permission prompt or
+      // elicitation dialog), so we deliberately did NOT nudge — the
+      // keystrokes would be captured as the human's answer. It delivers
+      // once they resume.
+      toast('message placed in mailbox — recipient is waiting on human input, delivers when they resume');
     } else {
       toast(resp.delivered
         ? 'message sent — recipient nudged live'

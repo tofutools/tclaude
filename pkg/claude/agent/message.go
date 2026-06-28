@@ -95,6 +95,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	var resp struct {
 		ID             int64  `json:"id,omitempty"`
 		Delivered      bool   `json:"delivered,omitempty"`
+		Held           bool   `json:"held,omitempty"`
 		ViaGroup       string `json:"via_group"`
 		RedirectedFrom string `json:"redirected_from,omitempty"`
 		Recipients     []struct {
@@ -103,6 +104,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			Title          string `json:"title,omitempty"`
 			MessageID      int64  `json:"message_id"`
 			Delivered      bool   `json:"delivered"`
+			Held           bool   `json:"held,omitempty"`
 			RedirectedFrom string `json:"redirected_from,omitempty"`
 		} `json:"recipients,omitempty"`
 	}
@@ -147,9 +149,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			return rcOK
 		}
 		delivered := 0
+		held := 0
 		for _, rcp := range resp.Recipients {
 			if rcp.Delivered {
 				delivered++
+			} else if rcp.Held {
+				held++
 			}
 		}
 		header := "Broadcast"
@@ -162,8 +167,15 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		if resp.ViaGroup != "" {
 			scope = fmt.Sprintf(" via group %q", resp.ViaGroup)
 		}
-		fmt.Fprintf(stdout, "%s%s: %d recipients (%d delivered, %d queued).\n",
-			header, scope, len(resp.Recipients), delivered, len(resp.Recipients)-delivered)
+		// "held" (recipient blocked on a human) is a distinct bucket from
+		// "queued" (recipient offline); only print it when it happened so
+		// the common line stays terse.
+		heldNote := ""
+		if held > 0 {
+			heldNote = fmt.Sprintf(", %d held (awaiting human input)", held)
+		}
+		fmt.Fprintf(stdout, "%s%s: %d recipients (%d delivered, %d queued%s).\n",
+			header, scope, len(resp.Recipients), delivered, len(resp.Recipients)-delivered-held, heldNote)
 		for _, rcp := range resp.Recipients {
 			name := rcp.Title
 			if name == "" {
@@ -172,6 +184,8 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			state := "queued"
 			if rcp.Delivered {
 				state = "delivered"
+			} else if rcp.Held {
+				state = "held (awaiting human input)"
 			}
 			redirect := ""
 			if rcp.RedirectedFrom != "" {
@@ -188,6 +202,13 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	state := "queued; target not online"
 	if resp.Delivered {
 		state = "delivered"
+	} else if resp.Held {
+		// The recipient is alive but blocked on a human (a permission
+		// prompt or elicitation dialog). We deliberately did NOT nudge —
+		// the keystrokes would be captured as the human's answer. The row
+		// is in their mailbox and delivers once they are back to working.
+		state = "held; recipient is waiting on human input — placed in their mailbox, " +
+			"delivers when they resume"
 	}
 	// An off-group send (the message.direct path) has no routing group;
 	// render it as a direct message rather than `via group ""`.
