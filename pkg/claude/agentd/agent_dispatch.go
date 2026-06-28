@@ -246,27 +246,39 @@ func requireInboxAccess(w http.ResponseWriter, r *http.Request) (effectiveConv s
 	}
 	// caller is "" for humans (no agent identity), the agent's conv otherwise.
 	// In both cases the EFFECTIVE conv to query is the target.
-	return target, caller != "" && caller != target, true
+	//
+	// isOperator means "the caller is reading someone ELSE's inbox" — it
+	// forces keep-unread so a drive-by read doesn't clobber the recipient's
+	// read marker. Compare on the stable actor (JOH-323): an agent that
+	// reincarnated / ran /clear and reads its own inbox via --target<self>
+	// resolves target to its current head, which differs from a predecessor
+	// caller conv as a string — a conv-literal `caller != target` would have
+	// mis-flagged that self-read as an operator view. sameActor keeps it a
+	// self-read across generations; genuinely different agents still differ.
+	return target, caller != "" && !sameActor(caller, target), true
 }
 
 // ownerOfGroupContaining returns true if ownerConv owns at least one
 // group whose membership includes targetConv. Linear scan over owned
 // groups; expected to be cheap (most agents own a handful of groups
 // at most).
+//
+// Membership is matched on the stable agent (JOH-323): db.FindMemberInGroup
+// resolves targetConv to its agent_id and looks the member up by that, so a
+// target named by any of its generations is recognised — the rotation-immune
+// form of the old `m.ConvID == targetConv` scan (which only matched a
+// member's current conv). Semantics are unchanged today: members are listed
+// from agent-keyed storage, so a non-agent targetConv could never equal a
+// member's conv under the old compare either, and FindMemberInGroup likewise
+// returns no match for a conv with no actor row.
 func ownerOfGroupContaining(ownerConv, targetConv string) bool {
 	owned, err := db.ListGroupsOwnedBy(ownerConv)
 	if err != nil || len(owned) == 0 {
 		return false
 	}
 	for _, gID := range owned {
-		members, err := db.ListAgentGroupMembers(gID)
-		if err != nil {
-			continue
-		}
-		for _, m := range members {
-			if m.ConvID == targetConv {
-				return true
-			}
+		if m, err := db.FindMemberInGroup(gID, targetConv); err == nil && m != nil {
+			return true
 		}
 	}
 	return false

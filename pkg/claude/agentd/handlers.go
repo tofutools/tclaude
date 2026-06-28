@@ -282,6 +282,35 @@ func peerAgentID(conv string) string {
 	return id
 }
 
+// sameActor reports whether two conv-ids belong to the same stable agent.
+// It is the rotation-immune form of `a == b` for actor-equality self-checks
+// (JOH-323): each conv resolves to its agent_id and the agents are compared,
+// so two generations of one agent (post-reincarnate / post-/clear) count as
+// equal — the old conv-literal compare only matched the exact generation.
+//
+// An empty conv-id is "no actor" and is never the same actor as anything,
+// including another empty — so it is fail-closed (returns false) regardless
+// of the a == b short-circuit below. Callers already guard their empty cases
+// (a human caller is ""; a placeholder member's conv is ""), but failing
+// closed here keeps the primitive safe for any future caller.
+//
+// Semantics are otherwise preserved for the non-agent cases the old compare
+// handled: the `a == b` short-circuit keeps the common self case cheap (no DB
+// hit) and still matches two identical convs; and a conv with no actor row (a
+// plain conversation) resolves to "" and is matched by conv-id alone, so two
+// distinct non-agent convs never collide, and a non-agent conv never matches
+// an agent. Mirrors the JOH-317 inbox/ownership matcher (callerIsRecipient).
+func sameActor(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	aa := peerAgentID(a)
+	return aa != "" && aa == peerAgentID(b)
+}
+
 // The message inbox/ownership surface keys on the STABLE actor, not the
 // caller's current conv generation (JOH-317). A conv-id only names one
 // generation, so an agent that reincarnated / ran /clear could neither read

@@ -566,7 +566,10 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 			case m.ConvID == "":
 				res.Action = "skipped:no_conv_id"
 				res.Detail = "placeholder member (no conv yet)"
-			case caller != "" && m.ConvID == caller:
+			case caller != "" && sameActor(m.ConvID, caller):
+				// Match on the stable actor (JOH-323): the caller never
+				// retires itself, including a predecessor generation of
+				// itself that still sits in the roster.
 				res.Action = "skipped:self"
 				res.Detail = "the caller never retires itself"
 			default:
@@ -857,7 +860,15 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 	// own conv mid-turn — the daemon's own request context is keyed
 	// off the caller's conv-id, and the cleanup goroutine would race
 	// the response write. Humans (caller == "") can always proceed.
-	if caller != "" && caller == targetConv {
+	//
+	// Match on the stable actor (JOH-323): DeleteAgentAllGenerations below
+	// sweeps EVERY generation of the actor, so deleting any generation of
+	// oneself wipes the live request conv too and hits the same race. The
+	// selector already resolves a predecessor forward to the head, so today
+	// targetConv == caller for a self-delete; sameActor only ever widens
+	// this guard to the same actor's generations — a genuinely different
+	// agent still differs and a peer/owner delete is unaffected.
+	if caller != "" && sameActor(caller, targetConv) {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"cannot delete self via this endpoint; use `tclaude conv rm` from a human shell or have a peer/owner do it")
 		return

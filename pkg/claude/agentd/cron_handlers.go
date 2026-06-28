@@ -293,7 +293,12 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 	if callerConv == "" {
 		return false
 	}
-	if j.OwnerConv == callerConv {
+	// Owner/target are the conv-ids recorded when the job was created; the
+	// caller is its live conv. Compare on the stable actor (JOH-323) so a
+	// caller that reincarnated / ran /clear since scheduling still sees its
+	// own job, and a job recorded against a past generation of the target is
+	// still visible to that agent's current generation.
+	if sameActor(j.OwnerConv, callerConv) {
 		return true
 	}
 	if j.IsGroupTarget() {
@@ -305,7 +310,7 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 		owner, err := db.IsAgentGroupOwner(j.GroupID, callerConv)
 		return err == nil && owner
 	}
-	if j.TargetConv == callerConv {
+	if sameActor(j.TargetConv, callerConv) {
 		return true
 	}
 	return ownerOfGroupContaining(callerConv, j.TargetConv)
@@ -718,7 +723,13 @@ func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (s
 	if isHuman {
 		return "", true
 	}
-	if caller == targetConv {
+	// Self path → self.schedule (the laxer, default-granted slug). Match on
+	// the stable actor (JOH-323): scheduling on a past generation of oneself
+	// (e.g. --target<own-old-conv>) is still a self-action and must not be
+	// pushed onto the stricter cross-agent path. sameActor only ever widens
+	// the self path to the SAME agent's other generations — two distinct
+	// agents still differ and take the cross path unchanged.
+	if sameActor(caller, targetConv) {
 		// Self path → self.schedule.
 		if _, ok := requirePermission(w, r, PermSelfSchedule); !ok {
 			return "", false
