@@ -390,6 +390,55 @@ func TestPruneAgentMessagesForConv(t *testing.T) {
 	assert.NotNil(t, got, "other-caller's message must still be untouched")
 }
 
+// TestPruneAgentMessagesForActor_EmptyConvDoesNotReapNonActorRows pins the
+// safety of the actor-keyed prune primitive (JOH-317): called with a blank
+// conv (the "prune actor X's whole mailbox, no conv" shape), it must key on
+// the agent ALONE and never let a `to_conv = ”` term match the empty-to_conv
+// group-broadcast / bookkeeping rows. actorMatchClause skips an empty
+// dimension rather than emitting `col = ”`; this guards against regressing
+// that into an over-broad mass delete.
+func TestPruneAgentMessagesForActor_EmptyConvDoesNotReapNonActorRows(t *testing.T) {
+	setupTestDB(t)
+
+	g, _ := CreateAgentGroup("alpha", "")
+	now := time.Now()
+	old := now.Add(-40 * 24 * time.Hour)
+
+	// Enroll an actor so its message carries a to_agent companion.
+	const convA = "aaaa1111-2222-3333-4444-555555555555"
+	_, _, err := EnsureAgentForConv(convA, "test")
+	require.NoError(t, err, "EnsureAgentForConv")
+	agentA, err := AgentIDForConv(convA)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentA, "actor should resolve")
+
+	mine, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: convA, Body: "x", CreatedAt: old,
+	})
+	require.NoError(t, err, "insert actor mail")
+	// A bookkeeping row with empty to_conv (hence empty to_agent) — the shape
+	// group-broadcast records take, which ListDeliveredUnreadAgentMessages
+	// deliberately excludes.
+	book, err := InsertAgentMessage(&AgentMessage{
+		GroupID: g, FromConv: "peer", ToConv: "", Body: "broadcast", CreatedAt: old,
+	})
+	require.NoError(t, err, "insert bookkeeping row")
+	bookRow, _ := GetAgentMessage(book)
+	require.Empty(t, bookRow.ToConv, "precondition: bookkeeping row has empty to_conv")
+	require.Empty(t, bookRow.ToAgent, "precondition: bookkeeping row has empty to_agent")
+
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	deleted, err := PruneAgentMessagesForActor("", agentA, cutoff, false)
+	require.NoError(t, err, "prune by actor with blank conv")
+	assert.Equal(t, int64(1), deleted, "only the actor's own row is reaped")
+
+	got, _ := GetAgentMessage(mine)
+	assert.Nil(t, got, "actor's own aged mail is pruned")
+	got, _ = GetAgentMessage(book)
+	assert.NotNil(t, got,
+		"empty-to_conv bookkeeping row must NOT be reaped by a blank-conv actor prune")
+}
+
 // TestListUndeliveredAgentMessagesFor covers the queue read used by
 // the flush-on-online path: returns only undelivered messages addressed
 // to the given conv, in oldest-first order.

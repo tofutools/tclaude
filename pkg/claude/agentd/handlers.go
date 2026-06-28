@@ -279,6 +279,57 @@ func peerAgentID(conv string) string {
 	return id
 }
 
+// The message inbox/ownership surface keys on the STABLE actor, not the
+// caller's current conv generation (JOH-317). A conv-id only names one
+// generation, so an agent that reincarnated / ran /clear could neither read
+// nor manage mail it received under a predecessor conv. These helpers resolve
+// the caller's conv to its agent and address the message by current conv OR
+// stable actor: the actor term spans generations; the conv term keeps a row
+// whose agent companion is '' (a conv messaged before it enrolled) visible
+// from its own current inbox. A conv with no actor row (a plain conversation
+// that messaged directly) resolves its agent to "" and is matched by conv
+// alone, so non-agent senders are unaffected. The delivery/flush queue is
+// already actor-keyed the same way (JOH-310).
+
+// inboxForCaller returns the caller's received mail across all of the actor's
+// generations (plus its own current-conv mail).
+func inboxForCaller(callerConv string, limit int) ([]*db.AgentMessage, error) {
+	return db.ListInboxForActor(callerConv, peerAgentID(callerConv), limit)
+}
+
+// outboxForCaller is the sent-mail twin of inboxForCaller.
+func outboxForCaller(callerConv string, limit int) ([]*db.AgentMessage, error) {
+	return db.ListOutboxForActor(callerConv, peerAgentID(callerConv), limit)
+}
+
+// callerIsRecipient reports whether callerConv is the recipient of m (the
+// read / reply gates: being the sender does not grant access). It matches by
+// current conv OR stable actor — so any generation of the actor counts
+// (JOH-317) — the rotation-immune form of the old `m.ToConv == callerConv`
+// check.
+func callerIsRecipient(callerConv string, m *db.AgentMessage) bool {
+	if m.ToConv == callerConv {
+		return true
+	}
+	if a := peerAgentID(callerConv); a != "" {
+		return m.ToAgent == a
+	}
+	return false
+}
+
+// deleteMessageForCaller deletes message id when callerConv is a party,
+// matching by current conv OR stable actor so it spans the actor's
+// generations (JOH-317).
+func deleteMessageForCaller(id int64, callerConv string) (bool, error) {
+	return db.DeleteAgentMessageForActor(id, callerConv, peerAgentID(callerConv))
+}
+
+// pruneMessagesForCaller prunes the caller's mail by current conv OR stable
+// actor, so it spans the actor's generations (JOH-317).
+func pruneMessagesForCaller(callerConv string, olderThan time.Time, readOnly bool) (int64, error) {
+	return db.PruneAgentMessagesForActor(callerConv, peerAgentID(callerConv), olderThan, readOnly)
+}
+
 // --- /v1/messages (POST), /v1/messages/{id} (GET) ---
 
 type sendReq struct {
@@ -1928,7 +1979,7 @@ func handleMessageDelete(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid id")
 		return
 	}
-	deleted, err := db.DeleteAgentMessageByID(id, myID)
+	deleted, err := deleteMessageForCaller(id, myID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -1982,7 +2033,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no message #%d", id))
 		return
 	}
-	if orig.ToConv != myID {
+	if !callerIsRecipient(myID, orig) {
 		writeError(w, http.StatusForbidden, "auth", "you are not the recipient of this message")
 		return
 	}
@@ -2118,7 +2169,7 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no message #%d", id))
 		return
 	}
-	if m.ToConv != myID {
+	if !callerIsRecipient(myID, m) {
 		writeError(w, http.StatusForbidden, "auth", "message is not addressed to you")
 		return
 	}
@@ -2237,9 +2288,9 @@ func handleInbox(w http.ResponseWriter, r *http.Request) {
 	var msgs []*db.AgentMessage
 	var err error
 	if outbox {
-		msgs, err = db.ListAgentMessagesFromConv(myID, limit)
+		msgs, err = outboxForCaller(myID, limit)
 	} else {
-		msgs, err = db.ListAgentMessagesForConv(myID, limit)
+		msgs, err = inboxForCaller(myID, limit)
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -2311,7 +2362,7 @@ func handleInboxPrune(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cutoff := time.Now().Add(-time.Duration(req.OlderThanSeconds) * time.Second)
-	deleted, err := db.PruneAgentMessagesForConv(myID, cutoff, req.ReadOnly)
+	deleted, err := pruneMessagesForCaller(myID, cutoff, req.ReadOnly)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return

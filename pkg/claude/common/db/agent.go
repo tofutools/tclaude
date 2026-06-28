@@ -1423,6 +1423,40 @@ func PruneAgentMessagesForConv(forConv string, olderThan time.Time, readOnly boo
 	return n, nil
 }
 
+// PruneAgentMessagesForActor is the actor-keyed twin of
+// PruneAgentMessagesForConv: it prunes the rows the caller is a party to by
+// current conv (from_conv/to_conv) OR stable actor (from_agent/to_agent), so
+// an agent's `inbox prune` reaps mail from ALL its generations — including
+// ones it received before a reincarnate / /clear (JOH-317) — rather than only
+// the current conv's slice, while still reaping current-conv rows whose agent
+// companion is ” (a conv messaged before it enrolled). readOnly still
+// restricts to messages the recipient has read. Whichever of conv/agentID is
+// empty is skipped (see actorMatchClause) rather than emitted as `col = ”`,
+// which would over-match and reap unrelated non-actor / bookkeeping rows.
+func PruneAgentMessagesForActor(conv, agentID string, olderThan time.Time, readOnly bool) (int64, error) {
+	where, args := actorMatchClause(
+		[2]string{"from_conv", conv}, [2]string{"to_conv", conv},
+		[2]string{"from_agent", agentID}, [2]string{"to_agent", agentID})
+	if where == "" {
+		return 0, fmt.Errorf("conv or agentID required")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	q := `DELETE FROM agent_messages WHERE ` + where + ` AND created_at < ?`
+	args = append(args, olderThan.Format(time.RFC3339Nano))
+	if readOnly {
+		q += ` AND read_at != ''`
+	}
+	res, err := d.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // AgentGroupOwner is a row in agent_group_owners. Owners can message
 // a group's members and multicast to the group without being members
 // themselves. Distinct from membership so the "X is an owner but
@@ -1998,6 +2032,37 @@ func DeleteAgentMessageByID(id int64, forConv string) (bool, error) {
 	return n > 0, nil
 }
 
+// DeleteAgentMessageForActor is the actor-keyed twin of
+// DeleteAgentMessageByID: it authorises the wipe when the caller is a party to
+// the message by current conv (from_conv/to_conv) OR stable actor
+// (from_agent/to_agent). The agent terms let a row received or sent under a
+// predecessor generation be deleted after the agent reincarnated / ran /clear
+// (JOH-317); the conv terms are kept alongside (NOT replaced) so a row whose
+// agent companion is ” — a conv messaged before it enrolled — stays
+// deletable from its current conv. Whichever of conv/agentID is empty is
+// skipped (see actorMatchClause) rather than emitted as `col = ”`, which would
+// match non-actor rows; a non-actor caller is authorised by conv alone.
+func DeleteAgentMessageForActor(id int64, conv, agentID string) (bool, error) {
+	where, args := actorMatchClause(
+		[2]string{"from_conv", conv}, [2]string{"to_conv", conv},
+		[2]string{"from_agent", agentID}, [2]string{"to_agent", agentID})
+	if where == "" {
+		return false, fmt.Errorf("conv or agentID required")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(
+		`DELETE FROM agent_messages WHERE id = ? AND `+where,
+		append([]any{id}, args...)...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // GetAgentMessage returns a single message by ID, or nil if not found.
 func GetAgentMessage(id int64) (*AgentMessage, error) {
 	db, err := Open()
@@ -2025,9 +2090,104 @@ func ListAgentMessagesFromConv(fromConv string, limit int) ([]*AgentMessage, err
 	return listAgentMessagesByCol("from_conv", fromConv, limit)
 }
 
+// ListInboxForActor is the actor-keyed inbox: every message addressed to the
+// caller either by its current conv (to_conv) OR by its stable actor
+// (to_agent), most recent first. The to_agent term — stamped from to_conv at
+// insert by the v79 dual-write (JOH-281/284) and shared by every generation
+// of the agent — is what spans ALL the actor's conv generations as ONE inbox,
+// the rotation fix (JOH-317): mail received before the agent reincarnated /
+// ran /clear is still readable from the live generation instead of being
+// stranded on the predecessor conv. The to_conv term is kept alongside it
+// (NOT replaced) so a message whose to_agent companion is ” — a conv that
+// was messaged before it enrolled as an agent, which is never backfilled —
+// stays visible in its own current inbox. This mirrors the delivery layer,
+// which likewise keeps both an agent-keyed and a conv-keyed drain so the two
+// together cover the whole set. pin_gen rows are NOT excluded — pinning only
+// steers DELIVERY (which pane is nudged); for the inbox VIEW the message is
+// still the actor's mail.
+//
+// Known limitation: a row addressed to a PAST generation that ALSO has
+// to_agent=” (a conv messaged before it enrolled, that later rotated) is
+// reachable from neither term once the actor moves on, and stays stranded. It
+// needs both "messaged-before-enroll" AND "later rotated", which is rare; a
+// full fix would OR in every one of the actor's conv generations. All four
+// read/delete/prune paths agree on missing it, so there is no asymmetry.
+func ListInboxForActor(toConv, toAgent string, limit int) ([]*AgentMessage, error) {
+	return listAgentMessagesForActor("to_conv", "to_agent", toConv, toAgent, limit)
+}
+
+// ListOutboxForActor is the actor-keyed outbox twin of ListInboxForActor:
+// every message the caller sent by current conv (from_conv) OR stable actor
+// (from_agent), most recent first.
+func ListOutboxForActor(fromConv, fromAgent string, limit int) ([]*AgentMessage, error) {
+	return listAgentMessagesForActor("from_conv", "from_agent", fromConv, fromAgent, limit)
+}
+
+// actorMatchClause builds the "(col = ? OR …)" predicate that matches a
+// message to its caller by current conv and/or stable actor, used by the
+// actor-keyed inbox/outbox/delete/prune. Each (column, value) pair is included
+// ONLY when its value is non-empty: an empty value is skipped entirely rather
+// than emitted as `col = ”`, which would over-match every non-actor /
+// group-broadcast row (empty to_conv/to_agent). Returns ("", nil) when every
+// value is empty — the caller must treat that as "match nothing". Column names
+// are literal constants from the call sites, never user input.
+func actorMatchClause(pairs ...[2]string) (string, []any) {
+	var terms []string
+	var args []any
+	for _, p := range pairs {
+		if p[1] == "" {
+			continue
+		}
+		terms = append(terms, p[0]+" = ?")
+		args = append(args, p[1])
+	}
+	if len(terms) == 0 {
+		return "", nil
+	}
+	return "(" + strings.Join(terms, " OR ") + ")", args
+}
+
+// listAgentMessagesForActor shares the read/scan path for the actor-keyed
+// inbox/outbox: it selects rows matching convCol = conv OR agentCol = agent,
+// ordered most-recent-first, skipping whichever of conv/agent is empty (see
+// actorMatchClause). convCol/agentCol must be literal column names, never user
+// input — they are interpolated into SQL. Ordering is by id DESC for the same
+// RFC3339Nano lexical-sort reason listAgentMessagesByCol documents.
+func listAgentMessagesForActor(convCol, agentCol, conv, agent string, limit int) ([]*AgentMessage, error) {
+	where, args := actorMatchClause([2]string{convCol, conv}, [2]string{agentCol, agent})
+	if where == "" {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT ` + agentMessageColumns + `
+		FROM agent_messages WHERE ` + where + ` ORDER BY id DESC`
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // listAgentMessagesByCol shares the read/scan path between the inbox
-// and outbox queries. col must be a literal column name (`to_conv` or
-// `from_conv`), never user input — it's interpolated into SQL.
+// and outbox queries. col must be a literal column name (`to_conv`,
+// `from_conv`, `to_agent` or `from_agent`), never user input — it's
+// interpolated into SQL.
 //
 // Ordering is by id DESC (autoincrement = insertion order), NOT created_at.
 // created_at is an RFC3339Nano string compared lexically by SQLite: a time on
