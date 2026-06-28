@@ -124,15 +124,17 @@ type Harness struct {
 	// exclusive in practice.
 	SeedsFirstTurn bool
 
-	// ApprovalsReviewer marks a harness that has a guardian/reviewer subagent
-	// the experimental `--auto-review` opt-in can route approval prompts to —
-	// Codex's `approvals_reviewer=auto_review` (it auto-decides in the human's
-	// place). It is a DISTINCT axis from Approval: a harness can have a launch
-	// approval/permission catalog yet no reviewer to delegate to. Claude Code is
-	// exactly that case now — it has an Approval catalog (its permission modes)
-	// but no guardian subagent — so it leaves this false and `--auto-review`
-	// stays rejected for it (SupportsAutoReview gates on this, NOT on
-	// SupportsApproval). Codex sets it true. See JOH-200 part 2.
+	// ApprovalsReviewer marks a harness exposing the experimental `--auto-review`
+	// opt-in — a routable guardian that auto-decides approval *prompts* in the
+	// human's place: Codex's `approvals_reviewer=auto_review`. It is a DISTINCT
+	// axis from Approval: a harness can have a launch approval/permission catalog
+	// yet no such `--auto-review`-style toggle. Claude Code is exactly that case
+	// — its `auto` permission mode IS a supervisor model that approves/blocks
+	// actions, but that lives inside the permission catalog (selected via
+	// --permission-mode), not as a separate routable `--auto-review` flag — so it
+	// leaves this false and `--auto-review` stays rejected for it
+	// (SupportsAutoReview gates on this, NOT on SupportsApproval). Codex sets it
+	// true. See JOH-200 part 2.
 	ApprovalsReviewer bool
 }
 

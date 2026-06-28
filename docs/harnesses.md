@@ -82,7 +82,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `inherit` (default) keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
-| **Auto-approve review** | ❌ no separate guardian-reviewer feature (the `auto` permission mode in the approval row above is the closest analog) | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
+| **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
 | **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) |
 

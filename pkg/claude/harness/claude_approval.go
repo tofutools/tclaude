@@ -22,7 +22,7 @@ import (
 //   - plan              : read-only planning — explores/reads but doesn't edit.
 //   - acceptEdits       : auto-approve edits + common fs commands in the cwd;
 //     other actions prompt.
-//   - auto              : a classifier model auto-approves safe actions and
+//   - auto              : a separate supervisor model approves safe actions and
 //     blocks unsafe ones; explicit ask-rules still prompt.
 //   - dontAsk           : auto-DENY anything not pre-approved; never prompts.
 //   - bypassPermissions : auto-approve everything (≈ --dangerously-skip-
@@ -90,7 +90,7 @@ var claudePermissionModeHelp = map[string]string{
 	claudePermPlan:    "Read-only planning — Claude explores and proposes a plan without editing files. ⚠ Still prompts on a write, so a detached agent can block if it tries one.",
 	claudePermDefault: "Standard interactive permissions — prompts before every non-read-only action. ⚠ A detached agent (no human at the pane) can block on a prompt no one answers.",
 	claudePermAccept:  "Auto-approve file edits + common filesystem commands (mkdir/touch/mv/cp/rm) in the working dir; other actions prompt. ⚠ Can still block a detached agent on a non-edit prompt.",
-	claudePermAuto:    "⚠ A classifier model auto-approves safe actions and blocks unsafe ones (curl|bash, force-push, prod deploys); explicit ask-rules still prompt. Mostly autonomous, but rare fallback prompts (classifier unavailable / repeated blocks) can still stall a detached agent.",
+	claudePermAuto:    "A separate supervisor model approves safe actions and blocks unsafe ones (curl|bash, force-push, prod deploys); explicit ask-rules still prompt. The most autonomous mode that keeps guardrails — well suited to a detached agent (only a rare classifier fallback can prompt).",
 	claudePermDontAsk: "Auto-DENY every action not pre-approved by your allow-rules (or read-only); never prompts. ⚠ A detached agent silently fails anything you haven't pre-allowed.",
 	claudePermBypass:  "⚠ Bypass ALL permission checks (≈ --dangerously-skip-permissions): auto-approve everything. No deadlocks but no guardrails — use only in a trusted/sandboxed context; cannot run as root.",
 }
