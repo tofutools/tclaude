@@ -94,6 +94,34 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// raise command reads "Focus" (no stray "Unfocus" in a label).
 	must("label: 'Hide all windows'", "the bulk detach command reads Hide, not Unfocus")
 
+	// Power control: stop / start agent PROCESSES (distinct from the
+	// window ops, which only detach/raise terminals). Each tier delegates
+	// to the same calls the dashboard's Shutdown / Power-on buttons and
+	// per-row status dots make — global + per-group reuse
+	// shutdownScope/powerOnScope (the /api/shutdown + /api/power-on
+	// endpoints), per-agent reuses stopAgentReq/resumeAgentReq behind the
+	// 3-way shutdownConfirm. Every variant is gated on a live count or the
+	// agent's current state so the palette never offers a no-op or the
+	// wrong verb.
+	must("shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq",
+		"palette imports the existing power-control ops from refresh.js")
+	// Global all-agents.
+	must("label: 'Shut down all agents'", "the palette offers a global shutdown")
+	must("shutdownScope('all', null)", "global shutdown reuses shutdownScope")
+	must("label: 'Power on all agents'", "the palette offers a global power-on")
+	must("powerOnScope('all', null)", "global power-on reuses powerOnScope")
+	// Per-group batch.
+	must("label: `Shut down group: ${g.name}`", "the palette offers a per-group shutdown")
+	must("shutdownScope('group', g.name)", "per-group shutdown reuses shutdownScope")
+	must("label: `Power on group: ${g.name}`", "the palette offers a per-group power-on")
+	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
+	// Per-agent, state-gated.
+	must("label: `Stop agent: ${label}`", "the palette offers a per-agent stop")
+	must("stopAgentInteractive(a.conv_id, label)",
+		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
+	must("label: `Resume agent: ${label}`", "the palette offers a per-agent resume")
+	must("resumeAgentReq(a.conv_id, label)", "per-agent resume reuses resumeAgentReq")
+
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
 	// as the per-row ⚙ Retire button (retireAgentInteractive), and a

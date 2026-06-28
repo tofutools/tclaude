@@ -48,6 +48,7 @@ import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
+import { bindHScroll } from './hscroll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -89,6 +90,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   bindTabs();
   bindTabHotkeys();
+  // Keep the full-bleed chrome bars sized to the scrollable content so a
+  // horizontal page scrollbar doesn't leave them ragged (JOH-313).
+  bindHScroll();
   // The Ctrl/Cmd-K command palette. After bindTabs() so its "Go to <tab>"
   // commands click nav buttons whose handlers are already wired.
   bindCommandPalette();
