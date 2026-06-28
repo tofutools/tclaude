@@ -40,7 +40,7 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 
 	// They are wired INTO the cog menus — not the always-visible header /
 	// row surfaces.
-	must("+ permMemberButton(m) + notifyMenuItem(m) +", "agent notify sits in the row cog menu")
+	must("+ notifyMenuItem(m) + remoteControlMenuItem(m, canRemote)", "agent notify sits in the row cog menu")
 	must("+ groupNotifyMenuItem(g)", "group notify sits in the group cog menu")
 
 	// The old always-visible surfaces are gone — no standalone per-agent

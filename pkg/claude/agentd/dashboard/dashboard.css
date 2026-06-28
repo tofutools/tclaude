@@ -1356,6 +1356,14 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .filter-bar-cog .action-menu { right: 0; }
 .action-menu.open { display: flex; }
 .action-menu button { width: 100%; text-align: left; }
+/* Hairline divider between the cog menu's semantic groups
+   (inspect & reach / configure / lifecycle / remove-destroy). Inert
+   full-width flex row — emitted by joinMenuGroups (helpers.js); the
+   parent's 4px gap gives it breathing room either side. */
+.action-menu .menu-sep {
+  height: 1px; margin: 0; padding: 0; border: 0;
+  background: #2a3340; flex: 0 0 auto;
+}
 /* The filter-bar cog's menu items dispatch via id-bound listeners
    (modal-templates.js, modal-message.js) rather than the data-act
    handler, so they don't inherit the .row-actions / .group-actions
