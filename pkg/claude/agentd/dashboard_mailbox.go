@@ -640,13 +640,18 @@ func (d *mailboxDecorator) titleOf(c string) string {
 	return t
 }
 
-func (d *mailboxDecorator) recipients(ids []string) []recipientLine {
-	if len(ids) == 0 {
+// recipients renders the stored audience arrays for the reading pane. convs is
+// the conv-id array; agents is the 1:1 stable-agent_id companion (JOH-284). Each
+// line prefers the persisted agent_id (pruning-immune) and falls back to a live
+// conv→agent lookup only on the empty slots (legacy pre-v79 rows / non-actor
+// recipients) — mirroring decorateRecipients on the CLI side.
+func (d *mailboxDecorator) recipients(convs, agents []string) []recipientLine {
+	if len(convs) == 0 {
 		return nil
 	}
-	ls := make([]recipientLine, 0, len(ids))
-	for _, id := range ids {
-		ls = append(ls, recipientLine{ConvID: id, AgentID: peerAgentID(id), Title: d.titleOf(id)})
+	ls := make([]recipientLine, 0, len(convs))
+	for i, id := range convs {
+		ls = append(ls, recipientLine{ConvID: id, AgentID: storedAgentOrResolve(agents, i, id), Title: d.titleOf(id)})
 	}
 	return ls
 }
@@ -664,8 +669,8 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 		ToConv:       m.ToConv,
 		ToAgent:      m.ToAgent,
 		ToTitle:      d.titleOf(m.ToConv),
-		ToRecipients: d.recipients(m.ToRecipients),
-		CcRecipients: d.recipients(m.CcRecipients),
+		ToRecipients: d.recipients(m.ToRecipients, m.ToRecipientAgents),
+		CcRecipients: d.recipients(m.CcRecipients, m.CcRecipientAgents),
 		Group:        d.groupNames[m.GroupID],
 		Subject:      m.Subject,
 		Body:         m.Body,

@@ -8,9 +8,10 @@ import (
 )
 
 // TestMigrateV77toV78_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts the retired_by_agent companion column is present. v78 is
-// head, so the literal currentVersion tripwire lives here now (moved forward
-// from v77).
+// chain and asserts the retired_by_agent companion column is present. The literal
+// currentVersion tripwire moved forward to the v79 test (per convention it lives
+// in the newest migration's test); this one just confirms a fresh DB reaches
+// currentVersion with the v78 column standing.
 func TestMigrateV77toV78_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -19,7 +20,6 @@ func TestMigrateV77toV78_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 78, currentVersion, "tripwire: bump this and add a v78→v79 test when you add a migration")
 
 	has, err := columnExists(d, "agents", "retired_by_agent")
 	require.NoError(t, err, "columnExists agents.retired_by_agent")

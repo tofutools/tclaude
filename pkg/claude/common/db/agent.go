@@ -357,6 +357,15 @@ const ReincarnationHandoffSubject = "reincarnation handoff"
 // message. Empty for legacy single-recipient sends — ToConv stays
 // canonical for delivery + filtering, the recipient arrays are
 // display-only.
+//
+// ToRecipientAgents / CcRecipientAgents are the stable agent_id companions
+// of those audience conv arrays (JOH-284), persisted at insert and indexed
+// 1:1 with the conv arrays (entry i is the actor of conv entry i, "" for a
+// non-actor / unmapped conv). They let the To:/CC: headers render the
+// rotation-immune id straight from the row — surviving recipient-generation
+// pruning (DeleteAgentByConvID), which strips the conv→agent link the old
+// read-time resolution relied on. Empty for legacy pre-v79 rows the backfill
+// missed; readers fall back to a live conv→agent lookup then.
 type AgentMessage struct {
 	ID       int64
 	GroupID  int64
@@ -377,16 +386,18 @@ type AgentMessage struct {
 	// (any value preset on the struct is ignored), and they are '' when
 	// the conv is not an actor (a plain conv, or a since-deleted agent).
 	// On read, scanAgentMessage fills them from the stored columns.
-	FromAgent    string
-	ToAgent      string
-	Subject      string
-	Body         string
-	ParentID     int64
-	CreatedAt    time.Time
-	DeliveredAt  time.Time
-	ReadAt       time.Time
-	ToRecipients []string
-	CcRecipients []string
+	FromAgent         string
+	ToAgent           string
+	Subject           string
+	Body              string
+	ParentID          int64
+	CreatedAt         time.Time
+	DeliveredAt       time.Time
+	ReadAt            time.Time
+	ToRecipients      []string
+	CcRecipients      []string
+	ToRecipientAgents []string
+	CcRecipientAgents []string
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -1343,18 +1354,25 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	// existing and freshly-inserted rows agree. Any FromAgent/ToAgent preset on
 	// the struct is intentionally ignored: the conv columns are the source of
 	// truth, so the denormalised actor refs can never drift from them.
+	// The audience-agent companions (JOH-284) are DERIVED here too — the same
+	// boundary, the same agent_conversations resolution as from_agent/to_agent
+	// — but per-element over the conv arrays, which a scalar SQL subquery can't
+	// express, so they're computed in Go and passed as JSON. Any
+	// To/CcRecipientAgents preset on the struct is intentionally ignored (the
+	// conv arrays are the source of truth, mirroring the from/to_agent rule).
 	res, err := db.Exec(`INSERT INTO agent_messages
 		(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		 created_at, delivered_at, read_at,
-		 to_recipients, cc_recipients, original_to_conv)
+		 to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv)
 		VALUES (?, ?, ?,
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
-		 ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
 		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
+		recipientAgentsJSON(db, m.ToRecipients), recipientAgentsJSON(db, m.CcRecipients),
 		m.OriginalToConv)
 	if err != nil {
 		return 0, err
@@ -1739,7 +1757,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at = ''
 		ORDER BY id ASC`
@@ -1828,7 +1846,7 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	}
 	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
 		FROM agent_messages WHERE id = ?`, id)
 	m, err := scanAgentMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1869,7 +1887,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC`
 	args := []any{value}
 	if limit > 0 {
@@ -2215,7 +2233,7 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 	}
 	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
 		FROM agent_messages`
 	where, args := f.where()
 	if where != "" {
@@ -2478,6 +2496,39 @@ func recipientsFromJSON(s string) []string {
 	return out
 }
 
+// recipientAgentsJSON resolves an audience conv-id array to the parallel JSON
+// array of stable agent_ids we store in the {to,cc}_recipient_agents companion
+// columns (JOH-284). The result indexes 1:1 with convs — entry i is the actor
+// owning convs[i], or "" for a non-actor / unmapped / since-pruned conv — so a
+// reader can pair them by index and fall back to a live lookup only on the
+// empty gaps. Returns "" (the column's empty default) when convs is empty OR
+// none of them resolve to an actor, so a send with no resolvable audience
+// stores the same empty value a legacy row carries and the reader falls back
+// wholesale. q is any
+// open *sql.DB / *sql.Tx (the resolution is the same agent_conversations join
+// InsertAgentMessage and migrateV75toV76 use, so stored and backfilled rows
+// agree).
+func recipientAgentsJSON(q dbExecQuerier, convs []string) string {
+	if len(convs) == 0 {
+		return ""
+	}
+	agents := make([]string, len(convs))
+	any := false
+	for i, c := range convs {
+		if c == "" {
+			continue
+		}
+		if id, err := agentIDForConvTx(q, c); err == nil && id != "" {
+			agents[i] = id
+			any = true
+		}
+	}
+	if !any {
+		return ""
+	}
+	return recipientsToJSON(agents)
+}
+
 func parseTimeOrZero(s string) time.Time {
 	if s == "" {
 		return time.Time{}
@@ -2521,11 +2572,13 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt string
 	var toRecipients, ccRecipients string
+	var toRecipientAgents, ccRecipientAgents string
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
 		&m.FromAgent, &m.ToAgent,
 		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt,
-		&toRecipients, &ccRecipients, &m.OriginalToConv); err != nil {
+		&toRecipients, &ccRecipients,
+		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
@@ -2533,5 +2586,7 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	m.ReadAt = parseTimeOrZero(readAt)
 	m.ToRecipients = recipientsFromJSON(toRecipients)
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
+	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)
+	m.CcRecipientAgents = recipientsFromJSON(ccRecipientAgents)
 	return &m, nil
 }
