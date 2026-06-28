@@ -560,7 +560,9 @@ func handleSudoRevokeBulk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
+	// agent_id leads the CLI's "Revoked N for <who>" line; conv_id stays
+	// the snapshot. res.AgentID is already resolved above (JOH-325).
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID, "agent_id": res.AgentID})
 }
 
 func sudoGrantsToJSON(rows []*db.SudoGrant, now time.Time) []sudoGrantJSON {
