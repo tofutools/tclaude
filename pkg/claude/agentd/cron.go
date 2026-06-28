@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -203,19 +202,15 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		return "no_target"
 	}
 	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, j.Body).Run(); err != nil {
+	// Route through injectTextAndSubmit rather than hand-rolling the
+	// text→Enter→Enter sequence: it shares the per-pane injection lock
+	// (JOH-310), so a solo cron fire can't interleave its send-keys with a
+	// concurrent nudge / slash / export injection into the same pane, and
+	// the paste-mode settle reasoning stays in one place.
+	if err := injectTextAndSubmit(target, j.Body); err != nil {
 		slog.Warn("cron: solo send failed", "job", j.ID, "error", err)
 		return "send_failed"
 	}
-	// 500ms gap — same paste-mode coalescing reasoning as
-	// injectTextAndSubmit; see comment there.
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("cron: solo submit failed", "job", j.ID, "error", err)
-		return "send_failed"
-	}
-	time.Sleep(500 * time.Millisecond)
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 	return "ok"
 }
 

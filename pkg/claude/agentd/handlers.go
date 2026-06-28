@@ -1049,6 +1049,11 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 // unlucky timing; agents that depend on tight ordering should poll
 // context-info and submit the follow-up themselves once compact has
 // resolved.
+//
+// The per-pane lock (JOH-310) makes the slash submit and the follow-up
+// each atomic, but NOT the pair: another injector can take the pane
+// between them. That is consistent with the best-effort follow-up
+// ordering described above and is not a regression.
 func injectSlashCommand(convID, line, followUp, reason string) bool {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
@@ -1093,6 +1098,23 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // once — each POST /v1/messages runs nudgeIfAlive on its own HTTP
 // goroutine against the same pane. Serializing per pane (one CC pane per
 // agent) gives each agent a single-file inbox-nudge queue.
+//
+// SCOPE — daemon-side only. This is an in-process mutex, so it serializes
+// the agentd injectors listed above against each other. send-keys into
+// the same pane from OTHER processes (the CC hook's own /rename, CLI
+// subprocesses) is not coordinated by it; those are rare and out of scope
+// here — covering them would need a tmux-level / file lock.
+//
+// COST — the lock is held across injectTextAndSubmit's two ~500 ms settle
+// sleeps (and injectMenuToggle's whole menu walk), and nudgeIfAlive runs
+// synchronously on the POST /v1/messages path. So when N senders nudge
+// one pane at once they single-file: the k-th sender's request blocks
+// ~(k-1)s. That is the deliberate price of "one nudge at a time" and is
+// fine for a handful of concurrent senders, but it shares a ceiling with
+// the agent CLI's client timeout — a very deep burst could time a trailing
+// sender out. Decoupling it (an async per-pane worker that enqueues and
+// returns) would lift that ceiling but changes nudgeIfAlive's synchronous
+// "delivered" contract, so it is left for a follow-up if it ever bites.
 //
 // The map gains one entry per distinct pane target the daemon ever
 // injects into (bounded by total agents launched this daemon life) and
