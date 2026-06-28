@@ -824,14 +824,15 @@ function paintList() {
       // sender-less row (human/operator) drops the empty party and reads as a
       // bare "→ recipient" rather than "(unknown) → recipient".
       // The row leads with each party's name (agt-id fallback when nameless);
-      // the conv-id it used rides along as a hover (the auditable snapshot).
-      // A multicast recipient ("first +N") has no single conv to hover.
+      // the full "agent_id / conv-id" pair rides along as a hover (the
+      // auditable snapshot) — matching the roster/audit surfaces. A multicast
+      // recipient ("first +N") has no single party to hover.
       const sender = allSenderLabel(m);
       const fromHTML = sender
-        ? `<span class="mail-row-party"${m.from_conv ? ` title="${esc(m.from_conv)}"` : ''}>${esc(sender)}</span>`
+        ? `<span class="mail-row-party"${m.from_conv ? ` title="${esc(idTooltip(m.from_agent, m.from_conv))}"` : ''}>${esc(sender)}</span>`
         : '';
       head = `${fromHTML}<span class="mail-row-arrow">→</span>
-        <span class="mail-row-party"${m.to_conv ? ` title="${esc(m.to_conv)}"` : ''}>${esc(allRecipientLabel(m))}</span>`;
+        <span class="mail-row-party"${m.to_conv ? ` title="${esc(idTooltip(m.to_agent, m.to_conv))}"` : ''}>${esc(allRecipientLabel(m))}</span>`;
     } else {
       const arrow = m.direction === 'out'
         ? '<span class="mail-dir out" title="sent">→</span>'
@@ -840,11 +841,13 @@ function paintList() {
       // brief) has no party to name — show just the arrow, the way the "all"
       // firehose drops an empty sender, instead of "(unknown sender)".
       const party = counterparty(m);
-      // The other party's conv-id (recipient for a sent row, sender for a
-      // received one) is the hover snapshot behind the name / agt-id.
+      // The other party (recipient for a sent row, sender for a received one):
+      // its full "agent_id / conv-id" pair is the hover snapshot behind the
+      // name / agt-id.
       const partyConv = m.direction === 'out' ? m.to_conv : m.from_conv;
+      const partyAgent = m.direction === 'out' ? m.to_agent : m.from_agent;
       const partyHTML = party
-        ? `<span class="mail-row-party"${partyConv ? ` title="${esc(partyConv)}"` : ''}>${esc(party)}</span>`
+        ? `<span class="mail-row-party"${partyConv ? ` title="${esc(idTooltip(partyAgent, partyConv))}"` : ''}>${esc(party)}</span>`
         : '';
       head = `${arrow}${partyHTML}`;
     }
