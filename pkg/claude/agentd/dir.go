@@ -33,6 +33,11 @@ import (
 
 // dirResp is the wire shape for GET .../dir.
 type dirResp struct {
+	// AgentID is the resolved agent's stable actor key — the canonical ID
+	// the CLI/dashboard leads with; ConvID is the live generation behind
+	// it (kept as the snapshot/hover). "" when the conv is not a known
+	// agent.
+	AgentID       string `json:"agent_id,omitempty"`
 	ConvID        string `json:"conv_id"`
 	StartDir      string `json:"start_dir"`                // Claude Code launch dir
 	StartBranch   string `json:"start_branch,omitempty"`   // git branch of start_dir
@@ -41,15 +46,25 @@ type dirResp struct {
 	CurrentBranch string `json:"current_branch,omitempty"` // git branch of worktree_dir
 	Source        string `json:"source"`                   // "hook" (tracked) | "fallback" (== start_dir)
 	CallerConv    string `json:"caller_conv,omitempty"`    // set when a different agent asked
+	// CallerAgentID is the asking agent's stable actor key — companion to
+	// CallerConv, set when a different agent asked.
+	CallerAgentID string `json:"caller_agent_id,omitempty"`
 }
 
 // dirOpenResp is the wire shape for POST .../dir.
 type dirOpenResp struct {
+	// AgentID is the resolved agent's stable actor key — the canonical ID
+	// the CLI/dashboard leads with; ConvID is the live generation behind
+	// it. "" when the conv is not a known agent.
+	AgentID    string `json:"agent_id,omitempty"`
 	ConvID     string `json:"conv_id"`
 	Dir        string `json:"dir"`
 	Which      string `json:"which"`
 	Opened     bool   `json:"opened"`
 	CallerConv string `json:"caller_conv,omitempty"`
+	// CallerAgentID is the asking agent's stable actor key — companion to
+	// CallerConv, set when a different agent asked.
+	CallerAgentID string `json:"caller_agent_id,omitempty"`
 }
 
 // resolveDirs adapts agent.ResolveLocation to this endpoint's wire
@@ -157,6 +172,7 @@ func writeDirInfo(w http.ResponseWriter, convID, caller string) {
 		source = "hook"
 	}
 	resp := dirResp{
+		AgentID:       peerAgentID(convID),
 		ConvID:        convID,
 		StartDir:      loc.StartupDir,
 		StartBranch:   loc.StartupBranch,
@@ -167,6 +183,7 @@ func writeDirInfo(w http.ResponseWriter, convID, caller string) {
 	}
 	if caller != "" && caller != convID {
 		resp.CallerConv = caller
+		resp.CallerAgentID = peerAgentID(caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -205,9 +222,10 @@ func openDirTerminal(w http.ResponseWriter, r *http.Request, convID, caller stri
 			"could not open a terminal: "+err.Error())
 		return
 	}
-	resp := dirOpenResp{ConvID: convID, Dir: dir, Which: which, Opened: true}
+	resp := dirOpenResp{AgentID: peerAgentID(convID), ConvID: convID, Dir: dir, Which: which, Opened: true}
 	if caller != "" && caller != convID {
 		resp.CallerConv = caller
+		resp.CallerAgentID = peerAgentID(caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

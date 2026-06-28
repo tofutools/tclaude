@@ -86,6 +86,11 @@ const (
 // by the shutdown and power-on responses; the Outcome string says
 // which op (and which result) it carries.
 type powerAgentOutcome struct {
+	// AgentID is the powered agent's stable actor key — the canonical ID
+	// the dashboard/CLI leads with; ConvID is the live generation behind
+	// it (kept as the snapshot/hover). "" when the conv is not a known
+	// agent.
+	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title,omitempty"`
 	Outcome string `json:"outcome"`          // shutdown: exited_gracefully|force_killed|already_offline|failed — power-on: resumed|already_online|failed
@@ -387,7 +392,7 @@ func runShutdown(targets []string, grace time.Duration) []powerAgentOutcome {
 func runPowerOn(targets []string) []powerAgentOutcome {
 	outcomes := make([]powerAgentOutcome, 0, len(targets))
 	for _, convID := range targets {
-		out := powerAgentOutcome{ConvID: convID, Title: agent.FreshTitle(convID)}
+		out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
 		res := resumeOneConv(convID)
 		switch res.Action {
 		case "resumed":
@@ -423,7 +428,7 @@ func runPowerOn(targets []string) []powerAgentOutcome {
 // session — no DB row, no .jsonl. Idempotent: an already-offline conv
 // comes back as already_offline.
 func escalateShutdown(convID string, grace time.Duration) powerAgentOutcome {
-	out := powerAgentOutcome{ConvID: convID, Title: agent.FreshTitle(convID)}
+	out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
 
 	// Step 1: soft exit — inject /exit, exactly as the per-agent
 	// "soft exit" shutdown button does.

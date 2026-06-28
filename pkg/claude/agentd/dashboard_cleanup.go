@@ -48,11 +48,16 @@ import (
 // dashboard renders these back into the modal so the human sees
 // exactly what happened, including every skip and its reason.
 type cleanupOutcome struct {
-	ConvID string   `json:"conv_id"`
-	Title  string   `json:"title,omitempty"`
-	Result string   `json:"result"`           // removed | retired | deleted | reinstated | skipped | failed
-	Detail string   `json:"detail,omitempty"` // human-readable reason
-	Groups []string `json:"groups,omitempty"` // groups touched (agents mode)
+	// AgentID is the cleaned-up actor's stable key — the canonical ID the
+	// dashboard/CLI leads with; ConvID is the live generation behind it
+	// (kept as the snapshot/hover). "" when the conv is not a known agent
+	// (e.g. a plain conversation being deleted).
+	AgentID string   `json:"agent_id,omitempty"`
+	ConvID  string   `json:"conv_id"`
+	Title   string   `json:"title,omitempty"`
+	Result  string   `json:"result"`           // removed | retired | deleted | reinstated | skipped | failed
+	Detail  string   `json:"detail,omitempty"` // human-readable reason
+	Groups  []string `json:"groups,omitempty"` // groups touched (agents mode)
 }
 
 // cleanupResponse is the wire shape returned by both cleanup
@@ -148,7 +153,7 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		convID, ok := resolveCleanupConv(raw)
-		out := cleanupOutcome{ConvID: convID, Title: cleanupTitle(convID)}
+		out := cleanupOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: cleanupTitle(convID)}
 		switch {
 		case !ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"
@@ -321,7 +326,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	for _, tg := range targets {
 		// Resolve the title up-front: the delete path wipes the
 		// conv_index row, so a post-delete lookup would come back empty.
-		out := cleanupOutcome{ConvID: tg.convID, Title: cleanupTitle(tg.convID)}
+		out := cleanupOutcome{AgentID: peerAgentID(tg.convID), ConvID: tg.convID, Title: cleanupTitle(tg.convID)}
 		switch {
 		case !tg.ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"

@@ -1402,6 +1402,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"tmux_session": outcome.TmuxSession,
 		"attach_cmd":   "tclaude session attach " + outcome.Label,
 	}
+	// Lead with the spawned agent's stable id when its conv has already
+	// enrolled (conv-id resolved inline); a pending spawn has no conv yet,
+	// so the field is simply omitted.
+	if aid := peerAgentID(outcome.ConvID); aid != "" {
+		resp["agent_id"] = aid
+	}
 	// FocusMode is only ever non-empty when the caller asked for
 	// auto-focus. "browser" means openTerminal couldn't pop a native
 	// window — the dashboard's spawn modal points at focus_ws instead of

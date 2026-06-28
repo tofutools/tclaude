@@ -20,7 +20,11 @@ import (
 // and `tclaude --join-group`. Mirrors the keys handleGroupSpawn writes
 // in pkg/claude/agentd/lifecycle.go.
 type SpawnResponse struct {
-	Group       string `json:"group"`
+	Group string `json:"group"`
+	// AgentID is the spawned agent's stable actor key — the canonical ID
+	// the CLI leads with; ConvID is the live generation behind it (kept as
+	// the snapshot/hover). "" when the spawn went pending (no conv yet).
+	AgentID     string `json:"agent_id,omitempty"`
 	ConvID      string `json:"conv_id"`
 	Label       string `json:"label"`
 	TmuxSession string `json:"tmux_session"`
@@ -526,7 +530,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 		return nil, MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Spawned %s in group %q\n", short(resp.ConvID), resp.Group)
+	fmt.Fprintf(stdout, "Spawned %s in group %q\n", shortAgentID(resp.AgentID, resp.ConvID), resp.Group)
 	if resp.Label != "" {
 		fmt.Fprintf(stdout, "  Label:   %s\n", resp.Label)
 	}

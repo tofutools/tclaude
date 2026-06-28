@@ -142,6 +142,13 @@ type costDayPoint struct {
 // LastDay. LastDay equals Day (the slice's only day) and is kept for
 // the wire's existing last-activity fallback.
 type costAgentRow struct {
+	// AgentID is the spending actor's stable key — a display companion to
+	// ConvID so a row can name WHO it belongs to. The per-conv keying and
+	// the cumulative-cost delta walk are unchanged: cost stays a per-conv
+	// series (a generation's cost resets per /clear), and this is only an
+	// added attribution field, never a rekey. "" when the conv is not a
+	// known agent (e.g. a plain conversation's spend).
+	AgentID      string  `json:"agent_id,omitempty"`
 	ConvID       string  `json:"conv_id"`
 	Title        string  `json:"title"`
 	Day          string  `json:"day"`
@@ -270,6 +277,7 @@ func collectCosts(from time.Time, factor float64, whatif bool) (costsResponse, e
 	}
 	for k, a := range bySlice {
 		out.Agents = append(out.Agents, costAgentRow{
+			AgentID:      peerAgentID(k.conv),
 			ConvID:       k.conv,
 			Title:        agent.CachedTitle(k.conv),
 			Day:          k.day,

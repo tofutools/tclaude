@@ -916,6 +916,10 @@ type dashboardConversation struct {
 // button. Carries the retire audit fields so the human can see who
 // demoted it and why.
 type dashboardRetiredAgent struct {
+	// AgentID is the retired actor's stable key — the canonical ID the
+	// dashboard/CLI leads with; ConvID is the live generation behind it
+	// (kept as the snapshot/hover).
+	AgentID   string `json:"agent_id,omitempty"`
 	ConvID    string `json:"conv_id"`
 	Title     string `json:"title"`
 	Online    bool   `json:"online"`
@@ -954,6 +958,12 @@ type dashboardReplacedGen struct {
 	Online     bool   `json:"online"` // ~always false — a predecessor has no live pane
 	// ActorConvID / ActorTitle point at the still-live (or retired) actor this
 	// generation belongs to, so the row can link back to the current agent.
+	// ActorAgentID is the actor's stable key — the canonical ID to link the
+	// row back to the live agent (ActorConvID is its current generation,
+	// kept as the snapshot/hover). NOTE: the row's own ConvID stays a bare
+	// conv-id on purpose — it names this predecessor GENERATION, not an
+	// actor (a KEEP-2 case), so it gets no agent_id companion.
+	ActorAgentID string `json:"actor_agent_id,omitempty"`
 	ActorConvID  string `json:"actor_conv_id"`
 	ActorTitle   string `json:"actor_title"`
 	ActorRetired bool   `json:"actor_retired,omitempty"` // the owning actor is itself retired
@@ -1712,6 +1722,7 @@ func collectRetiredSnapshot(retired []*db.Agent, aliveSessions map[string]struct
 			retiredAt = e.RetiredAt.Format(time.RFC3339)
 		}
 		out = append(out, dashboardRetiredAgent{
+			AgentID:          e.AgentID,
 			ConvID:           e.CurrentConvID,
 			Title:            agent.CachedTitle(e.CurrentConvID),
 			Online:           isConvOnlineIn(e.CurrentConvID, aliveSessions),
@@ -1811,6 +1822,7 @@ func collectReplacedGenerationsSnapshot(active, retired []*db.Agent, aliveSessio
 					Reason:       reason,
 					ReplacedAt:   ra,
 					Online:       isConvOnlineIn(g.ConvID, aliveSessions),
+					ActorAgentID: a.AgentID,
 					ActorConvID:  a.CurrentConvID,
 					ActorTitle:   actorTitle,
 					ActorRetired: actorRetired,

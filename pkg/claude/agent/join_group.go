@@ -78,7 +78,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		return fmt.Errorf("spawn into group %q: %w", params.JoinGroup, err)
 	}
 
-	fmt.Printf("Spawned %s in group %q\n", short(resp.ConvID), resp.Group)
+	fmt.Printf("Spawned %s in group %q\n", shortAgentID(resp.AgentID, resp.ConvID), resp.Group)
 	if resp.Label != "" {
 		fmt.Printf("  Label:   %s\n", resp.Label)
 	}
