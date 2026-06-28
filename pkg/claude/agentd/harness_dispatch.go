@@ -91,7 +91,15 @@ func sandboxForHarness(name string) string {
 		return harness.SandboxManagedProfile
 	}
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
-		return h.Sandbox.DefaultMode()
+		// Validate the default before threading it, so a harness whose default
+		// is a normalize-to-omit sentinel (Claude Code's `inherit`, which
+		// ValidateMode collapses to "") relaunches with no sandbox override
+		// rather than a literal `inherit` — keeping an un-overridden Claude
+		// agent on the operator's own settings.json across clone/reincarnate.
+		// Codex's managed-profile default validates to itself, unchanged.
+		if mode, verr := h.Sandbox.ValidateMode(h.Sandbox.DefaultMode()); verr == nil {
+			return mode
+		}
 	}
 	return ""
 }

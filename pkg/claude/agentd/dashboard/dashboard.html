@@ -1334,7 +1334,7 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="profile-editor-sandbox-row" style="display:none" title="Launch sandbox (Codex). Pre-selected to the harness's secure default.">
+    <label class="cron-create-row" id="profile-editor-sandbox-row" style="display:none" title="Launch sandbox the profile pre-fills into the spawn dialog. Modes are per-harness (Codex: tclaude-agent / workspace-write / read-only / danger-full-access; Claude Code: inherit / on / off). Pre-selected to the harness's recommended default.">
       <span class="cron-create-label">Sandbox</span>
       <select id="profile-editor-sandbox"></select>
     </label>
@@ -1772,7 +1772,7 @@
       <span class="cron-create-label">Descr</span>
       <input id="agent-spawn-descr" type="text" placeholder="optional — short one-line description shown on the dashboard" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row" id="agent-spawn-harness-row" title="Coding harness for the new agent. Claude Code is the default; Codex (OpenAI) is the other driver. The harness switches the Model + Effort menus to that harness's valid values and shows the Sandbox selector for harnesses that take a launch sandbox (Codex).">
+    <label class="cron-create-row" id="agent-spawn-harness-row" title="Coding harness for the new agent. Claude Code is the default; Codex (OpenAI) is the other driver. The harness switches the Model + Effort menus — and the Sandbox selector's modes — to that harness's valid values (both harnesses offer a launch sandbox; the mode sets differ).">
       <span class="cron-create-label">Harness</span>
       <select id="agent-spawn-harness"></select>
     </label>
@@ -1807,7 +1807,7 @@
         <option value="max">max</option>
       </select>
     </label>
-    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent (Codex). tclaude-agent (the recommended default) runs under tclaude's managed permission profile: workspace-write containment PLUS access to the agentd socket, so the agent can still coordinate via `tclaude agent`. The raw Codex --sandbox modes do NOT get that socket access: workspace-write confines writes to the working directory; read-only adds no writes; danger-full-access turns the sandbox OFF. Only shown for harnesses that take a launch sandbox — Claude Code's sandbox is configured separately, not here.">
+    <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. The live hint below explains the selected mode.">
       <span class="cron-create-label">Sandbox</span>
       <div class="cron-create-target">
         <select id="agent-spawn-sandbox"></select>

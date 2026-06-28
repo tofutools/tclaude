@@ -31,6 +31,11 @@ func init() {
 		Models:      claudeModels{},
 		Life:        claudeLifecycle{},
 		Convs:       claudeConvStore{},
+		// Claude Code's OS sandbox lives in settings.json, not a launch flag;
+		// claudeSandbox models a small inherit/on/off tri-state that the
+		// spawner translates to a per-session `--settings` override (the
+		// default, inherit, adds nothing — see claude_sandbox.go).
+		Sandbox: claudeSandbox{},
 		// Claude Code accepts a preset conv-id (--session-id), a launch-time
 		// display name (--name, written as a custom-title turn just like
 		// /rename), and a positional first-turn prompt — so the daemon can
@@ -84,6 +89,17 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 		// aliases contain brackets, which sh would otherwise treat as a
 		// glob pattern.
 		cmd += " --model " + clcommon.ShellQuoteArg(spec.Model)
+	}
+	// Claude Code has no `--sandbox` flag; its OS sandbox is a settings.json
+	// block. The `on`/`off` launch-containment modes are delivered as a
+	// per-session `--settings '<json>'` override that merges over the user's
+	// settings (only managed/policy settings outrank it). The default mode
+	// (inherit) yields "" here, so an un-chosen spawn emits no flag and the
+	// agent stays on the operator's own settings.json config. The JSON is a
+	// static, machine-built payload (claudeSandboxSettingsJSON), but shell-
+	// quoted as one arg anyway since it's handed to `sh -c`.
+	if s := claudeSandboxSettingsJSON(spec.SandboxMode); s != "" {
+		cmd += " --settings " + clcommon.ShellQuoteArg(s)
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))

@@ -220,10 +220,12 @@ type SpawnParams struct {
 	// short-flag enricher must not steal a letter from an existing field.
 	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude (default) | codex. Effort/model are validated against the chosen harness's own rules"`
 
-	// Sandbox is the launch-time OS-sandbox mode for a harness that takes
-	// one (Codex). Declared last (no explicit short) for the same reason as
-	// the fields above.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex launch containment for the new agent: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Unset = the secure default (Codex: tclaude-agent). Not applicable to claude"`
+	// Sandbox is the launch-time OS-sandbox mode for the new agent. Codex takes
+	// a native --sandbox enum; Claude Code has no launch flag, so its
+	// inherit/on/off modes are delivered as a `--settings` override (see
+	// harness.claudeSandbox). Declared last (no explicit short) for the same
+	// reason as the fields above.
+	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = the harness default (Codex: tclaude-agent; Claude: inherit)"`
 
 	// Approval is the launch-time approval policy for a harness that takes
 	// one (Codex). Declared last (no explicit short) for the same reason as

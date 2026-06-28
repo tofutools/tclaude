@@ -47,17 +47,20 @@ type NewParams struct {
 	// rest of runNew stays harness-agnostic.
 	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
 
-	// Sandbox selects a harness's launch containment (Codex's --sandbox). On a
-	// direct `session new` it is opt-in: unset emits no flag, so Codex uses the
-	// user's own config.toml sandbox_mode (the human running session new is the
-	// trust root — tclaude doesn't override their config). Pass a value
-	// explicitly. The special value tclaude-agent (SandboxManagedProfile) is a
-	// shorthand that is normalized to --permission-profile tclaude-agent, not a
-	// raw Codex mode. The daemon spawn path (agentd / `agent spawn`) defaults it
-	// to that managed profile instead, since a spawned agent is the untrusted
-	// party. Not applicable to Claude Code (settings.json-driven), which errors
-	// if it is set. See JOH-192 / JOH-207.
-	Sandbox string `long:"sandbox" optional:"true" help:"Codex launch containment: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+	// Sandbox selects a harness's launch containment. On a direct `session new`
+	// it is opt-in: unset emits no flag, so each harness uses its own config
+	// (Codex's config.toml sandbox_mode; Claude Code's settings.json) — the human
+	// running session new is the trust root, so tclaude doesn't override it. Pass
+	// a value explicitly. Codex's modes are its native --sandbox enum; the
+	// special value tclaude-agent (SandboxManagedProfile) is a shorthand
+	// normalized to --permission-profile tclaude-agent. Claude Code has no
+	// --sandbox flag, so its modes (inherit/on/off) are delivered as a
+	// `claude --settings '<json>'` override; inherit normalizes to "" (omit). The
+	// daemon spawn path (agentd / `agent spawn`) defaults Codex to the managed
+	// profile (a spawned agent is the untrusted party) and Claude to inherit (no
+	// override — its settings.json is the operator's chosen posture). See
+	// JOH-192 / JOH-207.
+	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
 	// PermissionProfile selects a tclaude-managed Codex permission profile to
 	// run under, emitted as `codex -p <name>`. It is how the daemon keeps a
@@ -260,12 +263,13 @@ func runNew(params *NewParams) error {
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
 	// `tclaude session new` is the human's own session, and the human is the
 	// trust root — tclaude must not silently override their config.toml
-	// sandbox_mode, so we emit --sandbox only when they pass it explicitly.
-	// (The daemon spawn path is where the workspace-write default belongs —
-	// an agentd-spawned agent is the untrusted party — and it threads the
-	// resolved mode in as an explicit --sandbox.) An explicit mode for a
-	// harness without a launch sandbox flag (Claude Code) errors here. The
-	// cwd-safety check needs the resolved cwd, so it happens later.
+	// sandbox_mode, so we emit a sandbox flag only when they pass it explicitly.
+	// (The daemon spawn path is where the secure default belongs — an
+	// agentd-spawned agent is the untrusted party — and it threads the resolved
+	// mode in explicitly.) For Claude Code, ValidateSandboxMode normalizes its
+	// inherit/blank to "" (no `--settings` override); the spawner turns on/off
+	// into the override. The cwd-safety check needs the resolved cwd, so it
+	// happens later.
 	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
 	if err != nil {
 		return err

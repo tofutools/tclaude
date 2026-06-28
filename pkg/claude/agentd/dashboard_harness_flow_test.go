@@ -24,8 +24,9 @@ func findDashHarness(snap dashSnapshot, name string) *dashHarness {
 // (JOH-162). The catalog must list both spawnable harnesses with the right
 // menu values and capability flags — in particular the subtle pair the
 // per-row controls gate on: Codex CAN rename (via its ConvStore, even with
-// no in-pane /rename) but CANNOT compact, and it alone takes a launch
-// sandbox.
+// no in-pane /rename) but CANNOT compact. Both harnesses expose a sandbox
+// selector now — Codex's native `--sandbox` modes and Claude Code's
+// inherit/on/off `--settings` override — with their own mode sets + help.
 func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -41,8 +42,18 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotEmpty(t, claude.EffortLevels, "claude offers effort levels")
 	assert.True(t, claude.CanRename, "claude renames in-pane")
 	assert.True(t, claude.CanCompact, "claude compacts in-pane")
-	assert.False(t, claude.CanSandbox, "claude has no launch sandbox flag")
-	assert.Empty(t, claude.SandboxModes, "claude exposes no sandbox modes")
+	// Claude Code's OS sandbox is a settings.json block (no `--sandbox` flag),
+	// but tclaude exposes a per-session inherit/on/off override delivered via
+	// `--settings`, so the dialog DOES show a sandbox selector for claude.
+	assert.True(t, claude.CanSandbox, "claude exposes a per-session sandbox override")
+	assert.Equal(t, []string{"inherit", "on", "off"}, claude.SandboxModes)
+	assert.Equal(t, "inherit", claude.DefaultSandbox, "inherit (= no override) is pre-selected")
+	require.NotNil(t, claude.SandboxModeHelp, "claude exposes per-mode sandbox help")
+	for _, m := range claude.SandboxModes {
+		assert.NotEmpty(t, claude.SandboxModeHelp[m], "help text for mode %q", m)
+	}
+	assert.NotContains(t, claude.SandboxModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
+	assert.Contains(t, claude.SandboxModeHelp["off"], "⚠", "off flags its sandbox-disabled caveat")
 	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
 
 	codex := findDashHarness(snap, "codex")

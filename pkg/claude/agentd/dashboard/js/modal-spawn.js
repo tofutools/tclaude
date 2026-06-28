@@ -92,8 +92,10 @@ async function updateSpawnModelDefaultLabel(groupName) {
 // The spawn dialog drives its harness selector + per-harness Model / Effort
 // / Sandbox menus off the snapshot's `harnesses` catalog (JOH-162). The
 // default harness (Claude Code) keeps its curated Model <select>; a harness
-// with no curated model list (Codex) swaps in a free-text Model input, and
-// a harness that takes a launch sandbox (Codex) reveals the Sandbox <select>.
+// with no curated model list (Codex) swaps in a free-text Model input. Both
+// harnesses expose a launch sandbox, so the Sandbox <select> shows for either
+// — its mode set + recommended default come from the catalog (Codex's native
+// --sandbox modes; Claude Code's inherit/on/off --settings override).
 
 // spawnHarnessCatalog returns the snapshot's harness catalog (array), or []
 // when it hasn't loaded yet.
@@ -161,7 +163,8 @@ function populateSpawnEffortSelect(h) {
 function applySpawnHarness(harnessName) {
   const h = spawnHarnessByName(harnessName);
   // No catalog entry (snapshot not loaded, or unknown harness): fall back
-  // to the default Claude-Code layout — curated model select, no sandbox.
+  // to the default Claude-Code layout — curated model select; the sandbox
+  // row is driven by can_sandbox below (hidden until the catalog loads).
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#agent-spawn-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#agent-spawn-model-codex-row').style.display = hasModelList ? 'none' : '';
