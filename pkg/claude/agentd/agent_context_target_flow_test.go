@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,7 @@ type ctxInfo struct {
 	TokensOutput      int64   `json:"tokens_output"`
 	ContextWindowSize int64   `json:"context_window_size"`
 	CallerConv        string  `json:"caller_conv"`
+	CallerAgentID     string  `json:"caller_agent_id"`
 }
 
 // ctxGroupEntry mirrors the daemon's groupContextEntry wire shape
@@ -303,4 +305,48 @@ func TestGroupContext_DeniedForNonOwnerNonSlug(t *testing.T) {
 	require.NotNil(t, hotEntry, "worker missing from human group context")
 	assert.True(t, hotEntry.HasSnapshot, "worker snapshot surfaced to human")
 	assert.Equal(t, 55.0, hotEntry.ContextPct, "worker context_pct")
+}
+
+// Scenario: an owning lead reads a worker's context via the cross-agent
+// --target route. The lead's conv-id is only a point-in-time snapshot —
+// after the lead reincarnates it names a dead generation — so the
+// attribution must lead with the durable actor.
+//
+// Expected: the response carries BOTH the caller_conv snapshot AND a
+// caller_agent_id companion resolved at assembly to the caller's stable
+// actor (JOH-329). The companion is the `agt_…` actor key, distinct from
+// the conv-id, so the CLI can lead with the id that survives the caller
+// reincarnating and fall back to caller_conv only for un-enrolled callers.
+func TestContextInfo_CallerAgentIDCompanion(t *testing.T) {
+	f := newFlow(t)
+
+	const lead = "caid-lead-bbbb-cccc-dddd"
+	const worker = "caid-wrkr-bbbb-cccc-dddd"
+	const label = "lbl-caid"
+
+	g := f.HaveGroup("squad")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, label, "tmux-caid", "/tmp/caid")
+	f.HaveMember("squad", worker)
+	// Owning the group is the read bypass — and the act of owning enrols
+	// the lead as an agent, minting the stable actor the companion resolves.
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
+	require.NoError(t,
+		db.UpdateContextSnapshot(label, 60.0, 120000, 12000, 200000),
+		"seed worker snapshot")
+
+	leadAgentID, err := db.AgentIDForConv(lead)
+	require.NoError(t, err)
+	require.NotEmpty(t, leadAgentID, "lead must be enrolled as an agent")
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+worker+"/context", nil), lead))
+	require.Equal(t, http.StatusOK, rec.Code, "agent/context (owner): body=%s", rec.Body.String())
+	var other ctxInfo
+	testharness.DecodeJSON(t, rec, &other)
+	assert.Equal(t, lead, other.CallerConv, "caller_conv snapshot still echoed")
+	assert.Equal(t, leadAgentID, other.CallerAgentID,
+		"caller_agent_id companion resolved to the caller's durable actor")
+	assert.True(t, strings.HasPrefix(other.CallerAgentID, "agt_"),
+		"companion is the stable agent_id, not the conv-id snapshot")
 }

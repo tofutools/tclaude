@@ -828,6 +828,7 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -916,6 +917,7 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	if stopRes.Action != "skipped:already_offline" {
 		resp["pre_stop"] = stopRes.Action
@@ -946,6 +948,7 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	}
 	if caller != "" && caller != targetConv {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

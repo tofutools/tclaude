@@ -311,6 +311,19 @@ func sameActor(a, b string) bool {
 	return aa != "" && aa == peerAgentID(b)
 }
 
+// stampCallerAgentID adds the durable `caller_agent_id` companion to a
+// response that already carries a `caller_conv` snapshot. The conv-id names
+// only one generation, so after the caller reincarnates the snapshot points
+// at a dead generation; the agent_id is the stable actor the attribution
+// should lead with (JOH-329). No-op when the caller isn't an enrolled agent
+// (older / un-enrolled callers keep only the conv snapshot, and the CLI falls
+// back to it).
+func stampCallerAgentID(resp map[string]any, caller string) {
+	if aid := peerAgentID(caller); aid != "" {
+		resp["caller_agent_id"] = aid
+	}
+}
+
 // The message inbox/ownership surface keys on the STABLE actor, not the
 // caller's current conv generation (JOH-317). A conv-id only names one
 // generation, so an agent that reincarnated / ran /clear could neither read
@@ -1496,6 +1509,7 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 		}
 		if caller != "" && caller != target {
 			resp["caller_conv"] = caller
+			stampCallerAgentID(resp, caller)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -1525,6 +1539,7 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1662,6 +1677,7 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	if body.FollowUp != "" {
 		resp["follow_up"] = body.FollowUp
@@ -1856,6 +1872,7 @@ func writeContextInfo(w http.ResponseWriter, convID, caller string) {
 	}
 	if caller != "" && caller != convID {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

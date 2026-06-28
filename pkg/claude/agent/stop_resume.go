@@ -72,11 +72,12 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		path += "?force=1"
 	}
 	var resp struct {
-		ConvID      string `json:"conv_id"`
-		CallerConv  string `json:"caller_conv,omitempty"`
-		Action      string `json:"action"`
-		Detail      string `json:"detail,omitempty"`
-		TmuxSession string `json:"tmux_session,omitempty"`
+		ConvID        string `json:"conv_id"`
+		CallerConv    string `json:"caller_conv,omitempty"`
+		CallerAgentID string `json:"caller_agent_id,omitempty"`
+		Action        string `json:"action"`
+		Detail        string `json:"detail,omitempty"`
+		TmuxSession   string `json:"tmux_session,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -90,7 +91,7 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
 	}
 	if resp.CallerConv != "" {
-		fmt.Fprintf(stdout, "  called by: %s\n", short(resp.CallerConv))
+		fmt.Fprintf(stdout, "  called by: %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	return rcOK
 }
@@ -136,10 +137,11 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/resume"
 	var resp struct {
-		ConvID     string `json:"conv_id"`
-		CallerConv string `json:"caller_conv,omitempty"`
-		Action     string `json:"action"`
-		Detail     string `json:"detail,omitempty"`
+		ConvID        string `json:"conv_id"`
+		CallerConv    string `json:"caller_conv,omitempty"`
+		CallerAgentID string `json:"caller_agent_id,omitempty"`
+		Action        string `json:"action"`
+		Detail        string `json:"detail,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -150,7 +152,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
 	}
 	if resp.CallerConv != "" {
-		fmt.Fprintf(stdout, "  called by: %s\n", short(resp.CallerConv))
+		fmt.Fprintf(stdout, "  called by: %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	return rcOK
 }
@@ -315,6 +317,7 @@ func deleteOne(convID string, force bool, stdout, stderr io.Writer) int {
 	var resp struct {
 		ConvID            string         `json:"conv_id"`
 		CallerConv        string         `json:"caller_conv,omitempty"`
+		CallerAgentID     string         `json:"caller_agent_id,omitempty"`
 		Action            string         `json:"action"`
 		PreStop           string         `json:"pre_stop,omitempty"`
 		JsonlRemoved      bool           `json:"jsonl_removed"`
@@ -347,7 +350,7 @@ func deleteOne(convID string, force bool, stdout, stderr io.Writer) int {
 		}
 	}
 	if resp.CallerConv != "" {
-		fmt.Fprintf(stdout, "  called by: %s\n", short(resp.CallerConv))
+		fmt.Fprintf(stdout, "  called by: %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	return rcOK
 }

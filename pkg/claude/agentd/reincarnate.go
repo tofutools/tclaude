@@ -528,6 +528,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	}
 	if caller != target {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	carry := ""
 	switch switchedClients {

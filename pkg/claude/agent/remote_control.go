@@ -101,6 +101,7 @@ func runRemoteControl(p *remoteControlParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		ConvID        string `json:"conv_id"`
 		CallerConv    string `json:"caller_conv,omitempty"`
+		CallerAgentID string `json:"caller_agent_id,omitempty"`
 		RemoteControl bool   `json:"remote_control"`
 		Action        string `json:"action"`
 		Note          string `json:"note,omitempty"`
@@ -118,7 +119,7 @@ func runRemoteControl(p *remoteControlParams, stdout, stderr io.Writer) int {
 	}
 	suffix := ""
 	if resp.CallerConv != "" {
-		suffix = fmt.Sprintf(" (called by %s)", short(resp.CallerConv))
+		suffix = fmt.Sprintf(" (called by %s)", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	if resp.Action == "status" {
 		// On a status call the daemon reads the live pane footer when it can
