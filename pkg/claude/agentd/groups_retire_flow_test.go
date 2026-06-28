@@ -622,3 +622,71 @@ func TestGroupRetire_ParallelOwnerlessMergeAcrossMembers(t *testing.T) {
 	assert.Contains(t, joined, `"alpha"`, "alpha lost its only owner; warnings=%v", resp.Warnings)
 	assert.Contains(t, joined, `"beta"`, "beta lost its only owner; warnings=%v", resp.Warnings)
 }
+
+// Scenario (JOH-327): the dashboard's retire preview now submits stable
+// agent_ids (the conv_id phase-out), and the matcher must resolve each
+// selector back to the member's conv-id. This pins that an explicit
+// `convs` list of agt_ ids retires exactly those members — AND that the
+// raw conv-id path STILL works in the same request (the conv-keyed
+// back-compat path D2 deliberately preserved): one member is selected by
+// its agt_ id, another by its raw conv-id, both retire, and an
+// unselected third survives.
+//
+// The raw-conv-id acceptance is what underpins the dangling-agent
+// recovery escape hatch (PR #628) — a member must stay retirable by a
+// conv-id even when the dashboard couldn't lead with an agent_id. (The
+// deeper looksLikeConvID UUID-shape fallback inside resolveCleanupConv
+// is belt-and-suspenders that a group member never reaches: membership
+// alone makes a conv resolvable via ResolveSelector's group-member
+// branch, so this test exercises that resolution path, not the
+// shape-only fallback.)
+func TestDashboardGroupRetire_AcceptsAgentIDAndConvIDSelectors(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const group = "dash-agentid"
+	const byAgentID = "agid-1111-2222-3333-4444" // selected via its agt_ id
+	const byConvID = "cvid-1111-2222-3333-4444"  // selected via its raw conv-id
+	const keep = "keep-1111-2222-3333-4444"      // not selected → must survive
+	f.HaveGroup(group)
+	for _, c := range []string{byAgentID, byConvID, keep} {
+		f.HaveConvWithTitle(c, "w-"+c[:4])
+		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], "/tmp/"+c[:4])
+		f.HaveMember(group, c)
+	}
+
+	// The stable agent_id of the first member — what the flipped picker emits.
+	agentID, err := db.AgentIDForConv(byAgentID)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID, "member must have a stable agent_id")
+	require.Contains(t, agentID, "agt_", "the selector must be an agt_ id, not a conv-id")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	body := map[string]any{"convs": []string{agentID, byConvID}, "shutdown": true}
+	r := testharness.JSONRequest(t, http.MethodPost, "/api/groups/"+group+"/retire", body)
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var resp groupRetireResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode: %s", rec.Body.String())
+
+	// Both selected members retire — one resolved from its agt_ id, one
+	// from its raw conv-id — and the response keys back on conv-id.
+	assert.Equal(t, "retired", retireMemberAction(resp, byAgentID),
+		"a member selected by its agt_ id must retire; members=%+v", resp.Members)
+	assert.Equal(t, "retired", retireMemberAction(resp, byConvID),
+		"a member selected by its raw conv-id must still retire (conv-keyed back-compat); members=%+v", resp.Members)
+	assert.Equal(t, "", retireMemberAction(resp, keep),
+		"an unselected member must be omitted; members=%+v", resp.Members)
+	assert.Len(t, resp.Members, 2, "only the two selected members are acted on; members=%+v", resp.Members)
+
+	for _, c := range []string{byAgentID, byConvID} {
+		state, serr := db.AgentState(c)
+		require.NoError(t, serr)
+		assert.Equal(t, db.AgentStateRetired, state, "%s must be retired", c)
+	}
+	keepState, err := db.AgentState(keep)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, keepState, "the unselected member stays active")
+	assert.True(t, flowGroupHasMember(f, group, keep), "the unselected member stays in the group")
+	assert.True(t, f.World.Tmux.IsAlive("tmux-keep"), "the unselected member's pane must not be touched")
+}

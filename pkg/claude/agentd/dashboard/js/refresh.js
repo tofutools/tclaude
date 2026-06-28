@@ -1040,8 +1040,10 @@ const RETIRE_STATUS_LABELS = { idle: 'idle', offline: 'offline' };
 // modal sends an EXPLICIT conv-id list built from these members, so what
 // the human ticks is precisely what the BE retires.
 //
-// Each entry is {conv_id, title, status, role} — enough to render a
-// preview row and to post the explicit selection.
+// Each entry is {agent_id, conv_id, title, status, role} — enough to
+// render a preview row and to post the explicit selection (the submit
+// leads with agent_id, falling back to conv_id for a member that has no
+// stable actor id yet).
 function groupMembersByStatus(group, status) {
   const snap = lastSnapshot || {};
   const g = (snap.groups || []).find(x => x.name === group);
@@ -1056,6 +1058,7 @@ function groupMembersByStatus(group, status) {
       : (m.online && m.state && m.state.status === status);
     if (matches) {
       out.push({
+        agent_id: m.agent_id || '',
         conv_id: m.conv_id,
         title: m.title || '',
         status: m.online ? ((m.state && m.state.status) || 'online') : 'offline',
@@ -1224,9 +1227,12 @@ function openRetirePreview(group, status) {
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
 
   async function onSubmit() {
-    // Snapshot the ticked conv-ids at click time — this is the list sent
-    // to the BE verbatim, the same list the human just reviewed.
-    const convs = candidates.filter(c => c.checked).map(c => c.conv_id);
+    // Snapshot the ticked agent-ids at click time — this is the list sent
+    // to the BE verbatim, the same list the human just reviewed. We lead
+    // with the stable agent_id (the BE resolves it back to the member's
+    // conv-id), falling back to conv_id for a member with no actor id —
+    // which also keeps a dangling agent retirable by its raw conv-id.
+    const convs = candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id);
     if (convs.length === 0) return;
     // Snapshot the worktree choice too — coupled to shutdown, so a box
     // disabled by an unticked shutdown never sends delete_worktree.
@@ -1612,13 +1618,13 @@ function openWindowModal(scope, groupName) {
       // A group-scoped modal is already one group, so the candidate
       // carries only that group — its group filter row shows a single
       // chip for it (a redundant-but-consistent twin of select-all).
-      candidates.push({ conv_id: m.conv_id, title: m.title || '',
+      candidates.push({ agent_id: m.agent_id || '', conv_id: m.conv_id, title: m.title || '',
         roles: m.role ? [m.role] : [], groups: [groupName], checked: true });
     }
   } else {
     for (const a of (snap.agents || [])) {
       if (!a.online) continue;
-      candidates.push({ conv_id: a.conv_id, title: a.title || '',
+      candidates.push({ agent_id: a.agent_id || '', conv_id: a.conv_id, title: a.title || '',
         roles: rolesByConv[a.conv_id] || [], groups: groupsByConv[a.conv_id] || [],
         checked: true });
     }
@@ -1796,7 +1802,10 @@ function openWindowModal(scope, groupName) {
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
 
   async function onSubmit() {
-    const convs = candidates.filter(c => c.checked).map(c => c.conv_id);
+    // Lead with the stable agent_id (the BE resolves it back to the conv-id
+    // the universe is keyed on), falling back to conv_id for a candidate
+    // with no actor id.
+    const convs = candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id);
     if (convs.length === 0) return;
     const dir = direction();
     const payload = { direction: dir, scope, convs };
@@ -2703,6 +2712,7 @@ export function openCleanupModal(opts) {
       for (const m of (g?.members || [])) {
         if (m.online) continue;
         out.push({
+          agent_id: m.agent_id || '',
           conv_id: m.conv_id, title: m.title || '', category: 'agent',
           online: false, lastActivity: (m.state || {}).last_hook || '',
           owner: !!m.owner, groups: [],
@@ -2715,6 +2725,7 @@ export function openCleanupModal(opts) {
       // auto-selection would be a footgun.
       for (const a of (lastSnapshot?.agents || [])) {
         out.push({
+          agent_id: a.agent_id || '',
           conv_id: a.conv_id, title: a.title || '', category: 'agent',
           online: !!a.online, lastActivity: (a.state || {}).last_hook || '',
           owner: !!(a.owned_groups || []).length,
@@ -2723,6 +2734,7 @@ export function openCleanupModal(opts) {
       }
       for (const r of (lastSnapshot?.retired || [])) {
         out.push({
+          agent_id: r.agent_id || '',
           conv_id: r.conv_id, title: r.title || '', category: 'retired',
           online: !!r.online, lastActivity: r.retired_at || '',
           owner: false, groups: [], checked: false,
@@ -3028,7 +3040,11 @@ export function openCleanupModal(opts) {
   }
 
   async function submit() {
-    const picks = selected().map(c => c.conv_id);
+    // Lead with the stable agent_id (the BE's resolveCleanupConv maps it
+    // back to a conv-id); a plain conversation has no actor id, so it falls
+    // back to conv_id — which also keeps a dangling agent reachable by its
+    // raw conv-id.
+    const picks = selected().map(c => c.agent_id || c.conv_id);
     if (!picks.length) return;
     errEl.textContent = '';
     submitBtn.disabled = true;

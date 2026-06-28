@@ -159,7 +159,12 @@ func handleAgentWindows(w http.ResponseWriter, r *http.Request) {
 		Group     string   `json:"group"`
 		Convs     []string `json:"convs"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	// Cap the body: selectWindowTargets now resolves each "convs" entry
+	// through resolveCleanupConv — a DB lookup, and a ~/.claude/projects
+	// rescan on a non-agt_ miss — so an unbounded selector list would
+	// amplify one POST into many filesystem walks. 64 KiB matches the
+	// group-retire route's cap; a realistic selection is tiny.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -314,6 +319,15 @@ func unfocusAllAgentWindows() (agentWindowsResp, error) {
 // Otherwise the result is the intersection — a `convs` entry outside
 // the universe is ignored, so the group modal cannot be used to reach
 // an agent outside its group. Always de-duplicated.
+//
+// Each `convs` selector is canonicalised through resolveCleanupConv
+// first: the dashboard now submits agent_ids (the conv_id phase-out),
+// and resolveCleanupConv maps an agt_ id (or a conv-id) to the conv-id
+// the universe is keyed on — with a UUID-shape fallback so a raw
+// conv/UUID id still works when nothing resolves it (the same
+// defensive posture the cleanup + retire bulk paths use). The
+// universe-membership check below still bounds the result to the scope,
+// so accepting agent_ids never widens reach beyond the group.
 func selectWindowTargets(universe, convs []string) []string {
 	inUniverse := make(map[string]bool, len(universe))
 	for _, id := range universe {
@@ -337,7 +351,9 @@ func selectWindowTargets(universe, convs []string) []string {
 		return out
 	}
 	for _, id := range convs {
-		keep(strings.TrimSpace(id))
+		if convID, ok := resolveCleanupConv(id); ok {
+			keep(convID)
+		}
 	}
 	return out
 }
