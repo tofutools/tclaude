@@ -5,7 +5,7 @@
 // modal reuses modal-cron's target picker; bindSudoModal wires the
 // sudo-grant modal (defined in modal-cron) to its DOM controls.
 
-import { $, $$, esc, shortId, shortAgentId, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, shortAgentId, idTooltip, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
@@ -107,13 +107,13 @@ function renderMessageMembers() {
     listEl.innerHTML = members.map(m => {
       const online = m.online ? '<span class="cleanup-badge online">online</span>' : '';
       // Lead the id column with the stable agent_id (conv-id prefix as the
-      // fallback), keeping the conv-id it used as the hover snapshot. The
+      // fallback), showing the full "agent_id / conv-id" pair on hover. The
       // checkbox stays keyed by conv_id — every member has one, so it's a
       // stable internal handle for the change listener regardless of agent_id.
       return `<div class="cleanup-row"><label>`
         + `<input type="checkbox" data-conv="${esc(m.conv_id)}"${m.checked ? ' checked' : ''} />`
         + `<span class="title">${esc(m.title || '(untitled)')}</span>`
-        + `<span class="id" title="${esc(m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</span>`
+        + `<span class="id" title="${esc(idTooltip(m.agent_id, m.conv_id))}">${esc(shortAgentId(m.agent_id, m.conv_id))}</span>`
         + `${online}</label></div>`;
     }).join('');
   }

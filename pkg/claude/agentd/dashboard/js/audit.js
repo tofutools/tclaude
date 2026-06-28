@@ -11,7 +11,7 @@
 // activation + any filter/sort/page change + a slow re-poll while
 // visible; never on the 2s snapshot tick.
 
-import { $, esc, relTime, shortAgentId } from './helpers.js';
+import { $, esc, relTime, shortAgentId, idTooltip } from './helpers.js';
 
 // View state. page/pageSize/sort/dir are sent to the server; total +
 // totalUnfiltered come back with each fetch and drive the pager + count.
@@ -95,7 +95,7 @@ function actorCell(e) {
   if (e.actor_kind === 'agent') {
     const id = shortAgentId(e.actor_agent, e.actor_conv);
     return `<span class="rowname">${esc(e.actor_label || '(agent)')}</span>`
-      + (id ? ` <span class="id" title="${esc(e.actor_conv)}">${esc(id)}</span>` : '');
+      + (id ? ` <span class="id" title="${esc(idTooltip(e.actor_agent, e.actor_conv))}">${esc(id)}</span>` : '');
   }
   return `<span class="muted" title="caller identity could not be resolved">${esc(e.actor_label || 'unknown')}</span>`;
 }

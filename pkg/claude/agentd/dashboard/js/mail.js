@@ -55,7 +55,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
-import { $, $$, esc, linkify, relTime, shortId, shortAgentId, withPreservedFocus } from './helpers.js';
+import { $, $$, esc, linkify, relTime, shortId, shortAgentId, idTooltip, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
@@ -832,7 +832,7 @@ function paintPager() {
 function recipientNames(rs) {
   if (!rs || !rs.length) return '';
   return rs.map(r => {
-    const id = `<span class="mail-cid" title="${esc(r.conv_id)}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`;
+    const id = `<span class="mail-cid" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`;
     return r.title ? `${esc(r.title)} ${id}` : id;
   }).join(', ');
 }
@@ -862,11 +862,11 @@ function paintReader() {
   }
   const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
   // From / To lead with the stable agent_id (name + agt_xxxxxxxx), with the
-  // conv-id snapshot on hover — the same handle the roster/audit surfaces
-  // lead with. shortAgentId falls back to the conv-id prefix for a party
-  // that was never an agent.
+  // full "agent_id / conv-id" pair on hover — the same handle the roster/audit
+  // surfaces lead with. shortAgentId falls back to the conv-id prefix for a
+  // party that was never an agent.
   const fromIdHTML = m.from_conv
-    ? `<span class="mail-cid" title="${esc(m.from_conv)}">${esc(shortAgentId(m.from_agent, m.from_conv))}</span>`
+    ? `<span class="mail-cid" title="${esc(idTooltip(m.from_agent, m.from_conv))}">${esc(shortAgentId(m.from_agent, m.from_conv))}</span>`
     : '';
   const fromHTML = m.from_title ? `${esc(m.from_title)} ${fromIdHTML}` : fromIdHTML;
   // To: prefer the full recipients array (multicasts carry every
@@ -874,7 +874,7 @@ function paintReader() {
   let toHTML = recipientNames(m.to_recipients);
   if (!toHTML && (m.to_title || m.to_conv)) {
     const toIdHTML = m.to_conv
-      ? `<span class="mail-cid" title="${esc(m.to_conv)}">${esc(shortAgentId(m.to_agent, m.to_conv))}</span>`
+      ? `<span class="mail-cid" title="${esc(idTooltip(m.to_agent, m.to_conv))}">${esc(shortAgentId(m.to_agent, m.to_conv))}</span>`
       : '';
     toHTML = m.to_title ? `${esc(m.to_title)} ${toIdHTML}` : toIdHTML;
   }

@@ -22,6 +22,17 @@ function shortId(id) { return (id || '').slice(0, 8); }
 // prefix when the row carries no agent_id (a plain conversation, a group
 // target, or an older daemon that didn't send the field).
 function shortAgentId(agentId, convId) { return agentId ? agentId.slice(0, 12) : shortId(convId); }
+// idTooltip is the hover companion to shortAgentId: it expands the truncated
+// handle to its full form for a cell's title. With both a stable agent_id and
+// a conv-id present it shows "<agent_id> / <conv-id>" so either identifier can
+// be read/copied off the hover (the agent_id is the rotation-immune handle;
+// the conv-id is what resumes/inspects the underlying conversation). Falls
+// back to whichever single id exists — a plain conversation, a group target,
+// or a pre-enrollment row carries only a conv-id.
+function idTooltip(agentId, convId) {
+  if (agentId && convId) return `${agentId} / ${convId}`;
+  return agentId || convId || '';
+}
 
 // linkify turns bare http(s) URLs in a plain-text string into clickable
 // <a> links and escapes everything else, so the result is safe to drop
@@ -1398,7 +1409,7 @@ function syncBotAnimations() {
 // composition details of the exported builders above.
 export {
   syncBotAnimations,
-  $, $$, esc, linkify, shortId, shortAgentId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
