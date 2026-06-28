@@ -119,6 +119,14 @@ var archivedTitleSuffixRegex = regexp.MustCompile(`-x(?:-\d+)?$`)
 // Pairs with `-c-N` (clone) on the live side. Unifies with `groups
 // archive` — both are soft-delete states.
 //
+// CAVEAT (JOH-319): a LIVE conversation whose own base name ends in `-x`
+// or `-x-<N>` (e.g. a user-chosen `foo-x`) self-matches and is treated as
+// archived — so it silently hides from `conv ls` etc. Post-JOH-319 the
+// living reincarnation generation keeps its base name, so this no longer
+// gets masked by an appended `-r-N` as it did before. Narrow (needs a
+// `-x`-ending base name); the durable fix is the `archived_at` column
+// below, which makes the title heuristic unnecessary.
+//
 // Note: this is the title-based fallback. The canonical check is the
 // (future) `conv_index.archived_at` column; this helper covers
 // legacy convs that pre-date the column. New code should prefer the
