@@ -322,6 +322,23 @@ func DeleteConvByID(convID string) (db.AgentDeletionCounts, error) {
 	return counts, nil
 }
 
+// afterHeadCheckForTest, when non-nil, is invoked inside
+// DeleteAgentAllGenerations in the TOCTOU window between the initial live-head
+// resolution and the ConvsForAgent generation capture — the exact race the
+// JOH-290 fix closes (re-resolving the live head before the predecessor sweep).
+// A regression test (JOH-305) sets it to rotate the actor's head onto a fresh
+// generation in that window, then asserts the new head survives the sweep
+// instead of being torn down as a "predecessor". Nil in production, so the
+// guarded call site below is a no-op; it lives here (not in _test.go) because
+// the production call site must compile against it. This is the in-process
+// …ForTest seam category sanctioned in CLAUDE.md (JOH-303): test-only,
+// nil-default, production-unreachable.
+//
+// It is a package-global, so a test that assigns it must stay serial (no
+// t.Parallel). The conv tests are inherently serial today — setupTestDB uses
+// t.Setenv + db.ResetForTest — so this is a latent caution, not a live race.
+var afterHeadCheckForTest func()
+
 // DeleteAgentAllGenerations is the actor-aware delete entry point: it removes a
 // conversation AND, when that conversation is the head (current) generation of a
 // stable agent (JOH-26), every OTHER generation of the same actor too — each
@@ -392,6 +409,15 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 			return counts, nil, err
 		}
 		return c, []string{convID}, nil
+	}
+
+	// Test-only TOCTOU injection point (JOH-305): fire a head rotation here, in
+	// the window between the head check above and the ConvsForAgent capture
+	// below, so the newly-rotated head lands in `gens` and a regression test can
+	// prove the live-head recheck (JOH-290) keeps it from being swept. No-op in
+	// production (hook is nil).
+	if afterHeadCheckForTest != nil {
+		afterHeadCheckForTest()
 	}
 
 	// Head generation of a live actor: gather the whole generation set up front
