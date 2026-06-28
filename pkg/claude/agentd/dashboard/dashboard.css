@@ -19,17 +19,51 @@ body {
   background: #0f1419;
   color: #d4d4d4;
 }
+/* header / nav are full-bleed bars: the background + border live on the
+   outer element (so they fill the bar's whole width — JS widens it to the
+   scrollable content width when the page can scroll sideways, JOH-313),
+   while the flex layout + padding live on the inner .bar-inner, which is
+   pinned to the viewport width so the right-aligned controls never fly off
+   the visible area. */
 header {
-  padding: 16px 24px 12px;
   border-bottom: 1px solid #2a3340;
   background: #161b22;
+}
+.header-inner {
+  padding: 16px 24px 12px;
   display: flex;
   align-items: center;
   gap: 16px;
 }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; }
 header .meta { color: #7d8590; font-size: 12px; }
-nav { display: flex; gap: 4px; padding: 0 24px; background: #161b22; border-bottom: 1px solid #2a3340; }
+nav { background: #161b22; border-bottom: 1px solid #2a3340; }
+.nav-inner { display: flex; gap: 4px; padding: 0 24px; }
+/* When the page can scroll sideways, JS sizes .bar-inner to the viewport
+   width (header/nav themselves are widened to the content width). In
+   follow mode the inner sticks to the left edge so the header buttons and
+   the tab strip stay put — and usable — as the content scrolls under
+   them; in static mode (no class) the inner scrolls off with the page.
+   Gated on .hscroll-overflow so we DON'T make the bars sticky in the
+   common, non-overflowing case: position:sticky creates a stacking
+   context regardless of z-index, which would needlessly re-scope the
+   header's popovers (#notify-pop / #slop-volume-pop). With no horizontal
+   scroll, sticky-left is a positional no-op anyway. When it IS active, the
+   header layer sits above the nav layer so those header dropdowns still
+   float over the tab strip rather than being painted over by it. */
+body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
+body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
+body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
+/* The ⇆ scroll-mode toggle only matters when the page can actually scroll
+   sideways, so it stays hidden until JS flags that (body.hscroll-overflow). */
+#hscroll-toggle { display: none; }
+body.hscroll-overflow #hscroll-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; padding: 2px 8px; font: inherit; font-size: 12px;
+  cursor: pointer; white-space: nowrap;
+}
+body.hscroll-overflow #hscroll-toggle:hover { color: #d4d4d4; border-color: #58a6ff; }
 nav button {
   background: none; border: none; color: #7d8590; padding: 10px 16px;
   cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
