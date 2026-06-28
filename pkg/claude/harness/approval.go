@@ -30,6 +30,21 @@ type ApprovalCatalog interface {
 	// default is wanted, via ResolveApprovalPolicy); any other value is either
 	// a recognized policy (returned trimmed) or an error naming the valid set.
 	ValidatePolicy(policy string) (string, error)
+	// Modes lists the selectable approval/permission policies for spawn UIs —
+	// the ApprovalCatalog parallel to SandboxCatalog.Modes, driving the spawn
+	// dialog / profile editor's approval <select>. A harness whose approval is
+	// real but NOT yet surfaced as a dropdown returns nil/empty (its policy
+	// stays CLI/profile-only); the dialog gates its row on a non-empty list, so
+	// an empty Modes() keeps the control hidden while DefaultPolicy still drives
+	// the daemon's secure default. (Codex returns nil today — its
+	// `--ask-for-approval` policy is CLI-only; Claude Code returns its
+	// permission modes.)
+	Modes() []string
+	// ModeHelp returns a one-line human description of a policy for spawn UIs
+	// — notably whether it is safe for an unattended/detached agent — or "" for
+	// an unrecognized policy. Like SandboxCatalog.ModeHelp, the copy lives
+	// beside the modes it describes so it can't drift from Modes().
+	ModeHelp(policy string) string
 }
 
 // ResolveApprovalPolicy is the entry point the *daemon* spawn boundaries
@@ -81,16 +96,18 @@ func ValidateApprovalPolicy(h *Harness, requested string) (string, error) {
 // an error if auto-review was requested for a harness that has no approvals
 // reviewer. Auto-review is part of the approval subsystem (it changes *who*
 // answers an approval prompt — a guardian subagent vs the human), so it is
-// gated on the same SupportsApproval() capability: a harness whose approval
-// handling is configured out of band (Claude Code) has no guardian to route
-// to, and silently dropping the flag would hide a mistake. There is no
-// non-false default to apply, so — unlike ResolveApprovalPolicy /
+// gated on the SupportsAutoReview() capability (the ApprovalsReviewer flag),
+// NOT on SupportsApproval(): a harness can have a launch approval/permission
+// catalog yet no guardian to route to. Claude Code is exactly that — it has a
+// permission-mode catalog but no reviewer subagent — so `--auto-review` stays
+// rejected for it, and silently dropping the flag would hide a mistake. There
+// is no non-false default to apply, so — unlike ResolveApprovalPolicy /
 // ValidateApprovalPolicy — a single function serves both the daemon spawn path
 // and the direct `session new` path: false (off) is the default everywhere,
 // and the experimental guardian is only ever engaged by an explicit opt-in.
 // See JOH-200 part 2.
 func ResolveAutoReview(h *Harness, requested bool) (bool, error) {
-	if requested && !h.SupportsApproval() {
+	if requested && !h.SupportsAutoReview() {
 		return false, fmt.Errorf("harness %q has no approvals reviewer "+
 			"(auto-review is a Codex approval-subsystem feature; not available for this harness)", h.Name)
 	}

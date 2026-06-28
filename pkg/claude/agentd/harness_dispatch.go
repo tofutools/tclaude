@@ -115,7 +115,14 @@ func sandboxForHarness(name string) string {
 // See JOH-200.
 func approvalForHarness(name string) string {
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
-		return h.Approval.DefaultPolicy()
+		// Validate the default before threading it, so Claude Code's `inherit`
+		// default (which ValidatePolicy collapses to "") relaunches with no
+		// `--permission-mode` override rather than a literal `inherit` — keeping
+		// an un-overridden Claude agent on its settings.json posture across
+		// clone/reincarnate. Codex's `never` default validates to itself.
+		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {
+			return pol
+		}
 	}
 	return ""
 }

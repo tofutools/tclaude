@@ -8,13 +8,14 @@
 // (profiles.js) owns the fetch + cache; this module is all DOM.
 //
 // The editor surfaces the same launch fields the spawn dialog does, driven off
-// the snapshot's `harnesses` catalog exactly like that dialog. Two launch
-// fields the spawn dialog also lacks — approval and auto_review, both Codex
-// approval-subsystem features with no entry in the catalog — are NOT edited
-// here; they remain reachable via the CLI / `/v1` API. Because the server's
-// PATCH is a FULL replace, editing a profile that carries them would otherwise
-// wipe them, so submit carries them forward from the original (guarded on an
-// unchanged harness, since they're Codex-gated).
+// the snapshot's `harnesses` catalog exactly like that dialog — including the
+// Permission-mode (approval) dropdown for a harness that surfaces approval
+// modes (Claude Code). Two fields stay un-surfaced: Codex's approval policy
+// (its harness exposes no dialog modes yet — CLI/`/v1`-only) and auto_review
+// (the experimental guardian opt-in, Codex-only). Because the server's PATCH is
+// a FULL replace, editing a profile that carries an un-surfaced value would
+// wipe it, so submit carries those forward from the original (guarded on an
+// unchanged harness).
 
 import { $, esc, bindSelectTitles } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
@@ -79,10 +80,11 @@ function populateProfileEffortSelect(h) {
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
-// applyProfileEditorHarness reshapes the editor's Model / Sandbox / Effort /
-// trust-dir rows for the chosen harness — the curated model <select> vs the
-// free-text input, the sandbox row (with its modes) for a harness that takes a
-// launch sandbox, the Codex-only trust-dir row. Mirrors applySpawnHarness.
+// applyProfileEditorHarness reshapes the editor's Model / Sandbox / Permission-
+// mode / Effort / trust-dir rows for the chosen harness — the curated model
+// <select> vs the free-text input, the sandbox + permission-mode rows (with
+// their modes) for a harness that exposes them, the Codex-only trust-dir row.
+// Mirrors applySpawnHarness.
 function applyProfileEditorHarness(harnessName) {
   const h = profileHarnessByName(harnessName);
   const hasModelList = !h || (h.models && h.models.length > 0);
@@ -97,6 +99,19 @@ function applyProfileEditorHarness(harnessName) {
       .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_sandbox ? ' (recommended)' : ''}</option>`)
       .join('');
     sandSel.value = h.default_sandbox || h.sandbox_modes[0];
+  }
+
+  // Permission mode (Claude Code) — same gating as the spawn dialog: shown only
+  // for a harness that surfaces approval modes (Codex has none, so its approval
+  // stays carried-forward, not edited here — see buildProfilePayload).
+  const canApproval = !!(h && h.can_approval && h.approval_modes && h.approval_modes.length);
+  $('#profile-editor-approval-row').style.display = canApproval ? '' : 'none';
+  if (canApproval) {
+    const apprSel = $('#profile-editor-approval');
+    apprSel.innerHTML = h.approval_modes
+      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_approval ? ' (recommended)' : ''}</option>`)
+      .join('');
+    apprSel.value = h.default_approval || h.approval_modes[0];
   }
 
   // trust-dir is Codex-only — it edits ~/.codex/config.toml, the same gating
@@ -239,6 +254,7 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   if (seed && seed.model) profileActiveModelEl().value = seed.model;
   setSelectIfPresent($('#profile-editor-effort'), seed ? seed.effort : '');
   setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
+  setSelectIfPresent($('#profile-editor-approval'), seed ? seed.approval : '');
 
   setTri($('#profile-editor-trust-dir'), seed ? seed.trust_dir : null);
   setTri($('#profile-editor-remote-control'), seed ? seed.remote_control : null);
@@ -264,10 +280,11 @@ function closeProfileEditor() {
 // buildProfilePayload assembles the full desired state from the editor. The
 // server's PATCH is a full replace, so every field the profile should keep
 // must be present. Launch fields are gated on the chosen harness's
-// capabilities so we never post a value it would reject (a sandbox / trust-dir
-// on Claude). Approval + auto_review aren't edited here; on an edit that keeps
-// the same harness they're carried forward from the original so the
-// full-replace doesn't drop a CLI-set value.
+// capabilities so we never post a value it would reject (a trust-dir on Claude,
+// remote-control on Codex). The permission mode (approval) is editable for a
+// harness that surfaces it (Claude Code); un-surfaced approval-subsystem fields
+// (Codex approval, auto_review) are carried forward from the original on a
+// same-harness edit so the full-replace doesn't drop a CLI-set value.
 function buildProfilePayload(name) {
   const harness = $('#profile-editor-harness').value;
   const hEntry = profileHarnessByName(harness);
@@ -281,10 +298,18 @@ function buildProfilePayload(name) {
     descr: $('#profile-editor-descr').value.trim(),
     initial_message: $('#profile-editor-init-msg').value,
   };
-  // Sandbox: only for a harness that takes a launch sandbox (Codex); its
-  // select always carries a value (the default is pre-selected).
+  // Sandbox: only for a harness that takes a launch sandbox; its select always
+  // carries a value (the default is pre-selected).
   if (hEntry && hEntry.can_sandbox && $('#profile-editor-sandbox').value) {
     body.sandbox = $('#profile-editor-sandbox').value;
+  }
+  // Permission mode: editable here only for a harness that surfaces approval
+  // modes (Claude Code) — its dropdown is the source of truth. A modeless
+  // harness (Codex) keeps its approval CLI-only, carried forward below.
+  const surfacesApproval = !!(hEntry && hEntry.can_approval
+    && hEntry.approval_modes && hEntry.approval_modes.length);
+  if (surfacesApproval && $('#profile-editor-approval').value) {
+    body.approval = $('#profile-editor-approval').value;
   }
   // trust-dir: Codex-only (the backend rejects a true on any other harness).
   const trustDir = (harness === 'codex') ? readTri($('#profile-editor-trust-dir')) : null;
@@ -305,11 +330,16 @@ function buildProfilePayload(name) {
   const groupCtx = readTri($('#profile-editor-group-context'));
   if (groupCtx != null) body.include_group_default_context = groupCtx;
 
-  // Carry forward the un-surfaced Codex approval fields on a same-harness edit
-  // (treat "" and "claude" as the same default harness).
+  // Carry forward the un-surfaced approval-subsystem fields on a same-harness
+  // edit (treat "" and "claude" as the same default harness), so the
+  // full-replace PATCH doesn't drop a CLI-set value the editor can't show:
+  //   - approval: only when the harness does NOT surface it as a dropdown
+  //     (Codex). When it does (Claude Code), the dropdown above is authoritative
+  //     — carrying forward would clobber a just-cleared/changed choice.
+  //   - auto_review: never surfaced anywhere, so always carried forward.
   const norm = (h) => h || 'claude';
   if (profileEditorEditing && norm(profileEditorEditing.harness) === norm(harness)) {
-    if (profileEditorEditing.approval) body.approval = profileEditorEditing.approval;
+    if (!surfacesApproval && profileEditorEditing.approval) body.approval = profileEditorEditing.approval;
     if (profileEditorEditing.auto_review != null) body.auto_review = profileEditorEditing.auto_review;
   }
   return body;

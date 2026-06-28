@@ -187,6 +187,23 @@ function applySpawnHarness(harnessName) {
     applySpawnSandboxHint(null);
   }
 
+  // Permission mode (Claude Code's --permission-mode). Mirrors the sandbox row:
+  // a harness exposes approval modes via the catalog, and the row shows only
+  // when there are modes to offer (Codex has approval but surfaces no dialog
+  // modes yet → can_approval true but approval_modes empty → row hidden).
+  const canApproval = !!(h && h.can_approval && h.approval_modes && h.approval_modes.length);
+  $('#agent-spawn-approval-row').style.display = canApproval ? '' : 'none';
+  if (canApproval) {
+    const apprSel = $('#agent-spawn-approval');
+    apprSel.innerHTML = h.approval_modes
+      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_approval ? ' (recommended)' : ''}</option>`)
+      .join('');
+    apprSel.value = h.default_approval || h.approval_modes[0];
+    applySpawnApprovalHint(h);
+  } else {
+    applySpawnApprovalHint(null);
+  }
+
   // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
   // the user's ~/.codex/config.toml, so it is OFF by default and never
   // auto-checked; hiding it for a non-Codex harness also clears it so the
@@ -225,6 +242,21 @@ function applySpawnSandboxHint(h) {
   const text = help[$('#agent-spawn-sandbox').value] || '';
   // Trusted catalog copy (not user input): escape, then render `…` spans as
   // <code> so the `tclaude agent` references read as code.
+  hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
+  hintEl.classList.toggle('warn', text.includes('⚠'));
+}
+
+// applySpawnApprovalHint sets the live help line under the Permission-mode
+// selector to the catalog's description of the selected mode — especially
+// whether it is safe for a DETACHED agent (several modes can block on a prompt
+// no one answers, or auto-deny, or remove all guardrails). A description
+// carrying the "⚠" marker is shown in the warn colour. Passing null (a harness
+// with no approval modes) clears it. Mirrors applySpawnSandboxHint.
+function applySpawnApprovalHint(h) {
+  const hintEl = $('#agent-spawn-approval-hint');
+  if (!hintEl) return;
+  const help = (h && h.approval_mode_help) || {};
+  const text = help[$('#agent-spawn-approval').value] || '';
   hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
   hintEl.classList.toggle('warn', text.includes('⚠'));
 }
@@ -543,6 +575,13 @@ function applyProfileToSpawnForm(p) {
       applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
     }
   }
+  if (p.approval) {
+    const apprSel = $('#agent-spawn-approval');
+    if ([...apprSel.options].some(o => o.value === p.approval)) {
+      apprSel.value = p.approval;
+      applySpawnApprovalHint(spawnHarnessByName($('#agent-spawn-harness').value));
+    }
+  }
   // trust_dir is a *bool — apply only when the profile set it (null = unset).
   // The row is Codex-only and hidden otherwise; setting the checkbox while
   // hidden is harmless (submit reads it only for Codex).
@@ -652,6 +691,12 @@ function spawnFormAsProfileSeed() {
     include_group_default_context: $('#agent-spawn-group-context').checked,
   };
   if (hEntry && hEntry.can_sandbox) seed.sandbox = $('#agent-spawn-sandbox').value;
+  // Approval is surfaced only for a harness with dialog modes (Claude Code), so
+  // seed it only then — matching the row's visibility (an empty <select> on a
+  // modeless harness would otherwise seed a blank approval).
+  if (hEntry && hEntry.can_approval && hEntry.approval_modes && hEntry.approval_modes.length) {
+    seed.approval = $('#agent-spawn-approval').value;
+  }
   if (harness === 'codex') seed.trust_dir = $('#agent-spawn-trust-dir').checked;
   return seed;
 }
@@ -1020,6 +1065,11 @@ async function submitAgentSpawn() {
   const harnessEntry = spawnHarnessByName(harness);
   const sandbox = (harnessEntry && harnessEntry.can_sandbox)
     ? $('#agent-spawn-sandbox').value : '';
+  // Permission mode is read only for a harness that surfaces approval modes
+  // (Claude Code); a modeless harness (Codex) sends none.
+  const approval = (harnessEntry && harnessEntry.can_approval
+    && harnessEntry.approval_modes && harnessEntry.approval_modes.length)
+    ? $('#agent-spawn-approval').value : '';
   const cwd = $('#agent-spawn-cwd').value.trim();
   const wtRepo = $('#agent-spawn-wt-repo').value.trim();
   const autoFocus = $('#agent-spawn-focus').checked;
@@ -1128,6 +1178,9 @@ async function submitAgentSpawn() {
     // human picks otherwise.
     if (harness && harness !== 'claude') body.harness = harness;
     if (sandbox) body.sandbox = sandbox;
+    // Permission mode (Claude Code) — the daemon resolves a blank/inherit to no
+    // override, so send it only when a concrete mode was chosen.
+    if (approval) body.approval = approval;
     // Opt-in dir-trust (Codex only): the daemon pre-trusts the cwd by editing
     // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
     // ticked the checkbox — never defaulted.
@@ -1235,6 +1288,11 @@ function bindAgentSpawnModal() {
   // agentd-reachability caveat changes per mode).
   $('#agent-spawn-sandbox').addEventListener('change', () => {
     applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
+  });
+  // Picking a different permission mode refreshes its live hint (the
+  // detached-agent safety caveat changes per mode).
+  $('#agent-spawn-approval').addEventListener('change', () => {
+    applySpawnApprovalHint(spawnHarnessByName($('#agent-spawn-harness').value));
   });
   // Switching the Model re-applies that model's remembered effort (or
   // resets to Default when it has none), so each model carries its own

@@ -1338,6 +1338,10 @@
       <span class="cron-create-label">Sandbox</span>
       <select id="profile-editor-sandbox"></select>
     </label>
+    <label class="cron-create-row" id="profile-editor-approval-row" style="display:none" title="Permission mode the profile pre-fills into the spawn dialog (Claude Code). inherit (recommended) adds no override; the explicit modes map to `claude --permission-mode` (plan / acceptEdits / default / auto / dontAsk / bypassPermissions).">
+      <span class="cron-create-label">Permission mode</span>
+      <select id="profile-editor-approval"></select>
+    </label>
     <label class="cron-create-row" id="profile-editor-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex (writes ~/.codex/config.toml). Default leaves it unset.">
       <span class="cron-create-label">Trust dir</span>
       <select id="profile-editor-trust-dir">
@@ -1815,6 +1819,16 @@
              set from the harness catalog's sandbox_mode_help by
              applySpawnSandboxHint(). -->
         <div id="agent-spawn-sandbox-hint" class="spawn-field-hint"></div>
+      </div>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-approval-row" style="display:none" title="Permission mode for the new agent (Claude Code). inherit (recommended) leaves your settings.json permission rules + the agentd approval popup as-is. The explicit modes map to `claude --permission-mode`: plan (read-only), acceptEdits, default (prompt for everything), auto (classifier auto-decides), dontAsk (auto-deny anything not pre-allowed), bypassPermissions (skip all checks). Because the agent runs detached, several modes can block on a prompt no one answers — the live hint below flags those.">
+      <span class="cron-create-label">Permission mode</span>
+      <div class="cron-create-target">
+        <select id="agent-spawn-approval"></select>
+        <!-- Live help for the selected mode (esp. detached-agent safety),
+             set from the harness catalog's approval_mode_help by
+             applySpawnApprovalHint(). -->
+        <div id="agent-spawn-approval-hint" class="spawn-field-hint"></div>
       </div>
     </label>
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">

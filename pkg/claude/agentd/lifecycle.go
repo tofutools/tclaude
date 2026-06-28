@@ -2820,11 +2820,13 @@ func appendPermissionProfileFlag(args []string, profile string) []string {
 }
 
 // appendApprovalFlag adds `--ask-for-approval <policy>` to a `tclaude session
-// new` argv when a policy is set. "" omits it (no approval handling — Claude
-// Code, or a caller that didn't resolve one). The policy is a validated enum
+// new` argv when a policy is set. "" omits it (no override — e.g. a Claude
+// inherit, or a caller that didn't resolve one). `--ask-for-approval` is the
+// harness-agnostic session-new flag name; the forked `session new` re-validates
+// it per-harness (a Codex policy vs a Claude --permission-mode value) and the
+// spawner emits the harness-appropriate flag. The value is a validated enum
 // resolved at the spawn boundary (harness.ResolveApprovalPolicy), never user
-// free-text, so it is safe as a bare arg. The forked `tclaude session new`
-// re-validates. See JOH-200.
+// free-text, so it is safe as a bare arg. See JOH-200.
 func appendApprovalFlag(args []string, policy string) []string {
 	if policy != "" {
 		args = append(args, "--ask-for-approval", policy)

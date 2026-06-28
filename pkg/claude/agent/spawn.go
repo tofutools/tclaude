@@ -227,11 +227,13 @@ type SpawnParams struct {
 	// reason as the fields above.
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = the harness default (Codex: tclaude-agent; Claude: inherit)"`
 
-	// Approval is the launch-time approval policy for a harness that takes
-	// one (Codex). Declared last (no explicit short) for the same reason as
-	// the fields above. Unset resolves to the non-escalating default (never)
-	// so the detached agent can't deadlock on an approval prompt (JOH-200).
-	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy for the new agent: untrusted|on-failure|on-request|never. Unset = the harness's non-escalating default (Codex: never) so the unattended agent never blocks on a prompt. Not applicable to claude"`
+	// Approval is the launch-time approval/permission posture for the new
+	// agent. Codex takes an --ask-for-approval policy; Claude Code's approval
+	// posture is its --permission-mode, carried through this same field (the
+	// spawner emits the harness-appropriate flag). Declared last (no explicit
+	// short) for the same reason as the fields above. Unset resolves to each
+	// harness's safe default (Codex: never; Claude: inherit — no override).
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = the harness's safe default (Codex: never, so it can't block on a prompt; Claude: inherit)"`
 
 	// AutoReview is a bool flag declared last (no explicit short) for the same
 	// reason as the fields above — boa's short-flag enricher must not steal a

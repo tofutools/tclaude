@@ -72,16 +72,17 @@ type NewParams struct {
 	// disk before launch. Not applicable to Claude Code. Rarely set by hand.
 	PermissionProfile string `long:"permission-profile" optional:"true" help:"Codex permission profile to run under (codex -p <name>); mutually exclusive with --sandbox. Not applicable to claude"`
 
-	// Approval selects a harness's launch-time approval policy (Codex's
-	// --ask-for-approval). On a direct `session new` it is opt-in: unset emits
-	// no flag, so Codex uses the user's own config.toml (the human running
-	// session new is the trust root and can attach to answer prompts — tclaude
-	// doesn't force a policy on them). The daemon spawn path (agentd / `agent
-	// spawn`) defaults it to the non-escalating `never` instead, since its pane
-	// is detached/unattended and would otherwise deadlock; that resolved value
-	// arrives here as an explicit --ask-for-approval. Not applicable to Claude
-	// Code (settings.json-driven), which errors if it is set. See JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Codex approval policy: untrusted|on-failure|on-request|never. Unset = no flag (Codex uses your config.toml). Not applicable to claude"`
+	// Approval selects a harness's launch-time approval/permission posture.
+	// Codex takes an --ask-for-approval policy; Claude Code has no approval flag
+	// — its posture is the --permission-mode the spawner emits — but the value
+	// rides through this same field (validated per-harness by claudeApproval /
+	// codexApproval). On a direct `session new` it is opt-in: unset emits no flag,
+	// so each harness uses its own config (the human running session new is the
+	// trust root and can answer prompts — tclaude doesn't force a posture). The
+	// daemon spawn path defaults it to each harness's safe value (Codex: never,
+	// so a detached pane can't deadlock; Claude: inherit, no override). See
+	// JOH-200.
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = no override (each harness uses its own config)"`
 
 	// AutoReview opts into the harness's guardian subagent (Codex's `-c
 	// approvals_reviewer=auto_review`), which auto-decides approval prompts in
@@ -320,11 +321,12 @@ func runNew(params *NewParams) error {
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
 	// trust-root reason as --sandbox above: a direct `tclaude session new` is
 	// the human's own session and they can attach to answer prompts, so tclaude
-	// emits --ask-for-approval only when they pass it explicitly. The daemon
-	// spawn path is where the non-escalating `never` default belongs (its pane
-	// is unattended) and it threads the resolved policy in as an explicit flag.
-	// An explicit policy for a harness without a launch approval flag (Claude
-	// Code) errors here.
+	// emits the approval/permission flag only when they pass it explicitly. The
+	// daemon spawn path is where each harness's safe default belongs (its pane
+	// is unattended) and it threads the resolved value in explicitly. The value
+	// is validated per-harness (Codex's --ask-for-approval policy vs Claude
+	// Code's --permission-mode); for Claude, inherit/blank normalizes to "" (no
+	// --permission-mode override). The spawner emits the harness-appropriate flag.
 	approvalPolicy, err := harness.ValidateApprovalPolicy(h, params.Approval)
 	if err != nil {
 		return err

@@ -81,7 +81,7 @@ instead of slash-command injection).
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ one-time trust) |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag |
-| **Approval posture at spawn** | ⚙️ configured in `settings.json` | ✅ `--ask-for-approval` flag, non-blocking default for agents |
+| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `inherit` (default) keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
 | **Auto-approve review** | ⚙️ `auto` permission mode (model classifier) | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
 | **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) |
@@ -160,6 +160,23 @@ This is the per-session counterpart to the **global** hardening guide
 ([`sandbox-hardening.md`](sandbox-hardening.md) / `tclaude setup
 --install-sandbox-hardening`), which locks down your user-level `settings.json`
 once for *all* agents; the two share the same `on` block so they can't drift.
+
+### Permission mode at spawn (Claude Code)
+
+The **approval axis** for Claude Code is its permission mode. The spawn dialog
+(a "Permission mode" dropdown), profiles, and `--ask-for-approval` thread it
+through to `claude --permission-mode <mode>`. Modes: **`inherit`** *(default,
+recommended)* adds no override — the agent keeps your `settings.json` permission
+rules and the agentd approval popup, so a daemon-spawned agent behaves exactly as
+before; then Claude Code's six modes — `plan` (read-only), `acceptEdits`,
+`default`, `auto` (classifier), `dontAsk` (auto-deny), `bypassPermissions`
+(skip all checks). Because tclaude agents run **detached**, the dialog's live
+hint flags the modes that can block on a prompt no human can answer, auto-deny,
+or remove all guardrails. The OS sandbox (above) and the permission mode are
+**orthogonal** — both layers apply.
+
+> Codex's approval axis (`--ask-for-approval`) is still CLI/profile-only — it is
+> not surfaced as a dialog dropdown yet; only Claude Code's permission modes are.
 
 ## What stays the same across harnesses
 

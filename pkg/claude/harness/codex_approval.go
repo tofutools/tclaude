@@ -12,10 +12,10 @@ import (
 // research.
 //
 //   - never        : never ask the user; execution failures return to the
-//                    model. The ONLY non-escalating posture — the one safe
-//                    default for an unattended/detached pane (JOH-200).
+//     model. The ONLY non-escalating posture — the one safe
+//     default for an unattended/detached pane (JOH-200).
 //   - on-request   : the model decides when to ask (Codex's own default) —
-//                    escalates to a human, so it deadlocks an unattended pane.
+//     escalates to a human, so it deadlocks an unattended pane.
 //   - on-failure   : DEPRECATED upstream; still escalates on failure.
 //   - untrusted    : escalates for any non-trusted command.
 //
@@ -50,6 +50,18 @@ func (codexApproval) ValidatePolicy(policy string) (string, error) {
 			policy, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest, ApprovalNever)
 	}
 }
+
+// Modes returns nil: Codex's `--ask-for-approval` policy is real (DefaultPolicy
+// still drives the daemon's non-escalating default, and the CLI / profile
+// accept it), but it is NOT surfaced as a spawn-dialog dropdown yet — the
+// dialog's approval row gates on a non-empty mode list, so nil keeps it Codex-
+// hidden. Only Claude Code surfaces its permission modes today (the deliberate
+// "Claude only" scope); wiring a Codex approval dropdown is a clean follow-up.
+func (codexApproval) Modes() []string { return nil }
+
+// ModeHelp returns "" for the same reason Modes() is nil — Codex approval has
+// no dropdown to caption yet.
+func (codexApproval) ModeHelp(string) string { return "" }
 
 // Codex auto-review (guardian) — the orthogonal "who answers an approval
 // prompt" axis. `--ask-for-approval` decides WHEN Codex asks; this config
