@@ -18,7 +18,7 @@ You have three commands for managing your own context window:
 
 | Command                                            | What it does                                                                                                                              |
 |----------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| `tclaude agent context-info`                       | Print the current context_pct + any pending /compact claim (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
+| `tclaude agent context-info`                       | Print the current context % + an absolute token breakdown + the model (self by default; `--target <peer>` reads one agent, `--group <name>` lists a whole team) |
 | `tclaude agent compact [follow-up]`                | Inject `/compact` into your own pane; identity preserved. Optional follow-up prompt is queued. |
 | `tclaude agent reincarnate <follow-up>`            | Replace yourself with a fresh successor that inherits your identity (groups, permissions, ownership). Follow-up is REQUIRED.              |
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
@@ -33,10 +33,15 @@ cross-agent verbs (see "Manager pattern" below).
 default-granted by `tclaude setup --install-default-agent-permissions`
 — see "Permission setup" below.
 
-The absolute token estimate (`~470k of ~1.0M`) assumes a **1M context
-window** — the percentage is the authoritative signal that the harness
-reports. On a smaller-window model the absolute number can be off, but
-the percentage threshold-based decision is still correct.
+`context-info` prints the conv id, the context percentage with an
+absolute token breakdown (`<in> in + <out> out = <total> of <window>
+tokens`), and the model — e.g.
+`context: 47% (320k in + 30k out = 350k of 1.0M tokens)`. The window
+size shown is the **real** one the harness reports, not an assumed 1M,
+so the absolute numbers stay accurate on smaller-window models. The
+**percentage is still the authoritative signal** for any threshold-based
+decision. (On a Claude Code build predating the absolute-token statusline
+fields the line falls back to percentage-only until the next turn.)
 
 ## When to reincarnate (or compact) — your project's call, not this skill's
 
@@ -189,8 +194,8 @@ need.**
 # Where am I?
 tclaude agent context-info
 # conv:    abc12345
-# context: 47% (~470k of ~1.0M tokens, assumes 1M window)
-# compact: idle
+# context: 47% (320k in + 30k out = 350k of 1.0M tokens)
+# model:   Opus 4.8 (1M context)
 
 # Before you compact or reincarnate — write down what matters
 # (do this in your tools — Read/Edit/Write — not via tclaude)
@@ -262,11 +267,13 @@ tclaude agentd serve   # in a non-sandboxed terminal
 
 ## Permission setup
 
-`compact` and `reincarnate` are opt-in. The fastest path is
-`tclaude setup --install-default-agent-permissions`, which grants
-`self.rename`, `self.compact`, and `self.reincarnate` as defaults in
-one shot. (Kept separate from `--install-agent-skills` so upgrading
-the on-disk skills doesn't re-add slugs you deliberately revoked.)
+`compact`, `reincarnate`, and `clone` are opt-in. The fastest path is
+`tclaude setup --install-default-agent-permissions`, which grants the
+self-lifecycle default slugs — currently `self.rename`, `self.compact`,
+`self.reincarnate`, `self.clone`, `self.schedule`, and
+`self.remote-control` — as defaults in one shot. (Kept separate from
+`--install-agent-skills` so upgrading the on-disk skills doesn't re-add
+slugs you deliberately revoked.)
 
 Manual alternatives:
 
