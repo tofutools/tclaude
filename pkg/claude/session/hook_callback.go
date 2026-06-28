@@ -486,9 +486,31 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		defer unlock()
 	}
 
+	// Resolve conv→agent once, immediately on receipt (JOH-282). The hook
+	// arrives keyed by conv_id — the tclaude↔harness bridge, the place the
+	// north star says conv_id legitimately lives — but the actor
+	// source-of-truth is the stable agent_id. Resolve it here so the boundary's
+	// audit log carries the actor identity as the resolved primary, with
+	// conv_id retained as the harness key + a logged snapshot.
+	//
+	// Best-effort and non-fatal: an as-yet-unenrolled conv resolves to "" (its
+	// first SessionStart enrolls it further down, via EnsureAgentForConv), and a
+	// transient resolution error must never drop a hook. This lookup is for the
+	// audit trail, not a routing decision — every downstream actor write
+	// (the sessions row, agent_workdir, agent_workspace) re-derives agent_id from
+	// conv_id at its own write via the v77 companion-column dual-write, and the
+	// identity operations (rotation across /clear, enrollment) resolve conv→agent
+	// explicitly, so nothing here depends on this value being non-empty.
+	ingestAgentID, agentErr := db.AgentIDForConv(input.ConvID)
+	if agentErr != nil {
+		slog.Warn("hook: failed to resolve conv→agent at ingestion (continuing)",
+			"conv_id", input.ConvID, "error", agentErr, "module", "hooks")
+	}
+
 	// Log hook event
 	slog.Info("hook received",
 		"event", input.HookEventName,
+		"agent_id", ingestAgentID,
 		"conv_id", input.ConvID,
 		"notification_type", input.NotificationType,
 		"tool_name", input.ToolName,
