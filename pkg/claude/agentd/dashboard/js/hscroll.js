@@ -36,7 +36,8 @@
 // width and pins their .bar-inner to the viewport width — but only while
 // the page actually overflows sideways; otherwise everything is reset to
 // its natural (viewport-wide) layout. Also flags body.hscroll-overflow so
-// the mode toggle reveals itself only when it's relevant.
+// the sticky-pin CSS (follow mode's .bar-inner) only engages when the page
+// actually overflows sideways.
 function syncFullBleedBars() {
   const bars = [
     document.querySelector('header'),
