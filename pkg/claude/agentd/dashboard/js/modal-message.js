@@ -5,7 +5,7 @@
 // modal reuses modal-cron's target picker; bindSudoModal wires the
 // sudo-grant modal (defined in modal-cron) to its DOM controls.
 
-import { $, $$, esc, shortId, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, shortAgentId, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
@@ -33,10 +33,12 @@ import { refresh, toast, openCleanupModal, bindBackdropDiscard } from './refresh
 //
 // Either way there is no schedule — the send fires once, now.
 
-// messageScopedGroup holds { name, members:[{conv_id,title,online,
-// checked}] } while the modal is open in group-scoped mode, and null
-// in solo mode. openMessageCreateModal sets it; submitMessageForm
-// branches on it.
+// messageScopedGroup holds { name, members:[{agent_id,conv_id,title,
+// online,checked}] } while the modal is open in group-scoped mode, and
+// null in solo mode. openMessageCreateModal sets it; submitMessageForm
+// branches on it. The subset send leads with agent_id (JOH-27, the
+// rotation-immune key the backend's fanOutToGroup accepts), keeping
+// conv_id as the snapshot / display fallback.
 let messageScopedGroup = null;
 
 // openMessageCreateModal opens the modal. prefill is an optional
@@ -82,7 +84,8 @@ function setupMessageGroupScope(groupName) {
   $('#message-create-group-row').style.display = '';
   const g = (lastSnapshot?.groups || []).find(x => x.name === groupName);
   const members = ((g && g.members) || []).map(m => ({
-    conv_id: m.conv_id, title: m.title || '', online: !!m.online, checked: true,
+    agent_id: m.agent_id || '', conv_id: m.conv_id, title: m.title || '',
+    online: !!m.online, checked: true,
   }));
   messageScopedGroup = { name: groupName, members };
   $('#message-create-group-hint').textContent = members.length
@@ -103,10 +106,14 @@ function renderMessageMembers() {
   } else {
     listEl.innerHTML = members.map(m => {
       const online = m.online ? '<span class="cleanup-badge online">online</span>' : '';
+      // Lead the id column with the stable agent_id (conv-id prefix as the
+      // fallback), keeping the conv-id it used as the hover snapshot. The
+      // checkbox stays keyed by conv_id — every member has one, so it's a
+      // stable internal handle for the change listener regardless of agent_id.
       return `<div class="cleanup-row"><label>`
         + `<input type="checkbox" data-conv="${esc(m.conv_id)}"${m.checked ? ' checked' : ''} />`
         + `<span class="title">${esc(m.title || '(untitled)')}</span>`
-        + `<span class="id">${esc(m.conv_id.slice(0, 8))}</span>`
+        + `<span class="id" title="${esc(m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</span>`
         + `${online}</label></div>`;
     }).join('');
   }
@@ -150,8 +157,8 @@ async function submitMessageForm() {
     return;
   }
   // Resolve the recipient(s): `mode` drives the success toast, `to`
-  // is the raw selector / "group:NAME" token, `members` is an
-  // explicit conv-id subset (group-scoped mode only) or null.
+  // is the raw selector / "group:NAME" token, `members` is an explicit
+  // agent-id subset (group-scoped mode only; conv-id fallback) or null.
   let mode, to, members = null;
   if (messageScopedGroup) {
     mode = 'group';
@@ -164,9 +171,11 @@ async function submitMessageForm() {
     }
     // Every member ticked → a plain group: multicast, which tracks the
     // LIVE roster (a member who joined since the modal opened is still
-    // reached). A subset → send the explicit conv-id list.
+    // reached). A subset → send the explicit member list, keyed by stable
+    // agent_id (the backend's fanOutToGroup accepts agent_id OR conv_id, so
+    // a pre-identity member with no agent_id still resolves via its conv_id).
     if (picked.length < all.length) {
-      members = picked.map(m => m.conv_id);
+      members = picked.map(m => m.agent_id || m.conv_id);
     }
   } else {
     const picked = readTargetPicker('message-create');

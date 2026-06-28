@@ -54,8 +54,10 @@ type mailboxMsg struct {
 	ID        int64  `json:"id"`
 	Direction string `json:"direction"`
 	FromConv  string `json:"from_conv"`
+	FromAgent string `json:"from_agent"`
 	FromTitle string `json:"from_title"`
 	ToConv    string `json:"to_conv"`
+	ToAgent   string `json:"to_agent"`
 	ToTitle   string `json:"to_title"`
 	Group     string `json:"group"`
 	Subject   string `json:"subject"`
@@ -209,6 +211,20 @@ func TestDashboardMailbox_AgentFolderMergesInAndOut(t *testing.T) {
 	assert.Equal(t, "alice", payload.Messages[1].FromTitle, "inbound row resolves the sender")
 	assert.False(t, payload.Messages[1].Read, "alice's opener is unread")
 	assert.Equal(t, "team", payload.Messages[1].Group)
+
+	// JOH-280: each row carries the sender's / recipient's stable agent_id
+	// (the snapshot the reading pane leads with) alongside the conv-id, so
+	// the web reader can show `name (agt_xxxxxxxx)` with conv on hover.
+	aliceAgent, err := db.AgentIDForConv(mbAlice)
+	require.NoError(t, err)
+	bobAgent, err := db.AgentIDForConv(mbBob)
+	require.NoError(t, err)
+	require.NotEmpty(t, aliceAgent, "alice is an enrolled agent with a stable id")
+	require.NotEmpty(t, bobAgent, "bob is an enrolled agent with a stable id")
+	assert.Equal(t, bobAgent, payload.Messages[0].FromAgent, "outbound row snapshots the sender's agent_id")
+	assert.Equal(t, aliceAgent, payload.Messages[0].ToAgent, "outbound row snapshots the recipient's agent_id")
+	assert.Equal(t, aliceAgent, payload.Messages[1].FromAgent, "inbound row snapshots the sender's agent_id")
+	assert.Equal(t, bobAgent, payload.Messages[1].ToAgent, "inbound row snapshots the recipient's agent_id")
 }
 
 // Scenario: id=human returns the human_messages folder, every row

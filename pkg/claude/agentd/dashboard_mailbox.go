@@ -340,11 +340,19 @@ func latestHumanMessageAt(msgs []dashboardHumanMessage) string {
 // is relative to the selected mailbox: "in" = received, "out" = sent.
 // For the human mailbox every row is "in" (agents → human).
 type mailboxMessage struct {
-	ID           int64           `json:"id"`
-	Direction    string          `json:"direction"`
-	FromConv     string          `json:"from_conv,omitempty"`
+	ID        int64  `json:"id"`
+	Direction string `json:"direction"`
+	FromConv  string `json:"from_conv,omitempty"`
+	// FromAgent / ToAgent are the sender's / recipient's stable agent_id
+	// (JOH-27), denormalised from the stored agent_messages snapshot so the
+	// reading pane can lead with `name (agt_xxxxxxxx)` and stay attributable
+	// after the conv is pruned. Empty when the conv was never an actor (a
+	// plain conv, or a since-deleted agent); the frontend then falls back to
+	// the short conv-id prefix via shortAgentId.
+	FromAgent    string          `json:"from_agent,omitempty"`
 	FromTitle    string          `json:"from_title,omitempty"`
 	ToConv       string          `json:"to_conv,omitempty"`
+	ToAgent      string          `json:"to_agent,omitempty"`
 	ToTitle      string          `json:"to_title,omitempty"`
 	ToRecipients []recipientLine `json:"to_recipients,omitempty"`
 	CcRecipients []recipientLine `json:"cc_recipients,omitempty"`
@@ -651,8 +659,10 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 		ID:           m.ID,
 		Direction:    dir,
 		FromConv:     m.FromConv,
+		FromAgent:    m.FromAgent,
 		FromTitle:    d.titleOf(m.FromConv),
 		ToConv:       m.ToConv,
+		ToAgent:      m.ToAgent,
 		ToTitle:      d.titleOf(m.ToConv),
 		ToRecipients: d.recipients(m.ToRecipients),
 		CcRecipients: d.recipients(m.CcRecipients),
