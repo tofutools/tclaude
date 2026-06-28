@@ -14,11 +14,20 @@
 //                          and the per-row eye buttons make
 //   - pick-a-subset      → opens the existing window modal
 //   - spawn              → opens the existing spawn modal
+//   - power control      → POST /api/shutdown | /api/power-on (global or
+//                          per-group, via shutdownScope/powerOnScope) and
+//                          per-agent stop/resume (stopAgentReq /
+//                          resumeAgentReq) — the same calls the dashboard's
+//                          Shutdown/Power-on buttons and status dots make
+//   - retire             → the per-agent / per-group demote-to-conversation
+//                          flows
 //
 // So the palette only adds a fast keyboard entry point to the window
-// hide/show + navigation the dashboard already does; it owns no agent
-// state of its own and reads the live roster fresh from lastSnapshot
-// each time it opens.
+// hide/show, power control, retire + navigation the dashboard already
+// does; it owns no agent state of its own and reads the live roster
+// fresh from lastSnapshot each time it opens. NB power control STOPS or
+// RESUMES agent processes, unlike the window ops which only detach/raise
+// terminals — see section 1b.
 //
 // It is a .modal-overlay so it picks up the shared backdrop AND pauses
 // the 2s auto-refresh while open (refreshSuspended() keys on
@@ -35,6 +44,7 @@ import {
   toast, openWindowModal,
   retireAgentInteractive, openRetirePreview, countGroupMembersByStatus,
   openWorktreeCleanup,
+  shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
@@ -114,6 +124,17 @@ async function hideAgent(conv, label) {
   }
 }
 
+// stopAgentInteractive mirrors the per-row status-dot toggle's STOP path
+// (row-actions 'dot-toggle'): pop the 3-way shutdownConfirm (Cancel /
+// Soft exit / Force kill) and, unless cancelled, stop with the chosen
+// force flag via the shared stopAgentReq. Resume needs no wrapper — it
+// is non-destructive, so the palette calls resumeAgentReq directly.
+async function stopAgentInteractive(conv, label) {
+  const choice = await shutdownConfirm({ label });
+  if (!choice) return; // Cancel
+  await stopAgentReq(conv, label, choice === 'force');
+}
+
 // -- Group fold helpers — collapse/expand the Groups-tab listing. Each
 //    group renders as <details data-group-key>; assigning .open fires a
 //    native toggle event that bindDetailsPersistence (refresh.js) catches,
@@ -148,9 +169,11 @@ function setAllGroupsOpen(open) {
 // -- Command list ------------------------------------------------------
 
 // buildCommands assembles the command list from the live snapshot plus
-// the current <nav>. Order is "headline first": the global hide/show
-// the branch is named for, then spawn, theme, tab navigation, group
-// fold (collapse/expand), then the per-group and per-agent window ops.
+// the current <nav>. Order is "headline first": global window hide/show
+// then global power control (shut down / power on all), then spawn,
+// theme, tab navigation, group fold (collapse/expand), then the
+// per-group and per-agent window ops, each followed by its power-control
+// (stop/start) sibling, then the retire blocks.
 // rankCommands re-ranks by query, so this order only governs the
 // empty-query view.
 function buildCommands() {
@@ -180,6 +203,34 @@ function buildCommands() {
     keywords: 'windows subset choose select modal some',
     run: () => openWindowModal('all', null),
   });
+
+  // 1b) Global power control — shut down / power on EVERY agent. The
+  //     POWER analog of the window ops above: hiding a window only
+  //     detaches a terminal (the agent keeps running), whereas these
+  //     actually stop the processes (/exit, then force-kill on grace
+  //     timeout) or resume them. Both reuse shutdownScope/powerOnScope —
+  //     the same count + confirm + POST the dashboard's "Shutdown all" /
+  //     "Power on all" buttons fire. Each is gated on its live count so
+  //     the palette never lists a no-op (no running agents → no "shut
+  //     down all"; nothing offline → no "power on all").
+  const onlineAll = (snap.agents || []).filter(a => a.online).length;
+  const offlineAll = (snap.agents || []).filter(a => !a.online).length;
+  if (onlineAll) {
+    cmds.push({
+      icon: '⏻', label: 'Shut down all agents',
+      hint: `stop ${onlineAll} running agent${onlineAll === 1 ? '' : 's'} (resumable; no data deleted)`,
+      keywords: 'shutdown shut down stop kill power off halt all agents global everything batch',
+      run: () => shutdownScope('all', null),
+    });
+  }
+  if (offlineAll) {
+    cmds.push({
+      icon: '⏼', label: 'Power on all agents',
+      hint: `resume ${offlineAll} offline agent${offlineAll === 1 ? '' : 's'} onto their conversations`,
+      keywords: 'power on start resume wake boot up all agents global everything batch',
+      run: () => powerOnScope('all', null),
+    });
+  }
 
   // 2) Spawn a new agent. The plain command DEFAULTS the dialog's group
   //    picker to the group the operator last interacted with (folded /
@@ -293,6 +344,33 @@ function buildCommands() {
     });
   }
 
+  // 6b) Per-group power control — shut down / power on every agent in a
+  //     group. The batch analog of the per-group window ops above, and
+  //     the per-group counterpart of the global commands. shutdownScope
+  //     counts RUNNING members (`g.online`, exactly what it confirms),
+  //     powerOnScope counts OFFLINE members; each variant gates on its
+  //     own live count so neither lists a no-op.
+  for (const g of groups) {
+    const onlineG = g.online || 0;
+    if (onlineG) {
+      cmds.push({
+        icon: '⏻', label: `Shut down group: ${g.name}`,
+        hint: `stop ${onlineG} running agent${onlineG === 1 ? '' : 's'} (resumable; no data deleted)`,
+        keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name,
+        run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
+      });
+    }
+    const offlineG = (g.members || []).filter(m => !m.online).length;
+    if (offlineG) {
+      cmds.push({
+        icon: '⏼', label: `Power on group: ${g.name}`,
+        hint: `resume ${offlineG} offline agent${offlineG === 1 ? '' : 's'} onto their conversations`,
+        keywords: 'power on start resume wake boot up group batch ' + g.name,
+        run: () => { recordGroupInteraction(g.name); powerOnScope('group', g.name); },
+      });
+    }
+  }
+
   // 7) Per-agent window ops — RUNNING agents only.
   for (const a of (snap.agents || [])) {
     if (!a.online) continue;
@@ -309,6 +387,32 @@ function buildCommands() {
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || ''),
       run: () => hideAgent(a.conv_id, label),
     });
+  }
+
+  // 7b) Per-agent power control — stop a running agent or resume an
+  //     offline one. The single-agent analog of the per-agent window
+  //     ops above, mirroring the per-row status-dot toggle: a stop pops
+  //     the 3-way shutdownConfirm (Cancel / Soft exit / Force kill), a
+  //     resume fires straight away (non-destructive). Each agent is
+  //     listed for its CURRENT state only — online → Stop, offline →
+  //     Resume — so the palette never offers the wrong verb.
+  for (const a of (snap.agents || [])) {
+    const label = a.title || (a.conv_id || '').slice(0, 8);
+    if (a.online) {
+      cmds.push({
+        icon: '⏻', label: `Stop agent: ${label}`,
+        hint: 'soft-exit, then force-kill if it does not exit (resumable)',
+        keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || ''),
+        run: () => stopAgentInteractive(a.conv_id, label),
+      });
+    } else {
+      cmds.push({
+        icon: '⏼', label: `Resume agent: ${label}`,
+        hint: 'restart in a fresh tmux session, resumed onto its conversation',
+        keywords: 'resume start power on wake boot up agent ' + label + ' ' + (a.conv_id || ''),
+        run: () => resumeAgentReq(a.conv_id, label),
+      });
+    }
   }
 
   // 8) Per-group bulk retire — "Retire idle / offline agents in <group>".
