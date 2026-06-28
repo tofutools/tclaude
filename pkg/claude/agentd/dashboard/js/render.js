@@ -67,7 +67,7 @@ function memberRowHTML(m, ctx) {
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
                 <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
-                <td class="id" title="${esc(m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>
+                <td class="id" title="${esc(m.agent_id || m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>
                 <td class="name-cell">
                   <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
                 </td>
