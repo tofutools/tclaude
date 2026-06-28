@@ -4,7 +4,7 @@
 // group/member target picker (used by this modal and the message
 // modal). Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, shortId, shortAgentId } from './helpers.js';
+import { $, $$, esc, shortId, shortAgentId, idTooltip } from './helpers.js';
 import { renderCronTab, formatInterval } from './tabs.js';
 // lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
 // the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
@@ -675,11 +675,12 @@ function pickCronTargetModal() {
           ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
           : '';
         // Lead the id column with the stable agent_id (conv-id prefix as
-        // the fallback), conv-id on hover — matching what this picker now
-        // returns and the agent-led cron-list / message-member rows.
+        // the fallback), the full "agent_id / conv-id" pair on hover —
+        // matching what this picker now returns and the agent-led
+        // cron-list / message-member rows.
         return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
                `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
-               `<span class="id" title="${esc(a.conv_id)}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span>${groups}` +
+               `<span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span>${groups}` +
                `</div>`;
       }).join('');
       const hl = list.querySelector('.add-member-row.highlighted');
