@@ -10,7 +10,7 @@ import {
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
-import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS } from './sort.js';
+import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS } from './sort.js';
 import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity } from './group-activity.js';
 import { dashPrefs } from './prefs.js';
 import { getDashDefaultProfile } from './profiles.js';
@@ -244,9 +244,9 @@ function renderVirtualReplacedGroup(g) {
     ? '<div class="muted">(no replaced generations)</div>'
     : `
         <table>
-          <thead><tr><th></th><th>conv</th><th>title</th><th>of agent</th><th>replaced</th><th></th></tr></thead>
+          ${sortHead('replaced', REPLACED_COLS)}
           <tbody>
-            ${members.map(a => {
+            ${applySort('replaced', members, REPLACED_ACCESSORS).map(a => {
               const actorName = a.actor_title || shortId(a.actor_conv_id);
               const replacedVia = a.reason || 'replaced';
               const replacedAge = a.replaced_at ? ' · ' + relTime(a.replaced_at) : '';

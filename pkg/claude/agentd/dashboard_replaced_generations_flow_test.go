@@ -137,6 +137,94 @@ func TestReplacedGenerations_SnapshotAndExactDelete(t *testing.T) {
 		"a conv-id that is not a linked generation must 404")
 }
 
+// Scenario: the "Replaced generations" list defaults to newest-replacement-first
+// ACROSS actors — the most recently superseded generation sits at the top,
+// whichever actor it belongs to (the order the dashboard falls back to with no
+// clickable-header sort active). Two actors each rotate once; we pin the
+// rotation timestamps to distinct seconds and assert the snapshot orders the two
+// predecessors by their replacement time, newest first — then flip the
+// timestamps and assert the order flips with them (proving the sort keys on
+// replacement time, not actor identity / insertion order).
+func TestReplacedGenerations_DefaultNewestReplacementFirst(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+
+	const (
+		group  = "alpha"
+		convX0 = "aaaa3333-4444-5555-6666-777777777777"
+		labelX = "spwn-rg3-x01"
+		tmuxX  = "tclaude-spwn-rg3-x01"
+		cwdX   = "/tmp/rg3workx"
+		convY0 = "bbbb3333-4444-5555-6666-777777777777"
+		labelY = "spwn-rg3-y01"
+		tmuxY  = "tclaude-spwn-rg3-y01"
+		cwdY   = "/tmp/rg3worky"
+	)
+
+	f.HaveGroup(group)
+
+	// Actor X: genesis convX0 → /clear → convX1 (convX0 becomes replaced).
+	f.HaveAliveSession(convX0, labelX, tmuxX, cwdX)
+	f.HaveMember(group, convX0)
+	convX1 := f.Clear(labelX).NewConv
+
+	// Actor Y: genesis convY0 → /clear → convY1 (convY0 becomes replaced).
+	f.HaveAliveSession(convY0, labelY, tmuxY, cwdY)
+	f.HaveMember(group, convY0)
+	convY1 := f.Clear(labelY).NewConv
+
+	// A predecessor's "replaced at" is the linked_at of the generation that
+	// SUPERSEDED it (the next chain link) — so to control each predecessor's
+	// replacement time we pin its successor's linked_at. We pin the genesis
+	// links too so each actor's chain keeps its oldest-first order (a successor
+	// backdated below its predecessor would reorder the chain and the snapshot
+	// would fall back to the predecessor's own birth time).
+	setLinkedAt := func(conv, ts string) {
+		t.Helper()
+		d, err := db.Open()
+		require.NoError(t, err)
+		_, err = d.Exec(`UPDATE agent_conversations SET linked_at = ? WHERE conv_id = ?`, ts, conv)
+		require.NoError(t, err)
+	}
+	// X replaced at 00:00:01, Y replaced at 00:00:03 → Y is the newer
+	// replacement.
+	setLinkedAt(convX0, "2020-01-01T00:00:00Z")
+	setLinkedAt(convX1, "2020-01-01T00:00:01Z")
+	setLinkedAt(convY0, "2020-01-01T00:00:02Z")
+	setLinkedAt(convY1, "2020-01-01T00:00:03Z")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	// orderedReplaced returns the snapshot's replaced[] conv-ids restricted to
+	// the ones we care about, in snapshot order.
+	orderedReplaced := func(snap dashSnapshot, want ...string) []string {
+		in := map[string]bool{}
+		for _, c := range want {
+			in[c] = true
+		}
+		var got []string
+		for _, r := range snap.Replaced {
+			if in[r.ConvID] {
+				got = append(got, r.ConvID)
+			}
+		}
+		return got
+	}
+
+	snap := fetchDashSnapshot(t, mux)
+	assert.Equal(t, []string{convY0, convX0}, orderedReplaced(snap, convX0, convY0),
+		"newest replacement (Y, 00:00:03) sorts above the older one (X, 00:00:01)")
+
+	// Flip: make X the newer replacement (00:00:09 > Y's 00:00:03). The order
+	// must follow the replacement time, not the actor — so X now leads.
+	setLinkedAt(convX1, "2020-01-01T00:00:09Z")
+	snap2 := fetchDashSnapshot(t, mux)
+	assert.Equal(t, []string{convX0, convY0}, orderedReplaced(snap2, convX0, convY0),
+		"after backdating Y below X, the newer X replacement leads")
+}
+
 // Scenario (cold-review hazard): deleting a MIDDLE generation must not strand an
 // OLDER generation's stale-id forwarding. Stale references forward through the
 // succession chain (agent_conv_succession), so removing generation B from a

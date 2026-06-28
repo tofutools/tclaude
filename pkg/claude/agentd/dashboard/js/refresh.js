@@ -641,7 +641,9 @@ function bindSortHeaders() {
     if (!th) return;
     const tableKey = th.dataset.sortTable;
     cycleSort(tableKey, th.dataset.sortCol);
-    if (tableKey === 'members') renderGroupsTab();
+    // 'replaced' is the virtual Replaced-generations sub-table, rendered as
+    // part of the groups tab — so re-render that, same as 'members'.
+    if (tableKey === 'members' || tableKey === 'replaced') renderGroupsTab();
     else if (tableKey === 'cron') renderCronTab();
     else if (tableKey === 'sudo') renderSudoTab();
     else if (tableKey === 'links') renderLinksTab();
