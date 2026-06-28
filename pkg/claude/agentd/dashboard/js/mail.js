@@ -208,6 +208,20 @@ function onlineConvs() {
   return set;
 }
 
+// onlineAgents is the set of stable agent_ids with a live tmux window —
+// the rotation-immune companion to onlineConvs. A sender that has
+// reincarnated since writing a message keeps the same agent_id while its
+// conv_id (the snapshot in from_conv) points at a now-dead generation, so
+// liveness must be checked against the actor, not the stale conv. Rows
+// without an agent_id (e.g. ungrouped raw convs) simply don't contribute.
+function onlineAgents() {
+  const set = new Set();
+  const snap = lastSnapshot || {};
+  (snap.agents || []).concat(snap.ungrouped || [])
+    .forEach(a => { if (a && a.online && a.agent_id) set.add(a.agent_id); });
+  return set;
+}
+
 // prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
 // generations of a still-existing actor — a reincarnate / Claude Code
 // /clear advanced the actor's live pointer and left these behind (JOH-26).
@@ -972,15 +986,18 @@ function readerHeaderRow(label, valueHTML) {
 // the msg-focus handler in row-actions.js (jump + mark read).
 function humanFocusButton(m) {
   if (!m.from_conv) return '';
-  // Liveness stays keyed on the conv-id (onlineConvs is the set of live
-  // tmux windows), but the focus TARGET sent to /api/jump leads with the
-  // sender's stable agent_id so a sender that has rotated since the message
-  // was written still resolves (jump goes through agent.ResolveSelector,
-  // which takes an `agt_` id OR a conv-id). from_agent is only populated on
-  // human-folder messages once their from_agent companion lands (JOH-316
-  // F2); until then this degrades to from_conv, the same fallback the
-  // reader's From line already uses (shortAgentId).
-  const focusable = onlineConvs().has(m.from_conv);
+  // Liveness keys on the SAME selector the focus TARGET (data-conv below)
+  // uses, so enablement and the jump can never disagree about which id is
+  // live: lead with the sender's stable agent_id when we have it (it stays
+  // valid across reincarnation, where from_conv becomes a dead-generation
+  // snapshot), else fall back to from_conv. Jump goes through
+  // agent.ResolveSelector (accepts an `agt_` id OR a conv-id). from_agent
+  // is only populated on human-folder messages once their companion lands
+  // (JOH-316 F2); until then both the enablement and the target degrade to
+  // from_conv, the same fallback the reader's From line uses (shortAgentId).
+  const focusable = m.from_agent
+    ? onlineAgents().has(m.from_agent)
+    : onlineConvs().has(m.from_conv);
   const label = m.from_title || m.from_conv;
   return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_agent || m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
 }
