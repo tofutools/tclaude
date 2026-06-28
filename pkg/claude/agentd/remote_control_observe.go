@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -97,10 +98,23 @@ const rcFooterScanLines = 6
 // rcMinConfidentWidth is the footer width (in columns, inferred from the widest
 // captured row) below which an ABSENT pill is reported as `unknown` rather than
 // `off`. Claude Code hides the pill when the pane is too narrow, so on a narrow
-// pane "no pill" doesn't prove "off". Heuristic — tune once CC's real
-// hide-threshold is known; erring toward `unknown` keeps us from confidently
-// reporting `off` for a pane that simply couldn't draw the pill.
+// (or empty, width 0) pane "no pill" doesn't prove "off". Heuristic — tune once
+// CC's real hide-threshold is known; erring toward `unknown` keeps us from
+// confidently reporting `off` for a pane that simply couldn't draw the pill.
 const rcMinConfidentWidth = 50
+
+// rcPillRightZone is how many columns from the right edge of a (wide) status row
+// the "/rc" token must start within to count as the pill when it carries no
+// trusted hyperlink. The real pill is right-aligned in a full-width status bar;
+// this rejects a left-aligned "/rc" typed into the input box, or a transcript
+// line that merely mentions it, when such a row falls inside the footer band.
+const rcPillRightZone = 16
+
+// rcSessionURLPrefix is the origin the footer pill links to. A captured pane
+// includes agent-influenceable text, so we only TRUST (as the definitive armed
+// signal) and only SURFACE to the operator a hyperlink under this exact origin —
+// a crafted link to anywhere else is ignored.
+const rcSessionURLPrefix = "https://claude.ai/code/"
 
 // rcPillRe matches the "/rc" pill as a bounded token — preceded by whitespace
 // or start-of-line and followed by whitespace, the failed suffix, or
@@ -108,7 +122,7 @@ const rcMinConfidentWidth = 50
 var rcPillRe = regexp.MustCompile(`(^|\s)/rc(\s|$)`)
 
 // rcFailedTextRe matches the textual failed variant if CC spells it out
-// ("/rc failed"). The colour-based failed variant is caught by lineMarksRed.
+// ("/rc failed"). The colour-based failed variant is caught by pillRed.
 var rcFailedTextRe = regexp.MustCompile(`/rc\s+failed\b`)
 
 // osc8Re extracts the target URL of an OSC 8 hyperlink: ESC ] 8 ; ; URL ST,
@@ -125,10 +139,6 @@ var oscStripRe = regexp.MustCompile("\x1b][^\x07\x1b]*(?:\x07|\x1b\\\\)")
 // and cursor moves, leaving the visible glyphs behind.
 var csiStripRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
-// sgrRe captures the parameter list of an SGR sequence (ESC [ … m) so
-// lineMarksRed can test it for a red foreground.
-var sgrRe = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
-
 // stripANSI removes OSC and CSI escape sequences, returning the visible text.
 func stripANSI(s string) string {
 	s = oscStripRe.ReplaceAllString(s, "")
@@ -136,29 +146,164 @@ func stripANSI(s string) string {
 	return s
 }
 
-// firstOSC8URL returns the first OSC 8 hyperlink target on the raw line, or "".
-func firstOSC8URL(rawLine string) string {
-	m := osc8Re.FindStringSubmatch(rawLine)
-	if len(m) >= 2 && m[1] != "" {
-		return m[1]
+// claudeSessionURL returns the first OSC 8 hyperlink target on the raw line
+// whose origin is rcSessionURLPrefix, or "". Gating on the origin keeps a
+// hyperlink crafted elsewhere in the (agent-influenceable) pane from being
+// surfaced to the operator as a connect link, and makes "carries a claude.ai
+// hyperlink" a trustworthy definitive armed signal.
+func claudeSessionURL(rawLine string) string {
+	for _, m := range osc8Re.FindAllStringSubmatch(rawLine, -1) {
+		if len(m) >= 2 && strings.HasPrefix(m[1], rcSessionURLPrefix) {
+			return m[1]
+		}
 	}
 	return ""
 }
 
-// lineMarksRed reports whether the raw line sets a red foreground anywhere in
-// its SGR codes (31 = red, 91 = bright red). Best-effort: 256-colour and
-// truecolour reds aren't decoded — if CC ever renders the failed pill that way,
-// extend this. A red footer line is how we tell the failed pill from the
-// healthy one when CC conveys the difference by colour rather than text.
-func lineMarksRed(rawLine string) bool {
-	for _, m := range sgrRe.FindAllStringSubmatch(rawLine, -1) {
-		for p := range strings.SplitSeq(m[1], ";") {
-			if p == "31" || p == "91" {
-				return true
+// pillRightAligned reports whether the "/rc" token sits in the right margin of a
+// WIDE status row — the geometry of the real footer pill. The row must be at
+// least rcMinConfidentWidth wide (ignoring trailing blanks) and the token must
+// start within rcPillRightZone columns of that trimmed right edge. Used to
+// reject a "/rc" that landed in the footer band but is really input-box or
+// transcript text (left-aligned, or on a short line). Callers gate this behind
+// "has no trusted hyperlink", so a properly-linked pill is accepted regardless
+// of alignment.
+func pillRightAligned(plain string) bool {
+	trimmed := strings.TrimRight(plain, " ")
+	w := len([]rune(trimmed))
+	if w < rcMinConfidentWidth {
+		return false
+	}
+	before, _, found := strings.Cut(plain, "/rc")
+	if !found {
+		return false
+	}
+	col := len([]rune(before))
+	return col >= w-rcPillRightZone
+}
+
+// pillRed reports whether the visible "/rc" pill on the raw line is drawn with a
+// red foreground — SCOPED to the pill, by replaying the line's SGR state up to
+// the point the "/rc" glyphs appear. Scoping matters: a red element elsewhere on
+// the status row (e.g. a high-context usage bar) must NOT make a healthy pill
+// read as failed. Recognises standard (31/91), 256-colour and truecolour reds.
+func pillRed(rawLine string) bool {
+	red := false
+	s := rawLine
+	for len(s) > 0 {
+		if s[0] == 0x1b {
+			n := escSeqLen(s)
+			if n <= 0 {
+				n = 1
+			}
+			if params, ok := sgrParams(s[:n]); ok {
+				red = foldRed(red, params)
+			}
+			s = s[n:]
+			continue
+		}
+		if strings.HasPrefix(s, "/rc") {
+			return red
+		}
+		s = s[1:]
+	}
+	return red
+}
+
+// escSeqLen returns the byte length of the terminal escape sequence beginning at
+// s[0] (assumed ESC): a CSI (ESC [ … final byte 0x40-0x7e), an OSC (ESC ] … ST,
+// where ST is BEL or ESC \), or a 2-byte ESC-x. Returns 0 when s doesn't start
+// with ESC. Used to step pillRed over escapes without scanning inside them (so a
+// "/rc" inside an OSC hyperlink URL is never mistaken for the visible pill).
+func escSeqLen(s string) int {
+	if len(s) == 0 || s[0] != 0x1b {
+		return 0
+	}
+	if len(s) < 2 {
+		return 1
+	}
+	switch s[1] {
+	case '[': // CSI
+		i := 2
+		for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
+			i++
+		}
+		if i < len(s) {
+			i++ // include the final byte
+		}
+		return i
+	case ']': // OSC, terminated by BEL or ESC \
+		i := 2
+		for i < len(s) {
+			if s[i] == 0x07 {
+				return i + 1
+			}
+			if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+				return i + 2
+			}
+			i++
+		}
+		return len(s)
+	default:
+		return 2 // ESC x
+	}
+}
+
+// sgrParams returns the parameter list of an SGR sequence (ESC [ … m), and ok.
+func sgrParams(seq string) (string, bool) {
+	if len(seq) >= 3 && seq[0] == 0x1b && seq[1] == '[' && seq[len(seq)-1] == 'm' {
+		return seq[2 : len(seq)-1], true
+	}
+	return "", false
+}
+
+// foldRed applies one SGR parameter list to the running red-foreground state:
+// 0/39/"" reset it, 31/91 set it, and 38;5;N / 38;2;R;G;B set it when the
+// extended colour is red-ish. Other params leave it unchanged.
+func foldRed(cur bool, params string) bool {
+	parts := strings.Split(params, ";")
+	if params == "" {
+		parts = []string{"0"} // bare ESC[m is a reset
+	}
+	for i := 0; i < len(parts); i++ {
+		switch parts[i] {
+		case "", "0", "39":
+			cur = false
+		case "31", "91":
+			cur = true
+		case "38":
+			if i+2 < len(parts) && parts[i+1] == "5" {
+				cur = isRed256(parts[i+2])
+				i += 2
+			} else if i+4 < len(parts) && parts[i+1] == "2" {
+				cur = isRedRGB(parts[i+2], parts[i+3], parts[i+4])
+				i += 4
 			}
 		}
 	}
+	return cur
+}
+
+// isRed256 reports whether a 256-colour palette index is a recognisable red
+// (standard reds + the pure-red column of the 6×6×6 cube + common light reds).
+func isRed256(s string) bool {
+	switch s {
+	case "1", "9", "52", "88", "124", "160", "196", "197", "203", "210", "167":
+		return true
+	}
 	return false
+}
+
+// isRedRGB reports whether a truecolour triple reads as red: a high red channel
+// with low green and blue.
+func isRedRGB(rs, gs, bs string) bool {
+	r, errR := strconv.Atoi(rs)
+	g, errG := strconv.Atoi(gs)
+	b, errB := strconv.Atoi(bs)
+	if errR != nil || errG != nil || errB != nil {
+		return false
+	}
+	return r >= 150 && g <= 100 && b <= 100
 }
 
 // capturePane snapshots the visible content of a tmux pane target
@@ -215,11 +360,18 @@ func parseRemoteControlFooter(raw string) rcObservation {
 		if !rcPillRe.MatchString(plain) {
 			continue
 		}
-		sawPill = true
-		if u := firstOSC8URL(rawLine); u != "" {
-			sessionURL = u
+		// Distinguish the real footer pill from a "/rc" that merely landed in
+		// the band (input box, transcript tail). A claude.ai/code hyperlink is
+		// definitive; otherwise the token must be right-aligned on a wide row.
+		url := claudeSessionURL(rawLine)
+		if url == "" && !pillRightAligned(plain) {
+			continue
 		}
-		if rcFailedTextRe.MatchString(plain) || lineMarksRed(rawLine) {
+		sawPill = true
+		if url != "" {
+			sessionURL = url
+		}
+		if rcFailedTextRe.MatchString(plain) || pillRed(rawLine) {
 			failed = true
 		}
 	}
@@ -233,11 +385,14 @@ func parseRemoteControlFooter(raw string) rcObservation {
 		}
 	case sawPill:
 		return rcObservation{state: rcSeenOn, sessionURL: sessionURL}
-	case width > 0 && width < rcMinConfidentWidth:
-		return rcObservation{
-			state: rcUnknown,
-			note:  fmt.Sprintf("the pane is only ~%d columns wide; Claude Code hides the /rc footer pill on a narrow pane, so its absence doesn't prove remote control is off — widen the pane or attach to confirm", width),
+	case width < rcMinConfidentWidth:
+		// Includes width 0 (empty capture, e.g. mid-redraw) and a too-narrow
+		// pane: in both, an absent pill doesn't prove "off".
+		note := fmt.Sprintf("the pane is only ~%d columns wide; Claude Code hides the /rc footer pill on a narrow pane, so its absence doesn't prove remote control is off — widen the pane or attach to confirm", width)
+		if width == 0 {
+			note = "the pane capture came back empty (it may have been mid-redraw), so remote-control state can't be confirmed from it — retry, or check the pane directly"
 		}
+		return rcObservation{state: rcUnknown, note: note}
 	default:
 		return rcObservation{state: rcSeenOff}
 	}

@@ -131,8 +131,10 @@ func runRemoteControl(p *remoteControlParams, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Remote control is ARMED but FAILED for %s%s — observed live, NOT currently reachable\n", short(resp.ConvID), suffix)
 		case "off":
 			fmt.Fprintf(stdout, "Remote control is off for %s%s — observed live\n", short(resp.ConvID), suffix)
-		default: // "unknown" or "" (no live pane to read)
-			fmt.Fprintf(stdout, "Remote control is %s for %s%s — best-known (pane not read)\n", state, short(resp.ConvID), suffix)
+		case "unknown":
+			fmt.Fprintf(stdout, "Remote control is %s for %s%s — best-known; couldn't confirm from the live pane\n", state, short(resp.ConvID), suffix)
+		default: // "" — no live pane to read
+			fmt.Fprintf(stdout, "Remote control is %s for %s%s — best-known (no live pane to read)\n", state, short(resp.ConvID), suffix)
 		}
 		if resp.SessionURL != "" {
 			fmt.Fprintf(stdout, "Connect at: %s\n", resp.SessionURL)

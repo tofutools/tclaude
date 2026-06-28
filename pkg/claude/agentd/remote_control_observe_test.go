@@ -24,11 +24,11 @@ func rcPad(s string, n int) string {
 func TestParseRemoteControlFooter(t *testing.T) {
 	const url = "https://claude.ai/code/019ec010-1111-2222-3333-444444444444"
 	tests := []struct {
-		name       string
-		raw        string
-		wantState  rcObserved
-		wantURL    string
-		wantNarrow bool // expect the "too narrow" note on an unknown
+		name        string
+		raw         string
+		wantState   rcObserved
+		wantURL     string
+		wantNoteSub string // substring the note must contain ("" = skip)
 	}{
 		{
 			name: "off: wide footer, no pill",
@@ -90,8 +90,49 @@ func TestParseRemoteControlFooter(t *testing.T) {
 				"opus 12%",
 				"auto mode",
 			}, "\n"),
-			wantState:  rcUnknown,
-			wantNarrow: true,
+			wantState:   rcUnknown,
+			wantNoteSub: "narrow",
+		},
+		{
+			name:        "unknown: empty capture (mid-redraw)",
+			raw:         "",
+			wantState:   rcUnknown,
+			wantNoteSub: "empty",
+		},
+		{
+			name:        "unknown: all-blank capture",
+			raw:         "\n\n\n",
+			wantState:   rcUnknown,
+			wantNoteSub: "empty",
+		},
+		{
+			name: "off: a left-aligned '/rc' in the input box (within the band) is not the pill",
+			raw: strings.Join([]string{
+				"> /rc",
+				rcPad("claude-opus  12%  7d", 60), // wide status row, no pill
+				"auto mode on (shift+tab to cycle)",
+			}, "\n"),
+			wantState: rcSeenOff,
+		},
+		{
+			name: "off: '/rc' mid-line on a wide row (not right-aligned) is not the pill",
+			raw: strings.Join([]string{
+				"> waiting for input",
+				"the agent said /rc somewhere in the middle of this otherwise wide line of text",
+				rcPad("claude-opus  12%  7d", 60),
+				"auto mode on (shift+tab to cycle)",
+			}, "\n"),
+			wantState: rcSeenOff,
+		},
+		{
+			name: "on: healthy pill survives a red usage bar earlier on the status row",
+			raw: strings.Join([]string{
+				"> waiting for input",
+				"",
+				"claude-opus  " + rcRed("████") + "  92%  " + rcPad("7d", 40) + "/rc",
+				"auto mode on (shift+tab to cycle)",
+			}, "\n"),
+			wantState: rcSeenOn,
 		},
 		{
 			name: "off: a '/rc' mention far ABOVE the footer is ignored",
@@ -142,8 +183,8 @@ func TestParseRemoteControlFooter(t *testing.T) {
 			if got.sessionURL != tc.wantURL {
 				t.Errorf("sessionURL = %q, want %q", got.sessionURL, tc.wantURL)
 			}
-			if tc.wantNarrow && !strings.Contains(got.note, "narrow") {
-				t.Errorf("expected a 'narrow' note on unknown, got %q", got.note)
+			if tc.wantNoteSub != "" && !strings.Contains(got.note, tc.wantNoteSub) {
+				t.Errorf("note = %q, want it to contain %q", got.note, tc.wantNoteSub)
 			}
 		})
 	}
@@ -165,28 +206,41 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
-func TestFirstOSC8URL(t *testing.T) {
-	const url = "https://claude.ai/code/xyz"
-	if got := firstOSC8URL("status  " + rcOSC8(url, "/rc")); got != url {
-		t.Errorf("firstOSC8URL = %q, want %q", got, url)
+func TestClaudeSessionURL(t *testing.T) {
+	const good = "https://claude.ai/code/xyz"
+	if got := claudeSessionURL("status  " + rcOSC8(good, "/rc")); got != good {
+		t.Errorf("claudeSessionURL = %q, want %q", got, good)
 	}
-	if got := firstOSC8URL("no hyperlink here /rc"); got != "" {
-		t.Errorf("firstOSC8URL on plain text = %q, want empty", got)
+	if got := claudeSessionURL("no hyperlink here /rc"); got != "" {
+		t.Errorf("claudeSessionURL on plain text = %q, want empty", got)
+	}
+	// A hyperlink to any other origin is NOT trusted/surfaced — the captured
+	// pane is agent-influenceable, so a crafted link must be ignored.
+	if got := claudeSessionURL("evil " + rcOSC8("https://evil.example/phish", "/rc")); got != "" {
+		t.Errorf("claudeSessionURL on a non-claude origin = %q, want empty", got)
 	}
 }
 
-func TestLineMarksRed(t *testing.T) {
-	if !lineMarksRed("\x1b[31m/rc\x1b[0m") {
-		t.Error("31m foreground should read as red")
+func TestPillRed(t *testing.T) {
+	// Scoped to the pill: a red bar BEFORE a reset + healthy pill is not red.
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"31m pill", "\x1b[31m/rc\x1b[0m", true},
+		{"91m bright-red pill", "\x1b[1;91m/rc\x1b[0m", true},
+		{"256-colour red pill", "\x1b[38;5;196m/rc\x1b[0m", true},
+		{"truecolour red pill", "\x1b[38;2;220;30;30m/rc\x1b[0m", true},
+		{"green pill", "\x1b[32m/rc\x1b[0m", false},
+		{"uncoloured pill", "/rc", false},
+		{"red elsewhere, healthy pill", "\x1b[31m####\x1b[0m  status  /rc", false},
+		{"red bar then reset then linked pill", "\x1b[38;2;200;10;10m▓▓\x1b[0m " + rcOSC8("https://claude.ai/code/x", "/rc"), false},
 	}
-	if !lineMarksRed("\x1b[1;91m/rc\x1b[0m") {
-		t.Error("91m bright-red foreground should read as red")
-	}
-	if lineMarksRed("\x1b[32m/rc\x1b[0m") {
-		t.Error("32m (green) must not read as red")
-	}
-	if lineMarksRed("/rc") {
-		t.Error("uncoloured text must not read as red")
+	for _, c := range cases {
+		if got := pillRed(c.line); got != c.want {
+			t.Errorf("%s: pillRed = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 
