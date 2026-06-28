@@ -55,10 +55,9 @@ func UnarchiveCmd() *cobra.Command {
 		Short: "Reverse `conv archive` — clear the archived flag on a conversation",
 		Long: "Clears `conv_index.archived_at` so the conv reappears in " +
 			"default `conv ls` output. Idempotent on already-active convs. " +
-			"Note: a reincarnated old conv that was renamed to `<name>-x` " +
-			"will still match the legacy title-suffix fallback unless you " +
-			"also rename it back — but the column-based check is the " +
-			"canonical signal everywhere new code looks.",
+			"Since JOH-320 the archived_at column is the sole visibility " +
+			"signal, so this reveals the conv even if its title still carries " +
+			"the cosmetic `-x` reincarnation marker — no need to rename it back.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		ValidArgsFunc: func(p *ArchiveParams, cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {

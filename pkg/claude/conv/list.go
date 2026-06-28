@@ -21,20 +21,20 @@ import (
 )
 
 type ListParams struct {
-	Dir             string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
-	Global          bool   `short:"g" help:"List conversations from all projects"`
-	SortBy          string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
-	Asc             bool   `long:"asc" help:"Sort ascending (default is descending)"`
-	Long            bool   `short:"l" help:"Show detailed output"`
-	Limit           int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
-	JSON            bool   `long:"json" help:"Output as JSON"`
-	Count           bool   `short:"c" long:"count" help:"Only output the count of conversations"`
-	Since           string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Before          string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
-	Watch           bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
-	Verbose         bool   `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
-	Reindex         bool   `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
-	ShowArchived    bool   `long:"show-archived" help:"Include archived convs whose title ends with the -x marker (default: hidden). Pairs with the groups archive concept."`
+	Dir          string `short:"C" long:"dir" optional:"true" help:"Directory to list conversations from (defaults to current directory)"`
+	Global       bool   `short:"g" help:"List conversations from all projects"`
+	SortBy       string `long:"sort-by" help:"Sort by: created, modified, messages, prompt, project" default:"modified"`
+	Asc          bool   `long:"asc" help:"Sort ascending (default is descending)"`
+	Long         bool   `short:"l" help:"Show detailed output"`
+	Limit        int    `short:"n" help:"Limit number of results (0 = no limit)" default:"0"`
+	JSON         bool   `long:"json" help:"Output as JSON"`
+	Count        bool   `short:"c" long:"count" help:"Only output the count of conversations"`
+	Since        string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Before       string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Watch        bool   `short:"w" long:"watch" help:"Interactive watch mode with search and session management"`
+	Verbose      bool   `short:"v" long:"verbose" help:"Show debug info (stale scan stats, timing)"`
+	Reindex      bool   `long:"reindex" help:"Force rescan all conversations from .jsonl files and update index"`
+	ShowArchived bool   `long:"show-archived" help:"Include archived convs (conv_index.archived_at set — reincarnation predecessors and 'tclaude conv archive') which are hidden by default. Pairs with the groups archive concept."`
 }
 
 func ListCmd() *cobra.Command {
@@ -134,12 +134,13 @@ func RunList(params *ListParams, stdout, stderr *os.File) int {
 		return 1
 	}
 
-	// Hide archived convs by default — `-x`-suffixed CustomTitles are
-	// reincarnated old instances kept on disk for history but rarely
-	// what the user wants to see. Opt back in with --show-archived.
-	// Same conceptual soft-delete as `groups archive` on the group
-	// side; convs use the title-suffix marker today, with a planned
-	// migration to a `conv_index.archived_at` column.
+	// Hide archived convs by default — reincarnated old instances (and
+	// anything `tclaude conv archive` marked) are kept on disk for history
+	// but rarely what the user wants to see. Opt back in with
+	// --show-archived. Same conceptual soft-delete as `groups archive` on
+	// the group side; archival is the explicit conv_index.archived_at column
+	// (JOH-320 retired the old `-x` title-suffix heuristic, which mis-hid a
+	// live agent whose base name legitimately ended in `-x`).
 	if !params.ShowArchived {
 		filtered := allEntries[:0]
 		for _, e := range allEntries {

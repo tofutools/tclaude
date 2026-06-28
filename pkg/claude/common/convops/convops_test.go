@@ -93,53 +93,16 @@ func TestSessionEntry_HasTitle(t *testing.T) {
 	}
 }
 
-// TestIsArchivedTitle locks in the suffix detection used by listing
-// surfaces (conv ls, dashboard) to default-hide reincarnated old
-// convs. The marker is the literal `-x` suffix, optionally followed by
-// a `-<N>` disambiguation counter (JOH-319: a repeat retirement of the
-// same base — the living gen keeps its name, so `worker-x` recurs and a
-// counter is appended). Edge cases: names like `unix` (no hyphen before
-// x) or `foo-x2` (no hyphen before the digit) must NOT match. Pairs
-// conceptually with `groups archive` on the group side; both are
-// soft-delete markers.
-func TestIsArchivedTitle(t *testing.T) {
-	cases := map[string]bool{
-		"":             false, // empty
-		"worker":       false, // no -x at all
-		"unix":         false, // ends in x but no hyphen — not a marker
-		"x":            false, // single 'x' isn't `-x`
-		"foo-x":        true,  // simplest match
-		"worker-x-2":   true,  // disambiguated repeat-retirement form (JOH-319)
-		"worker-x-12":  true,  // multi-digit counter
-		"foo-x2":       false, // no hyphen before the digit — not a counter
-		"worker-r-1-x": true,  // legacy archived reincarnate form
-		"worker-c-2-x": true,  // archived clone form (unusual but possible)
-		"foo-x-x":      true,  // already-archived-twice (edge case; reincarnate skips this but still detected)
-		"foo-extra":    false, // ends in something other than -x
-		"-x":           true,  // bare suffix is technically a match — title shouldn't be just "-x" but be permissive
-	}
-	for in, want := range cases {
-		t.Run(in, func(t *testing.T) {
-			assert.Equal(t, want, IsArchivedTitle(in), "IsArchivedTitle(%q)", in)
-			// Method form mirrors the helper.
-			e := SessionEntry{CustomTitle: in}
-			assert.Equal(t, want, e.IsArchived(), "(SessionEntry).IsArchived() with CustomTitle=%q", in)
-		})
-	}
-
-	// IsArchived only checks CustomTitle, not Summary / FirstPrompt —
-	// a Summary that happens to end in `-x` is coincidence, not an
-	// archive mark.
-	e := SessionEntry{Summary: "summary-x", FirstPrompt: "prompt-x"}
-	assert.False(t, e.IsArchived(), "Summary/FirstPrompt ending in -x must NOT mark a conv as archived")
-}
-
-// TestSessionEntry_IsArchived_PrefersColumn covers the canonical
-// archived signal: the `ArchivedAt` field (sourced from
-// `conv_index.archived_at`). When set, IsArchived returns true even
-// if the title doesn't have the `-x` suffix — the column survives
-// renames, rescans, etc.
-func TestSessionEntry_IsArchived_PrefersColumn(t *testing.T) {
+// TestSessionEntry_IsArchived covers the canonical (and now sole) archived
+// signal: the `ArchivedAt` field, sourced from `conv_index.archived_at`.
+// IsArchived is true exactly when that timestamp is non-empty, regardless of
+// the title.
+//
+// JOH-320: the old `-x` title-suffix heuristic was retired. A LIVE agent whose
+// base name legitimately ends in `-x` (e.g. `foo-x`, `worker-x-2`) must NOT be
+// treated as archived — the whole point of moving to the explicit column. The
+// `-x` rename is now a pure display convention with no visibility weight.
+func TestSessionEntry_IsArchived(t *testing.T) {
 	cases := []struct {
 		name      string
 		entry     SessionEntry
@@ -151,17 +114,22 @@ func TestSessionEntry_IsArchived_PrefersColumn(t *testing.T) {
 			wantArchd: true,
 		},
 		{
-			name:      "column empty, -x suffix legacy",
-			entry:     SessionEntry{CustomTitle: "worker-x"},
-			wantArchd: true,
-		},
-		{
-			name:      "both set",
+			name:      "column set, with -x suffix",
 			entry:     SessionEntry{CustomTitle: "worker-x", ArchivedAt: "2026-05-10T12:00:00Z"},
 			wantArchd: true,
 		},
 		{
-			name:      "neither — active",
+			name:      "live agent whose base name ends in -x (JOH-320: no longer hidden)",
+			entry:     SessionEntry{CustomTitle: "foo-x"},
+			wantArchd: false,
+		},
+		{
+			name:      "live agent with -x-N suffix (JOH-320: no longer hidden)",
+			entry:     SessionEntry{CustomTitle: "worker-x-2"},
+			wantArchd: false,
+		},
+		{
+			name:      "plain title — active",
 			entry:     SessionEntry{CustomTitle: "worker"},
 			wantArchd: false,
 		},
@@ -170,10 +138,56 @@ func TestSessionEntry_IsArchived_PrefersColumn(t *testing.T) {
 			entry:     SessionEntry{FirstPrompt: "hello"},
 			wantArchd: false,
 		},
+		{
+			name:      "summary/prompt ending in -x is not an archive mark",
+			entry:     SessionEntry{Summary: "summary-x", FirstPrompt: "prompt-x"},
+			wantArchd: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.wantArchd, tc.entry.IsArchived(), "IsArchived() (entry=%+v)", tc.entry)
+		})
+	}
+}
+
+// TestSessionEntry_ArchivedAt_JSON locks in that the archived signal is
+// exposed in `--json` (JOH-320): now that `archived_at` is the sole marker,
+// a `conv ls --show-archived --json` consumer must be able to read it. Empty
+// (active) entries omit the field (omitempty), so active-conv JSON is
+// unchanged.
+func TestSessionEntry_ArchivedAt_JSON(t *testing.T) {
+	archived := SessionEntry{SessionID: "a", ArchivedAt: "2026-05-10T12:00:00Z"}
+	b, err := json.Marshal(archived)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"archived_at":"2026-05-10T12:00:00Z"`, "archived entry exposes the column in JSON")
+
+	active := SessionEntry{SessionID: "b"}
+	b, err = json.Marshal(active)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "archived_at", "active entry omits the field (omitempty)")
+}
+
+// TestArchivedTitleSuffixRegex pins the degraded-mode fail-closed matcher
+// (used only when conv_index.archived_at is unreadable — see
+// LoadSessionsIndexWithOptions). It must recognise the `-x` / `-x-<N>`
+// reincarnation markers and not over-match. IsArchived() itself never
+// consults this — in normal operation archival is column-only.
+func TestArchivedTitleSuffixRegex(t *testing.T) {
+	cases := map[string]bool{
+		"":             false,
+		"worker":       false,
+		"unix":         false, // ends in x but no hyphen
+		"foo-x":        true,
+		"worker-x-2":   true,
+		"worker-x-12":  true,
+		"foo-x2":       false, // no hyphen before the digit
+		"worker-r-1-x": true,
+		"foo-extra":    false,
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			assert.Equal(t, want, archivedTitleSuffixRegex.MatchString(in), "match %q", in)
 		})
 	}
 }
