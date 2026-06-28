@@ -667,6 +667,20 @@ function spawnFormAsProfileSeed() {
 let spawnAttachments = [];
 let spawnAttachSeq = 0;
 
+// Keyboard-repeat guard for pasted files (JOH-307). Holding ⌘/Ctrl-V triggers
+// the OS key-repeat, which fires one `paste` event per repeat, each re-reading
+// the SAME clipboard — so the same file/screenshot was attaching over and over.
+// Auto-repeat events arrive in a tight burst (the key-repeat interval is at most
+// ~0.5s); a deliberate re-paste of the same file comes only after the user
+// releases and presses again, well outside that. handleSpawnPaste drops a pasted
+// file only when it repeats the immediately-preceding paste within this window —
+// scoping the dedupe to true key-repeat bursts. Distinct content (a different
+// key) is always kept, and the picker / drag-drop paths (which never auto-repeat)
+// stay untouched. clearSpawnAttachments resets the tracker per modal session.
+const SPAWN_PASTE_REPEAT_MS = 1000;
+let lastSpawnPasteAt = 0;
+let lastSpawnPasteKeys = new Set();
+
 // fmtAttachSize renders a byte count as a short human string for the list.
 function fmtAttachSize(n) {
   if (n < 1024) return n + ' B';
@@ -706,12 +720,17 @@ function removeSpawnAttachment(id) {
 }
 
 // clearSpawnAttachments empties the list and revokes every preview URL. Called
-// on modal open and close so attachments never leak across spawns.
+// on modal open and close so attachments never leak across spawns. It also
+// resets the paste-repeat tracker: a key-repeat burst can't span a modal
+// open/close, so a fresh dialog must not treat its first paste as a repeat of
+// the previous session's.
 function clearSpawnAttachments() {
   for (const a of spawnAttachments) {
     if (a.url) URL.revokeObjectURL(a.url);
   }
   spawnAttachments = [];
+  lastSpawnPasteAt = 0;
+  lastSpawnPasteKeys = new Set();
   renderSpawnAttachments();
 }
 
@@ -743,20 +762,6 @@ function renderSpawnAttachments() {
 function attachKey(f) {
   return `${f.name || ''}|${f.size}|${f.type || ''}`;
 }
-
-// Keyboard-repeat guard for pasted files (JOH-307). Holding ⌘/Ctrl-V triggers
-// the OS key-repeat, which fires one `paste` event per repeat, each re-reading
-// the SAME clipboard — so the same file/screenshot was attaching over and over.
-// Auto-repeat events arrive in a tight burst (the key-repeat interval is at most
-// ~0.5s); a deliberate re-paste of the same file comes only after the user
-// releases and presses again, well outside that. So we drop a pasted file only
-// when it repeats the immediately-preceding paste within this window — scoping
-// the dedupe to true key-repeat bursts. Distinct content (a different key) is
-// always kept, and the picker / drag-drop paths (which never auto-repeat) stay
-// untouched.
-const SPAWN_PASTE_REPEAT_MS = 1000;
-let lastSpawnPasteAt = 0;
-let lastSpawnPasteKeys = new Set();
 
 // handleSpawnPaste captures files pasted anywhere in the dialog: a screenshot
 // taken to the clipboard ("⌘V" of raw image data) AND a file copied in Finder /
