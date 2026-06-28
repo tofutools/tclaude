@@ -32,14 +32,10 @@
   <!-- The base URL + last-refresh heartbeat (#meta) used to sit here, but it
        crowded the title row's prime space; it now lives in the bottom footer
        bar (see <footer> below). refresh.js still writes the same #meta node. -->
-  <!-- Horizontal-scroll mode toggle (JOH-313). Only shown when the page is
-       wide enough to scroll sideways (body.hscroll-overflow). Flips between
-       follow mode (bars stay pinned to the viewport, controls usable while
-       scrolled) and static mode (bars fill the width, content scrolls off
-       with the page). Sits in the left cluster, so it's visible at rest and
-       (in follow mode) at any scroll; in static mode it scrolls off with
-       the rest of the header, so flip it back from the unscrolled view. -->
-  <button id="hscroll-toggle" type="button" aria-pressed="true" title="Horizontal scroll mode"></button>
+  <!-- The horizontal-scroll mode (follow vs static, JOH-313) used to be a
+       per-browser toggle button here; it now lives in config
+       (dashboard.hscroll_follow, editable on the Config tab) and rides the
+       snapshot — refresh.js toggles body.hscroll-follow off it. -->
   <span class="meta" style="margin-left:auto" id="usage"></span>
   <!-- Master OS-notification bell + per-type popover. The bell glyph
        mirrors config.notifications.enabled (the switch ABOVE the
@@ -354,6 +350,11 @@
         <span class="cfg-label">Plugins tab</span>
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-always-show-plugins" /> always show the Plugins tab, even with no plugins installed</label>
         <span class="cfg-hint">The <strong>Plugins</strong> tab manages human-defined integration bundles (e.g. a docker-backed MCP server). By default it <em>auto-hides</em> when you have no plugins installed — most setups never define one, so the empty tab is just clutter. Enable this to keep it visible regardless, e.g. to reach the built-in catalog and install one from there. (A broken <code>plugins.json</code> always shows the tab so the error isn't hidden.) Off by default. Stored as <code>dashboard.always_show_plugins_tab</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Horizontal scroll</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-hscroll-follow" /> keep the header &amp; tabs pinned while scrolled sideways (follow mode)</label>
+        <span class="cfg-hint">On a window too narrow for a wide member table, the page scrolls sideways. The full-bleed bars (header, tabs, slop marquee) always stretch to fill the width so they never look ragged — this controls their <em>content</em>. <strong>Follow</strong> (default, checked) pins the header controls and tab strip to the viewport and makes them sticky-left, so they stay put and usable while you're scrolled right. <strong>Static</strong> (unchecked) lets that content scroll off with the page — the bars still fill the width, but the controls aren't reachable until you scroll back. Stored as <code>dashboard.hscroll_follow</code> (the default is omitted; static writes <code>false</code>).</span>
       </div>
     </div>
 

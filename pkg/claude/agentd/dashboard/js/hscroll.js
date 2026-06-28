@@ -14,7 +14,8 @@
 // screen at rest. So each bar's content lives in a .bar-inner that we pin
 // to the viewport width; the bar's background fills the rest.
 //
-// Two modes, toggled live (so both can be compared) and persisted:
+// Two modes, chosen from config (dashboard.hscroll_follow, default follow)
+// and applied on every snapshot via setHScrollFollow:
 //   follow (default) — .bar-inner is sticky-left (CSS, body.hscroll-follow),
 //                      so the controls + tab strip stay put and usable as
 //                      the content scrolls under them.
@@ -23,19 +24,20 @@
 //                      ragged, but the controls aren't reachable while
 //                      scrolled right.
 //
+// The mode used to be a per-browser header toggle button; it now lives in
+// ~/.tclaude/config.json (editable on the Config tab) and rides the 2s
+// snapshot, so every dashboard for that daemon shares one setting.
+//
 // We use the live, laid-out document.scrollWidth (not a CSS
 // min-width:max-content) so wrappable content — long descriptions, audit
 // lines — can't force a permanent horizontal scrollbar on a wide screen.
-
-import { dashPrefs } from './prefs.js';
-
-const FOLLOW_KEY = 'tclaude.dash.hscroll.follow';
 
 // syncFullBleedBars widens header/nav/marquee to the scrollable content
 // width and pins their .bar-inner to the viewport width — but only while
 // the page actually overflows sideways; otherwise everything is reset to
 // its natural (viewport-wide) layout. Also flags body.hscroll-overflow so
-// the mode toggle reveals itself only when it's relevant.
+// the sticky-pin CSS (follow mode's .bar-inner) only engages when the page
+// actually overflows sideways.
 function syncFullBleedBars() {
   const bars = [
     document.querySelector('header'),
@@ -74,33 +76,24 @@ function scheduleSync() {
   });
 }
 
-function paintToggle(btn) {
-  const on = document.body.classList.contains('hscroll-follow');
-  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  btn.textContent = on ? '⇆ follow' : '⇆ static';
-  btn.title = on
-    ? 'Horizontal scroll: FOLLOW — the header bar & tabs stay pinned to the view (controls usable while scrolled). Click for static mode.'
-    : 'Horizontal scroll: STATIC — the bars fill the width but their controls scroll off with the page. Click for follow mode.';
+// setHScrollFollow applies the follow/static mode from config
+// (dashboard.hscroll_follow) — refresh.js calls it from every snapshot. It
+// only touches the DOM (and reschedules a bar resync) when the mode actually
+// changes, so the 2s poll doesn't churn. Exported so refresh.js drives it.
+function setHScrollFollow(on) {
+  on = !!on;
+  if (on === document.body.classList.contains('hscroll-follow')) return;
+  document.body.classList.toggle('hscroll-follow', on);
+  scheduleSync();
 }
 
-// bindHScroll wires up the mode (from the saved pref, default follow), the
-// ⇆ toggle button, and the resync triggers. Call AFTER initDashPrefs() so
-// the saved mode is available.
+// bindHScroll seeds the default mode (follow, until the first snapshot
+// confirms it from config) and wires the resync triggers. Call once at boot;
+// the live mode then arrives on every snapshot via setHScrollFollow.
 function bindHScroll() {
-  const follow = (dashPrefs.getItem(FOLLOW_KEY) ?? '1') === '1';
-  document.body.classList.toggle('hscroll-follow', follow);
-
-  const btn = document.getElementById('hscroll-toggle');
-  if (btn) {
-    paintToggle(btn);
-    btn.addEventListener('click', () => {
-      const next = !document.body.classList.contains('hscroll-follow');
-      document.body.classList.toggle('hscroll-follow', next);
-      dashPrefs.setItem(FOLLOW_KEY, next ? '1' : '0');
-      paintToggle(btn);
-      scheduleSync();
-    });
-  }
+  // Default-follow at boot so a wide first paint isn't briefly static before
+  // the first snapshot lands; refresh.js corrects it from config thereafter.
+  document.body.classList.add('hscroll-follow');
 
   // Re-measure whenever the content could have changed width: every
   // re-render / tab switch / group expand (DOM churn under <main>), and on
@@ -117,4 +110,4 @@ function bindHScroll() {
   scheduleSync();
 }
 
-export { bindHScroll, syncFullBleedBars };
+export { bindHScroll, setHScrollFollow, syncFullBleedBars };

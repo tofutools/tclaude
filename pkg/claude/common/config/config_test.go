@@ -628,3 +628,33 @@ func TestActivityBotsStyles(t *testing.T) {
 	assert.Equal(t, ActivityBotsOff, loaded.ActivityBotsRegular(), "regular off survives round-trip")
 	assert.Equal(t, ActivityBotsEmoji, loaded.ActivityBotsSlop(), "slop emoji survives round-trip")
 }
+
+// TestHScrollFollow covers the dashboard.hscroll_follow resolver: nil config
+// / absent block / nil pointer all default to follow (true); only an explicit
+// false selects static. A default config marshals no dashboard block, and an
+// explicit static survives Save/Load.
+func TestHScrollFollow(t *testing.T) {
+	bp := func(b bool) *bool { return &b }
+
+	// Default is follow (true) for every "unset" shape.
+	assert.True(t, (*Config)(nil).HScrollFollow(), "nil → follow")
+	assert.True(t, (&Config{}).HScrollFollow(), "no block → follow")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).HScrollFollow(), "nil pointer → follow")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{HScrollFollow: bp(true)}}).HScrollFollow(), "explicit true → follow")
+
+	// Only an explicit false selects static.
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{HScrollFollow: bp(false)}}).HScrollFollow(), "explicit false → static")
+
+	// A fresh (all-default) config serializes no dashboard block / key.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "hscroll_follow")
+	assert.NotContains(t, string(clean), "dashboard")
+
+	// Explicit static (false) survives Save/Load — the non-default is persisted.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{HScrollFollow: bp(false)}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.False(t, loaded.HScrollFollow(), "static survives round-trip")
+}

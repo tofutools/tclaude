@@ -588,6 +588,13 @@ type snapshotPayload struct {
 	// shows the one for the current mode. Defaults: regular emoji, slop
 	// sprites. See ActivityBotsRegular / ActivityBotsSlop.
 	ActivityBots activityBotsView `json:"activity_bots"`
+	// HScrollFollow mirrors config dashboard.hscroll_follow — whether the
+	// full-bleed chrome bars (header / nav / slop marquee) keep their content
+	// pinned to the viewport (follow, the default) while the page is scrolled
+	// sideways, or let it scroll off (static). refresh.js toggles
+	// body.hscroll-follow off this each poll; it replaces the old per-browser
+	// header toggle button. Default true. See Config.HScrollFollow.
+	HScrollFollow bool `json:"hscroll_follow"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1234,6 +1241,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Regular: cfg.ActivityBotsRegular(),
 			Slop:    cfg.ActivityBotsSlop(),
 		},
+		HScrollFollow: cfg.HScrollFollow(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},
