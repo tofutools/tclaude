@@ -13,11 +13,20 @@ import (
 // "current head" is computed by walking the succession chain forward
 // from AnchorConvID via ResolveLatestConv at lookup time — no need
 // to update this row on every reincarnate.
+//
+// ByAgent / AnchorAgentID are the stable agent_id companions of ByConv /
+// AnchorConvID (dual-written via agentForConvExpr, v77-backfilled): the
+// durable actor / anchored actor, with the conv forms kept as the
+// point-in-time snapshot. Surfacing AnchorAgentID does NOT change anchor
+// resolution — ResolveHeadAlias still walks the succession chain from
+// AnchorConvID (KEEP-2 generation pin); the agent_id is read-only here.
 type HeadAlias struct {
-	Handle       string
-	AnchorConvID string
-	CreatedAt    time.Time
-	ByConv       string
+	Handle        string
+	AnchorConvID  string
+	CreatedAt     time.Time
+	ByConv        string
+	ByAgent       string
+	AnchorAgentID string
 }
 
 // SetHeadAlias upserts (handle → anchorConvID). Handle is lower-cased
@@ -78,9 +87,9 @@ func GetHeadAlias(handle string) (*HeadAlias, error) {
 	}
 	var h HeadAlias
 	var createdAt string
-	err = d.QueryRow(`SELECT handle, anchor_conv_id, created_at, by_conv
+	err = d.QueryRow(`SELECT handle, anchor_conv_id, created_at, by_conv, by_agent, anchor_agent_id
 		FROM agent_head_aliases WHERE handle = ?`, handle).
-		Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv)
+		Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv, &h.ByAgent, &h.AnchorAgentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -109,7 +118,7 @@ func ListHeadAliases() ([]*HeadAlias, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT handle, anchor_conv_id, created_at, by_conv
+	rows, err := d.Query(`SELECT handle, anchor_conv_id, created_at, by_conv, by_agent, anchor_agent_id
 		FROM agent_head_aliases ORDER BY handle ASC`)
 	if err != nil {
 		return nil, err
@@ -119,7 +128,7 @@ func ListHeadAliases() ([]*HeadAlias, error) {
 	for rows.Next() {
 		var h HeadAlias
 		var createdAt string
-		if err := rows.Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv); err != nil {
+		if err := rows.Scan(&h.Handle, &h.AnchorConvID, &createdAt, &h.ByConv, &h.ByAgent, &h.AnchorAgentID); err != nil {
 			return nil, err
 		}
 		h.CreatedAt = parseTimeOrZero(createdAt)

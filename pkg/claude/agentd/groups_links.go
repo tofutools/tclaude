@@ -127,7 +127,11 @@ type linkJSON struct {
 	To        string `json:"to"`
 	Mode      string `json:"mode"`
 	CreatedAt string `json:"created_at"`
-	ByConv    string `json:"by_conv,omitempty"`
+	// ByAgent is the stable agent_id of the creator (the actor); ByConv is
+	// the conv-id snapshot kept for forensics. ByAgent is "" for a
+	// human/un-enrolled creator (then only ByConv is meaningful).
+	ByAgent string `json:"by_agent,omitempty"`
+	ByConv  string `json:"by_conv,omitempty"`
 }
 
 // toLinkJSON renders a link row for the wire. `names` is a preloaded
@@ -143,6 +147,7 @@ func toLinkJSON(l *db.AgentGroupLink, names map[int64]string) linkJSON {
 		To:        names[l.ToGroupID],
 		Mode:      l.Mode,
 		CreatedAt: l.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ByAgent:   l.ByAgent,
 		ByConv:    l.ByConv,
 	}
 }

@@ -756,7 +756,7 @@ func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, group_id, old_name, new_name, by_conv, at
+		`SELECT id, group_id, old_name, new_name, by_conv, at, by_agent
 		 FROM agent_group_audit WHERE group_id = ? ORDER BY id DESC`, groupID)
 	if err != nil {
 		return nil, err
@@ -765,7 +765,7 @@ func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
 	var out []AgentGroupAudit
 	for rows.Next() {
 		var a AgentGroupAudit
-		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &a.At); err != nil {
+		if err := rows.Scan(&a.ID, &a.GroupID, &a.OldName, &a.NewName, &a.ByConv, &a.At, &a.ByAgent); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -774,7 +774,11 @@ func ListAgentGroupRenames(groupID int64) ([]AgentGroupAudit, error) {
 }
 
 // AgentGroupAudit is one row in agent_group_audit, recording a single
-// rename event.
+// rename event. ByConv is the conv-id snapshot of who renamed the group;
+// ByAgent is the stable agent_id companion (dual-written via
+// agentForConvExpr, v77-backfilled) — the durable actor, with ByConv kept
+// as the point-in-time snapshot. ByAgent is "" for a human/un-enrolled
+// renamer.
 type AgentGroupAudit struct {
 	ID      int64
 	GroupID int64
@@ -782,6 +786,7 @@ type AgentGroupAudit struct {
 	NewName string
 	ByConv  string
 	At      string
+	ByAgent string
 }
 
 // ArchiveAgentGroup soft-deletes a group: stamps archived_at = now and
