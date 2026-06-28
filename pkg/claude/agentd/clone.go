@@ -724,10 +724,10 @@ func runClonePostInit(newConv, title, target, caller string) {
 	}
 	// Deliver any pending handoff / inbox nudges now that the rename has
 	// settled. The orchestration enqueued the clone-handoff row (when a
-	// follow-up was given) before launching this goroutine; flush claims
-	// + delivers it through the normal nudge pipeline. No synthetic
-	// welcome (unlike spawn) — the handoff row, when present, is the
-	// clone's first prompt; the /rename alone already materialised the
+	// follow-up was given) before launching this goroutine; the per-agent
+	// dispatcher claims + delivers it through the normal nudge pipeline. No
+	// synthetic welcome (unlike spawn) — the handoff row, when present, is
+	// the clone's first prompt; the /rename alone already materialised the
 	// .jsonl.
-	flush(newConv, realFlushSender)
+	enqueueDeliveryForConv(newConv)
 }

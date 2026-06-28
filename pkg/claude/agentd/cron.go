@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -187,12 +186,11 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 			slog.Warn("cron: insert message failed", "job", j.ID, "error", err)
 			return "send_failed"
 		}
-		// Best-effort nudge — flush only fires if the target is alive
-		// right now. Otherwise the message sits in the inbox until the
-		// next agent_messages-aware request from the target. goBackground
-		// (not a bare `go`) so a flow test firing a cron job can drain the
-		// nudge before its cleanup restores the clcommon.Default tmux swap.
-		goBackground(func() { flush(targetConv, realFlushSender) })
+		// Best-effort nudge via the per-agent dispatcher — delivers if the
+		// target is alive right now, otherwise the message sits in the inbox
+		// until the next agent_messages-aware request from the target.
+		// enqueueDeliveryForConv backgrounds + coalesces the drain itself.
+		enqueueDeliveryForConv(targetConv)
 		return "ok"
 	}
 
@@ -203,19 +201,15 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		return "no_target"
 	}
 	target := sess.TmuxSession + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, j.Body).Run(); err != nil {
+	// Route through injectTextAndSubmit rather than hand-rolling the
+	// text→Enter→Enter sequence: it shares the per-pane injection lock
+	// (JOH-310), so a solo cron fire can't interleave its send-keys with a
+	// concurrent nudge / slash / export injection into the same pane, and
+	// the paste-mode settle reasoning stays in one place.
+	if err := injectTextAndSubmit(target, j.Body); err != nil {
 		slog.Warn("cron: solo send failed", "job", j.ID, "error", err)
 		return "send_failed"
 	}
-	// 500ms gap — same paste-mode coalescing reasoning as
-	// injectTextAndSubmit; see comment there.
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("cron: solo submit failed", "job", j.ID, "error", err)
-		return "send_failed"
-	}
-	time.Sleep(500 * time.Millisecond)
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 	return "ok"
 }
 

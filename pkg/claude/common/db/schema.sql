@@ -196,13 +196,15 @@ CREATE TABLE "agent_messages" (
 			to_recipients    TEXT NOT NULL DEFAULT '',
 			cc_recipients    TEXT NOT NULL DEFAULT '',
 			original_to_conv TEXT NOT NULL DEFAULT ''
-		, from_agent TEXT NOT NULL DEFAULT '', to_agent TEXT NOT NULL DEFAULT '', to_recipient_agents TEXT NOT NULL DEFAULT '', cc_recipient_agents TEXT NOT NULL DEFAULT '');
+		, from_agent TEXT NOT NULL DEFAULT '', to_agent TEXT NOT NULL DEFAULT '', to_recipient_agents TEXT NOT NULL DEFAULT '', cc_recipient_agents TEXT NOT NULL DEFAULT '', pin_gen INTEGER NOT NULL DEFAULT 0);
 
 CREATE INDEX idx_agent_messages_to_conv
 			ON agent_messages(to_conv, created_at);
 
 CREATE INDEX idx_agent_messages_parent
 			ON agent_messages(parent_id);
+
+CREATE INDEX idx_agent_messages_to_agent ON agent_messages(to_agent);
 
 CREATE TABLE agent_transfer_log (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,

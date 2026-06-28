@@ -226,6 +226,29 @@ func GetAgent(agentID string) (*Agent, error) {
 	return a, err
 }
 
+// CurrentConvForAgent returns the conv-id of an agent's CURRENT (head)
+// generation — agents.current_conv_id — or "" if the agent is unknown. This is
+// the conv the agent-keyed nudge drain delivers to (JOH-310): it follows the
+// actor across reincarnate / /clear, so a message queued before a rotation
+// still reaches the live generation. It is the non-transaction sibling of
+// currentConvForAgentTx.
+func CurrentConvForAgent(agentID string) (string, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "", nil
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var cur string
+	err = d.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, agentID).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return cur, err
+}
+
 // GetAgentByConv resolves a conversation generation straight to its actor
 // row, or nil when the conv is not an agent.
 func GetAgentByConv(convID string) (*Agent, error) {

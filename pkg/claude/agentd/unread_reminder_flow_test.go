@@ -29,9 +29,9 @@ const (
 )
 
 // haveUnreadMessage stands up a group with an alive recipient, sends it a
-// message (delivered synchronously by the live nudge path), and returns the
-// flow plus the delivered message id. The message is now delivered-but-unread
-// — exactly the state the reminder sweep acts on.
+// message, drains the async delivery worker, and returns the flow plus the
+// delivered message id. The message is then delivered-but-unread — exactly the
+// state the reminder sweep acts on.
 func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	t.Helper()
 	f := newFlow(t)
@@ -45,8 +45,15 @@ func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var resp sendRespView
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.True(t, resp.Delivered, "alive recipient is nudged → message is delivered")
+	require.True(t, resp.Queued, "alive recipient: message queued for async delivery")
 	require.NotZero(t, resp.ID)
+	// Delivery is async now (JOH-310): drain the worker so the alive recipient
+	// is actually nudged and delivered_at is stamped — the precondition the
+	// unread-reminder sweep keys on (delivered-but-unread).
+	agentd.WaitForBackgroundForTest()
+	msg, err := db.GetAgentMessage(resp.ID)
+	require.NoError(t, err)
+	require.False(t, msg.DeliveredAt.IsZero(), "async worker delivered to the alive recipient")
 	return f, resp.ID
 }
 
@@ -88,6 +95,51 @@ func TestUnreadReminder_FiresAfterInterval(t *testing.T) {
 	agentd.RunUnreadReminderTickForTest(base.Add(11*time.Minute), st)
 	f.AssertSentContains(urTarget, "reminder —", time.Second)
 	f.AssertSentContains(urTarget, "inbox read", time.Second)
+}
+
+// TestUnreadReminder_FollowsAgentAcrossReincarnation guards the JOH-310
+// interaction: a head-following message keeps to_conv = the generation it was
+// addressed to, but if the recipient reincarnates after delivery the reminder
+// must still re-nudge the agent's CURRENT generation — resolved via to_agent,
+// not the now-dead to_conv. Without that resolution the sweep would target the
+// dead generation and the agent would never be reminded.
+func TestUnreadReminder_FollowsAgentAcrossReincarnation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	const sender = "urr-send-bbbb-cccc-000000000001"
+	const gen1 = "urr-gen1-bbbb-cccc-000000000002"
+	const gen2 = "urr-gen2-bbbb-cccc-000000000003"
+	f.HaveConvWithTitle(sender, "po-coordinator")
+	f.HaveConvWithTitle(gen1, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(gen1)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", gen1)
+	const tmux1 = "tclaude-urr-g1"
+	f.HaveAliveSession(gen1, "spwn-urr-g1", tmux1, "/tmp/work")
+
+	// Deliver a message to gen1 (now delivered-unread).
+	rec := postMessage(t, f, sender, map[string]any{"to": gen1, "body": "review please"})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	// Recipient reincarnates: gen1 → gen2. The old pane dies; the new one is up.
+	_, err := db.RotateAgentConv(gen1, gen2, "reincarnate")
+	require.NoError(t, err, "RotateAgentConv")
+	f.MarkOffline(tmux1)
+	const tmux2 = "tclaude-urr-g2"
+	f.HaveAliveSession(gen2, "spwn-urr-g2", tmux2, "/tmp/work")
+
+	// After the interval the reminder must fire at the NEW generation's pane.
+	st := agentd.NewUnreadReminderStateForTest()
+	base := time.Now()
+	agentd.RunUnreadReminderTickForTest(base.Add(11*time.Minute), st)
+	f.AssertSentContains(tmux2+":0.0", "reminder —", time.Second)
+	for _, sk := range f.World.Tmux.Sent() {
+		if sk.Target == tmux1+":0.0" && strings.Contains(sk.Text, "reminder —") {
+			t.Fatalf("reminder went to the dead generation %s", tmux1)
+		}
+	}
 }
 
 // TestUnreadReminder_RestartFloorDefersBacklog pins the restart-herd guard: a
@@ -201,6 +253,7 @@ func TestUnreadReminder_AggregatesBacklog(t *testing.T) {
 	// A second message to the same recipient from the same sender.
 	rec := postMessage(t, f, urSender, map[string]any{"to": urRecipient, "body": "second"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	agentd.WaitForBackgroundForTest() // deliver the second message too (async)
 
 	st := agentd.NewUnreadReminderStateForTest()
 	base := time.Now()

@@ -101,6 +101,20 @@ func runUnreadReminderTick(now time.Time) {
 	runUnreadReminderTickWith(now, unreadReminders)
 }
 
+// reminderTargetConv returns the conv whose pane an unread message should be
+// re-nudged into: the recipient agent's CURRENT head generation when the
+// message is head-following (to_agent set), else the recorded to_conv. This
+// keeps the reminder correct across a reincarnate/`/clear` that rotated the
+// recipient's conv-id after delivery (JOH-310).
+func reminderTargetConv(m *db.AgentMessage) string {
+	if m.ToAgent != "" {
+		if head, err := db.CurrentConvForAgent(m.ToAgent); err == nil && head != "" {
+			return head
+		}
+	}
+	return m.ToConv
+}
+
 // runUnreadReminderTickWith is the testable core: the state is passed in so a
 // test can drive the cadence with a fresh clock.
 func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
@@ -110,14 +124,21 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		return
 	}
 
-	// Group by recipient, preserving id order (oldest first) within each.
+	// Group by recipient's LIVE conv, preserving id order (oldest first) within
+	// each. We key on the agent's current head generation, not the recorded
+	// to_conv (JOH-310): a head-following message delivered across a
+	// reincarnate/`/clear` keeps to_conv = the old, now-dead generation, so
+	// grouping by to_conv would target a dead pane and the agent would never be
+	// reminded. reminderTargetConv resolves to_agent → current head; non-actor
+	// mail falls back to to_conv unchanged.
 	byConv := map[string][]*db.AgentMessage{}
 	order := []string{}
 	for _, m := range msgs {
-		if _, seen := byConv[m.ToConv]; !seen {
-			order = append(order, m.ToConv)
+		conv := reminderTargetConv(m)
+		if _, seen := byConv[conv]; !seen {
+			order = append(order, conv)
 		}
-		byConv[m.ToConv] = append(byConv[m.ToConv], m)
+		byConv[conv] = append(byConv[conv], m)
 	}
 
 	// Decide which recipients are due, and prune clock entries for recipients

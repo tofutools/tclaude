@@ -31,6 +31,8 @@ func postMessage(t *testing.T, f *testharness.Flow, fromConv string, body map[st
 // sendRespView is the subset of the /v1/messages response the tests assert on.
 type sendRespView struct {
 	ID        int64  `json:"id"`
+	Queued    bool   `json:"queued"`
+	Pending   int    `json:"pending"`
 	Delivered bool   `json:"delivered"`
 	ViaGroup  string `json:"via_group"`
 }
@@ -56,7 +58,7 @@ func TestMessage_SoloToSolo_WithMessageDirect_Delivered(t *testing.T) {
 	var resp sendRespView
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode body=%s", rec.Body.String())
 	assert.Empty(t, resp.ViaGroup, "a direct message has no routing group")
-	assert.True(t, resp.Delivered, "an alive recipient should be nudged")
+	assert.True(t, resp.Queued, "an alive recipient: message queued for async delivery")
 
 	rows, err := db.ListAgentMessagesForConv(recip, 100)
 	require.NoError(t, err, "ListAgentMessagesForConv")
@@ -64,6 +66,7 @@ func TestMessage_SoloToSolo_WithMessageDirect_Delivered(t *testing.T) {
 	assert.Equal(t, int64(0), rows[0].GroupID, "direct message — group_id 0")
 	assert.Equal(t, "ping, solo to solo", rows[0].Body)
 
+	agentd.WaitForBackgroundForTest() // drain the async nudge
 	f.AssertSentContains("tclaude-spwn-recp-001:0.0", "new agent message", 2*time.Second)
 }
 

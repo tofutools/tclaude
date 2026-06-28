@@ -30,7 +30,7 @@ func TestMigrateV75toV76_FreshSchema(t *testing.T) {
 
 // TestMigrateV75toV76_BackfillsAgentRefs drives the real v75→v76 migration over
 // hand-seeded v75-shaped message rows: every non-empty conv ref must be rewritten
-// to that conv's owning actor, an unmapped/non-actor conv must stay '', and a
+// to that conv's owning actor, an unmapped/non-actor conv must stay ”, and a
 // second generation of one actor must resolve to the SAME agent_id (proving the
 // stable identity the whole JOH-27 line is about). The migration is also re-run
 // to confirm it is idempotent.
@@ -90,7 +90,7 @@ func TestMigrateV75toV76_BackfillsAgentRefs(t *testing.T) {
 
 // TestInsertAgentMessage_DualWritesAgentRefs pins the send-path dual-write: a
 // freshly inserted message has from_agent/to_agent DERIVED from its conv columns
-// (the same join the backfill used), with a non-actor conv leaving ''. A value
+// (the same join the backfill used), with a non-actor conv leaving ”. A value
 // preset on the struct is ignored — the conv columns are the source of truth.
 func TestInsertAgentMessage_DualWritesAgentRefs(t *testing.T) {
 	setupTestDB(t)
@@ -139,6 +139,9 @@ func TestInsertAgentMessage_DualWritesAgentRefs(t *testing.T) {
 func seedV75MessagesWithoutAgentCols(t *testing.T, d *sql.DB) {
 	t.Helper()
 	for _, s := range []string{
+		// Drop the v80 index first: it references to_agent, so SQLite refuses
+		// to drop the column while it exists. At v75 the index didn't exist.
+		`DROP INDEX IF EXISTS idx_agent_messages_to_agent`,
 		`ALTER TABLE agent_messages DROP COLUMN from_agent`,
 		`ALTER TABLE agent_messages DROP COLUMN to_agent`,
 		`UPDATE schema_version SET version = 75`,

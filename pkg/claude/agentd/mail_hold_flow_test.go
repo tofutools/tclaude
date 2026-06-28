@@ -19,6 +19,8 @@ import (
 
 type sendResult struct {
 	ID        int64 `json:"id"`
+	Queued    bool  `json:"queued"`
+	Pending   int   `json:"pending"`
 	Delivered bool  `json:"delivered"`
 	Held      bool  `json:"held"`
 }
@@ -31,8 +33,9 @@ func decodeSend(t *testing.T, rec *httptest.ResponseRecorder) sendResult {
 }
 
 // assertNoSendKeys fails if any send-keys to `target` so far contains
-// `substr`. Both production write paths under test (nudgeIfAlive and
-// FlushUndeliveredForTest) are synchronous, so a miss here is authoritative
+// `substr`. Under the async delivery model (JOH-310) the caller must drain the
+// worker (agentd.WaitForBackgroundForTest) first; once drained — or for the
+// synchronous FlushUndeliveredForTest path — a miss here is authoritative
 // without polling.
 func assertNoSendKeys(t *testing.T, f *testharness.Flow, target, substr string) {
 	t.Helper()
@@ -69,14 +72,15 @@ func TestMail_HeldWhileRecipientAwaitingHumanInput(t *testing.T) {
 	// capturing keystrokes as the human's answer.
 	f.SetSessionStatus(recipient, session.StatusAwaitingInput)
 
-	// 1) Send while the recipient awaits human input → HELD, not delivered.
+	// 1) Send while the recipient awaits human input → queued; the async
+	// worker then runs the hold gate and leaves it undelivered.
 	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeSend(t, rec)
-	assert.False(t, resp.Delivered, "must not be delivered while recipient awaits human input")
-	assert.True(t, resp.Held, "must be reported held to the sender")
+	require.True(t, resp.Queued, "row queued for async delivery")
 	require.NotZero(t, resp.ID, "row must still be inserted into the mailbox")
 
+	agentd.WaitForBackgroundForTest() // drain the async delivery; the hold gate fires inside it
 	nudge := fmt.Sprintf("new agent message #%d", resp.ID)
 	msg, err := db.GetAgentMessage(resp.ID)
 	require.NoError(t, err)
@@ -129,8 +133,9 @@ func TestMail_ReaperBackstopDeliversHeldMailAfterResume(t *testing.T) {
 	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeSend(t, rec)
-	require.True(t, resp.Held, "must be held while recipient awaits permission")
+	require.True(t, resp.Queued, "row queued for async delivery")
 	nudge := fmt.Sprintf("new agent message #%d", resp.ID)
+	agentd.WaitForBackgroundForTest() // async worker runs the hold gate (awaiting_permission)
 	assertNoSendKeys(t, f, recvPane, nudge)
 
 	// The human answered the prompt; the worker resumed working but makes no
@@ -146,9 +151,10 @@ func TestMail_ReaperBackstopDeliversHeldMailAfterResume(t *testing.T) {
 }
 
 // TestMail_DeliversImmediatelyWhenRecipientWorking is the control: the exact
-// same setup but with the recipient in a normal working state delivers inline
-// at send time (delivered=true, nudge in the pane, no hold). This guards
-// against the hold gate accidentally swallowing ordinary deliveries.
+// same setup but with the recipient in a normal working state delivers (via
+// the async worker — nudge in the pane, delivered_at stamped, no hold) once
+// the worker drains. This guards against the hold gate accidentally swallowing
+// ordinary deliveries.
 func TestMail_DeliversImmediatelyWhenRecipientWorking(t *testing.T) {
 	f := newFlow(t)
 
@@ -166,11 +172,11 @@ func TestMail_DeliversImmediatelyWhenRecipientWorking(t *testing.T) {
 	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	resp := decodeSend(t, rec)
-	assert.True(t, resp.Delivered, "a working recipient is delivered to inline")
-	assert.False(t, resp.Held, "a working recipient is not held")
+	require.True(t, resp.Queued, "working recipient: message queued for async delivery")
 
+	agentd.WaitForBackgroundForTest() // drain the async nudge
 	f.AssertSentContains(recvTmux+":0.0", fmt.Sprintf("new agent message #%d", resp.ID), 2*time.Second)
 	msg, err := db.GetAgentMessage(resp.ID)
 	require.NoError(t, err)
-	assert.False(t, msg.DeliveredAt.IsZero(), "delivered_at stamped")
+	assert.False(t, msg.DeliveredAt.IsZero(), "delivered_at stamped by the worker")
 }

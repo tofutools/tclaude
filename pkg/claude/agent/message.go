@@ -36,6 +36,18 @@ type messageDeps struct {
 	nudge nudgeFn
 }
 
+// queuedState renders the async delivery state shown to the sender (JOH-310).
+// pending is the recipient's queue depth INCLUDING this message, so pending-1
+// is how many are ahead of it. Delivery happens asynchronously, so the sender
+// only ever sees "queued" here — never delivered/held, which the per-agent
+// worker decides after the send returns.
+func queuedState(pending int) string {
+	if pending > 1 {
+		return fmt.Sprintf("queued; %d ahead in delivery queue", pending-1)
+	}
+	return "queued for delivery"
+}
+
 type messageParams struct {
 	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group"`
 	Body    string   `pos:"true" optional:"true" help:"Message body (or use --stdin / --file)"`
@@ -44,6 +56,7 @@ type messageParams struct {
 	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
 	Cc      []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
 	Role    string   `long:"role" optional:"true" help:"With a 'group:' target, broadcast only to members holding this role (case-insensitive). Error on a 1:1 target."`
+	Gen     string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
 }
 
 func messageCmd() *cobra.Command {
@@ -75,6 +88,13 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 		fmt.Fprintf(stderr, "Error: --role is only valid with a 'group:' multicast target\n")
 		return rcInvalidArg
 	}
+	// --gen pins delivery to one agent's specific past generation; it is
+	// meaningless for a group: fan-out or a --cc multi-send. Fail fast before
+	// the daemon round-trip (the daemon enforces the same rule).
+	if p.Gen != "" && (strings.HasPrefix(p.Target, "group:") || len(p.Cc) > 0) {
+		fmt.Fprintf(stderr, "Error: --gen is only valid on a direct (non-group, non-cc) send\n")
+		return rcInvalidArg
+	}
 	body, status := readBody(p, stdin, stderr)
 	if status != rcOK {
 		return status
@@ -94,8 +114,8 @@ func runMessage(p *messageParams, d *messageDeps, stdout, stderr io.Writer, stdi
 func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {
 	var resp struct {
 		ID             int64  `json:"id,omitempty"`
-		Delivered      bool   `json:"delivered,omitempty"`
-		Held           bool   `json:"held,omitempty"`
+		Queued         bool   `json:"queued,omitempty"`
+		Pending        int    `json:"pending,omitempty"`
 		ViaGroup       string `json:"via_group"`
 		RedirectedFrom string `json:"redirected_from,omitempty"`
 		Recipients     []struct {
@@ -103,8 +123,8 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			AgentID        string `json:"agent_id,omitempty"`
 			Title          string `json:"title,omitempty"`
 			MessageID      int64  `json:"message_id"`
-			Delivered      bool   `json:"delivered"`
-			Held           bool   `json:"held,omitempty"`
+			Queued         bool   `json:"queued"`
+			Pending        int    `json:"pending,omitempty"`
 			RedirectedFrom string `json:"redirected_from,omitempty"`
 		} `json:"recipients,omitempty"`
 	}
@@ -118,6 +138,9 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	}
 	if p.Role != "" {
 		payload["role"] = p.Role
+	}
+	if p.Gen != "" {
+		payload["gen"] = p.Gen
 	}
 	err := DaemonPost("/v1/messages", payload, &resp)
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
@@ -148,13 +171,12 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			}
 			return rcOK
 		}
-		delivered := 0
-		held := 0
+		// Async delivery (JOH-310): every persisted recipient is queued; the
+		// per-agent worker delivers (or holds) each one after this returns.
+		queued := 0
 		for _, rcp := range resp.Recipients {
-			if rcp.Delivered {
-				delivered++
-			} else if rcp.Held {
-				held++
+			if rcp.Queued {
+				queued++
 			}
 		}
 		header := "Broadcast"
@@ -167,25 +189,21 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		if resp.ViaGroup != "" {
 			scope = fmt.Sprintf(" via group %q", resp.ViaGroup)
 		}
-		// "held" (recipient blocked on a human) is a distinct bucket from
-		// "queued" (recipient offline); only print it when it happened so
-		// the common line stays terse.
-		heldNote := ""
-		if held > 0 {
-			heldNote = fmt.Sprintf(", %d held (awaiting human input)", held)
+		notQueued := len(resp.Recipients) - queued
+		failNote := ""
+		if notQueued > 0 {
+			failNote = fmt.Sprintf(", %d failed", notQueued)
 		}
-		fmt.Fprintf(stdout, "%s%s: %d recipients (%d delivered, %d queued%s).\n",
-			header, scope, len(resp.Recipients), delivered, len(resp.Recipients)-delivered-held, heldNote)
+		fmt.Fprintf(stdout, "%s%s: %d recipients (%d queued for delivery%s).\n",
+			header, scope, len(resp.Recipients), queued, failNote)
 		for _, rcp := range resp.Recipients {
 			name := rcp.Title
 			if name == "" {
 				name = "(unnamed)"
 			}
-			state := "queued"
-			if rcp.Delivered {
-				state = "delivered"
-			} else if rcp.Held {
-				state = "held (awaiting human input)"
+			state := "not queued"
+			if rcp.Queued {
+				state = queuedState(rcp.Pending)
 			}
 			redirect := ""
 			if rcp.RedirectedFrom != "" {
@@ -199,17 +217,10 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		}
 		return rcOK
 	}
-	state := "queued; target not online"
-	if resp.Delivered {
-		state = "delivered"
-	} else if resp.Held {
-		// The recipient is alive but blocked on a human (a permission
-		// prompt or elicitation dialog). We deliberately did NOT nudge —
-		// the keystrokes would be captured as the human's answer. The row
-		// is in their mailbox and delivers once they are back to working.
-		state = "held; recipient is waiting on human input — placed in their mailbox, " +
-			"delivers when they resume"
-	}
+	// Async delivery (JOH-310): the row is persisted and handed to the
+	// recipient's per-agent delivery queue; the worker decides delivered/held
+	// after this returns, so the sender sees "queued" + the queue depth.
+	state := queuedState(resp.Pending)
 	// An off-group send (the message.direct path) has no routing group;
 	// render it as a direct message rather than `via group ""`.
 	via := "directly"
