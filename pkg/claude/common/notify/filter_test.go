@@ -97,3 +97,40 @@ func TestAllowedForConv(t *testing.T) {
 		assert.False(t, AllowedForConv("conv-multi"))
 	})
 }
+
+// TestAllowedForConv_SurvivesRotation pins the C2 (JOH-324) intent: the
+// mute decision keys on the stable agent_id, so a per-agent 'off' pref
+// AND a group mute both follow the actor onto a fresh conv generation
+// (the reincarnate / /clear case) without any re-keying.
+func TestAllowedForConv_SurvivesRotation(t *testing.T) {
+	setupFilterDB(t)
+
+	t.Run("per-agent off pref follows the agent across rotation", func(t *testing.T) {
+		const gen0, gen1 = "rot-pref-gen0", "rot-pref-gen1"
+		require.NoError(t, db.SetConvNotifyPref(gen0, db.NotifyPrefOff))
+		agentID, err := db.AgentIDForConv(gen0)
+		require.NoError(t, err)
+		require.NotEmpty(t, agentID)
+		// Link a new generation onto the same actor (rotation primitive).
+		require.NoError(t, db.LinkConvToAgent(gen1, agentID, "reincarnation", "test"))
+
+		assert.False(t, AllowedForConv(gen0), "old generation stays muted")
+		assert.False(t, AllowedForConv(gen1), "new generation inherits the agent's mute")
+	})
+
+	t.Run("group mute follows the agent across rotation", func(t *testing.T) {
+		const gen0, gen1 = "rot-grp-gen0", "rot-grp-gen1"
+		gid, err := db.CreateAgentGroup("rot-team", "")
+		require.NoError(t, err)
+		addMember(t, gid, gen0) // enrolls gen0 as an agent + keys membership by agent_id
+		agentID, err := db.AgentIDForConv(gen0)
+		require.NoError(t, err)
+		require.NotEmpty(t, agentID)
+		require.NoError(t, db.LinkConvToAgent(gen1, agentID, "reincarnation", "test"))
+
+		_, err = db.SetAgentGroupNotifyEnabled("rot-team", false)
+		require.NoError(t, err)
+		assert.False(t, AllowedForConv(gen0), "old generation silenced by muted group")
+		assert.False(t, AllowedForConv(gen1), "new generation silenced by the same muted group")
+	})
+}

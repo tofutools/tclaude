@@ -85,7 +85,10 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness stri
 }
 
 // AllowedForConv evaluates the per-agent / per-group notification
-// filters for an agent (conv-id). The decision ladder:
+// filters for an agent. conv-id is only the resolution input: the
+// function resolves it to the stable actor once at the top (JOH-324) and
+// keys the whole decision on that agent_id, so a mute set on the agent
+// survives reincarnate / /clear conv rotation. The decision ladder:
 //
 //  1. A per-agent pref (agent_notify_prefs) wins outright: 'off'
 //     silences the agent, 'on' forces notifications even when a
@@ -99,14 +102,22 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness stri
 //
 // The global config.notifications.enabled master switch sits ABOVE
 // this and is checked by the caller (OnStateTransition) — a per-agent
-// 'on' does not override a globally-off config. Fails open: a DB error
-// or an empty convID never suppresses a notification, so filtering
-// degrades to the historical notify-everything behaviour.
+// 'on' does not override a globally-off config. Fails open: a DB error,
+// an empty convID, or a conv that isn't (yet) an agent never suppresses
+// a notification, so filtering degrades to the historical
+// notify-everything behaviour.
 func AllowedForConv(convID string) bool {
 	if convID == "" {
 		return true
 	}
-	mode, err := db.GetConvNotifyPref(convID)
+	// Resolve conv→agent once at the boundary so the pref and group
+	// lookups below both key on the same stable actor. Fail open on a
+	// resolution error or a not-yet-enrolled conv.
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return true
+	}
+	mode, err := db.GetAgentNotifyPref(agentID)
 	if err != nil {
 		// Fail open right here: falling through to the group check
 		// could return false on a muted group even though the human
@@ -119,7 +130,7 @@ func AllowedForConv(convID string) bool {
 	case db.NotifyPrefOn:
 		return true
 	}
-	groups, err := db.ListGroupsForConv(convID)
+	groups, err := db.ListGroupsForAgent(agentID)
 	if err != nil {
 		return true
 	}

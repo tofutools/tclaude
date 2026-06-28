@@ -1694,7 +1694,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, res.ConvID, title)
+	policy := resolveSudoConfig(cfg, res.ConvID, res.AgentID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,

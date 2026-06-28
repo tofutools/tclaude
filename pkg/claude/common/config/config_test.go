@@ -691,3 +691,65 @@ func TestHScrollFollow(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, loaded.HScrollFollow(), "static survives round-trip")
 }
+
+// TestMatchSudoOverride_Keying covers the C2 (JOH-324) addition: a sudo
+// override may be keyed on the stable `agt_` agent_id (exact or short
+// prefix), surviving conv rotation — alongside the pre-existing conv-id
+// and title keys, which must keep matching.
+func TestMatchSudoOverride_Keying(t *testing.T) {
+	const (
+		convID  = "abcdef0123456789-conv"
+		agentID = "agt_032fdfcfbb0578a5a1cf6493db7264fb" // agt_ + 32 hex
+		title   = "my-worker"
+	)
+	mk := func(overrides map[string]*SudoConfigOverride) *Config {
+		return &Config{Agent: &AgentConfig{Sudo: &SudoConfig{Overrides: overrides}}}
+	}
+	tag := func(s string) *SudoConfigOverride { return &SudoConfigOverride{MaxDuration: s} }
+
+	t.Run("exact agent_id key matches", func(t *testing.T) {
+		ov := mk(map[string]*SudoConfigOverride{agentID: tag("hit")}).
+			MatchSudoOverride(convID, agentID, title)
+		require.NotNil(t, ov)
+		assert.Equal(t, "hit", ov.MaxDuration)
+	})
+	t.Run("short agent_id prefix (12 = agt_ + 8 hex) matches", func(t *testing.T) {
+		ov := mk(map[string]*SudoConfigOverride{agentID[:12]: tag("hit")}).
+			MatchSudoOverride(convID, agentID, title)
+		require.NotNil(t, ov)
+		assert.Equal(t, "hit", ov.MaxDuration)
+	})
+	t.Run("too-short agent_id prefix (<12) does not match", func(t *testing.T) {
+		assert.Nil(t, mk(map[string]*SudoConfigOverride{"agt_0123": tag("hit")}).
+			MatchSudoOverride(convID, agentID, title))
+	})
+	t.Run("agent_id key is skipped when caller has no actor", func(t *testing.T) {
+		assert.Nil(t, mk(map[string]*SudoConfigOverride{agentID: tag("hit")}).
+			MatchSudoOverride(convID, "", title))
+	})
+	t.Run("well-formed agt_ key for a different agent does not match", func(t *testing.T) {
+		// Same shape, different suffix — must not over-match the caller.
+		assert.Nil(t, mk(map[string]*SudoConfigOverride{"agt_ffffffff": tag("hit")}).
+			MatchSudoOverride(convID, agentID, title))
+	})
+	t.Run("conv-id key still matches (regression)", func(t *testing.T) {
+		ov := mk(map[string]*SudoConfigOverride{convID[:8]: tag("conv")}).
+			MatchSudoOverride(convID, agentID, title)
+		require.NotNil(t, ov)
+		assert.Equal(t, "conv", ov.MaxDuration)
+	})
+	t.Run("title key still matches (regression)", func(t *testing.T) {
+		ov := mk(map[string]*SudoConfigOverride{title: tag("title")}).
+			MatchSudoOverride(convID, agentID, title)
+		require.NotNil(t, ov)
+		assert.Equal(t, "title", ov.MaxDuration)
+	})
+	t.Run("longest matching key wins", func(t *testing.T) {
+		ov := mk(map[string]*SudoConfigOverride{
+			agentID[:12]: tag("short"), // 12 chars
+			agentID:      tag("full"),  // 36 chars — more specific
+		}).MatchSudoOverride(convID, agentID, title)
+		require.NotNil(t, ov)
+		assert.Equal(t, "full", ov.MaxDuration)
+	})
+}

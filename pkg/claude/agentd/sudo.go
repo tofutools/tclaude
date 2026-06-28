@@ -86,17 +86,22 @@ type resolvedSudo struct {
 }
 
 // resolveSudoConfig builds the effective sudo policy for a caller
-// (convID / title). Order of precedence: per-conv override
+// (convID / agentID / title). Order of precedence: per-caller override
 // (Sudo.Overrides[matching key]) → global Sudo block → hardcoded
 // fallbacks. Each layer fills in only the fields it sets — unset
 // fields fall through.
+//
+// agentID is the caller's stable actor (resolved at the boundary); it
+// lets a config override key on the rotation-immune `agt_` id. Pass ""
+// when the caller resolved to no actor — the override match simply skips
+// the agent-id branch and falls back to conv/title.
 //
 // Bad duration strings in the config are tolerated: a
 // time.ParseDuration error preserves the previous layer's value and
 // logs nothing (the human edited the file; surface the error in CI
 // or via a dedicated config-lint subcommand later if it becomes a
 // support burden).
-func resolveSudoConfig(cfg *config.Config, convID, title string) resolvedSudo {
+func resolveSudoConfig(cfg *config.Config, convID, agentID, title string) resolvedSudo {
 	out := resolvedSudo{
 		MaxDuration:     sudoDefaultMaxDuration,
 		DefaultDuration: sudoDefaultDefaultDuration,
@@ -108,7 +113,7 @@ func resolveSudoConfig(cfg *config.Config, convID, title string) resolvedSudo {
 	}
 	applySudoLayer(&out, cfg.Agent.Sudo.MaxDuration, cfg.Agent.Sudo.DefaultDuration,
 		cfg.Agent.Sudo.PopupTimeout, cfg.Agent.Sudo.Blocklist)
-	if ov := cfg.MatchSudoOverride(convID, title); ov != nil {
+	if ov := cfg.MatchSudoOverride(convID, agentID, title); ov != nil {
 		applySudoLayer(&out, ov.MaxDuration, ov.DefaultDuration, ov.PopupTimeout, ov.Blocklist)
 	}
 	return out
@@ -206,16 +211,16 @@ type sudoRequestBody struct {
 }
 
 type sudoGrantJSON struct {
-	ID        int64  `json:"id"`
-	AgentID   string `json:"agent_id,omitempty"`
-	ConvID    string `json:"conv_id"`
-	ConvTitle string `json:"conv_title,omitempty"`
-	Slug      string `json:"slug"`
-	GrantedAt string `json:"granted_at"`
-	ExpiresAt string `json:"expires_at"`
-	GrantedBy string `json:"granted_by"`
-	Reason    string `json:"reason,omitempty"`
-	RemainingSeconds int64 `json:"remaining_seconds,omitempty"`
+	ID               int64  `json:"id"`
+	AgentID          string `json:"agent_id,omitempty"`
+	ConvID           string `json:"conv_id"`
+	ConvTitle        string `json:"conv_title,omitempty"`
+	Slug             string `json:"slug"`
+	GrantedAt        string `json:"granted_at"`
+	ExpiresAt        string `json:"expires_at"`
+	GrantedBy        string `json:"granted_by"`
+	Reason           string `json:"reason,omitempty"`
+	RemainingSeconds int64  `json:"remaining_seconds,omitempty"`
 }
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
@@ -274,8 +279,12 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	if row := agent.FreshConvRow(p.ConvID); row != nil {
 		title = agent.DisplayTitle(row)
 	}
+	// Resolve the caller's stable actor at the boundary so a config
+	// override can key on the rotation-immune `agt_` id. Best-effort:
+	// an error / unenrolled conv yields "" and falls back to conv/title.
+	agentID, _ := db.AgentIDForConv(p.ConvID)
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, p.ConvID, title)
+	policy := resolveSudoConfig(cfg, p.ConvID, agentID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",
@@ -357,7 +366,7 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, targetConv, title)
+	policy := resolveSudoConfig(cfg, targetConv, res.AgentID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",

@@ -752,9 +752,11 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 // Sudo carries the human-curated defaults for `tclaude agent sudo`
 // (time-bounded permission elevations). Hand-written; the daemon
 // reads but never rewrites it. Empty fields fall back to the agentd
-// hardcoded defaults. Per-conv overrides via Sudo.Overrides[] use
-// selector-shaped keys (conv-id / title, with prefix match against
-// title and conv-id) the historical permission_overrides block did.
+// hardcoded defaults. Per-caller overrides via Sudo.Overrides[] use
+// selector-shaped keys (conv-id / stable `agt_` agent-id / title, with
+// prefix match) like the historical permission_overrides block did.
+// An `agt_`-tagged key survives the caller's reincarnate / /clear
+// rotation where a conv-id key would go stale.
 //
 // AutoLaunchDashboard, when true, makes `tclaude agentd serve` open the
 // browser dashboard on startup — the persistent twin of the
@@ -1110,14 +1112,23 @@ type SudoConfigOverride struct {
 	Blocklist       *[]string `json:"blocklist,omitempty"`
 }
 
+// agentIDSelectorPrefix tags a sudo-override key as an explicit stable
+// agent_id selector, mirroring db.AgentIDPrefix and the `agt_` form
+// ResolveSelector accepts. Duplicated as a literal here so the config
+// package (hand-edited, low-level) stays free of a db dependency.
+const agentIDSelectorPrefix = "agt_"
+
 // MatchSudoOverride picks the SudoConfigOverride that applies to the
-// caller (convID / title). Match shape mirrors the historical
-// permission_overrides[<conv-id|prefix|title>] pattern: a key matches
-// if it equals one of the two identifiers OR is a prefix of conv-id
-// (≥8 chars) or title. The longest matching key wins so a more
-// specific override beats a generic prefix. Returns nil when no key
+// caller (convID / agentID / title). Keys are selector-shaped: a key
+// matches if it equals one of the identifiers OR is a prefix of conv-id
+// (≥8 chars), of the stable agent_id (an `agt_`-tagged key, ≥12 chars =
+// agt_ + 8 hex, the displayed short form), or of the title. The
+// agent_id form survives conv rotation where a conv-id key would go
+// stale; agentID may be "" when the caller resolved to no actor, which
+// simply skips the agent-id branch. The longest matching key wins so a
+// more specific override beats a generic prefix. Returns nil when no key
 // matches.
-func (c *Config) MatchSudoOverride(convID, title string) *SudoConfigOverride {
+func (c *Config) MatchSudoOverride(convID, agentID, title string) *SudoConfigOverride {
 	if c == nil || c.Agent == nil || c.Agent.Sudo == nil {
 		return nil
 	}
@@ -1126,7 +1137,7 @@ func (c *Config) MatchSudoOverride(convID, title string) *SudoConfigOverride {
 		best    *SudoConfigOverride
 	)
 	for k, v := range c.Agent.Sudo.Overrides {
-		if !sudoOverrideKeyMatches(k, convID, title) {
+		if !sudoOverrideKeyMatches(k, convID, agentID, title) {
 			continue
 		}
 		if len(k) > len(bestKey) {
@@ -1137,11 +1148,19 @@ func (c *Config) MatchSudoOverride(convID, title string) *SudoConfigOverride {
 	return best
 }
 
-func sudoOverrideKeyMatches(key, convID, title string) bool {
+func sudoOverrideKeyMatches(key, convID, agentID, title string) bool {
 	if key == "" {
 		return false
 	}
-	if key == convID || key == title {
+	if key == convID || key == agentID || key == title {
+		return true
+	}
+	// Stable agent_id selector: an `agt_`-tagged key matches the caller's
+	// resolved agent_id by prefix (≥12 chars = agt_ + 8 hex, the displayed
+	// short form). Checked before the conv/title prefixes since the tag is
+	// an explicit "this is an agent id"; rotation-immune.
+	if agentID != "" && strings.HasPrefix(key, agentIDSelectorPrefix) &&
+		len(key) >= 12 && len(key) <= len(agentID) && agentID[:len(key)] == key {
 		return true
 	}
 	// Conv-id prefix match: 8 chars is the same threshold ResolveSelector
