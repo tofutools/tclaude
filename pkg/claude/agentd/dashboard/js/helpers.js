@@ -956,14 +956,15 @@ function permMemberButton(m) {
 }
 // cronMemberButton renders the ⏰ "schedule a nudge for this member"
 // button. Opens the cron-create modal prefilled with Solo target =
-// this conv-id, and Owner = this conv-id too (self-nudge is the
-// common case from member rows).
+// this member's stable agent_id, and Owner = the same (self-nudge is
+// the common case from member rows). conv-id is the fallback for a
+// pre-identity member (JOH-312).
 function cronMemberButton(m) {
   const label = m.title || m.conv_id;
   const prefill = JSON.stringify({
     targetMode: 'solo',
-    target: m.conv_id,
-    owner: m.conv_id,
+    target: m.agent_id || m.conv_id,
+    owner: m.agent_id || m.conv_id,
   });
   return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">⏰</button>`;
 }

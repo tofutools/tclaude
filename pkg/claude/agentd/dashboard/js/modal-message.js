@@ -259,10 +259,12 @@ function bindMessageModal() {
     messageScopedGroup.members.forEach(m => { m.checked = false; });
     renderMessageMembers();
   });
-  // From picker reuses the cron-pick-target agent overlay.
+  // From picker reuses the cron-pick-target agent overlay, which resolves
+  // to the picked agent's stable agent_id (conv-id fallback) — a selector
+  // the ResolveSelector-backed From field accepts (JOH-312).
   $('#message-create-from-pick').addEventListener('click', async () => {
-    const conv = await pickCronTargetModal();
-    if (conv) $('#message-create-from').value = conv;
+    const picked = await pickCronTargetModal();
+    if (picked) $('#message-create-from').value = picked;
   });
 }
 

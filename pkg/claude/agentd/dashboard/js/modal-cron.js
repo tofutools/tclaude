@@ -4,7 +4,7 @@
 // group/member target picker (used by this modal and the message
 // modal). Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, shortId } from './helpers.js';
+import { $, $$, esc, shortId, shortAgentId } from './helpers.js';
 import { renderCronTab, formatInterval } from './tabs.js';
 // lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
 // the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
@@ -244,7 +244,11 @@ function openCronCreateModal(prefill) {
 // POSTing /api/cron.
 function openCronEditModal(job) {
   cronEditId = job.id;
-  cronOriginalTarget = job.target_conv || '';
+  // Baseline the change-detection on the stable agent_id (conv-id
+  // fallback for a pre-identity job), matching jobToPrefill's target
+  // prefill — so reopening an edit and saving without touching the
+  // target doesn't spuriously re-send it (JOH-312).
+  cronOriginalTarget = job.target_agent || job.target_conv || '';
   cronOriginalGroupID = job.group_id || 0;
   $('#cron-create-title').textContent = 'Edit cron job';
   const meta = $('#cron-create-meta');
@@ -264,9 +268,13 @@ function jobToPrefill(job) {
   const isGroup = job.target_kind === 'group';
   return {
     name: job.name || '',
-    owner: job.owner_label || job.owner_conv || '',
+    // Lead owner/target with the stable agent_id (conv-id fallback for a
+    // pre-identity job) — the same rotation-immune handle the 🔍 picker
+    // now fills and that cronOriginalTarget baselines against, so an
+    // untouched target round-trips without a spurious re-send (JOH-312).
+    owner: job.owner_agent || job.owner_conv || '',
     targetMode: isGroup ? 'group' : 'solo',
-    target: isGroup ? '' : (job.target_label || job.target_conv || ''),
+    target: isGroup ? '' : (job.target_agent || job.target_conv || ''),
     groupName: isGroup ? (job.group_name || '') : '',
     interval: formatInterval(job.interval_seconds) || '',
     subject: job.subject || '',
@@ -338,7 +346,7 @@ function targetPickerMarkup(prefix) {
       <label><input type="radio" name="${prefix}-target-mode" value="group" /> Group (multicast)</label>
     </div>
     <div class="cron-target-input-row" id="${prefix}-target-solo">
-      <input id="${prefix}-target" type="text" placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
+      <input id="${prefix}-target" type="text" placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" />
       <button type="button" id="${prefix}-target-pick" title="Pick from agent list">🔍</button>
     </div>
     <!-- Scoped solo row — shown instead of the free-text input when
@@ -365,8 +373,10 @@ function bindTargetPicker(prefix) {
     rdo.addEventListener('change', () => setTargetPickerMode(prefix, rdo.value, false));
   });
   $('#' + prefix + '-target-pick').addEventListener('click', async () => {
-    const conv = await pickCronTargetModal();
-    if (conv) $('#' + prefix + '-target').value = conv;
+    // pickCronTargetModal resolves to the picked agent's stable agent_id
+    // (conv-id fallback) — the rotation-immune target token (JOH-312).
+    const picked = await pickCronTargetModal();
+    if (picked) $('#' + prefix + '-target').value = picked;
   });
 }
 
@@ -409,10 +419,13 @@ function populateTargetPickerMembers(prefix) {
   const g = (lastSnapshot?.groups || []).find(x => x.name === scope);
   const members = (g && g.members) || [];
   const prev = sel.value;
+  // Key the option on the stable agent_id (conv-id fallback for a
+  // pre-identity member) so a scoped solo target submits the rotation-
+  // immune handle, like the free-text picker (JOH-312).
   sel.innerHTML = members.length
-    ? members.map(m => `<option value="${esc(m.conv_id)}">${esc(m.title || m.conv_id)}${m.online ? '' : ' (offline)'}</option>`).join('')
+    ? members.map(m => `<option value="${esc(m.agent_id || m.conv_id)}">${esc(m.title || m.conv_id)}${m.online ? '' : ' (offline)'}</option>`).join('')
     : '<option value="">(no members in this group)</option>';
-  if (prev && members.some(m => m.conv_id === prev)) sel.value = prev;
+  if (prev && members.some(m => (m.agent_id || m.conv_id) === prev)) sel.value = prev;
 }
 
 // populateTargetPicker fills the picker from a prefill object
@@ -513,7 +526,7 @@ async function submitCronForm(keepOpen) {
       ? 'Pick a group from the dropdown (or create one first via the Groups tab).'
       : scopedSolo
         ? 'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.'
-        : 'Target is required — type a title / conv-id or use 🔍 to pick.';
+        : 'Target is required — type an agt_ id / title / conv-id or use 🔍 to pick.';
     return;
   }
   if (!bodyText) {
@@ -601,7 +614,8 @@ async function submitCronForm(keepOpen) {
 // .add-member-modal CSS. Mode "agent" → solo conv pool (matches the
 // sudo picker); mode "group" → would surface groups but in v1 we
 // already have a <select> for groups, so this is agent-only. Returns
-// the picked conv-id ("" on cancel).
+// the picked agent's stable agent_id — the rotation-immune target token
+// (conv-id fallback for a pre-identity agent; "" on cancel) (JOH-312).
 function pickCronTargetModal() {
   return new Promise(resolve => {
     const overlay = $('#cron-pick-target-modal');
@@ -632,8 +646,11 @@ function pickCronTargetModal() {
     function applyFilter(rows, q) {
       if (!q) return rows;
       const needle = q.toLowerCase();
+      // Match agent_id too — it's the value this picker now leads with and
+      // returns, so a human pasting an agt_ id must be able to find a row.
       return rows.filter(a =>
         (a.title || '').toLowerCase().includes(needle) ||
+        (a.agent_id || '').toLowerCase().includes(needle) ||
         (a.conv_id || '').toLowerCase().includes(needle) ||
         (a.groups || []).some(g => g.toLowerCase().includes(needle)));
     }
@@ -657,19 +674,24 @@ function pickCronTargetModal() {
         const groups = (a.groups || []).length
           ? `<span class="groups-tag">in: ${esc((a.groups || []).join(', '))}</span>`
           : '';
+        // Lead the id column with the stable agent_id (conv-id prefix as
+        // the fallback), conv-id on hover — matching what this picker now
+        // returns and the agent-led cron-list / message-member rows.
         return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
                `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
-               `<span class="id">${esc(shortId(a.conv_id))}</span>${groups}` +
+               `<span class="id" title="${esc(a.conv_id)}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span>${groups}` +
                `</div>`;
       }).join('');
       const hl = list.querySelector('.add-member-row.highlighted');
       if (hl) hl.scrollIntoView({block: 'nearest'});
     }
 
-    function close(convID) {
+    // The resolved value is the picked agent's stable agent_id (conv-id
+    // fallback) — the rotation-immune target token, not a generation.
+    function close(agentID) {
       overlay.classList.remove('show');
       document.removeEventListener('keydown', onKey, true);
-      resolve(convID || '');
+      resolve(agentID || '');
     }
     function onKey(e) {
       if (!overlay.classList.contains('show')) return;
@@ -685,7 +707,7 @@ function pickCronTargetModal() {
       else if (e.key === 'Enter') {
         e.preventDefault();
         const c = candidates[highlight];
-        if (c) close(c.conv_id);
+        if (c) close(c.agent_id || c.conv_id);
       }
     }
     list.onclick = (e) => {
@@ -693,7 +715,7 @@ function pickCronTargetModal() {
       if (!row) return;
       const i = parseInt(row.dataset.i, 10);
       const c = candidates[i];
-      if (c) close(c.conv_id);
+      if (c) close(c.agent_id || c.conv_id);
     };
     search.oninput = () => { highlight = 0; render(); };
     includeAll.onchange = render;
@@ -728,8 +750,9 @@ function bindCronModal() {
   // Owner picker reuses the cron-pick-target overlay (the target
   // picker's own 🔍 is wired by bindTargetPicker above).
   $('#cron-create-owner-pick').addEventListener('click', async () => {
-    const conv = await pickCronTargetModal();
-    if (conv) $('#cron-create-owner').value = conv;
+    // Owner is also addressed by the stable agent_id the picker returns.
+    const picked = await pickCronTargetModal();
+    if (picked) $('#cron-create-owner').value = picked;
   });
 }
 
