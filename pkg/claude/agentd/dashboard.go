@@ -1832,13 +1832,23 @@ func collectReplacedGenerationsSnapshot(active, retired []*db.Agent, aliveSessio
 	}
 	emit(active, false)
 	emit(retired, true)
-	// Group a single actor's generations together (by the live actor's title),
-	// newest replacement first within each actor.
+	// Default order: newest replacement first across ALL actors, so the most
+	// recently superseded generation sits at the top (what a reincarnate /
+	// /clear just left behind is what the operator most wants to see). The
+	// dashboard's clickable column headers can re-sort this client-side; this
+	// is the order it falls back to with no active sort. ReplacedAt is a
+	// fixed-width RFC3339 string, so its lexical order is chronological (same
+	// reliance the costs/cron columns lean on). On an exact-time tie, keep a
+	// single actor's generations together (by the live actor's title), then by
+	// conv-id for a deterministic order.
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].ReplacedAt != out[j].ReplacedAt {
+			return out[i].ReplacedAt > out[j].ReplacedAt
+		}
 		if out[i].ActorTitle != out[j].ActorTitle {
 			return out[i].ActorTitle < out[j].ActorTitle
 		}
-		return out[i].ReplacedAt > out[j].ReplacedAt
+		return out[i].ConvID < out[j].ConvID
 	})
 	return out
 }

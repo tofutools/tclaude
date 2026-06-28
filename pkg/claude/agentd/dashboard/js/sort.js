@@ -189,8 +189,31 @@ const LINK_ACCESSORS = {
   created: l => l.created_at,
 };
 
+// The virtual "Replaced generations" sub-table (render.js). Lowercase
+// labels match its existing archival style; the leading online-dot and
+// trailing action columns stay non-sortable. The default server order is
+// already newest-replaced-first (collectReplacedGenerationsSnapshot), so
+// dropping the sort (third header click) falls back to that.
+const REPLACED_COLS = [
+  { label: '' },
+  { label: 'conv', col: 'conv' },
+  { label: 'title', col: 'title' },
+  { label: 'of agent', col: 'actor' },
+  { label: 'replaced', col: 'replaced' },
+  { label: '' },
+];
+const REPLACED_ACCESSORS = {
+  conv:     a => a.conv_id,
+  title:    a => a.title,
+  actor:    a => a.actor_title || a.actor_conv_id,
+  // replaced sorts on the raw ISO timestamp (lexical = chronological):
+  // ascending = oldest first, descending = newest first.
+  replaced: a => a.replaced_at,
+};
+
 export {
   cycleSort, sortHead, applySort, loadSortState,
   MEMBER_COLS, MEMBER_ACCESSORS, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
+  REPLACED_COLS, REPLACED_ACCESSORS,
 };
