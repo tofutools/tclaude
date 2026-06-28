@@ -46,6 +46,11 @@ func newFlow(t *testing.T) *testharness.Flow {
 	t.Cleanup(agentd.SetInjectSettleDelayForTest(time.Millisecond))
 	// Likewise the remote-control disable-confirm pause (700ms in prod).
 	t.Cleanup(agentd.SetRemoteControlConfirmDelayForTest(time.Millisecond))
+	// And the background soft-exit retry's per-attempt wait (a few seconds
+	// in prod). The simulator honours /exit synchronously, so this is pure
+	// dead wait that every stop/retire/reincarnate flow — and the
+	// WaitForBackgroundForTest drain — would otherwise pay.
+	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
 
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)
