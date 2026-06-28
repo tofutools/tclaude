@@ -102,6 +102,49 @@ func TestMail_HeldWhileRecipientAwaitingHumanInput(t *testing.T) {
 	assert.False(t, msg.DeliveredAt.IsZero(), "message delivered after the recipient resumed")
 }
 
+// TestMail_ReaperBackstopDeliversHeldMailAfterResume proves the time-bounded
+// guarantee: a message held while the recipient was blocked on a human is
+// delivered by a reaper sweep once the agent is back to working, WITHOUT the
+// agent making any `tclaude agent` call of its own (the request-driven flush
+// never fires here). It also exercises the awaiting_permission state
+// end-to-end (the awaiting_input twin is covered above).
+func TestMail_ReaperBackstopDeliversHeldMailAfterResume(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const sender = "mh03-send-bbbb-cccc-000000000001"
+	const recipient = "mh03-recv-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(recipient, "worker")
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	const recvTmux = "tclaude-mh03-r"
+	f.HaveAliveSession(recipient, "spwn-mh03-r", recvTmux, "/tmp/work")
+	recvPane := recvTmux + ":0.0"
+
+	// The worker is showing a permission prompt — keystrokes injected now
+	// would be captured as the y/n answer.
+	f.SetSessionStatus(recipient, session.StatusAwaitingPermission)
+
+	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	resp := decodeSend(t, rec)
+	require.True(t, resp.Held, "must be held while recipient awaits permission")
+	nudge := fmt.Sprintf("new agent message #%d", resp.ID)
+	assertNoSendKeys(t, f, recvPane, nudge)
+
+	// The human answered the prompt; the worker resumed working but makes no
+	// agentd request. A reaper sweep is the only thing that can deliver now.
+	f.SetSessionStatus(recipient, session.StatusWorking)
+	agentd.RunReaperTickForTest(time.Now())
+	agentd.WaitForBackgroundForTest() // drain the goBackground flush the tick queued
+
+	f.AssertSentContains(recvPane, nudge, 2*time.Second)
+	msg, err := db.GetAgentMessage(resp.ID)
+	require.NoError(t, err)
+	assert.False(t, msg.DeliveredAt.IsZero(), "reaper backstop delivers held mail after resume")
+}
+
 // TestMail_DeliversImmediatelyWhenRecipientWorking is the control: the exact
 // same setup but with the recipient in a normal working state delivers inline
 // at send time (delivered=true, nudge in the pane, no hold). This guards
