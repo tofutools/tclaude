@@ -36,12 +36,13 @@ default-granted by `tclaude setup --install-default-agent-permissions`
 `context-info` prints the conv id, the context percentage with an
 absolute token breakdown (`<in> in + <out> out = <total> of <window>
 tokens`), and the model — e.g.
-`context: 47% (320k in + 30k out = 350k of 1.0M tokens)`. The window
+`context: 35% (320k in + 30k out = 350k of 1.0M tokens)`. The window
 size shown is the **real** one the harness reports, not an assumed 1M,
 so the absolute numbers stay accurate on smaller-window models. The
-**percentage is still the authoritative signal** for any threshold-based
-decision. (On a Claude Code build predating the absolute-token statusline
-fields the line falls back to percentage-only until the next turn.)
+**percentage is the authoritative signal** for any threshold-based
+decision — read it directly rather than recomputing from the tokens (the
+two won't always match exactly). The line shows the percentage alone
+until the first turn's token counts arrive.
 
 ## When to reincarnate (or compact) — your project's call, not this skill's
 
@@ -194,7 +195,7 @@ need.**
 # Where am I?
 tclaude agent context-info
 # conv:    abc12345
-# context: 47% (320k in + 30k out = 350k of 1.0M tokens)
+# context: 35% (320k in + 30k out = 350k of 1.0M tokens)
 # model:   Opus 4.8 (1M context)
 
 # Before you compact or reincarnate — write down what matters
