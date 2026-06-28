@@ -47,11 +47,14 @@ type SandboxCatalog interface {
 // SpawnSpec.SandboxMode. It applies the secure default, because an
 // agentd-spawned agent is the untrusted party that must be sandboxed:
 //
-//   - Harness has no launch sandbox flag (Claude Code): an explicit mode is
-//     an error (its sandbox is settings.json-driven, not a launch flag); an
-//     empty request resolves to "" (omit).
-//   - Harness takes one (Codex): an empty request resolves to the secure
-//     DefaultMode (workspace-write); any explicit mode is validated.
+//   - Harness with no sandbox catalog: an explicit mode is an error; an empty
+//     request resolves to "" (omit). Both shipped harnesses HAVE a catalog now
+//     — this branch only guards a future harness that leaves Sandbox nil.
+//   - Codex: an empty request resolves to the secure DefaultMode (the managed
+//     profile); any explicit mode is validated.
+//   - Claude Code: an empty request resolves to its DefaultMode (inherit), which
+//     ValidateMode normalizes back to "" — so an un-chosen Claude spawn imposes
+//     no `--settings` override and keeps the operator's settings.json posture.
 //
 // requested is trimmed first, so surrounding whitespace never leaks into
 // the flag.
@@ -66,11 +69,12 @@ func ResolveSandboxMode(h *Harness, requested string) (string, error) {
 // ValidateSandboxMode validates a requested mode WITHOUT applying the
 // harness default — empty stays empty (omit the flag). It is the direct
 // `tclaude session new` path's entry point: the human running session new is
-// the trust root, so tclaude must not silently override their own
-// config.toml sandbox_mode — it only emits --sandbox when they pass it
-// explicitly (the daemon spawn path uses ResolveSandboxMode for the secure
-// default instead). An explicit mode for a harness with no launch sandbox
-// flag (Claude Code) is still an error.
+// the trust root, so tclaude must not silently override their own config
+// (Codex's config.toml sandbox_mode, Claude Code's settings.json) — it emits a
+// sandbox value only when they pass one explicitly (the daemon spawn path uses
+// ResolveSandboxMode for the secure default instead). An explicit mode for a
+// harness with no sandbox catalog is still an error (no shipped harness hits
+// this — Claude Code now validates inherit/on/off and normalizes inherit to "").
 func ValidateSandboxMode(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {

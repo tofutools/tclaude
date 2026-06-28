@@ -1067,9 +1067,9 @@ type agentState struct {
 	// Surfaced regardless of liveness — a dead Codex agent is still Codex.
 	Harness string `json:"harness,omitempty"`
 	// SandboxMode is the launch-time OS-sandbox mode the agent was spawned
-	// under (Codex: read-only / workspace-write / danger-full-access), or
-	// "" for a harness with no launch sandbox (Claude Code) — the dashboard
-	// renders no sandbox badge for "". Surfaced regardless of liveness.
+	// under (Codex: read-only / workspace-write / danger-full-access; Claude
+	// Code: on / off — its `inherit` default normalizes to "" and records
+	// nothing). "" renders no sandbox badge. Surfaced regardless of liveness.
 	SandboxMode string `json:"sandbox_mode,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a

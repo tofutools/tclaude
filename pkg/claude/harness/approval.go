@@ -54,11 +54,15 @@ type ApprovalCatalog interface {
 // agentd-spawned agent is detached/unattended and must not deadlock on an
 // approval prompt:
 //
-//   - Harness has no launch approval flag (Claude Code): an explicit policy is
-//     an error (its approval behaviour is settings.json-driven, not a launch
-//     flag); an empty request resolves to "" (omit).
-//   - Harness takes one (Codex): an empty request resolves to the secure
-//     DefaultPolicy (never); any explicit policy is validated.
+//   - Harness with no approval catalog: an explicit policy is an error; an empty
+//     request resolves to "" (omit). Both shipped harnesses HAVE a catalog now —
+//     this branch only guards a future harness that leaves Approval nil.
+//   - Codex: an empty request resolves to the secure DefaultPolicy (never); any
+//     explicit policy is validated.
+//   - Claude Code: an empty request resolves to its DefaultPolicy (inherit),
+//     which ValidatePolicy normalizes back to "" — so an un-chosen Claude spawn
+//     passes no `--permission-mode` and keeps the operator's settings.json
+//     posture (+ the agentd approval popup).
 //
 // requested is trimmed first, so surrounding whitespace never leaks into the
 // flag.
@@ -74,11 +78,12 @@ func ResolveApprovalPolicy(h *Harness, requested string) (string, error) {
 // harness default — empty stays empty (omit the flag). It is the direct
 // `tclaude session new` path's entry point: the human running session new is
 // the trust root and can attach to the pane to answer prompts, so tclaude must
-// not silently force a non-escalating policy on them — it only emits
-// `--ask-for-approval` when they pass it explicitly (the daemon spawn path
-// uses ResolveApprovalPolicy for the non-escalating default instead, since its
-// pane is unattended). An explicit policy for a harness with no launch
-// approval flag (Claude Code) is still an error.
+// not silently force a posture on them — it emits a value only when they pass
+// one explicitly (the daemon spawn path uses ResolveApprovalPolicy for the safe
+// default instead, since its pane is unattended). An explicit policy for a
+// harness with no approval catalog is still an error (no shipped harness hits
+// this — Claude Code now validates its --permission-mode values and normalizes
+// inherit to "").
 func ValidateApprovalPolicy(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
