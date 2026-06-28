@@ -674,11 +674,30 @@ function fmtAttachSize(n) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+// attachKey is the content-identity of a file/blob, used to dedupe attachments
+// so each distinct file attaches exactly once: a Finder copy exposed in both
+// clipboardData.files and .items, a held-down ⌘/Ctrl-V firing repeated paste
+// events (keyboard auto-repeat), or a paste-then-drag of the same file.
+// lastModified is deliberately omitted — some browsers stamp a fresh
+// lastModified on every clipboard read, so a pasted screenshot would look "new"
+// on each keyboard repeat; name+size+type stays stable across repeats while
+// still telling genuinely different files apart.
+function attachKey(f) {
+  return `${f.name || ''}|${f.size}|${f.type || ''}`;
+}
+
 // addSpawnAttachments appends Files/Blobs to the pending list and re-renders.
 // A blob with no name (a raw pasted image) is given a generated PNG name.
 function addSpawnAttachments(files) {
   for (const f of files) {
     if (!f) continue;
+    // Skip a file already pending. Holding ⌘/Ctrl-V triggers keyboard
+    // auto-repeat, firing one paste event per repeat with identical clipboard
+    // contents — without this guard the same file/screenshot would attach over
+    // and over (JOH-307). The key is content-identity, so this also collapses
+    // a paste-then-drag of the same file.
+    const key = attachKey(f);
+    if (spawnAttachments.some(a => a.key === key)) continue;
     let name = f.name;
     if (!name) {
       const ext = (f.type && f.type.split('/')[1]) || 'png';
@@ -687,6 +706,7 @@ function addSpawnAttachments(files) {
     const isImage = (f.type || '').startsWith('image/');
     spawnAttachments.push({
       id: ++spawnAttachSeq,
+      key,
       file: f,
       name,
       size: f.size,
@@ -746,7 +766,7 @@ function handleSpawnPaste(e) {
   const seen = new Set();
   const add = (f) => {
     if (!f) return;
-    const key = `${f.name}|${f.size}|${f.type}|${f.lastModified || ''}`;
+    const key = attachKey(f);
     if (seen.has(key)) return;
     seen.add(key);
     collected.push(f);
