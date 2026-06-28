@@ -56,40 +56,37 @@ nav button:hover { color: #d4d4d4; }
    the message filter heads the list — DOM-adjacent so Tab moves between
    them directly); row 2 holds each column's scrolling body; the reader
    spans both rows in column 3. */
-/* App-shell height lock — ONLY while the Messages tab is active. The mail
-   client is the one tab that must fill the viewport exactly (its three
-   panes scroll internally); every other tab scrolls the page normally. So
-   rather than subtract a magic header+nav offset from 100vh — fragile: the
-   header grows with the slop marquee / extra buttons, and the old
-   `- 108px` also forgot main's 16px bottom padding, which left a permanent
-   ~15px global scrollbar on this tab regardless of content — pin
-   body → main → section into a flex column at 100vh and let the mail
-   client flex into whatever height is left. Keyed off the .active toggle
-   bindTabs() already applies (same :has() trick as the slop lever), so it
-   needs no JS and self-corrects when the chrome height changes. */
-body:has(#tab-messages.active) {
+/* App shell — EVERY tab. The header + slop-marquee + tab bar stay pinned at
+   the top of the viewport; `main` fills the rest and is the SINGLE scroll
+   region for everything below the tabs. It scrolls as one — horizontally and
+   vertically — so the fixed-width chrome never goes ragged and wide content
+   (e.g. a member table) never pushes the whole page sideways (JOH-313).
+   body → main is pinned into a flex column at 100vh; the chrome rows are
+   flex:none so only main flexes. This self-corrects when the chrome height
+   changes (slop marquee, multiline usage) with no magic offset — which is
+   why the Messages tab already used this shape and we now generalise it to
+   all tabs. flex:none on the rows also stops the slop-mode marquee
+   (overflow:hidden → automatic min-height 0, i.e. flex-shrinkable) from
+   being squeezed by any negative free space, which used to nudge the tabs
+   bar up a few px. min-width:0 lets main shrink to the viewport so its OWN
+   horizontal scrollbar engages instead of the content widening the page. */
+body {
   height: 100vh;
   display: flex; flex-direction: column;
 }
-body:has(#tab-messages.active) main,
-body:has(#tab-messages.active) #tab-messages.active {
-  flex: 1 1 auto; min-height: 0;
-  display: flex; flex-direction: column;
-}
-/* Freeze the chrome rows above the mail client so ONLY main flexes. In
-   slop mode #slop-marquee sits between header and nav and has
-   overflow:hidden, so as a flex item its automatic min-height resolves to
-   0 — i.e. flexbox is allowed to shrink it. If the column ever has the
-   slightest negative free space, the marquee (and main) shrink instead of
-   the page scrolling, nudging the nav/tabs bar up a few px. That shows up
-   only in slop mode (the marquee is the one shrinkable chrome row) and only
-   on this tab (the only flex app-shell). flex:none freezes header + marquee
-   + nav at their natural height so the tabs bar never moves; main alone
-   absorbs the leftover height. */
-body:has(#tab-messages.active) > header,
-body:has(#tab-messages.active) > #slop-marquee,
-body:has(#tab-messages.active) > nav {
+body > header,
+body > #slop-marquee,
+body > nav {
   flex: none;
+}
+main { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; }
+/* The Messages tab is special: it must fill main EXACTLY and let its three
+   mail panes scroll internally (no main-level scroll), so its section
+   becomes the flex column the mail client expects — height:100% of main
+   rather than contributing to main's scroll. */
+#tab-messages.active {
+  height: 100%;
+  display: flex; flex-direction: column;
 }
 .mail-client {
   display: grid;
@@ -1276,22 +1273,22 @@ details[open] > summary .spawn-btn { opacity: 1; }
   font-size: 16px; padding: 3px 12px;
 }
 .filter-bar-cog .cog-btn:hover { color: #ffb52e; border-color: #e3a008; }
+/* All ⚙ option menus are positioned FIXED (viewport-relative) and placed by
+   the toggle handler (row-actions.js) from the cog's bounding rect. main is
+   the page's single scroll region (overflow:auto — see the app shell above),
+   so an absolutely-positioned menu would be clipped by it; fixed floats the
+   menu above main instead. The menu can be tall (~15 items) on a short
+   viewport, so it's capped and scrolls internally — the handler pins it
+   on-screen when it fits neither below nor above the cog. overscroll-behavior
+   :contain keeps that inner scroll from chaining to main (which the
+   scroll-close listener would otherwise read as a dismiss). (JOH-313) */
 .action-menu {
-  display: none; position: absolute; top: 100%; z-index: 50;
-  margin-top: 4px; min-width: 150px; flex-direction: column; gap: 4px;
+  display: none; position: fixed; z-index: 50;
+  min-width: 150px; flex-direction: column; gap: 4px;
   padding: 6px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+  max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain;
 }
-/* Row actions sit in the row's first cell, near the table's left
-   edge, so the menu opens rightward; the group cog sits at the right
-   end of the summary, so its menu opens leftward — each stays
-   on-screen. */
-.row-actions .action-menu { left: 0; }
-.group-actions .action-menu { right: 0; }
-/* The filter-bar cog sits at the far right end of the filter bar
-   — right-align so the menu drops back to the LEFT instead of
-   overflowing past the page edge. */
-.filter-bar-cog .action-menu { right: 0; }
 .action-menu.open { display: flex; }
 .action-menu button { width: 100%; text-align: left; }
 /* The filter-bar cog's menu items dispatch via id-bound listeners
@@ -1305,9 +1302,6 @@ details[open] > summary .spawn-btn { opacity: 1; }
   font-family: inherit;
 }
 .filter-bar-cog .action-menu button:hover { color: #d4d4d4; border-color: #58a6ff; }
-/* Flip above the cog when opening downward would run off the viewport
-   bottom — the toggle handler measures the menu and sets this. */
-.action-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
 /* Keep the cluster fully opaque while its menu is open — the menu
    drops past the row/summary, so the pointer leaving the row would
    otherwise fade the open menu to the resting 0.4. */

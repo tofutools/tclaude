@@ -51,7 +51,8 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 
 	// Keyboard + ARIA: Escape closes an open menu, focus returns to the
 	// owning cog, and the cog / menu / items carry the ARIA menu-button
-	// roles. The menu also flips up when it would overflow the viewport.
+	// roles. The menu is a viewport-fixed popover (placed from the cog's
+	// rect) so main's single scroll region never clips it (JOH-313).
 	must(`aria-haspopup="menu"`, "the cog advertises its popup menu")
 	must(`aria-expanded="false"`, "the cog starts collapsed (aria-expanded=false)")
 	must("setAttribute('aria-expanded'", "the toggle keeps aria-expanded in sync")
@@ -59,8 +60,8 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(`role="menuitem"`, "collected buttons are tagged role=menuitem")
 	must("'Escape'", "Escape closes an open options menu")
 	must("cog.focus()", "closing a menu restores focus to its owning cog")
-	must(".action-menu.opens-up", "the menu can flip up to avoid viewport overflow")
-	must("classList.add('opens-up')", "the toggle handler flips the menu up when needed")
+	must("function positionFixedMenu(", "the ⚙ menu is a viewport-fixed popover so main's scroll never clips it")
+	must("positionFixedMenu(menu, btn,", "the toggle handler places the fixed menu from the cog's rect")
 
 	// Buttons that must STAY at the top level — never swallowed into a
 	// menu. The group keeps spawn / power-on / shutdown; the agent row

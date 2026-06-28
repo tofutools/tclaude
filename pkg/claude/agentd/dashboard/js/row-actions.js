@@ -272,6 +272,42 @@ function closeAllActionMenus() {
   });
 }
 
+// positionFixedMenu places a ⚙ option menu as a viewport-fixed popover
+// anchored to its cog. main is the page's single scroll region (JOH-313),
+// so fixed positioning floats the menu above it instead of letting it be
+// clipped. align is 'left' (menu's left edge under the cog — for row cogs at
+// the left of their row) or 'right' (menu's right edge under the cog's right
+// — for the group / filter-bar cogs that sit at the right). Either way it's
+// clamped on-screen, and flipped above / pinned when it would run off the
+// viewport bottom. Call it AFTER the menu is shown (display:flex) so its
+// measured size is real.
+function positionFixedMenu(menu, cog, align) {
+  const gap = 4;
+  // Clear any prior inline placement so the measurement is clean.
+  menu.style.top = menu.style.bottom = menu.style.left = '';
+  const c = cog.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  // Horizontal: anchor the menu's left or right edge to the cog, then clamp
+  // so it stays within the viewport (right edge first, then left).
+  let left = align === 'right' ? c.right - m.width : c.left;
+  if (left + m.width > window.innerWidth - gap) left = window.innerWidth - gap - m.width;
+  if (left < gap) left = gap;
+  menu.style.left = left + 'px';
+  // Vertical: prefer downward from the cog; flip above when it fits there;
+  // otherwise (too tall for either side — the menu has ~15 items) pin it
+  // within the viewport. The menu is capped (max-height) and scrolls
+  // internally, so every item stays reachable even when pinned.
+  let top;
+  if (c.bottom + gap + m.height <= window.innerHeight) {
+    top = c.bottom + gap;
+  } else if (m.height + gap <= c.top) {
+    top = c.top - gap - m.height;
+  } else {
+    top = Math.max(gap, window.innerHeight - gap - m.height);
+  }
+  menu.style.top = top + 'px';
+}
+
 // bindRowActions delegates clicks on row-action buttons to the
 // appropriate /api/groups/... call. After a successful mutation we
 // re-fetch the snapshot so the badge / button state updates.
@@ -1523,17 +1559,14 @@ function bindRowActions() {
           const willOpen = !!menu && !menu.classList.contains('open');
           closeAllActionMenus();
           if (willOpen) {
-            menu.classList.remove('opens-up');
             menu.classList.add('open');
             btn.setAttribute('aria-expanded', 'true');
-            // Flip the menu above the cog when its default downward
-            // position would run off the viewport bottom — but only
-            // when it actually fits above.
-            const mr = menu.getBoundingClientRect();
-            if (mr.bottom > window.innerHeight
-                && mr.height < btn.getBoundingClientRect().top) {
-              menu.classList.add('opens-up');
-            }
+            // Every ⚙ menu is positioned FIXED so it floats above main's
+            // single scroll region instead of being clipped by it (JOH-313).
+            // Row cogs sit at the left of their row → left-align the menu;
+            // the group and filter-bar cogs sit at the right → right-align
+            // so it opens leftward and stays on-screen.
+            positionFixedMenu(menu, btn, act === 'row-menu' ? 'left' : 'right');
           }
           return;
         }
@@ -1558,6 +1591,23 @@ function bindRowActions() {
     e.preventDefault();
     closeAllActionMenus();
   });
+
+  // Every ⚙ menu is positioned FIXED (it floats above main's scroll
+  // region — JOH-313), so it can't follow a scroll. Close any open menu
+  // when main (or any scroller) scrolls, or on resize, so it never drifts
+  // away from its cog. Capture phase catches main's scroll too (scroll
+  // events don't bubble). Scrolls that ORIGINATE inside an open menu (its
+  // own capped internal scroll) must NOT dismiss it — gate those out.
+  // Guarded so it's a no-op when nothing is open.
+  const closeMenusOnViewportChange = (e) => {
+    if (e && e.type === 'scroll') {
+      const t = e.target;
+      if (t && t.nodeType === 1 && t.closest && t.closest('.action-menu')) return;
+    }
+    if (document.querySelector('.action-menu.open')) closeAllActionMenus();
+  };
+  window.addEventListener('scroll', closeMenusOnViewportChange, true);
+  window.addEventListener('resize', closeMenusOnViewportChange);
 }
 
 export { bindRowActions, renameEditing };
