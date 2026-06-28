@@ -86,6 +86,15 @@ func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
 	require.True(t, r.Queued)
 	nudge := fmt.Sprintf("new agent message #%d", r.ID)
 
+	// Drain the async per-target worker the send armed (enqueueDeliveryForConv)
+	// while gen1 is still OFFLINE, so it HOLDS the backlog — the canDeliver gate
+	// runs before the claim — instead of racing the explicit drain below. Without
+	// this, a late-scheduled worker can run after gen2 comes online, resolve the
+	// agent head to gen2, and win the atomic ClaimAgentMessageDelivery first,
+	// leaving the synchronous drain to claim 0 (the macOS-CI flake). Mirrors
+	// TestNudgeQueue_HoldsThenDeliversBacklog's pre-online WaitForBackgroundForTest.
+	agentd.WaitForBackgroundForTest()
+
 	// The recipient reincarnates: its actor's live conv rotates gen1 → gen2.
 	_, err := db.RotateAgentConv(gen1, gen2, "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
