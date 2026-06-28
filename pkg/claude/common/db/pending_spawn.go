@@ -33,6 +33,16 @@ type PendingSpawn struct {
 	GroupContext   string
 	ReplyToConv    string
 	SpawnedByConv  string
+	// ReplyToAgent / SpawnedByAgent are the stable agent_id companions of
+	// ReplyToConv / SpawnedByConv (JOH-321 F2), DERIVED from them at insert via
+	// agent_conversations. The pending-spawn sweeper reconstructs this row minutes
+	// later — long enough for the spawner to have rotated — so the durable agent
+	// refs let the briefing reply-target + welcome attribution re-resolve the
+	// spawner's LIVE generation rather than the stale recorded conv. Empty for a
+	// human-initiated spawn / a non-actor conv; the read path falls back to the
+	// conv snapshot then.
+	ReplyToAgent   string
+	SpawnedByAgent string
 	WorktreePath   string
 	WorktreeBranch string
 	// CreatedAt is the RFC3339Nano spawn time, stamped by InsertPendingSpawn.
@@ -49,13 +59,20 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 	if err != nil {
 		return err
 	}
+	// Dual-write the stable routing/provenance refs (JOH-321 F2): reply_to_agent /
+	// spawned_by_agent are DERIVED from reply_to_conv / spawned_by_conv via
+	// agent_conversations (agentForConvExpr), the same boundary the v81 backfill
+	// used. Any ReplyToAgent/SpawnedByAgent preset on the struct is ignored — the
+	// conv columns are the source of truth, so the denormalised refs can't drift.
 	_, err = db.Exec(`
 		INSERT OR REPLACE INTO pending_spawns
 			(label, group_id, role, descr, name, initial_message, group_context,
-			 reply_to_conv, spawned_by_conv, worktree_path, worktree_branch, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
+			 worktree_path, worktree_branch, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?)`,
 		p.Label, p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
-		p.ReplyToConv, p.SpawnedByConv, p.WorktreePath, p.WorktreeBranch,
+		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
+		p.WorktreePath, p.WorktreeBranch,
 		time.Now().Format(time.RFC3339Nano))
 	return err
 }
@@ -70,7 +87,8 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 	}
 	row := db.QueryRow(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
-			reply_to_conv, spawned_by_conv, worktree_path, worktree_branch, created_at
+			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
+			worktree_path, worktree_branch, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -88,7 +106,8 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 	}
 	rows, err := db.Query(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
-			reply_to_conv, spawned_by_conv, worktree_path, worktree_branch, created_at
+			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
+			worktree_path, worktree_branch, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -125,6 +144,7 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var p PendingSpawn
 	if err := s.Scan(&p.Label, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
+		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &p.CreatedAt); err != nil {
 		return nil, err
 	}

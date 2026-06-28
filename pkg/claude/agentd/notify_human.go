@@ -200,6 +200,7 @@ func notifyHumanCallerGroup(callerConv string) string {
 type dashboardHumanMessage struct {
 	ID        int64  `json:"id"`
 	FromConv  string `json:"from_conv"`
+	FromAgent string `json:"from_agent"`
 	FromTitle string `json:"from_title"`
 	Group     string `json:"group"`
 	Subject   string `json:"subject"`
@@ -228,6 +229,7 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 		out = append(out, dashboardHumanMessage{
 			ID:        m.ID,
 			FromConv:  m.FromConv,
+			FromAgent: m.FromAgent,
 			FromTitle: m.FromTitle,
 			Group:     m.GroupName,
 			Subject:   m.Subject,

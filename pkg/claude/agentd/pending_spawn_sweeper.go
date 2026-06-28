@@ -149,6 +149,12 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		GroupContext:   ps.GroupContext,
 		ReplyToConv:    ps.ReplyToConv,
 		SpawnedByConv:  ps.SpawnedByConv,
+		// The durable agent_id companions (JOH-321 F2): minutes have passed since
+		// the spawn was recorded, so the spawner may have rotated. These let
+		// finishSpawnEnrollment re-resolve its LIVE generation for the briefing
+		// reply-target + welcome attribution rather than the stale recorded conv.
+		ReplyToAgent:   ps.ReplyToAgent,
+		SpawnedByAgent: ps.SpawnedByAgent,
 		WorktreePath:   ps.WorktreePath,
 		WorktreeBranch: ps.WorktreeBranch,
 	}

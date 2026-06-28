@@ -1511,6 +1511,16 @@ type spawnParams struct {
 	// reply-to is *where its brief-replies route*; a coordinator can
 	// hand a worker off by setting them apart.
 	SpawnedByConv string
+	// ReplyToAgent / SpawnedByAgent are the stable agent_id companions of
+	// ReplyToConv / SpawnedByConv (JOH-321 F2), set ONLY on the pending-spawn
+	// sweeper path — it reconstructs spawnParams from a persisted row minutes
+	// after the spawn, by which time the spawner may have rotated, so the
+	// durable agent ref lets the briefing reply-target + welcome attribution
+	// re-resolve the spawner's LIVE generation (liveConvForActor) rather than the
+	// stale recorded conv. Empty on the synchronous path (the recorded conv IS
+	// live), where resolution falls straight back to the conv.
+	ReplyToAgent   string
+	SpawnedByAgent string
 	// Timeout bounds the conv-id poll; <= 0 falls back to 30s. On the
 	// synchronous path it is the hard deadline before a spawn fails; on the
 	// Async path the poll is capped at the shorter asyncSpawnInlineGrace
@@ -1839,7 +1849,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
 		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv), inlineCap)
+			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
 	} else if spawnHarness.NeedsSpawnSeed() {
 		// Seed-needing harness (Codex): the conv-id can't be preset, so
 		// enrollment + the inbox briefing happen post-connect. But the pane still
@@ -1857,7 +1867,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, g.Name,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
-			resolveSpawnerTitle(p.SpawnedByConv), spawnInlineMaxChars())
+			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
 	}
 
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
@@ -2123,7 +2133,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	goBackground(func() {
 		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
 			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
-			p.SpawnedByConv, welcomeInSeed)
+			p.SpawnedByConv, p.SpawnedByAgent, welcomeInSeed)
 	})
 
 	return nil
@@ -2208,9 +2218,15 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
+		// Address the briefing FROM the reply-to actor's LIVE generation. On the
+		// sweeper path ReplyToConv is a minutes-old snapshot whose actor may have
+		// rotated; liveConvForActor re-resolves it from the durable ReplyToAgent
+		// companion (JOH-321 F2) so a reply routes to the current generation,
+		// falling back to the recorded conv when the companion is empty.
+		replyToConv := liveConvForActor(p.ReplyToConv, p.ReplyToAgent)
 		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
-			FromConv:     p.ReplyToConv,
+			FromConv:     replyToConv,
 			ToConv:       convID,
 			Subject:      "Startup context",
 			Body:         spawnContext,
@@ -2348,7 +2364,7 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 // spawnedByConv is the conv-id of the agent that requested the spawn
 // ("" for a human-initiated one); it is resolved to a display name
 // here so the welcome's attribution line names the real spawner.
-func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv string, welcomeInSeed bool) {
+func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv, spawnedByAgent string, welcomeInSeed bool) {
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -2399,7 +2415,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	if !welcomeInSeed {
 		welcome := buildSpawnWelcome(name, role, descr, groupName,
 			spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
-			resolveSpawnerTitle(spawnedByConv))
+			resolveSpawnerTitle(spawnedByConv, spawnedByAgent))
 		if err := injectTextAndSubmit(target, welcome); err != nil {
 			slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 			return
@@ -2716,7 +2732,8 @@ func buildSpawnStandbySeed(name, role, descr, groupName, worktreePath, worktreeB
 // tclaude-side rename passes keeps the welcome a safe single line.
 // "(unknown)" is rejected explicitly because it happens to satisfy
 // isValidRenameTitle.
-func resolveSpawnerTitle(spawnedByConv string) string {
+func resolveSpawnerTitle(spawnedByConv, spawnedByAgent string) string {
+	spawnedByConv = liveConvForActor(spawnedByConv, spawnedByAgent)
 	if spawnedByConv == "" {
 		return ""
 	}
@@ -2725,6 +2742,21 @@ func resolveSpawnerTitle(spawnedByConv string) string {
 		return "another agent"
 	}
 	return title
+}
+
+// liveConvForActor returns the actor's current live generation when the stable
+// agent_id companion is known (JOH-321 F2) — so routing/attribution survives a
+// rotation that happened while a spawn sat pending — falling back to the
+// recorded conv snapshot when the companion is empty (synchronous path / old
+// rows / a non-actor conv) or the agent has since vanished.
+func liveConvForActor(convSnapshot, agentID string) string {
+	if agentID == "" {
+		return convSnapshot
+	}
+	if cur, err := db.CurrentConvForAgent(agentID); err == nil && cur != "" {
+		return cur
+	}
+	return convSnapshot
 }
 
 // generateSpawnLabel produces a "spwn-XXXXXX" identifier. 6 hex
