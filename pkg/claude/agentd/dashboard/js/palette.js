@@ -42,7 +42,7 @@ import { $, $$, esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import {
   toast, openWindowModal,
-  retireAgentInteractive, openRetirePreview, countGroupMembersByStatus,
+  retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, countGroupMembersByStatus,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
@@ -229,6 +229,24 @@ function buildCommands() {
       hint: `resume ${offlineAll} offline agent${offlineAll === 1 ? '' : 's'} onto their conversations`,
       keywords: 'power on start resume wake boot up all agents global everything batch',
       run: () => powerOnScope('all', null),
+    });
+  }
+
+  // 1c) Global delete-retired — "Delete retired agents…". The human-driven
+  //     sibling of the timed agent.retired_cleanup auto-sweep (JOH-269):
+  //     opens a PREVIEW modal (openDeleteRetiredPreview) listing every
+  //     retired agent, all ticked, with live title/age filters and a
+  //     per-row opt-out, then POSTs the explicit ticked-AND-visible list to
+  //     /api/cleanup/agents {mode:"delete"}. 🗑 distinguishes it from the ♻
+  //     retire commands. Gated on ≥1 retired agent so the palette never
+  //     offers a no-op.
+  const retiredCount = (snap.retired || []).length;
+  if (retiredCount) {
+    cmds.push({
+      icon: '🗑', label: 'Delete retired agents…',
+      hint: `preview + permanently delete any of ${retiredCount} retired agent${retiredCount === 1 ? '' : 's'} (cannot be undone)`,
+      keywords: 'delete purge retired cleanup remove wipe agents',
+      run: () => openDeleteRetiredPreview(),
     });
   }
 
