@@ -147,11 +147,11 @@ type watchModel struct {
 	colOverrides   map[string]bool
 
 	// Settings
-	global      bool   // Search all projects
-	projectPath string // Current project path
-	since       string // Filter: modified after
-	before      string // Filter: modified before
-	showArchived bool  // Include archived (-x suffixed) convs in the listing; toggled with `e`
+	global       bool   // Search all projects
+	projectPath  string // Current project path
+	since        string // Filter: modified after
+	before       string // Filter: modified before
+	showArchived bool   // Include archived convs (conv_index.archived_at set) in the listing; toggled with `x`
 
 	// Result
 	selectedConv   *SessionEntry
@@ -610,10 +610,11 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.columnSelector = true
 			m.columnCursor = 0
 		case "x":
-			// Toggle visibility of archived (-x) convs. Default-hidden;
-			// useful when forensically tracking down a reincarnated
-			// instance's history. Mnemonic: press `x` to see convs
-			// marked with `-x`. Delete actions (`del` / `backspace` /
+			// Toggle visibility of archived convs (conv_index.archived_at
+			// set). Default-hidden; useful when forensically tracking down a
+			// reincarnated instance's history. Mnemonic: press `x` to reveal
+			// the e`x`pired generations (displayed with a `-x` title).
+			// Delete actions (`del` / `backspace` /
 			// `ctrl+d`) still work — `x` was freed up specifically for
 			// this toggle. Re-runs the active filter (search or
 			// semantic) so the result composes with whatever else is
@@ -1485,9 +1486,10 @@ func (m *watchModel) applySearchFilter() {
 	query := strings.ToLower(searchVal)
 
 	// Compose three independent filters:
-	//   1. Hide archived (-x) entries unless m.showArchived is on. Reincarnated
-	//      old convs persist on disk for history, but listing them by
-	//      default just clutters the table — toggle with `x`.
+	//   1. Hide archived entries (conv_index.archived_at set) unless
+	//      m.showArchived is on. Reincarnated old convs persist on disk for
+	//      history, but listing them by default just clutters the table —
+	//      toggle with `x`.
 	//   2. The text-search filter (matchesSearch).
 	//   3. The group filter (matchesGroupFilter) — when set, only convs
 	//      whose membership list includes that group pass.
@@ -1942,7 +1944,7 @@ func (m *watchModel) renderHelpView() string {
 	b.WriteString("    W         Create git worktree with this conversation\n")
 	b.WriteString("    del/^D    Delete conversation (with confirmation)\n")
 	b.WriteString("              If has session: y=delete+stop, s=stop only, n=cancel\n")
-	b.WriteString("    x         Toggle archived (-x) convs (default: hidden)\n")
+	b.WriteString("    x         Toggle archived convs (default: hidden)\n")
 	b.WriteString("    c         Choose visible columns (persisted)\n")
 	b.WriteString("    r         Refresh conversation list\n")
 	b.WriteString("\n")

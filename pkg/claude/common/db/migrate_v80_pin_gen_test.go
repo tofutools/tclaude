@@ -9,7 +9,7 @@ import (
 
 // TestMigrateV79toV80_FreshSchema builds a fresh DB through the full migrate()
 // chain and asserts the pin_gen column is present. (The currentVersion tripwire
-// has moved forward to the v81 test — v81 is head now.)
+// has moved forward to the head migration's test.)
 func TestMigrateV79toV80_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

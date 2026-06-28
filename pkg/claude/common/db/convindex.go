@@ -36,9 +36,10 @@ type ConvIndexRow struct {
 }
 
 // IsArchived reports whether this conv has been soft-deleted via
-// reincarnation or a future manual `conv archive` verb. Listing
-// surfaces (conv ls) hide archived rows by default; the title-suffix
-// fallback (`-x`) covers convs that pre-date the column.
+// reincarnation or the manual `conv archive` verb. Listing surfaces
+// (conv ls) hide archived rows by default. Since JOH-320 the archived_at
+// column is the sole signal — the old `-x` title-suffix heuristic was
+// retired because it mis-hid a live agent whose base name ended in `-x`.
 func (r *ConvIndexRow) IsArchived() bool {
 	return !r.ArchivedAt.IsZero()
 }

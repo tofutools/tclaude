@@ -64,12 +64,16 @@ type SessionEntry struct {
 	// per "no load fields without a consumer".)
 	Model    string `json:"model,omitempty"`
 	FileSize int64  `json:"-"` // Populated at load time, not persisted in index
-	// ArchivedAt is the canonical archived signal sourced from
-	// `conv_index.archived_at`. RFC3339 timestamp string when archived,
-	// empty when active. Populated at load time from the DB row;
-	// `IsArchived()` checks this column first, with the `-x` title
-	// suffix as a fallback for legacy convs that pre-date the column.
-	ArchivedAt string `json:"-"`
+	// ArchivedAt is the canonical (and, since JOH-320, sole) archived
+	// signal, sourced from `conv_index.archived_at`. RFC3339 timestamp
+	// string when archived, empty when active. Populated at load time from
+	// the DB row — on both the cache-hit path and a fresh rescan (see
+	// LoadSessionsIndexWithOptions). `IsArchived()` keys on it alone; the
+	// old `-x` title-suffix heuristic was retired. Surfaced in `--json`
+	// (omitempty) so a consumer of `conv ls --show-archived --json` can tell
+	// archived rows from active ones now that the `-x` title no longer marks
+	// them.
+	ArchivedAt string `json:"archived_at,omitempty"`
 	// BranchHistory is the distinct set of git branches this .jsonl
 	// touched — every branch stamped onto a turn, with the dir + the
 	// timestamps bracketing where it appeared. Populated only by a
@@ -98,52 +102,28 @@ func (e *SessionEntry) DisplayTitle() string {
 	return e.FirstPrompt
 }
 
-// archivedTitleSuffixRegex matches the `-x` archive marker, optionally
-// followed by a `-<N>` disambiguation counter, at end of title. Reincar-
-// nate writes onto the old conv's .jsonl right before /exit. The bare
-// `-x` is the historical form; the `-x-<N>` (N >= 2) variant appears when
-// an earlier retired generation already holds the bare form — which since
-// JOH-319 happens on every reincarnation, because the living successor now
-// keeps its plain base name instead of carrying an incrementing `-r-<N>`
-// (see agentd.retiredGenerationTitle).
+// archivedTitleSuffixRegex matches the cosmetic `-x` reincarnation marker
+// (optionally with a `-<N>` disambiguation counter) at end of a title.
+// JOH-320 retired this as the visibility signal for normal operation — it
+// survives ONLY as a degraded-mode fail-closed fallback (see
+// LoadSessionsIndexWithOptions) for when the authoritative
+// conv_index.archived_at column is unreadable. IsArchived() never consults it.
 var archivedTitleSuffixRegex = regexp.MustCompile(`-x(?:-\d+)?$`)
 
-// IsArchivedTitle returns true when a CustomTitle ends with the `-x`
-// archive marker (optionally with a `-<N>` counter — see
-// archivedTitleSuffixRegex). Used by listing surfaces (conv ls,
-// dashboard) to default-hide dead convs without needing a separate
-// "is_active" column. Only checks CustomTitle — Summary / FirstPrompt
-// happening to end with `-x` is coincidental, not an archive mark.
+// IsArchived is the canonical archived check on a SessionEntry. It reads
+// the explicit conv_index.archived_at column only (RFC3339 timestamp when
+// archived, empty when active) — sourced into ArchivedAt by the load path.
 //
-// Mnemonic: `-x` = archived (mark of expiration / supersession).
-// Pairs with `-c-N` (clone) on the live side. Unifies with `groups
-// archive` — both are soft-delete states.
-//
-// CAVEAT (JOH-319): a LIVE conversation whose own base name ends in `-x`
-// or `-x-<N>` (e.g. a user-chosen `foo-x`) self-matches and is treated as
-// archived — so it silently hides from `conv ls` etc. Post-JOH-319 the
-// living reincarnation generation keeps its base name, so this no longer
-// gets masked by an appended `-r-N` as it did before. Narrow (needs a
-// `-x`-ending base name); the durable fix is the `archived_at` column
-// below, which makes the title heuristic unnecessary.
-//
-// Note: this is the title-based fallback. The canonical check is the
-// (future) `conv_index.archived_at` column; this helper covers
-// legacy convs that pre-date the column. New code should prefer the
-// column-based check when one is available.
-func IsArchivedTitle(customTitle string) bool {
-	return archivedTitleSuffixRegex.MatchString(customTitle)
-}
-
-// IsArchived is the canonical archived check on a SessionEntry. Reads
-// the conv_index.archived_at column (preferred) and falls back to
-// the title-suffix marker for legacy convs that pre-date schema v17.
-// Either signal is enough to mark the conv as archived.
+// JOH-320: the old `-x` title-suffix heuristic was retired here. It could
+// not distinguish "I'm a retired reincarnation generation" from "my base
+// name just happens to end in `-x`", so a LIVE agent named e.g. `foo-x`
+// self-hid from `conv ls`. The `-x` rename the reincarnate path applies is
+// now a pure display convention; the column carries the visibility weight.
+// Reincarnation stamps the column on its retiring predecessor, the v82
+// migration backfilled existing predecessors, and `tclaude conv archive`
+// stamps it for arbitrary convs.
 func (e *SessionEntry) IsArchived() bool {
-	if e.ArchivedAt != "" {
-		return true
-	}
-	return IsArchivedTitle(e.CustomTitle)
+	return e.ArchivedAt != ""
 }
 
 // HasTitle returns true if the entry has a custom title or summary
@@ -221,6 +201,7 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 
 	// 2. Load existing DB entries for this project
 	dbRows, err := db.ListConvIndex(projectPath)
+	dbReadFailed := err != nil
 	if err != nil {
 		slog.Warn("conv_index: db read failed, will scan all files", "error", err)
 		dbRows = nil
@@ -306,6 +287,30 @@ func LoadSessionsIndexWithOptions(projectPath string, opts LoadSessionsIndexOpti
 			continue
 		}
 		scanned.FileSize = fileSize
+
+		// archived_at lives only in conv_index — the .jsonl carries no such
+		// field — and UpsertConvIndex deliberately preserves it across
+		// rescans. Carry it onto the freshly-scanned in-memory entry too,
+		// or a conv archived in the DB whose .jsonl then changed (e.g. a
+		// reincarnation predecessor whose `-x` display rename bumped the
+		// mtime and forced this rescan) would list as un-archived on this
+		// pass and flicker back into `conv ls` until the next cache hit.
+		// JOH-320: the column is the sole archived signal, so this carry is
+		// load-bearing, not cosmetic.
+		if prev := dbByID[convID]; prev != nil && !prev.ArchivedAt.IsZero() {
+			scanned.ArchivedAt = prev.ArchivedAt.Format(time.RFC3339Nano)
+		} else if dbReadFailed && archivedTitleSuffixRegex.MatchString(scanned.CustomTitle) {
+			// Degraded mode: the authoritative conv_index.archived_at is
+			// unreadable (db.ListConvIndex errored above), so for THIS pass
+			// only fall back to the cosmetic `-x` title marker. Better to
+			// keep a retired generation hidden than to fail open and
+			// resurface it as active while the DB is down. The file mtime is
+			// an approximate archived time. Reached only on a genuine DB read
+			// error — a normally-empty index (fresh project) leaves
+			// dbReadFailed false, so IsArchived() stays column-only in normal
+			// operation and a live `*-x` agent is not mis-hidden.
+			scanned.ArchivedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+		}
 
 		// Upsert into DB
 		row := entryToDBRow(scanned, projectPath)

@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Scenario (JOH-319): the living successor keeps the plain base name and
@@ -49,6 +51,16 @@ func TestReincarnate_SuccessorKeepsBaseName_PredecessorArchived(t *testing.T) {
 	//   - the old conv is gone (membership migrated atomically).
 	f.AssertGroupMember(g.Name, r.NewConv, "worker", 5*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
+
+	// JOH-320: the predecessor is hidden from `conv ls` by the durable
+	// conv_index.archived_at column the orchestrator stamps, not by the
+	// cosmetic `-x` title — so a live agent whose name merely happens to end
+	// in `-x` no longer self-hides. ConvIndexRow.IsArchived() is exactly the
+	// signal the listing/dashboard read paths consult.
+	oldRow, err := db.GetConvIndex(oldConv)
+	require.NoError(t, err, "GetConvIndex(old)")
+	require.NotNil(t, oldRow, "predecessor still has a conv_index row")
+	assert.True(t, oldRow.IsArchived(), "predecessor archived via conv_index.archived_at, not the -x title")
 }
 
 // Scenario: a SECOND retirement of the same base. Because the living

@@ -1,7 +1,9 @@
 package agentd
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -45,9 +47,11 @@ func reincarnateBase(title string) string {
 // RETIRING predecessor, plus whether a rename should happen at all.
 //
 // The archive convention is unchanged from before JOH-319: the
-// predecessor's current title gets the `-x` archive marker appended
-// (`convops.IsArchivedTitle` then hides it from `conv ls` etc.). What
-// changed is only that the living successor no longer carries an
+// predecessor's current title gets the `-x` archive marker appended.
+// Post-JOH-320 the `-x` is a pure DISPLAY convention — `conv ls` decides
+// visibility from the conv_index.archived_at column the orchestrator stamps
+// alongside this rename, not from the suffix. What changed in JOH-319 is only
+// that the living successor no longer carries an
 // incrementing `-r-<N>` — it keeps its plain base name — so every
 // retirement of `worker` now arrives at `worker-x` instead of a distinct
 // `worker-r-<N>-x`. uniqueArchiveTitle therefore appends a `-<N>` counter
@@ -503,10 +507,22 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 	// standalone retired or archived entry. It is excluded from the active
 	// roster (only the actor's current conv shows), the retired tray (the
 	// actor is active) and the plain-conversations list (ListAgentConvIDs
-	// covers every generation) — reachable via the succession edge /
-	// séance, which is why no conv_index.archived_at stamp is needed here.
+	// covers every generation) — reachable via the succession edge / séance.
 	if retiredRename {
 		_ = deliverRename(target, retiredTitle)
+	}
+	// Stamp the durable archived flag on the predecessor's conv_index row
+	// (JOH-320). `conv ls` and the watch view now decide visibility from
+	// conv_index.archived_at alone — the `-x` rename above is a pure display
+	// convention — so the retired generation must carry the column to stay
+	// hidden by default. Unconditional: the predecessor is always superseded
+	// here, even when retiredRename is false (an untitled predecessor gets no
+	// display rename but is still archived). FreshConvRowAt above guaranteed a
+	// conv_index row for a CC predecessor; sql.ErrNoRows (e.g. a Codex conv,
+	// whose archived state lives in its own thread store) is the expected
+	// no-op, not an error worth surfacing.
+	if err := db.SetConvIndexArchived(target, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Warn("reincarnate: stamp archived_at on predecessor failed", "conv", short8(target), "error", err)
 	}
 	// Soft-stop the old pane via the harness's exit command. A harness
 	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
