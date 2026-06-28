@@ -468,6 +468,24 @@ func runNew(params *NewParams) error {
 		sessionID = params.Label
 	}
 
+	// The session PK is now final (priority above: label > resumed conv UUID >
+	// random synthetic). Reject if a LIVE session already owns it. The tmux
+	// name is disambiguated below (UniqueTmuxSessionName), so without this
+	// guard SaveSessionState's ON CONFLICT(id) would silently overwrite that
+	// live session's row — and for a resumed conv UUID, also launch a second
+	// `claude --resume` on the same .jsonl. Before JOH-248 the PK and tmux name
+	// were identical, so the duplicate `new-session` clean-failed; this restores
+	// that now that the names diverge. A row owned only by a DEAD session is
+	// fine to reuse. (Relaunching under a DIFFERENT label that targets an
+	// already-live conv-id is a separate, pre-existing double-launch — a JOH-248
+	// follow-up, caught via FindSessionByConvID rather than the PK.)
+	if owner := liveSessionOwningID(sessionID); owner != nil {
+		if params.Label != "" {
+			return fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)
+		}
+		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+	}
+
 	// The tmux session name is the short, human-facing handle (tmux status
 	// line, `session ls`, attach target). Render it short here while the PK
 	// stays full, and keep it unique among live tmux sessions.

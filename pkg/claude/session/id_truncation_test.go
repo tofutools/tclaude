@@ -1,11 +1,13 @@
 package session
 
 import (
+	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -129,4 +131,77 @@ func TestUniqueTmuxSessionName_FreeBaseUnchanged(t *testing.T) {
 	assert.Equal(t, "d0e9fa14", UniqueTmuxSessionName("d0e9fa14"))
 	assert.Equal(t, "spwn-ab12cd", UniqueTmuxSessionName("spwn-ab12cd"))
 	assert.Equal(t, "", UniqueTmuxSessionName(""))
+}
+
+// fakeTmux reports the named sessions as alive (has-session exits 0) and every
+// other name as dead. Only the has-session probe IsTmuxSessionAlive issues is
+// modelled; it's all liveSessionOwningID needs.
+type fakeTmux struct{ alive map[string]bool }
+
+func (f fakeTmux) Command(args ...string) *exec.Cmd {
+	// IsTmuxSessionAlive issues: has-session -t <name>; exit 0 == alive.
+	if len(args) == 3 && args[0] == "has-session" && f.alive[args[2]] {
+		return exec.Command("true")
+	}
+	return exec.Command("false")
+}
+
+func (f fakeTmux) ListSessions() (map[string]struct{}, error) {
+	out := make(map[string]struct{}, len(f.alive))
+	for name, live := range f.alive {
+		if live {
+			out[name] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+// The launch path rejects reusing a session PK that a LIVE session already
+// owns — otherwise SaveSessionState's ON CONFLICT(id) would silently overwrite
+// (and orphan) that live session, the duplicate-tmux-name clean-fail the
+// pre-JOH-248 code got for free once the tmux name is disambiguated apart from
+// the PK. This guards BOTH launch PKs that can collide: an explicit --label,
+// and a resumed conversation's full UUID (relaunching an already-live conv would
+// also double `claude --resume` the same .jsonl). A PK owned only by a DEAD row,
+// or a free PK, is fine to (re)create. See JOH-248.
+func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	convUUID := "d0e9fa14-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	prevTmux := clcommon.Default
+	clcommon.Default = fakeTmux{alive: map[string]bool{"live-label": true, "d0e9fa14": true}}
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+
+	// Free PK — nothing to collide with.
+	assert.Nil(t, liveSessionOwningID("free-label"),
+		"a PK with no existing row is free to use")
+
+	// --label PK owned by a LIVE session — must report the collision so the
+	// caller rejects the launch instead of overwriting the row.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "live-label", ConvID: "conv-aaaa", TmuxSession: "live-label", Status: StatusIdle,
+	}))
+	owner := liveSessionOwningID("live-label")
+	require.NotNil(t, owner, "a live session already holding the label must block reuse")
+	assert.Equal(t, "live-label", owner.ID)
+
+	// Resumed-conv PK (full UUID) owned by a LIVE session — same guard: the
+	// row is keyed by the conv UUID and its tmux name was disambiguated to the
+	// 8-char prefix, which is the live name. Relaunching must be rejected.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: convUUID, ConvID: convUUID, TmuxSession: "d0e9fa14", Status: StatusIdle,
+	}))
+	owner = liveSessionOwningID(convUUID)
+	require.NotNil(t, owner, "a live session already resuming this conv must block a relaunch")
+	assert.Equal(t, convUUID, owner.ID)
+
+	// PK owned only by a DEAD row (its tmux name is not alive) — recreating
+	// over an exited row is fine, so no collision is reported.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "dead-label", ConvID: "conv-bbbb", TmuxSession: "dead-label", Status: StatusExited,
+	}))
+	assert.Nil(t, liveSessionOwningID("dead-label"),
+		"an exited row sharing the PK does not block a fresh launch")
 }

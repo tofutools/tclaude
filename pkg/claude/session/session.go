@@ -366,6 +366,26 @@ func sessionHandle(s *SessionState) string {
 	return s.ID
 }
 
+// liveSessionOwningID returns an existing, *live* session row already keyed by
+// the given PK, or nil. Used to guard a label/synthetic-PK launch: unlike a
+// resumed conv UUID (a stable identity that is fine to refresh), a label is a
+// fresh identity each launch and can collide with a different live session.
+// The tmux name is disambiguated separately, but the PK is not — so without
+// this check SaveSessionState's ON CONFLICT(id) would silently overwrite (and
+// orphan) the live session that already owns the label, reintroducing the very
+// conflation JOH-248 removes. A row owned only by a *dead* session returns nil:
+// recreating over an exited row is fine. See JOH-248.
+func liveSessionOwningID(sessionID string) *SessionState {
+	existing, err := LoadSessionState(sessionID)
+	if err != nil || existing == nil {
+		return nil
+	}
+	if IsTmuxSessionAlive(existing.TmuxSession) {
+		return existing
+	}
+	return nil
+}
+
 // FormatDuration formats a duration in a human-readable way
 func FormatDuration(d time.Duration) string {
 	if d < time.Minute {

@@ -1806,7 +1806,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	}
 
 	// Generate a label that's unlikely to collide with existing
-	// session IDs. Tclaude's GenerateSessionID() uses an 8-char
+	// session IDs. Tclaude's GenerateSessionID() uses 16-char
 	// random hex; we mirror that with a "spwn-" prefix so these
 	// rows are easy to spot in `tclaude session ls`.
 	label := generateSpawnLabel()
