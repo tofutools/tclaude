@@ -107,3 +107,32 @@ func TestDashboardHTML_SlopExtras(t *testing.T) {
 	must("@media (prefers-reduced-motion: reduce)",
 		"the new effects are CSS-gated on the OS reduce-motion preference")
 }
+
+// TestDashboardHTML_HidePullLever pins the opt-out that hides the slop-mode
+// side pull-lever: the snapshot flag, the refresh.js → body.hide-slop-lever
+// wiring, the CSS rule that drops the lever, and the Config-tab checkbox +
+// its config.js round-trip. All client/server string contracts, like
+// TestDashboardHTML_VegasRegularMode.
+func TestDashboardHTML_HidePullLever(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// refresh.js drives body.hide-slop-lever off the snapshot flag every poll.
+	must("classList.toggle('hide-slop-lever', !!data.hide_pull_lever)",
+		"refresh.js applies the snapshot flag every poll")
+
+	// CSS: the hide rule meets-and-exceeds the reveal rule's specificity and
+	// sits after it, so the lever vanishes while the rest of slop stays.
+	must("body.slop.hide-slop-lever:has(#tab-groups.active) #slop-lever { display: none; }",
+		"the lever is hidden when body.hide-slop-lever is set")
+
+	// Config tab: the checkbox + its populate/assemble round-trip through
+	// the slop.hide_pull_lever key.
+	must(`id="cfg-slop-hide-lever"`, "the Config-tab checkbox ships")
+	must("cfg.slop && cfg.slop.hide_pull_lever", "config.js populates the checkbox")
+	must("slop.hide_pull_lever = true", "config.js assembles the key on save")
+}

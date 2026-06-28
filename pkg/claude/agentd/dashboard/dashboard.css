@@ -3677,6 +3677,12 @@ body.slop:has(#tab-groups.active) #slop-lever {
   cursor: pointer;
   user-select: none;
 }
+/* Opt-out: config slop.hide_pull_lever (→ body.hide-slop-lever, applied
+   from the snapshot by refresh.js) hides the lever while the rest of slop
+   mode stays intact. Specificity meets-and-exceeds the reveal rule above
+   (the same two IDs plus the extra .hide-slop-lever class) and sits after
+   it, so it wins without !important. */
+body.slop.hide-slop-lever:has(#tab-groups.active) #slop-lever { display: none; }
 .slop-lever-track {
   width: 14px;
   height: 90px;

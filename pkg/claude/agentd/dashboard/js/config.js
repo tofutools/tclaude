@@ -421,6 +421,10 @@ function populateConfigForm(cfg) {
   // radio outside slop mode. Default off; lives in the slop block.
   $('#cfg-slop-vegas-regular').checked = !!(cfg.slop && cfg.slop.vegas_in_regular_mode);
 
+  // Hide the slop-mode side pull-lever. Default off (the lever shows);
+  // lives in the slop block.
+  $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
+
   // Activity bots — per-mode style of the deduped robot indicator.
   // Defaults: regular emoji, slop sprites (mirrors the Go resolvers).
   const ab = (cfg.dashboard && cfg.dashboard.activity_bots) || {};
@@ -567,13 +571,17 @@ function assembleConfig() {
 
   // slop is an optional block — its volumes/channel (owned by the header
   // mixer + picker, no widget on this page) ride along in the clone. Set
-  // only this page's one key, vegas_in_regular_mode: true when checked,
-  // dropped otherwise (false is the omitempty default). Drop the whole
-  // block only when nothing is left so an all-default slop doesn't marshal
-  // as a spurious "slop": {} diff — but a block that still holds a volume
-  // or channel survives.
+  // only this page's keys (vegas_in_regular_mode, hide_pull_lever): true
+  // when checked, dropped otherwise (false is the omitempty default). Drop
+  // the whole block only when nothing is left so an all-default slop doesn't
+  // marshal as a spurious "slop": {} diff — but a block that still holds a
+  // volume or channel survives.
   const slop = (cfg.slop && typeof cfg.slop === 'object') ? cfg.slop : {};
   if ($('#cfg-slop-vegas-regular').checked) slop.vegas_in_regular_mode = true; else delete slop.vegas_in_regular_mode;
+  // hide_pull_lever: true when checked, dropped otherwise (false is the
+  // omitempty default) so an all-default slop block doesn't marshal a
+  // spurious key.
+  if ($('#cfg-slop-hide-lever').checked) slop.hide_pull_lever = true; else delete slop.hide_pull_lever;
   if (Object.keys(slop).length) cfg.slop = slop; else delete cfg.slop;
 
   // dashboard is an optional block. activity_bots stores only the NON-

@@ -590,6 +590,39 @@ func TestShowVegasInRegularMode(t *testing.T) {
 	assert.Equal(t, 80, music, "the music volume coexists with the new flag")
 }
 
+// TestHidePullLever covers the default-OFF *bool resolver behind the opt-out
+// that hides the slop-mode side pull-lever: nil config, an absent slop block,
+// and an absent key all mean OFF (the lever shows); only an explicit true
+// hides it. The JSON shape is asserted too so a default config stays clean
+// (no redundant key) while an explicit-on round-trips and coexists with the
+// other slop settings.
+func TestHidePullLever(t *testing.T) {
+	off := false
+	on := true
+
+	assert.False(t, (*Config)(nil).HidePullLever(), "nil config → show")
+	assert.False(t, (&Config{}).HidePullLever(), "no slop block → show")
+	assert.False(t, (&Config{Slop: &SlopConfig{}}).HidePullLever(), "absent key → show")
+	assert.False(t, (&Config{Slop: &SlopConfig{HidePullLever: &off}}).HidePullLever(), "explicit false → show")
+	assert.True(t, (&Config{Slop: &SlopConfig{HidePullLever: &on}}).HidePullLever(), "explicit true → hide")
+
+	// A default (absent) value omits the key (omitempty + nil pointer).
+	clean, err := json.Marshal(&Config{Slop: &SlopConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "hide_pull_lever")
+
+	// An explicit-on round-trips through Save/Load alongside a volume so the
+	// new key and the existing slop settings coexist.
+	t.Setenv("HOME", t.TempDir())
+	vol := 70
+	require.NoError(t, Save(&Config{Slop: &SlopConfig{HidePullLever: &on, MusicVolume: &vol}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.HidePullLever(), "explicit true survives round-trip")
+	music, _ := loaded.ResolvedSlopVolumes()
+	assert.Equal(t, 70, music, "the music volume coexists with the new flag")
+}
+
 // TestActivityBotsStyles covers the per-mode style resolvers behind the
 // dashboard's activity-bot indicator: regular defaults to "emoji", slop to
 // "sprites"; nil config / absent block / absent key / an unknown value all
