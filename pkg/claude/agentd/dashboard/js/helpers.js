@@ -910,18 +910,38 @@ function remoteControlMenuItem(m, canRemote) {
   return `<button data-act="toggle-remote-control" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-intent="${esc(intent)}" data-label="${esc(label)}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
-// memberActions renders the per-row action cell for a real group
-// member. focus + hide stay at the TOP LEVEL — the window pair,
-// disabled when the agent is offline — and everything heavier (term,
-// clone, reincarnate, edit, the owner toggle, sudo, permissions,
-// notifications, cron, remove-from-group, retire) is collected behind
-// the ⚙ options cog so the row stays uncluttered. The cog is always
-// present and enabled.
+// MENU_SEP is the hairline divider between semantic groups of cog-menu
+// items. It's an inert flex row — no data-act and not a <button>, so the
+// row-actions.js click router ignores it (a click on it is treated like a
+// click on the menu's padding: menu stays open, nothing dispatched).
+const MENU_SEP = '<div class="menu-sep" role="separator"></div>';
+
+// joinMenuGroups concatenates the per-group HTML runs with a MENU_SEP
+// between them, dropping any empty group first so a group that renders to
+// nothing (e.g. a Configure group whose only item is a hidden
+// remote-control toggle) never leaves a dangling / doubled divider.
+function joinMenuGroups(groups) {
+  return groups.filter((g) => g && g.trim() !== '').join(MENU_SEP);
+}
+
+// memberActions renders the per-row action cell for a real group member.
+// focus + hide stay at the TOP LEVEL — the window pair, disabled when the
+// agent is offline. Everything heavier is collected behind the ⚙ options
+// cog so the row stays uncluttered, ordered into four semantic groups
+// (light/frequent → heavy/destructive), divider-separated:
+//   1. Inspect & reach   — view messages, term, open window, summary…
+//   2. Configure         — edit, owner, permissions, sudo, notify, remote, schedule
+//   3. Lifecycle         — clone, reincarnate
+//   4. Remove / destroy  — remove-from-group, retire
+// The cog is always present and enabled.
 function memberActions(g, m, canRemote) {
-  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
-    + editMemberButton(g, m) + ownerToggleButton(g, m) + sudoMemberButton(m)
-    + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m) + removeMemberButton(g, m)
-    + retireMemberButton(m);
+  const menu = joinMenuGroups([
+    viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m),
+    editMemberButton(g, m) + ownerToggleButton(g, m) + permMemberButton(m) + sudoMemberButton(m)
+      + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
+    cloneAgentButton(m) + reincarnateAgentButton(m),
+    removeMemberButton(g, m) + retireMemberButton(m),
+  ]);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
@@ -957,7 +977,7 @@ function exportAgentButton(m) {
   const why = m.online
     ? 'Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.'
     : 'Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.';
-  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">📋 summary…</button>`;
+  return `<button data-act="export-summary" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"${dis} title="${esc(why)}">summary…</button>`;
 }
 // permMemberButton renders the per-row "permissions" affordance —
 // opens the permanent-permission editor (grant / deny / default per
@@ -977,7 +997,7 @@ function cronMemberButton(m) {
     target: m.agent_id || m.conv_id,
     owner: m.agent_id || m.conv_id,
   });
-  return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">⏰</button>`;
+  return `<button data-act="cron-new" data-prefill="${esc(prefill)}" data-label="${esc(label)}" title="Schedule a recurring nudge for ${esc(label)}">schedule…</button>`;
 }
 
 // viewMessagesButton renders the ⚙-menu "view messages" item — a deep
@@ -986,7 +1006,7 @@ function cronMemberButton(m) {
 // (view-agent-messages → openMailbox(conv)).
 function viewMessagesButton(m) {
   const label = m.title || m.conv_id;
-  return `<button data-act="view-agent-messages" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open this agent's messages in the Messages tab">🗂 view messages</button>`;
+  return `<button data-act="view-agent-messages" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Open this agent's messages in the Messages tab">view messages</button>`;
 }
 
 // termButton renders the "open a terminal in this agent's working
@@ -1123,10 +1143,14 @@ function retireMemberButton(m) {
 // dot's job; renaming is the click-to-edit name cell. To put an
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m, canRemote) {
-  const menu = viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m) + cloneAgentButton(m) + reincarnateAgentButton(m)
-    + sudoMemberButton(m) + permMemberButton(m) + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m)
-    + retireMemberButton(m)
-    + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`;
+  const menu = joinMenuGroups([
+    viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m),
+    permMemberButton(m) + sudoMemberButton(m)
+      + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
+    cloneAgentButton(m) + reincarnateAgentButton(m),
+    retireMemberButton(m)
+      + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`,
+  ]);
   return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
 }
 
