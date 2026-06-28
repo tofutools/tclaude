@@ -811,6 +811,17 @@
         <label class="mail-sidebar-foot" title="Show folders for agents that have never sent or received a message">
           <input type="checkbox" id="mail-show-empty" /> show agents without messages
         </label>
+        <!-- Predecessor ("previous") generations of an agent — past conv-ids
+             left behind by a reincarnate / /clear — get a folder because their
+             message history survives; hidden from the agent listing (flat AND
+             nested) by default. This footer toggle pulls them back in. Purely a
+             client-side roster filter (mail.js reads the snapshot's replaced[]
+             list, the same source the Groups tab uses) — it hides only these
+             left-pane folders, never any message: the "All agent messages"
+             firehose still counts a predecessor's traffic. -->
+        <label class="mail-sidebar-foot" title="Show folders for previous (superseded) generations of agents — past conversations left behind by a reincarnate / /clear. Only hides the folders in this list; no messages are hidden.">
+          <input type="checkbox" id="mail-show-prev-gens" /> show previous generations
+        </label>
       </div>
       <!-- Row 2, col 2: list body — the "delete selected" / select-all bar
            sits above the scrolling message list (#mail-list); the pager
