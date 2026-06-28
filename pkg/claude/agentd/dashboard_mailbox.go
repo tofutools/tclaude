@@ -147,10 +147,16 @@ func registerDashboardMailboxRoutes(mux *http.ServeMux) {
 // roster only carries these when the operator opted in (include_retired),
 // so the frontend can flag them visually.
 type dashboardMailbox struct {
-	ID      string   `json:"id"`
-	Kind    string   `json:"kind"`
-	Title   string   `json:"title"`
-	Short   string   `json:"short,omitempty"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+	Short string `json:"short,omitempty"`
+	// AgentID is the agent folder's stable agent_id, resolved live from the
+	// folder's conv. It lets the sidebar lead a nameless folder with its
+	// agt_ handle (instead of a short conv-id) and hover the full
+	// "agent_id / conv-id" pair. Empty for pinned / group folders and any
+	// conv with no agent enrollment.
+	AgentID string   `json:"agent_id,omitempty"`
 	Online  bool     `json:"online"`
 	Retired bool     `json:"retired,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
@@ -278,6 +284,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 			Kind:    "agent",
 			Title:   title,
 			Short:   agent.ShortID(conv),
+			AgentID: peerAgentID(conv),
 			Online:  isConvOnlineIn(conv, aliveSessions),
 			Retired: retired,
 			Groups:  groupsByConv[conv],
@@ -533,10 +540,11 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		title = ""
 	}
 	writeMailboxPage(w, map[string]any{
-		"id":    id,
-		"kind":  "agent",
-		"title": title,
-		"short": agent.ShortID(id),
+		"id":       id,
+		"kind":     "agent",
+		"title":    title,
+		"short":    agent.ShortID(id),
+		"agent_id": peerAgentID(id),
 	}, p)
 }
 
