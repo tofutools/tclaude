@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -117,7 +118,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
-		if injectSlashCommand(convID, exitCmd, "", "soft-exit") {
+		if injectSoftExit(convID, exitCmd, "soft-exit") {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -142,6 +143,113 @@ func stopOneConv(convID string, force bool) memberOpResult {
 		res.Action = "killed_no_soft_exit"
 	}
 	return res
+}
+
+// injectSoftExit injects a harness soft-exit command (Claude Code's
+// /exit, Codex's /quit) into convID's live pane and arms a background
+// retry. It returns whether the FIRST injection's send-keys succeeded —
+// the soft_stopped/error contract callers (stopOneConv, reincarnate)
+// already rely on.
+//
+// Why the retry: a single /exit can be silently lost when the pane's
+// input buffer wasn't empty. send-keys appends the command to whatever
+// junk was already sitting there (a half-typed line, a stray paste), so
+// the trailing Enter submits "<junk>/exit" as one ordinary prompt instead
+// of an exit — and the pane keeps running. That submit DOES clear the
+// buffer, though, so a second /exit a few seconds later lands on a clean
+// input box and takes. scheduleSoftExitRetry re-injects while the SAME
+// pane process is still alive.
+func injectSoftExit(convID, exitCmd, reason string) bool {
+	sess := aliveSessionForConv(convID)
+	if sess == nil {
+		return false
+	}
+	if !injectSlashCommand(convID, exitCmd, "", reason) {
+		return false
+	}
+	// Capture the pane's live OS pid so the retry can tell THIS process apart
+	// from a later one that reused the same tmux name (a resume re-derives the
+	// name from the conv-id — see scheduleSoftExitRetry). 0 = couldn't read
+	// it; skip the retry rather than risk re-injecting blind.
+	if pid := livePanePID(sess.TmuxSession); pid > 0 {
+		scheduleSoftExitRetry(convID, sess.TmuxSession, pid, exitCmd, reason)
+	}
+	return true
+}
+
+// softExitRetryDelay is how long the background soft-exit retry waits
+// before each re-check of a pane it asked to /exit. A package var so flow
+// tests can shrink it (SetSoftExitRetryDelayForTest); production keeps a
+// few seconds so a pane that's honouring /exit has time to close before
+// we bother re-injecting.
+var softExitRetryDelay = 4 * time.Second
+
+// softExitMaxAttempts bounds the TOTAL number of soft-exit injections per
+// stop (the initial one + retries). The first retry recovers an /exit
+// lost to input-buffer junk (see injectSoftExit); the remaining margin
+// covers an unlucky pane that was mid-render. Capped so a pane that simply
+// will not exit isn't typed /exit forever — the escalation paths
+// (escalateShutdown) own the force-kill fallback.
+const softExitMaxAttempts = 3
+
+// scheduleSoftExitRetry backgrounds the re-injection of exitCmd into the
+// pane that injectSoftExit first targeted. It re-injects ONLY while that
+// pane is still the SAME live process — keyed on the tmux pane's OS pid
+// (panePID), captured at the first injection.
+//
+// The pid is the load-bearing guard: a resume re-derives the tmux session
+// name from the conv-id (sessionResumeArgs → session new -r, no --label →
+// name = conv-id[:8]), so a stop → exit → resume cycle can land a brand
+// new agent process under the very same tmux name within the retry window.
+// Matching on the name alone would then type /exit at that innocent,
+// freshly-resumed pane and drop its input. tmux assigns a fresh pane pid
+// to every new process, so a changed (or unreadable → 0) pid means "not my
+// pane anymore — stop." Re-injection goes straight to the captured target
+// (no conv re-resolution) so the pane we validated is the pane we type at.
+//
+// Runs through goBackground so it outlives the HTTP handler that asked for
+// the stop and flow tests can drain it with WaitForBackgroundForTest.
+func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string) {
+	target := tmuxSession + ":0.0"
+	goBackground(func() {
+		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
+			time.Sleep(softExitRetryDelay)
+			if livePanePID(tmuxSession) != panePID {
+				return // exited, force-killed, or a different process now owns the name
+			}
+			slog.Info("soft-exit retry: pane still alive, re-injecting exit",
+				"conv_id", convID,
+				"tmux_session", tmuxSession,
+				"pane_pid", panePID,
+				"attempt", attempt,
+				"max_attempts", softExitMaxAttempts,
+				"reason", reason)
+			if err := injectTextAndSubmit(target, exitCmd); err != nil {
+				slog.Warn("soft-exit retry inject failed",
+					"error", err, "tmux_session", tmuxSession, "reason", reason)
+				return
+			}
+		}
+	})
+}
+
+// livePanePID returns the OS pid tmux reports for tmuxSession's active
+// pane, or 0 when the session is gone or the query fails. Unlike the
+// sessions-table pid column — written only on the pane's first hook tick,
+// so stale right after a resume — tmux knows a pane's pid the instant it
+// is created, making this the reliable "is this still the same process?"
+// signal the soft-exit retry needs to avoid re-injecting into a resumed
+// pane that reused the tmux name.
+func livePanePID(tmuxSession string) int {
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", tmuxSession, "#{pane_pid}").Output()
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return pid
 }
 
 // handleGroupResume starts a tclaude session for every member that

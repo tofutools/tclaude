@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,10 @@ import (
 var (
 	trueBin  = resolveCoreutil("true")
 	falseBin = resolveCoreutil("false")
+	// echoBin backs the `display-message -p '#{pane_pid}'` query: the sim
+	// answers it with `echo <pane-pid>` so the caller's .Output() reads the
+	// pid back, the same hermetic-absolute-path discipline as true/false.
+	echoBin = resolveCoreutil("echo")
 )
 
 // resolveCoreutil returns an absolute path to the named coreutil from a
@@ -88,12 +93,19 @@ type TmuxSim struct {
 	// has-session calls". An accessor rather than a getter on the
 	// whole map so the lock stays internal.
 	commandCounts map[string]int
+	// nextPID hands each newly-registered session a distinct, launch-unique
+	// fake pane pid (mirrors tmux giving every new pane process a fresh OS
+	// pid). Re-registering the same name — the test stand-in for a resume
+	// reusing a conv-id-derived tmux name — therefore yields a DIFFERENT pid,
+	// which is exactly what the soft-exit retry's livePanePID guard keys on.
+	nextPID int
 }
 
 type tmuxSession struct {
-	name string
-	cwd  string
-	pane PaneSim
+	name    string
+	cwd     string
+	pane    PaneSim
+	panePID int
 }
 
 func newTmuxSim() *TmuxSim {
@@ -129,8 +141,34 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
 		t.killSession(args[2])
+	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":
+		return t.displayMessage(args)
 	}
 	return exec.Command(trueBin)
+}
+
+// displayMessage models `tmux display-message -p -t <target> '#{pane_pid}'`:
+// it echoes the target pane's launch-unique fake pid to stdout so the
+// caller's .Output() reads it back. A missing or no-longer-alive session
+// exits non-zero (falseBin) — exactly how real tmux fails the query when
+// the session is gone — which livePanePID reads as pid 0. Only #{pane_pid}
+// is modelled; any other format string would still get the pid (the only
+// field the daemon ever asks for).
+func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
+	target := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-t" {
+			target = args[i+1]
+		}
+	}
+	name := strings.SplitN(target, ":", 2)[0]
+	t.mu.Lock()
+	s, ok := t.sessions[name]
+	t.mu.Unlock()
+	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
+		return exec.Command(falseBin)
+	}
+	return exec.Command(echoBin, strconv.Itoa(s.panePID))
 }
 
 // setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
@@ -219,7 +257,8 @@ func (t *TmuxSim) killSession(name string) {
 func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane}
+	t.nextPID++
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, panePID: t.nextPID}
 }
 
 // MarkAlive registers a session without an attached pane sim. Used for
@@ -230,7 +269,8 @@ func (t *TmuxSim) MarkAlive(name string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.sessions[name]; !ok {
-		t.sessions[name] = &tmuxSession{name: name}
+		t.nextPID++
+		t.sessions[name] = &tmuxSession{name: name, panePID: t.nextPID}
 	}
 }
 

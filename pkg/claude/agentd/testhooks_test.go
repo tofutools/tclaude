@@ -128,6 +128,18 @@ func SetInjectSettleDelayForTest(d time.Duration) func() {
 	return func() { injectSettleDelay = prev }
 }
 
+// SetSoftExitRetryDelayForTest shrinks the background soft-exit retry's
+// per-attempt wait for the duration of a test. Production waits a few
+// seconds between re-injecting /exit into a still-alive pane; under the
+// synchronous simulator that is pure dead wait that every stop/retire/
+// reincarnate flow would pay (and WaitForBackgroundForTest would block
+// on). Returns a restore closure for t.Cleanup.
+func SetSoftExitRetryDelayForTest(d time.Duration) func() {
+	prev := softExitRetryDelay
+	softExitRetryDelay = d
+	return func() { softExitRetryDelay = prev }
+}
+
 // SetRemoteControlConfirmDelayForTest shrinks the remote-control disable
 // timing for the duration of a test — BOTH the pause before CC's confirm menu
 // renders and the gap between the menu keystrokes (Up/Up/Enter) — the same
