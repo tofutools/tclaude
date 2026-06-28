@@ -80,6 +80,14 @@ type CCSim struct {
 	remoteOn   bool
 	rcMenuOpen bool
 	rcMenuPos  int
+	// rcFailed models Claude Code's FAILED remote-control footer pill (a red
+	// "/rc" shown when the connection couldn't be established). Independent of
+	// remoteOn: a pane can be armed-and-reachable (remoteOn && !rcFailed) or
+	// armed-but-failed (remoteOn && rcFailed). Set via SetRemoteControlFailed;
+	// RenderPane reflects it so the daemon's footer readback can be tested
+	// against the failed branch. Off by default — most tests want the healthy
+	// pill.
+	rcFailed bool
 }
 
 // rcDisconnectMenuOffset is how many Up presses move the disconnect-confirm
@@ -268,6 +276,79 @@ func (c *CCSim) RemoteControlOn() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.remoteOn
+}
+
+// SetRemoteControlFailed models the connection behind an armed pane
+// failing/recovering: it flips the rcFailed flag so RenderPane draws the red
+// "/rc failed" pill (true) or the healthy "/rc" pill (false). Only meaningful
+// while remoteOn — a disarmed pane shows no pill regardless. Lets a flow test
+// exercise the daemon's failed-readback branch.
+func (c *CCSim) SetRemoteControlFailed(failed bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rcFailed = failed
+}
+
+// RenderPane returns a stand-in for what `tmux capture-pane -e` would print for
+// this CC pane: a couple of transcript lines and a bottom status row that
+// carries the "/rc" remote-control pill when Remote Access is armed — exactly
+// the footer signal the daemon's on-demand readback (observeRemoteControl)
+// scans for. The pill is drawn as a claude.ai/code OSC 8 hyperlink (so URL
+// extraction is exercised) and, when rcFailed, in red (so the failed branch is
+// exercised). A disarmed pane shows no pill. This is the institutional
+// knowledge of "what CC's footer looks like" encoded in the sim, mirroring how
+// the disconnect-confirm menu quirk lives in the Receive state machine.
+func (c *CCSim) RenderPane() string {
+	c.mu.Lock()
+	on, failed, conv := c.remoteOn, c.rcFailed, c.ConvID
+	c.mu.Unlock()
+	return renderCCFooter(on, failed, conv)
+}
+
+// renderCCFooter builds the pane content RenderPane returns. Kept as a free
+// function so the exact bytes (ANSI + OSC 8) are easy to read and adjust in one
+// place if the real CC footer changes.
+func renderCCFooter(on, failed bool, convID string) string {
+	var b strings.Builder
+	// A couple of transcript-ish rows above the footer. Deliberately free of a
+	// bounded "/rc" token so the band scan has nothing but the real pill to
+	// find. (Decoy-text robustness — conversation that DOES say "/rc" far above
+	// the footer — is pinned by the parser unit tests, not here.)
+	b.WriteString("> waiting for input\n")
+	b.WriteString("\n")
+	// The model/status row, padded to a realistic terminal width (real CC
+	// panes are wide; a too-narrow capture is what makes the daemon report
+	// "unknown" rather than "off"). The "/rc" pill sits right-aligned, and ONLY
+	// when armed — mirroring real Claude Code, which draws it solely while
+	// Remote Access is on.
+	const statusWidth = 72
+	status := "claude-opus  12%  7d"
+	if pad := statusWidth - len(status); pad > 0 {
+		status += strings.Repeat(" ", pad)
+	}
+	if on {
+		pill := osc8(("https://claude.ai/code/" + convID), "/rc")
+		if failed {
+			pill = ansiRed(pill)
+		}
+		status = status + "   " + pill
+	}
+	b.WriteString(status)
+	b.WriteString("\nauto mode on (shift+tab to cycle)\n")
+	return b.String()
+}
+
+// osc8 wraps label in an OSC 8 hyperlink to url (ESC ] 8 ; ; url ST … ESC ] 8 ;
+// ; ST), the terminal escape Claude Code uses to make the footer pill
+// clickable. ST here is ESC \.
+func osc8(url, label string) string {
+	return "\x1b]8;;" + url + "\x1b\\" + label + "\x1b]8;;\x1b\\"
+}
+
+// ansiRed wraps s in an SGR red-foreground sequence (31) reset by SGR 0 — how
+// Claude Code colours the failed footer pill.
+func ansiRed(s string) string {
+	return "\x1b[31m" + s + "\x1b[0m"
 }
 
 // MarkDead flips alive=false. Handlers call this from /exit-style

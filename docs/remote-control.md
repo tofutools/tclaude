@@ -27,8 +27,17 @@ session list.
 tclaude agent remote-control            # toggle (default when no intent given)
 tclaude agent remote-control on         # arm
 tclaude agent remote-control off        # disarm
-tclaude agent remote-control status     # print tclaude's best-known state
+tclaude agent remote-control status     # read the live pane: on / failed / off
 ```
+
+`status` reads the agent's live terminal directly — Claude Code draws a `/rc`
+pill in its footer while Remote Access is armed — so it answers *"can I connect
+right now"* rather than echoing a remembered guess. It reports `on` (armed and
+reachable, with the claude.ai/code link), `failed` (armed but the connection
+didn't establish), or `off`. Reading the pane also **self-heals** tclaude's
+tracked flag, so a manual in-pane toggle no longer leaves the badge stale (see
+[Caveats](#caveats)). If the pane can't be read (no live session, or it's too
+narrow to draw the pill) `status` falls back to the last-known value and says so.
 
 By default it acts on the calling agent (`self.remote-control`). To drive
 another agent, pass `--target` with a title, full conv-id, or 8+-char prefix —
@@ -102,15 +111,19 @@ dropping. (`/clear` keeps the same pane, so it never drops.)
 
 ## Caveats
 
-- **Best-known state can drift.** Claude Code exposes no programmatic readback
-  of whether Remote Access is on, so tclaude tracks its own *best-known* state
-  and uses it to decide which way the toggle should go. If you type
-  `/remote-control` **directly into the pane** (instead of going through
-  `tclaude agent remote-control` or the dashboard), tclaude's tracked state can
-  fall out of step with reality — the badge or the next toggle may then be
-  wrong. Re-sync by toggling once through tclaude (or check
-  `tclaude agent remote-control status`). Prefer the tclaude/dashboard controls
-  over typing the slash command yourself.
+- **The tracked flag can drift — but `status` re-syncs it.** Claude Code has no
+  *API-level* readback of whether Remote Access is on, so tclaude keeps its own
+  tracked flag and uses it for the dashboard badge and routine display. If you
+  type `/remote-control` **directly into the pane** (instead of going through
+  `tclaude agent remote-control` or the dashboard), that flag drifts. The fix is
+  built in: `tclaude agent remote-control status` (and the direction pick for
+  on/off/toggle) reads the live pane's `/rc` footer pill and **self-heals** the
+  tracked flag to match reality. So a drifted badge is corrected the next time
+  you run `status` or toggle through tclaude. This pane read is **on-demand
+  only** — it is never polled, so the dashboard badge still shows the cheap
+  tracked value until something explicitly re-checks. One limit: Claude Code
+  hides the pill on a too-narrow pane, so on a very narrow terminal `status`
+  can't positively confirm `off` and will say the state is unknown.
 - **Codex agents have no remote access.** An explicit `--remote-control` or
   `tclaude agent remote-control on` on a Codex agent is rejected; a profile or
   group *default* that would force it on is silently a no-op for Codex (a force-on

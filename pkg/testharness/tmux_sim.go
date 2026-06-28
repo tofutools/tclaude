@@ -64,9 +64,12 @@ type PaneSim interface {
 }
 
 // Both harness simulators satisfy PaneSim, so TmuxSim routes to either.
+// Only CCSim renders a footer (paneRenderer) — Codex has no remote control,
+// so it is never captured for the /rc pill.
 var (
-	_ PaneSim = (*CCSim)(nil)
-	_ PaneSim = (*CodexSim)(nil)
+	_ PaneSim      = (*CCSim)(nil)
+	_ PaneSim      = (*CodexSim)(nil)
+	_ paneRenderer = (*CCSim)(nil)
 )
 
 // TmuxSim is the test-time stand-in for clcommon.LiveTmux. It
@@ -143,8 +146,47 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		t.killSession(args[2])
 	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":
 		return t.displayMessage(args)
+	case len(args) >= 1 && args[0] == "capture-pane":
+		return t.capturePane(args)
 	}
 	return exec.Command(trueBin)
+}
+
+// paneRenderer is the optional capability a PaneSim implements to answer
+// `tmux capture-pane`: it returns the bytes the pane currently shows. CCSim
+// renders a footer carrying the "/rc" remote-control pill when armed, so the
+// daemon's on-demand readback (observeRemoteControl) has something to scan; a
+// pane sim without it (CodexSim) captures as empty, which the reader treats as
+// indeterminate — fine, since only remote-control-capable harnesses are ever
+// observed.
+type paneRenderer interface {
+	RenderPane() string
+}
+
+// capturePane models `tmux capture-pane -p -e -J -t <target>`: it echoes the
+// target pane's rendered content to stdout so the caller's .Output() reads it
+// back (the same hermetic echoBin trick as displayMessage). A missing or
+// no-longer-alive pane exits non-zero (falseBin) — exactly how real tmux fails
+// the capture on a dead target — which observeRemoteControl reads as
+// "unknown". A pane that doesn't implement paneRenderer echoes empty content.
+func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
+	target := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-t" {
+			target = args[i+1]
+		}
+	}
+	name := strings.SplitN(target, ":", 2)[0]
+	t.mu.Lock()
+	s, ok := t.sessions[name]
+	t.mu.Unlock()
+	if !ok || s.pane == nil || !s.pane.IsAlive() {
+		return exec.Command(falseBin)
+	}
+	if r, isRenderer := s.pane.(paneRenderer); isRenderer {
+		return exec.Command(echoBin, r.RenderPane())
+	}
+	return exec.Command(echoBin, "")
 }
 
 // displayMessage models `tmux display-message -p -t <target> '#{pane_pid}'`:

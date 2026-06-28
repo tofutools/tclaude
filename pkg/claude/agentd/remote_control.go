@@ -78,13 +78,25 @@ var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
 // is one of "enabled" | "disabled" | "noop" | "status"; RemoteControl is the
-// resulting best-known state. CallerConv is set only on a cross-agent call.
+// resulting effective state. CallerConv is set only on a cross-agent call.
 type remoteControlResp struct {
 	ConvID        string `json:"conv_id"`
 	CallerConv    string `json:"caller_conv,omitempty"`
 	RemoteControl bool   `json:"remote_control"`
 	Action        string `json:"action"`
 	Note          string `json:"note,omitempty"`
+	// Observed is the state read DIRECTLY from the live pane footer on a
+	// status call: "on" | "failed" | "off" | "unknown". Empty when the pane
+	// wasn't read (no live session). It is distinct from RemoteControl, which
+	// is the effective answer — the observed state when read confidently, else
+	// the tracked best-known flag.
+	Observed string `json:"observed,omitempty"`
+	// Source records where RemoteControl came from: "pane" (observed from the
+	// live footer) or "tracked" (tclaude's best-known flag).
+	Source string `json:"source,omitempty"`
+	// SessionURL is the claude.ai/code link parsed from the footer pill's
+	// hyperlink when armed — i.e. where you actually connect. Best-effort.
+	SessionURL string `json:"session_url,omitempty"`
 }
 
 // deliverRemoteControl injects the harness's remote-control toggle into the
@@ -205,17 +217,39 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 
 	sess := aliveSessionForConv(target)
 
-	// status: report best-known state without touching the pane.
+	// status: report the state. With a live pane we OBSERVE it directly (read
+	// the /rc footer pill) and self-heal the tracked flag; without one we fall
+	// back to the last-known tracked value. This is the only readback path and
+	// it is on-demand only — never polled.
 	if intent == "status" {
-		current := false
+		tracked := false
 		if sess != nil {
-			current = sess.RemoteControl
+			tracked = sess.RemoteControl
 		} else if rc, err := db.RemoteControlForConv(target); err == nil {
-			current = rc
+			tracked = rc
 		}
-		resp := remoteControlResp{ConvID: target, RemoteControl: current, Action: "status"}
+		resp := remoteControlResp{ConvID: target, RemoteControl: tracked, Action: "status", Source: "tracked"}
 		if sess == nil {
 			resp.Note = "no live session; reporting last-known state"
+		} else {
+			obs := observeRemoteControl(sess.TmuxSession + ":0.0")
+			resp.Observed = obs.state.String()
+			switch obs.state {
+			case rcSeenOn, rcSeenFailed:
+				resp.RemoteControl = true
+				resp.Source = "pane"
+				resp.SessionURL = obs.sessionURL
+				resp.Note = obs.note
+				selfHealRemoteControl(sess, true)
+			case rcSeenOff:
+				resp.RemoteControl = false
+				resp.Source = "pane"
+				selfHealRemoteControl(sess, false)
+			case rcUnknown:
+				// Couldn't confirm from the pane — keep the tracked flag and
+				// explain why (e.g. pane too narrow to draw the pill).
+				resp.Note = obs.note
+			}
 		}
 		if caller != "" && caller != target {
 			resp.CallerConv = caller
@@ -230,7 +264,15 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 			"target conv "+short8(target)+" has no live tmux session to toggle remote control on")
 		return
 	}
+	// Pick the toggle DIRECTION from the live pane when we can read it
+	// confidently, so a drifted tracked flag (someone toggled in-pane) can't
+	// send the toggle the wrong way. Fall back to the tracked flag when the
+	// pane is unreadable. Self-heal as a side effect.
 	current := sess.RemoteControl
+	if obs := observeRemoteControl(sess.TmuxSession + ":0.0"); obs.state != rcUnknown {
+		current = obs.state.armed()
+		selfHealRemoteControl(sess, current)
+	}
 
 	var desired bool
 	switch intent {

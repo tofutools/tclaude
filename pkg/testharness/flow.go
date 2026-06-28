@@ -856,6 +856,9 @@ type RemoteControlResp struct {
 	RemoteControl bool   `json:"remote_control"`
 	Action        string `json:"action"`
 	Note          string `json:"note"`
+	Observed      string `json:"observed"`
+	Source        string `json:"source"`
+	SessionURL    string `json:"session_url"`
 	Code          int    `json:"-"`
 	Raw           []byte `json:"-"`
 }
