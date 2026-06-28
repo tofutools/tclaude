@@ -581,6 +581,11 @@ type snapshotPayload struct {
 	// toggles body.vegas off this so the music/tab/volume light up in
 	// regular mode without the slot machines and FX. Default false.
 	VegasInRegularMode bool `json:"vegas_in_regular_mode"`
+	// HidePullLever mirrors config slop.hide_pull_lever — the opt-out that
+	// hides the slop-mode side pull-lever (the casino lever on the Groups
+	// tab). refresh.js toggles body.hide-slop-lever off this; CSS then drops
+	// the lever while leaving the rest of slop mode intact. Default false.
+	HidePullLever bool `json:"hide_pull_lever"`
 	// ActivityBots mirrors config dashboard.activity_bots — the per-mode
 	// STYLE of the deduped "activity bot" indicator in group headers + the
 	// top bar. Each field is "emoji" | "sprites" | "off"; the front-end
@@ -1237,6 +1242,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
 		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),
+		HidePullLever:        cfg.HidePullLever(),
 		ActivityBots: activityBotsView{
 			Regular: cfg.ActivityBotsRegular(),
 			Slop:    cfg.ActivityBotsSlop(),

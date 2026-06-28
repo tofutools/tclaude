@@ -322,6 +322,10 @@ export async function refresh() {
     // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
     // default follow) — replaces the old per-browser header toggle button.
     setHScrollFollow(data.hscroll_follow !== false);
+    // Hide the slop-mode side pull-lever when config slop.hide_pull_lever is
+    // set. body.hide-slop-lever drops the lever via CSS while leaving the
+    // rest of slop mode intact; a plain class toggle (like hide-costs).
+    document.body.classList.toggle('hide-slop-lever', !!data.hide_pull_lever);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

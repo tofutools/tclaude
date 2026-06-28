@@ -489,6 +489,13 @@ type ConvWatchConfig struct {
 // features stay slop-only) and an explicit value round-trips through the
 // Config tab.
 //
+// HidePullLever, when true, hides the slop-mode side pull-lever — the
+// casino lever pinned to the right edge of the Groups tab that spins every
+// machine at once. Slop mode otherwise stays fully intact; this just drops
+// that one ornament for people who find it in the way. A *bool so absent =
+// off (the lever shows, the historical default) and an explicit value
+// round-trips through the Config tab.
+//
 // Written by the dashboard's volume sliders via POST /api/slop/volumes and
 // the channel picker via POST /api/slop/channel; also round-trips through
 // the Config tab like any other field.
@@ -497,6 +504,7 @@ type SlopConfig struct {
 	EffectsVolume      *int    `json:"effects_volume,omitempty"`
 	Channel            *string `json:"channel,omitempty"`
 	VegasInRegularMode *bool   `json:"vegas_in_regular_mode,omitempty"`
+	HidePullLever      *bool   `json:"hide_pull_lever,omitempty"`
 }
 
 // SlopChannels is the allowlist of SomaFM channel ids slop mode's Vegas
@@ -578,6 +586,18 @@ func (c *Config) ShowVegasInRegularMode() bool {
 		return false
 	}
 	return *c.Slop.VegasInRegularMode
+}
+
+// HidePullLever reports whether the slop-mode side pull-lever (the casino
+// lever pinned to the right edge of the Groups tab) should be hidden —
+// config slop.hide_pull_lever. Off by default (absent / nil / explicit
+// false), so the lever shows as it historically did; only an explicit true
+// hides it. Nil-safe on the receiver so callers need no guard.
+func (c *Config) HidePullLever() bool {
+	if c == nil || c.Slop == nil || c.Slop.HidePullLever == nil {
+		return false
+	}
+	return *c.Slop.HidePullLever
 }
 
 // normalizeActivityBotsStyle returns s when it's a known style, else ""
