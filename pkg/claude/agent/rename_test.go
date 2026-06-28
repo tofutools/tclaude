@@ -53,11 +53,12 @@ func TestRunRename_AutoSkipsLocalTitleValidation(t *testing.T) {
 		}
 		// Surface a minimal success response so the helper finishes.
 		if resp, ok := out.(*struct {
-			ConvID     string `json:"conv_id"`
-			CallerConv string `json:"caller_conv,omitempty"`
-			Title      string `json:"title"`
-			Auto       bool   `json:"auto,omitempty"`
-			Note       string `json:"note,omitempty"`
+			ConvID        string `json:"conv_id"`
+			CallerConv    string `json:"caller_conv,omitempty"`
+			CallerAgentID string `json:"caller_agent_id,omitempty"`
+			Title         string `json:"title"`
+			Auto          bool   `json:"auto,omitempty"`
+			Note          string `json:"note,omitempty"`
 		}); ok {
 			resp.ConvID = "fake-conv"
 			resp.Auto = true

@@ -103,11 +103,12 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	var resp struct {
-		ConvID     string `json:"conv_id"`
-		CallerConv string `json:"caller_conv,omitempty"`
-		Title      string `json:"title"`
-		Auto       bool   `json:"auto,omitempty"`
-		Note       string `json:"note,omitempty"`
+		ConvID        string `json:"conv_id"`
+		CallerConv    string `json:"caller_conv,omitempty"`
+		CallerAgentID string `json:"caller_agent_id,omitempty"`
+		Title         string `json:"title"`
+		Auto          bool   `json:"auto,omitempty"`
+		Note          string `json:"note,omitempty"`
 	}
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
@@ -129,12 +130,12 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 	if resp.Auto {
 		if resp.CallerConv != "" {
 			fmt.Fprintf(stdout, "Auto-rename nudge sent to %s (by %s); the agent will pick its own title.\n",
-				short(resp.ConvID), short(resp.CallerConv))
+				short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 		} else {
 			fmt.Fprintf(stdout, "Auto-rename nudge sent; the agent will pick its own title.\n")
 		}
 	} else if resp.CallerConv != "" {
-		fmt.Fprintf(stdout, "Renamed %s to %q (called by %s)\n", short(resp.ConvID), resp.Title, short(resp.CallerConv))
+		fmt.Fprintf(stdout, "Renamed %s to %q (called by %s)\n", short(resp.ConvID), resp.Title, shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
 		fmt.Fprintf(stdout, "Renamed %s to %q\n", short(resp.ConvID), resp.Title)
 	}

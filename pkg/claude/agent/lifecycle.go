@@ -259,11 +259,12 @@ func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout
 		body["follow_up"] = followUp
 	}
 	var resp struct {
-		ConvID     string `json:"conv_id"`
-		CallerConv string `json:"caller_conv,omitempty"`
-		Action     string `json:"action"`
-		FollowUp   string `json:"follow_up,omitempty"`
-		Note       string `json:"note,omitempty"`
+		ConvID        string `json:"conv_id"`
+		CallerConv    string `json:"caller_conv,omitempty"`
+		CallerAgentID string `json:"caller_agent_id,omitempty"`
+		Action        string `json:"action"`
+		FollowUp      string `json:"follow_up,omitempty"`
+		Note          string `json:"note,omitempty"`
 	}
 	path := "/v1/agent/" + url.PathEscape(target) + "/" + label
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
@@ -271,9 +272,9 @@ func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout
 		return MapDaemonErrorToRC(err)
 	}
 	if resp.FollowUp != "" {
-		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), short(resp.CallerConv))
+		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
-		fmt.Fprintf(stdout, "Submitted /%s to %s (caller %s)\n", label, short(resp.ConvID), short(resp.CallerConv))
+		fmt.Fprintf(stdout, "Submitted /%s to %s (caller %s)\n", label, short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	if resp.Note != "" {
 		fmt.Fprintf(stdout, "Note: %s\n", resp.Note)
@@ -338,6 +339,7 @@ type contextInfoResp struct {
 	ContextWindowSize int64   `json:"context_window_size"`
 	Model             string  `json:"model,omitempty"`
 	CallerConv        string  `json:"caller_conv,omitempty"`
+	CallerAgentID     string  `json:"caller_agent_id,omitempty"`
 }
 
 // groupContextEntry mirrors the daemon's per-member wire shape for
@@ -389,7 +391,7 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "conv:    %s\n", short(resp.ConvID))
 	if resp.CallerConv != "" {
-		fmt.Fprintf(stdout, "caller:  %s\n", short(resp.CallerConv))
+		fmt.Fprintf(stdout, "caller:  %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	tokensTotal := resp.TokensInput + resp.TokensOutput
 	if resp.ContextWindowSize > 0 && tokensTotal > 0 {

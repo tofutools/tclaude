@@ -80,8 +80,12 @@ var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 // is one of "enabled" | "disabled" | "noop" | "status"; RemoteControl is the
 // resulting effective state. CallerConv is set only on a cross-agent call.
 type remoteControlResp struct {
-	ConvID        string `json:"conv_id"`
-	CallerConv    string `json:"caller_conv,omitempty"`
+	ConvID     string `json:"conv_id"`
+	CallerConv string `json:"caller_conv,omitempty"`
+	// CallerAgentID is the asking agent's stable actor key — companion to
+	// CallerConv, set when a different agent asked. The CLI leads with this
+	// (it survives the caller reincarnating) and falls back to CallerConv.
+	CallerAgentID string `json:"caller_agent_id,omitempty"`
 	RemoteControl bool   `json:"remote_control"`
 	Action        string `json:"action"`
 	Note          string `json:"note,omitempty"`
@@ -253,6 +257,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		}
 		if caller != "" && caller != target {
 			resp.CallerConv = caller
+			resp.CallerAgentID = peerAgentID(caller)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -293,6 +298,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		}
 		if caller != "" && caller != target {
 			resp.CallerConv = caller
+			resp.CallerAgentID = peerAgentID(caller)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -320,6 +326,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	resp := remoteControlResp{ConvID: target, RemoteControl: desired, Action: action}
 	if caller != "" && caller != target {
 		resp.CallerConv = caller
+		resp.CallerAgentID = peerAgentID(caller)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

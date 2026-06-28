@@ -612,6 +612,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm, followUp
 	}
 	if caller != target {
 		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
 	}
 	if newTmux != "" && label != "" {
 		resp["attach_cmd"] = "tclaude session attach " + label

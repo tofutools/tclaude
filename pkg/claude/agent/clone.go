@@ -113,17 +113,18 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		path = "/v1/agent/" + url.PathEscape(target) + "/clone"
 	}
 	var resp struct {
-		OldConv     string   `json:"old_conv"`
-		NewConv     string   `json:"new_conv"`
-		CallerConv  string   `json:"caller_conv,omitempty"`
-		Label       string   `json:"label"`
-		TmuxSession string   `json:"tmux_session"`
-		AttachCmd   string   `json:"attach_cmd"`
-		Copied      []string `json:"copied"`
-		CopyConv    bool     `json:"copy_conv"`
-		FollowUp    string   `json:"follow_up,omitempty"`
-		MessageID   int64    `json:"message_id,omitempty"`
-		Note        string   `json:"note,omitempty"`
+		OldConv       string   `json:"old_conv"`
+		NewConv       string   `json:"new_conv"`
+		CallerConv    string   `json:"caller_conv,omitempty"`
+		CallerAgentID string   `json:"caller_agent_id,omitempty"`
+		Label         string   `json:"label"`
+		TmuxSession   string   `json:"tmux_session"`
+		AttachCmd     string   `json:"attach_cmd"`
+		Copied        []string `json:"copied"`
+		CopyConv      bool     `json:"copy_conv"`
+		FollowUp      string   `json:"follow_up,omitempty"`
+		MessageID     int64    `json:"message_id,omitempty"`
+		Note          string   `json:"note,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -131,7 +132,7 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "Cloned %s -> %s (called by %s)\n",
-			short(resp.OldConv), short(resp.NewConv), short(resp.CallerConv))
+			short(resp.OldConv), short(resp.NewConv), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
 		fmt.Fprintf(stdout, "Cloned %s -> %s\n", short(resp.OldConv), short(resp.NewConv))
 	}
