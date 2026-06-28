@@ -681,7 +681,9 @@ function fmtAttachSize(n) {
 // lastModified is deliberately omitted — some browsers stamp a fresh
 // lastModified on every clipboard read, so a pasted screenshot would look "new"
 // on each keyboard repeat; name+size+type stays stable across repeats while
-// still telling genuinely different files apart.
+// still telling genuinely different files apart in practice. (Two distinct files
+// with identical name+size+type would collide, but the server already de-collides
+// same-name uploads and identical byte sizes across different files are rare.)
 function attachKey(f) {
   return `${f.name || ''}|${f.size}|${f.type || ''}`;
 }
