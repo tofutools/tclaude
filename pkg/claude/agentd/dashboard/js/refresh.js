@@ -1345,6 +1345,11 @@ function openDeleteRetiredPreview() {
       title: r.title || '',
       retired_at: r.retired_at || '',
       retired_by: r.retired_by_display || r.retired_by || '',
+      // online is ~always false for a retired agent, but the BE's delete
+      // tier skips a still-running session unless include_online (which
+      // this modal never sends) — so flag it on the row so the rare online
+      // row reads as "will be skipped" rather than silently no-op'ing.
+      online: !!r.online,
       checked: true,
     }))
     // Newest retirement first — the snapshot already sorts this way, but a
@@ -1413,13 +1418,16 @@ function openDeleteRetiredPreview() {
     }
     listEl.innerHTML = rows.map(c => {
       const age = c.retired_at ? `retired ${relTime(c.retired_at)}` : 'retired (unknown)';
+      // An online retired agent is skipped by the BE (no include_online
+      // here), so badge it so the human isn't surprised by a "skipped" row.
+      const online = c.online ? '<span class="cleanup-badge online">online — will skip</span>' : '';
       const by = c.retired_by ? `<span class="cleanup-badge">by ${esc(c.retired_by)}</span>` : '';
       return `<div class="cleanup-row"><label>`
         + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
         + `<span class="title">${esc(c.title || '(untitled)')}</span>`
         + `<span class="id">${esc(shortId(c.conv_id))}</span>`
         + `<span class="seen">${esc(age)}</span>`
-        + `${by}</label></div>`;
+        + `${online}${by}</label></div>`;
     }).join('');
   }
   function renderFooter() {
@@ -1489,6 +1497,7 @@ function openDeleteRetiredPreview() {
     if (resp && resp.failed) bits.push(resp.failed + ' failed');
     hintEl.className = 'cleanup-hint';
     hintEl.textContent = 'Delete complete — ' + (bits.join(' · ') || 'nothing to do') + '.';
+    countEl.textContent = ''; // the "n of N selected" tally is meaningless once results are in
     errEl.textContent = (resp && (resp.warnings || []).length) ? '⚠ ' + resp.warnings.join('  ⚠ ') : '';
     submitBtn.textContent = 'Done';
     submitBtn.disabled = false;
