@@ -992,10 +992,13 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 //
 // Deleting a PREDECESSOR generation (a reincarnate / Claude Code /clear keeps
 // the old conv around) instead only unlinks that one conv from its actor — the
-// live actor and its identity survive (JOH-26). When convID is the live
-// generation and the actor has older generations, those predecessors' own
-// conv-scoped rows + .jsonl are left behind (cleaning them up across an actor's
-// whole generation set is a later stage).
+// live actor and its identity survive (JOH-26). The succession chain is healed
+// (a middle-generation delete re-links pred→succ) and any head_alias anchored on
+// the deleted predecessor is rebased onto its successor (JOH-330), so stale-id
+// forwarding and alias resolution both still reach the live head. When convID is
+// the live generation and the actor has older generations, those predecessors'
+// own conv-scoped rows + .jsonl are left behind (cleaning them up across an
+// actor's whole generation set is a later stage).
 //
 // Filesystem state (the .jsonl in ~/.claude/projects/... and the
 // ~/.claude/session-env/<convID> file) is the caller's
@@ -1155,6 +1158,22 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 					bridgeOld, bridgeNew, bridgeReason,
 					time.Now().UTC().Format(time.RFC3339), bridgeNew, bridgeOld); err != nil {
 					return AgentDeletionCounts{}, fmt.Errorf("delete agent (bridge succession): %w", err)
+				}
+			}
+			// Rebase any head_alias conv-anchored on THIS deleted predecessor onto
+			// its immediate successor — the head_alias twin of the bridge above
+			// (JOH-330). The conv-scoped loop wiped convID's anchor→successor edge,
+			// so an alias left on convID would resolve (ResolveHeadAlias →
+			// ResolveLatestConv) to the now-dead anchor instead of the live head;
+			// forwarding the anchor one hop keeps it on the live succession chain, so
+			// the alias's own chain-walk still lands on the head. bridgeNew is the
+			// same forward target the succession bridge uses and is always present
+			// for a non-head generation (the rotation off convID recorded the edge);
+			// a no-op when no alias is anchored here. The live-head delete falls in
+			// the actor-teardown branch above, where the alias legitimately breaks.
+			if bridgeNew != "" && bridgeNew != convID {
+				if _, err := rebaseHeadAliasAnchorTx(tx, convID, bridgeNew); err != nil {
+					return AgentDeletionCounts{}, fmt.Errorf("delete agent (rebase head alias): %w", err)
 				}
 			}
 		}
