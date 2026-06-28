@@ -36,6 +36,7 @@ type mailboxEntry struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"`
 	Title       string   `json:"title"`
+	AgentID     string   `json:"agent_id"`
 	Online      bool     `json:"online"`
 	Retired     bool     `json:"retired"`
 	Groups      []string `json:"groups"`
@@ -156,6 +157,20 @@ func TestDashboardMailboxes_EnumeratesFoldersWithCounts(t *testing.T) {
 	assert.Equal(t, 1, bob.In)
 	assert.Equal(t, 1, bob.Out)
 	assert.Equal(t, 1, bob.Unread, "bob has not read alice's message")
+
+	// The sidebar roster carries each agent folder's stable agent_id, resolved
+	// live from its conv, so a nameless folder can lead with its agt_ handle
+	// (instead of a short conv-id) and hover the full agent_id / conv-id pair.
+	// The pinned "all" / "human" folders carry none.
+	aliceAgent, err := db.AgentIDForConv(mbAlice)
+	require.NoError(t, err)
+	require.NotEmpty(t, aliceAgent, "alice is an enrolled agent with a stable id")
+	assert.Equal(t, aliceAgent, alice.AgentID, "alice's folder snapshots her stable agent_id")
+	bobAgent, err := db.AgentIDForConv(mbBob)
+	require.NoError(t, err)
+	assert.Equal(t, bobAgent, bob.AgentID, "bob's folder snapshots his stable agent_id")
+	assert.Empty(t, boxes[0].AgentID, "the virtual 'all' folder has no agent_id")
+	assert.Empty(t, boxes[1].AgentID, "the human folder has no agent_id")
 }
 
 // Scenario: a freshly-enrolled agent with no mail is hidden from the
@@ -194,6 +209,7 @@ func TestDashboardMailbox_AgentFolderMergesInAndOut(t *testing.T) {
 		ID       string       `json:"id"`
 		Kind     string       `json:"kind"`
 		Title    string       `json:"title"`
+		AgentID  string       `json:"agent_id"`
 		Messages []mailboxMsg `json:"messages"`
 	}
 	testharness.DecodeJSON(t, rec, &payload)
@@ -225,6 +241,10 @@ func TestDashboardMailbox_AgentFolderMergesInAndOut(t *testing.T) {
 	assert.Equal(t, aliceAgent, payload.Messages[0].ToAgent, "outbound row snapshots the recipient's agent_id")
 	assert.Equal(t, aliceAgent, payload.Messages[1].FromAgent, "inbound row snapshots the sender's agent_id")
 	assert.Equal(t, bobAgent, payload.Messages[1].ToAgent, "inbound row snapshots the recipient's agent_id")
+
+	// The folder identity itself also carries the agent_id, so the sidebar
+	// label for the selected folder leads with the agt_ handle too.
+	assert.Equal(t, bobAgent, payload.AgentID, "the agent folder identity snapshots its stable agent_id")
 }
 
 // Scenario: id=human returns the human_messages folder, every row

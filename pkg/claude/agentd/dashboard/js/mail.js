@@ -577,7 +577,22 @@ function mailboxLabel(mb) {
   if (mb.kind === 'all') return 'All agent messages';
   if (mb.kind === 'human') return 'Human notifications';
   if (mb.kind === 'group') return mb.title || '(group)';
-  return mb.title || shortId(mb.id) || '(unknown)';
+  // A nameless agent folder leads with its stable agt_ handle (shortAgentId),
+  // falling back to the short conv-id prefix only when no agent_id is known.
+  return mb.title || shortAgentId(mb.agent_id, mb.id) || '(unknown)';
+}
+
+// mailboxTitleAttr is the folder row's hover tooltip. For an agent folder it
+// appends the full "agent_id / conv-id" pair to the label, so the stable
+// handle (and the conv it currently rides) is readable/copyable off the
+// sidebar without losing the full name on hover. Other folders just hover
+// their label.
+function mailboxTitleAttr(mb) {
+  if (mb.kind === 'agent') {
+    const ids = idTooltip(mb.agent_id, mb.id);
+    return ids ? `${mailboxLabel(mb)} — ${ids}` : mailboxLabel(mb);
+  }
+  return mailboxLabel(mb);
 }
 
 function mailboxIcon(mb) {
@@ -589,7 +604,7 @@ function mailboxIcon(mb) {
 
 function mailboxMatchesFilter(mb, q) {
   if (!q) return true;
-  return [mailboxLabel(mb), mb.id, mb.short, ...(mb.groups || [])]
+  return [mailboxLabel(mb), mb.id, mb.short, mb.agent_id, ...(mb.groups || [])]
     .some(s => (s || '').toLowerCase().includes(q));
 }
 
@@ -618,7 +633,7 @@ function mailboxRowHTML(mb, nested = false, prevGen = false) {
   const tag = mb.retired ? '<span class="mailbox-tag" title="This agent has been retired">retired</span>' : '';
   const prevTag = prevGen ? '<span class="mailbox-tag" title="A superseded past generation of this agent — a conversation left behind by a reincarnate / /clear">prev gen</span>' : '';
   const btn = `<button class="mailbox${active ? ' active' : ''}${mb.unread ? ' has-unread' : ''}"
-    data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxLabel(mb))}">
+    data-act="mailbox-select" data-id="${esc(mb.id)}" title="${esc(mailboxTitleAttr(mb))}">
     <span class="mailbox-icon">${mailboxIcon(mb)}</span>
     <span class="mailbox-name">${esc(mailboxLabel(mb))}</span>
     ${tag}${prevTag}${count}${unread}
