@@ -38,7 +38,8 @@ for solo targets).
 | `agent.schedule`  | no              | Manage jobs targeting ANOTHER agent. Group owners can manage jobs on members they own without this. |
 
 `self.schedule` is seeded by `tclaude setup --install-default-agent-permissions`
-alongside `self.compact`, `self.reincarnate`, and `self.clone`.
+alongside the other self-lifecycle default slugs (`self.rename`,
+`self.compact`, `self.reincarnate`, `self.clone`, `self.remote-control`).
 
 ## When to use
 
