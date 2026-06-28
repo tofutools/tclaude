@@ -8,9 +8,8 @@ import (
 )
 
 // TestMigrateV78toV79_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts the audience-agent companion columns are present. v79 is
-// head, so the literal currentVersion tripwire lives here now (moved forward
-// from v78).
+// chain and asserts the audience-agent companion columns are present. The
+// literal currentVersion tripwire moved forward to the v80 test (head).
 func TestMigrateV78toV79_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -19,7 +18,6 @@ func TestMigrateV78toV79_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 79, currentVersion, "tripwire: bump this and add a v79→v80 test when you add a migration")
 
 	for _, col := range []string{"to_recipient_agents", "cc_recipient_agents"} {
 		has, err := columnExists(d, "agent_messages", col)

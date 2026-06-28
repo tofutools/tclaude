@@ -398,6 +398,14 @@ type AgentMessage struct {
 	CcRecipients      []string
 	ToRecipientAgents []string
 	CcRecipientAgents []string
+	// PinGen marks a message deliberately addressed to a SPECIFIC previous
+	// generation of the recipient agent (JOH-310 prev-gen targeting): set
+	// when the sender passed an explicit `gen` conv-id. Normal messages
+	// (PinGen=false) follow the agent to its current head generation at
+	// delivery time; a pinned message sticks to its recorded ToConv. Unlike
+	// FromAgent/ToAgent it is NOT derived — it is explicit caller intent,
+	// persisted by InsertAgentMessage and read back by scanAgentMessage.
+	PinGen bool
 }
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
@@ -1360,20 +1368,26 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	// express, so they're computed in Go and passed as JSON. Any
 	// To/CcRecipientAgents preset on the struct is intentionally ignored (the
 	// conv arrays are the source of truth, mirroring the from/to_agent rule).
+	// pin_gen is explicit caller intent (prev-gen targeting, JOH-310), NOT
+	// derived from the conv columns like from_agent/to_agent — stored 1/0.
+	pinGen := 0
+	if m.PinGen {
+		pinGen = 1
+	}
 	res, err := db.Exec(`INSERT INTO agent_messages
 		(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		 created_at, delivered_at, read_at,
-		 to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv)
+		 to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv, pin_gen)
 		VALUES (?, ?, ?,
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
-		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
 		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
 		recipientAgentsJSON(db, m.ToRecipients), recipientAgentsJSON(db, m.CcRecipients),
-		m.OriginalToConv)
+		m.OriginalToConv, pinGen)
 	if err != nil {
 		return 0, err
 	}
@@ -1755,9 +1769,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
-		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
+	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
 		WHERE to_conv = ? AND delivered_at = ''
 		ORDER BY id ASC`
@@ -1775,6 +1787,116 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ListUndeliveredForAgent returns undelivered, head-following messages for an
+// agent — to_agent matches AND pin_gen = 0 — oldest first (by id, the same
+// insertion-order reason ListUndeliveredAgentMessagesFor documents). This is
+// the agent-keyed delivery queue (JOH-310): keyed on the stable agent_id and
+// EXCLUDING prev-gen-pinned rows (pin_gen=1, which stick to their exact conv
+// and are drained by ListUndeliveredForExactConv). Because it keys on the
+// actor, a message queued before the recipient reincarnated / ran /clear is
+// still found and delivered to the agent's current head generation.
+func ListUndeliveredForAgent(agentID string) ([]*AgentMessage, error) {
+	if agentID == "" {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT ` + agentMessageColumns + `
+		FROM agent_messages
+		WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = ''
+		ORDER BY id ASC`
+	rows, err := db.Query(q, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListUndeliveredForExactConv returns undelivered messages addressed to a
+// SPECIFIC conv that must NOT follow an agent's head — prev-gen-pinned rows
+// (pin_gen=1) and messages to a non-actor conv (to_agent=”) — oldest first.
+// It is the complement of ListUndeliveredForAgent: together they partition the
+// undelivered set with no overlap, so the agent-keyed and conv-keyed drains
+// never double-target one message. Head-following agent messages (pin_gen=0,
+// to_agent!=”) are deliberately excluded here — they belong to the agent
+// drain, which delivers them to the live generation.
+func ListUndeliveredForExactConv(convID string) ([]*AgentMessage, error) {
+	if convID == "" {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT ` + agentMessageColumns + `
+		FROM agent_messages
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = ''
+		ORDER BY id ASC`
+	rows, err := db.Query(q, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*AgentMessage
+	for rows.Next() {
+		m, err := scanAgentMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// CountUndeliveredForAgent returns how many head-following messages are queued
+// for an agent (the predicate ListUndeliveredForAgent walks). It is the
+// "queue depth" the send response reports back to the sender (JOH-310) so the
+// caller sees how deep the recipient's inbox-nudge queue is without blocking on
+// delivery.
+func CountUndeliveredForAgent(agentID string) (int, error) {
+	if agentID == "" {
+		return 0, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = db.QueryRow(
+		`SELECT COUNT(*) FROM agent_messages WHERE to_agent = ? AND pin_gen = 0 AND delivered_at = ''`,
+		agentID).Scan(&n)
+	return n, err
+}
+
+// CountUndeliveredForExactConv is the conv-keyed twin of CountUndeliveredForAgent
+// (same predicate as ListUndeliveredForExactConv): the queue depth reported for
+// a prev-gen-pinned or non-actor-conv send.
+func CountUndeliveredForExactConv(convID string) (int, error) {
+	if convID == "" {
+		return 0, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = db.QueryRow(
+		`SELECT COUNT(*) FROM agent_messages WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND delivered_at = ''`,
+		convID).Scan(&n)
+	return n, err
 }
 
 // ListDeliveredUnreadAgentMessages returns every message that has been
@@ -1795,9 +1917,7 @@ func ListDeliveredUnreadAgentMessages() ([]*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
-		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, original_to_conv
+	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
 		WHERE to_conv != '' AND delivered_at != '' AND read_at = ''
 		ORDER BY id ASC`
@@ -1884,9 +2004,7 @@ func GetAgentMessage(id int64) (*AgentMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
-		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
+	row := db.QueryRow(`SELECT `+agentMessageColumns+`
 		FROM agent_messages WHERE id = ?`, id)
 	m, err := scanAgentMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1925,9 +2043,7 @@ func listAgentMessagesByCol(col, value string, limit int) ([]*AgentMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
-		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
+	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages WHERE ` + col + ` = ? ORDER BY id DESC`
 	args := []any{value}
 	if limit > 0 {
@@ -2271,9 +2387,7 @@ func ListMailboxPage(f MailboxFilter, limit, offset int) ([]*AgentMessage, error
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
-		created_at, delivered_at, read_at,
-		to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv
+	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages`
 	where, args := f.where()
 	if where != "" {
@@ -2608,17 +2722,37 @@ func scanAgentGroupMember(s rowScanner) (*AgentGroupMember, error) {
 	return &m, nil
 }
 
+// agentMessageColumns is the canonical, ordered SELECT list for the
+// agent_messages columns scanAgentMessage reads — the two MUST stay in
+// lockstep (same columns, same order). Every query that feeds
+// scanAgentMessage selects exactly this list, so adding a column is a
+// single edit here + the matching Scan destination, not a five-call-site
+// hunt.
+//
+// A drifted copy of this list — one SELECT missing the columns a later
+// migration added — is the arity-mismatch bug that RED'd main when v79's
+// audience-agent columns landed: scanAgentMessage grew to 17 destinations
+// but ListDeliveredUnreadAgentMessages still selected 15 ("expected 15
+// destination arguments in Scan, not 17"). Centralising the list kills
+// that whole bug class. Append-only: add new columns at the END (and a
+// matching Scan dest) so existing positional scans stay valid.
+const agentMessageColumns = `id, group_id, from_conv, to_conv, from_agent, to_agent, ` +
+	`subject, body, parent_id, created_at, delivered_at, read_at, ` +
+	`to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, ` +
+	`original_to_conv, pin_gen`
+
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt string
 	var toRecipients, ccRecipients string
 	var toRecipientAgents, ccRecipientAgents string
+	var pinGen int
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
 		&m.FromAgent, &m.ToAgent,
 		&m.Subject, &m.Body, &m.ParentID,
 		&createdAt, &deliveredAt, &readAt,
 		&toRecipients, &ccRecipients,
-		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv); err != nil {
+		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv, &pinGen); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
@@ -2628,5 +2762,6 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)
 	m.CcRecipientAgents = recipientsFromJSON(ccRecipientAgents)
+	m.PinGen = pinGen != 0
 	return &m, nil
 }
