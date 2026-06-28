@@ -68,6 +68,17 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	wantAgent, err := db.AgentIDForConv(conv)
 	require.NoError(t, err, "AgentIDForConv")
 	require.NotEmpty(t, wantAgent, "a granted conv should be minted as an actor")
+
+	// JOH-325: the grant-bundle response leads with the stable agent_id too,
+	// so the dashboard confirmation renders the rotation-immune handle.
+	var bundle struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bundle), "decode POST /v1/sudo")
+	assert.Equal(t, wantAgent, bundle.AgentID, "grant response should carry the stable agent_id")
+	assert.Equal(t, conv, bundle.ConvID, "grant response conv_id")
+
 	listReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/sudo", nil), conv)
 	listRec := testharness.Serve(f.Mux, listReq)
@@ -399,6 +410,45 @@ func TestSudo_Proactive_HumanWithTarget_NoPopup(t *testing.T) {
 	assert.Equal(t, "groups.spawn", got.Slug, "slug")
 	assert.Equal(t, "<human-cli>:proactive", got.GrantedBy,
 		"granted_by (CLI label distinguishes from dashboard + popup-approved)")
+}
+
+// Scenario: human revokes every grant for one conv via DELETE
+// /v1/sudo?conv=<selector>. JOH-325: the response leads with the stable
+// agent_id (so the CLI's "Revoked N for <who>" line is rotation-immune)
+// alongside the conv_id snapshot.
+func TestSudo_RevokeByConv_ResponseLeadsWithAgentID(t *testing.T) {
+	f := newFlow(t)
+	const targetConv = "rvk-aaaa-bbbb-cccc-1111"
+	f.HaveConvWithTitle(targetConv, "alice")
+
+	// Proactive human grant mints the actor and lands two grants.
+	grantBody := map[string]any{
+		"slugs":    []string{"groups.spawn", "member.add"},
+		"duration": "5m",
+		"target":   targetConv,
+	}
+	grantRec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/sudo", grantBody)))
+	require.Equal(t, http.StatusOK, grantRec.Code, "proactive grant body=%s", grantRec.Body.String())
+
+	wantAgent, err := db.AgentIDForConv(targetConv)
+	require.NoError(t, err, "AgentIDForConv")
+	require.NotEmpty(t, wantAgent, "a granted conv should be minted as an actor")
+
+	// Revoke-by-conv (human-only). The response should carry agent_id.
+	revRec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodDelete, "/v1/sudo?conv="+targetConv, nil)))
+	require.Equal(t, http.StatusOK, revRec.Code, "revoke-by-conv body=%s", revRec.Body.String())
+
+	var resp struct {
+		Revoked int64  `json:"revoked"`
+		ConvID  string `json:"conv_id"`
+		AgentID string `json:"agent_id"`
+	}
+	require.NoError(t, json.Unmarshal(revRec.Body.Bytes(), &resp), "decode DELETE /v1/sudo?conv=")
+	assert.Equal(t, int64(2), resp.Revoked, "both grants revoked")
+	assert.Equal(t, targetConv, resp.ConvID, "response conv_id")
+	assert.Equal(t, wantAgent, resp.AgentID, "response should lead with the stable agent_id")
 }
 
 // Scenario: an AGENT calls /v1/sudo with target set. That's

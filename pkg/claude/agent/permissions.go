@@ -55,6 +55,11 @@ type permissionsState struct {
 	// Overrides is the full tri-state per-conv view — conv-id → slug →
 	// "grant" | "deny". Grants is its grant-only projection.
 	Overrides map[string]map[string]string `json:"overrides"`
+	// AgentIDs projects the stable agent_id behind each conv key (conv-id
+	// → agent_id), so the roster can lead with the rotation-immune id while
+	// the maps above stay conv-keyed (JOH-325). Absent for a conv with no
+	// actor behind it; the renderer falls back to the conv prefix then.
+	AgentIDs map[string]string `json:"agent_ids"`
 }
 
 type permSlugEntry struct {
@@ -69,6 +74,7 @@ type permSlugEntry struct {
 type permissionsMutateResp struct {
 	Target    string   `json:"target"`
 	TargetKey string   `json:"target_key,omitempty"`
+	AgentID   string   `json:"agent_id,omitempty"`
 	Title     string   `json:"title,omitempty"`
 	Slug      string   `json:"slug"`
 	Effective []string `json:"effective"`
@@ -136,7 +142,7 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "PER-AGENT OVERRIDES:")
 	tbl := table.New(
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "TITLE", MinWidth: 8, Weight: 0.7, Truncate: true},
 		table.Column{Header: "GRANTED", MinWidth: 10, Weight: 1.2, Truncate: true},
 		table.Column{Header: "DENIED", MinWidth: 8, Weight: 1.0, Truncate: true},
@@ -161,10 +167,10 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 		// Try to surface a friendly title for keys that look like full
 		// conv-ids. Prefixes and arbitrary strings are passed through.
 		title := grantKeyTitle(k)
-		idShort := k
-		if len(k) > 8 {
-			idShort = k[:8]
-		}
+		// Lead with the stable agent_id (rotation-immune); fall back to the
+		// conv prefix when the daemon couldn't project one. conv-id stays
+		// available via --json (the Overrides map is conv-keyed).
+		idShort := shortAgentID(state.AgentIDs[k], k)
 		tbl.AddRow(table.Row{Cells: []string{
 			idShort, title,
 			strings.Join(granted, ", "),
@@ -237,6 +243,7 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 		if err := enc.Encode(map[string]any{
 			"target":        p.Target,
 			"target_key":    res.ConvID,
+			"agent_id":      res.AgentID,
 			"title":         title,
 			"effective":     effective,
 			"source":        source,
@@ -246,7 +253,7 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 		}
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%s (%s) — effective permissions [%s]:\n", short(res.ConvID), title, source)
+	fmt.Fprintf(stdout, "%s (%s) — effective permissions [%s]:\n", shortAgentID(res.AgentID, res.ConvID), title, source)
 	if len(effective) == 0 {
 		fmt.Fprintln(stdout, "  (none)")
 		return rcOK
@@ -483,14 +490,14 @@ func runPermissionsMutate(path, verb, target, slug, askHumanRaw string, stdout, 
 	}
 	label := resp.Target
 	if resp.TargetKey != "" && resp.TargetKey != resp.Target {
-		short := resp.TargetKey
-		if len(short) > 8 {
-			short = short[:8]
-		}
+		// Lead the resolved identity with the stable agent_id (conv-id is
+		// the live snapshot behind it); fall back to the conv prefix when
+		// the daemon couldn't project an agent_id.
+		who := shortAgentID(resp.AgentID, resp.TargetKey)
 		if resp.Title != "" {
-			label = fmt.Sprintf("%s (%s, %s)", resp.Target, short, resp.Title)
+			label = fmt.Sprintf("%s (%s, %s)", resp.Target, who, resp.Title)
 		} else {
-			label = fmt.Sprintf("%s (%s)", resp.Target, short)
+			label = fmt.Sprintf("%s (%s)", resp.Target, who)
 		}
 	}
 	sort.Strings(resp.Effective)

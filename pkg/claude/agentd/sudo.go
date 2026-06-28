@@ -432,6 +432,10 @@ type sudoBundleResponse struct {
 	Grants    []sudoGrantJSON `json:"grants"`
 	ExpiresAt string          `json:"expires_at"`
 	ConvID    string          `json:"conv_id"`
+	// AgentID is the stable actor behind ConvID, so the grant
+	// confirmation can lead with the rotation-immune id (JOH-325). Empty
+	// when the conv has no actor; readers fall back to the conv prefix.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // insertSudoBundle inserts one row per slug, sharing granted_at /
@@ -473,6 +477,14 @@ func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, r
 			Reason:           reason,
 			RemainingSeconds: int64(dur.Seconds()),
 		})
+	}
+	// Project the stable actor so the confirmation leads with agent_id
+	// (display-only; grants are keyed on convID above). Resolved after the
+	// inserts because InsertSudoGrant mints the actor for a fresh conv —
+	// resolving earlier would see no agent_id yet. Empty when no grant
+	// landed (no actor); readers fall back to the conv prefix.
+	if agentID, err := db.AgentIDForConv(convID); err == nil {
+		out.AgentID = agentID
 	}
 	return out, http.StatusOK
 }
@@ -557,7 +569,9 @@ func handleSudoRevokeBulk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
+	// agent_id leads the CLI's "Revoked N for <who>" line; conv_id stays
+	// the snapshot. res.AgentID is already resolved above (JOH-325).
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID, "agent_id": res.AgentID})
 }
 
 func sudoGrantsToJSON(rows []*db.SudoGrant, now time.Time) []sudoGrantJSON {

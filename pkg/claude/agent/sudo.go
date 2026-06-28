@@ -103,6 +103,7 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 		Grants    []sudoGrantJSON `json:"grants"`
 		ExpiresAt string          `json:"expires_at"`
 		ConvID    string          `json:"conv_id"`
+		AgentID   string          `json:"agent_id"`
 	}
 	if err := DaemonPost("/v1/sudo", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -118,7 +119,8 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 	exp, _ := time.Parse(time.RFC3339Nano, resp.ExpiresAt)
 	verb := "Sudo approved"
 	if strings.TrimSpace(p.Target) != "" {
-		verb = "Sudo granted to " + short(resp.ConvID)
+		// Lead with the stable agent_id (conv-id is the snapshot behind it).
+		verb = "Sudo granted to " + shortAgentID(resp.AgentID, resp.ConvID)
 	}
 	if exp.IsZero() {
 		fmt.Fprintln(stdout, verb+".")
@@ -276,12 +278,14 @@ func runSudoRevoke(p *sudoRevokeParams, stdin io.Reader, stdout, stderr io.Write
 		var resp struct {
 			Revoked int64  `json:"revoked"`
 			ConvID  string `json:"conv_id"`
+			AgentID string `json:"agent_id"`
 		}
 		if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
 		}
-		fmt.Fprintf(stdout, "Revoked %d grant(s) for %s.\n", resp.Revoked, short(resp.ConvID))
+		// Lead with the stable agent_id (conv-id is the snapshot behind it).
+		fmt.Fprintf(stdout, "Revoked %d grant(s) for %s.\n", resp.Revoked, shortAgentID(resp.AgentID, resp.ConvID))
 		return rcOK
 	case p.All:
 		// Confirm before nuking unless --force. The bulk path is the
