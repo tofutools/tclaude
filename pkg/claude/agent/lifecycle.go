@@ -343,6 +343,7 @@ type contextInfoResp struct {
 // groupContextEntry mirrors the daemon's per-member wire shape for
 // GET /v1/groups/{name}/context.
 type groupContextEntry struct {
+	AgentID           string  `json:"agent_id,omitempty"`
 	ConvID            string  `json:"conv_id"`
 	Title             string  `json:"title"`
 	Role              string  `json:"role,omitempty"`
@@ -432,7 +433,7 @@ func runGroupContextInfo(p *contextInfoParams, group string, stdout, stderr io.W
 	}
 	tbl := table.New(
 		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 8},
+		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
 		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
 		table.Column{Header: "CTX%", Width: 5, Align: table.AlignRight},
@@ -443,7 +444,7 @@ func runGroupContextInfo(p *contextInfoParams, group string, stdout, stderr io.W
 	for _, e := range entries {
 		tbl.AddRow(table.Row{Cells: []string{
 			onlineMark(e.Online),
-			short(e.ConvID),
+			shortAgentID(e.AgentID, e.ConvID),
 			e.Title,
 			e.Role,
 			formatContextPct(e),

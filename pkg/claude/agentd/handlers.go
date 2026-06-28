@@ -262,7 +262,10 @@ func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 			title = agent.DisplayTitle(r.Row)
 		}
 		out = append(out, &peerEntry{
-			AgentID:           peerAgentID(r.ConvID),
+			// agent.ResolveSelector already stamped the stable agent_id on
+			// every candidate, so read it off the resolved handle instead of
+			// a second db.AgentIDForConv lookup.
+			AgentID:           r.AgentID,
 			ConvID:            r.ConvID,
 			Title:             title,
 			agentLocationView: locationView(r.ConvID),
@@ -3160,6 +3163,10 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 // every statusline render (UpdateSessionModel), including the empty
 // pre-first-response ones that carry no context figures.
 type groupContextEntry struct {
+	// AgentID is the member's stable actor key — the canonical ID the CLI
+	// leads with; ConvID is the live generation behind it (kept as the
+	// snapshot/hover). "" when the conv is not a known agent.
+	AgentID           string  `json:"agent_id,omitempty"`
 	ConvID            string  `json:"conv_id"`
 	Title             string  `json:"title"`
 	Role              string  `json:"role,omitempty"`
@@ -3204,6 +3211,7 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		// there's no real context figure to show.
 		hasSnapshot := hasSession && snapshotPopulated(snap)
 		out = append(out, groupContextEntry{
+			AgentID:           peerAgentID(m.ConvID),
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
 			Role:              m.Role,

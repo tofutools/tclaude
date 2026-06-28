@@ -60,6 +60,10 @@ var (
 // removing it would break that conversation's cwd-scoped resume (a live
 // agent loses its cwd outright; an offline one can no longer be resumed).
 type sweepAgent struct {
+	// AgentID is the bound agent's stable actor key — the canonical ID the
+	// dashboard/CLI leads with; ConvID is the live generation behind it
+	// (kept as the snapshot/hover). "" when the conv is not a known agent.
+	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
 	Online  bool   `json:"online"`
@@ -165,7 +169,7 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 			online := isConvOnline(cid)
 			anyOnline = anyOnline || online
 			row.Agents = append(row.Agents, sweepAgent{
-				ConvID: cid, Title: agent.FreshTitle(cid), Online: online, Retired: convRetired(cid),
+				AgentID: peerAgentID(cid), ConvID: cid, Title: agent.FreshTitle(cid), Online: online, Retired: convRetired(cid),
 			})
 		}
 		switch {

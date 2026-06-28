@@ -387,8 +387,8 @@ func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.W
 			failed++
 			continue
 		}
-		fmt.Fprintf(stdout, "  Spawned member name=%q conv=%s tmux=%s\n",
-			spec.Name, short(sresp.ConvID), sresp.TmuxSession)
+		fmt.Fprintf(stdout, "  Spawned member name=%q agent=%s conv=%s tmux=%s\n",
+			spec.Name, shortAgentID(sresp.AgentID, sresp.ConvID), short(sresp.ConvID), sresp.TmuxSession)
 		spawned++
 	}
 	return spawned, failed

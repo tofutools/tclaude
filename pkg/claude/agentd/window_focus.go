@@ -78,6 +78,11 @@ const (
 
 // agentWindowOutcome is the per-agent result of one window op.
 type agentWindowOutcome struct {
+	// AgentID is the targeted agent's stable actor key — the canonical ID
+	// the dashboard/CLI leads with; ConvID is the live generation behind
+	// it (kept as the snapshot/hover). "" when the conv is not a known
+	// agent.
+	AgentID string `json:"agent_id,omitempty"`
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title,omitempty"`
 	Outcome string `json:"outcome"`          // focused | detached | no_window | failed
@@ -342,7 +347,7 @@ func selectWindowTargets(universe, convs []string) []string {
 // but never errors, exactly like the per-agent jump endpoint);
 // unfocus reports how many windows it dismissed.
 func applyWindowOp(direction, convID string, sess *db.SessionRow) agentWindowOutcome {
-	out := agentWindowOutcome{ConvID: convID, Title: agent.FreshTitle(convID)}
+	out := agentWindowOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
 	if direction == "focus" {
 		focusAgentWindow(sess)
 		out.Outcome = windowFocused

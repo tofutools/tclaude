@@ -26,6 +26,7 @@ type ctxInfo struct {
 // ctxGroupEntry mirrors the daemon's groupContextEntry wire shape
 // (/v1/groups/{name}/context).
 type ctxGroupEntry struct {
+	AgentID           string  `json:"agent_id"`
 	ConvID            string  `json:"conv_id"`
 	Title             string  `json:"title"`
 	Role              string  `json:"role"`
@@ -252,6 +253,12 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 	assert.True(t, hotEntry.HasSnapshot, "hot worker has a snapshot")
 	assert.Equal(t, 91.0, hotEntry.ContextPct, "hot worker context_pct")
 	assert.Equal(t, int64(200000), hotEntry.ContextWindowSize, "hot worker window size")
+	// D1: the row leads with the member's stable agent_id (resolved from its
+	// conv), the display-of-WHO foundation — not just the raw conv-id.
+	wantAgentID, err := db.AgentIDForConv(hot)
+	require.NoError(t, err, "resolve hot worker agent_id")
+	require.NotEmpty(t, wantAgentID, "hot worker should have a stable agent_id")
+	assert.Equal(t, wantAgentID, hotEntry.AgentID, "group context row carries the member's agent_id")
 
 	freshEntry := findCtxEntry(entries, fresh)
 	require.NotNil(t, freshEntry, "fresh worker missing from group context")

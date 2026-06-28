@@ -90,6 +90,7 @@ func runDir(p *dirParams, stdout, stderr io.Writer) int {
 
 	if p.Open {
 		var resp struct {
+			AgentID    string `json:"agent_id,omitempty"`
 			ConvID     string `json:"conv_id"`
 			Dir        string `json:"dir"`
 			CallerConv string `json:"caller_conv,omitempty"`
@@ -99,7 +100,7 @@ func runDir(p *dirParams, stdout, stderr io.Writer) int {
 			return MapDaemonErrorToRC(err)
 		}
 		if resp.CallerConv != "" {
-			fmt.Fprintf(stdout, "Opened a terminal in %s for %s\n", resp.Dir, short(resp.ConvID))
+			fmt.Fprintf(stdout, "Opened a terminal in %s for %s\n", resp.Dir, shortAgentID(resp.AgentID, resp.ConvID))
 		} else {
 			fmt.Fprintf(stdout, "Opened a terminal in %s\n", resp.Dir)
 		}

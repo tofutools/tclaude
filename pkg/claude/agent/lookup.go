@@ -53,8 +53,14 @@ var errNoAgentMatch = errors.New("no agent matches")
 // Resolved is a minimal handle to a conversation reachable by a selector.
 // Exported so the daemon (pkg/claude/agentd) can reuse the resolver.
 type Resolved struct {
-	ConvID string
-	Row    *db.ConvIndexRow // may be nil if conv not yet indexed
+	// AgentID is the stable actor key behind ConvID — the canonical ID the
+	// CLI leads with when naming WHO it resolved; ConvID is the live
+	// generation behind it (kept as the snapshot/hover). "" when the conv
+	// is not (yet) a known agent. Stamped at the resolver chokepoint
+	// (resolveSelector) so every consumer gets it without a second lookup.
+	AgentID string
+	ConvID  string
+	Row     *db.ConvIndexRow // may be nil if conv not yet indexed
 }
 
 // resolved is the package-private alias used by existing CLI code.
@@ -91,13 +97,40 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 	}
 
 	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) || errors.Is(err, errNoAgentMatch) {
-		return redirectResolvedToLatest(r), matches, err
+		return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
 	}
 
 	// Cache miss. Refresh the index across all projects and try again.
 	refreshAllProjects()
 	r, matches, err := tryResolve(selector)
-	return redirectResolvedToLatest(r), matches, err
+	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
+}
+
+// stampAgentID fills in the resolved conv's stable agent_id (the canonical
+// actor key) so consumers can name WHO without a second db.AgentIDForConv
+// lookup. Resolved AFTER redirectResolvedToLatest so the agent_id matches
+// the live generation we hand back, not a stale pre-redirect conv. A
+// non-agent conv (or an unindexed/unknown one) leaves AgentID "". Returns r
+// unchanged (nil-safe) so it can wrap the return expression inline.
+func stampAgentID(r *resolved) *resolved {
+	if r == nil {
+		return nil
+	}
+	r.AgentID, _ = db.AgentIDForConv(r.ConvID)
+	return r
+}
+
+// stampAgentIDs stamps every ambiguity candidate the same way as the primary
+// result, so a consumer reading .AgentID off a candidate (e.g. the daemon's
+// peerEntriesFromResolved) gets the stable id without its own lookup.
+// Candidates aren't succession-redirected (they're alternatives, not the
+// chosen head), so each is stamped from its own conv-id. Returns the slice
+// for inline use.
+func stampAgentIDs(matches []*resolved) []*resolved {
+	for _, m := range matches {
+		stampAgentID(m)
+	}
+	return matches
 }
 
 // redirectResolvedToLatest follows the agent_conv_succession chain
@@ -773,8 +806,7 @@ func runLookupDirect(p *lookupParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcNotFound
 	}
-	agentID, _ := db.AgentIDForConv(r.ConvID)
-	fmt.Fprintln(stdout, lookupID(agentID, r.ConvID))
+	fmt.Fprintln(stdout, lookupID(r.AgentID, r.ConvID))
 	return rcOK
 }
 
