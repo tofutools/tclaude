@@ -977,30 +977,42 @@ async function powerOnScope(scope, groupName) {
 // flags, take the dangling-entry recovery path on a 409, then toast the
 // outcome and refresh. A cancelled confirm is a no-op.
 async function retireAgentInteractive(conv, label) {
-  const choice = await retireConfirm({ label, conv });
-  if (!choice) return;
-  const q = `?shutdown=${choice.shutdown ? 1 : 0}`
-    + (choice.deleteWorktree ? '&delete_worktree=1' : '');
-  let r;
-  try {
-    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-  } catch (e) {
-    toast(`Retire failed: ${(e && e.message) || e}`, true);
-    return;
-  }
-  if (!r.ok) {
-    // A dangling entry (conversation gone) can't be retired — offer to
-    // remove it instead of a dead-end error toast.
-    if (await maybeHandleDanglingRetire(r, conv, label)) return;
-    toast(`Retire failed: ${await r.text()}`, true);
-    return;
-  }
-  let retireResp = null;
-  try { retireResp = await r.json(); } catch (_) {}
-  toast(retireToast(label, choice, retireResp));
-  refresh();
+  // The retire work runs inside retireConfirm's `perform` so the confirm
+  // modal stays up with a spinner on the OK button while the POST is in
+  // flight (matching the bulk-retire preview). retireConfirm only invokes
+  // perform after the human confirms, so the confirmation gate is intact;
+  // close() dismisses the modal once the POST settles, before the toast or
+  // the dangling-recovery modal.
+  await retireConfirm({
+    label, conv,
+    perform: async (choice, close) => {
+      const q = `?shutdown=${choice.shutdown ? 1 : 0}`
+        + (choice.deleteWorktree ? '&delete_worktree=1' : '');
+      let r;
+      try {
+        r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+      } catch (e) {
+        close();
+        toast(`Retire failed: ${(e && e.message) || e}`, true);
+        return;
+      }
+      if (!r.ok) {
+        close();
+        // A dangling entry (conversation gone) can't be retired — offer to
+        // remove it instead of a dead-end error toast.
+        if (await maybeHandleDanglingRetire(r, conv, label)) return;
+        toast(`Retire failed: ${await r.text()}`, true);
+        return;
+      }
+      let retireResp = null;
+      try { retireResp = await r.json(); } catch (_) {}
+      close();
+      toast(retireToast(label, choice, retireResp));
+      refresh();
+    },
+  });
 }
 
 // RETIRE_STATUS_LABELS maps a bulk-retire status token to the word used
@@ -1846,7 +1858,19 @@ function openWindowModal(scope, groupName) {
 // Retire, null on Cancel / outside-click / Escape. Shared by the
 // per-row retire button and the drag-onto-Retired gesture so both ask
 // the same question.
-function retireConfirm({label, conv}) {
+//
+// `perform` is an optional async (choice, close) => … the modal runs when
+// the human clicks Retire, WITH the modal still open and the OK button
+// swapped to a spinner — the same in-flight feedback the bulk-retire
+// preview gives (openRetirePreview), so a retire that takes a beat doesn't
+// look ignored. perform owns the outcome (toast / refresh / dangling
+// recovery) and calls the close() it is handed to dismiss the modal once
+// the POST settles, before any toast or follow-up modal; a throw falls
+// back to a generic error toast. While perform runs the dismiss handlers
+// (Cancel / Esc / backdrop) are gated so a stray click can't resolve out
+// from under the in-flight POST. When perform is omitted the OK button
+// resolves the choice and closes immediately (plain-confirm contract).
+function retireConfirm({label, conv, perform}) {
   return new Promise(resolve => {
     const overlay = $('#retire-modal');
     const okBtn = $('#retire-ok');
@@ -1887,12 +1911,34 @@ function retireConfirm({label, conv}) {
       }
     };
 
+    // busy is set while a perform() runs: the OK button shows a spinner
+    // and the dismiss handlers are gated so an Esc/backdrop/cancel can't
+    // resolve the promise out from under the in-flight POST. setBusy also
+    // restores the button to its idle "Retire" label, so cleanup leaves
+    // the (reusable) modal clean for the next open.
+    let busy = false;
+    const setBusy = (on) => {
+      busy = on;
+      okBtn.disabled = on;
+      cancelBtn.disabled = on;
+      if (on) {
+        okBtn.setAttribute('aria-busy', 'true');
+        okBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Retiring…';
+      } else {
+        okBtn.removeAttribute('aria-busy');
+        okBtn.textContent = 'Retire';
+      }
+    };
+
     // active guards the background worktree fetch: once the modal closes
     // (and possibly reopens for another agent) a late response must not
-    // mutate the now-foreign modal DOM.
+    // mutate the now-foreign modal DOM. cleanup is idempotent so perform's
+    // close() and the onOk finally can both call it harmlessly.
     let active = true;
     const cleanup = (result) => {
+      if (!active) return;
       active = false;
+      setBusy(false);
       overlay.classList.remove('show');
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
@@ -1901,13 +1947,29 @@ function retireConfirm({label, conv}) {
       shutdownCb.removeEventListener('change', renderWtRow);
       resolve(result);
     };
-    const onOk = () => cleanup({
-      shutdown: shutdownCb.checked,
-      deleteWorktree: wtCb.checked && !wtCb.disabled,
-    });
-    const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
-    const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+    const onOk = async () => {
+      const choice = {
+        shutdown: shutdownCb.checked,
+        deleteWorktree: wtCb.checked && !wtCb.disabled,
+      };
+      // No perform → plain confirm: resolve the choice and let the caller
+      // do the work (and the dismissing) itself.
+      if (typeof perform !== 'function') { cleanup(choice); return; }
+      // Run the work with the modal up and the OK button spinning. perform
+      // calls close() to dismiss once the POST settles; cleanup() in the
+      // finally is the idempotent safety net (no-op if perform closed).
+      setBusy(true);
+      try {
+        await perform(choice, () => cleanup(choice));
+      } catch (e) {
+        toast(`Retire failed: ${(e && e.message) || e}`, true);
+      } finally {
+        cleanup(choice);
+      }
+    };
+    const onCancel = () => { if (!busy) cleanup(null); };
+    const onOverlay = (e) => { if (!busy && e.target === overlay) cleanup(null); };
+    const onKey = (e) => { if (!busy && e.key === 'Escape') cleanup(null); };
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);

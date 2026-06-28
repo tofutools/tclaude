@@ -585,32 +585,43 @@ async function runDndRemoveFromGroup(payload) {
 // button.
 async function runDndRetire(payload) {
   const {conv, label} = payload;
-  const choice = await retireConfirm({ label, conv });
+  // The retire runs inside retireConfirm's `perform`, so the confirm modal
+  // keeps a spinner on its OK button while the POST is in flight (same as
+  // the per-row retire and the bulk-retire preview). close() dismisses the
+  // modal once the POST settles, before any toast / dangling modal. The
+  // finally re-syncs either way — and on the cancel branch (perform never
+  // ran, choice is null) the refresh below undoes the optimistic dragend.
+  const choice = await retireConfirm({
+    label, conv,
+    perform: async (ch, close) => {
+      try {
+        const q = `?shutdown=${ch.shutdown ? 1 : 0}`
+          + (ch.deleteWorktree ? '&delete_worktree=1' : '');
+        const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        if (!r.ok) {
+          close();
+          // A dangling entry (conversation gone) can't be retired — offer
+          // to remove it instead. The finally below re-syncs.
+          if (await maybeHandleDanglingRetire(r, conv, label)) return;
+          toast(`retire ${label} failed: ${await r.text()}`, true);
+          return;
+        }
+        let retireResp = null;
+        try { retireResp = await r.json(); } catch (_) {}
+        close();
+        toast(retireToast(label, ch, retireResp));
+      } catch (err) {
+        close();
+        toast(`retire failed: ${err && err.message || err}`, true);
+      } finally {
+        await refresh();
+      }
+    },
+  });
   if (!choice) {
-    await refresh(); // undo the optimistic dragend state
-    return;
-  }
-  try {
-    const q = `?shutdown=${choice.shutdown ? 1 : 0}`
-      + (choice.deleteWorktree ? '&delete_worktree=1' : '');
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      // A dangling entry (conversation gone) can't be retired — offer to
-      // remove it instead. On return the finally below re-syncs (which
-      // also undoes the optimistic drag state on the cancel branch).
-      if (await maybeHandleDanglingRetire(r, conv, label)) return;
-      toast(`retire ${label} failed: ${await r.text()}`, true);
-      return;
-    }
-    let retireResp = null;
-    try { retireResp = await r.json(); } catch (_) {}
-    toast(retireToast(label, choice, retireResp));
-  } catch (err) {
-    toast(`retire failed: ${err && err.message || err}`, true);
-  } finally {
-    await refresh();
+    await refresh(); // undo the optimistic dragend state on cancel
   }
 }
 
