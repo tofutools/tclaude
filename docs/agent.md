@@ -657,7 +657,7 @@ with care.
 
 ## Bundled skills
 
-Six skills ship with the binary and install to `~/.claude/skills/`
+Seven skills ship with the binary and install to `~/.claude/skills/`
 for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 (default `~/.codex/skills`) for Codex CLI, via
 `tclaude setup --install-agent-skills`:
@@ -672,6 +672,9 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`agent-dir`** — report or open a terminal in an agent's working
   directory.
 - **`agent-schedule`** — set up and manage recurring `cron` nudges.
+- **`agent-remote-control`** — toggle Claude Code Remote Access
+  (claude.ai/code + the Claude mobile app) on/off via
+  `tclaude agent remote-control`; Claude-Code-only.
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
   [Messages tab](dashboard.md#messages).
