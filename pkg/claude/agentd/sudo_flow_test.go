@@ -68,6 +68,17 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	wantAgent, err := db.AgentIDForConv(conv)
 	require.NoError(t, err, "AgentIDForConv")
 	require.NotEmpty(t, wantAgent, "a granted conv should be minted as an actor")
+
+	// JOH-325: the grant-bundle response leads with the stable agent_id too,
+	// so the dashboard confirmation renders the rotation-immune handle.
+	var bundle struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &bundle), "decode POST /v1/sudo")
+	assert.Equal(t, wantAgent, bundle.AgentID, "grant response should carry the stable agent_id")
+	assert.Equal(t, conv, bundle.ConvID, "grant response conv_id")
+
 	listReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/sudo", nil), conv)
 	listRec := testharness.Serve(f.Mux, listReq)

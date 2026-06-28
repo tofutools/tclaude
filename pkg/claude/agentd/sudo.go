@@ -206,16 +206,16 @@ type sudoRequestBody struct {
 }
 
 type sudoGrantJSON struct {
-	ID        int64  `json:"id"`
-	AgentID   string `json:"agent_id,omitempty"`
-	ConvID    string `json:"conv_id"`
-	ConvTitle string `json:"conv_title,omitempty"`
-	Slug      string `json:"slug"`
-	GrantedAt string `json:"granted_at"`
-	ExpiresAt string `json:"expires_at"`
-	GrantedBy string `json:"granted_by"`
-	Reason    string `json:"reason,omitempty"`
-	RemainingSeconds int64 `json:"remaining_seconds,omitempty"`
+	ID               int64  `json:"id"`
+	AgentID          string `json:"agent_id,omitempty"`
+	ConvID           string `json:"conv_id"`
+	ConvTitle        string `json:"conv_title,omitempty"`
+	Slug             string `json:"slug"`
+	GrantedAt        string `json:"granted_at"`
+	ExpiresAt        string `json:"expires_at"`
+	GrantedBy        string `json:"granted_by"`
+	Reason           string `json:"reason,omitempty"`
+	RemainingSeconds int64  `json:"remaining_seconds,omitempty"`
 }
 
 func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +423,10 @@ type sudoBundleResponse struct {
 	Grants    []sudoGrantJSON `json:"grants"`
 	ExpiresAt string          `json:"expires_at"`
 	ConvID    string          `json:"conv_id"`
+	// AgentID is the stable actor behind ConvID, so the grant
+	// confirmation can lead with the rotation-immune id (JOH-325). Empty
+	// when the conv has no actor; readers fall back to the conv prefix.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // insertSudoBundle inserts one row per slug, sharing granted_at /
@@ -464,6 +468,14 @@ func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, r
 			Reason:           reason,
 			RemainingSeconds: int64(dur.Seconds()),
 		})
+	}
+	// Project the stable actor so the confirmation leads with agent_id
+	// (display-only; grants are keyed on convID above). Resolved after the
+	// inserts because InsertSudoGrant mints the actor for a fresh conv —
+	// resolving earlier would see no agent_id yet. Empty when no grant
+	// landed (no actor); readers fall back to the conv prefix.
+	if agentID, err := db.AgentIDForConv(convID); err == nil {
+		out.AgentID = agentID
 	}
 	return out, http.StatusOK
 }

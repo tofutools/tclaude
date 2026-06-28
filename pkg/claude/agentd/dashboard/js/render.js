@@ -589,6 +589,10 @@ function renderGroupLinksSection(groupName) {
 
 function renderPermissions(perm, agents) {
   const titleByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.title]));
+  // Lead each roster row with the stable agent_id (rotation-immune); the
+  // cell hover shows both ids via idTooltip. The overrides map is
+  // conv-keyed, so resolve agent_id via the agents array (carries both).
+  const agentIdByConv = Object.fromEntries((agents || []).map(a => [a.conv_id, a.agent_id]));
   const overrides = perm.overrides || {};
   const defaults = perm.defaults || [];
   // Split each conv's tri-state override map into granted / denied
@@ -615,7 +619,7 @@ function renderPermissions(perm, agents) {
           <tbody>
             ${rows.map(r => `
               <tr>
-                <td class="id">${esc(shortId(r.k))}</td>
+                <td class="id" title="${esc(idTooltip(agentIdByConv[r.k], r.k))}">${esc(shortAgentId(agentIdByConv[r.k], r.k))}</td>
                 <td class="rowname">${esc(titleByConv[r.k] || '(unknown)')}</td>
                 <td>${r.granted.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
                 <td>${r.denied.map(s => `<span class="tag slug deny">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>

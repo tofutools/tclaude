@@ -4,7 +4,7 @@
 // group/member target picker (used by this modal and the message
 // modal). Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, shortId, shortAgentId, idTooltip } from './helpers.js';
+import { $, $$, esc, shortAgentId, idTooltip } from './helpers.js';
 import { renderCronTab, formatInterval } from './tabs.js';
 // lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
 // the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
@@ -69,7 +69,7 @@ async function submitSudoGrant() {
     const resp = await r.json();
     const ok = (resp.grants || []).filter(g => g.id > 0).length;
     const failed = (resp.grants || []).length - ok;
-    toast(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${resp.conv_id ? shortId(resp.conv_id) : conv}` +
+    toast(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${shortAgentId(resp.agent_id, resp.conv_id) || conv}` +
       (failed > 0 ? ` (${failed} failed)` : ''));
     closeSudoGrantModal();
     await refresh();
@@ -121,6 +121,7 @@ function pickSudoAgentModal() {
       return rows.filter(a =>
         (a.title || '').toLowerCase().includes(needle) ||
         (a.conv_id || '').toLowerCase().includes(needle) ||
+        (a.agent_id || '').toLowerCase().includes(needle) ||
         (a.groups || []).some(g => g.toLowerCase().includes(needle)));
     }
 
@@ -149,7 +150,7 @@ function pickSudoAgentModal() {
         const badge = sudoBadge(sudoByConv[a.conv_id], a.conv_id);
         return `<div class="add-member-row${i === highlight ? ' highlighted' : ''}" data-i="${i}">` +
                `${dot}<span class="rowname">${esc(a.title || '(unnamed)')}</span>` +
-               `<span class="id">${esc(shortId(a.conv_id))}</span>${badge}${groups}` +
+               `<span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span>${badge}${groups}` +
                `</div>`;
       }).join('');
       const hl = list.querySelector('.add-member-row.highlighted');

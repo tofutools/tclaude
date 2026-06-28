@@ -272,10 +272,17 @@ func OwnerImpliedSlugs() []string {
 // Overrides is the full tri-state per-conv view — conv-id → slug →
 // "grant" | "deny". Grants (above) is the grant-only projection of the
 // same table, kept for back-compat with readers that predate deny.
+//
+// AgentIDs projects the stable agent_id behind each conv key in
+// Grants/Overrides (conv-id → agent_id), so the CLI roster can LEAD with
+// the rotation-immune id (`name (agt_xxxxxxxx)`) while the maps stay
+// conv-keyed on the wire (JOH-325). Absent for a conv that doesn't (yet)
+// resolve to an actor; readers fall back to the conv prefix then.
 type permissionsState struct {
 	Defaults  []string                     `json:"defaults"`
 	Grants    map[string][]string          `json:"grants"`
 	Overrides map[string]map[string]string `json:"overrides"`
+	AgentIDs  map[string]string            `json:"agent_ids"`
 }
 
 // targetSentinelDefault is the magic target string that means "modify
@@ -290,6 +297,7 @@ const targetSentinelDefault = "default"
 type resolvedTarget struct {
 	Sentinel  bool
 	Key       string // full conv-id when !Sentinel
+	AgentID   string // stable agent_id behind Key, for leading the response "who" (JOH-325); "" when not an actor
 	ConvTitle string // best-effort display title for the resolved conv (echoed in responses)
 }
 
@@ -305,7 +313,7 @@ func resolveTarget(target string) (*resolvedTarget, error) {
 	if err != nil {
 		return nil, err
 	}
-	rt := &resolvedTarget{Key: res.ConvID}
+	rt := &resolvedTarget{Key: res.ConvID, AgentID: res.AgentID}
 	if res.Row != nil {
 		rt.ConvTitle = agent.DisplayTitle(res.Row)
 	}
@@ -319,6 +327,7 @@ func snapshotPermissions() (permissionsState, error) {
 	out := permissionsState{
 		Grants:    map[string][]string{},
 		Overrides: map[string]map[string]string{},
+		AgentIDs:  map[string]string{},
 	}
 	if cfg != nil && cfg.Agent != nil {
 		out.Defaults = append(out.Defaults, cfg.Agent.DefaultPermissions...)
@@ -337,7 +346,31 @@ func snapshotPermissions() (permissionsState, error) {
 	if overrides != nil {
 		out.Overrides = overrides
 	}
+	// Project the stable agent_id behind every conv key so the CLI roster
+	// can lead with it (display-only — the maps stay conv-keyed). Resolve
+	// each conv once; a key that doesn't map to an actor is simply absent.
+	for conv := range out.Grants {
+		addAgentIDProjection(out.AgentIDs, conv)
+	}
+	for conv := range out.Overrides {
+		addAgentIDProjection(out.AgentIDs, conv)
+	}
 	return out, nil
+}
+
+// addAgentIDProjection records conv → agent_id in dst, skipping convs
+// already resolved or with no actor behind them. Best-effort: a lookup
+// error leaves the conv out, and the reader falls back to the conv prefix.
+func addAgentIDProjection(dst map[string]string, conv string) {
+	if conv == "" {
+		return
+	}
+	if _, ok := dst[conv]; ok {
+		return
+	}
+	if agentID, err := db.AgentIDForConv(conv); err == nil && agentID != "" {
+		dst[conv] = agentID
+	}
 }
 
 // addDefaultPermission inserts slug into config.Agent.DefaultPermissions
@@ -418,6 +451,7 @@ type permissionsMutateReq struct {
 type permissionsMutateResp struct {
 	Target    string   `json:"target"`
 	TargetKey string   `json:"target_key,omitempty"` // resolved conv-id when target != "default"
+	AgentID   string   `json:"agent_id,omitempty"`   // stable agent_id behind TargetKey, for leading the "who" (JOH-325)
 	Title     string   `json:"title,omitempty"`      // display title of the resolved conv, when known
 	Slug      string   `json:"slug"`
 	Effect    string   `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
@@ -547,6 +581,7 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.TargetKey = target.Key
+		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle
 		slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 		resp.Effective = slugs
@@ -602,6 +637,7 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, permissionsMutateResp{
 		Target:    body.Target,
 		TargetKey: target.Key,
+		AgentID:   target.AgentID,
 		Title:     target.ConvTitle,
 		Slug:      body.Slug,
 		Effect:    db.PermEffectDeny,
@@ -640,6 +676,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.TargetKey = target.Key
+		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle
 		slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 		resp.Effective = slugs
