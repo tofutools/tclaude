@@ -89,7 +89,7 @@ func flushAgent(agentID string) int {
 	}
 	return flushQueue("agent:"+agentID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForAgent(agentID) },
-		func() bool { return heldForHumanInput(head) },
+		func() bool { return deliverablePane(head) },
 		func(m *db.AgentMessage) bool { return sendNudgeBracket(head, m.ID) })
 }
 
@@ -101,22 +101,22 @@ func flushAgent(agentID string) int {
 func flush(convID string, send flushSender) int {
 	return flushQueue("conv:"+convID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForExactConv(convID) },
-		func() bool { return heldForHumanInput(convID) },
+		func() bool { return deliverablePane(convID) },
 		send)
 }
 
 // flushQueue is the shared drain core: list the queue, hold the WHOLE batch
-// if the delivery pane is blocked on a human, else claim each message
-// atomically (so concurrent drains don't double-nudge) and deliver. Returns
-// the number successfully claimed — regardless of whether the send landed
-// (a vanished tmux session is logged but not retried).
+// unless the delivery pane is reachable RIGHT NOW (alive + not blocked on a
+// human), else claim each message atomically (so concurrent drains don't
+// double-nudge) and deliver. Returns the number successfully claimed.
 //
-// The hold gate runs BEFORE ClaimAgentMessageDelivery: a claim stamps
-// delivered_at, so claiming-then-failing-to-send would mark a held message
-// delivered and it would never be retried. Returning early leaves every row
-// undelivered for the next drain — the recipient's next request, or the
-// reaper backstop — once they are back to working/idle (JOH-308).
-func flushQueue(label string, list func() ([]*db.AgentMessage, error), held func() bool, send flushSender) int {
+// The canDeliver gate runs BEFORE ClaimAgentMessageDelivery: a claim stamps
+// delivered_at, so claiming a message we then can't deliver — the recipient is
+// offline (the async send path routinely hits this) or mid human-input dialog
+// (JOH-308) — would consume it without ever nudging. Returning early leaves
+// every row undelivered for the next drain (the recipient's next request, or
+// the reaper backstop) once it is reachable again.
+func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDeliver func() bool, send flushSender) int {
 	msgs, err := list()
 	if err != nil {
 		slog.Warn("flush: list undelivered failed", "error", err, "target", label)
@@ -125,8 +125,8 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), held func
 	if len(msgs) == 0 {
 		return 0
 	}
-	if held() {
-		slog.Debug("flush: holding queued mail; recipient awaiting human input",
+	if !canDeliver() {
+		slog.Debug("flush: holding queued mail; recipient offline or awaiting human input",
 			"target", label, "queued", len(msgs))
 		return 0
 	}

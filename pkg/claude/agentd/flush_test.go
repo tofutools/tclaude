@@ -32,6 +32,19 @@ func resetFlushState(_ *testing.T) {
 	flushDebounceMu.Unlock()
 }
 
+// drainExactConv exercises the flushQueue claim/iteration/dedup core directly
+// with the alive-gate forced open, so these unit tests can assert delivery
+// semantics without standing up a live tmux session (the gate's offline /
+// awaiting-human behaviour is covered by the mail-hold + nudge-queue flow
+// tests). It lists the exact-conv queue, the same source the production conv
+// drain uses.
+func drainExactConv(convID string, send flushSender) int {
+	return flushQueue("test:conv:"+convID,
+		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForExactConv(convID) },
+		func() bool { return true },
+		send)
+}
+
 func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 	setupTestDB(t)
 
@@ -67,7 +80,7 @@ func TestFlush_DeliversUndeliveredOldestFirst(t *testing.T) {
 		return true
 	}
 
-	n := flush("me", send)
+	n := drainExactConv("me", send)
 	assert.Equal(t, 3, n, "flush return value")
 	assert.Equal(t, []int64{id1, id2, id3}, got, "delivered order")
 
@@ -89,7 +102,7 @@ func TestFlush_NoMessagesNoCalls(t *testing.T) {
 	setupTestDB(t)
 	calls := 0
 	send := func(*db.AgentMessage) bool { calls++; return true }
-	assert.Equal(t, 0, flush("nobody", send), "flush of empty queue")
+	assert.Equal(t, 0, drainExactConv("nobody", send), "flush of empty queue")
 	assert.Equal(t, 0, calls, "send call count")
 }
 
@@ -104,14 +117,14 @@ func TestFlush_FailedSendStillClaims(t *testing.T) {
 	})
 
 	send := func(*db.AgentMessage) bool { return false }
-	assert.Equal(t, 1, flush("me", send), "flush return (claim still counted)")
+	assert.Equal(t, 1, drainExactConv("me", send), "flush return (claim still counted)")
 	m, _ := db.GetAgentMessage(id)
 	if assert.NotNil(t, m) {
 		assert.False(t, m.DeliveredAt.IsZero(), "message should be marked delivered to prevent re-attempt")
 	}
 
 	// A second flush sees the row as delivered and skips it.
-	assert.Equal(t, 0, flush("me", send), "second flush")
+	assert.Equal(t, 0, drainExactConv("me", send), "second flush")
 }
 
 func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {
@@ -139,7 +152,7 @@ func TestFlush_ConcurrentClaimsAreRaceFree(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			flush("me", send)
+			drainExactConv("me", send)
 		}()
 	}
 	wg.Wait()
