@@ -65,9 +65,10 @@ func runReply(p *replyParams, stdout, stderr io.Writer, stdin io.Reader) int {
 
 func runReplyDaemon(id int64, subject, body string, stdout, stderr io.Writer) int {
 	var resp struct {
-		ID        int64  `json:"id"`
-		Delivered bool   `json:"delivered"`
-		ViaGroup  string `json:"via_group"`
+		ID       int64  `json:"id"`
+		Queued   bool   `json:"queued"`
+		Pending  int    `json:"pending"`
+		ViaGroup string `json:"via_group"`
 	}
 	err := DaemonPost(fmt.Sprintf("/v1/messages/%d/reply", id), map[string]string{
 		"subject": subject,
@@ -77,10 +78,9 @@ func runReplyDaemon(id int64, subject, body string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	state := "queued; target not online"
-	if resp.Delivered {
-		state = "delivered"
-	}
+	// Async delivery (JOH-310): the reply is queued; the worker delivers it
+	// after this returns, so we report the queue depth, not a verdict.
+	state := queuedState(resp.Pending)
 	// A reply to a direct (off-group) message has no routing group.
 	via := "directly"
 	if resp.ViaGroup != "" {
@@ -89,4 +89,3 @@ func runReplyDaemon(id int64, subject, body string, stdout, stderr io.Writer) in
 	fmt.Fprintf(stdout, "Sent reply #%d %s (%s)\n", resp.ID, via, state)
 	return rcOK
 }
-

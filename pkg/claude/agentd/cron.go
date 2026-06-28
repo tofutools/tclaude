@@ -186,12 +186,11 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 			slog.Warn("cron: insert message failed", "job", j.ID, "error", err)
 			return "send_failed"
 		}
-		// Best-effort nudge — flush only fires if the target is alive
-		// right now. Otherwise the message sits in the inbox until the
-		// next agent_messages-aware request from the target. goBackground
-		// (not a bare `go`) so a flow test firing a cron job can drain the
-		// nudge before its cleanup restores the clcommon.Default tmux swap.
-		goBackground(func() { flush(targetConv, realFlushSender) })
+		// Best-effort nudge via the per-agent dispatcher — delivers if the
+		// target is alive right now, otherwise the message sits in the inbox
+		// until the next agent_messages-aware request from the target.
+		// enqueueDeliveryForConv backgrounds + coalesces the drain itself.
+		enqueueDeliveryForConv(targetConv)
 		return "ok"
 	}
 

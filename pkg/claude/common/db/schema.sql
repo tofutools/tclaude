@@ -204,6 +204,8 @@ CREATE INDEX idx_agent_messages_to_conv
 CREATE INDEX idx_agent_messages_parent
 			ON agent_messages(parent_id);
 
+CREATE INDEX idx_agent_messages_to_agent ON agent_messages(to_agent);
+
 CREATE TABLE agent_transfer_log (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind           TEXT NOT NULL,

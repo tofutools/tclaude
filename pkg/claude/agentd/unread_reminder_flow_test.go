@@ -29,9 +29,9 @@ const (
 )
 
 // haveUnreadMessage stands up a group with an alive recipient, sends it a
-// message (delivered synchronously by the live nudge path), and returns the
-// flow plus the delivered message id. The message is now delivered-but-unread
-// — exactly the state the reminder sweep acts on.
+// message, drains the async delivery worker, and returns the flow plus the
+// delivered message id. The message is then delivered-but-unread — exactly the
+// state the reminder sweep acts on.
 func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	t.Helper()
 	f := newFlow(t)
@@ -45,8 +45,15 @@ func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var resp sendRespView
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.True(t, resp.Delivered, "alive recipient is nudged → message is delivered")
+	require.True(t, resp.Queued, "alive recipient: message queued for async delivery")
 	require.NotZero(t, resp.ID)
+	// Delivery is async now (JOH-310): drain the worker so the alive recipient
+	// is actually nudged and delivered_at is stamped — the precondition the
+	// unread-reminder sweep keys on (delivered-but-unread).
+	agentd.WaitForBackgroundForTest()
+	msg, err := db.GetAgentMessage(resp.ID)
+	require.NoError(t, err)
+	require.False(t, msg.DeliveredAt.IsZero(), "async worker delivered to the alive recipient")
 	return f, resp.ID
 }
 
@@ -201,6 +208,7 @@ func TestUnreadReminder_AggregatesBacklog(t *testing.T) {
 	// A second message to the same recipient from the same sender.
 	rec := postMessage(t, f, urSender, map[string]any{"to": urRecipient, "body": "second"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	agentd.WaitForBackgroundForTest() // deliver the second message too (async)
 
 	st := agentd.NewUnreadReminderStateForTest()
 	base := time.Now()

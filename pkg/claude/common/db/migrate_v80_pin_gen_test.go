@@ -35,8 +35,10 @@ func TestMigrateV79toV80_AddsColumn(t *testing.T) {
 	require.NoError(t, err, "Open")
 
 	// Reshape agent_messages back to its v79 (pre-pin_gen) form and pin the
-	// version, then seed a row with a raw INSERT in that shape.
+	// version, then seed a row with a raw INSERT in that shape. Both the
+	// pin_gen column and the to_agent index are v80 artifacts, so drop both.
 	for _, s := range []string{
+		`DROP INDEX IF EXISTS idx_agent_messages_to_agent`,
 		`ALTER TABLE agent_messages DROP COLUMN pin_gen`,
 		`UPDATE schema_version SET version = 79`,
 	} {
@@ -63,6 +65,12 @@ func TestMigrateV79toV80_AddsColumn(t *testing.T) {
 	var pinGen int
 	require.NoError(t, d.QueryRow(`SELECT pin_gen FROM agent_messages WHERE id = 1`).Scan(&pinGen))
 	assert.Equal(t, 0, pinGen, "existing row defaults to 0 (head-following)")
+
+	var idxCount int
+	require.NoError(t, d.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_agent_messages_to_agent'`,
+	).Scan(&idxCount))
+	assert.Equal(t, 1, idxCount, "to_agent index created")
 
 	// Idempotent: a re-run over the already-migrated DB is a clean no-op.
 	require.NoError(t, migrateV79toV80(d), "v79→v80 re-run is a clean no-op")

@@ -57,6 +57,16 @@ func migrateV79toV80(db *sql.DB) error {
 		}
 	}
 
+	// Index the agent-keyed delivery queue (JOH-310): the per-agent drain and
+	// the queue-depth count both filter on to_agent, which the existing
+	// idx_agent_messages_to_conv does not cover. IF NOT EXISTS keeps a
+	// half-applied run idempotent.
+	if _, err := tx.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_agent_messages_to_agent ON agent_messages(to_agent)`,
+	); err != nil {
+		return fmt.Errorf("migrate v79→v80 (index agent_messages.to_agent): %w", err)
+	}
+
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 80`); err != nil {
 		return fmt.Errorf("migrate v79→v80 (version): %w", err)
 	}

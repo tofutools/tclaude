@@ -549,7 +549,10 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 		// before the handoff message's nudge lands.
 		time.Sleep(reincarnateReadyDelay)
 	}
-	flush(newConv, realFlushSender)
+	// newConv is the agent's fresh head generation; route through the
+	// per-agent dispatcher so head-following mail queued to the actor
+	// (across the rotation) is delivered to it, not just exact-conv mail.
+	enqueueDeliveryForConv(newConv)
 }
 
 // switchTmuxClients moves tmux clients currently attached to oldTmux

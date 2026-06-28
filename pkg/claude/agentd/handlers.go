@@ -282,7 +282,16 @@ func peerAgentID(conv string) string {
 // --- /v1/messages (POST), /v1/messages/{id} (GET) ---
 
 type sendReq struct {
-	To      string   `json:"to"`
+	To string `json:"to"`
+	// Gen optionally pins delivery to a SPECIFIC previous generation of the
+	// target agent (JOH-310 prev-gen targeting): a conv-id that must belong
+	// to the same agent `To` resolves to. When set, the message is addressed
+	// to that exact conv (pin_gen=1) instead of following the agent to its
+	// current head generation — the deliberate, explicit way to reach a past
+	// generation, never inferred from a bare conv-id in `To` (which the
+	// resolver auto-redirects forward to the head). Direct (1:1) sends only;
+	// an error with a group:/--cc target.
+	Gen     string   `json:"gen,omitempty"`
 	Cc      []string `json:"cc,omitempty"`
 	Subject string   `json:"subject,omitempty"`
 	Body    string   `json:"body"`
@@ -315,8 +324,24 @@ type sendReq struct {
 // with "group:") ID/Delivered are zero values and Recipients lists
 // one entry per non-sender member.
 type sendResp struct {
-	ID        int64 `json:"id,omitempty"`
-	Delivered bool  `json:"delivered,omitempty"`
+	ID int64 `json:"id,omitempty"`
+	// Queued is true once the message row is persisted and handed to the
+	// async per-agent delivery queue (JOH-310). Under the async model the
+	// send call returns immediately, BEFORE the worker decides
+	// delivered/held, so Queued — not Delivered/Held — is the success
+	// signal on a direct send. Pending carries the queue depth.
+	Queued bool `json:"queued,omitempty"`
+	// Pending is the recipient's queue depth at send time — how many
+	// undelivered nudges are now waiting for them, including this one. It is
+	// the "queue length" the sender CLI surfaces. 0 is a valid value (e.g. a
+	// non-actor target whose count we don't track), so it is informational
+	// only, never a failure signal.
+	Pending int `json:"pending,omitempty"`
+	// Delivered/Held are retained for response back-compat but are no longer
+	// set on the async send path (delivery + the JOH-308 human-input hold are
+	// decided later by the worker, not at send time). They stay populated
+	// only where a synchronous verdict still exists.
+	Delivered bool `json:"delivered,omitempty"`
 	// Held is true when the recipient has an alive pane but is currently
 	// blocked on a human (awaiting_input / awaiting_permission). The
 	// message is in their mailbox but deliberately NOT nudged in — a nudge
@@ -346,7 +371,14 @@ type recipient struct {
 	AgentID   string `json:"agent_id,omitempty"`
 	Title     string `json:"title,omitempty"`
 	MessageID int64  `json:"message_id"`
-	Delivered bool   `json:"delivered"`
+	// Queued is true once this recipient's row is persisted and handed to the
+	// async delivery queue (JOH-310) — the per-recipient analogue of
+	// sendResp.Queued. Pending is this recipient's queue depth.
+	Queued  bool `json:"queued,omitempty"`
+	Pending int  `json:"pending,omitempty"`
+	// Delivered/Held are retained for back-compat but no longer set on the
+	// async path (the worker decides them after the send returns).
+	Delivered bool `json:"delivered"`
 	// Held mirrors sendResp.Held per-recipient: the recipient is alive but
 	// blocked on a human, so their copy is in the mailbox, not yet nudged.
 	Held bool `json:"held,omitempty"`
@@ -455,6 +487,14 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 			"members is only valid with a 'group:' multicast target")
 		return
 	}
+	// gen pins a SPECIFIC generation of ONE agent; it is meaningless for a
+	// group: fan-out or a --cc multi-send, where "the target" isn't a single
+	// agent. Reject loudly before routing.
+	if strings.TrimSpace(req.Gen) != "" && (strings.HasPrefix(req.To, multicastPrefix) || len(req.Cc) > 0) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"gen is only valid on a direct (non-group, non-cc) send")
+		return
+	}
 	if strings.HasPrefix(req.To, multicastPrefix) {
 		handleMulticast(w, fromID, req)
 		return
@@ -488,6 +528,25 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	rawInput := strings.TrimSpace(req.To)
 	if rawInput != "" && rawInput != finalConv && db.ResolveLatestConv(rawInput) == finalConv {
 		originalTo = rawInput
+	}
+	// Prev-gen targeting (JOH-310): an explicit `gen` overrides the
+	// head-following default, pinning delivery to a SPECIFIC past generation
+	// of the SAME agent `To` resolved to. It must be a conv of that agent —
+	// validated here so a caller can't smuggle a cross-agent conv past the
+	// agent-keyed routing — and it is the deliberate opt-out from the
+	// resolver's auto-redirect-to-head, so no Original-To attribution.
+	pinGen := false
+	if genTrim := strings.TrimSpace(req.Gen); genTrim != "" {
+		targetAgent, _ := db.AgentIDForConv(finalConv)
+		genAgent, _ := db.AgentIDForConv(genTrim)
+		if targetAgent == "" || genAgent == "" || genAgent != targetAgent {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("gen %q is not a generation of the target agent", genTrim))
+			return
+		}
+		finalConv = genTrim
+		originalTo = ""
+		pinGen = true
 	}
 	if finalConv == fromID {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cannot message self")
@@ -526,16 +585,20 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		// so the recipient's `inbox read` can render a consistent
 		// "To: ..." header. CC stays empty.
 		ToRecipients: []string{finalConv},
+		PinGen:       pinGen,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	outcome := nudgeIfAlive(id, finalConv)
+	// Async delivery (JOH-310): hand the recipient to the per-agent queue and
+	// return immediately with the queue depth. The sender never blocks on the
+	// tmux nudge; the worker decides delivered/held later.
+	enqueueDeliveryForConv(finalConv)
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             id,
-		Delivered:      outcome.delivered(),
-		Held:           outcome.held(),
+		Queued:         true,
+		Pending:        queueDepthFor(finalConv, pinGen),
 		ViaGroup:       viaName,
 		RedirectedFrom: originalTo,
 	})
@@ -655,14 +718,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	primaryOutcome := nudgeIfAlive(primaryID, primaryConv)
+	enqueueDeliveryForConv(primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
 		ConvID:         primaryConv,
 		AgentID:        peerAgentID(primaryConv),
 		Title:          primaryTitle,
 		MessageID:      primaryID,
-		Delivered:      primaryOutcome.delivered(),
-		Held:           primaryOutcome.held(),
+		Queued:         true,
+		Pending:        queueDepthFor(primaryConv, false),
 		RedirectedFrom: primaryOriginalTo,
 	})
 
@@ -691,14 +754,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			})
 			continue
 		}
-		outcome := nudgeIfAlive(id, r.ConvID)
+		enqueueDeliveryForConv(r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         r.ConvID,
 			AgentID:        peerAgentID(r.ConvID),
 			Title:          r.Title,
 			MessageID:      id,
-			Delivered:      outcome.delivered(),
-			Held:           outcome.held(),
+			Queued:         true,
+			Pending:        queueDepthFor(r.ConvID, false),
 			RedirectedFrom: r.OriginalToConv,
 		})
 	}
@@ -962,14 +1025,14 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			})
 			continue
 		}
-		outcome := nudgeIfAlive(id, finalConv)
+		enqueueDeliveryForConv(finalConv)
 		out = append(out, recipient{
 			ConvID:         finalConv,
 			AgentID:        peerAgentID(finalConv),
 			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
-			Delivered:      outcome.delivered(),
-			Held:           outcome.held(),
+			Queued:         true,
+			Pending:        queueDepthFor(finalConv, false),
 			RedirectedFrom: originalTo,
 		})
 	}
@@ -2009,11 +2072,11 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	outcome := nudgeIfAlive(newID, replyTarget)
+	enqueueDeliveryForConv(replyTarget)
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             newID,
-		Delivered:      outcome.delivered(),
-		Held:           outcome.held(),
+		Queued:         true,
+		Pending:        queueDepthFor(replyTarget, false),
 		ViaGroup:       replyViaName,
 		RedirectedFrom: replyOriginalTo,
 	})
