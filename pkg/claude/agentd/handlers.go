@@ -2023,10 +2023,10 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	// Decorated with conv titles when known so the receiver sees friendly
 	// names alongside the conv-ids.
 	if len(m.ToRecipients) > 0 {
-		resp["to_recipients"] = decorateRecipients(m.ToRecipients)
+		resp["to_recipients"] = decorateRecipients(m.ToRecipients, m.ToRecipientAgents)
 	}
 	if len(m.CcRecipients) > 0 {
-		resp["cc_recipients"] = decorateRecipients(m.CcRecipients)
+		resp["cc_recipients"] = decorateRecipients(m.CcRecipients, m.CcRecipientAgents)
 	}
 	// In-Reply-To: only set on threaded messages so the renderer can
 	// hide the header for top-of-thread messages.
@@ -2190,21 +2190,35 @@ type recipientLine struct {
 	Title   string `json:"title,omitempty"`
 }
 
-// decorateRecipients turns a recipients array (conv-ids only, as stored
-// in agent_messages) into a labelled list, resolving each conv to its
-// title and stable agent_id. Best-effort lookup: a conv without an index
-// row / agent enrollment just gets ConvID set, so the renderer can fall
-// back to the short prefix.
-func decorateRecipients(ids []string) []recipientLine {
-	out := make([]recipientLine, 0, len(ids))
-	for _, id := range ids {
+// decorateRecipients turns the stored audience arrays into a labelled list.
+// convs is the conv-id array (to_recipients / cc_recipients); agents is the
+// 1:1 stable-agent_id companion (to_recipient_agents / cc_recipient_agents,
+// JOH-284). Each line prefers the STORED agent_id — which survives the
+// recipient's conv generation being pruned — and falls back to a live conv→agent
+// lookup only where the stored id is empty (a legacy pre-v79 row the backfill
+// missed, or a genuine non-actor recipient). Title is still resolved from the
+// conv (best-effort display); a conv without an index row just leaves it blank.
+func decorateRecipients(convs, agents []string) []recipientLine {
+	out := make([]recipientLine, 0, len(convs))
+	for i, id := range convs {
 		out = append(out, recipientLine{
 			ConvID:  id,
-			AgentID: peerAgentID(id),
+			AgentID: storedAgentOrResolve(agents, i, id),
 			Title:   agent.TitleFor(id),
 		})
 	}
 	return out
+}
+
+// storedAgentOrResolve returns the persisted agent_id at index i of the
+// companion array when present and non-empty, otherwise resolves convID→agent
+// live. This is the read-path fallback that keeps legacy rows (and non-actor
+// recipients) working while preferring the stored, pruning-immune id.
+func storedAgentOrResolve(agents []string, i int, convID string) string {
+	if i < len(agents) && agents[i] != "" {
+		return agents[i]
+	}
+	return peerAgentID(convID)
 }
 
 func groupByID(id int64) (*db.AgentGroup, error) {

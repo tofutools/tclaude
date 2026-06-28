@@ -1021,18 +1021,28 @@ func (c *importCtx) messages() error {
 		// run before messages() and ensureAgentForConvTx every imported conv,
 		// so a message whose remapped conv is an actor resolves here; a
 		// non-actor conv falls through COALESCE to ''.
+		//
+		// The audience-agent companions (JOH-284) are derived the same way but
+		// per-element over the remapped conv arrays (a scalar subquery can't map
+		// a JSON array), so they're computed in Go — keeping an imported message
+		// just as pruning-safe as a freshly-sent one.
+		toRecipientsJSON := c.rl(m.ToRecipients)
+		ccRecipientsJSON := c.rl(m.CcRecipients)
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_messages
 				(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, created_at,
 				 delivered_at, read_at, parent_id, to_recipients, cc_recipients,
-				 original_to_conv)
+				 to_recipient_agents, cc_recipient_agents, original_to_conv)
 			VALUES (?, ?, ?,
 			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 			 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
-			 ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+			 ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
 			c.newGroupID, c.rc(m.FromConv), c.rc(m.ToConv), c.rc(m.FromConv), c.rc(m.ToConv),
-			m.Subject, m.Body, m.CreatedAt, m.DeliveredAt, m.ReadAt, c.rl(m.ToRecipients),
-			c.rl(m.CcRecipients), c.rc(m.OriginalToConv))
+			m.Subject, m.Body, m.CreatedAt, m.DeliveredAt, m.ReadAt, toRecipientsJSON,
+			ccRecipientsJSON,
+			recipientAgentsJSON(c.tx, recipientsFromJSON(toRecipientsJSON)),
+			recipientAgentsJSON(c.tx, recipientsFromJSON(ccRecipientsJSON)),
+			c.rc(m.OriginalToConv))
 		if err != nil {
 			return fmt.Errorf("import: message %d: %w", m.ID, err)
 		}

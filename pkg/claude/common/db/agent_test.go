@@ -706,3 +706,55 @@ func TestAgentMessageRecipientsRoundTrip(t *testing.T) {
 	assert.Nil(t, legacy.ToRecipients, "legacy row should decode to nil arrays, got to=%v", legacy.ToRecipients)
 	assert.Nil(t, legacy.CcRecipients, "legacy row should decode to nil arrays, got cc=%v", legacy.CcRecipients)
 }
+
+// TestAgentMessageAudienceAgentsPersistAndSurvivePruning pins the JOH-284 fix:
+// the stable agent_id companions of the audience arrays are persisted at insert
+// (indexed 1:1 with the conv arrays) and keep rendering the actor id after the
+// recipient's conversation generation is pruned — the scenario the old read-time
+// conv→agent resolution lost (DeleteAgentByConvID strips the agent_conversations
+// link a live lookup needed).
+func TestAgentMessageAudienceAgentsPersistAndSurvivePruning(t *testing.T) {
+	setupTestDB(t)
+	g, err := CreateAgentGroup("alpha", "")
+	require.NoError(t, err, "CreateAgentGroup")
+
+	// Sender + two recipients enrolled as actors.
+	_, err = AllocateAgent("sender-conv", "spawn")
+	require.NoError(t, err)
+	primary, err := AllocateAgent("primary-conv", "spawn")
+	require.NoError(t, err)
+	cc1, err := AllocateAgent("cc1-conv", "spawn")
+	require.NoError(t, err)
+
+	id, err := InsertAgentMessage(&AgentMessage{
+		GroupID:      g,
+		FromConv:     "sender-conv",
+		ToConv:       "primary-conv",
+		Body:         "hi all",
+		ToRecipients: []string{"primary-conv"},
+		CcRecipients: []string{"cc1-conv"},
+	})
+	require.NoError(t, err, "InsertAgentMessage")
+
+	// Persisted at insert, 1:1 with the conv arrays.
+	got, err := GetAgentMessage(id)
+	require.NoError(t, err, "GetAgentMessage")
+	require.NotNil(t, got)
+	assert.Equal(t, []string{primary}, got.ToRecipientAgents, "to companion derived at insert")
+	assert.Equal(t, []string{cc1}, got.CcRecipientAgents, "cc companion derived at insert")
+
+	// Prune cc1's generation. cc1 is only a CC recipient (not this row's
+	// to_conv/from_conv), so the message row survives — but the actor row + its
+	// conv link are gone, so a live conv→agent lookup would now return "".
+	_, err = DeleteAgentByConvID("cc1-conv")
+	require.NoError(t, err, "DeleteAgentByConvID")
+	gone, err := AgentIDForConv("cc1-conv")
+	require.NoError(t, err)
+	require.Equal(t, "", gone, "pruned conv no longer resolves to its agent (the old read-time path's blind spot)")
+
+	// The stored companion still carries cc1's stable id — the fix.
+	got, err = GetAgentMessage(id)
+	require.NoError(t, err, "GetAgentMessage after prune")
+	require.NotNil(t, got)
+	assert.Equal(t, []string{cc1}, got.CcRecipientAgents, "stored audience agent survives recipient-generation pruning")
+}
