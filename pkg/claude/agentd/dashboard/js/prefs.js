@@ -156,10 +156,15 @@ const dashPrefs = {
 };
 
 // pagehide covers tab close / navigation / bfcache; visibilitychange→
-// hidden is the more reliable signal on mobile and some desktops.
-window.addEventListener('pagehide', flushNow);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flushNow();
-});
+// hidden is the more reliable signal on mobile and some desktops. Guarded
+// on `window` so importing this module outside a browser — e.g. the
+// `node --test` jstest suite that imports sort.js (which pulls in dashPrefs)
+// — doesn't throw at module eval; the unload flush is a browser-only concern.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushNow);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushNow();
+  });
+}
 
 export { dashPrefs, initDashPrefs };

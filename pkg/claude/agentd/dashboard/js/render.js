@@ -10,7 +10,11 @@ import {
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
-import { sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS } from './sort.js';
+import {
+  sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
+  RETIRED_COLS, RETIRED_ACCESSORS, CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
+  PENDING_COLS, PENDING_ACCESSORS,
+} from './sort.js';
 import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity } from './group-activity.js';
 import { dashPrefs } from './prefs.js';
 import { getDashDefaultProfile } from './profiles.js';
@@ -148,9 +152,9 @@ function renderVirtualConversationsGroup(g) {
     ? '<div class="muted">(no non-agent conversations)</div>'
     : `
         <table>
-          <thead><tr><th></th><th>conv</th><th>title</th><th>last activity</th><th></th></tr></thead>
+          ${sortHead('conversations', CONVERSATIONS_COLS)}
           <tbody>
-            ${members.map(c => `
+            ${applySort('conversations', members, CONVERSATIONS_ACCESSORS).map(c => `
               <tr class="dnd-draggable" draggable="true" data-dnd-source-conversation="1"
                   data-dnd-conv="${esc(c.conv_id)}"
                   data-dnd-agent="${esc(c.agent_id || c.conv_id)}"
@@ -196,15 +200,15 @@ function renderVirtualRetiredGroup(g) {
     ? '<div class="muted">(no retired agents)</div>'
     : `
         <table>
-          <thead><tr><th></th><th>conv</th><th>title</th><th>retired</th><th>by</th><th>reason</th><th></th></tr></thead>
+          ${sortHead('retired', RETIRED_COLS)}
           <tbody>
-            ${members.map(a => `
+            ${applySort('retired', members, RETIRED_ACCESSORS).map(a => `
               <tr class="dnd-draggable" draggable="true" data-dnd-source-retired="1"
                   data-dnd-conv="${esc(a.conv_id)}"
                   data-dnd-agent="${esc(a.agent_id || a.conv_id)}"
                   data-dnd-label="${esc(a.title || a.conv_id)}">
                 <td>${onlineDot(a.online)}</td>
-                <td class="id">${esc(shortId(a.conv_id))}</td>
+                <td class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</td>
                 <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
                 <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
                 <td${a.retired_by ? ` title="${esc(a.retired_by)}"` : ''}>${esc(a.retired_by_display || a.retired_by || '')}</td>
@@ -300,9 +304,9 @@ function renderVirtualPendingGroup(g) {
     ? '<div class="muted">(no pending spawns)</div>'
     : `
         <table>
-          <thead><tr><th></th><th>label</th><th>name</th><th>group</th><th>dir</th><th>age</th><th></th></tr></thead>
+          ${sortHead('pending', PENDING_COLS)}
           <tbody>
-            ${members.map(p => {
+            ${applySort('pending', members, PENDING_ACCESSORS).map(p => {
               const focusBtn = p.online
                 ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
                 : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;

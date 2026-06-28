@@ -27,7 +27,13 @@ func TestDashboardHTML_SortableColumnsWired(t *testing.T) {
 	must("bindSortHeaders();", "delegation is actually installed at startup")
 
 	// Every primary table opts in by rendering a sortHead(...) header.
-	for _, table := range []string{"members", "cron", "sudo", "links"} {
+	// The virtual sub-tables (Retired / Conversations / Pending / Replaced
+	// generations) are included: they're the "non-real" groups that gained
+	// the same clickable, agent-id-leading headers as real groups.
+	for _, table := range []string{
+		"members", "cron", "sudo", "links",
+		"retired", "conversations", "pending", "replaced",
+	} {
 		must("sortHead('"+table+"'", table+" table renders a sortable header")
 	}
 

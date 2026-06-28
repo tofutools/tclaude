@@ -211,9 +211,80 @@ const REPLACED_ACCESSORS = {
   replaced: a => a.replaced_at,
 };
 
+// The virtual "Retired" sub-table (render.js). Like its siblings the
+// leading online-dot and trailing action columns stay non-sortable. The
+// id column now leads with the retired actor's stable agent_id (conv-id
+// fallback), so it sorts on that — the same key the column displays. The
+// default server order is newest-retired-first (collectRetiredSnapshot),
+// which dropping the sort (third header click) falls back to.
+const RETIRED_COLS = [
+  { label: '' },
+  { label: 'id', col: 'id' },
+  { label: 'title', col: 'title' },
+  { label: 'retired', col: 'retired' },
+  { label: 'by', col: 'by' },
+  { label: 'reason', col: 'reason' },
+  { label: '' },
+];
+const RETIRED_ACCESSORS = {
+  // id sorts on the stable agent_id the column now displays (conv-id fallback).
+  id:      a => a.agent_id || a.conv_id,
+  title:   a => a.title,
+  // retired sorts on the raw ISO timestamp (lexical = chronological):
+  // ascending = oldest first, descending = newest first.
+  retired: a => a.retired_at,
+  by:      a => a.retired_by_display || a.retired_by,
+  reason:  a => a.retire_reason,
+};
+
+// The virtual "Conversations" sub-table (render.js) — recent non-agent
+// conversations. These rows are plain conversations, NOT agents, so they
+// carry no stable agent_id: the id column stays a conv-id and sorts on it.
+// Leading online-dot and trailing promote-action columns are non-sortable.
+const CONVERSATIONS_COLS = [
+  { label: '' },
+  { label: 'conv', col: 'conv' },
+  { label: 'title', col: 'title' },
+  { label: 'last activity', col: 'last' },
+  { label: '' },
+];
+const CONVERSATIONS_ACCESSORS = {
+  conv:  c => c.conv_id,
+  title: c => c.title,
+  // last sorts on the raw ISO modified stamp (lexical = chronological).
+  last:  c => c.modified,
+};
+
+// The virtual "Pending" sub-table (render.js) — dashboard spawns still
+// behind a startup gate. A pending spawn has no conv-id yet (it is keyed
+// on its label), so the id column stays the label. Leading online-dot and
+// trailing focus-action columns are non-sortable. The default server order
+// is newest-pending-first, which dropping the sort falls back to.
+const PENDING_COLS = [
+  { label: '' },
+  { label: 'label', col: 'label' },
+  { label: 'name', col: 'name' },
+  { label: 'group', col: 'group' },
+  { label: 'dir', col: 'dir' },
+  { label: 'age', col: 'age' },
+  { label: '' },
+];
+const PENDING_ACCESSORS = {
+  label: p => p.label,
+  name:  p => p.name || p.role,
+  group: p => p.group,
+  dir:   p => p.cwd,
+  // age sorts on the raw ISO spawn time (lexical = chronological):
+  // ascending = oldest first, descending = newest first.
+  age:   p => p.created_at,
+};
+
 export {
   cycleSort, sortHead, applySort, loadSortState,
   MEMBER_COLS, MEMBER_ACCESSORS, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
   REPLACED_COLS, REPLACED_ACCESSORS,
+  RETIRED_COLS, RETIRED_ACCESSORS,
+  CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
+  PENDING_COLS, PENDING_ACCESSORS,
 };
