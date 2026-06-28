@@ -61,7 +61,11 @@ type headAliasJSON struct {
 	Head      string `json:"head_conv_id"`
 	HeadTitle string `json:"head_title,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
-	ByConv    string `json:"by_conv,omitempty"`
+	// AnchorAgent / ByAgent are the stable agent_id companions of Anchor /
+	// ByConv (the anchored actor, and who set the alias). Surfaced on `--json`.
+	AnchorAgent string `json:"anchor_agent_id,omitempty"`
+	ByAgent     string `json:"by_agent,omitempty"`
+	ByConv      string `json:"by_conv,omitempty"`
 }
 
 // --- alias set ---

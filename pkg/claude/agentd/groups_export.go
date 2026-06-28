@@ -617,7 +617,11 @@ type transferLogView struct {
 	ConvRemaps    string `json:"conv_remaps,omitempty"`
 	AgentCount    int    `json:"agent_count"`
 	MessageCount  int    `json:"message_count"`
-	ByConv        string `json:"by_conv,omitempty"`
+	// ByAgent is the stable agent_id of the caller who ran the export/import
+	// (the actor); ByConv is the conv-id snapshot kept for forensics. ByAgent
+	// is "" for a human/un-enrolled caller (then only ByConv is meaningful).
+	ByAgent string `json:"by_agent,omitempty"`
+	ByConv  string `json:"by_conv,omitempty"`
 }
 
 // handleGroupTransfers serves GET /v1/groups/transfers — the export /
@@ -654,6 +658,7 @@ func handleGroupTransfers(w http.ResponseWriter, r *http.Request) {
 			ConvRemaps:    e.ConvRemaps,
 			AgentCount:    e.AgentCount,
 			MessageCount:  e.MessageCount,
+			ByAgent:       e.ByAgent,
 			ByConv:        e.ByConv,
 		})
 	}

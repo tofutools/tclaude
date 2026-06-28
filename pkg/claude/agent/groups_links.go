@@ -22,7 +22,10 @@ type linkEntry struct {
 	To        string `json:"to"`
 	Mode      string `json:"mode"`
 	CreatedAt string `json:"created_at"`
-	ByConv    string `json:"by_conv,omitempty"`
+	// ByAgent is the stable agent_id of the creator (the actor); ByConv is the
+	// conv-id snapshot. Surfaced on `--json`; "" for a human/un-enrolled creator.
+	ByAgent string `json:"by_agent,omitempty"`
+	ByConv  string `json:"by_conv,omitempty"`
 }
 
 // --- groups link (parent) ---

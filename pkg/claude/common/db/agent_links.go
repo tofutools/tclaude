@@ -34,7 +34,12 @@ type AgentGroupLink struct {
 	ToGroupID   int64
 	Mode        string
 	CreatedAt   time.Time
-	ByConv      string
+	// ByConv is the conv-id snapshot of who created the link; ByAgent is
+	// the stable agent_id companion (dual-written via agentForConvExpr,
+	// v77-backfilled). ByAgent is the durable actor; ByConv is the
+	// point-in-time snapshot. ByAgent is "" for a human/un-enrolled creator.
+	ByConv  string
+	ByAgent string
 }
 
 // InsertAgentGroupLink records a new edge from→to under mode. Returns
@@ -129,7 +134,7 @@ func GetAgentGroupLinkByID(id int64) (*AgentGroupLink, error) {
 		return nil, err
 	}
 	row := d.QueryRow(
-		`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv
+		`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent
 		 FROM agent_group_links WHERE id = ?`, id)
 	l, err := scanAgentGroupLink(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -161,17 +166,17 @@ func ListAgentGroupLinks(groupID int64, dir LinkDirection) ([]*AgentGroupLink, e
 	switch dir {
 	case LinkOut:
 		rows, err = d.Query(
-			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv
+			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent
 			 FROM agent_group_links WHERE from_group_id = ?
 			 ORDER BY id`, groupID)
 	case LinkIn:
 		rows, err = d.Query(
-			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv
+			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent
 			 FROM agent_group_links WHERE to_group_id = ?
 			 ORDER BY id`, groupID)
 	case LinkBoth, "":
 		rows, err = d.Query(
-			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv
+			`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent
 			 FROM agent_group_links
 			 WHERE from_group_id = ? OR to_group_id = ?
 			 ORDER BY id`, groupID, groupID)
@@ -202,7 +207,7 @@ func ListAllAgentGroupLinks() ([]*AgentGroupLink, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv
+		`SELECT id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent
 		 FROM agent_group_links
 		 ORDER BY id`)
 	if err != nil {
@@ -329,14 +334,14 @@ func roleSatisfiesLinkMode(role, mode string) bool {
 }
 
 // scanAgentGroupLink reads a single row from a query that selects
-// (id, from_group_id, to_group_id, mode, created_at, by_conv) in
-// that order.
+// (id, from_group_id, to_group_id, mode, created_at, by_conv, by_agent)
+// in that order.
 func scanAgentGroupLink(scanner interface {
 	Scan(dest ...any) error
 }) (*AgentGroupLink, error) {
 	var l AgentGroupLink
 	var createdAt string
-	if err := scanner.Scan(&l.ID, &l.FromGroupID, &l.ToGroupID, &l.Mode, &createdAt, &l.ByConv); err != nil {
+	if err := scanner.Scan(&l.ID, &l.FromGroupID, &l.ToGroupID, &l.Mode, &createdAt, &l.ByConv, &l.ByAgent); err != nil {
 		return nil, err
 	}
 	l.CreatedAt = parseTimeOrZero(createdAt)

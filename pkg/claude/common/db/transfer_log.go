@@ -35,8 +35,13 @@ type TransferLogEntry struct {
 	ConvRemaps    string
 	AgentCount    int
 	MessageCount  int
-	ByConv        string
-	Note          string
+	// ByConv is the conv-id snapshot of who ran the export/import; ByAgent is
+	// the stable agent_id companion (dual-written via agentForConvExpr,
+	// v77-backfilled). ByAgent is the durable actor; ByConv is the
+	// point-in-time snapshot. ByAgent is "" for a human/un-enrolled caller.
+	ByConv  string
+	ByAgent string
+	Note    string
 }
 
 // execer is satisfied by both *sql.DB and *sql.Tx, so a transfer-log
@@ -95,7 +100,7 @@ func ListTransferLog(limit int) ([]TransferLogEntry, error) {
 	query := `
 		SELECT id, kind, at, format_version, source_group, source_home,
 		       source_os, result_group, target_dir, conv_remaps,
-		       agent_count, message_count, by_conv, note
+		       agent_count, message_count, by_conv, note, by_agent
 		FROM agent_transfer_log
 		ORDER BY id DESC`
 	args := []any{}
@@ -116,7 +121,7 @@ func ListTransferLog(limit int) ([]TransferLogEntry, error) {
 		if err := rows.Scan(&e.ID, &e.Kind, &at, &e.FormatVersion,
 			&e.SourceGroup, &e.SourceHome, &e.SourceOS, &e.ResultGroup,
 			&e.TargetDir, &e.ConvRemaps, &e.AgentCount, &e.MessageCount,
-			&e.ByConv, &e.Note); err != nil {
+			&e.ByConv, &e.Note, &e.ByAgent); err != nil {
 			return nil, err
 		}
 		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {

@@ -30,10 +30,17 @@ import (
 type headAliasJSON struct {
 	Handle    string `json:"handle"`
 	Anchor    string `json:"anchor_conv_id"`
-	Head      string `json:"head_conv_id"`           // anchor walked through ResolveLatestConv
-	HeadTitle string `json:"head_title,omitempty"`   // display title of the head, when known
+	Head      string `json:"head_conv_id"`         // anchor walked through ResolveLatestConv
+	HeadTitle string `json:"head_title,omitempty"` // display title of the head, when known
 	CreatedAt string `json:"created_at,omitempty"`
-	ByConv    string `json:"by_conv,omitempty"`
+	// AnchorAgent is the stable agent_id of the anchored actor; ByAgent is the
+	// stable agent_id of who set the alias (the actor). AnchorConvID / ByConv
+	// are the conv-id snapshots. Anchor resolution is unchanged — Head still
+	// derives from AnchorConvID via the succession chain (KEEP-2); AnchorAgent
+	// is surfaced read-only for attribution.
+	AnchorAgent string `json:"anchor_agent_id,omitempty"`
+	ByAgent     string `json:"by_agent,omitempty"`
+	ByConv      string `json:"by_conv,omitempty"`
 }
 
 func handleHeadAliases(w http.ResponseWriter, r *http.Request) {
@@ -149,10 +156,12 @@ func setHeadAlias(w http.ResponseWriter, r *http.Request) {
 
 func headAliasRowToJSON(h *db.HeadAlias) headAliasJSON {
 	out := headAliasJSON{
-		Handle:    h.Handle,
-		Anchor:    h.AnchorConvID,
-		Head:      db.ResolveLatestConv(h.AnchorConvID),
-		ByConv:    h.ByConv,
+		Handle:      h.Handle,
+		Anchor:      h.AnchorConvID,
+		Head:        db.ResolveLatestConv(h.AnchorConvID),
+		AnchorAgent: h.AnchorAgentID,
+		ByAgent:     h.ByAgent,
+		ByConv:      h.ByConv,
 	}
 	if !h.CreatedAt.IsZero() {
 		out.CreatedAt = h.CreatedAt.Format(time.RFC3339)
