@@ -547,6 +547,30 @@ func (f *Flow) MarkOffline(tmuxSession string) {
 	f.World.Tmux.MarkOffline(tmuxSession)
 }
 
+// SetSessionStatus overwrites the live status column on convID's session
+// row(s) — the field the hook callback normally owns. It puts an otherwise
+// alive agent into a specific state (e.g. session.StatusAwaitingInput /
+// StatusAwaitingPermission) that a status-gated path keys on, without
+// standing up the hook pipeline. The tmux session stays registered and
+// alive; only the persisted status changes. Fatals if no session row exists
+// for convID (call after HaveAliveSession).
+func (f *Flow) SetSessionStatus(convID, status string) {
+	f.T.Helper()
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		f.T.Fatalf("SetSessionStatus: %v", err)
+	}
+	if len(rows) == 0 {
+		f.T.Fatalf("SetSessionStatus: no session row for %s", convID)
+	}
+	for _, r := range rows {
+		r.Status = status
+		if err := db.SaveSession(r); err != nil {
+			f.T.Fatalf("SetSessionStatus: save: %v", err)
+		}
+	}
+}
+
 // -- When (actions) --
 
 // SpawnResp parses POST /v1/groups/{name}/spawn.

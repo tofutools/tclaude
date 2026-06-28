@@ -49,6 +49,34 @@ func RunAuditLogCleanupForTest(now time.Time) { runAuditLogCleanup(now) }
 // just-retired agent is treated as long-retired without sleeping.
 func RunRetiredAgentCleanupForTest(now time.Time) { runRetiredAgentCleanup(now) }
 
+// RunUnreadReminderTickForTest runs one unread-message reminder sweep
+// synchronously (the same work startUnreadReminderSweep does on its timer)
+// against a fresh, isolated cadence clock, so a flow test can drive the
+// re-nudge without starting the goroutine or waiting its interval. Passing an
+// explicit `now` lets a test fast-forward past unreadReminderInterval without
+// sleeping; the same `st` threaded across calls models successive ticks.
+func RunUnreadReminderTickForTest(now time.Time, st *unreadReminderState) {
+	runUnreadReminderTickWith(now, st)
+}
+
+// NewUnreadReminderStateForTest mints a fresh cadence clock for a test so
+// state never leaks between scenarios in the shared package test binary.
+func NewUnreadReminderStateForTest() *unreadReminderState { return newUnreadReminderState() }
+
+// SeedUnreadReminderEpochForTest sets the cadence-clock epoch (the floor a
+// never-yet-reminded conv's first reminder is clamped to), so a test can model
+// a daemon that started AFTER a message was delivered and prove the restart
+// floor defers that message's first reminder to epoch+interval.
+func SeedUnreadReminderEpochForTest(st *unreadReminderState, t time.Time) { st.setEpoch(t) }
+
+// SetUnreadReminderIntervalForTest overrides the per-message reminder cadence
+// for the duration of a test. Returns a restore closure for t.Cleanup.
+func SetUnreadReminderIntervalForTest(d time.Duration) func() {
+	prev := unreadReminderInterval
+	unreadReminderInterval = d
+	return func() { unreadReminderInterval = prev }
+}
+
 // SetBranchHistoryPREnrichmentForTest flips the conv_branch_history PR
 // enrichment gate, which production leaves off by default. A test that
 // wants refreshBranchLink to stamp resolved PRs onto the history table

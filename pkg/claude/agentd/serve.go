@@ -217,6 +217,12 @@ func runServe(p *serveParams) error {
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
 
+	// Unread-message reminder sweep. Re-nudges an online, idle, non-retired
+	// agent every ~10 minutes about a delivered message it hasn't read yet;
+	// a pane blocked on a permission/elicitation dialog is left alone until
+	// it clears. Shares the daemon-wide stop channel. See unread_reminder.go.
+	startUnreadReminderSweep(cronStop)
+
 	// Long-horizon retired-agent cleanup (JOH-269). OPT-IN: when the human
 	// enables agent.retired_cleanup, permanently deletes agents/convs that
 	// have been retired longer than the configured window (~1 year by

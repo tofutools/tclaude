@@ -315,8 +315,16 @@ type sendReq struct {
 // with "group:") ID/Delivered are zero values and Recipients lists
 // one entry per non-sender member.
 type sendResp struct {
-	ID         int64       `json:"id,omitempty"`
-	Delivered  bool        `json:"delivered,omitempty"`
+	ID        int64 `json:"id,omitempty"`
+	Delivered bool  `json:"delivered,omitempty"`
+	// Held is true when the recipient has an alive pane but is currently
+	// blocked on a human (awaiting_input / awaiting_permission). The
+	// message is in their mailbox but deliberately NOT nudged in — a nudge
+	// now could be captured by the open dialog as the human's answer. It is
+	// delivered once the recipient is back to working/idle. Mutually
+	// exclusive with Delivered. Only meaningful on a direct (non-group)
+	// send; multicast / --cc carry per-recipient Held on each entry.
+	Held       bool        `json:"held,omitempty"`
 	ViaGroup   string      `json:"via_group"`
 	Recipients []recipient `json:"recipients,omitempty"`
 	// RedirectedFrom is non-empty when the addressed conv-id has been
@@ -339,6 +347,9 @@ type recipient struct {
 	Title     string `json:"title,omitempty"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
+	// Held mirrors sendResp.Held per-recipient: the recipient is alive but
+	// blocked on a human, so their copy is in the mailbox, not yet nudged.
+	Held bool `json:"held,omitempty"`
 	// RedirectedFrom mirrors sendResp.RedirectedFrom on a per-recipient
 	// basis: when the entry's ConvID is the live successor of a
 	// superseded id the sender originally addressed, the original id
@@ -520,10 +531,11 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(id, finalConv)
+	outcome := nudgeIfAlive(id, finalConv)
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             id,
-		Delivered:      delivered,
+		Delivered:      outcome.delivered(),
+		Held:           outcome.held(),
 		ViaGroup:       viaName,
 		RedirectedFrom: originalTo,
 	})
@@ -643,13 +655,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	primaryDelivered := nudgeIfAlive(primaryID, primaryConv)
+	primaryOutcome := nudgeIfAlive(primaryID, primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
 		ConvID:         primaryConv,
 		AgentID:        peerAgentID(primaryConv),
 		Title:          primaryTitle,
 		MessageID:      primaryID,
-		Delivered:      primaryDelivered,
+		Delivered:      primaryOutcome.delivered(),
+		Held:           primaryOutcome.held(),
 		RedirectedFrom: primaryOriginalTo,
 	})
 
@@ -678,13 +691,14 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			})
 			continue
 		}
-		delivered := nudgeIfAlive(id, r.ConvID)
+		outcome := nudgeIfAlive(id, r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         r.ConvID,
 			AgentID:        peerAgentID(r.ConvID),
 			Title:          r.Title,
 			MessageID:      id,
-			Delivered:      delivered,
+			Delivered:      outcome.delivered(),
+			Held:           outcome.held(),
 			RedirectedFrom: r.OriginalToConv,
 		})
 	}
@@ -948,13 +962,14 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			})
 			continue
 		}
-		delivered := nudgeIfAlive(id, finalConv)
+		outcome := nudgeIfAlive(id, finalConv)
 		out = append(out, recipient{
 			ConvID:         finalConv,
 			AgentID:        peerAgentID(finalConv),
 			Title:          agent.TitleFor(finalConv),
 			MessageID:      id,
-			Delivered:      delivered,
+			Delivered:      outcome.delivered(),
+			Held:           outcome.held(),
 			RedirectedFrom: originalTo,
 		})
 	}
@@ -982,7 +997,8 @@ func messageNudgeText(msgID int64) string {
 }
 
 // nudgeIfAlive looks up the target's tmux session and, if alive, sends
-// the bracketed system-style nudge. Returns true on successful delivery.
+// the bracketed system-style nudge. The returned deliveryOutcome
+// distinguishes delivered / queued-offline / held — see deliveryOutcome.
 //
 // This is the half that broke for sandboxed senders in v1: the daemon
 // owns the tmux side here, so the sender's sandbox is irrelevant.
@@ -990,10 +1006,10 @@ func messageNudgeText(msgID int64) string {
 // The DB can hold multiple session rows for the same conv_id (auto-register
 // creates new rows alongside stale ones from previous launches). We pick
 // the first one whose tmux session is actually alive, most-recent first.
-func nudgeIfAlive(msgID int64, toID string) bool {
+func nudgeIfAlive(msgID int64, toID string) deliveryOutcome {
 	candidates, err := db.FindSessionsByConvID(toID)
 	if err != nil {
-		return false
+		return outcomeQueued
 	}
 	var sess *db.SessionRow
 	for _, c := range candidates {
@@ -1006,7 +1022,17 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 		}
 	}
 	if sess == nil {
-		return false
+		return outcomeQueued
+	}
+	// Hold delivery if the pane is blocked on a human (awaiting_input /
+	// awaiting_permission). Injecting a nudge now would be captured by the
+	// open dialog as the human's answer, and the real notification lost.
+	// Leave delivered_at empty so a later flush — once the agent is back to
+	// working/idle — delivers it. See isAwaitingHumanInput.
+	if isAwaitingHumanInput(sess.Status) {
+		slog.Info("nudge held: recipient awaiting human input",
+			"msg_id", msgID, "to", toID, "status", sess.Status)
+		return outcomeHeld
 	}
 	// Announce the message, naming the sender by stable identity (JOH-27
 	// PR3b). Subject, group and reply addressing still live in the message
@@ -1018,14 +1044,16 @@ func nudgeIfAlive(msgID int64, toID string) bool {
 	nudge := messageNudgeText(msgID)
 	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
-		return false
+		// Treat an inject failure like the offline case: delivered_at stays
+		// empty so a later flush retries.
+		return outcomeQueued
 	}
 	// delivered_at is internal bookkeeping; the nudge itself already
 	// landed, so log on failure rather than failing the whole call.
 	if err := db.MarkAgentMessageDelivered(msgID); err != nil {
 		slog.Warn("failed to record delivered_at", "error", err, "msg_id", msgID)
 	}
-	return true
+	return outcomeDelivered
 }
 
 // injectSlashCommand finds an alive tmux session for convID and types the
@@ -1981,10 +2009,11 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	delivered := nudgeIfAlive(newID, replyTarget)
+	outcome := nudgeIfAlive(newID, replyTarget)
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             newID,
-		Delivered:      delivered,
+		Delivered:      outcome.delivered(),
+		Held:           outcome.held(),
 		ViaGroup:       replyViaName,
 		RedirectedFrom: replyOriginalTo,
 	})
@@ -2076,10 +2105,10 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 	// Decorated with conv titles when known so the receiver sees friendly
 	// names alongside the conv-ids.
 	if len(m.ToRecipients) > 0 {
-		resp["to_recipients"] = decorateRecipients(m.ToRecipients)
+		resp["to_recipients"] = decorateRecipients(m.ToRecipients, m.ToRecipientAgents)
 	}
 	if len(m.CcRecipients) > 0 {
-		resp["cc_recipients"] = decorateRecipients(m.CcRecipients)
+		resp["cc_recipients"] = decorateRecipients(m.CcRecipients, m.CcRecipientAgents)
 	}
 	// In-Reply-To: only set on threaded messages so the renderer can
 	// hide the header for top-of-thread messages.
@@ -2243,21 +2272,35 @@ type recipientLine struct {
 	Title   string `json:"title,omitempty"`
 }
 
-// decorateRecipients turns a recipients array (conv-ids only, as stored
-// in agent_messages) into a labelled list, resolving each conv to its
-// title and stable agent_id. Best-effort lookup: a conv without an index
-// row / agent enrollment just gets ConvID set, so the renderer can fall
-// back to the short prefix.
-func decorateRecipients(ids []string) []recipientLine {
-	out := make([]recipientLine, 0, len(ids))
-	for _, id := range ids {
+// decorateRecipients turns the stored audience arrays into a labelled list.
+// convs is the conv-id array (to_recipients / cc_recipients); agents is the
+// 1:1 stable-agent_id companion (to_recipient_agents / cc_recipient_agents,
+// JOH-284). Each line prefers the STORED agent_id — which survives the
+// recipient's conv generation being pruned — and falls back to a live conv→agent
+// lookup only where the stored id is empty (a legacy pre-v79 row the backfill
+// missed, or a genuine non-actor recipient). Title is still resolved from the
+// conv (best-effort display); a conv without an index row just leaves it blank.
+func decorateRecipients(convs, agents []string) []recipientLine {
+	out := make([]recipientLine, 0, len(convs))
+	for i, id := range convs {
 		out = append(out, recipientLine{
 			ConvID:  id,
-			AgentID: peerAgentID(id),
+			AgentID: storedAgentOrResolve(agents, i, id),
 			Title:   agent.TitleFor(id),
 		})
 	}
 	return out
+}
+
+// storedAgentOrResolve returns the persisted agent_id at index i of the
+// companion array when present and non-empty, otherwise resolves convID→agent
+// live. This is the read-path fallback that keeps legacy rows (and non-actor
+// recipients) working while preferring the stored, pruning-immune id.
+func storedAgentOrResolve(agents []string, i int, convID string) string {
+	if i < len(agents) && agents[i] != "" {
+		return agents[i]
+	}
+	return peerAgentID(convID)
 }
 
 func groupByID(id int64) (*db.AgentGroup, error) {

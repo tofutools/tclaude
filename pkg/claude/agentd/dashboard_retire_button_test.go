@@ -90,10 +90,13 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 		t.Error("retire-agent case: must delegate to retireAgentInteractive(conv, label)")
 	}
 
-	// 4. The shared retireAgentInteractive gates on retireConfirm — the
-	//    SAME modal the drag-onto-Retired gesture uses — and only POSTs
-	//    after a non-null choice, so neither an accidental click nor a
-	//    stray palette pick can retire without confirmation.
+	// 4. The shared retireAgentInteractive gates the retire on retireConfirm
+	//    — the SAME modal the drag-onto-Retired gesture uses — by handing it
+	//    a `perform` callback that runs the /retire POST. retireConfirm only
+	//    invokes perform after the human confirms (and keeps the modal open
+	//    with a spinner while it runs, see TestDashboardHTML_SingleRetireSpinner),
+	//    so neither an accidental click nor a stray palette pick can retire
+	//    without confirmation.
 	start := strings.Index(disp, "async function retireAgentInteractive(")
 	if start < 0 {
 		t.Fatal("refresh.js: `async function retireAgentInteractive(` not found")
@@ -108,11 +111,53 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	if confirm < 0 {
 		t.Fatal("retireAgentInteractive: must gate on `await retireConfirm({`")
 	}
-	if !strings.Contains(fnBody, "if (!choice) return;") {
-		t.Error("retireAgentInteractive: must bail on a null choice (`if (!choice) return;`)")
+	if !strings.Contains(fnBody, "perform:") {
+		t.Error("retireAgentInteractive: must delegate the retire work to a `perform:` callback so retireConfirm runs it only after confirmation")
 	}
 	fetch := strings.Index(fnBody, "/retire")
-	if fetch >= 0 && confirm > fetch {
+	if fetch < 0 {
+		t.Fatal("retireAgentInteractive: missing the /retire POST")
+	}
+	// The POST must live inside the retireConfirm({…}) call (the perform
+	// callback), never before it — i.e. retireConfirm precedes the fetch.
+	if confirm > fetch {
 		t.Errorf("retireAgentInteractive: retireConfirm (at %d) must precede the /retire POST (at %d)", confirm, fetch)
+	}
+}
+
+// TestDashboardHTML_SingleRetireSpinner pins the in-flight feedback for the
+// SINGLE-agent retire (the bulk-retire preview's spinner is guarded
+// separately in dashboard_retire_preview_test.go). retireConfirm runs its
+// caller's `perform` with the modal still open and the OK button swapped to
+// a .btn-spinner ("Retiring…"), so a retire that takes a beat doesn't look
+// ignored. This guards that wiring so a refactor can't silently drop it.
+func TestDashboardHTML_SingleRetireSpinner(t *testing.T) {
+	start := strings.Index(dashboardAssets, "function retireConfirm(")
+	if start < 0 {
+		t.Fatal("refresh.js: `function retireConfirm(` not found")
+	}
+	fnBody, _, found := strings.Cut(dashboardAssets[start:], "\n}\n")
+	if !found {
+		t.Fatal("refresh.js: could not bound retireConfirm")
+	}
+	// The function must take the perform callback the callers feed it…
+	if !strings.Contains(fnBody, "perform}") {
+		t.Error("retireConfirm: must accept a `perform` callback (`{label, conv, perform}`)")
+	}
+	// …and on confirm show the in-button spinner + aria-busy while it runs,
+	// then clear the busy state so the reusable modal opens clean next time.
+	for _, needle := range []string{
+		`okBtn.setAttribute('aria-busy', 'true')`, // busy flag on confirm
+		`class="btn-spinner"`,                     // in-button spinner
+		`Retiring…`,                               // busy label
+		`okBtn.removeAttribute('aria-busy')`,      // cleared when idle again
+	} {
+		if !strings.Contains(fnBody, needle) {
+			t.Errorf("retireConfirm: missing %q — confirm must give in-flight feedback", needle)
+		}
+	}
+	// The spinner needs its CSS rule (shared with the bulk-retire button).
+	if !strings.Contains(dashboardAssets, ".btn-spinner {") {
+		t.Error("dashboard assets: missing the .btn-spinner CSS rule")
 	}
 }

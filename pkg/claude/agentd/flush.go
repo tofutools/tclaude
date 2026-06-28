@@ -52,6 +52,21 @@ func maybeFlushUndelivered(convID string) {
 	})
 }
 
+// FlushUndeliveredForTest runs the production flush for convID
+// synchronously — the same flush + realFlushSender that maybeFlushUndelivered
+// drives — bypassing the per-conv debounce and the background goroutine so a
+// flow test can assert delivery (and the awaiting-human-input hold) without
+// racing a goroutine. Returns the number of messages claimed this call.
+//
+// It exists only because BuildHandlerForTest serves buildMux() WITHOUT the
+// withIdentity middleware that triggers flush in production, so the
+// resume-delivery path has no request-driven entry point under test. Not a
+// subprocess mock and not reachable from production — a sanctioned …ForTest
+// entry into the real flush path. See CLAUDE.md "In-process session seams".
+func FlushUndeliveredForTest(convID string) int {
+	return flush(convID, realFlushSender)
+}
+
 // flush walks every undelivered message addressed to convID, claims
 // each one atomically (so concurrent flushes don't double-nudge),
 // and asks `send` to deliver. Returns the number of messages
@@ -68,6 +83,19 @@ func flush(convID string, send flushSender) int {
 		return 0
 	}
 	if len(msgs) == 0 {
+		return 0
+	}
+	// Hold the whole queue if the recipient's pane is blocked on a human
+	// (awaiting_input / awaiting_permission). Crucially this gate runs
+	// BEFORE ClaimAgentMessageDelivery below: a claim stamps delivered_at,
+	// so claiming-then-failing-to-send would mark a held message delivered
+	// and it would never be retried. By returning early we leave every row
+	// undelivered for the next flush — the recipient's next request, or the
+	// reaper backstop — once they are back to working/idle. See
+	// heldForHumanInput.
+	if heldForHumanInput(convID) {
+		slog.Debug("flush: holding queued mail; recipient awaiting human input",
+			"conv", convID, "queued", len(msgs))
 		return 0
 	}
 	claimed := 0
