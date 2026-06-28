@@ -20,11 +20,14 @@ import (
 // agent (the manager pattern; requires `agent.remote-control` or owning a
 // group containing the target).
 //
-// `/remote-control` is a TOGGLE with no programmatic readback, so tclaude
-// tracks its own best-known state (JOH-256) and `status` reports that without
-// touching the pane. `on`/`off` only act when the best-known state differs;
-// `toggle` always flips it. The best-known state can drift if a human toggles
-// remote control inside the pane directly.
+// `/remote-control` is a TOGGLE with no API-level readback, so tclaude tracks
+// its own best-known state (JOH-256) — but `status` (and the direction pick for
+// on/off/toggle) now READS the live pane: Claude Code shows a persistent `/rc`
+// footer pill while Remote Access is armed, so the daemon captures the pane and
+// scans for it, healing the tracked flag if it had drifted (e.g. a human
+// toggled remote control inside the pane directly). When the pane can't be read
+// it falls back to the tracked flag. `on`/`off` only act when the state
+// differs; `toggle` always flips it.
 func remoteControlCmd() *cobra.Command {
 	return boa.CmdT[remoteControlParams]{
 		Use:   "remote-control",
@@ -37,10 +40,13 @@ func remoteControlCmd() *cobra.Command {
 			"Intent (positional, default `toggle`):\n" +
 			"  on      enable remote access (no-op if already on)\n" +
 			"  off     disable remote access (sends the confirm Enter CC prompts for)\n" +
-			"  toggle  flip the current best-known state\n" +
-			"  status  report the best-known state without touching the pane\n\n" +
-			"Note: Claude Code exposes no readback of remote-control state, so tclaude tracks its " +
-			"own best-known value; it can drift if you toggle remote control inside the pane directly. " +
+			"  toggle  flip the current state\n" +
+			"  status  read the live pane and report the ACTUAL state (on/failed/off)\n\n" +
+			"Note: `status` reads Claude Code's `/rc` footer pill straight off the live pane, so it " +
+			"answers \"can I connect right now\" — and it self-heals tclaude's tracked flag if you'd " +
+			"toggled remote control inside the pane directly. on/off/toggle likewise pick their " +
+			"direction from the observed pane state when readable. If the pane can't be read (no live " +
+			"session, or too narrow to draw the pill) status falls back to the tracked best-known value. " +
 			"Remote access also requires being logged into claude.ai (OAuth, not an API key).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *remoteControlParams, _ *cobra.Command) error {
@@ -98,6 +104,9 @@ func runRemoteControl(p *remoteControlParams, stdout, stderr io.Writer) int {
 		RemoteControl bool   `json:"remote_control"`
 		Action        string `json:"action"`
 		Note          string `json:"note,omitempty"`
+		Observed      string `json:"observed,omitempty"`
+		Source        string `json:"source,omitempty"`
+		SessionURL    string `json:"session_url,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -112,7 +121,22 @@ func runRemoteControl(p *remoteControlParams, stdout, stderr io.Writer) int {
 		suffix = fmt.Sprintf(" (called by %s)", short(resp.CallerConv))
 	}
 	if resp.Action == "status" {
-		fmt.Fprintf(stdout, "Remote control is %s for %s%s\n", state, short(resp.ConvID), suffix)
+		// On a status call the daemon reads the live pane footer when it can
+		// (resp.Observed), which answers "can I connect" directly; it falls
+		// back to the tracked best-known flag otherwise.
+		switch resp.Observed {
+		case "on":
+			fmt.Fprintf(stdout, "Remote control is on for %s%s — observed live, reachable\n", short(resp.ConvID), suffix)
+		case "failed":
+			fmt.Fprintf(stdout, "Remote control is ARMED but FAILED for %s%s — observed live, NOT currently reachable\n", short(resp.ConvID), suffix)
+		case "off":
+			fmt.Fprintf(stdout, "Remote control is off for %s%s — observed live\n", short(resp.ConvID), suffix)
+		default: // "unknown" or "" (no live pane to read)
+			fmt.Fprintf(stdout, "Remote control is %s for %s%s — best-known (pane not read)\n", state, short(resp.ConvID), suffix)
+		}
+		if resp.SessionURL != "" {
+			fmt.Fprintf(stdout, "Connect at: %s\n", resp.SessionURL)
+		}
 	} else {
 		fmt.Fprintf(stdout, "Remote control %s for %s (now %s)%s\n", resp.Action, short(resp.ConvID), state, suffix)
 	}
