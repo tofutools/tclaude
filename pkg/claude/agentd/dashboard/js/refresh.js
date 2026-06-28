@@ -1987,7 +1987,10 @@ function retireConfirm({label, conv, perform}) {
     fetch(`/api/agents/${encodeURIComponent(conv)}/worktree`, { credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : null)
       .then(wt => {
-        if (!active) return;
+        // Skip once busy too: after the human clicks Retire the choice is
+        // locked and the OK button shows the spinner, so a late probe must
+        // not paint the worktree row behind it.
+        if (!active || busy) return;
         if (!wt || wt.kind === 'none' || !wt.path) return;
         wtInfo = wt;
         wtRow.style.display = '';
