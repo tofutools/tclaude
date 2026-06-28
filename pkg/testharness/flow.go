@@ -435,7 +435,7 @@ func (f *Flow) HavePendingName(convID, name string) {
 }
 
 // HaveConvWithTitle drops a conv_index row carrying customTitle so
-// downstream lookups (uniqueReincarnateTitle, FreshConvRow) resolve.
+// downstream lookups (the archive-name scan, FreshConvRow) resolve.
 func (f *Flow) HaveConvWithTitle(convID, customTitle string) {
 	f.T.Helper()
 	if err := db.UpsertConvIndex(&db.ConvIndexRow{

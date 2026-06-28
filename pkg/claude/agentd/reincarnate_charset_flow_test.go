@@ -12,8 +12,8 @@ import (
 // Scenario (JOH-177): a worker whose predecessor title carries a
 // control character (a newline) is reincarnated. Both reincarnate
 // rename injections — the old pane's `<prev>-x` archive rename and the
-// new pane's `<prev>-r-N` rename — flow through deliverRename, which
-// types the title into a live tmux pane via send-keys. A newline in
+// new pane's `<base>` base-name rename — flow through deliverRename,
+// which types the title into a live tmux pane via send-keys. A newline in
 // that title would land as a premature Enter, splitting the keystroke
 // stream: `/rename evil` submits and the bytes after the newline run as
 // their own command. This is the keystroke-injection sink the cold

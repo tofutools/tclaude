@@ -69,8 +69,9 @@ func TestCodexAgent_RenameViaNativeStore(t *testing.T) {
 
 // Reincarnating a Codex agent must (a) bring the successor back under the
 // SAME harness — codex, not Claude Code — and (b) carry the predecessor's
-// title, read from the native store (threads.title) and written onto the
-// retired pane as `<prev>-x` through SetTitle. Pins both halves of
+// title, read from the native store (threads.title): the retired pane is
+// archive-renamed to `<prev>-x` and the living successor keeps the plain
+// base name (JOH-319), both written through SetTitle. Pins both halves of
 // "identity + title preservation".
 func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
 	f := newFlow(t)
@@ -102,13 +103,14 @@ func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
 
 	// Title carry, successor half (end-to-end): the freshly-spawned Codex
 	// pane models Codex's session-start threads-row creation, so its async
-	// rename to `<prev>-r-1` lands on a real row. Poll the successor sim's
-	// threads.title until the post-spawn rename goroutine has delivered it.
+	// rename to the plain base name lands on a real row. Poll the successor
+	// sim's threads.title until the post-spawn rename goroutine has
+	// delivered it.
 	newCx := f.World.Codexes.GetByConvID(rein.NewConv)
 	require.NotNil(t, newCx, "successor CodexSim should be registered")
 	require.Eventually(t, func() bool {
 		title, err := newCx.ThreadTitle()
-		return err == nil && title == "original-codex-r-1"
+		return err == nil && title == "original-codex"
 	}, 3*time.Second, 20*time.Millisecond,
-		"successor's `<prev>-r-1` rename should persist to its native threads.title")
+		"successor keeps the plain base name (JOH-319) on its native threads.title")
 }

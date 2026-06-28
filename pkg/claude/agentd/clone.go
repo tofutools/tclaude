@@ -247,9 +247,10 @@ var cloneSuffixRegex = regexp.MustCompile(`^(.*?)-(?:c|clone)-\d+$`)
 // title). base is origTitle with any existing `-c-<digits>` /
 // `-clone-<digits>` stripped, so a clone-of-a-clone bumps N rather
 // than nesting suffixes (`worker-c-3` clones to `worker-c-4`, not
-// `worker-c-3-c-1`). The short `-c-` is paired with `-r-` for
-// reincarnations — distinct enough at a glance, short enough to tile
-// in dashboard rows. Sibling of reincarnate's uniqueReincarnateTitle.
+// `worker-c-3-c-1`). The short `-c-` keeps clone titles compact enough
+// to tile in dashboard rows. (Reincarnation no longer has a parallel
+// live-side suffix — post-JOH-319 the living generation keeps its plain
+// base name; see agentd.retiredGenerationTitle.)
 //
 // N is monotonically larger than the previous clone's N: we start
 // the search at `prevN + 1`, then advance to the smallest free slot
@@ -294,8 +295,7 @@ func uniqueCloneTitle(origTitle string) string {
 
 // scanCloneSuffixes walks every conv_index row and returns the set of
 // integers N where some custom_title equals `<prefix><N>`. Used by
-// uniqueCloneTitle to pick the smallest free N. Sibling of
-// scanReincarnateSuffixes.
+// uniqueCloneTitle to pick the smallest free N.
 func scanCloneSuffixes(prefix string) map[int]bool {
 	used := map[int]bool{}
 	rows, err := db.ListAllConvIndex()

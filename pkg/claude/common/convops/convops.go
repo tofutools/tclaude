@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,24 +98,33 @@ func (e *SessionEntry) DisplayTitle() string {
 	return e.FirstPrompt
 }
 
+// archivedTitleSuffixRegex matches the `-x` archive marker, optionally
+// followed by a `-<N>` disambiguation counter, at end of title. Reincar-
+// nate writes onto the old conv's .jsonl right before /exit. The bare
+// `-x` is the historical form; the `-x-<N>` (N >= 2) variant appears when
+// an earlier retired generation already holds the bare form — which since
+// JOH-319 happens on every reincarnation, because the living successor now
+// keeps its plain base name instead of carrying an incrementing `-r-<N>`
+// (see agentd.retiredGenerationTitle).
+var archivedTitleSuffixRegex = regexp.MustCompile(`-x(?:-\d+)?$`)
+
 // IsArchivedTitle returns true when a CustomTitle ends with the `-x`
-// archived-marker suffix that reincarnate writes onto the old conv's
-// .jsonl right before /exit. Used by listing surfaces (conv ls,
+// archive marker (optionally with a `-<N>` counter — see
+// archivedTitleSuffixRegex). Used by listing surfaces (conv ls,
 // dashboard) to default-hide dead convs without needing a separate
 // "is_active" column. Only checks CustomTitle — Summary / FirstPrompt
 // happening to end with `-x` is coincidental, not an archive mark.
 //
 // Mnemonic: `-x` = archived (mark of expiration / supersession).
-// Pairs with `-r-N` (reincarnated successor) and `-c-N` (clone) on
-// the live side. Unifies with `groups archive` — both are
-// soft-delete states.
+// Pairs with `-c-N` (clone) on the live side. Unifies with `groups
+// archive` — both are soft-delete states.
 //
 // Note: this is the title-based fallback. The canonical check is the
 // (future) `conv_index.archived_at` column; this helper covers
 // legacy convs that pre-date the column. New code should prefer the
 // column-based check when one is available.
 func IsArchivedTitle(customTitle string) bool {
-	return strings.HasSuffix(customTitle, "-x")
+	return archivedTitleSuffixRegex.MatchString(customTitle)
 }
 
 // IsArchived is the canonical archived check on a SessionEntry. Reads

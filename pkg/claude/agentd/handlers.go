@@ -1871,12 +1871,13 @@ func renameTitleCharsetOK(t string) bool {
 
 // isValidRenameSink is the charset-only rename gate used on the
 // send-keys injection path for titles that may legitimately exceed
-// isValidRenameTitle's 64-char cap. A reincarnate/clone carry title is
-// `<predecessor-title>-r-<N>` / `<predecessor-title>-x` — a predecessor
-// already at the 64-char display max would push the suffixed title past
-// the cap, so reusing isValidRenameTitle here would reject a perfectly
-// legitimate title (and, pre-JOH-177, the reincarnate path injected with
-// NO gate at all rather than over-reject). The injection-relevant
+// isValidRenameTitle's 64-char cap. A clone carry title is
+// `<original-title>-c-<N>`, and a reincarnation archive-renames its
+// predecessor to `<predecessor-title>-x` (or `-x-<N>`) — a title already
+// at the 64-char display max would push the suffixed form past the cap,
+// so reusing isValidRenameTitle here would reject a perfectly legitimate
+// title (and, pre-JOH-177, the reincarnate path injected with NO gate at
+// all rather than over-reject). The injection-relevant
 // property is the CHARSET — reject any rune `tmux send-keys` would treat
 // as an early submit / control sequence — not the length, so this keeps
 // the charset rule and drops the cap. An empty title is rejected

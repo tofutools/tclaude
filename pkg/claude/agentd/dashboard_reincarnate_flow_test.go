@@ -289,25 +289,32 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
 	var resp struct {
-		OldConv     string `json:"old_conv"`
-		NewConv     string `json:"new_conv"`
-		NewTitle    string `json:"new_title"`
-		TmuxSession string `json:"tmux_session"`
+		OldConv      string `json:"old_conv"`
+		NewConv      string `json:"new_conv"`
+		NewTitle     string `json:"new_title"`
+		RetiredTitle string `json:"retired_title"`
+		TmuxSession  string `json:"tmux_session"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "body=%s", rec.Body.String())
 	assert.Equal(t, oldConv, resp.OldConv)
 	require.NotEmpty(t, resp.NewConv, "force mode spawns a successor conv")
 	assert.NotEqual(t, oldConv, resp.NewConv)
-	assert.Equal(t, "worker-r-4", resp.NewTitle, "the -r-<N> suffix increments from the parent")
+	// JOH-319: the living successor keeps the plain base name (the legacy
+	// `-r-3` is shed); the predecessor takes the `-x` archive marker.
+	assert.Equal(t, "worker", resp.NewTitle, "the living successor keeps the base name")
+	assert.Equal(t, "worker-r-3-x", resp.RetiredTitle, "the predecessor is archive-renamed")
 
-	// The successor pane is renamed; the old pane is soft-exited.
-	f.AssertSentContains(resp.TmuxSession+":0.0", "/rename worker-r-4", 5*time.Second)
+	// The successor pane is renamed to the base name; the old pane is
+	// archive-renamed and soft-exited.
+	f.AssertSentContains(resp.TmuxSession+":0.0", "/rename worker", 5*time.Second)
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 2*time.Second),
+		"old pane archive-renamed; sent=%+v", f.World.Tmux.Sent())
 	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 2*time.Second),
 		"old pane should receive /exit in force mode; sent=%+v", f.World.Tmux.Sent())
 
 	// Group membership migrated old → new — the same surface invariant
 	// the /v1 reincarnate flow test pins.
-	f.AssertGroupMember(g.Name, resp.NewConv, "worker-r-4", 5*time.Second)
+	f.AssertGroupMember(g.Name, resp.NewConv, "worker", 5*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 
 	// The follow-up text must actually REACH the successor — the daemon
