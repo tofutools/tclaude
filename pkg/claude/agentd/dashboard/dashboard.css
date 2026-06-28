@@ -89,16 +89,6 @@ nav { background: #161b22; border-bottom: 1px solid #2a3340; }
 body.hscroll-overflow.hscroll-follow .bar-inner { position: sticky; left: 0; }
 body.hscroll-overflow.hscroll-follow header .bar-inner { z-index: 2; }
 body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
-/* The ⇆ scroll-mode toggle only matters when the page can actually scroll
-   sideways, so it stays hidden until JS flags that (body.hscroll-overflow). */
-#hscroll-toggle { display: none; }
-body.hscroll-overflow #hscroll-toggle {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: none; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; padding: 2px 8px; font: inherit; font-size: 12px;
-  cursor: pointer; white-space: nowrap;
-}
-body.hscroll-overflow #hscroll-toggle:hover { color: #d4d4d4; border-color: #58a6ff; }
 nav button {
   background: none; border: none; color: #7d8590; padding: 10px 16px;
   cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;

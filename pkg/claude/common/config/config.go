@@ -19,12 +19,12 @@ import (
 
 // Config represents the tclaude configuration file structure.
 type Config struct {
-	Notifications      *NotificationConfig    `json:"notifications,omitempty"`
-	PreCompactGuard    *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
-	LogLevel           string                 `json:"log_level,omitempty"`
-	RecordHooks        bool                   `json:"record_hooks,omitempty"`
-	RateLimit          *RateLimitConfig       `json:"ratelimit,omitempty"`
-	Agent              *AgentConfig           `json:"agent,omitempty"`
+	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
+	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
+	LogLevel        string                 `json:"log_level,omitempty"`
+	RecordHooks     bool                   `json:"record_hooks,omitempty"`
+	RateLimit       *RateLimitConfig       `json:"ratelimit,omitempty"`
+	Agent           *AgentConfig           `json:"agent,omitempty"`
 
 	// Terminal names the terminal emulator the agentd dashboard's
 	// spawn auto-focus / shell-attach feature should open — "ghostty",
@@ -115,6 +115,22 @@ type DashboardConfig struct {
 	// never hidden. Default false (auto-hide when empty). See
 	// (*Config).ShowPluginsTabAlways.
 	AlwaysShowPluginsTab bool `json:"always_show_plugins_tab,omitempty"`
+	// HScrollFollow selects the dashboard's horizontal-scroll chrome-bar
+	// behaviour for when the page is wide enough to need a sideways scrollbar
+	// (JOH-313). The full-bleed bars (header / nav / slop marquee) always
+	// widen to the content so they never look ragged; this knob is only about
+	// their CONTENT:
+	//   true  (follow, the default) — the bars' content is pinned to the
+	//         viewport and sticky-left, so the header controls + tab strip
+	//         stay put and usable while the page is scrolled sideways.
+	//   false (static)              — the content scrolls off with the page;
+	//         the bar background still fills the width, but the controls
+	//         aren't reachable while scrolled right.
+	// A *bool so absent (the default) is distinguishable from an explicit
+	// false: nil → follow. The dashboard reads the resolved value off the
+	// snapshot each poll and toggles body.hscroll-follow; it replaces the old
+	// per-browser header toggle button. See (*Config).HScrollFollow.
+	HScrollFollow *bool `json:"hscroll_follow,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -626,6 +642,18 @@ func (c *Config) ActivityBotsSlop() string {
 // the installed set is empty). Nil-safe on the receiver.
 func (c *Config) ShowPluginsTabAlways() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.AlwaysShowPluginsTab
+}
+
+// HScrollFollow reports whether the dashboard's full-bleed chrome bars
+// should keep their content pinned to the viewport (follow mode) while the
+// page is scrolled sideways — config dashboard.hscroll_follow. Default true
+// (absent block / nil pointer); only an explicit "hscroll_follow": false
+// selects static mode. Nil-safe on the receiver so callers need no guard.
+func (c *Config) HScrollFollow() bool {
+	if c == nil || c.Dashboard == nil || c.Dashboard.HScrollFollow == nil {
+		return true
+	}
+	return *c.Dashboard.HScrollFollow
 }
 
 // FocusConfig holds window-focus behavior knobs.

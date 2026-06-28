@@ -30,6 +30,7 @@ import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode } from './slop.js';
+import { setHScrollFollow } from './hscroll.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -318,6 +319,9 @@ export async function refresh() {
     renderNotifyGlobal(!!data.notifications_enabled);
     applyCostTabVisibility(data);
     setVegasRegularMode(!!data.vegas_in_regular_mode);
+    // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
+    // default follow) — replaces the old per-browser header toggle button.
+    setHScrollFollow(data.hscroll_follow !== false);
     // Hide the slop-mode side pull-lever when config slop.hide_pull_lever is
     // set. body.hide-slop-lever drops the lever via CSS while leaving the
     // rest of slop mode intact; a plain class toggle (like hide-costs).
