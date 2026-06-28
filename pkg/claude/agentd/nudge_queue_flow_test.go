@@ -86,6 +86,16 @@ func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
 	require.True(t, r.Queued)
 	nudge := fmt.Sprintf("new agent message #%d", r.ID)
 
+	// Quiesce the send's async delivery worker WHILE gen1 is still offline, so
+	// its drain runs as a no-op (no live pane) and the message stays
+	// undelivered. Without this barrier the worker's single drain pass can be
+	// scheduled after gen2 comes online below, re-resolve the agent's head to
+	// gen2, and deliver the nudge itself — which leaves the explicit
+	// FlushUndeliveredForTest with nothing to claim (count 0, not 1). That race
+	// made this test ~9% flaky on CI (JOH-326). The sibling nudge-queue tests
+	// barrier the same way after their sends.
+	agentd.WaitForBackgroundForTest()
+
 	// The recipient reincarnates: its actor's live conv rotates gen1 → gen2.
 	_, err := db.RotateAgentConv(gen1, gen2, "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
