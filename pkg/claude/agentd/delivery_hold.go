@@ -25,7 +25,7 @@ const (
 	// be stolen by the dialog (and the real notification skipped). We
 	// deliberately HOLD: the row stays undelivered (delivered_at empty) and
 	// a later flush — once the recipient is back to working/idle — delivers
-	// it. See isAwaitingHumanInput / heldForHumanInput.
+	// it. See isAwaitingHumanInput / deliverablePane.
 	outcomeHeld
 )
 

@@ -132,6 +132,16 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 	}
 	claimed := 0
 	for _, m := range msgs {
+		// Re-check the gate each iteration: a settle gap (~1s/message) is long
+		// enough for the recipient to enter a human-input dialog or for its
+		// pane to die mid-batch. Stopping BEFORE the claim leaves the rest of
+		// the backlog undelivered for the next drain, rather than claiming a
+		// message we can no longer safely deliver.
+		if !canDeliver() {
+			slog.Debug("flush: pausing batch; recipient no longer deliverable",
+				"target", label, "remaining", len(msgs)-claimed)
+			break
+		}
 		ok, err := db.ClaimAgentMessageDelivery(m.ID)
 		if err != nil {
 			slog.Warn("flush: claim failed", "error", err, "msg_id", m.ID)

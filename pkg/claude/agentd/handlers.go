@@ -523,7 +523,12 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// superseded conv-id and the resolver redirected it. Title / prefix
 	// inputs naturally skip this branch (they don't have chain rows
 	// keyed on the literal title text).
-	finalConv := target.ConvID
+	// headConv is the agent's live head generation (the resolver already
+	// redirected a superseded input to it). Authorisation routes against the
+	// head — reachability is an agent-level property — even when `gen` repoints
+	// delivery to a past generation below.
+	headConv := target.ConvID
+	finalConv := headConv
 	originalTo := ""
 	rawInput := strings.TrimSpace(req.To)
 	if rawInput != "" && rawInput != finalConv && db.ResolveLatestConv(rawInput) == finalConv {
@@ -537,7 +542,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// resolver's auto-redirect-to-head, so no Original-To attribution.
 	pinGen := false
 	if genTrim := strings.TrimSpace(req.Gen); genTrim != "" {
-		targetAgent, _ := db.AgentIDForConv(finalConv)
+		targetAgent, _ := db.AgentIDForConv(headConv)
 		genAgent, _ := db.AgentIDForConv(genTrim)
 		if targetAgent == "" || genAgent == "" || genAgent != targetAgent {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
@@ -557,10 +562,12 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// through that group. Off-group sends — to an ungrouped agent, or
 	// across a group boundary — require the elevated message.direct
 	// slug and route as direct messages (group_id 0). Authority is
-	// checked against the LIVE successor: the outdated id may have lost
-	// membership by the time the successor took over, but the
-	// successor is who actually receives the message.
-	groupID, viaName, ok := resolveMessageRouting(w, fromID, finalConv)
+	// checked against the LIVE successor (headConv): the outdated id may
+	// have lost membership by the time the successor took over, but the
+	// successor is who actually receives the message. Routing against the
+	// head (not a `gen`-pinned past conv) keeps the owner-of-group /
+	// via-link reach paths — which compare the member's head conv — correct.
+	groupID, viaName, ok := resolveMessageRouting(w, fromID, headConv)
 	if !ok {
 		return
 	}
@@ -1185,10 +1192,12 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // the Enter from another land in the same input box, submitting a
 // garbled or merged prompt (and a nudge can be lost).
 //
-// This bites in practice when several agents message ONE target agent at
-// once — each POST /v1/messages runs nudgeIfAlive on its own HTTP
-// goroutine against the same pane. Serializing per pane (one CC pane per
-// agent) gives each agent a single-file inbox-nudge queue.
+// This still matters under the async per-agent delivery queue (JOH-310):
+// inbox nudges no longer run on the sender's request, but the per-agent and
+// per-conv drains can both target one pane (a head-following and a pinned
+// message), and the unread-reminder sweep, slash/welcome/export injectors and
+// cron all type into the same panes. The lock keeps any two such sequences
+// single-file.
 //
 // SCOPE — daemon-side only. This is an in-process mutex, so it serializes
 // the agentd injectors listed above against each other. send-keys into
@@ -1197,15 +1206,10 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // here — covering them would need a tmux-level / file lock.
 //
 // COST — the lock is held across injectTextAndSubmit's two ~500 ms settle
-// sleeps (and injectMenuToggle's whole menu walk), and nudgeIfAlive runs
-// synchronously on the POST /v1/messages path. So when N senders nudge
-// one pane at once they single-file: the k-th sender's request blocks
-// ~(k-1)s. That is the deliberate price of "one nudge at a time" and is
-// fine for a handful of concurrent senders, but it shares a ceiling with
-// the agent CLI's client timeout — a very deep burst could time a trailing
-// sender out. Decoupling it (an async per-pane worker that enqueues and
-// returns) would lift that ceiling but changes nudgeIfAlive's synchronous
-// "delivered" contract, so it is left for a follow-up if it ever bites.
+// sleeps (and injectMenuToggle's whole menu walk). Under the async model the
+// waiters are BACKGROUND drain/reminder goroutines, not the sender's request
+// (the send path enqueues and returns), so this latency is no longer on any
+// caller's critical path — it only single-files the daemon's own injectors.
 //
 // The map gains one entry per distinct pane target the daemon ever
 // injects into (bounded by total agents launched this daemon life) and
