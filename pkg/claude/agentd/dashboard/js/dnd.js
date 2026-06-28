@@ -145,6 +145,13 @@ function bindDnd() {
     const row = e.target.closest('.dnd-draggable');
     if (!row) return;
     const conv = row.getAttribute('data-dnd-conv');
+    // The rotation-immune stable agent_id (falls back to the conv-id for a
+    // pre-identity / plain-conversation row). Carried alongside `conv` in
+    // the payload: the runDnd* endpoint calls route by `agent` (resolved
+    // server-side via agent.ResolveSelector), while the optimistic
+    // lastSnapshot splice in runDndMove still correlates on `conv` (member
+    // rows are keyed by conv_id there) — so neither path breaks (JOH-322).
+    const agent = row.getAttribute('data-dnd-agent') || conv;
     const sourceGroup = row.getAttribute('data-dnd-source-group');
     const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
     const sourceConversation = row.hasAttribute('data-dnd-source-conversation');
@@ -159,7 +166,7 @@ function bindDnd() {
     // most-supported channel; the JSON body keeps the encoding
     // self-describing. We allow both move (default) and copy effects
     // so Ctrl-drag can flip the cursor hint via dropEffect.
-    const payload = JSON.stringify({conv, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, label});
+    const payload = JSON.stringify({conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, label});
     e.dataTransfer.setData('application/x-tclaude-member', payload);
     e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -357,6 +364,9 @@ function bindDnd() {
 // both calls and refresh.
 async function runDndClone(payload, targetGroup) {
   const {conv, label} = payload;
+  // sel = the rotation-immune selector (agent_id, conv-id fallback) the
+  // server resolves; conv stays for any local snapshot correlation.
+  const sel = payload.agent || conv;
   const confirmed = await confirmModal({
     title: 'Clone agent into group?',
     body: `Fork a new sibling agent from "${label}" and add the clone to `
@@ -368,7 +378,7 @@ async function runDndClone(payload, targetGroup) {
   });
   if (!confirmed) { await refresh(); return; }
   try {
-    const cloneRes = await fetch(`/api/agents/${encodeURIComponent(conv)}/clone`, {
+    const cloneRes = await fetch(`/api/agents/${encodeURIComponent(sel)}/clone`, {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({}),
@@ -411,6 +421,10 @@ async function runDndClone(payload, targetGroup) {
 // the local mutation and surfaces a toast.
 async function runDndMove(payload, targetGroup) {
   const {conv, sourceGroup, label} = payload;
+  // sel routes the membership writes (server resolves agent_id or conv-id);
+  // the optimistic lastSnapshot splice below still matches on conv_id, so
+  // the local member rows correlate regardless of which selector we send.
+  const sel = payload.agent || conv;
   // Confirm BEFORE the lastSnapshot read + optimistic splice below,
   // so a cancelled move leaves the snapshot — and the render —
   // completely untouched.
@@ -466,14 +480,14 @@ async function runDndMove(payload, targetGroup) {
       const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv}),
+        body: JSON.stringify({conv: sel}),
       });
       if (!addRes.ok) {
         toast(`move add failed: ${await addRes.text()}`, true);
         rollback();
         return;
       }
-      const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+      const delRes = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}`, {
         method: 'DELETE', credentials: 'same-origin',
       });
       if (!delRes.ok) {
@@ -506,6 +520,7 @@ async function runDndMove(payload, targetGroup) {
 // keeps the code simple and the failure mode obvious.
 async function runDndAddToGroup(payload, targetGroup) {
   const {conv, label} = payload;
+  const sel = payload.agent || conv;
   // The source is either an ungrouped agent or a plain conversation;
   // for a conversation the membership write also promotes it to an
   // agent, so the modal says so.
@@ -525,7 +540,7 @@ async function runDndAddToGroup(payload, targetGroup) {
     const r = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({conv}),
+      body: JSON.stringify({conv: sel}),
     });
     if (!r.ok) {
       toast(`add to ${targetGroup} failed: ${await r.text()}`, true);
@@ -551,6 +566,7 @@ async function runDndAddToGroup(payload, targetGroup) {
 // runDndAddToGroup.
 async function runDndRemoveFromGroup(payload) {
   const {conv, sourceGroup, label} = payload;
+  const sel = payload.agent || conv;
   if (!sourceGroup) return; // not a real-group member — nothing to do
   const confirmed = await confirmModal({
     title: 'Remove agent from group?',
@@ -562,7 +578,7 @@ async function runDndRemoveFromGroup(payload) {
   });
   if (!confirmed) { await refresh(); return; }
   try {
-    const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(conv)}`, {
+    const r = await fetch(`/api/groups/${encodeURIComponent(sourceGroup)}/members/${encodeURIComponent(sel)}`, {
       method: 'DELETE', credentials: 'same-origin',
     });
     if (!r.ok) {
@@ -585,6 +601,7 @@ async function runDndRemoveFromGroup(payload) {
 // button.
 async function runDndRetire(payload) {
   const {conv, label} = payload;
+  const sel = payload.agent || conv;
   // The retire runs inside retireConfirm's `perform`, so the confirm modal
   // keeps a spinner on its OK button while the POST is in flight (same as
   // the per-row retire and the bulk-retire preview). close() dismisses the
@@ -592,19 +609,19 @@ async function runDndRetire(payload) {
   // finally re-syncs either way — and on the cancel branch (perform never
   // ran, choice is null) the refresh below undoes the optimistic dragend.
   const choice = await retireConfirm({
-    label, conv,
+    label, conv: sel,
     perform: async (ch, close) => {
       try {
         const q = `?shutdown=${ch.shutdown ? 1 : 0}`
           + (ch.deleteWorktree ? '&delete_worktree=1' : '');
-        const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/retire${q}`, {
+        const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/retire${q}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
           close();
           // A dangling entry (conversation gone) can't be retired — offer
           // to remove it instead. The finally below re-syncs.
-          if (await maybeHandleDanglingRetire(r, conv, label)) return;
+          if (await maybeHandleDanglingRetire(r, sel, label)) return;
           toast(`retire ${label} failed: ${await r.text()}`, true);
           return;
         }
@@ -631,6 +648,7 @@ async function runDndRetire(payload) {
 // virtual group on the next snapshot.
 async function runDndPromoteToUngrouped(payload) {
   const {conv, label} = payload;
+  const sel = payload.agent || conv;
   const confirmed = await confirmModal({
     title: 'Promote conversation to an agent?',
     body: `Promote the conversation "${label}" to an agent. It joins no group `
@@ -640,7 +658,7 @@ async function runDndPromoteToUngrouped(payload) {
   });
   if (!confirmed) { await refresh(); return; }
   try {
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/promote`, {
+    const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/promote`, {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) {
@@ -665,6 +683,7 @@ async function runDndPromoteToUngrouped(payload) {
 // Ungrouped virtual group on the next snapshot.
 async function runDndReinstate(payload, targetGroup) {
   const {conv, label} = payload;
+  const sel = payload.agent || conv;
   const confirmed = await confirmModal({
     title: 'Reinstate retired agent?',
     body: targetGroup
@@ -679,7 +698,7 @@ async function runDndReinstate(payload, targetGroup) {
   });
   if (!confirmed) { await refresh(); return; }
   try {
-    const r = await fetch(`/api/agents/${encodeURIComponent(conv)}/reinstate`, {
+    const r = await fetch(`/api/agents/${encodeURIComponent(sel)}/reinstate`, {
       method: 'POST', credentials: 'same-origin',
     });
     if (!r.ok) {
@@ -690,7 +709,7 @@ async function runDndReinstate(payload, targetGroup) {
       const addRes = await fetch(`/api/groups/${encodeURIComponent(targetGroup)}/members`, {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({conv}),
+        body: JSON.stringify({conv: sel}),
       });
       if (!addRes.ok) {
         toast(`reinstated ${label}, but join ${targetGroup} failed: ${await addRes.text()}`, true);

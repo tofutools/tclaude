@@ -375,17 +375,20 @@ function buildCommands() {
   for (const a of (snap.agents || [])) {
     if (!a.online) continue;
     const label = a.title || (a.conv_id || '').slice(0, 8);
+    // Route by the rotation-immune stable agent_id (conv-id fallback for a
+    // pre-identity row); the server resolves it via agent.ResolveSelector.
+    const sel = a.agent_id || a.conv_id;
     cmds.push({
       icon: '◎', label: `Focus window: ${label}`,
       hint: "raise / open this agent's terminal",
       keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || ''),
-      run: () => jumpAgent(a.conv_id, label),
+      run: () => jumpAgent(sel, label),
     });
     cmds.push({
       icon: '⏏', label: `Hide window: ${label}`,
       hint: "detach this agent's terminal",
       keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || ''),
-      run: () => hideAgent(a.conv_id, label),
+      run: () => hideAgent(sel, label),
     });
   }
 
@@ -398,19 +401,20 @@ function buildCommands() {
   //     Resume — so the palette never offers the wrong verb.
   for (const a of (snap.agents || [])) {
     const label = a.title || (a.conv_id || '').slice(0, 8);
+    const sel = a.agent_id || a.conv_id;
     if (a.online) {
       cmds.push({
         icon: '⏻', label: `Stop agent: ${label}`,
         hint: 'soft-exit, then force-kill if it does not exit (resumable)',
         keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || ''),
-        run: () => stopAgentInteractive(a.conv_id, label),
+        run: () => stopAgentInteractive(sel, label),
       });
     } else {
       cmds.push({
         icon: '⏼', label: `Resume agent: ${label}`,
         hint: 'restart in a fresh tmux session, resumed onto its conversation',
         keywords: 'resume start power on wake boot up agent ' + label + ' ' + (a.conv_id || ''),
-        run: () => resumeAgentReq(a.conv_id, label),
+        run: () => resumeAgentReq(sel, label),
       });
     }
   }
@@ -463,11 +467,12 @@ function buildCommands() {
   for (const a of (snap.agents || [])) {
     const label = a.title || (a.conv_id || '').slice(0, 8);
     const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
+    const sel = a.agent_id || a.conv_id;
     cmds.push({
       icon: '♻', label: `Retire agent: ${label}`,
       hint: `demote to a plain conversation (${status})`,
       keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status,
-      run: () => retireAgentInteractive(a.conv_id, label),
+      run: () => retireAgentInteractive(sel, label),
     });
   }
 

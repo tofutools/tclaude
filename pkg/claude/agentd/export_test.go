@@ -11,19 +11,19 @@ import (
 // binding. A drop in any one silently breaks the feature at runtime.
 func TestDashboardJS_ExportModalWired(t *testing.T) {
 	for _, needle := range []string{
-		`data-act="export-summary"`,             // ⚙-menu button (helpers.js)
-		"function exportAgentButton(",           // its builder (helpers.js)
-		"case 'export-summary'",                 // row-action dispatch (row-actions.js)
-		"openExportModal(conv, label)",          // dispatch opens the modal (row-actions.js)
-		"function bindExportModal(",             // modal binder (modal-export.js)
-		"bindExportModal();",                    // boot wires it (dashboard.js)
-		`id="export-agent-modal"`,               // modal element (dashboard.html)
-		`id="export-agent-instructions"`,        // instructions field (dashboard.html)
-		"/api/export-jobs/",                     // poll/download endpoint (modal-export.js)
-		`id="export-agent-history"`,             // history panel (dashboard.html)
-		"function loadExportHistory(",           // history loader (modal-export.js)
-		"/exports",                              // list/clear endpoint (modal-export.js)
-		`data-export-act="delete"`,              // per-entry delete control (modal-export.js)
+		`data-act="export-summary"`,      // ⚙-menu button (helpers.js)
+		"function exportAgentButton(",    // its builder (helpers.js)
+		"case 'export-summary'",          // row-action dispatch (row-actions.js)
+		"openExportModal(agent, label)",  // dispatch opens the modal (row-actions.js)
+		"function bindExportModal(",      // modal binder (modal-export.js)
+		"bindExportModal();",             // boot wires it (dashboard.js)
+		`id="export-agent-modal"`,        // modal element (dashboard.html)
+		`id="export-agent-instructions"`, // instructions field (dashboard.html)
+		"/api/export-jobs/",              // poll/download endpoint (modal-export.js)
+		`id="export-agent-history"`,      // history panel (dashboard.html)
+		"function loadExportHistory(",    // history loader (modal-export.js)
+		"/exports",                       // list/clear endpoint (modal-export.js)
+		`data-export-act="delete"`,       // per-entry delete control (modal-export.js)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q — export modal wiring broken", needle)
@@ -45,8 +45,8 @@ func TestSanitizeExportFilename(t *testing.T) {
 		{"..", "export.zip"},
 		{"a/b/c.md", "c.md"},
 		{"with\nnewline.md", "withnewline.md"},
-		{`foo".zip`, "foo.zip"},      // quote would break Content-Disposition
-		{"a;b.md", "ab.md"},          // semicolon too
+		{`foo".zip`, "foo.zip"}, // quote would break Content-Disposition
+		{"a;b.md", "ab.md"},     // semicolon too
 	}
 	for _, c := range cases {
 		if got := sanitizeExportFilename(c.in); got != c.want {

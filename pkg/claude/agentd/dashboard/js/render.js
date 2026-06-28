@@ -36,7 +36,7 @@ import { sudoByConv } from './refresh.js';
 function renameNameCell(m, state) {
   const name = esc(m.title || '(unnamed)');
   if (harnessCanRename(lastSnapshot, state.harness)) {
-    return `<span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${name}</span>`;
+    return `<span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${name}</span>`;
   }
   return `<span class="rowname-text rowname-fixed" title="This agent's harness does not support renaming">${name}</span>`;
 }
@@ -65,6 +65,7 @@ function memberRowHTML(m, ctx) {
   return `
               <tr class="dnd-draggable" draggable="true" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
+                  data-dnd-agent="${esc(m.agent_id || m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
                 <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
                 <td class="id" title="${esc(m.conv_id)}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>
@@ -152,6 +153,7 @@ function renderVirtualConversationsGroup(g) {
             ${members.map(c => `
               <tr class="dnd-draggable" draggable="true" data-dnd-source-conversation="1"
                   data-dnd-conv="${esc(c.conv_id)}"
+                  data-dnd-agent="${esc(c.agent_id || c.conv_id)}"
                   data-dnd-label="${esc(c.title || c.conv_id)}">
                 <td>${onlineDot(c.online)}</td>
                 <td class="id">${esc(shortId(c.conv_id))}</td>
@@ -199,6 +201,7 @@ function renderVirtualRetiredGroup(g) {
             ${members.map(a => `
               <tr class="dnd-draggable" draggable="true" data-dnd-source-retired="1"
                   data-dnd-conv="${esc(a.conv_id)}"
+                  data-dnd-agent="${esc(a.agent_id || a.conv_id)}"
                   data-dnd-label="${esc(a.title || a.conv_id)}">
                 <td>${onlineDot(a.online)}</td>
                 <td class="id">${esc(shortId(a.conv_id))}</td>
@@ -206,7 +209,7 @@ function renderVirtualRetiredGroup(g) {
                 <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
                 <td${a.retired_by ? ` title="${esc(a.retired_by)}"` : ''}>${esc(a.retired_by_display || a.retired_by || '')}</td>
                 <td class="muted">${esc(a.retire_reason || '')}</td>
-                <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
+                <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-agent="${esc(a.agent_id || a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
               </tr>`).join('')}
           </tbody>
         </table>`;

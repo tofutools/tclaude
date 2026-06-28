@@ -65,7 +65,7 @@ func TestDashboardHTML_RemoteControlWired(t *testing.T) {
 	// row-actions.js: the handler POSTs {intent} to the dashboard's cookie-auth
 	// route (NOT /v1 directly) and refreshes to reconcile the best-known state.
 	must("case 'toggle-remote-control':", "the toggle has a dispatch case")
-	must("`/api/agents/${encodeURIComponent(conv)}/remote-control`", "the toggle POSTs the dashboard remote-control route")
+	must("`/api/agents/${encodeURIComponent(agent)}/remote-control`", "the toggle POSTs the dashboard remote-control route")
 	must("body: JSON.stringify({ intent }),", "the toggle sends the intent body")
 
 	// CSS: the indicator has a style rule.

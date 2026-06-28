@@ -117,10 +117,10 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
 	must("label: `Stop agent: ${label}`", "the palette offers a per-agent stop")
-	must("stopAgentInteractive(a.conv_id, label)",
+	must("stopAgentInteractive(sel, label)",
 		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
 	must("label: `Resume agent: ${label}`", "the palette offers a per-agent resume")
-	must("resumeAgentReq(a.conv_id, label)", "per-agent resume reuses resumeAgentReq")
+	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
@@ -132,7 +132,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
 	must("label: `Retire agent: ${label}`", "the palette offers a per-agent retire")
-	must("retireAgentInteractive(a.conv_id, label)",
+	must("retireAgentInteractive(sel, label)",
 		"per-agent retire reuses the shared confirm + POST flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")

@@ -55,7 +55,7 @@ func TestDashboardHTML_DanglingRetireWired(t *testing.T) {
 	if next := strings.Index(caseBody[len("case 'retire-agent': {"):], "\n        case "); next >= 0 {
 		caseBody = caseBody[:len("case 'retire-agent': {")+next]
 	}
-	if !strings.Contains(caseBody, "retireAgentInteractive(conv, label)") {
+	if !strings.Contains(caseBody, "retireAgentInteractive(agent, label)") {
 		t.Error("retire-agent case: must delegate to the shared retireAgentInteractive flow")
 	}
 	// retireAgentInteractive itself must route a failed retire through the

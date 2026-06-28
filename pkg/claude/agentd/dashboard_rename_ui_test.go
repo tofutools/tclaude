@@ -54,6 +54,6 @@ func TestDashboardRenameUI_FoldedIntoEditAndNameCell(t *testing.T) {
 
 	// Both new surfaces POST to the one rename endpoint — the edit
 	// panel's Save and the inline name handler issue this exact fetch.
-	present("`/api/agents/${encodeURIComponent(conv)}/rename`",
-		"a rename surface POSTs to /api/agents/{conv}/rename")
+	present("`/api/agents/${encodeURIComponent(agent)}/rename`",
+		"a rename surface POSTs to /api/agents/{agent}/rename")
 }
