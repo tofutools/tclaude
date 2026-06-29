@@ -2218,9 +2218,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding-top: 6px; color: #c9d1d9; white-space: nowrap; cursor: pointer;
 }
 .spawn-role-row .spawn-owner-toggle input { margin: 0; }
+/* Match the dialog's other inline buttons (Clear / Save as profile… / Attach…),
+   which use this dark theme — without it the button falls back to the browser's
+   default (white) styling and clashes with the dialog. */
 .spawn-role-row #agent-spawn-perms {
   flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 10px; font-size: 12px; color: #c9d1d9; font-family: inherit;
+  cursor: pointer;
 }
+.spawn-role-row #agent-spawn-perms:hover { background: #2d333b; }
 .spawn-role-row .spawn-perms-indicator {
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
