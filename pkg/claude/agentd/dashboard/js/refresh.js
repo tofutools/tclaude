@@ -1397,7 +1397,11 @@ function openDeleteRetiredPreview() {
   const matchesFilter = (c) => {
     const q = searchEl.value.trim().toLowerCase();
     if (q && !(c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q))) return false;
-    if (ageDays(c) < minAgeDays()) return false;
+    // Only apply the age floor when it's positive — at 0 ("show all") a
+    // future-dated retired_at (client clock skew) yields a negative age that
+    // would otherwise be wrongly hidden by `age < 0`.
+    const minAge = minAgeDays();
+    if (minAge > 0 && ageDays(c) < minAge) return false;
     return true;
   };
   // visibleChecked is the load-bearing set (JOH-31): rows that are BOTH
