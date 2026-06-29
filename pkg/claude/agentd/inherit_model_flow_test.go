@@ -82,10 +82,12 @@ func TestReincarnate_CodexInheritsLiveModelAndEffort(t *testing.T) {
 	assert.Equal(t, "high", effort, "Codex successor must run the predecessor's effort")
 }
 
-// Scenario: the predecessor ran a 1M-context variant. The statusline's
-// model.id carries no window suffix — the context_window_size snapshot
-// (1000000) is what distinguishes it — so the successor's --model must
-// come out as `<id>[1m]`.
+// Scenario: the predecessor ran a 1M-context variant on an OLDER Claude
+// Code build whose model.id carried NO window suffix — the
+// context_window_size snapshot (1000000) is what distinguishes it — so
+// the successor's --model must come out as `<id>[1m]`. (The current-build
+// counterpart, where model.id already carries the suffix, is covered by
+// TestAgentResume_1MModelIDWithSuffix_NoDoubleSuffix.)
 func TestReincarnate_1MContextWindow_AppendsSuffix(t *testing.T) {
 	f := newFlow(t)
 
@@ -206,4 +208,38 @@ func TestAgentResume_InheritsLiveModel(t *testing.T) {
 	effort, ok := f.World.SpawnEffort(conv)
 	require.True(t, ok)
 	assert.Equal(t, "high", effort, "resumed agent must come back on its own effort")
+}
+
+// Scenario (regression): current Claude Code builds report model.id WITH
+// the [1m] window suffix already attached (e.g. "claude-opus-4-8[1m]"),
+// not the bare id the inheritance code originally assumed. A resume of a
+// 1M-context agent must still come back on the 1M variant exactly once.
+//
+// The pre-fix code blind-appended "[1m]" whenever the window snapshot was
+// 1M, producing "claude-opus-4-8[1m][1m]" — which fails ValidateModel and
+// collapses --model to "", so `claude --resume` fell back to the family
+// Claude Code restores from the conversation (right) but lost the 1M
+// window (wrong); effort, validated independently, survived. That exact
+// "right family + right effort, no [1m]" symptom is what this pins.
+func TestAgentResume_1MModelIDWithSuffix_NoDoubleSuffix(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7"
+	const label = "spwn-old-1msfx"
+	const tmux = "tclaude-" + label
+	f.HaveAliveSession(conv, label, tmux, "/tmp/work")
+	// model.id already carries [1m], window snapshot also says 1M.
+	reportModel(t, label, "claude-opus-4-8[1m]", "high")
+	require.NoError(t, db.UpdateContextSnapshot(label, 12, 120_000, 800, 1_000_000))
+	f.MarkOffline(tmux)
+
+	r := f.AsHuman().Resume(conv)
+	require.Equal(t, "resumed", r.Action, "resume action: %s", r.Raw)
+
+	model, ok := f.World.SpawnModel(conv)
+	require.True(t, ok, "no resume-spawn recorded for conv %s", conv)
+	assert.Equal(t, "claude-opus-4-8[1m]", model, "1M model.id with suffix must resume on [1m] exactly once")
+	effort, ok := f.World.SpawnEffort(conv)
+	require.True(t, ok)
+	assert.Equal(t, "high", effort, "effort must survive alongside the 1M model")
 }
