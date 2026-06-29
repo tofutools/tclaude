@@ -1072,7 +1072,7 @@ func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string,
 		switch strings.TrimSpace(effect) {
 		case "", "default":
 			continue // no override — inherits the global default
-		case "grant", "deny":
+		case db.PermEffectGrant, db.PermEffectDeny:
 			if !IsKnownPermSlug(slug) {
 				return nil, fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
 					slug, strings.Join(knownSlugs(), ", "))
@@ -1194,27 +1194,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// boundary, before any subprocess launches:
 	//   - every override slug must be registered and every effect in
 	//     {grant,deny} ("default"/"" carries no override and is dropped);
-	//   - the privilege is gated — a human (dashboard) caller always passes,
-	//     and an agent caller must already OWN the target group (owners can
-	//     manage member ownership + perms). A non-owner agent that tries to
-	//     mint an owner or grant slugs it could not otherwise confer is a 403,
-	//     so groups.spawn alone can't be used to escalate.
+	//   - the privilege is gated so a spawn confers no MORE authority than the
+	//     post-spawn path: a human (dashboard) caller always passes, and an
+	//     agent caller must hold the SAME slug the dedicated endpoints require —
+	//     groups.own to mint an owner (handleGroupOwnersAdd) and
+	//     permissions.grant to set per-slug overrides (handlePermissionsGrant).
+	//     Group ownership is deliberately NOT sufficient: owner-state confers
+	//     only the owner-implied lifecycle slugs (groups.spawn/stop/…), NOT
+	//     groups.own or permissions.grant — so keying on ownership would let an
+	//     owner mint a child holding permissions.grant and escalate globally.
+	//     resolvePermission (no owner bypass) is the same evaluation those
+	//     endpoints run.
 	permOverrides, povErr := normalizeSpawnPermissionOverrides(body.PermissionOverrides)
 	if povErr != "" {
 		writeError(w, http.StatusBadRequest, "invalid_permission_overrides", povErr)
 		return
 	}
-	if (body.IsOwner || len(permOverrides) > 0) && spawnerConvID != "" {
-		isOwner, ownErr := db.IsAgentGroupOwner(g.ID, spawnerConvID)
-		if ownErr != nil {
-			writeError(w, http.StatusInternalServerError, "io",
-				"failed to check group ownership: "+ownErr.Error())
+	if spawnerConvID != "" {
+		if body.IsOwner && resolvePermission(spawnerConvID, PermGroupsOwn) != permAllow {
+			writeError(w, http.StatusForbidden, "forbidden",
+				"making the spawned agent a group owner requires the "+PermGroupsOwn+" permission")
 			return
 		}
-		if !isOwner {
+		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
 			writeError(w, http.StatusForbidden, "forbidden",
-				"setting the spawned agent's group-owner status or permission overrides "+
-					"requires you to own the target group")
+				"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
 			return
 		}
 	}
@@ -2400,11 +2404,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 // briefing for a conv-id that will never exist. It is NOT called on a slow/
 // missing conv-id poll: there the pane is most likely coming up, so the spawn
 // is returned as a success against the preset id rather than rolled back (see
-// the launch-enrollment branch in executeSpawn). Both removals are best-effort
+// the launch-enrollment branch in executeSpawn). All removals are best-effort
 // — a failure here only leaves a harmless orphan the operator can clear from
 // the dashboard — so they log rather than bubble. The pending-name row is keyed
 // by a conv-id that now never materialises, so it is never read again and is
 // left in place.
+//
+// It also undoes the birth-time access controls enrollSpawnedConv may have
+// written (the group-owner row + per-slug overrides): both are applied before
+// the fork on the launch-enrollment path, so a failed launch would otherwise
+// strand a ghost owner of the group (which could mask an ownerless-group
+// warning) and dangling override rows for a conv that never exists. Both calls
+// are no-ops when nothing was written, so this is unconditional — rollback has
+// no spawnParams to consult.
 func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	if msgID > 0 {
 		if _, err := db.DeleteAgentMessageByID(msgID, convID); err != nil {
@@ -2415,6 +2427,14 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
 		slog.Warn("spawn: rollback failed to remove group member",
 			"conv", convID, "group", g.Name, "error", err)
+	}
+	if _, err := db.RemoveAgentGroupOwner(g.ID, convID); err != nil {
+		slog.Warn("spawn: rollback failed to remove birth owner grant",
+			"conv", convID, "group", g.Name, "error", err)
+	}
+	if _, err := db.RevokeAllAgentPermissionsForConv(convID); err != nil {
+		slog.Warn("spawn: rollback failed to revoke birth permission overrides",
+			"conv", convID, "error", err)
 	}
 }
 

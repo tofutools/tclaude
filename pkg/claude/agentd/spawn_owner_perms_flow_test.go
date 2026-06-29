@@ -122,14 +122,15 @@ func TestSpawnOwnerPerms_BadEffectRejected(t *testing.T) {
 		"bad effect should 400; body=%s", spawn.Raw)
 }
 
-// Scenario: escalation gate — an agent caller that holds groups.spawn but does
-// NOT own the target group cannot mint an owner or grant slugs at spawn. The
-// request is a 403, so groups.spawn alone can't be used to escalate.
-func TestSpawnOwnerPerms_NonOwnerAgentForbidden(t *testing.T) {
+// Scenario: escalation gate — an agent caller that holds groups.spawn but holds
+// neither groups.own nor permissions.grant cannot mint an owner or grant slugs
+// at spawn. A spawn must confer no MORE authority than the post-spawn path, so
+// each portion is gated on the SAME slug the dedicated endpoint requires.
+func TestSpawnOwnerPerms_AgentWithoutGrantSlugsForbidden(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
-	// A spawner agent enrolled with groups.spawn but NOT an owner of alpha.
+	// A spawner agent enrolled with groups.spawn ONLY.
 	const spawner = "spwn-1111-2222-3333-4444"
 	f.HaveMember("alpha", spawner)
 	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"), "grant groups.spawn")
@@ -139,26 +140,58 @@ func TestSpawnOwnerPerms_NonOwnerAgentForbidden(t *testing.T) {
 		"is_owner": true,
 	})
 	assert.Equalf(t, http.StatusForbidden, owner.Code,
-		"non-owner agent minting an owner should 403; body=%s", owner.Raw)
+		"minting an owner without groups.own should 403; body=%s", owner.Raw)
 
 	perms := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name":                 "henchman",
 		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
 	})
 	assert.Equalf(t, http.StatusForbidden, perms.Code,
-		"non-owner agent granting slugs should 403; body=%s", perms.Raw)
+		"granting slugs without permissions.grant should 403; body=%s", perms.Raw)
 }
 
-// Scenario: the same agent, once it OWNS the group, may apply the controls —
-// owners already manage member ownership + perms, so this is not an escalation.
-func TestSpawnOwnerPerms_OwnerAgentAllowed(t *testing.T) {
+// Scenario: GROUP OWNERSHIP ALONE is NOT sufficient — owning a group confers the
+// owner-implied lifecycle slugs (groups.spawn/…) but NOT groups.own or
+// permissions.grant. So an owner that lacks those two slugs still can't mint a
+// child owner or grant it slugs; otherwise ownership of one group would let a
+// lead spawn a child holding permissions.grant and escalate globally. This is
+// the regression guarding that boundary.
+func TestSpawnOwnerPerms_OwnershipAloneInsufficient(t *testing.T) {
 	f := newFlow(t)
 	g := f.HaveGroup("alpha")
 
+	// An OWNER of alpha (so it passes the spawn via owner-bypass) that holds
+	// neither groups.own nor permissions.grant.
 	const spawner = "ownr-1111-2222-3333-4444"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"), "grant groups.spawn")
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, spawner, "test"), "make spawner an owner")
+
+	owner := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
+		"name":     "heir",
+		"is_owner": true,
+	})
+	assert.Equalf(t, http.StatusForbidden, owner.Code,
+		"an owner without groups.own must NOT mint a child owner; body=%s", owner.Raw)
+
+	perms := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
+		"name":                 "heir",
+		"permission_overrides": map[string]any{agentd.PermPermissionsGrant: "grant"},
+	})
+	assert.Equalf(t, http.StatusForbidden, perms.Code,
+		"an owner without permissions.grant must NOT grant slugs (esp. permissions.grant); body=%s", perms.Raw)
+}
+
+// Scenario: an agent that DOES hold the required slugs may apply the controls —
+// the spawn-time path mirrors the dedicated endpoints exactly.
+func TestSpawnOwnerPerms_AgentWithGrantSlugsAllowed(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("alpha")
+
+	const spawner = "good-1111-2222-3333-4444"
+	f.HaveMember("alpha", spawner)
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"), "grant groups.spawn")
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsOwn, "test"), "grant groups.own")
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermPermissionsGrant, "test"), "grant permissions.grant")
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name":     "deputy",
@@ -167,7 +200,7 @@ func TestSpawnOwnerPerms_OwnerAgentAllowed(t *testing.T) {
 			agentd.PermGroupsSpawn: "grant",
 		},
 	})
-	require.Equalf(t, http.StatusOK, spawn.Code, "owner agent spawn body=%s", spawn.Raw)
+	require.Equalf(t, http.StatusOK, spawn.Code, "authorised agent spawn body=%s", spawn.Raw)
 	assert.True(t, ownsGroup(t, g.ID, spawn.ConvID), "deputy spawned as a group owner")
 	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
 	require.NoError(t, err)

@@ -1607,12 +1607,14 @@ details[open] > summary .spawn-btn { opacity: 1; }
 #cron-pick-target-modal { z-index: 150; }
 /* The permanent-permission editor opens standalone (the ⚙ "permissions"
    button) AND from inside the edit-member modal (its Permissions…
-   button). In the stacked case it must sit ON TOP of the edit-member
-   overlay; both are plain z-index:100, and while DOM order happens to
-   favour it today, pin it to 150 so the layering is explicit rather
-   than incidental. Still below the toast (200) and the shared confirm
+   button). In the stacked case it must sit ON TOP of whatever opened it:
+   the edit-member + spawn modals (plain z-index:100) AND the profile
+   editor (150), which now also opens it from its Permissions… button.
+   Pin it to 160 — above the 150 profile editor (equal z-index would break
+   the tie by DOM order, and this overlay comes EARLIER in the DOM, so it
+   would paint behind). Still below the toast (200) and the shared confirm
    (1000) its own backdrop-discard guard pops. */
-#perm-edit-modal { z-index: 150; }
+#perm-edit-modal { z-index: 160; }
 /* The profile editor opens standalone (the profiles-manage overlay's edit / +
    new) AND on top of the spawn modal ("Save as profile") and the inline
    default-profile pickers ("＋ new profile…"). The spawn modal is a plain
