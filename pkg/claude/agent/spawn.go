@@ -184,6 +184,29 @@ type SpawnRequest struct {
 	// rejected, count/length capped), not access-checked. Empty for a spawn
 	// with no attachments.
 	Attachments []string `json:"attachments,omitempty"`
+
+	// IsOwner, when true, makes the spawned agent a group owner of the target
+	// group at birth — the same structural grant the Edit-agent modal's
+	// "Group owner" checkbox / `tclaude agent groups owners add` confers,
+	// applied during enrollment so the new agent comes up already owning the
+	// group (and thus holding its owner-conferred slugs). false (the default)
+	// spawns an ordinary member. Mirrors the group-template
+	// GroupTemplateAgent.IsOwner field; honoured only for a human (dashboard)
+	// caller or a caller that already owns the target group (the daemon
+	// rejects an escalation attempt by a non-owner agent).
+	IsOwner bool `json:"is_owner,omitempty"`
+
+	// PermissionOverrides sets the new agent's permanent per-slug permission
+	// overrides at birth — the same grant/deny rows the per-agent permission
+	// editor writes, applied during enrollment so the agent's first turn sees
+	// them. It maps a registered permission slug to its effect: "grant" or
+	// "deny" (a slug left out, or mapped to "default"/"", carries no override
+	// and inherits the global default). The daemon validates every slug
+	// against the registry and every effect against {grant,deny}; an unknown
+	// slug or bad effect is a 400. Like IsOwner it is gated to a human caller
+	// or an owner of the target group. Empty for a spawn that takes the
+	// group's default permissions.
+	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
 }
 
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does

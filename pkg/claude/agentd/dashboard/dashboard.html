@@ -1418,6 +1418,25 @@
         <option value="0">off</option>
       </select>
     </label>
+    <label class="cron-create-row" title="Pre-fill the spawn dialog's “Group owner” checkbox — spawned agents become owners of the destination group. Default leaves the dialog's own (off).">
+      <span class="cron-create-label">Group owner</span>
+      <select id="profile-editor-owner">
+        <option value="">Default (leave dialog's own)</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+    </label>
+    <!-- A <div> (not a <label>) so the Permissions… button click isn't
+         swallowed by the label's focus-the-control default. Mirrors the spawn
+         dialog's Role row: the buffered per-slug overrides a profile
+         pre-fills into the spawn dialog. -->
+    <div class="cron-create-row" title="Per-slug permission overrides (grant / deny / inherit) the profile pre-fills into the spawn dialog. The same editor as a live agent's permissions.">
+      <span class="cron-create-label">Permissions</span>
+      <div class="cron-create-target spawn-attachments-controls">
+        <button type="button" id="profile-editor-perms">Permissions…</button>
+        <span id="profile-editor-perms-indicator" class="spawn-perms-indicator" hidden></span>
+      </div>
+    </div>
     <div class="cron-create-error" id="profile-editor-error"></div>
     <div class="modal-buttons">
       <button id="profile-editor-cancel" type="button">Cancel</button>
@@ -1788,10 +1807,21 @@
         <ul class="spawn-attachments-list" id="agent-spawn-attachments-list"></ul>
       </div>
     </div>
-    <label class="cron-create-row">
+    <!-- A <div> (not a <label>) so clicking the owner checkbox / Permissions…
+         button doesn't get swallowed by the label's focus-the-input default —
+         the same reason the Attachments row above is a div. The owner toggle +
+         Permissions… button ride the right of the Role row: both are
+         birth-time access controls applied when the agent enrolls, mirroring the
+         Edit-agent modal's Group owner checkbox + Permissions… button. -->
+    <div class="cron-create-row spawn-role-row">
       <span class="cron-create-label">Role</span>
       <input id="agent-spawn-role" type="text" placeholder="optional — short tag (e.g. researcher, planner)" autocomplete="off" spellcheck="false" />
-    </label>
+      <label class="spawn-owner-toggle" title="Make the new agent a group owner of the destination group at birth — the same structural grant as the Edit-agent modal's Group owner checkbox. Owners can manage other members of the group (message, reincarnate, compact, rename, clone) without a per-slug grant.">
+        <input id="agent-spawn-owner" type="checkbox" /> owner
+      </label>
+      <button type="button" id="agent-spawn-perms" title="Set the new agent's permanent per-slug permissions (grant / deny / inherit) to apply when it spawns — the same editor used for a live agent's permissions.">Permissions…</button>
+      <span id="agent-spawn-perms-indicator" class="spawn-perms-indicator" hidden></span>
+    </div>
     <label class="cron-create-row">
       <span class="cron-create-label">Descr</span>
       <input id="agent-spawn-descr" type="text" placeholder="optional — short one-line description shown on the dashboard" autocomplete="off" spellcheck="false" />

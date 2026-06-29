@@ -139,6 +139,11 @@ function profileSummary(p) {
   }
   if (p.auto_review != null) parts.push(`auto-review ${p.auto_review ? 'on' : 'off'}`);
   if (p.approval) parts.push(`approval ${p.approval}`);
+  // Birth-time access controls: a chip for the owner default and the
+  // override count, when the profile carries them.
+  if (p.is_owner != null) parts.push(`owner ${p.is_owner ? 'on' : 'off'}`);
+  const nOverrides = p.permission_overrides ? Object.keys(p.permission_overrides).length : 0;
+  if (nOverrides) parts.push(`${nOverrides} perm${nOverrides === 1 ? '' : 's'}`);
   return parts.join(' · ');
 }
 

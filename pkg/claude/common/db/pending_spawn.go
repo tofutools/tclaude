@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"time"
 )
 
@@ -45,6 +47,15 @@ type PendingSpawn struct {
 	SpawnedByAgent string
 	WorktreePath   string
 	WorktreeBranch string
+	// IsOwner / PermissionOverrides are the birth-time access controls the
+	// spawn dialog requested: make the agent a group owner, and/or
+	// seed its per-slug permission overrides (slug → "grant" | "deny"). The
+	// pending-spawn sweeper reconstructs them into spawnParams so enrollSpawnedConv
+	// applies the same owner/perm writes the inline paths do. PermissionOverrides
+	// is stored as a JSON object in the permission_overrides column (empty string
+	// = no overrides); nil/empty here means none.
+	IsOwner             bool
+	PermissionOverrides map[string]string
 	// CreatedAt is the RFC3339Nano spawn time, stamped by InsertPendingSpawn.
 	CreatedAt string
 }
@@ -68,13 +79,47 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 		INSERT OR REPLACE INTO pending_spawns
 			(label, group_id, role, descr, name, initial_message, group_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			 worktree_path, worktree_branch, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?)`,
+			 worktree_path, worktree_branch, is_owner, permission_overrides, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?)`,
 		p.Label, p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
-		p.WorktreePath, p.WorktreeBranch,
+		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		time.Now().Format(time.RFC3339Nano))
 	return err
+}
+
+// marshalPermissionOverrides encodes a birth-time override map for the
+// permission_overrides column: "" for nil/empty (the common case), else a
+// compact JSON object. A marshal failure (practically impossible for a
+// map[string]string) logs and stores "" rather than failing the whole pending
+// insert — the agent still enrolls, just without the overrides the sweeper
+// would have applied.
+func marshalPermissionOverrides(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		slog.Warn("pending-spawn: failed to marshal permission overrides; storing none", "error", err)
+		return ""
+	}
+	return string(b)
+}
+
+// unmarshalPermissionOverrides decodes the permission_overrides column back
+// into a map. "" (the common case) yields nil; a malformed blob logs and yields
+// nil so a corrupt row still enrolls without overrides rather than wedging the
+// sweeper.
+func unmarshalPermissionOverrides(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		slog.Warn("pending-spawn: failed to unmarshal permission overrides; ignoring", "raw", s, "error", err)
+		return nil
+	}
+	return m
 }
 
 // GetPendingSpawn returns the pending spawn with the given label, or
@@ -88,7 +133,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 	row := db.QueryRow(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -107,7 +152,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 	rows, err := db.Query(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -142,11 +187,15 @@ func DeletePendingSpawn(label string) error {
 // single-row Get and the multi-row List share this helper.
 func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var p PendingSpawn
+	var isOwner int
+	var permOverrides string
 	if err := s.Scan(&p.Label, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
-		&p.WorktreePath, &p.WorktreeBranch, &p.CreatedAt); err != nil {
+		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.CreatedAt); err != nil {
 		return nil, err
 	}
+	p.IsOwner = isOwner != 0
+	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	return &p, nil
 }

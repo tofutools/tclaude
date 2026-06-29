@@ -1051,6 +1051,44 @@ func armRemoteControlAfterResume(convID string) {
 //     `name` (when set) becomes the new agent's conversation title
 //     via the post-spawn /rename injection.
 //
+// normalizeSpawnPermissionOverrides validates the birth-time permission
+// overrides off a SpawnRequest and returns the canonical slug→effect map to
+// apply at enrollment. Each slug must be registered and each effect
+// must be "grant" or "deny"; a "default"/"" effect is a no-op and is dropped
+// (the agent inherits the global default for that slug), so an editor that
+// posts every slug — most at Default — collapses to just the real overrides.
+// An unknown slug or an unrecognised effect returns a non-empty human-readable
+// error string (the caller maps it to a 400); the map is nil for no overrides.
+func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string, string) {
+	if len(in) == 0 {
+		return nil, ""
+	}
+	out := make(map[string]string, len(in))
+	for slug, effect := range in {
+		slug = strings.TrimSpace(slug)
+		if slug == "" {
+			continue
+		}
+		switch strings.TrimSpace(effect) {
+		case "", "default":
+			continue // no override — inherits the global default
+		case "grant", "deny":
+			if !IsKnownPermSlug(slug) {
+				return nil, fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+					slug, strings.Join(knownSlugs(), ", "))
+			}
+			out[slug] = strings.TrimSpace(effect)
+		default:
+			return nil, fmt.Sprintf("permission override for %q must be \"grant\", \"deny\", or \"default\"; got %q",
+				slug, effect)
+		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
 // Permission: groups.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
@@ -1147,6 +1185,38 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if attErr != "" {
 		writeError(w, http.StatusBadRequest, "invalid_attachments", attErr)
 		return
+	}
+
+	// Birth-time access controls: make the new agent a group owner
+	// and/or seed its permanent per-slug permission overrides, the same grants
+	// the Edit-agent modal applies to a live agent — but applied at enrollment
+	// so the agent's first turn already has them. Validate here, at the
+	// boundary, before any subprocess launches:
+	//   - every override slug must be registered and every effect in
+	//     {grant,deny} ("default"/"" carries no override and is dropped);
+	//   - the privilege is gated — a human (dashboard) caller always passes,
+	//     and an agent caller must already OWN the target group (owners can
+	//     manage member ownership + perms). A non-owner agent that tries to
+	//     mint an owner or grant slugs it could not otherwise confer is a 403,
+	//     so groups.spawn alone can't be used to escalate.
+	permOverrides, povErr := normalizeSpawnPermissionOverrides(body.PermissionOverrides)
+	if povErr != "" {
+		writeError(w, http.StatusBadRequest, "invalid_permission_overrides", povErr)
+		return
+	}
+	if (body.IsOwner || len(permOverrides) > 0) && spawnerConvID != "" {
+		isOwner, ownErr := db.IsAgentGroupOwner(g.ID, spawnerConvID)
+		if ownErr != nil {
+			writeError(w, http.StatusInternalServerError, "io",
+				"failed to check group ownership: "+ownErr.Error())
+			return
+		}
+		if !isOwner {
+			writeError(w, http.StatusForbidden, "forbidden",
+				"setting the spawned agent's group-owner status or permission overrides "+
+					"requires you to own the target group")
+			return
+		}
 	}
 
 	// Resolve the startup briefing's sender. Default: the spawn
@@ -1389,26 +1459,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
-		Name:           body.Name,
-		Role:           body.Role,
-		Descr:          body.Descr,
-		InitialMessage: body.InitialMessage,
-		Attachments:    attachments,
-		Cwd:            cwd,
-		WorktreePath:   worktreePath,
-		WorktreeBranch: worktreeBranch,
-		AutoFocus:      body.AutoFocus,
-		Effort:         effort,
-		Model:          model,
-		Harness:        h.Name,
-		SandboxMode:    sandboxMode,
-		ApprovalPolicy: approvalPolicy,
-		AutoReview:     autoReview,
-		TrustDir:       trustDir,
-		RemoteControl:  remoteControl,
-		ReplyToConv:    replyToConv,
-		SpawnedByConv:  spawnerConvID,
-		Timeout:        timeout,
+		Name:                body.Name,
+		Role:                body.Role,
+		Descr:               body.Descr,
+		InitialMessage:      body.InitialMessage,
+		Attachments:         attachments,
+		Cwd:                 cwd,
+		WorktreePath:        worktreePath,
+		WorktreeBranch:      worktreeBranch,
+		AutoFocus:           body.AutoFocus,
+		Effort:              effort,
+		Model:               model,
+		Harness:             h.Name,
+		SandboxMode:         sandboxMode,
+		ApprovalPolicy:      approvalPolicy,
+		AutoReview:          autoReview,
+		TrustDir:            trustDir,
+		RemoteControl:       remoteControl,
+		ReplyToConv:         replyToConv,
+		SpawnedByConv:       spawnerConvID,
+		IsOwner:             body.IsOwner,
+		PermissionOverrides: permOverrides,
+		Timeout:             timeout,
 		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
 		// non-blocking: a spawn whose conv-id does not materialise within the
 		// inline grace becomes a PENDING agent rather than hanging the request
@@ -1557,6 +1629,18 @@ type spawnParams struct {
 	// live), where resolution falls straight back to the conv.
 	ReplyToAgent   string
 	SpawnedByAgent string
+	// IsOwner makes the spawned agent a group owner of the target group at
+	// birth. enrollSpawnedConv applies it (best-effort, like the
+	// group-template instantiator) right after the membership add, so the new
+	// agent comes up already owning the group. false = ordinary member.
+	IsOwner bool
+	// PermissionOverrides is the new agent's permanent per-slug override set
+	// to apply at birth: slug → "grant" | "deny". enrollSpawnedConv
+	// writes each via db.SetAgentPermissionOverride after the membership add,
+	// best-effort alongside IsOwner. Validated at the spawn boundary
+	// (handleGroupSpawn) — every slug registered, every effect in {grant,deny}.
+	// nil/empty = inherit the group's default permissions.
+	PermissionOverrides map[string]string
 	// Timeout bounds the conv-id poll; <= 0 falls back to 30s. On the
 	// synchronous path it is the hard deadline before a spawn fails; on the
 	// Async path the poll is capped at the shorter asyncSpawnInlineGrace
@@ -2076,17 +2160,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if p.Async {
 		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
 		pending := &db.PendingSpawn{
-			Label:          label,
-			GroupID:        g.ID,
-			Role:           p.Role,
-			Descr:          p.Descr,
-			Name:           p.Name,
-			InitialMessage: p.InitialMessage,
-			GroupContext:   p.GroupContext,
-			ReplyToConv:    p.ReplyToConv,
-			SpawnedByConv:  p.SpawnedByConv,
-			WorktreePath:   p.WorktreePath,
-			WorktreeBranch: p.WorktreeBranch,
+			Label:               label,
+			GroupID:             g.ID,
+			Role:                p.Role,
+			Descr:               p.Descr,
+			Name:                p.Name,
+			InitialMessage:      p.InitialMessage,
+			GroupContext:        p.GroupContext,
+			ReplyToConv:         p.ReplyToConv,
+			SpawnedByConv:       p.SpawnedByConv,
+			WorktreePath:        p.WorktreePath,
+			WorktreeBranch:      p.WorktreeBranch,
+			IsOwner:             p.IsOwner,
+			PermissionOverrides: p.PermissionOverrides,
 		}
 		if err := db.InsertPendingSpawn(pending); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -2225,6 +2311,31 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			slog.Warn("spawn: failed to re-resolve actor after group add", "conv", convID, "error", rErr)
 		} else {
 			agentID = id
+		}
+	}
+
+	// Birth-time access controls: make the new agent a group owner
+	// and/or apply its requested per-slug permission overrides, the same writes
+	// the group-template instantiator performs after executeSpawn — but folded
+	// into enrollment so they reach EVERY spawn path uniformly: the launch-
+	// enrollment (CC, pre-fork), the inline-resolve (Codex), and the pending-
+	// spawn sweeper, which reconstructs p.IsOwner / p.PermissionOverrides from
+	// the persisted row. Both are best-effort and only log on failure — the
+	// agent is already spawned + grouped, and the human can re-apply from the
+	// Edit-agent modal; a failed grant must not strand the spawn. The grants
+	// were authorised at the boundary (handleGroupSpawn gates owner/override on
+	// a human caller or an owner of g), so granter records who requested it.
+	granter := granterLabel(p.SpawnedByConv)
+	if p.IsOwner {
+		if err := db.AddAgentGroupOwner(g.ID, convID, granter); err != nil {
+			slog.Warn("spawn: failed to grant group ownership at birth",
+				"conv", convID, "group", g.Name, "error", err)
+		}
+	}
+	for slug, effect := range p.PermissionOverrides {
+		if err := db.SetAgentPermissionOverride(convID, slug, effect, granter); err != nil {
+			slog.Warn("spawn: failed to apply birth permission override",
+				"conv", convID, "slug", slug, "effect", effect, "error", err)
 		}
 	}
 

@@ -2207,6 +2207,21 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 6px 10px; font-size: 13px; color: #c9d1d9; font-family: inherit;
 }
 .cron-create-row select { text-overflow: ellipsis; }
+/* Spawn dialog Role row: the owner toggle + Permissions… button + indicator sit
+   to the right of the role input, vertically aligned to its text baseline
+   (padding-top:6px matches the input). The input keeps flex:1 so it fills the
+   row; these controls take their intrinsic width on the right. */
+.spawn-role-row .spawn-owner-toggle {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  padding-top: 6px; color: #c9d1d9; white-space: nowrap; cursor: pointer;
+}
+.spawn-role-row .spawn-owner-toggle input { margin: 0; }
+.spawn-role-row #agent-spawn-perms {
+  flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
+}
+.spawn-role-row .spawn-perms-indicator {
+  flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
+}
 .cron-create-row input[type=text]:focus,
 .cron-create-row select:focus,
 .cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }

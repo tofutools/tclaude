@@ -68,6 +68,12 @@ type spawnProfileJSON struct {
 	AutoFocus                  *bool `json:"auto_focus,omitempty"`
 	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
 
+	// Birth-time access controls the profile pre-fills. IsOwner is
+	// tri-state (null = unset). PermissionOverrides maps slug → "grant" | "deny"
+	// (absent = no overrides); validated against the slug registry at save.
+	IsOwner             *bool             `json:"is_owner,omitempty"`
+	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -91,6 +97,8 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		SyncWorktree:               p.SyncWorktree,
 		AutoFocus:                  p.AutoFocus,
 		IncludeGroupDefaultContext: p.IncludeGroupDefaultContext,
+		IsOwner:                    p.IsOwner,
+		PermissionOverrides:        p.PermissionOverrides,
 	}
 	if !p.CreatedAt.IsZero() {
 		out.CreatedAt = p.CreatedAt.Format(time.RFC3339)
@@ -188,6 +196,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 				"are allowed but other control characters are not", agent.MaxInitialMessageBytes)}
 	}
 
+	// Birth-time permission overrides: same registry + effect validation the
+	// spawn boundary applies, so a profile can't persist an unknown slug. A
+	// "default"/"" effect is dropped here too — the saved map holds only real
+	// overrides.
+	permOverrides, povErr := normalizeSpawnPermissionOverrides(body.PermissionOverrides)
+	if povErr != "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_permission_overrides", povErr}
+	}
+
 	return &db.SpawnProfile{
 		Name:                       name,
 		Harness:                    hName,
@@ -205,6 +222,8 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		SyncWorktree:               body.SyncWorktree,
 		AutoFocus:                  body.AutoFocus,
 		IncludeGroupDefaultContext: body.IncludeGroupDefaultContext,
+		IsOwner:                    body.IsOwner,
+		PermissionOverrides:        permOverrides,
 	}, nil
 }
 
