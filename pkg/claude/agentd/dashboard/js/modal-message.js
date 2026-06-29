@@ -15,7 +15,7 @@ import {
 // lastSnapshot lives in dashboard.js; refresh() / toast / openCleanupModal
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, openCleanupModal, bindBackdropDiscard } from './refresh.js';
+import { refresh, toast, openCleanupModal, openDeleteRetiredPreview, bindBackdropDiscard } from './refresh.js';
 
 
 // --- one-shot message modal -----------------------------------------
@@ -575,6 +575,10 @@ function bindGroupCreateModal() {
   // reinstate spanning active agents, retired agents and plain
   // conversations (openCleanupModal mode 'agents').
   $('#cleanup-all-open').addEventListener('click', () => openCleanupModal({ mode: 'agents' }));
+  // Retired-scoped batch delete (JOH-31) — the filterable preview of every
+  // retired agent, all ticked, with per-row opt-out before the purge. The
+  // discoverable twin of the command palette's "Delete retired agents…".
+  $('#delete-retired-open').addEventListener('click', () => openDeleteRetiredPreview());
   $('#group-create-cancel').addEventListener('click', closeGroupCreateModal);
   $('#group-create-submit').addEventListener('click', submitGroupCreate);
   bindBackdropDiscard('group-create-modal', closeGroupCreateModal);

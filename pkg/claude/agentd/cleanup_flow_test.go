@@ -447,6 +447,65 @@ func TestDeleteAgent_WithWorktree(t *testing.T) {
 // reinstate tier is the inverse of retire, and a tier that doesn't
 // apply to a target skips it gracefully instead of failing.
 
+// Scenario (JOH-31): the dashboard's "Delete retired agents…" preview
+// modal (openDeleteRetiredPreview) is built on the load-bearing invariant
+// that ONLY the rows that are both ticked AND visible under the current
+// filters are POSTed — verbatim, never re-resolved server-side. This pins
+// the daemon half of that contract: when the browser submits an explicit
+// subset of the retired population, /api/cleanup/agents {mode:"delete"}
+// deletes EXACTLY that subset and leaves the rest of the retired roster
+// untouched. A retired agent that the human had filtered out (or unticked)
+// is simply absent from the `agents` list, so it must survive — verified
+// at the endpoint/DB surface, not by poking the .jsonl.
+func TestCleanup_Agents_DeleteRetired_ExplicitSubsetOnly(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	// Three retired agents in the population. The "ticked & visible" set is
+	// {keep-typo-a, keep-typo-b}; `filtered` stands for a row the human had
+	// ticked but then hid behind a name/age filter, so it is NOT in the POST.
+	const deleteA = "dela-1111-2222-3333-4444"
+	const deleteB = "delb-1111-2222-3333-4444"
+	const filtered = "keep-1111-2222-3333-4444"
+	for conv, title := range map[string]string{
+		deleteA:  "stale-alpha",
+		deleteB:  "stale-bravo",
+		filtered: "still-wanted",
+	} {
+		f.HaveConvWithTitle(conv, title)
+		f.HaveRetiredAgent(conv)
+	}
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	// The browser POSTs exactly the snapshotted ticked-and-visible list —
+	// deleteA + deleteB only; `filtered` is deliberately omitted.
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+deleteA+`","`+deleteB+`"],"mode":"delete"}`)
+
+	assert.Equal(t, 2, resp.Deleted, "exactly the two POSTed retired agents purged")
+	assert.Equal(t, 0, resp.Failed)
+	f.AssertDeleted(deleteA)
+	f.AssertDeleted(deleteB)
+	for _, conv := range []string{deleteA, deleteB} {
+		state, err := db.AgentState(conv)
+		require.NoError(t, err)
+		assert.Equalf(t, db.AgentStateNone, state, "enrollment row gone for %s", conv)
+	}
+
+	// The filtered-out retired agent was never in the POST, so the endpoint
+	// never touched it — it is still a retired conversation on disk.
+	state, err := db.AgentState(filtered)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state,
+		"a retired agent absent from the POST list must survive — the BE acts on the explicit list, never the whole population")
+	row, err := db.GetConvIndex(filtered)
+	require.NoError(t, err)
+	require.NotNil(t, row, "filtered-out conv_index row kept")
+	for _, o := range resp.Outcomes {
+		assert.NotEqualf(t, filtered, o.ConvID, "filtered-out agent must not appear in the outcome log")
+	}
+}
+
 // Scenario: the delete tier reaches a retired agent — a category the
 // modal previously couldn't see. The retired enrollment row is purged
 // alongside the conversation.
