@@ -76,7 +76,7 @@ func runPrune(params *PruneParams) error {
 		fmt.Printf("Would delete %d exited session(s):\n", len(toDelete))
 		for _, state := range toDelete {
 			age := FormatDuration(time.Since(state.Updated))
-			fmt.Printf("  %s  (exited %s ago)\n", state.ID, age)
+			fmt.Printf("  %s  (exited %s ago)\n", pruneLabel(state), age)
 		}
 		return nil
 	}
@@ -84,7 +84,7 @@ func runPrune(params *PruneParams) error {
 	deleted := 0
 	for _, state := range toDelete {
 		if err := DeleteSessionState(state.ID); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", state.ID, err)
+			fmt.Fprintf(os.Stderr, "Failed to delete %s: %v\n", pruneLabel(state), err)
 			continue
 		}
 		deleted++
@@ -92,6 +92,19 @@ func runPrune(params *PruneParams) error {
 
 	fmt.Printf("Pruned %d exited session(s)\n", deleted)
 	return nil
+}
+
+// pruneLabel renders an exited session for prune output: the short handle, plus
+// the full PK when they differ. An exited session's tmux name can have been
+// reused by a later, LIVE session, so the bare handle alone could read as if a
+// line targets that live session — showing the unique PK disambiguates. Deletion
+// is always keyed by state.ID regardless. See JOH-248.
+func pruneLabel(s *SessionState) string {
+	h := sessionHandle(s)
+	if h == s.ID {
+		return h
+	}
+	return fmt.Sprintf("%s (%s)", h, s.ID)
 }
 
 // pruneExitedSessionsSilent removes all exited session state files silently

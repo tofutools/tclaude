@@ -53,11 +53,11 @@ func runFocus(params *FocusParams) error {
 	if !IsTmuxSessionAlive(state.TmuxSession) {
 		state.Status = StatusExited
 		_ = SaveSessionState(state)
-		return fmt.Errorf("session %s has exited", state.ID)
+		return fmt.Errorf("session %s has exited", sessionHandle(state))
 	}
 
 	// Try to focus the window
-	fmt.Printf("Focusing session %s...\n", state.ID)
+	fmt.Printf("Focusing session %s...\n", sessionHandle(state))
 
 	// Set the session ID for other functions that may need it
 	_ = os.Setenv("TCLAUDE_SESSION_ID", state.ID)

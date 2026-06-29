@@ -103,7 +103,7 @@ func killMultiple(params *KillParams) error {
 	if !params.Force {
 		fmt.Printf("This will kill %d session(s):\n", len(targets))
 		for _, state := range targets {
-			fmt.Printf("  %s [%s] (%s)\n", state.ID, state.Status, state.Cwd)
+			fmt.Printf("  %s [%s] (%s)\n", sessionHandle(state), state.Status, state.Cwd)
 		}
 		fmt.Print("\nContinue? [y/N]: ")
 		var response string
@@ -117,7 +117,7 @@ func killMultiple(params *KillParams) error {
 	killed := 0
 	for _, state := range targets {
 		if err := killSession(state); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to kill %s: %v\n", state.ID, err)
+			fmt.Fprintf(os.Stderr, "Failed to kill %s: %v\n", sessionHandle(state), err)
 			continue
 		}
 		killed++
@@ -142,7 +142,7 @@ func killSession(state *SessionState) error {
 	}
 
 	if state.ID != "" {
-		fmt.Printf("Killed session %s\n", state.ID)
+		fmt.Printf("Killed session %s\n", sessionHandle(state))
 	}
 	return nil
 }

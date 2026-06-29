@@ -2211,8 +2211,24 @@ func createSessionForConv(conv *SessionEntry) error {
 		}
 	}
 
-	sessionID := conv.SessionID[:8]
-	tmuxSession := sessionID
+	// The session PK carries the FULL conversation identity — never a
+	// truncation (a shared 8-char prefix would collide on the PK). The tmux
+	// name is the short, human-facing handle. See JOH-248.
+	sessionID := conv.SessionID
+
+	// Reserve the conversation before launching: this rejects an already-live
+	// conv AND serializes against a concurrent resume (otherwise two resumes
+	// could both `claude --resume` the same .jsonl → corruption). Keyed on
+	// conv_id, it catches the live session whatever its PK shape; the lock is
+	// held until the launch returns and the OS frees it if this process dies.
+	// See JOH-332.
+	release, reject := session.ReserveConvForLaunch(sessionID)
+	if reject != nil {
+		return reject
+	}
+	defer release()
+
+	tmuxSession := session.UniqueTmuxSessionName(session.ShortTmuxBase(sessionID, ""))
 
 	// Resume through the conv's recorded harness, not a hardcoded
 	// `claude --resume`: a Codex conv selected in the watch view must be
@@ -2259,7 +2275,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
 
-	fmt.Printf("Created session %s\n", sessionID)
+	fmt.Printf("Created session %s\n", tmuxSession)
 	fmt.Println("Attaching... (Ctrl+B D to detach)")
 
 	return session.AttachToSession(sessionID, tmuxSession, false)

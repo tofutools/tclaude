@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -306,11 +308,118 @@ func CheckTmuxInstalled() error {
 	return nil
 }
 
-// GenerateSessionID creates a short unique session ID
+// GenerateSessionID creates a unique synthetic session id, used as the
+// session row's primary key when the conversation UUID isn't known at spawn
+// time (a fresh, non-resumed session). 64 bits of crypto entropy — never a
+// truncation of a longer id; only the tmux name / on-screen rendering are
+// shortened (JOH-248). Falls back to nanosecond time if the system RNG fails.
 func GenerateSessionID() string {
-	// Use last 8 hex chars of unix nano time
-	hex := fmt.Sprintf("%016x", time.Now().UnixNano())
-	return hex[len(hex)-8:]
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// ShortTmuxBase returns the short, human-facing base for a session's tmux
+// name: an explicit label verbatim, else the first 8 chars of the (full)
+// session id. The tmux name is where the id is deliberately rendered short;
+// the stored PK keeps the full identity (JOH-248). Exported so the conv-resume
+// paths share one definition with `session new`.
+func ShortTmuxBase(sessionID, label string) string {
+	if label != "" {
+		return label
+	}
+	if len(sessionID) > 8 {
+		return sessionID[:8]
+	}
+	return sessionID
+}
+
+// UniqueTmuxSessionName keeps the short tmux name unique among live tmux
+// sessions. tmux requires unique session names and two resumed conversations
+// can share an 8-char prefix, so a taken base falls back to a -N suffix.
+// "Short if possible": the bare base is used whenever it is free. (Best-effort:
+// a racing creator between this check and `tmux new-session` just makes that
+// spawn fail with a duplicate-name error — no corruption.)
+func UniqueTmuxSessionName(base string) string {
+	if base == "" || !IsTmuxSessionAlive(base) {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !IsTmuxSessionAlive(candidate) {
+			return candidate
+		}
+	}
+	return base
+}
+
+// sessionHandle is the short, human-facing identifier for a session — its
+// tmux name when set (a label stays whole; a conv-derived name is already the
+// 8-char prefix), else the full id. Used for display and the attach hint; it
+// resolves back to the session via findSession (JOH-248).
+func sessionHandle(s *SessionState) string {
+	if s.TmuxSession != "" {
+		return s.TmuxSession
+	}
+	return s.ID
+}
+
+// liveSessionOwningID returns an existing, *live* session row already keyed by
+// the given PK, or nil. Used to guard a label/synthetic-PK launch: unlike a
+// resumed conv UUID (a stable identity that is fine to refresh), a label is a
+// fresh identity each launch and can collide with a different live session.
+// The tmux name is disambiguated separately, but the PK is not — so without
+// this check SaveSessionState's ON CONFLICT(id) would silently overwrite (and
+// orphan) the live session that already owns the label, reintroducing the very
+// conflation JOH-248 removes. A row owned only by a *dead* session returns nil:
+// recreating over an exited row is fine. See JOH-248.
+func liveSessionOwningID(sessionID string) *SessionState {
+	existing, err := LoadSessionState(sessionID)
+	if err != nil || existing == nil {
+		return nil
+	}
+	if IsTmuxSessionAlive(existing.TmuxSession) {
+		return existing
+	}
+	return nil
+}
+
+// LiveSessionForConv returns an existing, *live* session row for the given
+// conversation id, or nil. It keys on conv_id — the conversation's stable
+// identity — so it finds a live session regardless of that session's PK shape:
+// a full-UUID resume PK, a fresh spawn's random synthetic PK, or a
+// pre-de-truncation convID[:8] PK. A PK-keyed LoadSessionState lookup misses
+// the latter two (their PK is not the conv UUID), which is how a manual resume
+// of an already-live conversation slipped past the launch guards and ran a
+// second `claude --resume` on the same .jsonl (interleaved appends → conv-file
+// corruption). All three resume paths (session new -r, conv resume, the watch
+// TUI) guard on this. See JOH-332.
+//
+// It probes ALL rows for the conv, not just the freshest: a conv can carry
+// several rows (a stale spawn / old-PK row plus the live one), and a dead
+// row's updated_at can be bumped above a live-but-idle row's frozen one (the
+// reaper's MarkSessionExitedIfUnchanged, or a stale-handle attach), so a
+// "most-recent row only" probe could miss the live session and wrongly allow a
+// relaunch. Mirrors the all-rows liveness check in isConvOnline /
+// pickAliveSession. Best-effort: the guard reads here and the new row is
+// written later, so two truly-concurrent resumes can still race (as before) —
+// tmux's unique-name rejection is the backstop for that window.
+func LiveSessionForConv(convID string) *SessionState {
+	if convID == "" {
+		return nil
+	}
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return nil
+	}
+	for _, row := range rows {
+		if row != nil && IsTmuxSessionAlive(row.TmuxSession) {
+			return fromRow(row)
+		}
+	}
+	return nil
 }
 
 // FormatDuration formats a duration in a human-readable way
@@ -410,7 +519,7 @@ func GetSessionCompletions(includeExited bool) []string {
 		}
 		dir = strings.ReplaceAll(dir, " ", "_")
 
-		completion := fmt.Sprintf("%s_%s_%s", state.ID, state.Status, dir)
+		completion := fmt.Sprintf("%s_%s_%s", sessionHandle(state), state.Status, dir)
 		completions = append(completions, completion)
 	}
 
