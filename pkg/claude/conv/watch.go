@@ -2216,16 +2216,17 @@ func createSessionForConv(conv *SessionEntry) error {
 	// name is the short, human-facing handle. See JOH-248.
 	sessionID := conv.SessionID
 
-	// Reject if a live session is already resuming this conversation. Keyed on
-	// conv_id via LiveSessionForConv (the stable identity), it catches the live
-	// session whatever its PK shape — a fresh spawn's synthetic PK or an old
-	// convID[:8] PK that a PK-keyed lookup would miss — so relaunching can't run
-	// a second `claude --resume` on the same .jsonl. The disambiguated tmux name
-	// no longer makes the duplicate `new-session` clean-fail, so guard
-	// explicitly — mirroring conv/resume.go. See JOH-332.
-	if existing := session.LiveSessionForConv(sessionID); existing != nil {
-		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", existing.TmuxSession, existing.TmuxSession)
+	// Reserve the conversation before launching: this rejects an already-live
+	// conv AND serializes against a concurrent resume (otherwise two resumes
+	// could both `claude --resume` the same .jsonl → corruption). Keyed on
+	// conv_id, it catches the live session whatever its PK shape; the lock is
+	// held until the launch returns and the OS frees it if this process dies.
+	// See JOH-332.
+	release, reject := session.ReserveConvForLaunch(sessionID)
+	if reject != nil {
+		return reject
 	}
+	defer release()
 
 	tmuxSession := session.UniqueTmuxSessionName(session.ShortTmuxBase(sessionID, ""))
 

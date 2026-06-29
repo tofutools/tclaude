@@ -468,19 +468,22 @@ func runNew(params *NewParams) error {
 		sessionID = params.Label
 	}
 
-	// When resuming, reject if the conversation already has a LIVE session.
-	// Keyed on conv_id (the conversation's stable identity) via
-	// LiveSessionForConv, so it catches the live session whatever its PK shape
-	// — a full-UUID resume PK, a fresh spawn's synthetic PK, or a
-	// pre-de-truncation convID[:8] PK. The PK guard below only catches the
-	// first; without this conv_id guard a manual `session new -r` on a conv
-	// already live under a synthetic/old PK would double-launch
-	// `claude --resume` on the same .jsonl (interleaved appends → corruption).
-	// See JOH-332.
+	// When resuming, reserve the conversation before launching. This both
+	// rejects an already-live conv AND serializes against a concurrent resume:
+	// two `session new -r` of the same conv that both pass a bare read-guard
+	// would otherwise both run `claude --resume` on the same .jsonl (interleaved
+	// appends → corruption), because the disambiguated tmux name no longer makes
+	// the second `new-session` clean-fail. Keyed on conv_id, it catches the live
+	// session whatever its PK shape (full-UUID / synthetic / old convID[:8]).
+	// The lock is held (defer) until the session row is written and runNew
+	// returns; the OS frees it if this process dies. The PK guard below still
+	// backstops a reused --label. See JOH-332.
 	if fullConvID != "" {
-		if owner := LiveSessionForConv(fullConvID); owner != nil {
-			return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+		release, reject := ReserveConvForLaunch(fullConvID)
+		if reject != nil {
+			return reject
 		}
+		defer release()
 	}
 
 	// The session PK is now final (priority above: label > resumed conv UUID >
