@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -43,4 +45,37 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 	present("body.is_owner = owner", "the profile payload sends the tri-state owner")
 	present("body.permission_overrides = profilePermOverrides",
 		"the profile payload sends its buffered overrides")
+}
+
+// TestDashboardPermEditorStacksAboveProfileEditor guards an Escape-correctness
+// invariant. The buffered permission editor (#perm-edit-modal) now opens from
+// the spawn-profile editor's Permissions… button — i.e. stacked ON TOP of
+// #profile-editor-modal. Escape dismissal routes through isTopmostOverlay, which
+// ranks overlays by computed z-index and breaks ties by DOM order. The perm
+// editor comes EARLIER in the DOM than the profile editor, so if the two share a
+// z-index the tiebreak names the profile editor topmost and Escape would close
+// the editor BENEATH the visible one. The fix is a strictly higher z-index on
+// the perm editor; this test fails if a future edit ever re-equalizes them.
+func TestDashboardPermEditorStacksAboveProfileEditor(t *testing.T) {
+	zIndexOf := func(selector string) int {
+		t.Helper()
+		// Match `#selector { … z-index: N; … }` (single-line rule).
+		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*(\d+)`)
+		m := re.FindStringSubmatch(dashboardAssets)
+		if m == nil {
+			t.Fatalf("no z-index rule found for %s", selector)
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("bad z-index for %s: %v", selector, err)
+		}
+		return n
+	}
+
+	perm := zIndexOf("#perm-edit-modal")
+	profile := zIndexOf("#profile-editor-modal")
+	if perm <= profile {
+		t.Errorf("#perm-edit-modal z-index (%d) must be strictly above #profile-editor-modal (%d) "+
+			"so Escape closes the perm editor stacked on top of it, not the editor beneath", perm, profile)
+	}
 }

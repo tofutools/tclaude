@@ -2327,8 +2327,12 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	// the persisted row. Both are best-effort and only log on failure — the
 	// agent is already spawned + grouped, and the human can re-apply from the
 	// Edit-agent modal; a failed grant must not strand the spawn. The grants
-	// were authorised at the boundary (handleGroupSpawn gates owner/override on
-	// a human caller or an owner of g), so granter records who requested it.
+	// were authorised at the boundary (handleGroupSpawn requires the same slug
+	// the dedicated endpoints do — groups.own / permissions.grant — for an agent
+	// caller), so granter just records who requested it. We use granterLabel
+	// rather than auditedCaller, so a (narrow) sudo-elevated spawn-time grant is
+	// NOT via-sudo-annotated in the audit row the way the dedicated endpoints
+	// annotate it — an accepted residual; the authorization is identical.
 	granter := granterLabel(p.SpawnedByConv)
 	if p.IsOwner {
 		if err := db.AddAgentGroupOwner(g.ID, convID, granter); err != nil {
