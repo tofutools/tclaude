@@ -7,9 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// positionTimeout bounds how long the best-effort positioner waits for the
+// picker window to map before giving up and leaving it where the WM put it.
+const positionTimeout = 4 * time.Second
 
 // pick drives a native folder chooser on Linux, preferring zenity (GTK)
 // and falling back to kdialog (KDE). When neither is installed it returns
@@ -26,16 +32,41 @@ func pick(ctx context.Context, opts Options) (string, error) {
 			// hint ends in a separator.
 			args = append(args, "--filename="+strings.TrimRight(opts.StartDir, "/")+"/")
 		}
-		return runLinuxPicker(ctx, bin, args)
+		// GTK defaults to the Wayland backend when one is present, which
+		// makes the dialog an unpositionable native surface; pin it to
+		// XWayland so we can place it next to the pointer.
+		return runLinuxPicker(ctx, bin, args, "GDK_BACKEND=x11")
 	}
 	if bin, err := exec.LookPath("kdialog"); err == nil {
 		start := opts.StartDir
 		if start == "" {
 			start = "."
 		}
-		return runLinuxPicker(ctx, bin, []string{"--getexistingdirectory", start, "--title", title})
+		// Same idea for Qt/KDE: force the X11 (xcb) platform plugin.
+		return runLinuxPicker(ctx, bin, []string{"--getexistingdirectory", start, "--title", title}, "QT_QPA_PLATFORM=xcb")
 	}
 	return "", ErrUnavailable
+}
+
+// envWithOverride returns the current environment with kv ("KEY=value")
+// applied so it actually takes effect: any pre-existing entry for the same key
+// is dropped before kv is appended. A blind append would leave a duplicate, and
+// getenv returns the first match — so an inherited GDK_BACKEND/QT_QPA_PLATFORM
+// would otherwise shadow our override.
+func envWithOverride(kv string) []string {
+	key, _, ok := strings.Cut(kv, "=")
+	if !ok {
+		return append(os.Environ(), kv)
+	}
+	prefix := key + "="
+	base := os.Environ()
+	out := make([]string, 0, len(base)+1)
+	for _, e := range base {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return append(out, kv)
 }
 
 // runLinuxPicker runs a picker binary and maps its exit convention onto
@@ -50,12 +81,35 @@ func pick(ctx context.Context, opts Options) (string, error) {
 //
 // stderr is captured but only read on the genuine-error path, so zenity's
 // GTK chatter on a normal run or a cancel never leaks into a result.
-func runLinuxPicker(ctx context.Context, bin string, args []string) (string, error) {
+//
+// x11Env, when non-empty (e.g. "GDK_BACKEND=x11"), pins the toolkit to its X11
+// backend so the dialog is an addressable XWayland window — but only when an X
+// server is actually reachable, since otherwise the override would break the
+// picker on a pure-Wayland or headless box. With the override in effect we
+// launch asynchronously and best-effort-nudge the window next to the pointer.
+func runLinuxPicker(ctx context.Context, bin string, args []string, x11Env string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+
+	position := x11Env != "" && x11Available()
+	if position {
+		cmd.Env = envWithOverride(x11Env)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	if position {
+		posCtx, cancel := context.WithTimeout(ctx, positionTimeout)
+		defer cancel()
+		pid := uint32(cmd.Process.Pid) //nolint:gosec // a pid fits a uint32; X11 _NET_WM_PID is a CARDINAL
+		go func() {
+			defer cancel() // release the timer as soon as we've positioned
+			positionPickerNearPointer(posCtx, pid)
+		}()
+	}
+	err := cmd.Wait()
 	out := strings.TrimSpace(stdout.String())
 	if err == nil {
 		return out, nil
