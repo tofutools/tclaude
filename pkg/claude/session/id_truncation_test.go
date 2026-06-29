@@ -261,3 +261,70 @@ func TestLiveSessionForConv_FindsLiveByConvID_RegardlessOfPK(t *testing.T) {
 	assert.Nil(t, LiveSessionForConv("dddddddd-4444-4444-8444-444444444444"))
 	assert.Nil(t, LiveSessionForConv(""))
 }
+
+// LiveSessionForConv must probe ALL rows for the conv, not just the freshest:
+// a dead row's updated_at can be bumped above a live-but-idle row's (the
+// reaper, or a stale-handle attach), so a "most-recent row only" probe would
+// miss the live session and wrongly allow a second `claude --resume`. See
+// JOH-332 (cold-review follow-up).
+func TestLiveSessionForConv_MultiRow_PrefersLiveOverFreshDead(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	prevTmux := clcommon.Default
+	clcommon.Default = fakeTmux{alive: map[string]bool{"livename": true}} // "spwn-stale" is dead
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+
+	conv := "aaaaaaaa-1111-4111-8111-111111111111"
+
+	// Live row written FIRST so its updated_at is older...
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: conv, ConvID: conv, TmuxSession: "livename", Status: StatusIdle,
+	}))
+	// ...then a DEAD sibling row written later, making it the freshest by
+	// updated_at (FindSessionByConvID's ORDER BY updated_at DESC LIMIT 1 would
+	// return this one and report no live session).
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "spwn-stale", ConvID: conv, TmuxSession: "spwn-stale", Status: StatusExited,
+	}))
+
+	got := LiveSessionForConv(conv)
+	require.NotNil(t, got, "the live row must be found even when a dead sibling row is more recently updated")
+	assert.Equal(t, conv, got.ID)
+}
+
+// findSession must resolve a shared tmux handle to the LIVE owner, not a stale
+// exited row that recorded the same tmux name. The name probe reports both
+// rows' tmux name alive (it belongs to the live owner), so the persisted
+// Status is the disambiguator — and the live row must win even when the exited
+// namesake is more recently updated. See JOH-248/JOH-332.
+func TestFindSession_PrefersLiveOwnerOverExitedNamesake(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	prevTmux := clcommon.Default
+	clcommon.Default = fakeTmux{alive: map[string]bool{"d0e9fa14": true}} // the live owner's pane
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+
+	live := "d0e9fa14-1111-4111-8111-111111111111"
+
+	// Live owner written first (older updated_at), full-UUID PK, tmux d0e9fa14.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: live, ConvID: live, TmuxSession: "d0e9fa14", Status: StatusIdle,
+	}))
+	// Stale exited row written later (newer updated_at): an old convID[:8] PK
+	// that recorded the same tmux name before it exited.
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "d0e9fa14", ConvID: "d0e9fa14-2222-4222-8222-222222222222", TmuxSession: "d0e9fa14", Status: StatusExited,
+	}))
+
+	got, err := findSession("d0e9fa14")
+	require.NoError(t, err)
+	assert.Equal(t, live, got.ID,
+		"the shared handle must resolve to the live owner, not the newer exited namesake")
+	assert.NotEqual(t, StatusExited, got.Status)
+}

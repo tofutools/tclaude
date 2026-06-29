@@ -396,16 +396,28 @@ func liveSessionOwningID(sessionID string) *SessionState {
 // second `claude --resume` on the same .jsonl (interleaved appends → conv-file
 // corruption). All three resume paths (session new -r, conv resume, the watch
 // TUI) guard on this. See JOH-332.
+//
+// It probes ALL rows for the conv, not just the freshest: a conv can carry
+// several rows (a stale spawn / old-PK row plus the live one), and a dead
+// row's updated_at can be bumped above a live-but-idle row's frozen one (the
+// reaper's MarkSessionExitedIfUnchanged, or a stale-handle attach), so a
+// "most-recent row only" probe could miss the live session and wrongly allow a
+// relaunch. Mirrors the all-rows liveness check in isConvOnline /
+// pickAliveSession. Best-effort: the guard reads here and the new row is
+// written later, so two truly-concurrent resumes can still race (as before) —
+// tmux's unique-name rejection is the backstop for that window.
 func LiveSessionForConv(convID string) *SessionState {
 	if convID == "" {
 		return nil
 	}
-	existing, err := FindSessionByConvID(convID)
-	if err != nil || existing == nil {
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
 		return nil
 	}
-	if IsTmuxSessionAlive(existing.TmuxSession) {
-		return existing
+	for _, row := range rows {
+		if row != nil && IsTmuxSessionAlive(row.TmuxSession) {
+			return fromRow(row)
+		}
 	}
 	return nil
 }

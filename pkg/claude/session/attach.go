@@ -112,11 +112,18 @@ func findSession(id string) (*SessionState, error) {
 	// the short tmux name, which diverges from the full-UUID PK and can be
 	// disambiguated with a -N suffix. A stale row from before the PK
 	// de-truncation (id = convID[:8]) can linger sharing a tmux name with the
-	// live owner, so a live tmux-handle match must beat a *dead* exact-PK match
-	// — otherwise attach/kill lands on the stale row the user can't see. Within
-	// a liveness tier the exact PK wins (it is unique); the rendered tmux handle
-	// is the fallback, with the most-recently-updated row breaking ties among
-	// rows sharing a name. See JOH-248/JOH-332.
+	// live owner, so a match on the live owner must beat a stale namesake —
+	// otherwise attach/kill lands on the row the user can't see.
+	//
+	// A row counts as live only if its tmux name is alive AND it isn't marked
+	// exited: when an exited row and the live owner share a tmux name, the name
+	// probe alone reports BOTH alive (the name belongs to the live owner), so
+	// the persisted Status is what distinguishes them.
+	//
+	// Within a liveness tier the rendered tmux handle wins (it's what the user
+	// sees in `session ls`); the exact PK is the fallback, with the
+	// most-recently-updated row breaking ties among rows sharing a name. So the
+	// precedence is liveTmux > liveID > deadTmux > deadID. See JOH-248/JOH-332.
 	var liveID, liveTmux, deadID, deadTmux *SessionState
 	for _, state := range states {
 		matchesID := state.ID == id
@@ -124,7 +131,7 @@ func findSession(id string) (*SessionState, error) {
 		if !matchesID && !matchesTmux {
 			continue
 		}
-		alive := IsTmuxSessionAlive(state.TmuxSession)
+		alive := state.Status != StatusExited && IsTmuxSessionAlive(state.TmuxSession)
 		if matchesID {
 			if alive {
 				liveID = state
@@ -142,7 +149,7 @@ func findSession(id string) (*SessionState, error) {
 			}
 		}
 	}
-	for _, m := range []*SessionState{liveID, liveTmux, deadID, deadTmux} {
+	for _, m := range []*SessionState{liveTmux, liveID, deadTmux, deadID} {
 		if m != nil {
 			return m, nil
 		}
