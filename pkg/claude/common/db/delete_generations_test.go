@@ -129,6 +129,166 @@ func TestDeleteAgentByConvID_BridgesMiddleGenerationSuccession(t *testing.T) {
 	assert.Equal(t, "C", head.CurrentConvID, "the live head is unchanged")
 }
 
+// TestDeleteAnchor_RebasesHeadAlias guards the JOH-330 corner: a head_alias is
+// conv-anchored on a SPECIFIC generation and resolves to the live head by walking
+// the succession chain forward from that anchor (ResolveHeadAlias →
+// ResolveLatestConv). Deleting the alias's exact anchor (genesis) generation while
+// the owning actor survives at a LATER generation used to strand the alias on the
+// now-dead anchor — the conv-scoped loop wipes the anchor→succ edge, so
+// ResolveLatestConv(anchor) returns the dead anchor instead of the live head. The
+// delete path must rebase such an alias's anchor onto the surviving head, mirroring
+// the middle-generation succession bridge.
+func TestDeleteAnchor_RebasesHeadAlias(t *testing.T) {
+	setupTestDB(t)
+
+	// One actor, three generations: A → B → C (C the live head).
+	_, _, err := EnsureAgentForConv("A", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("A", "B", "clear")
+	require.NoError(t, err, "rotate A→B")
+	_, err = RotateAgentConv("B", "C", "reincarnate")
+	require.NoError(t, err, "rotate B→C")
+
+	// An alias 'foo' anchored on the genesis generation A.
+	require.NoError(t, SetHeadAlias("foo", "A", "A"), "SetHeadAlias foo→A")
+
+	// Precondition: the alias resolves to the live head before any delete.
+	got, err := ResolveHeadAlias("foo")
+	require.NoError(t, err)
+	require.Equal(t, "C", got, "alias forwards to head before any delete")
+
+	actor, err := AgentIDForConv("C")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	// --- Delete the alias's exact anchor generation A (actor survives at C). ---
+	_, err = DeleteAgentByConvID("A")
+	require.NoError(t, err, "delete anchor generation")
+
+	// The alias must be rebased forward and still resolve to the live head C.
+	got, err = ResolveHeadAlias("foo")
+	require.NoError(t, err)
+	assert.Equal(t, "C", got, "alias still resolves to the live head after its anchor is deleted")
+
+	// The anchor row no longer points at the dead conv A.
+	h, err := GetHeadAlias("foo")
+	require.NoError(t, err)
+	require.NotNil(t, h, "alias row survives the anchor delete")
+	assert.NotEqual(t, "A", h.AnchorConvID, "anchor was rebased off the deleted conv")
+	assert.Equal(t, actor, h.AnchorAgentID, "anchor_agent_id still names the surviving actor")
+}
+
+// TestDeleteMiddleAnchor_RebasesAliasAndBridges exercises the JOH-330 rebase and
+// the JOH-26 middle-generation succession bridge together: when the deleted conv is
+// BOTH a middle generation AND a head_alias anchor (A → B → C → D, alias anchored on
+// B), deleting B must heal the A→C bridge AND forward the alias anchor onto B's
+// immediate successor C, so the alias still chain-walks to the live head D.
+func TestDeleteMiddleAnchor_RebasesAliasAndBridges(t *testing.T) {
+	setupTestDB(t)
+
+	// One actor, four generations: A → B → C → D (D the live head).
+	_, _, err := EnsureAgentForConv("A", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("A", "B", "clear")
+	require.NoError(t, err, "rotate A→B")
+	_, err = RotateAgentConv("B", "C", "reincarnate")
+	require.NoError(t, err, "rotate B→C")
+	_, err = RotateAgentConv("C", "D", "clear")
+	require.NoError(t, err, "rotate C→D")
+
+	// An alias anchored on the MIDDLE generation B.
+	require.NoError(t, SetHeadAlias("foo", "B", "B"), "SetHeadAlias foo→B")
+
+	actor, err := AgentIDForConv("D")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	// --- Delete the middle generation B (which is also the alias anchor). ---
+	_, err = DeleteAgentByConvID("B")
+	require.NoError(t, err, "delete middle anchor generation")
+
+	// The succession chain is healed: A bridges straight to C.
+	succ, err := GetConvSuccessor("A")
+	require.NoError(t, err)
+	assert.Equal(t, "C", succ, "an A→C bridge edge was recorded")
+
+	// The alias anchor was forwarded one hop to C and still resolves to head D.
+	h, err := GetHeadAlias("foo")
+	require.NoError(t, err)
+	require.NotNil(t, h)
+	assert.Equal(t, "C", h.AnchorConvID, "anchor rebased onto B's immediate successor C")
+	assert.Equal(t, actor, h.AnchorAgentID, "anchor_agent_id still names the surviving actor")
+	got, err := ResolveHeadAlias("foo")
+	require.NoError(t, err)
+	assert.Equal(t, "D", got, "alias still resolves to the live head after the middle-anchor delete")
+}
+
+// TestDeleteAnchor_RebasesAllAliasesOnSameAnchor covers the WHERE-anchor_conv_id
+// fan-out: more than one handle can be anchored on the same conv, and deleting that
+// conv must rebase every one of them, not just the first.
+func TestDeleteAnchor_RebasesAllAliasesOnSameAnchor(t *testing.T) {
+	setupTestDB(t)
+
+	// One actor, three generations: A → B → C (C the live head).
+	_, _, err := EnsureAgentForConv("A", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("A", "B", "clear")
+	require.NoError(t, err, "rotate A→B")
+	_, err = RotateAgentConv("B", "C", "reincarnate")
+	require.NoError(t, err, "rotate B→C")
+
+	// Two handles, both anchored on the genesis generation A.
+	require.NoError(t, SetHeadAlias("foo", "A", "A"), "SetHeadAlias foo→A")
+	require.NoError(t, SetHeadAlias("bar", "A", "A"), "SetHeadAlias bar→A")
+
+	actor, err := AgentIDForConv("C")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	// --- Delete the shared anchor A. ---
+	_, err = DeleteAgentByConvID("A")
+	require.NoError(t, err, "delete shared anchor")
+
+	// Both aliases are rebased off the dead anchor and still resolve to head C.
+	for _, handle := range []string{"foo", "bar"} {
+		h, err := GetHeadAlias(handle)
+		require.NoError(t, err)
+		require.NotNil(t, h, "alias %q survives the anchor delete", handle)
+		assert.NotEqual(t, "A", h.AnchorConvID, "alias %q rebased off the deleted conv", handle)
+		assert.Equal(t, actor, h.AnchorAgentID, "alias %q anchor_agent_id still names the surviving actor", handle)
+		got, err := ResolveHeadAlias(handle)
+		require.NoError(t, err)
+		assert.Equal(t, "C", got, "alias %q still resolves to the live head", handle)
+	}
+}
+
+// TestDeleteLiveHead_AliasBreaks pins the intended boundary of the JOH-330 fix:
+// when the deleted conv is the actor's LAST/live generation (the whole actor is
+// torn down), the alias has no surviving head to rebase onto and may legitimately
+// break — the rebase is scoped to predecessor deletes only.
+func TestDeleteLiveHead_AliasBreaks(t *testing.T) {
+	setupTestDB(t)
+
+	// A single-generation actor A, with an alias anchored on it.
+	_, _, err := EnsureAgentForConv("A", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	require.NoError(t, SetHeadAlias("foo", "A", "A"), "SetHeadAlias foo→A")
+	got, err := ResolveHeadAlias("foo")
+	require.NoError(t, err)
+	require.Equal(t, "A", got, "alias resolves to A before delete")
+
+	// --- Delete the live head A: the whole actor is removed. ---
+	_, err = DeleteAgentByConvID("A")
+	require.NoError(t, err, "delete live head")
+
+	// The alias row is left as-is (still pointing at the now-dead A) — there is no
+	// surviving generation to rebase onto, so the alias legitimately goes stale.
+	h, err := GetHeadAlias("foo")
+	require.NoError(t, err)
+	require.NotNil(t, h, "alias row is not rebased away when the whole actor is gone")
+	assert.Equal(t, "A", h.AnchorConvID, "anchor is left on the deleted head (alias breaks by design)")
+}
+
 // TestDeleteAgentByConvID_CronJobsActorScoped guards the JOH-26 PR3a delete
 // move: cron jobs are agent-keyed (owner_agent / target_agent), so they are
 // torn down with the ACTOR (its current-generation delete), not on a

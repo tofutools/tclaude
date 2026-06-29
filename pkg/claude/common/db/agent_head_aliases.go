@@ -54,6 +54,35 @@ func SetHeadAlias(handle, anchorConvID, byConv string) error {
 	return err
 }
 
+// rebaseHeadAliasAnchorTx re-points every head_alias anchored on oldAnchor to
+// newAnchor, inside the caller's transaction. It is the head_alias twin of the
+// middle-generation succession bridge (DeleteAgentByConvID): when an alias's exact
+// anchor generation is deleted while the owning actor survives at a later
+// generation, the conv-scoped delete wipes the anchor→successor edge, so an alias
+// left on the dead anchor would resolve (ResolveHeadAlias → ResolveLatestConv) to
+// that dead conv instead of the live head. Forwarding the anchor onto the deleted
+// conv's successor keeps the alias on the live succession chain, so its own
+// chain-walk still lands on the head (JOH-330).
+//
+// anchor_agent_id is re-derived from newAnchor (the dual-write companion); since
+// oldAnchor and newAnchor are generations of the same actor it is unchanged in
+// value, but re-deriving keeps the companion consistent with the snapshot. A no-op
+// (0 rows) when nothing is anchored on oldAnchor. Returns rows affected.
+func rebaseHeadAliasAnchorTx(tx dbExecQuerier, oldAnchor, newAnchor string) (int64, error) {
+	if oldAnchor == "" || newAnchor == "" || oldAnchor == newAnchor {
+		return 0, nil
+	}
+	res, err := tx.Exec(`UPDATE agent_head_aliases
+		SET anchor_conv_id = ?, anchor_agent_id = `+agentForConvExpr+`
+		WHERE anchor_conv_id = ?`,
+		newAnchor, newAnchor, oldAnchor)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // RemoveHeadAlias drops a handle. Returns the number of rows removed
 // (0 when the handle wasn't set).
 func RemoveHeadAlias(handle string) (int64, error) {
