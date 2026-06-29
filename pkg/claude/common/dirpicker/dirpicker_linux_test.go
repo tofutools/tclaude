@@ -14,7 +14,7 @@ import (
 // without a real GUI picker.
 
 func TestRunLinuxPicker_OutputOnCleanExit(t *testing.T) {
-	out, err := runLinuxPicker(context.Background(), "/bin/echo", []string{"/some/dir"})
+	out, err := runLinuxPicker(context.Background(), "/bin/echo", []string{"/some/dir"}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestRunLinuxPicker_OutputOnCleanExit(t *testing.T) {
 
 func TestRunLinuxPicker_Exit1IsCancel(t *testing.T) {
 	// /bin/false exits 1 with no output — the cancel convention.
-	_, err := runLinuxPicker(context.Background(), "/bin/false", nil)
+	_, err := runLinuxPicker(context.Background(), "/bin/false", nil, "")
 	if !errors.Is(err, ErrCanceled) {
 		t.Fatalf("got %v, want ErrCanceled", err)
 	}
@@ -34,7 +34,7 @@ func TestRunLinuxPicker_Exit1IsCancel(t *testing.T) {
 func TestRunLinuxPicker_RealFailureSurfaced(t *testing.T) {
 	// Non-1 exit + stderr + no stdout = a genuine failure, not a cancel.
 	_, err := runLinuxPicker(context.Background(), "/bin/sh",
-		[]string{"-c", "echo boom >&2; exit 2"})
+		[]string{"-c", "echo boom >&2; exit 2"}, "")
 	if err == nil || errors.Is(err, ErrCanceled) {
 		t.Fatalf("got %v, want a real error", err)
 	}
@@ -46,7 +46,7 @@ func TestRunLinuxPicker_RealFailureSurfaced(t *testing.T) {
 func TestRunLinuxPicker_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := runLinuxPicker(ctx, "/bin/sleep", []string{"5"})
+	_, err := runLinuxPicker(ctx, "/bin/sleep", []string{"5"}, "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want context.Canceled", err)
 	}
