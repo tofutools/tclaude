@@ -19,7 +19,14 @@ tclaude setup
 This will:
 1. Install Claude hooks for status tracking
 2. Register the protocol handler (WSL/Windows) for clickable notifications
-3. Ask if you want to enable notifications
+3. Ask if you want to enable notifications — but only on the first run
+
+Re-running `tclaude setup` never changes notification settings you've
+already chosen: a deliberately disabled block stays disabled (even with
+`--yes`), and your transitions, cooldown and other tweaks are preserved.
+Setup only *adds* notification categories introduced in a newer tclaude
+version; to enable/disable notifications later, edit `~/.tclaude/config.json`
+or use the dashboard's Config tab.
 
 You can check your setup status anytime:
 

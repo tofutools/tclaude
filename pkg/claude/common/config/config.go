@@ -1297,6 +1297,27 @@ func Load() (*Config, error) {
 	return &config, nil
 }
 
+// NotificationsPresent reports whether the on-disk config file already
+// contains a "notifications" block. It probes the raw bytes BEFORE
+// Normalize seeds a default block, letting callers (notably `tclaude
+// setup`) tell a deliberately-configured state — including one the user
+// turned off — apart from a never-configured fresh install. A missing,
+// unreadable or unparseable file, or an explicit "notifications": null,
+// all report false.
+func NotificationsPresent() bool {
+	data, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		Notifications *json.RawMessage `json:"notifications"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	return probe.Notifications != nil
+}
+
 // Normalize fills in tclaude's defaults and clamps out-of-range values
 // on a Config in place: an empty log level becomes "info", a missing
 // notifications block is populated, a zero cooldown / empty transition
@@ -1718,6 +1739,29 @@ func (c *NotificationConfig) SetNotifyType(to string, on bool) {
 		kept = append(kept, TransitionRule{From: "*", To: to})
 	}
 	c.Transitions = kept
+}
+
+// MergeDefaultTypes additively ensures every currently-supported
+// notification category (NotifyTypes) has its wildcard rule {from:"*",
+// to:<type>} present, adding any that are missing and returning the
+// destinations it added (in NotifyTypes order; nil if none). Existing
+// rules — including from-specific "advanced" rules — and the
+// cooldown/command/human-message settings are left untouched. This is how
+// `tclaude setup` picks up categories introduced in a newer tclaude
+// version without overwriting the user's other notification choices. A
+// nil receiver returns nil.
+func (c *NotificationConfig) MergeDefaultTypes() []string {
+	if c == nil {
+		return nil
+	}
+	var added []string
+	for _, ty := range NotifyTypes {
+		if !c.NotifyTypeEnabled(ty) {
+			c.SetNotifyType(ty, true)
+			added = append(added, ty)
+		}
+	}
+	return added
 }
 
 // HumanMessagesIntent reports the human-messages preference independent of

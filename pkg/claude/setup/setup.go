@@ -307,30 +307,7 @@ func runSetup(params *Params) error {
 
 	// 4. Configure notifications
 	fmt.Println("\n=== Notifications ===")
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Printf("  Warning: could not load config: %v\n", err)
-		cfg = config.DefaultConfig()
-	}
-
-	if cfg.Notifications != nil && cfg.Notifications.Enabled {
-		fmt.Println("✓ Notifications already enabled")
-	} else {
-		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
-			if cfg.Notifications == nil {
-				cfg.Notifications = config.DefaultConfig().Notifications
-			}
-			cfg.Notifications.Enabled = true
-			if err := config.Save(cfg); err != nil {
-				fmt.Printf("  Warning: could not save config: %v\n", err)
-			} else {
-				fmt.Println("✓ Notifications enabled")
-				fmt.Printf("  Config saved to: %s\n", config.ConfigPath())
-			}
-		} else {
-			fmt.Println("  Notifications not enabled (you can enable later in config)")
-		}
-	}
+	configureNotifications(params)
 
 	// 5. Optional extras layered on top of the baseline.
 	if err := installExtras(params); err != nil {
@@ -623,6 +600,72 @@ func sandboxAdvisory() string {
 		"  tclaude can't verify this for you; it depends on your Claude Code\n" +
 		"  settings.json. See:\n" +
 		"  " + sandboxHardeningDocURL
+}
+
+// configureNotifications handles the "=== Notifications ===" setup step.
+// It respects a notifications block the user has already configured: an
+// existing block's Enabled flag is never flipped, so a deliberately
+// disabled state survives repeated `tclaude setup` runs (the enable prompt
+// and --yes only ever take effect on a genuine first run, when no block
+// exists on disk yet). Independently — and per the "additively merge new
+// categories" policy — it adds any newly-supported notification categories
+// to the transitions list, preserving the user's existing rules, cooldown,
+// command and human-message choice.
+func configureNotifications(params *Params) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("  Warning: could not load config: %v\n", err)
+		cfg = config.DefaultConfig()
+	}
+	// Probe the raw file BEFORE trusting the normalized block: Load seeds a
+	// default (disabled) block when the file has none, so cfg.Notifications
+	// is never nil here and can't itself distinguish "user configured this"
+	// from "fresh install".
+	configured := config.NotificationsPresent()
+	if cfg.Notifications == nil { // defensive; Load always normalizes
+		cfg.Notifications = config.DefaultConfig().Notifications
+	}
+
+	// Additively pick up notification categories added in a newer tclaude
+	// version. Everything the user already set is left untouched.
+	added := cfg.Notifications.MergeDefaultTypes()
+
+	save := false
+	switch {
+	case configured && cfg.Notifications.Enabled:
+		fmt.Println("✓ Notifications already enabled (keeping your settings)")
+		save = len(added) > 0
+	case configured:
+		// Configured but disabled — the user turned them off on purpose.
+		// Never re-enable on a repeat setup; only keep categories current.
+		fmt.Println("✓ Notifications disabled in your config — leaving them off")
+		save = len(added) > 0
+	default:
+		// First run: no notifications block on disk yet. Offer to enable.
+		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
+			cfg.Notifications.Enabled = true
+			save = true
+			fmt.Println("✓ Notifications enabled")
+		} else {
+			fmt.Println("  Notifications not enabled (you can enable later in config)")
+		}
+	}
+
+	if save && len(added) > 0 {
+		noun := "category"
+		if len(added) > 1 {
+			noun = "categories"
+		}
+		fmt.Printf("  Added new notification %s: %s\n", noun, strings.Join(added, ", "))
+	}
+
+	if save {
+		if err := config.Save(cfg); err != nil {
+			fmt.Printf("  Warning: could not save config: %v\n", err)
+		} else {
+			fmt.Printf("  Config saved to: %s\n", config.ConfigPath())
+		}
+	}
 }
 
 // askYesNo prompts the user for a yes/no answer. If assumeYes is true, prints the prompt and returns true without reading input.
