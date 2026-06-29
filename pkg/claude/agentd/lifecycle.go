@@ -1092,6 +1092,19 @@ func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string,
 // Permission: groups.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
+// marshalSpawnConfig serialises a spawn request to the verbatim JSON stored on
+// agents.initial_spawn_config. It marshals the already-validated, already-decoded
+// request, so an error is not expected; on the off chance one occurs it returns
+// "" (the spawn proceeds without the audit snapshot rather than failing).
+func marshalSpawnConfig(req agent.SpawnRequest) string {
+	b, err := json.Marshal(req)
+	if err != nil {
+		slog.Warn("spawn: failed to marshal spawn config for audit", "error", err)
+		return ""
+	}
+	return string(b)
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -1485,6 +1498,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		IsOwner:             body.IsOwner,
 		PermissionOverrides: permOverrides,
 		Timeout:             timeout,
+		// Verbatim snapshot of the spawn request, recorded onto the new actor's
+		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
+		// "what was this spawned with" record). Marshalling the already-decoded
+		// body cannot fail in practice; on the off chance it does, leave it empty
+		// rather than fail a spawn over an audit field.
+		SpawnConfigJSON: marshalSpawnConfig(body),
 		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
 		// non-blocking: a spawn whose conv-id does not materialise within the
 		// inline grace becomes a PENDING agent rather than hanging the request
@@ -1661,6 +1680,13 @@ type spawnParams struct {
 	// the conv-id synchronously, so it stays blocking by design. See JOH-205
 	// inc2.
 	Async bool
+	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
+	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
+	// records it onto the new actor's agents.initial_spawn_config so there is a
+	// durable, agent-level "what was this spawned with" record. Empty on the
+	// paths that have no SpawnRequest to snapshot (the pending-spawn sweeper,
+	// the group-template instantiator), where the column simply stays "".
+	SpawnConfigJSON string
 }
 
 // spawnOutcome is the success result of executeSpawn.
@@ -2315,6 +2341,18 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 			slog.Warn("spawn: failed to re-resolve actor after group add", "conv", convID, "error", rErr)
 		} else {
 			agentID = id
+		}
+	}
+
+	// Record the verbatim spawn config onto the new actor — the durable,
+	// agent-level "what was this spawned with" record (JOH-334). Best-effort:
+	// the agent is already spawned + grouped, so a failed write just means no
+	// audit snapshot, never a stranded spawn. Empty on paths with no
+	// SpawnRequest to snapshot (sweeper / template), where it stays "".
+	if agentID != "" && p.SpawnConfigJSON != "" {
+		if err := db.SetAgentInitialSpawnConfig(agentID, p.SpawnConfigJSON); err != nil {
+			slog.Warn("spawn: failed to record initial spawn config",
+				"agent", agentID, "error", err)
 		}
 	}
 

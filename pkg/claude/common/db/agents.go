@@ -422,6 +422,27 @@ func SetAgentPendingName(agentID, name string) error {
 	return err
 }
 
+// SetAgentInitialSpawnConfig records the verbatim JSON snapshot of the spawn
+// request an actor was born from onto agents.initial_spawn_config — the durable,
+// agent-level "what was this spawned with" record. A plain UPDATE — a no-op when
+// the agent is unknown. Written once at spawn enrollment; later lifecycle ops
+// (rename, reincarnate, /clear) never touch it, so it stays the birth record.
+// The column is write-only by design: tclaude stores it verbatim and never reads
+// it back (resume reads live state), so there is no matching getter.
+func SetAgentInitialSpawnConfig(agentID, cfg string) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("SetAgentInitialSpawnConfig: agent_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agents SET initial_spawn_config = ? WHERE agent_id = ?`,
+		cfg, agentID)
+	return err
+}
+
 // RetireAgentByID demotes an active actor: it sets retired_at so the agent
 // drops off every live surface, leaving its conversation generations intact.
 // Returns false (no error) when the agent was not active, so a repeated
