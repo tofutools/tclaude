@@ -84,6 +84,37 @@ func TestSetNotifyType_PreservesAdvancedRules(t *testing.T) {
 	assert.False(t, n.NotifyTypeEnabled("idle"))
 }
 
+// MergeDefaultTypes is additive: it fills in only the missing canonical
+// categories, leaves advanced + already-present rules untouched, returns
+// what it added in NotifyTypes order, and is idempotent on a full block.
+func TestMergeDefaultTypes(t *testing.T) {
+	// nil receiver is safe and adds nothing.
+	assert.Nil(t, (*NotificationConfig)(nil).MergeDefaultTypes())
+
+	// A full default block has every category already → no-op.
+	full := DefaultConfig().Notifications
+	assert.Nil(t, full.MergeDefaultTypes(), "default block is already complete")
+
+	// An older/partial block: missing "error" + "exited", plus an advanced
+	// rule that must round-trip and must not light a canonical checkbox.
+	n := &NotificationConfig{Transitions: []TransitionRule{
+		{From: "*", To: "idle"},
+		{From: "*", To: "awaiting_permission"},
+		{From: "*", To: "awaiting_input"},
+		{From: "working", To: "idle"}, // advanced
+	}}
+	added := n.MergeDefaultTypes()
+	assert.Equal(t, []string{"error", "exited"}, added, "added in NotifyTypes order")
+	for _, ty := range NotifyTypes {
+		assert.True(t, n.NotifyTypeEnabled(ty), "category %q present after merge", ty)
+	}
+	assert.Contains(t, n.Transitions, TransitionRule{From: "working", To: "idle"},
+		"advanced rule preserved")
+
+	// Idempotent: a second merge finds nothing to add.
+	assert.Nil(t, n.MergeDefaultTypes(), "second merge is a no-op")
+}
+
 // HumanMessagesIntent is the checkbox state (default-on, off only on an
 // explicit false) — independent of the master Enabled switch, unlike
 // NotifyHumanMessages which ANDs Enabled.
