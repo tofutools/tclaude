@@ -199,6 +199,10 @@ func TestDeleteMiddleAnchor_RebasesAliasAndBridges(t *testing.T) {
 	// An alias anchored on the MIDDLE generation B.
 	require.NoError(t, SetHeadAlias("foo", "B", "B"), "SetHeadAlias foo→B")
 
+	actor, err := AgentIDForConv("D")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
 	// --- Delete the middle generation B (which is also the alias anchor). ---
 	_, err = DeleteAgentByConvID("B")
 	require.NoError(t, err, "delete middle anchor generation")
@@ -213,6 +217,7 @@ func TestDeleteMiddleAnchor_RebasesAliasAndBridges(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, h)
 	assert.Equal(t, "C", h.AnchorConvID, "anchor rebased onto B's immediate successor C")
+	assert.Equal(t, actor, h.AnchorAgentID, "anchor_agent_id still names the surviving actor")
 	got, err := ResolveHeadAlias("foo")
 	require.NoError(t, err)
 	assert.Equal(t, "D", got, "alias still resolves to the live head after the middle-anchor delete")
@@ -236,6 +241,10 @@ func TestDeleteAnchor_RebasesAllAliasesOnSameAnchor(t *testing.T) {
 	require.NoError(t, SetHeadAlias("foo", "A", "A"), "SetHeadAlias foo→A")
 	require.NoError(t, SetHeadAlias("bar", "A", "A"), "SetHeadAlias bar→A")
 
+	actor, err := AgentIDForConv("C")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
 	// --- Delete the shared anchor A. ---
 	_, err = DeleteAgentByConvID("A")
 	require.NoError(t, err, "delete shared anchor")
@@ -246,6 +255,7 @@ func TestDeleteAnchor_RebasesAllAliasesOnSameAnchor(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, h, "alias %q survives the anchor delete", handle)
 		assert.NotEqual(t, "A", h.AnchorConvID, "alias %q rebased off the deleted conv", handle)
+		assert.Equal(t, actor, h.AnchorAgentID, "alias %q anchor_agent_id still names the surviving actor", handle)
 		got, err := ResolveHeadAlias(handle)
 		require.NoError(t, err)
 		assert.Equal(t, "C", got, "alias %q still resolves to the live head", handle)
