@@ -43,6 +43,23 @@ func TestRunLinuxPicker_RealFailureSurfaced(t *testing.T) {
 	}
 }
 
+func TestEnvWithOverride_DropsDuplicateKey(t *testing.T) {
+	// A pre-existing value must not survive: getenv returns the first match,
+	// so a leftover entry would shadow our override.
+	t.Setenv("GDK_BACKEND", "wayland")
+	env := envWithOverride("GDK_BACKEND=x11")
+
+	var matches []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "GDK_BACKEND=") {
+			matches = append(matches, e)
+		}
+	}
+	if len(matches) != 1 || matches[0] != "GDK_BACKEND=x11" {
+		t.Fatalf("GDK_BACKEND entries = %v, want exactly [GDK_BACKEND=x11]", matches)
+	}
+}
+
 func TestRunLinuxPicker_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

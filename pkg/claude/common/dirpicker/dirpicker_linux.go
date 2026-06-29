@@ -48,6 +48,27 @@ func pick(ctx context.Context, opts Options) (string, error) {
 	return "", ErrUnavailable
 }
 
+// envWithOverride returns the current environment with kv ("KEY=value")
+// applied so it actually takes effect: any pre-existing entry for the same key
+// is dropped before kv is appended. A blind append would leave a duplicate, and
+// getenv returns the first match — so an inherited GDK_BACKEND/QT_QPA_PLATFORM
+// would otherwise shadow our override.
+func envWithOverride(kv string) []string {
+	key, _, ok := strings.Cut(kv, "=")
+	if !ok {
+		return append(os.Environ(), kv)
+	}
+	prefix := key + "="
+	base := os.Environ()
+	out := make([]string, 0, len(base)+1)
+	for _, e := range base {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return append(out, kv)
+}
+
 // runLinuxPicker runs a picker binary and maps its exit convention onto
 // our contract, distinguishing the three outcomes the caller cares about:
 //
@@ -74,7 +95,7 @@ func runLinuxPicker(ctx context.Context, bin string, args []string, x11Env strin
 
 	position := x11Env != "" && x11Available()
 	if position {
-		cmd.Env = append(os.Environ(), x11Env)
+		cmd.Env = envWithOverride(x11Env)
 	}
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -82,8 +103,11 @@ func runLinuxPicker(ctx context.Context, bin string, args []string, x11Env strin
 	if position {
 		posCtx, cancel := context.WithTimeout(ctx, positionTimeout)
 		defer cancel()
-		//nolint:gosec // a pid fits a uint32; X11 _NET_WM_PID is a CARDINAL
-		go positionPickerNearPointer(posCtx, uint32(cmd.Process.Pid))
+		pid := uint32(cmd.Process.Pid) //nolint:gosec // a pid fits a uint32; X11 _NET_WM_PID is a CARDINAL
+		go func() {
+			defer cancel() // release the timer as soon as we've positioned
+			positionPickerNearPointer(posCtx, pid)
+		}()
 	}
 	err := cmd.Wait()
 	out := strings.TrimSpace(stdout.String())
