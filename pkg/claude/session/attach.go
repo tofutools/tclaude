@@ -108,27 +108,44 @@ func findSession(id string) (*SessionState, error) {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	// Exact id match wins outright — the PK is unique.
+	// Resolve to an exact match, preferring a LIVE row. The displayed handle is
+	// the short tmux name, which diverges from the full-UUID PK and can be
+	// disambiguated with a -N suffix. A stale row from before the PK
+	// de-truncation (id = convID[:8]) can linger sharing a tmux name with the
+	// live owner, so a live tmux-handle match must beat a *dead* exact-PK match
+	// — otherwise attach/kill lands on the stale row the user can't see. Within
+	// a liveness tier the exact PK wins (it is unique); the rendered tmux handle
+	// is the fallback, with the most-recently-updated row breaking ties among
+	// rows sharing a name. See JOH-248/JOH-332.
+	var liveID, liveTmux, deadID, deadTmux *SessionState
 	for _, state := range states {
-		if state.ID == id {
-			return state, nil
+		matchesID := state.ID == id
+		matchesTmux := state.TmuxSession == id
+		if !matchesID && !matchesTmux {
+			continue
+		}
+		alive := IsTmuxSessionAlive(state.TmuxSession)
+		if matchesID {
+			if alive {
+				liveID = state
+			} else if deadID == nil {
+				deadID = state
+			}
+		}
+		if matchesTmux {
+			if alive {
+				if liveTmux == nil || state.Updated.After(liveTmux.Updated) {
+					liveTmux = state
+				}
+			} else if deadTmux == nil || state.Updated.After(deadTmux.Updated) {
+				deadTmux = state
+			}
 		}
 	}
-
-	// Exact match on the short tmux handle we render to users (it diverges
-	// from the full-UUID PK; matching it keeps the displayed handle
-	// authoritative even when it was disambiguated with a -N suffix). tmux
-	// names are reused once a session exits, so a dead row can linger sharing
-	// a name — prefer the most-recently-updated match, which is the live
-	// owner. See JOH-248.
-	var tmuxMatch *SessionState
-	for _, state := range states {
-		if state.TmuxSession == id && (tmuxMatch == nil || state.Updated.After(tmuxMatch.Updated)) {
-			tmuxMatch = state
+	for _, m := range []*SessionState{liveID, liveTmux, deadID, deadTmux} {
+		if m != nil {
+			return m, nil
 		}
-	}
-	if tmuxMatch != nil {
-		return tmuxMatch, nil
 	}
 
 	// Try prefix match (on the full id — a short conv/synthetic prefix).

@@ -386,6 +386,30 @@ func liveSessionOwningID(sessionID string) *SessionState {
 	return nil
 }
 
+// LiveSessionForConv returns an existing, *live* session row for the given
+// conversation id, or nil. It keys on conv_id — the conversation's stable
+// identity — so it finds a live session regardless of that session's PK shape:
+// a full-UUID resume PK, a fresh spawn's random synthetic PK, or a
+// pre-de-truncation convID[:8] PK. A PK-keyed LoadSessionState lookup misses
+// the latter two (their PK is not the conv UUID), which is how a manual resume
+// of an already-live conversation slipped past the launch guards and ran a
+// second `claude --resume` on the same .jsonl (interleaved appends → conv-file
+// corruption). All three resume paths (session new -r, conv resume, the watch
+// TUI) guard on this. See JOH-332.
+func LiveSessionForConv(convID string) *SessionState {
+	if convID == "" {
+		return nil
+	}
+	existing, err := FindSessionByConvID(convID)
+	if err != nil || existing == nil {
+		return nil
+	}
+	if IsTmuxSessionAlive(existing.TmuxSession) {
+		return existing
+	}
+	return nil
+}
+
 // FormatDuration formats a duration in a human-readable way
 func FormatDuration(d time.Duration) string {
 	if d < time.Minute {

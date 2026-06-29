@@ -205,3 +205,59 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	assert.Nil(t, liveSessionOwningID("dead-label"),
 		"an exited row sharing the PK does not block a fresh launch")
 }
+
+// The resume-path double-launch guard must key on conv_id, not the PK. A
+// conversation made live by a FRESH `session new` has a random synthetic PK
+// (the full UUID lives only in the conv_id column); an old, pre-de-truncation
+// row has a convID[:8] PK. In both cases a PK-keyed LoadSessionState(fullUUID)
+// MISSES the live row, so a manual `session new -r` / `conv resume` of that
+// already-live conversation used to slip past the guard and double-launch
+// `claude --resume` on the same .jsonl (interleaved appends → corruption).
+// LiveSessionForConv catches it whatever the PK shape. See JOH-332.
+func TestLiveSessionForConv_FindsLiveByConvID_RegardlessOfPK(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	prevTmux := clcommon.Default
+	clcommon.Default = fakeTmux{alive: map[string]bool{"spwn-abc123": true, "bbbbbbbb": true}}
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+
+	// Fresh-spawn shape: synthetic PK, full UUID only in conv_id, live.
+	freshConv := "aaaaaaaa-1111-4111-8111-111111111111"
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "spwn-abc123", ConvID: freshConv, TmuxSession: "spwn-abc123", Status: StatusIdle,
+	}))
+
+	// The PK-keyed lookup the old guard used misses it — that's the gap (it
+	// returns no row; the production guard ignores the error and checks nil).
+	pkLookup, _ := LoadSessionState(freshConv)
+	assert.Nil(t, pkLookup, "PK-keyed LoadSessionState(fullUUID) misses a synthetic-PK row — the JOH-332 gap")
+
+	// The conv_id-keyed guard catches it.
+	got := LiveSessionForConv(freshConv)
+	require.NotNil(t, got, "a live fresh-spawn session must be found by conv_id so resume can't double-launch")
+	assert.Equal(t, "spwn-abc123", got.ID)
+
+	// Old pre-de-truncation shape: convID[:8] PK, live — also caught.
+	oldConv := "bbbbbbbb-2222-4222-8222-222222222222"
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "bbbbbbbb", ConvID: oldConv, TmuxSession: "bbbbbbbb", Status: StatusIdle,
+	}))
+	got = LiveSessionForConv(oldConv)
+	require.NotNil(t, got, "a live pre-de-truncation session must be found by conv_id (the upgrade-window case)")
+	assert.Equal(t, "bbbbbbbb", got.ID)
+
+	// A conv whose only session is DEAD (tmux name not alive) is resumable —
+	// no live session to collide with.
+	deadConv := "cccccccc-3333-4333-8333-333333333333"
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "spwn-dead", ConvID: deadConv, TmuxSession: "spwn-dead", Status: StatusExited,
+	}))
+	assert.Nil(t, LiveSessionForConv(deadConv),
+		"an exited session for the conv does not block a resume")
+
+	// Unknown conv and empty input resolve to nil, not an error.
+	assert.Nil(t, LiveSessionForConv("dddddddd-4444-4444-8444-444444444444"))
+	assert.Nil(t, LiveSessionForConv(""))
+}

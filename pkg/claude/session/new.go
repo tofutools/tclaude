@@ -468,17 +468,30 @@ func runNew(params *NewParams) error {
 		sessionID = params.Label
 	}
 
+	// When resuming, reject if the conversation already has a LIVE session.
+	// Keyed on conv_id (the conversation's stable identity) via
+	// LiveSessionForConv, so it catches the live session whatever its PK shape
+	// — a full-UUID resume PK, a fresh spawn's synthetic PK, or a
+	// pre-de-truncation convID[:8] PK. The PK guard below only catches the
+	// first; without this conv_id guard a manual `session new -r` on a conv
+	// already live under a synthetic/old PK would double-launch
+	// `claude --resume` on the same .jsonl (interleaved appends → corruption).
+	// See JOH-332.
+	if fullConvID != "" {
+		if owner := LiveSessionForConv(fullConvID); owner != nil {
+			return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+		}
+	}
+
 	// The session PK is now final (priority above: label > resumed conv UUID >
 	// random synthetic). Reject if a LIVE session already owns it. The tmux
 	// name is disambiguated below (UniqueTmuxSessionName), so without this
 	// guard SaveSessionState's ON CONFLICT(id) would silently overwrite that
-	// live session's row — and for a resumed conv UUID, also launch a second
-	// `claude --resume` on the same .jsonl. Before JOH-248 the PK and tmux name
-	// were identical, so the duplicate `new-session` clean-failed; this restores
-	// that now that the names diverge. A row owned only by a DEAD session is
-	// fine to reuse. (Relaunching under a DIFFERENT label that targets an
-	// already-live conv-id is a separate, pre-existing double-launch — a JOH-248
-	// follow-up, caught via FindSessionByConvID rather than the PK.)
+	// live session's row. Before JOH-248 the PK and tmux name were identical,
+	// so the duplicate `new-session` clean-failed; this restores that now that
+	// the names diverge. A row owned only by a DEAD session is fine to reuse.
+	// (This PK guard primarily backstops a reused --label; the resumed-conv
+	// case is covered by the conv_id guard above. See JOH-332.)
 	if owner := liveSessionOwningID(sessionID); owner != nil {
 		if params.Label != "" {
 			return fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)

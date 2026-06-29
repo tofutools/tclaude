@@ -159,9 +159,14 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// the short, human-facing handle. See JOH-248.
 	sessionID := rc.ConvID
 
-	// Check if a session already exists for this conversation.
-	existing, _ := session.LoadSessionState(sessionID)
-	if existing != nil && session.IsTmuxSessionAlive(existing.TmuxSession) {
+	// Reject if a live session already exists for this conversation. Keyed on
+	// conv_id (the stable identity) via LiveSessionForConv, so it catches the
+	// live session whatever its PK shape — including a fresh spawn's synthetic
+	// PK or a pre-de-truncation convID[:8] PK that a PK-keyed lookup would miss.
+	// Without this, a manual resume of an already-live conv double-launches
+	// `claude --resume` on the same .jsonl (interleaved appends → corruption).
+	// See JOH-332.
+	if existing := session.LiveSessionForConv(sessionID); existing != nil {
 		fmt.Fprintf(stderr, "Session %s already exists for this conversation\n", existing.TmuxSession)
 		fmt.Fprintf(stderr, "Attach with: tclaude session attach %s\n", existing.TmuxSession)
 		return 1
