@@ -310,12 +310,22 @@ function bindSudoModal() {
 // /api/permissions, which diffs it against what's persisted. This is
 // the PERMANENT analog of the "+ sudo" elevation — the banner in the
 // modal spells out the difference.
-let permEditConv = '';
 // permEditOwnsGroup: does the agent being edited own at least one group?
 // Owner-conferred ("owner_implied") slugs are effectively held by a group
 // owner via the daemon's owner-bypass, even at Default, so the effective
-// indicator must reflect that — set per-open in openPermEditModal.
+// indicator must reflect that — set per-open in openPermEditor.
 let permEditOwnsGroup = false;
+// permEditOwnedGroups names the group(s) the edited subject owns, for the
+// owner-note. For a live agent it comes from the snapshot; for a to-be-spawned
+// agent it is the destination group, gated on the spawn dialog's owner checkbox.
+let permEditOwnedGroups = [];
+// permEditOnSave is the save sink for the active editor, set per-open so the
+// shared build/submit logic serves two callers: the conv-backed editor POSTs
+// the full selection to /api/permissions (the daemon diffs it), and the
+// pre-spawn buffer editor writes the spawn dialog's in-memory overrides. It
+// receives the collected slug→effect map and returns a Promise; throwing
+// surfaces on the modal's error line. null means no editor is open.
+let permEditOnSave = null;
 
 // permRowEffective recomputes the "✓ granted / ✗ denied / ✓ via owner"
 // indicator on one row from its selected effect, whether the slug is a
@@ -348,25 +358,31 @@ function convOwnedGroups(conv) {
   return (a && a.owned_groups) || [];
 }
 
-function openPermEditModal(conv, label) {
+// openPermEditor is the shared renderer behind both permission editors. It
+// builds one tri-state row per registry slug, pre-selected from `overrides`
+// (slug→'grant'|'deny'|'default'), wires the owner-note + "via owner" hints
+// from ownsGroup/ownedGroups, and stows `onSave` as the submit sink. The
+// conv-backed editor (openPermEditModal) and the pre-spawn buffer editor
+// (openSpawnPermEditor) differ only in their seed + save; everything visual is
+// shared so the spawn dialog gets the identical editor the live-agent path has.
+function openPermEditor({ subtitle, overrides, ownsGroup, ownedGroups, onSave }) {
   const snap = lastSnapshot || {};
   const perms = snap.permissions || {};
   const slugs = (snap.slugs || []).slice().sort((a, b) => a.slug < b.slug ? -1 : 1);
   const defaultSet = new Set(perms.defaults || []);
-  const overrides = (perms.overrides || {})[conv] || {};
-  const ownedGroups = convOwnedGroups(conv);
-  permEditConv = conv;
-  permEditOwnsGroup = ownedGroups.length > 0;
-  $('#perm-edit-subtitle').textContent =
-    `Agent: ${label || shortId(conv)} · ${shortId(conv)}`;
+  overrides = overrides || {};
+  permEditOwnsGroup = !!ownsGroup;
+  permEditOwnedGroups = ownedGroups || [];
+  permEditOnSave = onSave;
+  $('#perm-edit-subtitle').textContent = subtitle || '';
   // Owner note: a group owner holds the owner-conferred (👑) slugs below
   // for its owned groups / their members even at Default. Surface that so
   // the human isn't misled by a "✗ denied"-looking Default tri-state.
   const ownerNote = $('#perm-edit-owner-note');
   if (ownerNote) {
-    if (permEditOwnsGroup) {
+    if (permEditOwnsGroup && permEditOwnedGroups.length) {
       ownerNote.innerHTML =
-        `👑 <strong>Group owner</strong> of ${ownedGroups.map(g => `<code>${esc(g)}</code>`).join(', ')}. ` +
+        `👑 <strong>Group owner</strong> of ${permEditOwnedGroups.map(g => `<code>${esc(g)}</code>`).join(', ')}. ` +
         `Owner-conferred slugs (marked 👑) are effectively held for those groups and their members ` +
         `even at <strong>Default</strong> — shown as “✓ via owner”. A <strong>Deny</strong> still suppresses one.`;
       ownerNote.hidden = false;
@@ -406,40 +422,83 @@ function openPermEditModal(conv, label) {
   setTimeout(() => $('#perm-edit-filter').focus(), 0);
 }
 
+// openPermEditModal is the conv-backed (live-agent) editor: it seeds from the
+// snapshot's per-conv overrides and saves by POSTing the full selection to
+// /api/permissions, which diffs it against what is persisted.
+function openPermEditModal(conv, label) {
+  const overrides = ((lastSnapshot?.permissions?.overrides) || {})[conv] || {};
+  const ownedGroups = convOwnedGroups(conv);
+  openPermEditor({
+    subtitle: `Agent: ${label || shortId(conv)} · ${shortId(conv)}`,
+    overrides,
+    ownsGroup: ownedGroups.length > 0,
+    ownedGroups,
+    onSave: async (selection) => {
+      const r = await fetch('/api/permissions', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conv, overrides: selection }),
+      });
+      if (!r.ok) {
+        throw new Error((await r.text()) || ('HTTP ' + r.status));
+      }
+      const resp = await r.json().catch(() => ({}));
+      const n = resp.changed || 0;
+      toast(`Permissions saved — ${n} change${n === 1 ? '' : 's'}`);
+      await refresh();
+    },
+  });
+}
+
+// openSpawnPermEditor is the pre-spawn (buffer) editor: the agent does not
+// exist yet, so it seeds from an in-memory override map the spawn dialog keeps
+// and saves by handing the non-default selection back to `onSave` (no network).
+// ownsGroup mirrors the spawn dialog's "Group owner" checkbox so the "via
+// owner" hints preview accurately; group is the spawn destination.
+function openSpawnPermEditor({ overrides, ownsGroup, group, label, onSave }) {
+  openPermEditor({
+    subtitle: `New agent${label ? ` “${label}”` : ''} → ${group} · applied when it spawns`,
+    overrides: overrides || {},
+    ownsGroup: !!ownsGroup,
+    ownedGroups: ownsGroup ? [group] : [],
+    onSave: (selection) => {
+      // Keep only the real overrides (grant/deny) in the dialog's buffer, so
+      // the indicator counts intent and the spawn body stays terse.
+      const kept = {};
+      Object.keys(selection).forEach(slug => {
+        if (selection[slug] === 'grant' || selection[slug] === 'deny') kept[slug] = selection[slug];
+      });
+      onSave(kept);
+    },
+  });
+}
+
 function closePermEditModal() {
   $('#perm-edit-modal').classList.remove('show');
 }
 
+// submitPermEdit collects the full tri-state selection from the DOM and hands
+// it to the active editor's onSave sink (set per-open by openPermEditor). The
+// conv path POSTs + refreshes; the buffer path writes the spawn dialog's
+// overrides. Both share this UI shell: disable while saving, surface any thrown
+// error on the modal's error line, close on success.
 async function submitPermEdit() {
   const errEl = $('#perm-edit-error');
   errEl.textContent = '';
-  if (!permEditConv) { errEl.textContent = 'No agent selected.'; return; }
+  if (!permEditOnSave) { errEl.textContent = 'No save target.'; return; }
   const overrides = {};
   $$('#perm-edit-list .perm-row').forEach(row => {
     const active = row.querySelector('.perm-tristate button.active');
     overrides[row.dataset.slug] = active ? active.dataset.effect : 'default';
   });
-  if (!Object.keys(overrides).length) { errEl.textContent = 'Nothing to save.'; return; }
   const btn = $('#perm-edit-submit');
   btn.disabled = true;
   try {
-    const r = await fetch('/api/permissions', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conv: permEditConv, overrides }),
-    });
-    if (!r.ok) {
-      errEl.textContent = (await r.text()) || ('HTTP ' + r.status);
-      return;
-    }
-    const resp = await r.json().catch(() => ({}));
-    const n = resp.changed || 0;
-    toast(`Permissions saved — ${n} change${n === 1 ? '' : 's'}`);
+    await permEditOnSave(overrides);
     closePermEditModal();
-    await refresh();
   } catch (e) {
-    errEl.textContent = 'Network error: ' + (e.message || e);
+    errEl.textContent = (e && e.message) || ('Error: ' + e);
   } finally {
     btn.disabled = false;
   }
@@ -592,5 +651,5 @@ function bindGroupCreateModal() {
 
 export {
   openMessageCreateModal, bindMessageModal, bindSudoModal,
-  openPermEditModal, bindPermEditModal, bindGroupCreateModal,
+  openPermEditModal, openSpawnPermEditor, bindPermEditModal, bindGroupCreateModal,
 };

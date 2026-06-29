@@ -157,6 +157,11 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		SpawnedByAgent: ps.SpawnedByAgent,
 		WorktreePath:   ps.WorktreePath,
 		WorktreeBranch: ps.WorktreeBranch,
+		// Birth-time access controls: the sweeper applies the same
+		// owner grant + permission overrides the inline paths do, now that the
+		// conv-id exists. enrollSpawnedConv reads these off spawnParams.
+		IsOwner:             ps.IsOwner,
+		PermissionOverrides: ps.PermissionOverrides,
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 		slog.Warn("pending-spawn sweeper: enrollment failed; will retry",

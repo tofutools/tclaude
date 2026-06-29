@@ -52,6 +52,15 @@ type SpawnProfile struct {
 	AutoFocus                  *bool
 	IncludeGroupDefaultContext *bool
 
+	// Birth-time access controls the spawn dialog can pre-fill from a profile
+	//. IsOwner is tri-state (nil = unset → leave the dialog's own
+	// default): when set it pre-checks "Group owner". PermissionOverrides is the
+	// saved per-slug override map (slug → "grant" | "deny"), stored as a JSON
+	// object in the permission_overrides column ("" = none) and pre-loaded into
+	// the dialog's buffered editor.
+	IsOwner             *bool
+	PermissionOverrides map[string]string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -92,13 +101,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		   (name, harness, model, effort, sandbox, approval, auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control,
+		    is_owner, permission_overrides,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
+		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -123,6 +134,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
+		   is_owner = ?, permission_overrides = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
@@ -130,6 +142,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
+		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -204,16 +217,18 @@ func DeleteSpawnProfile(name string) (int64, error) {
 
 const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
-	sync_worktree, auto_focus, include_group_default_context, remote_control, created_at, updated_at
+	sync_worktree, auto_focus, include_group_default_context, remote_control,
+	is_owner, permission_overrides, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
-	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl sql.NullInt64
-	var createdAt, updatedAt string
+	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, isOwner sql.NullInt64
+	var permOverrides, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
-		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &createdAt, &updatedAt); err != nil {
+		&syncWorktree, &autoFocus, &includeCtx, &remoteControl,
+		&isOwner, &permOverrides, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	p.AutoReview = nullToBoolPtr(autoReview)
@@ -222,6 +237,8 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.AutoFocus = nullToBoolPtr(autoFocus)
 	p.IncludeGroupDefaultContext = nullToBoolPtr(includeCtx)
 	p.RemoteControl = nullToBoolPtr(remoteControl)
+	p.IsOwner = nullToBoolPtr(isOwner)
+	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
 	return &p, nil

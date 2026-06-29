@@ -18,6 +18,13 @@ import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js'
 import { slopJackpot } from './slop-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
+import { openSpawnPermEditor } from './modal-message.js';
+
+// Birth-time permission overrides the human set in the stacked Permissions…
+// editor, buffered here until the spawn POSTs them. slug → 'grant' |
+// 'deny'; reset to {} on every modal open. The owner intent rides the
+// #agent-spawn-owner checkbox directly.
+let spawnPermOverrides = {};
 
 
 // ---- Agent spawn modal --------------------------------------------------
@@ -603,6 +610,13 @@ function applyProfileToSpawnForm(p) {
   if (p.include_group_default_context != null) {
     $('#agent-spawn-group-context').checked = !!p.include_group_default_context;
   }
+  // Birth-time access controls: apply the profile's owner default only
+  // when it set one (tri-state), and load its per-slug overrides into the buffer.
+  if (p.is_owner != null) $('#agent-spawn-owner').checked = !!p.is_owner;
+  if (p.permission_overrides) {
+    spawnPermOverrides = { ...p.permission_overrides };
+    updateSpawnPermsIndicator();
+  }
   // The name may have changed → re-sync the worktree branch name + the
   // normalize preview.
   applyWtSync();
@@ -628,10 +642,59 @@ function clearSpawnProfileFields() {
   updateSpawnGroupContextRow($('#agent-spawn-group').value);
   // Reset Remote Access to the group-policy default (no profile picked now).
   applyRemoteControlPrefill($('#agent-spawn-group').value, null);
+  // Owner + permission overrides are profile-controlled too — clear them.
+  resetSpawnAccessControls();
   $('#agent-spawn-load-profile').value = '';
   syncSelectTitle($('#agent-spawn-load-profile'));
   applyWtSync();
   updateSpawnNameHint();
+}
+
+// resetSpawnAccessControls clears the birth-time access controls: the
+// Group-owner checkbox and the buffered per-slug permission overrides, then
+// refreshes the indicator. Called on every open and by the profile Clear path.
+function resetSpawnAccessControls() {
+  $('#agent-spawn-owner').checked = false;
+  spawnPermOverrides = {};
+  updateSpawnPermsIndicator();
+}
+
+// updateSpawnPermsIndicator reflects how many per-slug overrides are buffered
+// next to the Permissions… button, so the human can see intent without
+// reopening the editor (e.g. "2 set" / "1 grant · 1 deny").
+function updateSpawnPermsIndicator() {
+  const el = $('#agent-spawn-perms-indicator');
+  if (!el) return;
+  const slugs = Object.keys(spawnPermOverrides);
+  if (!slugs.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  let grants = 0, denies = 0;
+  slugs.forEach(s => { if (spawnPermOverrides[s] === 'deny') denies++; else grants++; });
+  const parts = [];
+  if (grants) parts.push(`${grants} grant${grants === 1 ? '' : 's'}`);
+  if (denies) parts.push(`${denies} den${denies === 1 ? 'y' : 'ies'}`);
+  el.textContent = parts.join(' · ');
+  el.hidden = false;
+}
+
+// openSpawnPermsEditor opens the stacked per-slug permission editor seeded from
+// the buffered overrides, gated on the destination group + the live Group-owner
+// checkbox (so its "via owner" hints preview accurately). On save it stores the
+// returned non-default selection and refreshes the indicator.
+function openSpawnPermsEditor() {
+  openSpawnPermEditor({
+    overrides: spawnPermOverrides,
+    ownsGroup: $('#agent-spawn-owner').checked,
+    group: $('#agent-spawn-group').value,
+    label: $('#agent-spawn-name').value.trim(),
+    onSave: (kept) => {
+      spawnPermOverrides = kept;
+      updateSpawnPermsIndicator();
+    },
+  });
 }
 
 // populateSpawnProfileOptions rebuilds the Profile selector's <option> list
@@ -689,7 +752,12 @@ function spawnFormAsProfileSeed() {
     auto_focus: $('#agent-spawn-focus').checked,
     sync_worktree: $('#agent-spawn-wt-sync').checked,
     include_group_default_context: $('#agent-spawn-group-context').checked,
+    // Birth-time access controls: the owner checkbox is a concrete
+    // on/off, and the buffered overrides ride along when any are set so "Save as
+    // profile" captures the whole dialog including its permission intent.
+    is_owner: $('#agent-spawn-owner').checked,
   };
+  if (Object.keys(spawnPermOverrides).length) seed.permission_overrides = { ...spawnPermOverrides };
   if (hEntry && hEntry.can_sandbox) seed.sandbox = $('#agent-spawn-sandbox').value;
   // Approval is surfaced only for a harness with dialog modes (Claude Code), so
   // seed it only then — matching the row's visibility (an empty <select> on a
@@ -969,6 +1037,9 @@ function openAgentSpawnModal(opts) {
   // every open with an empty list and any prior preview URLs revoked.
   clearSpawnAttachments();
   $('#agent-spawn-attach-input').value = '';
+  // Birth-time access controls start cleared every open; a picked profile may
+  // re-apply them below (applyProfileToSpawnForm).
+  resetSpawnAccessControls();
   // Populate the harness selector from the catalog and reshape the Model /
   // Sandbox rows for the chosen harness (default Claude Code). This also
   // re-applies the remembered effort for the now-active Model control, so
@@ -1195,6 +1266,13 @@ async function submitAgentSpawn() {
     if (harnessEntry && harnessEntry.can_remote_control) {
       body.remote_control = $('#agent-spawn-remote-control').checked;
     }
+    // Birth-time access controls: the Group-owner checkbox and the
+    // buffered per-slug overrides. Sent only when set so a plain spawn body is
+    // unchanged; the daemon validates the slugs/effects and gates both on the
+    // caller (human, or an owner of the target group). The dashboard caller is
+    // the human, so this always passes here.
+    if ($('#agent-spawn-owner').checked) body.is_owner = true;
+    if (Object.keys(spawnPermOverrides).length) body.permission_overrides = spawnPermOverrides;
     if (sel.path && wtRepo && wtRepo !== cwd) {
       body.cwd = cwd;
       body.worktree_path = sel.path;
@@ -1330,6 +1408,12 @@ function bindAgentSpawnModal() {
       },
     });
   });
+  // Permissions… opens the stacked per-slug editor. It works
+  // entirely on the in-memory buffer — nothing is written until the spawn
+  // POSTs. The stacked editor is a sibling .modal-overlay, so the spawn
+  // dialog's Esc/backdrop close already bails for it (isTopmostOverlay) and
+  // its Ctrl/Cmd+Enter can't bubble here.
+  $('#agent-spawn-perms').addEventListener('click', openSpawnPermsEditor);
   $('#agent-spawn-cancel').addEventListener('click', closeAgentSpawnModal);
   $('#agent-spawn-submit').addEventListener('click', submitAgentSpawn);
   // Ctrl/Cmd+Enter spawns from anywhere in the dialog (incl. the

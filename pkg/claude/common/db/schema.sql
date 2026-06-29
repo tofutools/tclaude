@@ -319,7 +319,7 @@ CREATE TABLE pending_spawns (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '');
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE spawn_profiles (
 			id                            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,7 +340,7 @@ CREATE TABLE spawn_profiles (
 			include_group_default_context INTEGER,
 			created_at                    TEXT NOT NULL,
 			updated_at                    TEXT NOT NULL
-		, remote_control INTEGER);
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE ask_threads (
 			term_key   TEXT NOT NULL,

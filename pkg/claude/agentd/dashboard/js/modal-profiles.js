@@ -23,6 +23,12 @@ import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } fr
 import {
   loadProfiles, createProfile, updateProfile, deleteProfile, profileSummary,
 } from './profiles.js';
+import { openSpawnPermEditor } from './modal-message.js';
+
+// Buffered per-slug permission overrides for the profile being edited.
+// slug → 'grant' | 'deny'; reset per openProfileEditor, written by the stacked
+// Permissions… editor, and folded into the save payload.
+let profilePermOverrides = {};
 
 // The original profile object while editing an existing one (the PATCH target
 // + the source of carried-forward fields the editor doesn't surface); null
@@ -137,6 +143,42 @@ function applyProfileEditorHarness(harnessName) {
 // a plain checkbox collapsing unset into false.
 function setTri(sel, v) { sel.value = (v == null) ? '' : (v ? '1' : '0'); }
 function readTri(sel) { const v = sel.value; return v === '' ? null : (v === '1'); }
+
+// updateProfilePermsIndicator mirrors the buffered override count next to the
+// profile editor's Permissions… button (e.g. "1 grant · 2 denies").
+function updateProfilePermsIndicator() {
+  const el = $('#profile-editor-perms-indicator');
+  if (!el) return;
+  const slugs = Object.keys(profilePermOverrides);
+  if (!slugs.length) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  let grants = 0, denies = 0;
+  slugs.forEach(s => { if (profilePermOverrides[s] === 'deny') denies++; else grants++; });
+  const parts = [];
+  if (grants) parts.push(`${grants} grant${grants === 1 ? '' : 's'}`);
+  if (denies) parts.push(`${denies} den${denies === 1 ? 'y' : 'ies'}`);
+  el.textContent = parts.join(' · ');
+  el.hidden = false;
+}
+
+// openProfilePermsEditor opens the stacked per-slug editor seeded from the
+// profile's buffered overrides. The owner select gates the "via owner" preview;
+// the group is unknown for a reusable profile, so a placeholder names it.
+function openProfilePermsEditor() {
+  openSpawnPermEditor({
+    overrides: profilePermOverrides,
+    ownsGroup: readTri($('#profile-editor-owner')) === true,
+    group: 'the spawn group',
+    label: $('#profile-editor-agent-name').value.trim(),
+    onSave: (kept) => {
+      profilePermOverrides = kept;
+      updateProfilePermsIndicator();
+    },
+  });
+}
 
 function setSelectIfPresent(sel, value) {
   if (value && [...sel.options].some(o => o.value === value)) sel.value = value;
@@ -261,11 +303,17 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   setTri($('#profile-editor-sync-worktree'), seed ? seed.sync_worktree : null);
   setTri($('#profile-editor-auto-focus'), seed ? seed.auto_focus : null);
   setTri($('#profile-editor-group-context'), seed ? seed.include_group_default_context : null);
+  setTri($('#profile-editor-owner'), seed ? seed.is_owner : null);
 
   $('#profile-editor-agent-name').value = seed ? (seed.agent_name || '') : '';
   $('#profile-editor-role').value = seed ? (seed.role || '') : '';
   $('#profile-editor-descr').value = seed ? (seed.descr || '') : '';
   $('#profile-editor-init-msg').value = seed ? (seed.initial_message || '') : '';
+
+  // Birth-time permission overrides: seed the buffer from the profile (a shallow
+  // copy so editing doesn't mutate the seed) and refresh the indicator.
+  profilePermOverrides = (seed && seed.permission_overrides) ? { ...seed.permission_overrides } : {};
+  updateProfilePermsIndicator();
 
   $('#profile-editor-modal').classList.add('show');
   bindSelectTitles($('#profile-editor-modal'));
@@ -329,6 +377,13 @@ function buildProfilePayload(name) {
   if (autoFocus != null) body.auto_focus = autoFocus;
   const groupCtx = readTri($('#profile-editor-group-context'));
   if (groupCtx != null) body.include_group_default_context = groupCtx;
+
+  // Birth-time access controls: the tri-state owner pre-fill and the
+  // buffered per-slug overrides. Sent only when set so a profile without them
+  // round-trips unchanged.
+  const owner = readTri($('#profile-editor-owner'));
+  if (owner != null) body.is_owner = owner;
+  if (Object.keys(profilePermOverrides).length) body.permission_overrides = profilePermOverrides;
 
   // Carry forward the un-surfaced approval-subsystem fields on a same-harness
   // edit (treat "" and "claude" as the same default harness), so the
@@ -423,6 +478,9 @@ function bindProfilesUI() {
   // Editor modal.
   $('#profile-editor-cancel').addEventListener('click', closeProfileEditor);
   $('#profile-editor-submit').addEventListener('click', submitProfileEditor);
+  // Permissions… opens the stacked per-slug editor on the profile's buffer
+  // — same sibling-overlay pattern as the spawn dialog's button.
+  $('#profile-editor-perms').addEventListener('click', openProfilePermsEditor);
   $('#profile-editor-harness').addEventListener('change', (e) => {
     applyProfileEditorHarness(e.target.value);
   });

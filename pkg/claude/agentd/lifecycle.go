@@ -1051,6 +1051,44 @@ func armRemoteControlAfterResume(convID string) {
 //     `name` (when set) becomes the new agent's conversation title
 //     via the post-spawn /rename injection.
 //
+// normalizeSpawnPermissionOverrides validates the birth-time permission
+// overrides off a SpawnRequest and returns the canonical slug→effect map to
+// apply at enrollment. Each slug must be registered and each effect
+// must be "grant" or "deny"; a "default"/"" effect is a no-op and is dropped
+// (the agent inherits the global default for that slug), so an editor that
+// posts every slug — most at Default — collapses to just the real overrides.
+// An unknown slug or an unrecognised effect returns a non-empty human-readable
+// error string (the caller maps it to a 400); the map is nil for no overrides.
+func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string, string) {
+	if len(in) == 0 {
+		return nil, ""
+	}
+	out := make(map[string]string, len(in))
+	for slug, effect := range in {
+		slug = strings.TrimSpace(slug)
+		if slug == "" {
+			continue
+		}
+		switch strings.TrimSpace(effect) {
+		case "", "default":
+			continue // no override — inherits the global default
+		case db.PermEffectGrant, db.PermEffectDeny:
+			if !IsKnownPermSlug(slug) {
+				return nil, fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+					slug, strings.Join(knownSlugs(), ", "))
+			}
+			out[slug] = strings.TrimSpace(effect)
+		default:
+			return nil, fmt.Sprintf("permission override for %q must be \"grant\", \"deny\", or \"default\"; got %q",
+				slug, effect)
+		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
 // Permission: groups.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
@@ -1147,6 +1185,42 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if attErr != "" {
 		writeError(w, http.StatusBadRequest, "invalid_attachments", attErr)
 		return
+	}
+
+	// Birth-time access controls: make the new agent a group owner
+	// and/or seed its permanent per-slug permission overrides, the same grants
+	// the Edit-agent modal applies to a live agent — but applied at enrollment
+	// so the agent's first turn already has them. Validate here, at the
+	// boundary, before any subprocess launches:
+	//   - every override slug must be registered and every effect in
+	//     {grant,deny} ("default"/"" carries no override and is dropped);
+	//   - the privilege is gated so a spawn confers no MORE authority than the
+	//     post-spawn path: a human (dashboard) caller always passes, and an
+	//     agent caller must hold the SAME slug the dedicated endpoints require —
+	//     groups.own to mint an owner (handleGroupOwnersAdd) and
+	//     permissions.grant to set per-slug overrides (handlePermissionsGrant).
+	//     Group ownership is deliberately NOT sufficient: owner-state confers
+	//     only the owner-implied lifecycle slugs (groups.spawn/stop/…), NOT
+	//     groups.own or permissions.grant — so keying on ownership would let an
+	//     owner mint a child holding permissions.grant and escalate globally.
+	//     resolvePermission (no owner bypass) is the same evaluation those
+	//     endpoints run.
+	permOverrides, povErr := normalizeSpawnPermissionOverrides(body.PermissionOverrides)
+	if povErr != "" {
+		writeError(w, http.StatusBadRequest, "invalid_permission_overrides", povErr)
+		return
+	}
+	if spawnerConvID != "" {
+		if body.IsOwner && resolvePermission(spawnerConvID, PermGroupsOwn) != permAllow {
+			writeError(w, http.StatusForbidden, "forbidden",
+				"making the spawned agent a group owner requires the "+PermGroupsOwn+" permission")
+			return
+		}
+		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
+			writeError(w, http.StatusForbidden, "forbidden",
+				"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
+			return
+		}
 	}
 
 	// Resolve the startup briefing's sender. Default: the spawn
@@ -1389,26 +1463,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
-		Name:           body.Name,
-		Role:           body.Role,
-		Descr:          body.Descr,
-		InitialMessage: body.InitialMessage,
-		Attachments:    attachments,
-		Cwd:            cwd,
-		WorktreePath:   worktreePath,
-		WorktreeBranch: worktreeBranch,
-		AutoFocus:      body.AutoFocus,
-		Effort:         effort,
-		Model:          model,
-		Harness:        h.Name,
-		SandboxMode:    sandboxMode,
-		ApprovalPolicy: approvalPolicy,
-		AutoReview:     autoReview,
-		TrustDir:       trustDir,
-		RemoteControl:  remoteControl,
-		ReplyToConv:    replyToConv,
-		SpawnedByConv:  spawnerConvID,
-		Timeout:        timeout,
+		Name:                body.Name,
+		Role:                body.Role,
+		Descr:               body.Descr,
+		InitialMessage:      body.InitialMessage,
+		Attachments:         attachments,
+		Cwd:                 cwd,
+		WorktreePath:        worktreePath,
+		WorktreeBranch:      worktreeBranch,
+		AutoFocus:           body.AutoFocus,
+		Effort:              effort,
+		Model:               model,
+		Harness:             h.Name,
+		SandboxMode:         sandboxMode,
+		ApprovalPolicy:      approvalPolicy,
+		AutoReview:          autoReview,
+		TrustDir:            trustDir,
+		RemoteControl:       remoteControl,
+		ReplyToConv:         replyToConv,
+		SpawnedByConv:       spawnerConvID,
+		IsOwner:             body.IsOwner,
+		PermissionOverrides: permOverrides,
+		Timeout:             timeout,
 		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
 		// non-blocking: a spawn whose conv-id does not materialise within the
 		// inline grace becomes a PENDING agent rather than hanging the request
@@ -1557,6 +1633,18 @@ type spawnParams struct {
 	// live), where resolution falls straight back to the conv.
 	ReplyToAgent   string
 	SpawnedByAgent string
+	// IsOwner makes the spawned agent a group owner of the target group at
+	// birth. enrollSpawnedConv applies it (best-effort, like the
+	// group-template instantiator) right after the membership add, so the new
+	// agent comes up already owning the group. false = ordinary member.
+	IsOwner bool
+	// PermissionOverrides is the new agent's permanent per-slug override set
+	// to apply at birth: slug → "grant" | "deny". enrollSpawnedConv
+	// writes each via db.SetAgentPermissionOverride after the membership add,
+	// best-effort alongside IsOwner. Validated at the spawn boundary
+	// (handleGroupSpawn) — every slug registered, every effect in {grant,deny}.
+	// nil/empty = inherit the group's default permissions.
+	PermissionOverrides map[string]string
 	// Timeout bounds the conv-id poll; <= 0 falls back to 30s. On the
 	// synchronous path it is the hard deadline before a spawn fails; on the
 	// Async path the poll is capped at the shorter asyncSpawnInlineGrace
@@ -2076,17 +2164,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if p.Async {
 		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
 		pending := &db.PendingSpawn{
-			Label:          label,
-			GroupID:        g.ID,
-			Role:           p.Role,
-			Descr:          p.Descr,
-			Name:           p.Name,
-			InitialMessage: p.InitialMessage,
-			GroupContext:   p.GroupContext,
-			ReplyToConv:    p.ReplyToConv,
-			SpawnedByConv:  p.SpawnedByConv,
-			WorktreePath:   p.WorktreePath,
-			WorktreeBranch: p.WorktreeBranch,
+			Label:               label,
+			GroupID:             g.ID,
+			Role:                p.Role,
+			Descr:               p.Descr,
+			Name:                p.Name,
+			InitialMessage:      p.InitialMessage,
+			GroupContext:        p.GroupContext,
+			ReplyToConv:         p.ReplyToConv,
+			SpawnedByConv:       p.SpawnedByConv,
+			WorktreePath:        p.WorktreePath,
+			WorktreeBranch:      p.WorktreeBranch,
+			IsOwner:             p.IsOwner,
+			PermissionOverrides: p.PermissionOverrides,
 		}
 		if err := db.InsertPendingSpawn(pending); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -2228,6 +2318,35 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		}
 	}
 
+	// Birth-time access controls: make the new agent a group owner
+	// and/or apply its requested per-slug permission overrides, the same writes
+	// the group-template instantiator performs after executeSpawn — but folded
+	// into enrollment so they reach EVERY spawn path uniformly: the launch-
+	// enrollment (CC, pre-fork), the inline-resolve (Codex), and the pending-
+	// spawn sweeper, which reconstructs p.IsOwner / p.PermissionOverrides from
+	// the persisted row. Both are best-effort and only log on failure — the
+	// agent is already spawned + grouped, and the human can re-apply from the
+	// Edit-agent modal; a failed grant must not strand the spawn. The grants
+	// were authorised at the boundary (handleGroupSpawn requires the same slug
+	// the dedicated endpoints do — groups.own / permissions.grant — for an agent
+	// caller), so granter just records who requested it. We use granterLabel
+	// rather than auditedCaller, so a (narrow) sudo-elevated spawn-time grant is
+	// NOT via-sudo-annotated in the audit row the way the dedicated endpoints
+	// annotate it — an accepted residual; the authorization is identical.
+	granter := granterLabel(p.SpawnedByConv)
+	if p.IsOwner {
+		if err := db.AddAgentGroupOwner(g.ID, convID, granter); err != nil {
+			slog.Warn("spawn: failed to grant group ownership at birth",
+				"conv", convID, "group", g.Name, "error", err)
+		}
+	}
+	for slug, effect := range p.PermissionOverrides {
+		if err := db.SetAgentPermissionOverride(convID, slug, effect, granter); err != nil {
+			slog.Warn("spawn: failed to apply birth permission override",
+				"conv", convID, "slug", slug, "effect", effect, "error", err)
+		}
+	}
+
 	// Record the requested name as the actor's pending display name. Until
 	// the title materialises (a tick later on the legacy path; at launch on
 	// the launch-enrollment path) the dashboard would otherwise show
@@ -2289,11 +2408,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 // briefing for a conv-id that will never exist. It is NOT called on a slow/
 // missing conv-id poll: there the pane is most likely coming up, so the spawn
 // is returned as a success against the preset id rather than rolled back (see
-// the launch-enrollment branch in executeSpawn). Both removals are best-effort
+// the launch-enrollment branch in executeSpawn). All removals are best-effort
 // — a failure here only leaves a harmless orphan the operator can clear from
 // the dashboard — so they log rather than bubble. The pending-name row is keyed
 // by a conv-id that now never materialises, so it is never read again and is
 // left in place.
+//
+// It also undoes the birth-time access controls enrollSpawnedConv may have
+// written (the group-owner row + per-slug overrides): both are applied before
+// the fork on the launch-enrollment path, so a failed launch would otherwise
+// strand a ghost owner of the group (which could mask an ownerless-group
+// warning) and dangling override rows for a conv that never exists. Both calls
+// are no-ops when nothing was written, so this is unconditional — rollback has
+// no spawnParams to consult.
 func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	if msgID > 0 {
 		if _, err := db.DeleteAgentMessageByID(msgID, convID); err != nil {
@@ -2304,6 +2431,14 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
 		slog.Warn("spawn: rollback failed to remove group member",
 			"conv", convID, "group", g.Name, "error", err)
+	}
+	if _, err := db.RemoveAgentGroupOwner(g.ID, convID); err != nil {
+		slog.Warn("spawn: rollback failed to remove birth owner grant",
+			"conv", convID, "group", g.Name, "error", err)
+	}
+	if _, err := db.RevokeAllAgentPermissionsForConv(convID); err != nil {
+		slog.Warn("spawn: rollback failed to revoke birth permission overrides",
+			"conv", convID, "error", err)
 	}
 }
 
