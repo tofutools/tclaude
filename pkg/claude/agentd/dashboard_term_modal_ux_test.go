@@ -72,18 +72,47 @@ func TestTermModal_BackdropDetachVsCloseByViewType(t *testing.T) {
 	src := readTermModalSrc(t)
 
 	// The confirm copy is chosen off hideConv (set = web window, null = web term).
-	if !strings.Contains(src, "confirmModal(hideConv ?") {
-		t.Error("modal-term.js confirmAndClose must pick its copy off hideConv — a web " +
+	start := strings.Index(src, "confirmModal(hideConv ?")
+	if start < 0 {
+		t.Fatal("modal-term.js confirmAndClose must pick its copy off hideConv — a web " +
 			"window detaches (agent keeps running) while an ad hoc web terminal closes")
 	}
-	// Web window → ask to detach.
-	if !strings.Contains(src, "okLabel: 'Detach'") {
-		t.Error("modal-term.js web-window confirm must offer 'Detach' — clicking outside a " +
-			"web window must ask to detach, not to shut the agent down")
+	// Pin the branch→copy MAPPING, not just that both labels appear somewhere: the
+	// hideConv-truthy branch (before the `} : {` separator) must carry 'Detach',
+	// the else branch (after it) 'Close terminal'. A transposition that swapped the
+	// two branches' copy would still pass a "both strings present" check, so order
+	// is the real invariant.
+	rest := src[start:]
+	detachIdx := strings.Index(rest, "okLabel: 'Detach'")
+	elseIdx := strings.Index(rest, "} : {")
+	closeIdx := strings.Index(rest, "okLabel: 'Close terminal'")
+	if detachIdx < 0 || elseIdx < 0 || closeIdx < 0 || !(detachIdx < elseIdx && elseIdx < closeIdx) {
+		t.Error("modal-term.js confirm copy is mis-mapped: the hideConv-truthy branch must " +
+			"offer 'Detach' (web window) and the else branch 'Close terminal' (ad hoc web terminal)")
 	}
-	// Web terminal → ask to close (unchanged).
-	if !strings.Contains(src, "okLabel: 'Close terminal'") {
-		t.Error("modal-term.js ad hoc web-terminal confirm must keep offering 'Close terminal'")
+}
+
+// TestTermModal_SpawnAutoFocusDetaches pins that the spawn auto-focus in-browser
+// fallback (modal-spawn.js) is treated as a web window, not a throwaway terminal.
+// It attaches to the agent's LIVE tmux session (handleDashboardSpawnFocusWS →
+// openAttachCmd, the same attach the open-window row action uses), so closing it
+// must run the reliable server-side detach (/api/hide) and its confirm must ask
+// to DETACH — exactly like the open-window caller. That requires passing hideConv
+// to openTermModal; without it the modal both shows the wrong "Close terminal?"
+// copy and skips the detach, leaving the forked tmux client stuck attached.
+func TestTermModal_SpawnAutoFocusDetaches(t *testing.T) {
+	data, err := fs.ReadFile(dashboardAssetsFS, "js/modal-spawn.js")
+	if err != nil {
+		t.Fatalf("read js/modal-spawn.js: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(src, "payload.focus_ws") {
+		t.Skip("spawn auto-focus in-browser fallback not present — nothing to pin")
+	}
+	if !strings.Contains(src, "hideConv: payload.conv_id") {
+		t.Error("modal-spawn.js spawn auto-focus opens a live-session web window — it must " +
+			"pass hideConv (payload.conv_id) so closing it detaches via /api/hide and asks to " +
+			"detach, not just drop the WebSocket")
 	}
 }
 
@@ -142,14 +171,19 @@ func TestTermModal_DetachCallsHideAPI(t *testing.T) {
 }
 
 // TestTermModal_OnlyOpenWindowPassesHideConv pins the load-bearing wiring and
-// guards a footgun. The open-window row action must thread the agent selector
-// through as hideConv so the modal's detach hits /api/hide for the agent's live
-// session. Crucially, EXACTLY ONE openTermModal caller may pass hideConv: the
-// web-term / term-dir callers attach to a THROWAWAY tclaude-term-… session, but
-// /api/hide resolves to the agent's MAIN spwn-… session — so passing hideConv
-// there would detach the agent's real window when its throwaway terminal closes.
-// The count invariant fails the build if a future edit copy-pastes hideConv onto
-// one of those callers.
+// guards a footgun WITHIN row-actions.js. The open-window row action must thread
+// the agent selector through as hideConv so the modal's detach hits /api/hide for
+// the agent's live session. Crucially, of row-actions.js's openTermModal callers
+// EXACTLY ONE may pass hideConv: the web-term / term-dir callers attach to a
+// THROWAWAY tclaude-term-… session, but /api/hide resolves to the agent's MAIN
+// spwn-… session — so passing hideConv there would detach the agent's real window
+// when its throwaway terminal closes. The count invariant fails the build if a
+// future edit copy-pastes hideConv onto one of those callers.
+//
+// hideConv is legitimate from OTHER files too when the view attaches to the
+// agent's main session — the spawn auto-focus fallback in modal-spawn.js is the
+// other such caller (see TestTermModal_SpawnAutoFocusDetaches). This count is
+// scoped to row-actions.js precisely so those legitimate callers don't relax it.
 func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
 	src := readRowActionsSrc(t)
 	if !strings.Contains(src, "hideConv: agent") {
@@ -157,9 +191,9 @@ func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
 			"openTermModal — without it the web window's Detach/Close can't hit /api/hide")
 	}
 	if n := strings.Count(src, "hideConv:"); n != 1 {
-		t.Errorf("exactly one openTermModal caller may pass hideConv (the open-window "+
-			"action); found %d — a web-term/term-dir caller passing hideConv would detach "+
-			"the agent's MAIN session when its throwaway terminal closes", n)
+		t.Errorf("exactly one row-actions.js openTermModal caller may pass hideConv (the "+
+			"open-window action); found %d — a web-term/term-dir caller passing hideConv would "+
+			"detach the agent's MAIN session when its throwaway terminal closes", n)
 	}
 }
 

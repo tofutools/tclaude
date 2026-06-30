@@ -1300,7 +1300,15 @@ async function submitAgentSpawn() {
       // agentd, or no terminal emulator installed) — open the same
       // in-browser fallback the "open window" row action uses, rather
       // than claiming "opening terminal" and opening nothing.
-      openTermModal({ wsPath: payload.focus_ws, label: payload.label || label });
+      //
+      // This attaches to the agent's LIVE tmux session (handleDashboardSpawnFocusWS
+      // → openAttachCmd, the same attach as the open-window row action), so it's a
+      // web window, not a throwaway web terminal: pass hideConv so closing it runs
+      // the reliable server-side detach (/api/hide) and the confirm asks to DETACH,
+      // not to close — mirroring the open-window caller (row-actions.js). When the
+      // spawn has no conv-id yet (a gated/pre-hook spawn) hideConv is null, which
+      // degrades to the plain close — no worse than before.
+      openTermModal({ wsPath: payload.focus_ws, label: payload.label || label, hideConv: payload.conv_id || null });
       toast(`spawned ${label} → ${group} — opened in-browser terminal`);
     } else {
       toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
