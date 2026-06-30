@@ -1447,6 +1447,57 @@ details[open] > summary .spawn-btn { opacity: 1; }
 .group-max-members.unset { color: #484f58; font-style: italic; }
 .group-max-members.unset:hover { color: #d4d4d4; }
 .group-max-members.full { color: #f0883e; }
+
+/* ── Group quick-options auto-fold (config dashboard.group_quick_options) ──
+   In "hover" mode (body.group-quick-fold, the default) the editable chip text
+   in a group <summary> collapses to icon-only at rest and slides open when the
+   pointer is over the header — a pure-CSS horizontal accordion that reclaims
+   the width those chips eat. The .qo-text span wraps ONLY the variable-length
+   label; the leading 📝/📁/🧠/🔗 icon, the group name, the activity-bot row
+   and the always-on 👥 member chip stay put, so a folded header still reads at
+   a glance.
+
+   .qo-text carries NO base style on purpose: in "expanded" mode, on a touch
+   (no-hover) device, or for a pinned group the span is a transparent inline
+   wrapper, so the header renders exactly as it did before this feature. Only
+   the fold selectors below touch it.
+
+   It collapses via a max-width TRANSITION rather than display:none so it
+   survives the 2s snapshot poll: that poll rebuilds the group rows with
+   innerHTML, and a transition triggered by :hover does NOT replay on a
+   freshly-inserted node (the new element paints directly in its current hover
+   state) — unlike the keyframe animations that needed wall-clock re-phasing.
+   So the fold never flickers on the tick.
+
+   Gated to (hover: hover) so touch devices — which can't hover to reveal —
+   always get the full chips. A pinned group (.quick-pinned, a per-browser
+   dashPref toggled from the ⚙ menu) opts out and stays expanded even here. */
+@media (hover: hover) {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text {
+    display: inline-block;
+    vertical-align: bottom;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
+    opacity: 0;
+    transition: max-width 0.18s ease, opacity 0.18s ease;
+  }
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text {
+    /* Generous reveal cap — typical descr/dir/profile show in full; a
+       pathological label clips to an ellipsis (the chip's title tooltip still
+       carries the whole value) so a long one can't blow the row out to a
+       reflow. */
+    max-width: 48ch;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text {
+    transition: none;
+  }
+}
+
 /* 🔔/🔕 top-bar master notification bell — a chrome-free button like
    .status-dot. The per-group and per-agent notify controls used to be
    bells/chips too, but they moved into the ⚙ options menus and now wear

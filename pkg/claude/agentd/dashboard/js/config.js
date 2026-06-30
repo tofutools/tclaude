@@ -439,6 +439,11 @@ function populateConfigForm(cfg) {
   // explicit dashboard.hscroll_follow:false (static) unchecks it.
   $('#cfg-dashboard-hscroll-follow').checked = !(cfg.dashboard && cfg.dashboard.hscroll_follow === false);
 
+  // Group quick-options auto-fold. Default hover (checked, the chips fold to
+  // icons + expand on hover); only an explicit
+  // dashboard.group_quick_options:"expanded" unchecks it.
+  $('#cfg-dashboard-group-quick-fold').checked = !(cfg.dashboard && cfg.dashboard.group_quick_options === 'expanded');
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -608,6 +613,10 @@ function assembleConfig() {
   // static (false) and drop the key when following — mirrors the Go *bool
   // omitempty + default-true resolver.
   if (!$('#cfg-dashboard-hscroll-follow').checked) dashboard.hscroll_follow = false; else delete dashboard.hscroll_follow;
+  // group_quick_options: hover (fold) is the default, so store only the
+  // NON-default "expanded" and drop the key when folding — mirrors the Go
+  // omitempty + default-hover resolver.
+  if (!$('#cfg-dashboard-group-quick-fold').checked) dashboard.group_quick_options = 'expanded'; else delete dashboard.group_quick_options;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field

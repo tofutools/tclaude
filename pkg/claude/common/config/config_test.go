@@ -723,6 +723,34 @@ func TestHScrollFollow(t *testing.T) {
 	assert.False(t, loaded.HScrollFollow(), "static survives round-trip")
 }
 
+// TestGroupQuickOptions covers the dashboard.group_quick_options resolver: nil
+// config / absent block / absent key / garbage all default to "hover" (fold);
+// only an explicit "expanded" opts out. A default config marshals no dashboard
+// block, and an explicit "expanded" survives Save/Load.
+func TestGroupQuickOptions(t *testing.T) {
+	// Default is hover (fold) for every "unset"/garbage shape.
+	assert.Equal(t, GroupQuickOptionsHover, (*Config)(nil).GroupQuickOptions(), "nil → hover")
+	assert.Equal(t, GroupQuickOptionsHover, (&Config{}).GroupQuickOptions(), "no block → hover")
+	assert.Equal(t, GroupQuickOptionsHover, (&Config{Dashboard: &DashboardConfig{}}).GroupQuickOptions(), "absent key → hover")
+	assert.Equal(t, GroupQuickOptionsHover, (&Config{Dashboard: &DashboardConfig{GroupQuickOptions: "wat"}}).GroupQuickOptions(), "unknown → hover")
+	assert.Equal(t, GroupQuickOptionsHover, (&Config{Dashboard: &DashboardConfig{GroupQuickOptions: GroupQuickOptionsHover}}).GroupQuickOptions(), "explicit hover → hover")
+
+	// Only an explicit "expanded" opts out of folding.
+	assert.Equal(t, GroupQuickOptionsExpanded, (&Config{Dashboard: &DashboardConfig{GroupQuickOptions: GroupQuickOptionsExpanded}}).GroupQuickOptions(), "explicit expanded → expanded")
+
+	// A fresh (all-default) config serializes no dashboard block / key.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "group_quick_options")
+
+	// Explicit "expanded" survives Save/Load — the non-default is persisted.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{GroupQuickOptions: GroupQuickOptionsExpanded}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, GroupQuickOptionsExpanded, loaded.GroupQuickOptions(), "expanded survives round-trip")
+}
+
 // TestMatchSudoOverride_Keying covers the C2 (JOH-324) addition: a sudo
 // override may be keyed on the stable `agt_` agent_id (exact or short
 // prefix), surviving conv rotation — alongside the pre-existing conv-id

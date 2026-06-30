@@ -410,6 +410,15 @@ export async function refresh() {
     // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
     // default follow) — replaces the old per-browser header toggle button.
     setHScrollFollow(data.hscroll_follow !== false);
+    // Group quick-options fold mode (config dashboard.group_quick_options,
+    // default "hover"). body.group-quick-fold drives the CSS horizontal
+    // accordion: the editable chips in each group <summary> collapse to
+    // icon-only at rest and expand on header hover. "expanded" keeps them
+    // full. A plain class toggle, like hide-slop-lever below — render.js
+    // already rebuilt the (re-rendered) group rows this same tick, so the
+    // class is the only extra state. Folding is gated to hover-capable
+    // pointers in CSS, so touch devices stay expanded whatever the mode.
+    document.body.classList.toggle('group-quick-fold', data.group_quick_options !== 'expanded');
     // Hide the slop-mode side pull-lever when config slop.hide_pull_lever is
     // set. body.hide-slop-lever drops the lever via CSS while leaving the
     // rest of slop mode intact; a plain class toggle (like hide-costs).
