@@ -285,9 +285,11 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		`id="cfg-dashboard-group-quick-fold"`,
 		// dashboard.css — collapse at rest (gated to hover pointers, skipping
 		// pinned groups) and reveal on header hover.
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text",
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text",
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned).quick-hover > summary .qo-text",
+		// The accordion is scoped to collapsed groups (:not([open])) so an
+		// expanded group keeps its quick options fully shown.
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text",
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text",
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text",
 		"@media (hover: hover) {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
