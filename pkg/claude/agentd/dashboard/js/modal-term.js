@@ -56,6 +56,12 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
   // left over from a previous (possibly web-term) open so a stale conv can't
   // get detached under a different modal.
   hideConv = hc || null;
+  // The Detach button only makes sense for a web WINDOW (a view onto the agent's
+  // LIVE session, hideConv set): "detach" hands the tmux client back while the
+  // agent keeps running. An ad hoc web TERMINAL (hideConv null) is its own
+  // throwaway shell — nothing to detach from — so it gets only the × Close.
+  // Toggle per open; the modal is a reused singleton.
+  $('#term-session-detach').style.display = hideConv ? '' : 'none';
   // Defensive reset: a fresh open should never inherit a stuck guard from a
   // previous session (it can't with the mutual-exclusion below, but this
   // costs nothing and guarantees a reopened modal can always prompt again).
