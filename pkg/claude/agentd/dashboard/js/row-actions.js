@@ -436,16 +436,21 @@ function bindRowActions() {
           toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
           return;
         }
-        case 'term': {
+        case 'term':
+        case 'web-term': {
           // Pick which directory, then ask the daemon to spawn a
           // terminal window there. Non-destructive and changes no
-          // dashboard state, so skip the refresh.
+          // dashboard state, so skip the refresh. `web-term` sets
+          // web:true so the daemon ALWAYS streams an in-browser PTY
+          // (mode:"browser") instead of trying a native window first —
+          // see handleDashboardTermAPI.
+          const web = act === 'web-term';
           const which = await termDirModal({ label });
           if (!which) return;
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ which }),
+            body: JSON.stringify(web ? { which, web: true } : { which }),
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
