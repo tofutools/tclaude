@@ -194,7 +194,7 @@ function openPane(seed) {
   term.loadAddon(fitAddon);
   term.open(host);
 
-  const p = { key, label, seed, term, fitAddon, ws: null, wrap, statusEl, reconnectBtn, tab: null };
+  const p = { key, label, seed, term, fitAddon, ws: null, wrap, statusEl, reconnectBtn, tab: null, ro: null };
 
   // Keystrokes go over the wire as binary frames — never text — so the
   // server's resize-control check (which only parses TextMessage frames) can
@@ -202,7 +202,8 @@ function openPane(seed) {
   // contract as modal-term.js.
   term.onData((d) => { if (p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(new TextEncoder().encode(d)); });
   term.onResize(() => sendResize(p));
-  new ResizeObserver(() => { if (activeKey === key) fit(p); }).observe(host);
+  p.ro = new ResizeObserver(() => { if (activeKey === key) fit(p); });
+  p.ro.observe(host);
 
   if (!solo) {
     const tab = document.createElement('div');
@@ -238,6 +239,7 @@ function closePane(key) {
   // Closing only detaches the socket; the underlying tmux/PTY session keeps
   // running, so reopening this agent reattaches to the same shell.
   closeSocket(p);
+  if (p.ro) { try { p.ro.disconnect(); } catch (_) { /* already gone */ } }
   try { p.term.dispose(); } catch (_) { /* already disposed */ }
   p.wrap.remove();
   if (p.tab) p.tab.remove();

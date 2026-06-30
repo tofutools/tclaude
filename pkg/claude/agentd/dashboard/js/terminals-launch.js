@@ -21,25 +21,32 @@ const WIN_NAME = 'tclaude_terminals';
 export function launchInTerminals(seedOrPromise) {
   const win = window.open('', WIN_NAME);
   Promise.resolve(seedOrPromise).then((seed) => {
-    const fresh = isBlank(win);
+    // Only ADD via the hash (no reload) when the tab is already showing the
+    // multiplexer; for a freshly popped blank tab (about:blank → pathname
+    // "blank"), or anything else, do a full navigation. This is more robust
+    // than sniffing about:blank, whose href/pathname vary across browsers.
+    const onTerminals = isOnTerminals(win);
     if (!seed || !seed.ws) {
-      // Cancelled: don't leave a blank tab we just popped. Only close one we
-      // freshly created (about:blank) — never an existing multiplexer tab.
-      if (win && fresh) { try { win.close(); } catch (_) { /* not ours / already gone */ } }
+      // Cancelled (e.g. the which-dir picker was dismissed): close the blank
+      // tab we just popped, but never an existing multiplexer tab.
+      if (win && !onTerminals) { try { win.close(); } catch (_) { /* already gone */ } }
       return;
     }
     if (!win) { toast('Allow pop-ups for this site to open a terminal tab', true); return; }
     const hash = 'open=' + encodeURIComponent(JSON.stringify(seed));
-    if (fresh) win.location = '/terminals#' + hash;  // new tab → load the page
-    else win.location.hash = hash;                   // open tab → hashchange, no reload
+    try {
+      if (onTerminals) win.location.hash = hash;       // open tab → hashchange, no reload
+      else win.location = '/terminals#' + hash;        // new/blank tab → load the page
+    } catch (_) { /* tab closed mid-flight — the human can click again */ }
   });
 }
 
-// isBlank reports whether `win` is a freshly created, not-yet-navigated tab
-// (about:blank) versus an already-open multiplexer tab. Reading .location is
-// same-origin here; the catch is belt-and-suspenders.
-function isBlank(win) {
+// isOnTerminals reports whether `win` is already showing the multiplexer page
+// (so we can hand it a new terminal via a hashchange instead of reloading and
+// dropping its live panes). Reading .location is same-origin here; the catch
+// guards a just-closed window.
+function isOnTerminals(win) {
   if (!win) return false;
-  try { return !win.location || win.location.href === 'about:blank'; }
+  try { return !!win.location && win.location.pathname === '/terminals'; }
   catch (_) { return false; }
 }
