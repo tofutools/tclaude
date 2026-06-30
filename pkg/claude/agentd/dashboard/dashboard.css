@@ -1498,9 +1498,12 @@ details[open] > summary .spawn-btn { opacity: 1; }
 
    Gated to (hover: hover) so touch devices — which can't hover to reveal —
    always get the full chips. A pinned group (.quick-pinned, a per-browser
-   dashPref toggled from the ⚙ menu) opts out and stays expanded even here. */
+   dashPref toggled from the ⚙ menu) opts out and stays expanded even here.
+   So does an EXPANDED group: :not([open]) scopes the whole accordion to
+   collapsed groups, so once you unfold a group its quick options stay open
+   (you're already looking inside it — no reason to make you hover for them). */
 @media (hover: hover) {
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
     display: inline-block;
     vertical-align: bottom;
     white-space: nowrap;
@@ -1508,14 +1511,14 @@ details[open] > summary .spawn-btn { opacity: 1; }
     text-overflow: ellipsis;
     max-width: 0;
     opacity: 0;
-    transition: max-width 0.18s ease, opacity 0.18s ease;
+    transition: max-width 0.36s ease, opacity 0.36s ease;
   }
   /* Reveal on native :hover (instant + smooth during live movement) OR on the
      JS-stamped .quick-hover (which renderGroups re-applies each poll, so the
      reveal survives the 2s wholesale re-render that a freshly-inserted node's
      :hover would not — see bindGroupQuickHover in refresh.js). */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned).quick-hover > summary .qo-text {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text {
     /* Generous reveal cap — typical descr/dir/profile show in full; a
        pathological label clips to an ellipsis (the chip's title tooltip still
        carries the whole value) so a long one can't blow the row out to a
@@ -1525,7 +1528,7 @@ details[open] > summary .spawn-btn { opacity: 1; }
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
     transition: none;
   }
 }
