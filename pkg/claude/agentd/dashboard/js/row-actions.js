@@ -487,7 +487,12 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
-          if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label }); return; }
+          // Pass hideConv so the modal's Detach/Close runs the real server-side
+          // detach (/api/hide/{conv}) — closing the in-browser window must drop
+          // the tmux client, or the agent session stays "attached" and can't be
+          // reattached. Only the open-window attach (the agent's live session)
+          // gets this; web-term opens its own throwaway session.
+          if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent }); return; }
           toast(`window opened: ${label}`);
           return;
         }

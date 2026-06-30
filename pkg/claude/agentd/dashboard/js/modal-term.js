@@ -28,6 +28,14 @@ let term = null;
 let fitAddon = null;
 let ws = null;
 let currentWsPath = null;
+// The agent conv to detach on close, or null. Set only for the "open window"
+// attach (a terminal on the agent's LIVE tmux session), where closing the modal
+// must actually detach the tmux client — otherwise the session stays "attached"
+// and can't be reattached. We do that by POSTing /api/hide/{conv}, the same
+// server-side detach the per-agent "hide" eye button uses. Left null for the ad
+// hoc web-term (its own throwaway session, no agent client to hide), where
+// closing the WebSocket is enough.
+let hideConv = null;
 // True while ANY term-modal confirmation (the disconnect prompt OR the
 // "Close terminal?" confirm shared by the × button and the backdrop click) is
 // open. confirmModal is a shared singleton (one #confirm-modal element);
@@ -42,8 +50,12 @@ let termConfirmOpen = false;
 // to wsPath over a WebSocket. label is shown in the modal title bar.
 // The underlying tmux/tclaude session outlives the modal — closing it
 // just detaches the WebSocket, reopening reattaches to the same shell.
-export function openTermModal({ wsPath, label }) {
+export function openTermModal({ wsPath, label, hideConv: hc }) {
   currentWsPath = wsPath;
+  // Only the live-agent "open window" attach passes hideConv; clear any value
+  // left over from a previous (possibly web-term) open so a stale conv can't
+  // get detached under a different modal.
+  hideConv = hc || null;
   // Defensive reset: a fresh open should never inherit a stuck guard from a
   // previous session (it can't with the mutual-exclusion below, but this
   // costs nothing and guarantees a reopened modal can always prompt again).
@@ -174,11 +186,35 @@ export function closeTermModal() {
   $('#term-session-modal').classList.remove('show');
 }
 
-// confirmAndClose runs the "Close terminal?" confirm and closes the modal if
-// the human accepts. Shared by the × Close button and the backdrop click —
-// both are the cautious, ask-first path (a plain × press, and an outside
-// click while reaching for the terminal, are both easy accidents). The
-// Detach button skips this entirely (closeTermModal directly): detaching is
+// detachAndClose performs the RELIABLE detach and then closes the modal. For a
+// live-agent "open window" (hideConv set) it POSTs /api/hide/{conv} — the exact
+// server-side detach the per-agent "hide" eye button uses (DetachSessionClients
+// → tmux detach-client for every client on the session) — and awaits it before
+// tearing the view down. We do this explicitly instead of relying on the
+// WebSocket close to detach the tmux client: for the open-window attach (tclaude
+// forks the tmux client) that implicit teardown didn't reliably detach, leaving
+// the session stuck "attached" so it couldn't be reattached. For the ad hoc
+// web-term (hideConv null) there's no agent client to hide, so it just closes.
+// Best-effort — a hide error is logged but never blocks the close.
+async function detachAndClose() {
+  if (hideConv) {
+    try {
+      const res = await fetch(`/api/hide/${encodeURIComponent(hideConv)}`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!res.ok) console.warn('term modal detach (hide) failed:', res.status, await res.text().catch(() => ''));
+    } catch (e) {
+      console.warn('term modal detach (hide) request error:', e);
+    }
+  }
+  closeTermModal();
+}
+
+// confirmAndClose runs the "Close terminal?" confirm and, if the human accepts,
+// detaches + closes (detachAndClose). Shared by the × Close button and the
+// backdrop click — both are the cautious, ask-first path (a plain × press, and
+// an outside click while reaching for the terminal, are both easy accidents).
+// The Detach button skips the confirm (detachAndClose directly): detaching is
 // the deliberate "drop my view now" action, so it needs no confirmation.
 //
 // Shares the disconnect prompt's in-flight guard (confirmModal is a single
@@ -197,7 +233,7 @@ async function confirmAndClose() {
   } finally {
     termConfirmOpen = false;
   }
-  if (close) { closeTermModal(); return; }
+  if (close) { await detachAndClose(); return; }
   // Kept open: if the socket dropped while this confirm was up (its onclose
   // saw the guard set and skipped the prompt), surface the reconnect choice
   // now instead of leaving a silently-dead terminal on screen. Gate on
@@ -211,13 +247,14 @@ async function confirmAndClose() {
 // dashboard init (dashboard.js).
 //
 // Two deliberate-close affordances, genuinely different by intent — but both
-// do the same thing to the backend (detach the WebSocket, which gracefully
-// detaches the tmux client and leaves the underlying session running). The
-// only difference is the confirmation gate:
+// run the same reliable detach (detachAndClose → /api/hide for an open-window
+// attach) and leave the underlying agent session running. The only difference
+// is the confirmation gate:
 //   • Detach — instant, no confirm. The deliberate "drop my view now, the
 //     agent keeps running" action; the human reached for exactly this.
-//   • × Close — asks first (confirmAndClose). A plain close is also where an
-//     accidental click lands, so it confirms before tearing the view down.
+//   • × Close — asks first (confirmAndClose, which then detachAndClose-s). A
+//     plain close is also where an accidental click lands, so it confirms
+//     before tearing the view down.
 // A backdrop click is the easiest accident of all, so it routes through the
 // same confirm as ×.
 //
@@ -226,7 +263,7 @@ async function confirmAndClose() {
 // must pass straight through to xterm. (The confirm's own confirmModal still
 // handles Escape = cancel while it's up.)
 //
-// Detach binds straight to closeTermModal with no termConfirmOpen guard: it
+// Detach binds straight to detachAndClose with no termConfirmOpen guard: it
 // doesn't need one because a confirm, when open, covers it. #confirm-modal is
 // a full-viewport overlay at z-index 1000, above this modal's z-index 100, so
 // the Detach button isn't clickable while any confirm (×, backdrop, or the
@@ -234,7 +271,7 @@ async function confirmAndClose() {
 // above #term-session-modal if either z-index ever changes.
 export function bindTermModal() {
   const overlay = $('#term-session-modal');
-  $('#term-session-detach').addEventListener('click', closeTermModal);
+  $('#term-session-detach').addEventListener('click', detachAndClose);
   $('#term-session-close').addEventListener('click', confirmAndClose);
   overlay.addEventListener('click', (e) => {
     if (e.target !== overlay) return;
