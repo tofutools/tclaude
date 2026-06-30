@@ -174,7 +174,7 @@ function cronStatusPill(s) {
 
 function renderCron(jobs) {
   if (!jobs || !jobs.length) {
-    return '<div class="empty">No cron jobs yet. Create one with: <code>tclaude agent cron add &lt;name&gt; &lt;interval&gt; &lt;target&gt; -- &lt;body&gt;</code></div>';
+    return '<div class="empty">No cron jobs yet. Create one with the <strong>+ new cron job</strong> button above.</div>';
   }
   return `
     <table>
@@ -311,7 +311,7 @@ function renderSudoTab() {
 // who can message whom.
 function renderLinks(rows) {
   if (!rows || !rows.length) {
-    return '<div class="empty">No inter-group links yet. Create one with the <strong>+ new link</strong> button above, or: <code>tclaude agent groups link add &lt;from&gt; &lt;to&gt; [--bidir]</code></div>';
+    return '<div class="empty">No inter-group links yet. Create one with the <strong>+ new link</strong> button above.</div>';
   }
   return `
     <table>

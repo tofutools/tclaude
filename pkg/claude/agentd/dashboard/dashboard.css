@@ -983,15 +983,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding: 0 6px; font-size: 11px;
 }
 .role-edit:hover .role-add { color: #adbac7; border-color: #58a6ff; text-decoration: none; }
-.copy-cmd {
-  display: block; margin-top: 8px;
-  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
-  padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
-  color: #c9d1d9; cursor: pointer;
-  white-space: nowrap; overflow-x: auto;
-}
-.copy-cmd:hover { border-color: #58a6ff; }
-.copy-cmd::before { content: "$ "; color: #7d8590; }
 #status { font-size: 11px; color: #7d8590; }
 /* Leading ● — pseudo-element so its colour can swap with the
    live/error class without us round-tripping HTML through
@@ -1779,7 +1770,7 @@ details[data-group-key].group-reorder-source { opacity: 0.5; }
    box, on the edge the drop lands against (above = before, below = after).
    Outset (not inset) so it sits in the gap BETWEEN groups instead of inside
    the box — an inset line is painted under the group's own content (the
-   expanded body's table / links / copy-cmd) and gets hidden. For an expanded
+   expanded body's table / links) and gets hidden. For an expanded
    group the after-line therefore sits clearly below its full body. */
 details[data-group-key].group-drop-before {
   box-shadow: 0 -3px 0 0 #58a6ff;
