@@ -114,7 +114,7 @@ export function listPagerHTML(kind, paging) {
   // suppression checks (closest('button, …')) treat them as interactive.
   const btn = (act, glyph, title, disabled) =>
     `<button type="button" class="list-pager-btn" data-pager="${act}" data-list="${kind}"`
-    + `${disabled ? ' disabled' : ''} title="${title}">${glyph}</button>`;
+    + `${disabled ? ' disabled' : ''} title="${title}" aria-label="${title}">${glyph}</button>`;
   return `<div class="list-pager" data-list="${kind}">`
     + btn('first', '«', 'First page', atFirst)
     + btn('prev', '‹', 'Previous page', atFirst)
