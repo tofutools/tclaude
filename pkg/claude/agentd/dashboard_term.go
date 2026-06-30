@@ -107,7 +107,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	name := termSessionName(res.ConvID, which)
 	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, shellSingleQuote(name), shellSingleQuote(dir))
-	runPTYOverWS(w, r, cmd)
+	runPTYOverWS(w, r, cmd, name)
 }
 
 // handleDashboardOpenWindowWS is the in-browser fallback for "open
@@ -148,7 +148,7 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, openAttachCmd(sess.ID))
+	runPTYOverWS(w, r, openAttachCmd(sess.ID), sess.TmuxSession)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -192,7 +192,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, openAttachCmd(label))
+	runPTYOverWS(w, r, openAttachCmd(label), sess.TmuxSession)
 }
 
 // termResizeMsg is sent from the browser when the xterm instance
@@ -203,22 +203,43 @@ type termResizeMsg struct {
 	Rows int    `json:"rows"`
 }
 
-// hangupProcessGroup sends SIGHUP to the whole process group led by proc, not
-// just proc itself.
+// detachTmuxSession asks the tmux server to detach every client attached to
+// tmuxSession; the clients drop their view and the session keeps running,
+// detached. This is the reliable way to make closing the web window/term modal
+// actually detach on the tmux level: it commands the always-running tmux server
+// directly (`tmux -L tclaude detach-client -s …`), so it works even though the
+// tmux client is a forked child that a PTY-close hangup / process-group SIGHUP
+// did not reliably tear down in the field (see hangupProcessGroup). Best-effort
+// — a missing session/server just makes tmux exit non-zero, which we ignore.
 //
-// Why the group: runPTYOverWS's child is `sh -c "exec tclaude session attach
-// …"` (open-window) or `sh -c "tmux new-session …"` (open-term). In the
-// open-window case the tclaude wrapper FORKS the tmux client as a child rather
-// than exec-replacing itself, so the tmux client is a *grandchild*. Signaling
-// only proc (the wrapper) leaves that client attached — the bug where closing
-// the web window's modal didn't actually detach it on the tmux level. pty.Start
-// started the wrapper with Setsid, so it leads a process group whose pgid
-// equals its pid; a kill to the negative pid reaches the wrapper AND the tmux
-// client, and the client treats SIGHUP as a terminal hangup and detaches
-// cleanly. (The old pkg/claude/web path got away with signaling proc directly
-// because it ran `tmux attach` with no wrapper in between.) The tmux SERVER is
-// a separate long-running daemon outside this group, so the underlying session
-// keeps running.
+// This detaches ALL of the session's clients, so if the agent also has a native
+// terminal window attached, closing the web view detaches that too. That's an
+// accepted simplification for now; detaching only our own client (by its PTY
+// tty, which tmux exposes as #{client_tty}) is a deliberate future refinement.
+func detachTmuxSession(tmuxSession string) {
+	if tmuxSession == "" {
+		return
+	}
+	_ = clcommon.TmuxCommand("detach-client", "-s", tmuxSession).Run()
+}
+
+// hangupProcessGroup sends SIGHUP to the whole process group led by proc, not
+// just proc itself. It is a teardown BACKSTOP — the reliable detach is
+// detachTmuxSession (which commands the tmux server directly); this just makes
+// sure the wrapper process and anything it forked actually exit if that did not
+// already bring them down.
+//
+// Why the group and not just proc: runPTYOverWS's child is `sh -c "exec tclaude
+// session attach …"` (open-window) or `sh -c "tmux new-session …"` (open-term).
+// In the open-window case the wrapper — sh, exec-replaced by tclaude, so the
+// same pid as proc — FORKS the tmux client as a child, so a SIGHUP to proc
+// alone misses it. pty.Start started the wrapper with Setsid, so it leads a
+// process group whose pgid == pid; a kill to the negative pid reaches proc AND
+// that forked tmux client. (On its own this signal proved unreliable for
+// detaching the client in the field — hence detachTmuxSession — but it is still
+// a cheap, correct way to reap the process tree.) The tmux SERVER is a separate
+// long-running daemon outside this group, so the underlying session keeps
+// running.
 //
 // Targeting the negative pid is safe even if Setsid somehow didn't take: a
 // process group with id == proc.Pid exists only while proc actually leads one,
@@ -242,7 +263,13 @@ func hangupProcessGroup(proc *os.Process) {
 // generalised to take an arbitrary command instead of a hardcoded
 // `tmux attach-session`. Callers must call checkDashboardAuth before
 // reaching here — this function performs no auth of its own.
-func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
+//
+// tmuxSession is the tmux session this PTY attaches to (the agent's
+// `spwn-…` / ad hoc `tclaude-term-…` session, on the `-L tclaude` server).
+// On teardown it is handed to detachTmuxSession so closing the modal actually
+// detaches on the tmux level. Pass "" when there is no associated session
+// (then teardown falls back to the process-group SIGHUP alone).
+func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string) {
 	conn, err := termWSUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -258,6 +285,10 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 		return
 	}
 	defer func() {
+		// Reliable detach first: tell the tmux server to drop the session's
+		// clients. Then tear down the PTY/process tree (the SIGHUP is a
+		// backstop — see hangupProcessGroup).
+		detachTmuxSession(tmuxSession)
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()
@@ -268,11 +299,11 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 	// other side can never stay blocked and wg.Wait() always completes —
 	// e.g. when the PTY EOFs (shell/tmux exited) the WS->PTY goroutine
 	// would otherwise stay parked in conn.ReadMessage() forever. The
-	// outer defers (conn.Close, then ptmx.Close + a process-group SIGHUP +
-	// cmd.Wait) still run afterwards; the double close is a harmless no-op.
-	// The underlying tmux session lives on — the SIGHUP detaches the tmux
-	// CLIENT (our attachment) but never reaches the tmux server daemon,
-	// which runs outside this process group.
+	// outer defers (conn.Close, then detachTmuxSession + ptmx.Close + a
+	// process-group SIGHUP + cmd.Wait) still run afterwards; the double
+	// close is a harmless no-op. The underlying tmux session lives on —
+	// detach-client drops our CLIENT (and any others) but never touches the
+	// tmux server daemon, so the session keeps running detached.
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
