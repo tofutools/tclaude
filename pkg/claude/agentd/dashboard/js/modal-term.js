@@ -186,17 +186,26 @@ export function closeTermModal() {
   $('#term-session-modal').classList.remove('show');
 }
 
-// detachAndClose performs the RELIABLE detach and then closes the modal. For a
-// live-agent "open window" (hideConv set) it POSTs /api/hide/{conv} — the exact
-// server-side detach the per-agent "hide" eye button uses (DetachSessionClients
-// → tmux detach-client for every client on the session) — and awaits it before
-// tearing the view down. We do this explicitly instead of relying on the
-// WebSocket close to detach the tmux client: for the open-window attach (tclaude
-// forks the tmux client) that implicit teardown didn't reliably detach, leaving
-// the session stuck "attached" so it couldn't be reattached. For the ad hoc
-// web-term (hideConv null) there's no agent client to hide, so it just closes.
-// Best-effort — a hide error is logged but never blocks the close.
+// detachAndClose closes the modal and then runs the RELIABLE server-side
+// detach. For a live-agent "open window" (hideConv set) it POSTs
+// /api/hide/{conv} — the exact server-side detach the per-agent "hide" eye
+// button uses (DetachSessionClients → tmux detach-client for every client on
+// the session). We do this explicitly instead of relying on the WebSocket close
+// to detach the tmux client: for the open-window attach (tclaude forks the tmux
+// client) that implicit teardown didn't reliably detach, leaving the session
+// stuck "attached" so it couldn't be reattached. For the ad hoc web-term
+// (hideConv null) there's no agent client to hide, so it just closes.
+//
+// ORDER MATTERS — closeTermModal() runs FIRST so closeSocket() nulls ws.onclose
+// before the hide can land. /api/hide detaches THIS window's own client, which
+// EOFs the PTY and makes agentd close the WebSocket; if onclose were still armed
+// when that close frame arrives (we'd be parked on the await), it would fire
+// promptReconnect() and pop a spurious "Terminal disconnected" dialog over the
+// just-closed modal. Closing first makes the server-side close silent — and the
+// view drops instantly, which is what the click asked for. Best-effort: a hide
+// error is logged but never reopens the view.
 async function detachAndClose() {
+  closeTermModal();
   if (hideConv) {
     try {
       const res = await fetch(`/api/hide/${encodeURIComponent(hideConv)}`, {
@@ -207,7 +216,6 @@ async function detachAndClose() {
       console.warn('term modal detach (hide) request error:', e);
     }
   }
-  closeTermModal();
 }
 
 // confirmAndClose runs the ask-first confirm and, if the human accepts, runs
