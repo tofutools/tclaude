@@ -203,6 +203,37 @@ type termResizeMsg struct {
 	Rows int    `json:"rows"`
 }
 
+// hangupProcessGroup sends SIGHUP to the whole process group led by proc, not
+// just proc itself.
+//
+// Why the group: runPTYOverWS's child is `sh -c "exec tclaude session attach
+// …"` (open-window) or `sh -c "tmux new-session …"` (open-term). In the
+// open-window case the tclaude wrapper FORKS the tmux client as a child rather
+// than exec-replacing itself, so the tmux client is a *grandchild*. Signaling
+// only proc (the wrapper) leaves that client attached — the bug where closing
+// the web window's modal didn't actually detach it on the tmux level. pty.Start
+// started the wrapper with Setsid, so it leads a process group whose pgid
+// equals its pid; a kill to the negative pid reaches the wrapper AND the tmux
+// client, and the client treats SIGHUP as a terminal hangup and detaches
+// cleanly. (The old pkg/claude/web path got away with signaling proc directly
+// because it ran `tmux attach` with no wrapper in between.) The tmux SERVER is
+// a separate long-running daemon outside this group, so the underlying session
+// keeps running.
+//
+// Targeting the negative pid is safe even if Setsid somehow didn't take: a
+// process group with id == proc.Pid exists only while proc actually leads one,
+// so the worst case is ESRCH — it can never reach agentd's own group. If the
+// group send fails (e.g. everything already exited), fall back to signaling
+// proc directly so behaviour never regresses below the old single-PID signal.
+func hangupProcessGroup(proc *os.Process) {
+	if proc == nil {
+		return
+	}
+	if err := syscall.Kill(-proc.Pid, syscall.SIGHUP); err != nil {
+		_ = proc.Signal(syscall.SIGHUP)
+	}
+}
+
 // runPTYOverWS upgrades the request to a WebSocket and pumps a PTY
 // running `sh -c shellCommand` over it: PTY output → binary WS
 // messages, WS messages → PTY input, except a {"type":"resize",...}
@@ -228,7 +259,7 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 	}
 	defer func() {
 		_ = ptmx.Close()
-		_ = cmd.Process.Signal(syscall.SIGHUP)
+		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()
 	}()
 
@@ -237,10 +268,11 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand string) {
 	// other side can never stay blocked and wg.Wait() always completes —
 	// e.g. when the PTY EOFs (shell/tmux exited) the WS->PTY goroutine
 	// would otherwise stay parked in conn.ReadMessage() forever. The
-	// outer defers (conn.Close, then ptmx.Close + SIGHUP to the `sh -c`
-	// wrapper + cmd.Wait) still run afterwards; the double close is a
-	// harmless no-op. The tmux/tclaude session itself lives on — SIGHUP
-	// only reaches the wrapper.
+	// outer defers (conn.Close, then ptmx.Close + a process-group SIGHUP +
+	// cmd.Wait) still run afterwards; the double close is a harmless no-op.
+	// The underlying tmux session lives on — the SIGHUP detaches the tmux
+	// CLIENT (our attachment) but never reaches the tmux server daemon,
+	// which runs outside this process group.
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
