@@ -172,6 +172,20 @@ func readRowActionsSrc(t *testing.T) string {
 	return string(data)
 }
 
+// TestTermModal_DetachButtonOnlyForWebWindow pins that the Detach button is
+// shown only for a web WINDOW (a view onto the agent's live session, hideConv
+// set) and hidden for an ad hoc web TERMINAL (hideConv null) — a throwaway
+// shell has nothing to detach from, so it gets only the × Close. The toggle is
+// keyed off hideConv in openTermModal.
+func TestTermModal_DetachButtonOnlyForWebWindow(t *testing.T) {
+	src := readTermModalSrc(t)
+	if !strings.Contains(src, "$('#term-session-detach').style.display = hideConv ?") {
+		t.Error("modal-term.js must toggle the Detach button on hideConv (shown for a web " +
+			"window, hidden for an ad hoc web terminal) — `$('#term-session-detach')." +
+			"style.display = hideConv ? …`")
+	}
+}
+
 // TestTermModal_DetachButtonInMarkup pins the Detach button into the modal
 // header (dashboard.html) so the JS binding above has an element to attach to.
 func TestTermModal_DetachButtonInMarkup(t *testing.T) {
