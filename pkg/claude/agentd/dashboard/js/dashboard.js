@@ -11,7 +11,7 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   bindListPagers,
   refresh,
 } from './refresh.js';
@@ -101,7 +101,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // commands click nav buttons whose handlers are already wired.
   bindCommandPalette();
   bindAccessSubtabs();
-  bindCopy();
   bindDetailsPersistence();
   bindGroupTitleToggle();
   bindSortHeaders();

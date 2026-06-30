@@ -679,28 +679,6 @@ export function showAccessTab(subtab) {
   if (subtab) activateAccessSubtab(subtab);
 }
 
-function bindCopy() {
-  document.addEventListener('click', e => {
-    const t = e.target.closest('[data-copy]');
-    if (!t) return;
-    const cmd = t.getAttribute('data-copy');
-    // Gate on the clipboard API before calling. When `navigator.clipboard` is
-    // entirely absent the `?.` already short-circuits the whole chain harmlessly,
-    // but when `clipboard` is present while `writeText` is missing (some
-    // non-secure / partial-support contexts) the chain does NOT short-circuit and
-    // `.writeText(cmd)` throws a synchronous TypeError before the trailing
-    // `.catch()` is even attached. The explicit guard covers both; the inline
-    // "✓ copied" feedback then only fires on an actual successful write.
-    // (Mirrors JOH-294's row-actions.js guard.)
-    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
-    navigator.clipboard.writeText(cmd).then(() => {
-      const orig = t.textContent;
-      t.textContent = '✓ copied: ' + cmd;
-      setTimeout(() => { t.textContent = orig; }, 1200);
-    }).catch(() => {});
-  });
-}
-
 // Group <details> headers fold/unfold ONLY when the group title is
 // clicked — not when the click lands on a header chip (📝/📁/👥/🧠), a
 // badge, a link chip, or the empty space to the right of them. The
@@ -773,7 +751,7 @@ function bindDetailsPersistence() {
 // bindSortHeaders delegates clicks on sortable <th> cells. Headers
 // are re-rendered on every 2s refresh, so a single document-level
 // listener is simpler than re-binding per render (same approach as
-// bindCopy / bindDetailsPersistence). Clicking re-renders just the
+// bindDetailsPersistence). Clicking re-renders just the
 // affected tab so the new ordering — and the header arrow — show
 // immediately, without waiting for the next poll.
 function bindSortHeaders() {
@@ -3733,7 +3711,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, openWorktreeCleanup,
   groupMembersByStatus, countGroupMembersByStatus,

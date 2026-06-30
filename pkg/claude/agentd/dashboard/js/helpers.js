@@ -1318,7 +1318,7 @@ function groupOfflineToggleHTML(name) {
 // restoration entirely, leaving that natural focus untouched.
 const FOCUS_SIG_ATTRS = [
   'data-act', 'data-conv', 'data-group', 'data-id',
-  'data-tab', 'data-subtab', 'data-goto-tab', 'data-copy',
+  'data-tab', 'data-subtab', 'data-goto-tab',
 ];
 
 function focusSignature(el) {

@@ -461,7 +461,7 @@ function groupActivityChip(members) {
 
 function renderGroups(groups) {
   if (!groups || !groups.length) {
-    return '<div class="empty">No groups yet. Create one with: <code>tclaude agent groups create &lt;name&gt;</code></div>';
+    return '<div class="empty">No groups yet. Create one with the <strong>+ new group</strong> button above.</div>';
   }
   return groups.map(g => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
@@ -526,7 +526,6 @@ function renderGroups(groups) {
           </tbody>
         </table>`}
         ${renderGroupLinksSection(g.name)}
-        <code class="copy-cmd" data-copy="tclaude agent groups members ${g.name}">tclaude agent groups members ${esc(g.name)}</code>
       </div>
     </details>
   `;
@@ -632,11 +631,11 @@ function renderPermissions(perm, agents) {
   return `
     <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
     ${defaults.length === 0
-      ? '<div class="empty">No defaults set. Grant with: <code>tclaude agent permissions grant default &lt;slug&gt;</code></div>'
+      ? '<div class="empty">No defaults set.</div>'
       : `<div>${defaults.map(s => `<span class="tag default slug">${esc(s)}</span>`).join(' ')}</div>`}
     <h3>Per-agent overrides <span class="muted" style="font-size:11px">— permanent grant / deny on top of defaults (SQLite agent_permissions). Edit via the per-agent “permissions” button.</span></h3>
     ${rows.length === 0
-      ? '<div class="empty">No per-agent overrides yet. Use the per-agent “permissions” button, or <code>tclaude agent permissions grant|deny &lt;conv&gt; &lt;slug&gt;</code></div>'
+      ? '<div class="empty">No per-agent overrides yet. Use the per-agent “permissions” button.</div>'
       : `<table>
           <thead><tr><th>ID</th><th>Title</th><th>Granted</th><th>Denied</th></tr></thead>
           <tbody>
