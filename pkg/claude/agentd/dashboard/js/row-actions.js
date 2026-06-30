@@ -18,6 +18,7 @@ import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
+import { launchInTerminals } from './terminals-launch.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -447,21 +448,18 @@ function bindRowActions() {
           toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
           return;
         }
-        case 'term':
-        case 'web-term': {
+        case 'term': {
           // Pick which directory, then ask the daemon to spawn a
           // terminal window there. Non-destructive and changes no
-          // dashboard state, so skip the refresh. `web-term` sets
-          // web:true so the daemon ALWAYS streams an in-browser PTY
-          // (mode:"browser") instead of trying a native window first —
-          // see handleDashboardTermAPI.
-          const web = act === 'web-term';
+          // dashboard state, so skip the refresh. Native-first: the
+          // daemon falls back to an in-browser PTY (mode:"browser") only
+          // when it can't pop a native window — see handleDashboardTermAPI.
           const which = await termDirModal({ label });
           if (!which) return;
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(web ? { which, web: true } : { which }),
+            body: JSON.stringify({ which }),
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
@@ -469,21 +467,35 @@ function bindRowActions() {
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
-        case 'open-window':
-        case 'web-open-window': {
+        case 'web-term': {
+          // The dedicated "web term" button ALWAYS streams an in-browser
+          // PTY. Open it in the standalone terminals multiplexer tab
+          // (js/terminals.js) — a separate browser tab that holds many
+          // live terminals at once — instead of the blocking in-page
+          // modal, so several agents' terminals can be open simultaneously
+          // without covering the dashboard. The which-dir choice resolves
+          // into the WS path the multiplexer connects to
+          // (/api/term-ws/{conv}); the tab is opened synchronously on the
+          // click so a pop-up blocker can't eat it (see launchInTerminals).
+          launchInTerminals(
+            termDirModal({ label }).then((which) => (which
+              ? {
+                ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
+                label,
+                key: `term:${conv}:${which}`,
+              }
+              : null)),
+          );
+          return;
+        }
+        case 'open-window': {
           // Open a terminal attached to the agent's live session — the
           // explicit way to get a console. Non-destructive, changes no
-          // dashboard state, so skip the refresh. `web-open-window` sets
-          // web:true so the daemon ALWAYS streams an in-browser PTY
-          // (mode:"browser") instead of trying a native window first —
-          // see handleDashboardOpenWindowAPI.
-          const web = act === 'web-open-window';
+          // dashboard state, so skip the refresh. Native-first; the daemon
+          // falls back to an in-browser PTY only when it can't pop a native
+          // window — see handleDashboardOpenWindowAPI.
           const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
-            ...(web ? {
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ web: true }),
-            } : {}),
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
@@ -494,6 +506,18 @@ function bindRowActions() {
           // gets this; web-term opens its own throwaway session.
           if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent }); return; }
           toast(`window opened: ${label}`);
+          return;
+        }
+        case 'web-open-window': {
+          // Like "web term" but attached to the agent's live session (its
+          // Claude Code TUI) rather than a fresh shell. ALWAYS a browser
+          // terminal, opened in the multiplexer tab. No dir choice, so no
+          // await before the open — connects to /api/open-window-ws/{conv}.
+          launchInTerminals({
+            ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
+            label,
+            key: `window:${conv}`,
+          });
           return;
         }
         case 'focus-pending': {

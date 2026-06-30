@@ -1,0 +1,87 @@
+/* terminals.css — the standalone multi-terminal page (terminals.html +
+   js/terminals.js), served at /terminals. Deliberately self-contained: this
+   page is NOT the dashboard SPA, so it does not pull in dashboard.css. It
+   reuses only the vendored xterm stylesheet for the terminal grid itself.
+
+   Dark theme matched to the dashboard's palette (#0d1117 base, #161b22
+   chrome, #2a3340 borders, #c9d1d9 text, #1f6feb accent) so the two surfaces
+   feel like one tool. Buttons are themed explicitly — a bare <button> would
+   otherwise render with the browser's white default. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: #0d1117; color: #c9d1d9;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+#mux {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+}
+
+/* Tab strip — one tab per open terminal. Hidden in solo mode and when empty
+   (js/terminals.js toggles display). */
+#mux-tabs {
+  display: flex; flex: none; gap: 4px;
+  padding: 5px 6px 0; overflow-x: auto;
+  background: #161b22; border-bottom: 1px solid #2a3340;
+}
+.mux-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
+  border-radius: 6px 6px 0 0; background: #0d1117; color: #7d8590;
+  cursor: pointer; white-space: nowrap; max-width: 240px;
+}
+.mux-tab:hover { color: #c9d1d9; }
+.mux-tab.active { background: #21262d; color: #c9d1d9; border-color: #3d4451; }
+.mux-tab-label { overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+.mux-tab-close {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 0 2px; opacity: 0.6;
+}
+.mux-tab-close:hover { opacity: 1; color: #f85149; }
+
+/* Pane area — every terminal is absolutely positioned and stacked; only the
+   active one is shown. Background panes stay live (their WebSocket keeps
+   streaming into the off-screen xterm buffer) so switching tabs reveals the
+   up-to-date terminal. */
+#mux-panes { position: relative; flex: 1; min-height: 0; }
+.mux-pane { position: absolute; inset: 0; display: none; flex-direction: column; }
+.mux-pane.active { display: flex; }
+
+.mux-pane-header {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 6px 10px; background: #161b22; border-bottom: 1px solid #2a3340;
+}
+.mux-pane-title {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mux-pane-status { font-size: 11px; color: #7d8590; flex: 1; }
+
+.mux-btn {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
+}
+.mux-btn:hover { background: #2d333b; border-color: #3d4451; }
+
+.mux-pane-xterm { flex: 1; min-height: 0; padding: 6px; overflow: hidden; }
+.mux-pane-xterm .xterm { height: 100%; }
+
+/* Empty state — shown when no terminals are open (e.g. a freshly opened tab
+   before its first seed lands, or after the last terminal is closed). */
+#mux-empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  color: #7d8590; text-align: center; padding: 24px;
+}
+#mux-empty .mux-empty-title { color: #c9d1d9; font-size: 15px; }
+#mux-empty code {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 1px 5px; font-family: ui-monospace, monospace; color: #c9d1d9;
+}
+
+body.solo #mux-tabs { display: none !important; }

@@ -23,6 +23,7 @@
 
 import { $ } from './helpers.js';
 import { confirmModal } from './refresh.js';
+import { launchInTerminals } from './terminals-launch.js';
 
 let term = null;
 let fitAddon = null;
@@ -36,6 +37,9 @@ let currentWsPath = null;
 // hoc web-term (its own throwaway session, no agent client to hide), where
 // closing the WebSocket is enough.
 let hideConv = null;
+// The label shown in the modal title, remembered so the "⧉ tab" pop-out can
+// hand it to the standalone terminals page.
+let currentLabel = null;
 // True while ANY term-modal confirmation (the disconnect prompt OR the
 // detach/close confirm shared by the × button and the backdrop click) is
 // open. confirmModal is a shared singleton (one #confirm-modal element);
@@ -56,11 +60,13 @@ export function openTermModal({ wsPath, label, hideConv: hc }) {
   // left over from a previous (possibly web-term) open so a stale conv can't
   // get detached under a different modal.
   hideConv = hc || null;
+  currentLabel = label;
   // The Detach button only makes sense for a web WINDOW (a view onto the agent's
   // LIVE session, hideConv set): "detach" hands the tmux client back while the
   // agent keeps running. An ad hoc web TERMINAL (hideConv null) is its own
   // throwaway shell — nothing to detach from — so it gets only the × Close.
-  // Toggle per open; the modal is a reused singleton.
+  // Toggle per open; the modal is a reused singleton. (The "⧉ tab" pop-out
+  // stays visible for both — any terminal can move to the terminals page.)
   $('#term-session-detach').style.display = hideConv ? '' : 'none';
   // Defensive reset: a fresh open should never inherit a stuck guard from a
   // previous session (it can't with the mutual-exclusion below, but this
@@ -300,6 +306,20 @@ export function bindTermModal() {
   const overlay = $('#term-session-modal');
   $('#term-session-detach').addEventListener('click', detachAndClose);
   $('#term-session-close').addEventListener('click', confirmAndClose);
+  // "⧉ tab" — hand this same WebSocket terminal to the standalone terminals
+  // page (a separate browser tab that holds several at once), then tear down
+  // this modal view. The underlying tmux/PTY session outlives the modal, so
+  // the new tab reattaches to the very same shell; detachAndClose drops this
+  // window's own client first (and, for an open-window attach, /api/hide-s it)
+  // so the new tab isn't size-clamped by a now-defunct viewer — and for a
+  // fresh terminals tab the hide lands before the new attach (which waits on
+  // the page load). Lets the gesture-less fallbacks that land in this modal
+  // (spawn auto-focus, native-window-unavailable) escape the single blocking
+  // overlay into the multi-terminal view.
+  $('#term-session-pop').addEventListener('click', () => {
+    if (currentWsPath) launchInTerminals({ ws: currentWsPath, label: currentLabel });
+    detachAndClose();
+  });
   overlay.addEventListener('click', (e) => {
     if (e.target !== overlay) return;
     confirmAndClose();

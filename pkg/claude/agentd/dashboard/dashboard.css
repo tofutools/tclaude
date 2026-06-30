@@ -1821,6 +1821,14 @@ details[open] > summary .spawn-btn { opacity: 1; }
   margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
 }
 .term-session-status { font-size: 11px; color: #7d8590; flex: 1; }
+/* "⧉ tab" — pop this modal terminal out into the standalone terminals page
+   (js/terminals-launch.js). Themed dark: a bare <button> would render with
+   the browser's white default. */
+.term-session-pop {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
+}
+.term-session-pop:hover { background: #2d333b; border-color: #3d4451; }
 .term-session-close {
   background: none; border: none; color: #7d8590; cursor: pointer;
   font-size: 20px; line-height: 1; padding: 0 4px;
