@@ -794,7 +794,13 @@ function paintSidebar() {
     // doubles as a fold toggle. Helper text under the expanded header explains
     // what the per-row checkboxes are for (otherwise a mystery).
     const filtering = !!q;
-    const expanded = filtering || isAgentsExpanded();
+    // Stay expanded while a bulk-wipe selection is pending: a ticked mailbox
+    // must never collapse out of view — you could neither see nor un-tick it,
+    // yet the 🗑 wipe bar would still count and wipe it. toggleAgentsExpand
+    // clears the selection before folding, so an explicit fold still wins
+    // (size → 0); this guards the indirect collapse routes — clearing or
+    // narrowing the mailbox filter, whose handler only repaints the sidebar.
+    const expanded = filtering || isAgentsExpanded() || mail.selectedBoxes.size > 0;
     if (filtering) {
       html += '<div class="mailbox-section">All agent mailboxes</div>';
     } else {
