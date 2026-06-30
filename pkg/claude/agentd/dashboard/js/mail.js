@@ -108,6 +108,13 @@ const SHOW_PREV_GENS_KEY = 'tclaude.dash.mail.showprevgens';
 // mail-specific prefix so it stays independent of the Groups tab's own
 // tclaude.dash.group.<name> card-expand flags. Default collapsed.
 const GROUP_EXPAND_PREFIX = 'tclaude.dash.mail.groupexp.';
+// Whether the flat "All agent mailboxes" section is expanded. The per-agent
+// roster — every row carrying a bulk-wipe checkbox — is collapsed by default
+// so the sidebar opens clean and the destructive wipe affordance is opt-in;
+// grouped agents stay reachable by expanding their group above. Persisted;
+// default folded. A live text filter force-expands it regardless (matches
+// must never hide behind the fold).
+const AGENTS_EXPAND_KEY = 'tclaude.dash.mail.agentsexp';
 
 // Page sizes the selector offers. The default (50) is what a fresh
 // dashboard uses until the operator picks one; every value stays at or
@@ -546,6 +553,28 @@ function toggleGroupExpand(name) {
   paintSidebar();
 }
 
+// isAgentsExpanded reports whether the flat "All agent mailboxes" section is
+// expanded to reveal the per-agent roster. Default folded.
+function isAgentsExpanded() {
+  return dashPrefs.getItem(AGENTS_EXPAND_KEY) === '1';
+}
+
+// toggleAgentsExpand flips the flat agent section's expand state, persists it
+// (set '1' / removeItem, like the other sticky sidebar toggles), and repaints.
+// Folding also drops any pending bulk-wipe selection: the checkboxes that
+// drive it are about to vanish, so leaving the wipe bar counting now-hidden
+// rows would be a trap. Pure view state — no server round-trip.
+function toggleAgentsExpand() {
+  if (isAgentsExpanded()) {
+    dashPrefs.removeItem(AGENTS_EXPAND_KEY);
+    mail.selectedBoxes.clear();
+    paintWipeBar();
+  } else {
+    dashPrefs.setItem(AGENTS_EXPAND_KEY, '1');
+  }
+  paintSidebar();
+}
+
 // isSelectedEmpty reports whether the open folder is an empty-mailbox
 // agent folder (total 0), per the current roster. Used to decide whether
 // hiding empty folders would strand the selection.
@@ -757,8 +786,35 @@ function paintSidebar() {
     }
   }
   if (agents.length) {
-    html += '<div class="mailbox-section">Agents</div>';
-    html += agents.map(mb => mailboxRowHTML(mb, false, prevGens.has(mb.id))).join('');
+    // The flat per-agent roster is collapsed by default: every row carries a
+    // bulk-wipe checkbox (a rare, destructive affordance) and grouped agents
+    // are already reachable by expanding their group above, so an always-open
+    // flat list is mostly clutter. A live text filter force-expands the
+    // section so matches can't hide behind the fold; otherwise the header
+    // doubles as a fold toggle. Helper text under the expanded header explains
+    // what the per-row checkboxes are for (otherwise a mystery).
+    const filtering = !!q;
+    // Stay expanded while a bulk-wipe selection is pending: a ticked mailbox
+    // must never collapse out of view — you could neither see nor un-tick it,
+    // yet the 🗑 wipe bar would still count and wipe it. toggleAgentsExpand
+    // clears the selection before folding, so an explicit fold still wins
+    // (size → 0); this guards the indirect collapse routes — clearing or
+    // narrowing the mailbox filter, whose handler only repaints the sidebar.
+    const expanded = filtering || isAgentsExpanded() || mail.selectedBoxes.size > 0;
+    if (filtering) {
+      html += '<div class="mailbox-section">All agent mailboxes</div>';
+    } else {
+      // Collapsed hides every per-agent unread badge, so roll them up onto the
+      // header — otherwise unread agent mail would silently vanish behind the
+      // fold. Expanded needs no rollup: each row shows its own badge.
+      const unread = expanded ? 0 : agents.reduce((n, mb) => n + (mb.unread || 0), 0);
+      const unreadBadge = unread ? ` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : '';
+      html += `<button type="button" class="mailbox-section mailbox-section-toggle${unread ? ' has-unread' : ''}" data-act="mailbox-toggle-agents-section" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse the agent list' : 'Expand the agent list'}"><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span> All agent mailboxes (${agents.length})${unreadBadge}</button>`;
+    }
+    if (expanded) {
+      html += '<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>';
+      html += agents.map(mb => mailboxRowHTML(mb, false, prevGens.has(mb.id))).join('');
+    }
   }
   el.innerHTML = html;
 }
@@ -1458,6 +1514,8 @@ function initMail() {
         selectMailbox(btn.getAttribute('data-id'));
       } else if (act === 'mailbox-toggle-group') {
         toggleGroupExpand(btn.getAttribute('data-group'));
+      } else if (act === 'mailbox-toggle-agents-section') {
+        toggleAgentsExpand();
       } else if (act === 'mail-open') {
         selectMessage(btn.getAttribute('data-id'));
       } else if (act === 'mail-msg-delete') {

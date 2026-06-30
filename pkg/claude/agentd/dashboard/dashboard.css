@@ -387,6 +387,28 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
   text-transform: uppercase; letter-spacing: .06em;
 }
 .mailbox-section:first-child { margin-top: 0; }
+/* The "All agent mailboxes" divider doubles as a fold toggle: it reuses the
+   .mailbox-section label styling (uppercase / muted / small) but is a
+   full-width <button>, so strip the native button chrome and lay the caret +
+   label out in a flex row flush with the static dividers above it. Without
+   font-family: inherit the UA button font would leak through. */
+.mailbox-section-toggle {
+  display: flex; align-items: center; gap: 4px;
+  background: none; border: none; cursor: pointer;
+  text-align: left; font-family: inherit;
+}
+.mailbox-section-toggle:hover { color: #c9d1d9; }
+/* Brighten the collapsed header when it carries rolled-up unread mail, so the
+   blue badge isn't the only signal. */
+.mailbox-section-toggle.has-unread { color: #adbac7; }
+.mailbox-section-caret { flex: 0 0 auto; font-size: 13px; line-height: 1; }
+/* One-line hint under the expanded agent section, explaining the per-row
+   bulk-wipe checkboxes (otherwise a mystery — they only surface a wipe bar at
+   the top of the sidebar). */
+.mailbox-section-help {
+  color: #6e7681; font-size: 11px; font-style: italic;
+  padding: 0 8px 5px; line-height: 1.35;
+}
 
 /* Retired-agent folders (only shown when the sidebar toggle is on): dim
    the row and tag it so it reads as demoted, not a live agent. Empty-mailbox
