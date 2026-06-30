@@ -246,6 +246,56 @@ func TestDashboardJS_MailColsResizable(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_GroupQuickFoldWired guards the group quick-options
+// auto-fold accordion (config dashboard.group_quick_options), whose pieces
+// span six files that must stay in lockstep — there's no JS render test, so we
+// assert on the embedded concatenation at `go test ./...`. The Go resolver +
+// round-trip is covered separately by config.TestGroupQuickOptions. A rename in
+// any one file silently breaks the fold (or its pin) only in the browser:
+//   - render.js wraps the variable chip text in .qo-text and stamps
+//     .quick-pinned on a pinned group's <details> + emits the ⚙ pin toggle;
+//   - refresh.js toggles body.group-quick-fold off the snapshot flag;
+//   - row-actions.js handles the pin toggle (a per-browser dashPref);
+//   - dashboard.css collapses .qo-text at rest and expands it on header hover,
+//     scoped to hover-capable pointers and skipping pinned groups;
+//   - config.js + dashboard.html expose the Config-tab checkbox.
+func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
+	for _, needle := range []string{
+		// render.js — the collapsible text wrapper, the pin class, the pin
+		// pref key and the ⚙ menu toggle.
+		`<span class="qo-text">`,
+		"quick-pinned",
+		"tclaude.dash.quickpin.",
+		`data-act="toggle-quick-pin"`,
+		// refresh.js — drives the body class off the snapshot flag, and tracks
+		// the hovered group so the reveal survives the 2s innerHTML re-render.
+		"'group-quick-fold', data.group_quick_options !== 'expanded'",
+		"export let hoveredGroupKey",
+		"function bindGroupQuickHover(",
+		// dashboard.js — wires the hover tracker in at init.
+		"bindGroupQuickHover()",
+		// render.js — re-stamps .quick-hover from the tracked key each render.
+		"g.name === hoveredGroupKey",
+		// row-actions.js — the pin toggle handler.
+		"case 'toggle-quick-pin':",
+		// config.js — load + gather the Config-tab checkbox.
+		"#cfg-dashboard-group-quick-fold",
+		"dashboard.group_quick_options = 'expanded'",
+		// dashboard.html — the Config-tab control.
+		`id="cfg-dashboard-group-quick-fold"`,
+		// dashboard.css — collapse at rest (gated to hover pointers, skipping
+		// pinned groups) and reveal on header hover.
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text",
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text",
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned).quick-hover > summary .qo-text",
+		"@media (hover: hover) {",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — group quick-fold wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

@@ -357,6 +357,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-hscroll-follow" /> keep the header &amp; tabs pinned while scrolled sideways (follow mode)</label>
         <span class="cfg-hint">On a window too narrow for a wide member table, the page scrolls sideways. The full-bleed bars (header, tabs, slop marquee) always stretch to fill the width so they never look ragged — this controls their <em>content</em>. <strong>Follow</strong> (default, checked) pins the header controls and tab strip to the viewport and makes them sticky-left, so they stay put and usable while you're scrolled right. <strong>Static</strong> (unchecked) lets that content scroll off with the page — the bars still fill the width, but the controls aren't reachable until you scroll back. Stored as <code>dashboard.hscroll_follow</code> (the default is omitted; static writes <code>false</code>).</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Group quick options</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-group-quick-fold" /> auto-fold quick options to icons, expand on hover</label>
+        <span class="cfg-hint">Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).</span>
+      </div>
     </div>
 
     <div class="cfg-section">

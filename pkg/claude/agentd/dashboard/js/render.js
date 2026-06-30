@@ -27,7 +27,7 @@ import { getDashDefaultProfile } from './profiles.js';
 // every module finishes evaluating (sudoBadge is a hoisted function;
 // lastSnapshot / sudoByConv are read-only live bindings here).
 import { lastSnapshot, sudoBadge } from './dashboard.js';
-import { sudoByConv } from './refresh.js';
+import { sudoByConv, hoveredGroupKey } from './refresh.js';
 
 // renameNameCell renders the agent's name — the click-to-edit rename
 // affordance when the agent's harness supports a rename (the common case:
@@ -390,6 +390,15 @@ function groupActionsHTML(g, members) {
   const ctxTitle = ctxLen > 0
     ? `Startup context (${ctxLen} chars) delivered to the inbox of agents spawned here — click to edit`
     : 'No startup context — click to set one';
+  // Quick-options pin toggle — only meaningful while auto-fold is on, so
+  // it's omitted in "expanded" mode (nothing folds there). Pinning is a
+  // per-browser dashPref (tclaude.dash.quickpin.<name>); render.js stamps
+  // .quick-pinned on the <details> so the fold CSS skips this group.
+  const qoFoldActive = !lastSnapshot || lastSnapshot.group_quick_options !== 'expanded';
+  const qoPinned = dashPrefs.getItem('tclaude.dash.quickpin.' + g.name) === '1';
+  const quickPinItem = qoFoldActive
+    ? `<button data-act="toggle-quick-pin" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-pinned="${qoPinned ? '1' : '0'}" title="${qoPinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest."}">${qoPinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>`
+    : '';
   const menu =
     `<button data-act="add-member" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Add an existing conversation to this group">+ add member</button>`
     + `<button data-act="cron-new" data-prefill='${esc(JSON.stringify({targetMode: 'group', groupName: g.name, scopeGroup: g.name}))}' data-label="${esc(g.name)}" title="Schedule a recurring cron job scoped to ${esc(g.name)} — multicast the whole group, or nudge a single member">⏰ multicast</button>`
@@ -398,6 +407,7 @@ function groupActionsHTML(g, members) {
     + `<button data-act="set-group-context" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(ctxTitle)}">${ctxLabel}</button>`
     + groupNotifyMenuItem(g)
     + remoteControlPolicyMenuItem(g)
+    + quickPinItem
     + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
     + `<button data-act="clone-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clone this group — copy every setting (directory, description, startup context, default profile, max-members, notify) and the owners into a new group. Optionally clone the member agents too.">⧉ clone…</button>`
     + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
@@ -479,6 +489,21 @@ function renderGroups(groups) {
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
     const isOpen = dashPrefs.getItem('tclaude.dash.group.' + g.name) === '1';
+    // Quick-options pin: a per-group, per-browser opt-out of the
+    // body.group-quick-fold accordion. A pinned group carries .quick-pinned
+    // on its <details>, which the fold CSS excludes, so its chips stay
+    // expanded even when auto-fold is on. Persisted in dashPrefs (server-side,
+    // like the open/closed + offline-visibility view state). Toggled from the
+    // group ⚙ menu (toggle-quick-pin). No effect in "expanded" mode — nothing
+    // folds there to opt out of.
+    const quickPinned = dashPrefs.getItem('tclaude.dash.quickpin.' + g.name) === '1';
+    // Compose the <details> class list: .quick-pinned opts out of folding,
+    // .quick-hover re-stamps the JS-tracked hover so the reveal survives the
+    // 2s re-render (see bindGroupQuickHover / hoveredGroupKey in refresh.js).
+    const detailsClasses = [];
+    if (quickPinned) detailsClasses.push('quick-pinned');
+    if (!quickPinned && g.name === hoveredGroupKey) detailsClasses.push('quick-hover');
+    const detailsClassAttr = detailsClasses.length ? ` class="${detailsClasses.join(' ')}"` : '';
     // 👥 chip: <online>/<total>/<cap> — but collapse the online
     // slot to <total>/<cap> when everyone is online (the common
     // case), so the chip stays terse and only grows a third slot
@@ -502,14 +527,14 @@ function renderGroups(groups) {
     if (hiddenOffline > 0) capChipTitleParts.push(`${hiddenOffline} offline hidden in this view`);
     const capChipTitle = capChipTitleParts.join(' · ') + (g.max_members ? ' — click to edit cap' : ' — click to set a cap');
     return `
-    <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${isOpen ? ' open' : ''}>
+    <details data-group-key="${esc(g.name)}" data-dnd-target-group="${esc(g.name)}"${detailsClassAttr}${isOpen ? ' open' : ''}>
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
         ${groupActivityChip(members)}
-        <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝 ${g.descr ? esc(g.descr) : 'no description'}</span>
-        <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span>
+        <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
+        <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
-        <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span>
+        <span class="group-default-model${g.default_profile ? '' : ' unset'}" data-act="set-group-profile" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-profile="${esc(g.default_profile || '')}" title="${g.default_profile ? 'Default spawn profile for agents spawned into this group: ' + esc(g.default_profile) + ' — fills blank launch fields at spawn. Click to change.' : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)'}">🧠<span class="qo-text">${g.default_profile ? ' ' + esc(g.default_profile) : ''}</span></span>
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
@@ -556,7 +581,7 @@ function renderGroupLinkChips(groupName) {
     ...out.map(l => chip(l.to, 'out', l.mode)),
     ...inc.map(l => chip(l.from, 'in', l.mode)),
   ].join('');
-  return `<span class="group-link-chips" data-act="links-manage" title="Inter-group links — click to manage">🔗 ${chips}</span>`;
+  return `<span class="group-link-chips" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${chips}</span></span>`;
 }
 
 // renderGroupLinksSection: per-group outbound/inbound link rows. Reads

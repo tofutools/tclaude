@@ -330,6 +330,17 @@ function bindRowActions() {
           renderGroupsTab();
           return;
         }
+        case 'toggle-quick-pin': {
+          // Pure client-side view state — pin/unpin this group's quick
+          // options so the body.group-quick-fold accordion skips it. Stored
+          // in dashPrefs (server-side, per browser) like the offline override
+          // above. No daemon round-trip; re-render shows the new state.
+          const pkey = 'tclaude.dash.quickpin.' + group;
+          if (dashPrefs.getItem(pkey) === '1') dashPrefs.removeItem(pkey);
+          else dashPrefs.setItem(pkey, '1');
+          renderGroupsTab();
+          return;
+        }
         case 'remove-member': {
           const confirmed = await confirmModal({
             title: 'Remove member from group?',

@@ -96,6 +96,27 @@ const (
 	ActivityBotsOff     = "off"
 )
 
+// Group quick-options display modes — config dashboard.group_quick_options.
+// The "quick options" are the editable chips packed into each group's
+// <summary> header (📝 description, 📁 default dir, 🧠 default profile, 🔗
+// links). They grow the header wide, so the dashboard can auto-fold them:
+//
+//	"hover"    — icon-only at rest; the chip text slides open when the
+//	             pointer is over the group header (a CSS horizontal
+//	             accordion). The activity-bot row, group name and 👥 member
+//	             chip always stay visible. This is the default.
+//	"expanded" — always show the full chips (the pre-fold behaviour).
+//
+// An empty / unknown value falls back to the default (see GroupQuickOptions).
+// Folding is a hover affordance, so it's gated to hover-capable pointers in
+// CSS — touch devices always see the full chips. A per-group "pin" (a
+// per-browser dashboard pref) opts a single group out of folding regardless
+// of this mode.
+const (
+	GroupQuickOptionsHover    = "hover"
+	GroupQuickOptionsExpanded = "expanded"
+)
+
 // DashboardConfig holds display toggles for the agentd web dashboard.
 type DashboardConfig struct {
 	// ActivityBots selects the style of the per-group + global "activity
@@ -131,6 +152,16 @@ type DashboardConfig struct {
 	// snapshot each poll and toggles body.hscroll-follow; it replaces the old
 	// per-browser header toggle button. See (*Config).HScrollFollow.
 	HScrollFollow *bool `json:"hscroll_follow,omitempty"`
+	// GroupQuickOptions selects how the editable "quick option" chips in each
+	// group <summary> header (📝 description, 📁 default dir, 🧠 default
+	// profile, 🔗 links) are displayed — one of GroupQuickOptions{Hover,
+	// Expanded}. "hover" (the default) folds them to icon-only at rest and
+	// slides the text open on header hover, reclaiming horizontal space;
+	// "expanded" keeps the full chips always visible. Empty / unknown →
+	// default (hover). The dashboard reads the resolved value off the snapshot
+	// each poll and toggles body.group-quick-fold. See
+	// (*Config).GroupQuickOptions.
+	GroupQuickOptions string `json:"group_quick_options,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -654,6 +685,32 @@ func (c *Config) HScrollFollow() bool {
 		return true
 	}
 	return *c.Dashboard.HScrollFollow
+}
+
+// normalizeGroupQuickOptions returns s when it's a known mode, else ""
+// (so the resolver falls back to its default for a blank or hand-edited
+// garbage value).
+func normalizeGroupQuickOptions(s string) string {
+	switch s {
+	case GroupQuickOptionsHover, GroupQuickOptionsExpanded:
+		return s
+	default:
+		return ""
+	}
+}
+
+// GroupQuickOptions reports the display mode for the group <summary> quick-
+// option chips — config dashboard.group_quick_options. Default "hover"
+// (absent block / key or an unknown value): the chips fold to icon-only at
+// rest and expand on header hover. "expanded" keeps them always visible.
+// Nil-safe on the receiver so callers need no guard.
+func (c *Config) GroupQuickOptions() string {
+	if c != nil && c.Dashboard != nil {
+		if s := normalizeGroupQuickOptions(c.Dashboard.GroupQuickOptions); s != "" {
+			return s
+		}
+	}
+	return GroupQuickOptionsHover
 }
 
 // FocusConfig holds window-focus behavior knobs.

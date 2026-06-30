@@ -11,7 +11,7 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   bindListPagers,
   refresh,
 } from './refresh.js';
@@ -103,6 +103,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindAccessSubtabs();
   bindDetailsPersistence();
   bindGroupTitleToggle();
+  bindGroupQuickHover();
   bindSortHeaders();
   bindRowActions();
   bindDnd();
