@@ -43,9 +43,17 @@ func TestTermModal_BackdropDoesNotCloseDirectly(t *testing.T) {
 		t.Error("modal-term.js closes on a backdrop click without confirming — " +
 			"an outside click must ask first, not tear the terminal down")
 	}
-	if !strings.Contains(src, "confirmModal({") {
-		t.Error("modal-term.js no longer calls confirmModal — the close/disconnect " +
-			"confirmations are gone")
+	// Pin the backdrop handler specifically (not just "confirmModal is called
+	// somewhere", which promptReconnect alone would satisfy): the click
+	// handler must early-return on a non-backdrop target and route the actual
+	// close through confirmModal.
+	if !strings.Contains(src, "if (e.target !== overlay) return;") {
+		t.Error("modal-term.js backdrop handler must early-return on a non-backdrop " +
+			"target before deciding to close")
+	}
+	if !strings.Contains(src, "okLabel: 'Close terminal'") {
+		t.Error("modal-term.js backdrop close must go through a confirmModal " +
+			"offering 'Close terminal' — the outside click must ask first")
 	}
 }
 

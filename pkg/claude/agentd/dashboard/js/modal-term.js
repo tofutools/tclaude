@@ -28,10 +28,14 @@ let term = null;
 let fitAddon = null;
 let ws = null;
 let currentWsPath = null;
-// True while the disconnect prompt (confirmModal) is open, so a second
-// onclose — or a stray error firing alongside it — can't stack a second
-// copy of the dialog on top.
-let reconnectPromptOpen = false;
+// True while ANY term-modal confirmation (the disconnect prompt OR the
+// backdrop "Close terminal?" confirm) is open. confirmModal is a shared
+// singleton (one #confirm-modal element); opening a second over a pending
+// first would double up its button/Escape listeners so one click resolves
+// both promises — clicking "Reconnect" could then close the terminal, and a
+// stranded promise could wedge the disconnect prompt for the page's life.
+// This single in-flight guard keeps the two confirms mutually exclusive.
+let termConfirmOpen = false;
 
 // openTermModal opens the modal and (re)connects an xterm.js terminal
 // to wsPath over a WebSocket. label is shown in the modal title bar.
@@ -39,6 +43,10 @@ let reconnectPromptOpen = false;
 // just detaches the WebSocket, reopening reattaches to the same shell.
 export function openTermModal({ wsPath, label }) {
   currentWsPath = wsPath;
+  // Defensive reset: a fresh open should never inherit a stuck guard from a
+  // previous session (it can't with the mutual-exclusion below, but this
+  // costs nothing and guarantees a reopened modal can always prompt again).
+  termConfirmOpen = false;
   $('#term-session-title').textContent = label ? `Terminal — ${label}` : 'Terminal';
   $('#term-session-modal').classList.add('show');
 
@@ -116,11 +124,15 @@ function setStatus(text) {
 
 // promptReconnect asks the human what to do after an unexpected drop:
 // reconnect to the same session, or close the modal. Escape / the cancel
-// button both close (the connection is already dead). Guarded so a burst
-// of close/error events only ever shows one dialog.
+// button both close (the connection is already dead). Bails if a term-modal
+// confirm is already open (the shared-singleton guard) so a burst of
+// close/error events — or a drop landing while the backdrop "Close terminal?"
+// confirm is up — can't stack a second dialog. When it bails for the latter
+// reason, the backdrop handler re-offers the reconnect once its own confirm
+// resolves, so the prompt is deferred, not lost.
 async function promptReconnect() {
-  if (reconnectPromptOpen) return;
-  reconnectPromptOpen = true;
+  if (termConfirmOpen) return;
+  termConfirmOpen = true;
   let reconnect;
   try {
     reconnect = await confirmModal({
@@ -130,7 +142,7 @@ async function promptReconnect() {
       cancelLabel: 'Close terminal',
     });
   } finally {
-    reconnectPromptOpen = false;
+    termConfirmOpen = false;
   }
   // The modal may have been closed out from under the prompt; don't
   // resurrect a connection for a terminal the user already dismissed.
@@ -143,7 +155,15 @@ function closeSocket() {
   if (ws) {
     const old = ws;
     ws = null;
+    // Detach EVERY handler before closing: onclose so an intentional close
+    // doesn't trigger the reconnect prompt, and onerror/onopen/onmessage so a
+    // late event on this now-orphaned socket can't reach back through the
+    // module-level `ws` and act on its replacement (connect() installs a
+    // fresh socket right after this).
     old.onclose = null;
+    old.onerror = null;
+    old.onopen = null;
+    old.onmessage = null;
     old.close();
   }
 }
@@ -168,12 +188,28 @@ export function bindTermModal() {
   $('#term-session-close').addEventListener('click', closeTermModal);
   overlay.addEventListener('click', async (e) => {
     if (e.target !== overlay) return;
-    const close = await confirmModal({
-      title: 'Close terminal?',
-      body: 'The underlying session keeps running — you can reopen it to reattach.',
-      okLabel: 'Close terminal',
-      cancelLabel: 'Keep open',
-    });
-    if (close) closeTermModal();
+    // Share the disconnect prompt's in-flight guard (confirmModal is a single
+    // shared element). If a confirm is already up, ignore the backdrop click.
+    if (termConfirmOpen) return;
+    termConfirmOpen = true;
+    let close;
+    try {
+      close = await confirmModal({
+        title: 'Close terminal?',
+        body: 'The underlying session keeps running — you can reopen it to reattach.',
+        okLabel: 'Close terminal',
+        cancelLabel: 'Keep open',
+      });
+    } finally {
+      termConfirmOpen = false;
+    }
+    if (close) { closeTermModal(); return; }
+    // Kept open: if the socket dropped while this confirm was up (its onclose
+    // saw the guard set and skipped the prompt), surface the reconnect choice
+    // now instead of leaving a silently-dead terminal on screen. Gate on
+    // readyState (not a bool) so a still-CONNECTING socket isn't mistaken for
+    // a drop.
+    const dropped = ws && (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING);
+    if (dropped && $('#term-session-modal').classList.contains('show')) promptReconnect();
   });
 }
