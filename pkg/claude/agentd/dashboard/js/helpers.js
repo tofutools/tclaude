@@ -936,7 +936,7 @@ function joinMenuGroups(groups) {
 // The cog is always present and enabled.
 function memberActions(g, m, canRemote) {
   const menu = joinMenuGroups([
-    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + exportAgentButton(m),
+    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + webOpenWindowButton(m) + exportAgentButton(m),
     editMemberButton(g, m) + ownerToggleButton(g, m) + permMemberButton(m) + sudoMemberButton(m)
       + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
     cloneAgentButton(m) + reincarnateAgentButton(m),
@@ -1038,6 +1038,17 @@ function webTermButton(m) {
 function openWindowButton(m) {
   const label = m.title || m.conv_id;
   return `<button data-act="open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal window attached to this agent's live session (its Claude Code TUI)">open window</button>`;
+}
+
+// webOpenWindowButton renders the "web window" affordance — the same
+// attach-to-the-live-session as `open window`, but ALWAYS streamed into an
+// in-browser xterm (modal-term.js) instead of a native window. `open window`
+// only falls back to the browser when the daemon host can't pop a native
+// window; this button forces it, for reaching a live agent's TUI from a
+// remote dashboard (e.g. a phone) even though the host itself has a display.
+function webOpenWindowButton(m) {
+  const label = m.title || m.conv_id;
+  return `<button data-act="web-open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal attached to this agent's live session (its Claude Code TUI), in the browser (always a web terminal — never a native window)">web window</button>`;
 }
 
 // Eye glyphs for the focus / hide window buttons — an open eye for
@@ -1155,7 +1166,7 @@ function retireMemberButton(m) {
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m, canRemote) {
   const menu = joinMenuGroups([
-    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + exportAgentButton(m),
+    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + webOpenWindowButton(m) + exportAgentButton(m),
     permMemberButton(m) + sudoMemberButton(m)
       + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
     cloneAgentButton(m) + reincarnateAgentButton(m),
