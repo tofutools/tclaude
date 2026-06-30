@@ -22,12 +22,16 @@
 // with mode:"browser".
 
 import { $ } from './helpers.js';
+import { confirmModal } from './refresh.js';
 
 let term = null;
 let fitAddon = null;
 let ws = null;
-let reconnectTimer = null;
 let currentWsPath = null;
+// True while the disconnect prompt (confirmModal) is open, so a second
+// onclose — or a stray error firing alongside it — can't stack a second
+// copy of the dialog on top.
+let reconnectPromptOpen = false;
 
 // openTermModal opens the modal and (re)connects an xterm.js terminal
 // to wsPath over a WebSocket. label is shown in the modal title bar.
@@ -88,8 +92,13 @@ function connect() {
     term.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
   };
   ws.onclose = () => {
-    setStatus('disconnected — reconnecting…');
-    reconnectTimer = setTimeout(connect, 2000);
+    // Don't silently reconnect — a dropped connection often means the
+    // shell/session ended, and a quiet retry loop hides that. Ask instead.
+    // closeSocket() nulls this handler before any INTENTIONAL close (the ×
+    // button, backdrop confirm, or a reconnect), so this only fires on a
+    // genuine drop.
+    setStatus('disconnected');
+    promptReconnect();
   };
   ws.onerror = () => { try { ws.close(); } catch (_) { /* onclose handles it */ } };
 }
@@ -105,8 +114,32 @@ function setStatus(text) {
   if (el) el.textContent = text;
 }
 
+// promptReconnect asks the human what to do after an unexpected drop:
+// reconnect to the same session, or close the modal. Escape / the cancel
+// button both close (the connection is already dead). Guarded so a burst
+// of close/error events only ever shows one dialog.
+async function promptReconnect() {
+  if (reconnectPromptOpen) return;
+  reconnectPromptOpen = true;
+  let reconnect;
+  try {
+    reconnect = await confirmModal({
+      title: 'Terminal disconnected',
+      body: 'The connection to the terminal was closed. The underlying session keeps running — reconnect to it, or close this terminal?',
+      okLabel: 'Reconnect',
+      cancelLabel: 'Close terminal',
+    });
+  } finally {
+    reconnectPromptOpen = false;
+  }
+  // The modal may have been closed out from under the prompt; don't
+  // resurrect a connection for a terminal the user already dismissed.
+  if (!$('#term-session-modal').classList.contains('show')) return;
+  if (reconnect) connect();
+  else closeTermModal();
+}
+
 function closeSocket() {
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) {
     const old = ws;
     ws = null;
@@ -120,13 +153,27 @@ export function closeTermModal() {
   $('#term-session-modal').classList.remove('show');
 }
 
-// bindTermModal wires the close button / backdrop click / Escape key.
-// Called once at dashboard init (dashboard.js).
+// bindTermModal wires the close button / backdrop click. Called once at
+// dashboard init (dashboard.js).
+//
+// The × button is the explicit, deliberate close — no confirm. A backdrop
+// click is easy to do by accident while reaching for the terminal, so it
+// asks first rather than tearing the session view down. Escape is NOT a
+// close key here: it's a control character the terminal itself needs
+// (vim, less, and the Claude Code TUI all lean on it), so it must pass
+// straight through to xterm. (The disconnect prompt's own confirmModal
+// still handles Escape = cancel while it's up.)
 export function bindTermModal() {
   const overlay = $('#term-session-modal');
   $('#term-session-close').addEventListener('click', closeTermModal);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeTermModal(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && overlay.classList.contains('show')) closeTermModal();
+  overlay.addEventListener('click', async (e) => {
+    if (e.target !== overlay) return;
+    const close = await confirmModal({
+      title: 'Close terminal?',
+      body: 'The underlying session keeps running — you can reopen it to reattach.',
+      okLabel: 'Close terminal',
+      cancelLabel: 'Keep open',
+    });
+    if (close) closeTermModal();
   });
 }
