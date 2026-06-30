@@ -37,11 +37,24 @@ export function listLimit(kind) {
 
 export function listOffset(kind) { return offsets[kind] || 0; }
 
-// listParams builds the offset/limit query fragment the snapshot-tick fetch
+// listParams builds the offset/limit/q query fragment the snapshot-tick fetch
 // sends for one list. Always windowed — the modals call the same endpoints
-// with no params to get the full set (fetchListFull).
-export function listParams(kind) {
-  return `offset=${listOffset(kind)}&limit=${listLimit(kind)}`;
+// with no params to get the full set (fetchListFull). q (the Groups-tab filter
+// box) is applied server-side so the filter searches the WHOLE list, not just
+// the loaded page.
+export function listParams(kind, q) {
+  let s = `offset=${listOffset(kind)}&limit=${listLimit(kind)}`;
+  if (q) s += `&q=${encodeURIComponent(q)}`;
+  return s;
+}
+
+// resetListOffsets zeroes every list's offset — used when the Groups-tab filter
+// query changes, so a search starts on the first page of its (server-filtered)
+// results rather than a stale deep page.
+export function resetListOffsets() {
+  offsets.retired = 0;
+  offsets.conversations = 0;
+  offsets.replaced = 0;
 }
 
 // syncServedOffset reconciles our stored offset with the offset the server

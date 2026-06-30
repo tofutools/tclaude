@@ -7,7 +7,8 @@
 import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
-import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull } from './list-paging.js';
+import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull, resetListOffsets } from './list-paging.js';
+import { conversationsVisible, replacedVisible } from './virtual-groups.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   renderPermissions, renderSlugs, showStatus,
@@ -99,7 +100,18 @@ function bindFilter(tab) {
   const key = `tclaude.dash.filter.${tab}`;
   input.value = dashPrefs.getItem(key) || '';
   const rerender = () => {
-    if (tab === 'groups') renderGroupsTab();
+    if (tab === 'groups') {
+      renderGroupsTab();
+      // The three paginated virtual lists (Retired/Conversations/Replaced)
+      // filter SERVER-side — their full set isn't in memory — so any groups
+      // filter-bar change (a query edit, or newly showing a list) needs a
+      // round-trip to refetch the right q-matched window. Debounced so a fast
+      // typist fires one fetch (mirrors the Messages tab's server search). The
+      // page-1 reset on a QUERY change lives in onChange, not here, so toggling
+      // a "show X" checkbox doesn't bounce the other lists' pagers.
+      clearTimeout(groupsFilterTimer);
+      groupsFilterTimer = setTimeout(refresh, 250);
+    }
     else if (tab === 'templates') renderTemplatesTab();
     else if (tab === 'cron') renderCronTab();
     else if (tab === 'sudo') renderSudoTab();
@@ -113,6 +125,11 @@ function bindFilter(tab) {
   const onChange = () => {
     const v = input.value;
     if (v) dashPrefs.setItem(key, v); else dashPrefs.removeItem(key);
+    // A groups QUERY change resets the three paginated lists to page 1 — a
+    // page-3 view of the old query is meaningless once the query (and its
+    // server-side result set) changes. rerender() then triggers the debounced
+    // refetch that sends the new q.
+    if (tab === 'groups') resetListOffsets();
     rerender();
   };
   input.addEventListener('input', onChange);
@@ -253,6 +270,25 @@ function bindFilter(tab) {
   }
 }
 
+// refreshSeq tokens each refresh() run. A run that finds itself no longer the
+// latest (a pager click / filter change / next tick started while its fetches
+// were in flight) bails before mutating shared state — the guard refresh()
+// lacked, which let a slow older run clobber a newer page's offset.
+let refreshSeq = 0;
+
+// groupsFilterTimer debounces the server-side refetch the Groups filter box
+// triggers (the three paginated lists filter in SQL, so a query change needs a
+// round-trip — see bindFilter).
+let groupsFilterTimer = null;
+
+// groupsTabActive reports whether the Groups tab is the visible one — used to
+// skip the (default-hidden, expensive) conversations/replaced sub-fetches when
+// their virtual group can't be on screen anyway.
+function groupsTabActive() {
+  const s = $('#tab-groups');
+  return !!s && s.classList.contains('active');
+}
+
 // Focus preservation across the 2s re-render lives in helpers.js
 // (captureFocus / restoreFocus / withPreservedFocus) — shared with
 // mail.js, which wraps its own async mail repaint the same way. refresh()
@@ -269,42 +305,69 @@ export async function refresh() {
   }
   try {
     // The three heavy, ever-growing lists — retired / conversations / replaced
-    // — no longer ride inside the snapshot. Each has its own paginated
-    // endpoint; we fetch all four TOGETHER so the tick stays one coordinated
-    // update (a single Promise.all, then one render), then stitch the windowed
-    // pages back onto the snapshot object below.
-    // The list sub-fetches swallow a network rejection (→ null) so a blip on
-    // one of them degrades to "keep the previous rows" (stitchListPage) instead
-    // of failing the whole tick. The snapshot fetch keeps its original
-    // behaviour — a snapshot network error rejects to the outer catch.
+    // — no longer ride inside the snapshot. Each has its own paginated endpoint
+    // fetched ALONGSIDE the snapshot (one Promise.all, one render); the windowed
+    // pages are stitched back on below.
+    //
+    // Two gates keep this cheap: (1) conversations + replaced are fetched only
+    // when the Groups tab is showing their (default-hidden) virtual group — no
+    // point pulling them every tick on another tab or when collapsed; retired is
+    // always fetched (default-visible + it drives the palette's delete-retired
+    // count). (2) the Groups filter box value rides along as the server-side `q`
+    // so the filter searches the WHOLE list, not just the loaded page.
+    //
+    // List sub-fetches swallow a network rejection (→ null) so a blip on one
+    // degrades to "keep the previous rows" (stitchListPage) rather than failing
+    // the tick. The snapshot fetch keeps its original behaviour — its network
+    // error rejects to the outer catch.
+    const seq = ++refreshSeq;
+    const groupsQ = ($('#filter-groups')?.value || '').trim();
+    const onGroups = groupsTabActive();
+    const get = (path) => fetch(path, { credentials: 'same-origin' }).catch(() => null);
     const [snapR, retiredR, convR, replacedR] = await Promise.all([
       fetch('/api/snapshot', { credentials: 'same-origin' }),
-      fetch('/api/retired?' + listParams('retired'), { credentials: 'same-origin' }).catch(() => null),
-      fetch('/api/conversations?' + listParams('conversations'), { credentials: 'same-origin' }).catch(() => null),
-      fetch('/api/replaced?' + listParams('replaced'), { credentials: 'same-origin' }).catch(() => null),
+      get('/api/retired?' + listParams('retired', groupsQ)),
+      (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
+      (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
     ]);
+    // A newer refresh() (a pager click, a filter change, or the next interval
+    // tick) started while this one's fetches were in flight — drop this stale
+    // run before it touches any shared state. Without this, a slow older refresh
+    // resuming LAST clobbers the newer page and resets the stored offset
+    // (refresh() has no reqSeq otherwise, unlike mail.js, which learned this).
+    if (seq !== refreshSeq) return;
     if (!snapR.ok) {
       showStatus('snapshot failed: HTTP ' + snapR.status, true);
       return;
     }
     const data = await snapR.json();
-    // The guard above was sampled BEFORE the fetch. A drag or a modal
-    // may have opened while it was in flight — re-check now, before
-    // touching the DOM. Bailing here (ahead of the lastSnapshot
-    // assignment) also preserves any optimistic drag mutation already
-    // applied to the old snapshot; the drag/modal teardown re-runs
-    // refresh() when it finishes.
+    if (seq !== refreshSeq) return;
+    // The suspend guard was sampled BEFORE the fetch; a drag/modal may have
+    // opened since. Re-check before touching the DOM (this preserves any
+    // optimistic drag mutation on the old snapshot; its teardown re-runs us).
     if (refreshSuspended()) return;
     // Stitch each windowed list onto the snapshot so the downstream renderers
     // keep reading data.retired / .conversations / .replaced unchanged.
-    // data.paging carries each list's {offset,limit,total,total_unfiltered}
-    // for the pagers + count summaries. A failed sub-fetch keeps the previous
-    // tick's rows for that list (a transient blip must not blank a section).
+    // data.paging carries each list's {offset,limit,total,total_unfiltered} for
+    // the pagers + count summaries. A failed OR gated-off (undefined) sub-fetch
+    // keeps the previous tick's rows for that list — a blip / a collapsed group
+    // must not blank a section.
     const prevSnap = lastSnapshot || {};
     data.paging = {};
     await stitchListPage(data, 'retired', retiredR, prevSnap);
     await stitchListPage(data, 'conversations', convR, prevSnap);
     await stitchListPage(data, 'replaced', replacedR, prevSnap);
+    // stitchListPage awaited resp.json() (async boundaries) — re-check the seq
+    // (a newer refresh may have started) AND the suspend guard (a drag/modal may
+    // have opened) before mutating shared offset state and the DOM.
+    if (seq !== refreshSeq) return;
+    if (refreshSuspended()) return;
+    // Reconcile each list's stored offset with the server's CLAMPED served
+    // offset — done HERE, after the seq guard, so a stale refresh can never
+    // write it (the pager-clobber bug). No-op when the offset didn't move.
+    syncServedOffset('retired', data.paging.retired.offset);
+    syncServedOffset('conversations', data.paging.conversations.offset);
+    syncServedOffset('replaced', data.paging.replaced.offset);
     // Snapshot the keyboard focus before the renders below replace the
     // tab bodies wholesale, so a Tab-navigating user isn't bounced to
     // the top of the page on every poll. Restored at the end once the
@@ -384,7 +447,9 @@ async function stitchListPage(data, kind, resp, prevSnap) {
         total: body.total || 0,
         total_unfiltered: body.total_unfiltered || 0,
       };
-      syncServedOffset(kind, body.offset);
+      // Offset reconciliation (syncServedOffset) is deliberately NOT done here —
+      // it mutates shared module state, so refresh() applies it only after its
+      // seq guard, so a stale run can't write a clobbering offset.
       return;
     }
   } catch { /* fall through to keep-previous */ }

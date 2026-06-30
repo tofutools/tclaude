@@ -263,7 +263,10 @@ let prevGenFetchedAt = 0;
 // (force=true on a mutation, which can change the set immediately). Keeps the
 // last set on a transient failure.
 async function loadPrevGenIds(force) {
-  if (!force && mail.prevGenIds.size && Date.now() - prevGenFetchedAt < 15000) return;
+  // Gate on prevGenFetchedAt (have we fetched at all), NOT on prevGenIds.size —
+  // an empty replaced set is the common "nothing reincarnated yet" case, and
+  // gating on .size there would defeat the throttle and refetch every 2s.
+  if (!force && prevGenFetchedAt && Date.now() - prevGenFetchedAt < 15000) return;
   try {
     const rows = await fetchListFull('replaced');
     mail.prevGenIds = new Set(rows.map(r => r.conv_id).filter(Boolean));

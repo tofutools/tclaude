@@ -210,12 +210,16 @@ func replacedGenQ(q string) (joinFrag, whereFrag string, args []any) {
 	}
 	like := dashListLike(q)
 	joinFrag = ` LEFT JOIN conv_index ci ON ci.conv_id = s.old_conv_id`
+	// reason (reincarnate / clear / …) is matched too, so the Groups-tab filter
+	// box finds a replaced row by HOW it was superseded — mirroring the
+	// client-side filterGroups, which also matches the reason column.
 	whereFrag = ` AND (LOWER(s.old_conv_id) LIKE ? ESCAPE '\'
 		OR LOWER(s.agent_id) LIKE ? ESCAPE '\'
+		OR LOWER(s.reason) LIKE ? ESCAPE '\'
 		OR LOWER(COALESCE(ci.custom_title, '')) LIKE ? ESCAPE '\'
 		OR LOWER(COALESCE(ci.summary, '')) LIKE ? ESCAPE '\'
 		OR LOWER(COALESCE(ci.first_prompt, '')) LIKE ? ESCAPE '\')`
-	return joinFrag, whereFrag, []any{like, like, like, like, like}
+	return joinFrag, whereFrag, []any{like, like, like, like, like, like}
 }
 
 // ListReplacedGenerationsPage returns one newest-replacement-first page of

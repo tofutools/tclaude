@@ -216,7 +216,11 @@ func handleDashboardReplaced(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	alive, _ := session.LiveTmuxSessions()
+	// No tmux probe here: a replaced row is a SUPERSEDED predecessor generation
+	// — the actor already advanced its live pointer off it, so the old conv-id
+	// never has a live pane. Online is always false; skipping the probe drops a
+	// per-request `tmux list-sessions` fork (this handler runs every 2s while
+	// the Replaced group is shown, plus the mail tab's prev-gen pull).
 	rows := make([]dashboardReplacedGen, 0, len(gens))
 	for _, g := range gens {
 		actorTitle := agent.CachedTitle(g.CurrentConvID)
@@ -236,7 +240,7 @@ func handleDashboardReplaced(w http.ResponseWriter, r *http.Request) {
 			Title:        title,
 			Reason:       g.Reason,
 			ReplacedAt:   replacedAt,
-			Online:       isConvOnlineIn(g.OldConvID, alive),
+			Online:       false, // predecessor generation — never has a live pane
 			ActorAgentID: g.AgentID,
 			ActorConvID:  g.CurrentConvID,
 			ActorTitle:   actorTitle,
