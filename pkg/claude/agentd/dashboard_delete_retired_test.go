@@ -53,11 +53,14 @@ func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
 	must("$('#delete-retired-open').addEventListener('click', () => openDeleteRetiredPreview())",
 		"the Groups-menu button is wired to the driver")
 
-	// 3. The candidate list is seeded from the snapshot's retired roster,
-	//    all ticked by default — so the headline action targets the whole
-	//    retired population and the human opts rows OUT.
-	must("const retired = (lastSnapshot && lastSnapshot.retired) || []",
-		"the preview seeds its candidates from the snapshot's retired roster")
+	// 3. The candidate list is seeded from the FULL retired endpoint
+	//    (/api/retired with no paging params), all ticked by default — so the
+	//    headline action targets the whole retired population and the human
+	//    opts rows OUT. The snapshot now only ships ONE PAGE of retired[], so
+	//    reading it would silently scope the bulk delete to the visible window;
+	//    the modal must fetch the complete list.
+	must("retired = await fetchListFull('retired')",
+		"the preview seeds its candidates from the full retired endpoint, not the windowed snapshot")
 	must("checked: true,", "retired candidates are ticked by default")
 
 	// Bound the rest of the assertions to the driver's own body so a needle
@@ -131,7 +134,8 @@ func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
 
 	// 8. The palette command is gated on ≥1 retired agent so it never offers
 	//    a no-op, and carries the 🗑 icon (distinct from the ♻ retire ones).
-	must("const retiredCount = (snap.retired || []).length", "the palette command gates on the retired count")
+	must("const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0",
+		"the palette command gates on the retired total from the pagination envelope (retired[] is windowed now)")
 	must("if (retiredCount) {", "the command is only listed when there is at least one retired agent")
 	must("icon: '🗑', label: 'Delete retired agents…'", "the palette command carries the distinct 🗑 delete label")
 	must("keywords: 'delete purge retired cleanup remove wipe agents'", "the command's search keywords")

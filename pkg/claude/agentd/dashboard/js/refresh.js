@@ -7,6 +7,7 @@
 import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
+import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull } from './list-paging.js';
 import { recordGroupInteraction } from './last-group.js';
 import {
   renderPermissions, renderSlugs, showStatus,
@@ -267,12 +268,26 @@ export async function refresh() {
     return;
   }
   try {
-    const r = await fetch('/api/snapshot', { credentials: 'same-origin' });
-    if (!r.ok) {
-      showStatus('snapshot failed: HTTP ' + r.status, true);
+    // The three heavy, ever-growing lists — retired / conversations / replaced
+    // — no longer ride inside the snapshot. Each has its own paginated
+    // endpoint; we fetch all four TOGETHER so the tick stays one coordinated
+    // update (a single Promise.all, then one render), then stitch the windowed
+    // pages back onto the snapshot object below.
+    // The list sub-fetches swallow a network rejection (→ null) so a blip on
+    // one of them degrades to "keep the previous rows" (stitchListPage) instead
+    // of failing the whole tick. The snapshot fetch keeps its original
+    // behaviour — a snapshot network error rejects to the outer catch.
+    const [snapR, retiredR, convR, replacedR] = await Promise.all([
+      fetch('/api/snapshot', { credentials: 'same-origin' }),
+      fetch('/api/retired?' + listParams('retired'), { credentials: 'same-origin' }).catch(() => null),
+      fetch('/api/conversations?' + listParams('conversations'), { credentials: 'same-origin' }).catch(() => null),
+      fetch('/api/replaced?' + listParams('replaced'), { credentials: 'same-origin' }).catch(() => null),
+    ]);
+    if (!snapR.ok) {
+      showStatus('snapshot failed: HTTP ' + snapR.status, true);
       return;
     }
-    const data = await r.json();
+    const data = await snapR.json();
     // The guard above was sampled BEFORE the fetch. A drag or a modal
     // may have opened while it was in flight — re-check now, before
     // touching the DOM. Bailing here (ahead of the lastSnapshot
@@ -280,6 +295,16 @@ export async function refresh() {
     // applied to the old snapshot; the drag/modal teardown re-runs
     // refresh() when it finishes.
     if (refreshSuspended()) return;
+    // Stitch each windowed list onto the snapshot so the downstream renderers
+    // keep reading data.retired / .conversations / .replaced unchanged.
+    // data.paging carries each list's {offset,limit,total,total_unfiltered}
+    // for the pagers + count summaries. A failed sub-fetch keeps the previous
+    // tick's rows for that list (a transient blip must not blank a section).
+    const prevSnap = lastSnapshot || {};
+    data.paging = {};
+    await stitchListPage(data, 'retired', retiredR, prevSnap);
+    await stitchListPage(data, 'conversations', convR, prevSnap);
+    await stitchListPage(data, 'replaced', replacedR, prevSnap);
     // Snapshot the keyboard focus before the renders below replace the
     // tab bodies wholesale, so a Tab-navigating user isn't bounced to
     // the top of the page on every poll. Restored at the end once the
@@ -341,6 +366,57 @@ export async function refresh() {
   } catch (e) {
     showStatus('snapshot failed: ' + (e.message || e), true);
   }
+}
+
+// stitchListPage folds one paginated list endpoint's response onto the
+// snapshot object so the virtual-group renderers + pagers read it like a
+// plain snapshot field. On a failed / non-OK sub-fetch it keeps the previous
+// tick's rows + paging for that list, so a transient blip never blanks a
+// section mid-poll.
+async function stitchListPage(data, kind, resp, prevSnap) {
+  try {
+    if (resp && resp.ok) {
+      const body = await resp.json();
+      data[kind] = body.rows || [];
+      data.paging[kind] = {
+        offset: body.offset || 0,
+        limit: body.limit || 0,
+        total: body.total || 0,
+        total_unfiltered: body.total_unfiltered || 0,
+      };
+      syncServedOffset(kind, body.offset);
+      return;
+    }
+  } catch { /* fall through to keep-previous */ }
+  data[kind] = (prevSnap && prevSnap[kind]) || [];
+  data.paging[kind] = (prevSnap && prevSnap.paging && prevSnap.paging[kind])
+    || { offset: 0, limit: 0, total: (data[kind] || []).length, total_unfiltered: (data[kind] || []).length };
+}
+
+// bindListPagers wires the per-list pager footers rendered inside the Retired /
+// Conversations / Replaced virtual groups. Delegated on the stable #groups-list
+// parent (the group bodies are re-rendered wholesale every tick). Pager
+// controls carry data-pager (not data-act) so the global row-action handler
+// leaves them alone. A nav/size change updates the list's offset/limit, then
+// re-fetches via refresh() — keeping it the same single coordinated tick.
+export function bindListPagers() {
+  const root = $('#groups-list');
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-pager]');
+    if (!btn || btn.disabled) return;
+    const kind = btn.getAttribute('data-list');
+    const action = btn.getAttribute('data-pager');
+    const total = (lastSnapshot && lastSnapshot.paging && lastSnapshot.paging[kind]
+      && lastSnapshot.paging[kind].total) || 0;
+    if (listPagerNav(kind, action, total)) refresh();
+  });
+  root.addEventListener('change', (e) => {
+    const sel = e.target.closest('select[data-pager="size"]');
+    if (!sel) return;
+    setListPageSize(sel.getAttribute('data-list'), Number(sel.value) || 50);
+    refresh();
+  });
 }
 
 function bindTabs() {
@@ -1340,8 +1416,17 @@ function openRetirePreview(group, status) {
 // .modal-overlay is open, so the population can't shift between preview and
 // submit. On success the editable list is swapped for the per-conv outcome
 // log the cleanup endpoint returns (the result phase).
-function openDeleteRetiredPreview() {
-  const retired = (lastSnapshot && lastSnapshot.retired) || [];
+async function openDeleteRetiredPreview() {
+  // retired[] in the snapshot is only one page now — fetch the COMPLETE list
+  // (the /api/retired no-param path) so this bulk-delete preview acts on every
+  // retired agent, not just the visible window.
+  let retired;
+  try {
+    retired = await fetchListFull('retired');
+  } catch (e) {
+    toast('delete retired: failed to load (' + (e.message || e) + ')');
+    return;
+  }
   const candidates = retired
     .map(r => ({
       agent_id: r.agent_id || '',
@@ -2602,6 +2687,10 @@ function addMemberModal(groupName) {
     // list). Reset when the candidate set changes; clamped on render.
     let highlight = 0;
     let candidates = [];
+    // Full (un-paginated) promote pool — recent non-agent conversations.
+    // Populated by the fetch below (conversations[] is windowed in the snapshot
+    // now, so we can't read the full set off lastSnapshot).
+    let promoteConvs = [];
 
     // Members already in this group — exclude from candidates so the
     // list shows ONLY rows the user can actually add. Looked up from
@@ -2644,7 +2733,7 @@ function addMemberModal(groupName) {
       // it to an agent (the daemon enrolls it on the membership
       // write). Tagged with _promote so the row flags the
       // side-effect. Same online-gating as everything else.
-      for (const a of lastSnapshot?.conversations || []) push({ ...a, _promote: true });
+      for (const a of promoteConvs) push({ ...a, _promote: true });
       // Sort: online first, then by title.
       out.sort((a, b) => {
         if (!!b.online !== !!a.online) return (b.online ? 1 : 0) - (a.online ? 1 : 0);
@@ -2718,6 +2807,14 @@ function addMemberModal(groupName) {
       const hl = list.querySelector('.add-member-row.highlighted');
       if (hl) hl.scrollIntoView({block: 'nearest'});
     }
+
+    // conversations[] is windowed in the snapshot now; fetch the full list
+    // (the /api/conversations no-param path) so the promote picker offers any
+    // recent non-agent conv, not just the visible page. agents/ungrouped come
+    // from the snapshot (not paginated). Re-renders when it lands.
+    fetchListFull('conversations')
+      .then(rows => { promoteConvs = rows; render(); })
+      .catch(() => { /* keep promoteConvs empty; agents/ungrouped still offered */ });
 
     async function addOne(idx) {
       const cand = candidates[idx];
@@ -2936,7 +3033,7 @@ const CLEANUP_CAT_LABEL = {
 // re-checks tmux liveness for every conv-id, so a conv that came
 // back online between snapshot and submit is reported skipped unless
 // "include online sessions" was opted into.
-export function openCleanupModal(opts) {
+export async function openCleanupModal(opts) {
   const overlay = $('#cleanup-modal');
   const listEl = $('#cleanup-list');
   const optsEl = $('#cleanup-options');
@@ -2972,6 +3069,23 @@ export function openCleanupModal(opts) {
   // sessions. Off by default: the offline-only safety stance.
   let includeOnline = false;
   let searchText = '';
+  // 'agents' mode spans retired + conversations, which the 2s snapshot now
+  // only ships a page of. Fetch the FULL lists (the endpoints' no-param path)
+  // so a bulk cleanup acts on every candidate, not just the visible window.
+  // agents[] is not paginated, so it still comes from the snapshot.
+  let fullRetired = [];
+  let fullConversations = [];
+  if (mode === 'agents') {
+    try {
+      [fullRetired, fullConversations] = await Promise.all([
+        fetchListFull('retired'),
+        fetchListFull('conversations'),
+      ]);
+    } catch (e) {
+      toast('cleanup: failed to load candidates (' + (e.message || e) + ')');
+      return;
+    }
+  }
 
   // Build the candidate list from the current snapshot. Each entry
   // carries its own `checked` flag so re-renders (filter changes)
@@ -3005,7 +3119,7 @@ export function openCleanupModal(opts) {
           groups: a.groups || [], checked: false,
         });
       }
-      for (const r of (lastSnapshot?.retired || [])) {
+      for (const r of fullRetired) {
         out.push({
           agent_id: r.agent_id || '',
           conv_id: r.conv_id, title: r.title || '', category: 'retired',
@@ -3013,7 +3127,7 @@ export function openCleanupModal(opts) {
           owner: false, groups: [], checked: false,
         });
       }
-      for (const c of (lastSnapshot?.conversations || [])) {
+      for (const c of fullConversations) {
         out.push({
           conv_id: c.conv_id, title: c.title || '', category: 'conversation',
           online: !!c.online, lastActivity: c.modified || '',

@@ -12,6 +12,7 @@ import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindCopy, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindListPagers,
   refresh,
 } from './refresh.js';
 
@@ -90,6 +91,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   bindTabs();
   bindTabHotkeys();
+  // Delegated pager footers for the Retired / Conversations / Replaced virtual
+  // groups (their lists are paginated server-side now).
+  bindListPagers();
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();

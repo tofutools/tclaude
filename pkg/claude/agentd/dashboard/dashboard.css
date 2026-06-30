@@ -945,6 +945,25 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; cursor: pointer;
 }
+/* Per-list pager footer inside the Retired / Conversations / Replaced virtual
+   groups — mirrors the Audit/Messages pager chrome. Explicit dark theme: an
+   unthemed inline <button> would render with the browser's white default. */
+.list-pager {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 4px 2px; font-size: 12px; color: #7d8590;
+}
+.list-pager-count { white-space: nowrap; padding: 0 4px; }
+.list-pager-btn {
+  background: #161b22; color: #7d8590; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 2px 8px; cursor: pointer; line-height: 1;
+}
+.list-pager-btn:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.list-pager-btn:disabled { opacity: 0.4; cursor: default; }
+.list-pager-size {
+  margin-left: auto;
+  background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
+  border-radius: 4px; padding: 1px 4px; cursor: pointer;
+}
 .owner-badge {
   display: inline-block; padding: 1px 6px; margin-left: 4px;
   background: #1d2a3a; color: #d29922; border: 1px solid #4d3a1d;

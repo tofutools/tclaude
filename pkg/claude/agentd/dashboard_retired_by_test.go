@@ -36,11 +36,14 @@ func TestResolveRetiredByDisplay(t *testing.T) {
 	assert.Equal(t, "system:export-clone", resolveRetiredByDisplay("system:export-clone", ""))
 }
 
-// TestCollectRetiredSnapshot_RetiredByName drives the full retire→snapshot path:
-// an agent retired by ANOTHER agent surfaces the retirer's NAME (+ stable id) in
+// TestRetiredPageRow_RetiredByName drives the full retire→retired-list path: an
+// agent retired by ANOTHER agent surfaces the retirer's NAME (+ stable id) in
 // the dashboard's retired "by", while the raw conv-id is kept only for hover
-// provenance. This is the surface the operator hit in JOH-306.
-func TestCollectRetiredSnapshot_RetiredByName(t *testing.T) {
+// provenance. This is the surface the operator hit in JOH-306. The retired list
+// moved off the 2s snapshot onto the paginated GET /api/retired endpoint, so
+// the row build is now db.ListRetiredAgentsPage + the handler's
+// resolveRetiredByDisplay (what handleDashboardRetired runs per row).
+func TestRetiredPageRow_RetiredByName(t *testing.T) {
 	setupTestDB(t)
 
 	retirer, err := db.AllocateAgent("retirer-conv", "spawn")
@@ -56,12 +59,11 @@ func TestCollectRetiredSnapshot_RetiredByName(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	retired, err := db.ListRetiredAgents()
+	retired, err := db.ListRetiredAgentsPage("", 0, 0)
 	require.NoError(t, err)
-
-	out := collectRetiredSnapshot(retired, map[string]struct{}{})
-	require.Len(t, out, 1)
-	assert.Equal(t, "retirer-conv", out[0].RetiredBy, "raw audit value kept for provenance")
-	assert.Equal(t, "PO Lead ("+agent.ShortAgentID(retirer, "")+")", out[0].RetiredByDisplay,
+	require.Len(t, retired, 1)
+	assert.Equal(t, "retirer-conv", retired[0].RetiredBy, "raw audit value kept for provenance")
+	assert.Equal(t, "PO Lead ("+agent.ShortAgentID(retirer, "")+")",
+		resolveRetiredByDisplay(retired[0].RetiredBy, retired[0].RetiredByAgent),
 		"the by column shows the retirer's name, not a bare conv-id")
 }

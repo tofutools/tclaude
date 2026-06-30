@@ -58,7 +58,7 @@ const CONVERSATIONS_VKEY = ' conversations-virtual';
 // snapshot's conversations[] (recent non-enrolled convs). The
 // `conversations` flag is the discriminator renderGroups keys off to
 // pick the lighter conversation-row renderer.
-function virtualConversationsGroup(convs) {
+function virtualConversationsGroup(convs, paging) {
   const rows = (convs || []).slice();
   return {
     name: CONVERSATIONS_LABEL,
@@ -68,6 +68,10 @@ function virtualConversationsGroup(convs) {
     descr: 'recent conversations that are not agents',
     members: rows,
     online: rows.filter(c => c.online).length,
+    // Server-side pagination envelope ({offset,limit,total,total_unfiltered})
+    // for this list — drives the count summary + pager footer (the snapshot
+    // only ships one window per tick).
+    paging: paging || null,
   };
 }
 
@@ -89,7 +93,7 @@ const RETIRED_VKEY = ' retired-virtual';
 // virtualRetiredGroup builds the synthetic group from the snapshot's
 // retired[] rows. The `retired` flag is the discriminator renderGroups
 // keys off to pick the retired-row renderer.
-function virtualRetiredGroup(retired) {
+function virtualRetiredGroup(retired, paging) {
   const rows = (retired || []).slice();
   return {
     name: RETIRED_LABEL,
@@ -99,6 +103,7 @@ function virtualRetiredGroup(retired) {
     descr: 'agents demoted back to plain conversations',
     members: rows,
     online: rows.filter(r => r.online).length,
+    paging: paging || null,
   };
 }
 
@@ -154,7 +159,7 @@ const REPLACED_VKEY = ' replaced-virtual';
 // virtualReplacedGroup builds the synthetic group from the snapshot's
 // replaced[] rows. The `replaced` flag is the discriminator renderGroups
 // keys off to pick the replaced-generation row renderer (view + delete).
-function virtualReplacedGroup(replaced) {
+function virtualReplacedGroup(replaced, paging) {
   const rows = (replaced || []).slice();
   return {
     name: REPLACED_LABEL,
@@ -164,6 +169,7 @@ function virtualReplacedGroup(replaced) {
     descr: 'superseded past generations of agents (reincarnate / /clear)',
     members: rows,
     online: rows.filter(r => r.online).length,
+    paging: paging || null,
   };
 }
 

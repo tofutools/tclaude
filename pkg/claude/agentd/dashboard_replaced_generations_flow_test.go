@@ -165,35 +165,31 @@ func TestReplacedGenerations_DefaultNewestReplacementFirst(t *testing.T) {
 
 	f.HaveGroup(group)
 
-	// Actor X: genesis convX0 → /clear → convX1 (convX0 becomes replaced).
+	// Actor X: genesis convX0 → /clear (convX0 becomes a replaced generation).
 	f.HaveAliveSession(convX0, labelX, tmuxX, cwdX)
 	f.HaveMember(group, convX0)
-	convX1 := f.Clear(labelX).NewConv
+	f.Clear(labelX)
 
-	// Actor Y: genesis convY0 → /clear → convY1 (convY0 becomes replaced).
+	// Actor Y: genesis convY0 → /clear (convY0 becomes a replaced generation).
 	f.HaveAliveSession(convY0, labelY, tmuxY, cwdY)
 	f.HaveMember(group, convY0)
-	convY1 := f.Clear(labelY).NewConv
+	f.Clear(labelY)
 
-	// A predecessor's "replaced at" is the linked_at of the generation that
-	// SUPERSEDED it (the next chain link) — so to control each predecessor's
-	// replacement time we pin its successor's linked_at. We pin the genesis
-	// links too so each actor's chain keeps its oldest-first order (a successor
-	// backdated below its predecessor would reorder the chain and the snapshot
-	// would fall back to the predecessor's own birth time).
-	setLinkedAt := func(conv, ts string) {
+	// A predecessor's "replaced at" is the succeeded_at of its succession edge
+	// (agent_conv_succession, keyed by the predecessor's old_conv_id) — the
+	// timestamp /api/replaced orders by. Pin each predecessor's edge to a
+	// distinct second so the newest-replacement-first order is deterministic.
+	setSucceededAt := func(oldConv, ts string) {
 		t.Helper()
 		d, err := db.Open()
 		require.NoError(t, err)
-		_, err = d.Exec(`UPDATE agent_conversations SET linked_at = ? WHERE conv_id = ?`, ts, conv)
+		_, err = d.Exec(`UPDATE agent_conv_succession SET succeeded_at = ? WHERE old_conv_id = ?`, ts, oldConv)
 		require.NoError(t, err)
 	}
 	// X replaced at 00:00:01, Y replaced at 00:00:03 → Y is the newer
 	// replacement.
-	setLinkedAt(convX0, "2020-01-01T00:00:00Z")
-	setLinkedAt(convX1, "2020-01-01T00:00:01Z")
-	setLinkedAt(convY0, "2020-01-01T00:00:02Z")
-	setLinkedAt(convY1, "2020-01-01T00:00:03Z")
+	setSucceededAt(convX0, "2020-01-01T00:00:01Z")
+	setSucceededAt(convY0, "2020-01-01T00:00:03Z")
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -219,7 +215,7 @@ func TestReplacedGenerations_DefaultNewestReplacementFirst(t *testing.T) {
 
 	// Flip: make X the newer replacement (00:00:09 > Y's 00:00:03). The order
 	// must follow the replacement time, not the actor — so X now leads.
-	setLinkedAt(convX1, "2020-01-01T00:00:09Z")
+	setSucceededAt(convX0, "2020-01-01T00:00:09Z")
 	snap2 := fetchDashSnapshot(t, mux)
 	assert.Equal(t, []string{convX0, convY0}, orderedReplaced(snap2, convX0, convY0),
 		"after backdating Y below X, the newer X replacement leads")
