@@ -29,6 +29,17 @@ const emptyEl = document.getElementById('mux-empty');
 
 if (solo) document.body.classList.add('solo');
 
+// Cross-tab handoff channel. The dashboard's "web term" / "web window" actions
+// (js/terminals-launch.js) post {type:'open', seed} here; we ack each with
+// {type:'opened', key} so the dashboard stops resending it, and announce
+// {type:'ready'} on load so a dashboard with seeds queued during our cold load
+// flushes them — closing the lost-open race a bare URL hash would have. A solo
+// pop-out tab is a single fixed terminal and must NOT join the channel, or it
+// would start absorbing the multiplexer's opens. Origin-scoped, so only the
+// same daemon run's dashboard reaches us.
+let bc = null;
+if (!solo) { try { bc = new BroadcastChannel('tclaude_terminals'); } catch (_) { /* unsupported — hash only */ } }
+
 // key -> pane object. The key dedupes opens: clicking the same agent's "web
 // window" twice focuses the existing pane instead of stacking a duplicate.
 const panes = new Map();
@@ -44,17 +55,30 @@ function seedKey(seed) {
   return seed.key || seed.ws;
 }
 
+// normalizeSeed accepts a seed only if its ws is a same-origin absolute path
+// (leading "/"), so neither a crafted hash nor a channel message can point the
+// socket at an arbitrary host. Returns the seed or null.
+function normalizeSeed(seed) {
+  return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
+}
+
+// openFromSeed opens (or focuses) the pane for a seed and acks it back to the
+// dashboard so it stops resending — the other half of the lost-open
+// handshake. Used for both hash- and channel-delivered seeds.
+function openFromSeed(raw) {
+  const seed = normalizeSeed(raw);
+  if (!seed) return;
+  openPane(seed);
+  if (bc) bc.postMessage({ type: 'opened', key: seedKey(seed) });
+}
+
 // decodeOpenHash pulls the { ws, label, key } seed out of "#open=<encoded
-// json>". Only same-origin absolute WS paths (leading "/") are accepted, so a
-// crafted hash can't point the socket at an arbitrary host.
+// json>".
 function decodeOpenHash() {
   const m = /[#&]open=([^&]+)/.exec(location.hash || '');
   if (!m) return null;
-  try {
-    const seed = JSON.parse(decodeURIComponent(m[1]));
-    if (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) return seed;
-  } catch (_) { /* malformed hash — ignore */ }
-  return null;
+  try { return JSON.parse(decodeURIComponent(m[1])); }
+  catch (_) { return null; }  // malformed hash — ignore
 }
 
 function consumeHash() {
@@ -63,7 +87,7 @@ function consumeHash() {
   // seed, and (b) the NEXT open — even an identical one — still changes the
   // hash and fires hashchange (the dashboard re-uses this one named tab).
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-  if (seed) openPane(seed);
+  if (seed) openFromSeed(seed);
 }
 
 function setStatus(p, text) { if (p.statusEl) p.statusEl.textContent = text; }
@@ -264,6 +288,16 @@ function popOut(key) {
   closePane(key);
 }
 
+if (bc) {
+  bc.onmessage = (e) => {
+    const d = e.data;
+    if (d && d.type === 'open') openFromSeed(d.seed);
+  };
+}
+
 window.addEventListener('hashchange', consumeHash);
 updateChrome();
 consumeHash();
+// Tell any dashboard that has seeds queued from while we were cold-loading to
+// (re)send them now that we're listening.
+if (bc) bc.postMessage({ type: 'ready' });
