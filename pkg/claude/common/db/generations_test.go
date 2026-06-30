@@ -51,3 +51,55 @@ func TestGenerationsForAgent_ReturnsChainWithReasons(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
+
+// TestGenerationsForAgent_OrdersByLinkNotLexicalTimestamp pins the ordering
+// against a regression to a lexicographic linked_at sort. linked_at is stored
+// as RFC3339Nano, whose variable-width fractional seconds do NOT string-sort
+// chronologically: a generation that lands exactly on a whole second formats
+// with no fraction ("…43Z"), and '.' (0x2E) < 'Z' (0x5A), so a same-second
+// generation that DOES carry a fraction ("…43.0000018Z") sorts BEFORE it. With
+// `ORDER BY linked_at` the oldest generation would come back last — the live-CI
+// flake that bit this suite when gen0 happened to fall on a whole second. The
+// readers must order by rowid (link-insertion order) instead, so this passes
+// deterministically every run rather than once in a blue moon.
+func TestGenerationsForAgent_OrdersByLinkNotLexicalTimestamp(t *testing.T) {
+	setupTestDB(t)
+
+	// Build a 3-generation chain through the normal path so the rows are
+	// inserted in link order (g0 → g1 → g2) and get ascending rowids.
+	_, _, err := EnsureAgentForConv("g0", "spawn")
+	require.NoError(t, err, "EnsureAgentForConv")
+	_, err = RotateAgentConv("g0", "g1", "clear")
+	require.NoError(t, err, "rotate g0→g1")
+	_, err = RotateAgentConv("g1", "g2", "reincarnate")
+	require.NoError(t, err, "rotate g1→g2")
+	actor, err := AgentIDForConv("g2")
+	require.NoError(t, err)
+	require.NotEmpty(t, actor)
+
+	// Stamp the exact pathological timestamps: the OLDEST link (g0) on a whole
+	// second (no fraction), the later two with fractions that string-sort ahead
+	// of it. A lexicographic linked_at sort would yield g1, g2, g0.
+	d, err := Open()
+	require.NoError(t, err)
+	for conv, at := range map[string]string{
+		"g0": "2026-06-30T20:13:43Z",
+		"g1": "2026-06-30T20:13:43.0000018Z",
+		"g2": "2026-06-30T20:13:43.0000025Z",
+	} {
+		_, err = d.Exec(`UPDATE agent_conversations SET linked_at = ? WHERE conv_id = ?`, at, conv)
+		require.NoError(t, err, "stamp linked_at for %s", conv)
+	}
+
+	gens, err := GenerationsForAgent(actor)
+	require.NoError(t, err)
+	require.Len(t, gens, 3)
+	assert.Equal(t, []string{"g0", "g1", "g2"},
+		[]string{gens[0].ConvID, gens[1].ConvID, gens[2].ConvID},
+		"generations must return in link/rowid order, not lexicographic linked_at order")
+
+	// ConvsForAgent shares the ordering; pin its lighter twin too.
+	convs, err := ConvsForAgent(actor)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"g0", "g1", "g2"}, convs)
+}
