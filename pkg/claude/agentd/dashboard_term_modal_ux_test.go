@@ -86,7 +86,9 @@ func TestTermModal_BackdropDetachVsCloseByViewType(t *testing.T) {
 	detachIdx := strings.Index(rest, "okLabel: 'Detach'")
 	elseIdx := strings.Index(rest, "} : {")
 	closeIdx := strings.Index(rest, "okLabel: 'Close terminal'")
-	if detachIdx < 0 || elseIdx < 0 || closeIdx < 0 || !(detachIdx < elseIdx && elseIdx < closeIdx) {
+	ordered := detachIdx >= 0 && elseIdx >= 0 && closeIdx >= 0 &&
+		detachIdx < elseIdx && elseIdx < closeIdx
+	if !ordered {
 		t.Error("modal-term.js confirm copy is mis-mapped: the hideConv-truthy branch must " +
 			"offer 'Detach' (web window) and the else branch 'Close terminal' (ad hoc web terminal)")
 	}
