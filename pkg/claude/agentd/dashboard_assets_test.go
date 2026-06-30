@@ -267,8 +267,15 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		"quick-pinned",
 		"tclaude.dash.quickpin.",
 		`data-act="toggle-quick-pin"`,
-		// refresh.js — drives the body class off the snapshot flag.
+		// refresh.js — drives the body class off the snapshot flag, and tracks
+		// the hovered group so the reveal survives the 2s innerHTML re-render.
 		"'group-quick-fold', data.group_quick_options !== 'expanded'",
+		"export let hoveredGroupKey",
+		"function bindGroupQuickHover(",
+		// dashboard.js — wires the hover tracker in at init.
+		"bindGroupQuickHover()",
+		// render.js — re-stamps .quick-hover from the tracked key each render.
+		"g.name === hoveredGroupKey",
 		// row-actions.js — the pin toggle handler.
 		"case 'toggle-quick-pin':",
 		// config.js — load + gather the Config-tab checkbox.
@@ -280,6 +287,7 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		// pinned groups) and reveal on header hover.
 		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary .qo-text",
 		"body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text",
+		"body.group-quick-fold details[data-group-key]:not(.quick-pinned).quick-hover > summary .qo-text",
 		"@media (hover: hover) {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

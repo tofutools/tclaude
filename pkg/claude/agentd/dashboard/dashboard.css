@@ -887,6 +887,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .group-link-chip.out { color: #79c0ff; }
 .group-link-chip.in { color: #7ee787; }
 .group-link-chip:hover { border-color: #58a6ff; filter: brightness(1.15); }
+/* The chips share a single .qo-text wrapper (so the quick-options auto-fold can
+   collapse them as one), which means the parent flex gap no longer falls
+   between individual chips. Space adjacent chips directly so they don't butt
+   together — applies in every mode, fold or not. */
+.group-link-chip + .group-link-chip { margin-left: 4px; }
 .tag {
   display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0;
   background: #21262d; color: #d4d4d4; border: 1px solid #2a3340;
@@ -1483,7 +1488,12 @@ details[open] > summary .spawn-btn { opacity: 1; }
     opacity: 0;
     transition: max-width 0.18s ease, opacity 0.18s ease;
   }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text {
+  /* Reveal on native :hover (instant + smooth during live movement) OR on the
+     JS-stamped .quick-hover (which renderGroups re-applies each poll, so the
+     reveal survives the 2s wholesale re-render that a freshly-inserted node's
+     :hover would not — see bindGroupQuickHover in refresh.js). */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned) > summary:hover .qo-text,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned).quick-hover > summary .qo-text {
     /* Generous reveal cap — typical descr/dir/profile show in full; a
        pathological label clips to an ellipsis (the chip's title tooltip still
        carries the whole value) so a long one can't blow the row out to a

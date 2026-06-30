@@ -712,6 +712,52 @@ export function showAccessTab(subtab) {
 // space still lands in the input; only the fold is cancelled). Verified in
 // Chromium: the Space activation is a synthetic click on the <summary>, and a
 // capture-phase preventDefault cancels the fold without eating the character.
+// hoveredGroupKey: the group whose <summary> header the pointer is currently
+// over, tracked in JS so the quick-options auto-fold reveal (render.js +
+// dashboard.css) survives the 2s wholesale innerHTML re-render of #groups-list.
+//
+// A pure CSS :hover can't carry the reveal across that re-render on its own: a
+// freshly-inserted node sitting under a STATIONARY cursor is not re-matched by
+// :hover in Blink/WebKit until the next mouse move, so the rebuilt header would
+// compute to the folded state and the chips would snap shut on every poll while
+// the user holds still to read them. renderGroups re-stamps .quick-hover from
+// this key each render, and bindGroupQuickHover keeps it live between renders,
+// so the reveal is deterministic regardless of the browser's :hover bookkeeping.
+// (The CSS keeps :hover too, for the instant smooth reveal during live movement.)
+export let hoveredGroupKey = null;
+
+// bindGroupQuickHover tracks the hovered group header on the stable
+// #groups-list container — bound once at init, delegated, because the
+// container's inner HTML is replaced every poll but the container itself is
+// not. mouseover sets the key to the group whose <summary> the pointer is over
+// (null over the expanded member body, matching the header-only reveal), and
+// mouseleave clears it when the pointer exits the list entirely. It also
+// toggles .quick-hover on the live <details> immediately so live interaction is
+// smooth without waiting for the next render.
+function bindGroupQuickHover() {
+  const root = $('#groups-list');
+  if (!root) return;
+  const setHover = key => {
+    if (key === hoveredGroupKey) return;
+    hoveredGroupKey = key;
+    // Re-sync the live DOM now; the next renderGroups also re-stamps from the
+    // key, so a poll landing between events can't lose it.
+    root.querySelectorAll('details[data-group-key]').forEach(d => {
+      d.classList.toggle('quick-hover', d.getAttribute('data-group-key') === key);
+    });
+  };
+  root.addEventListener('mouseover', e => {
+    // closest() with a child combinator matches a <summary> that is a direct
+    // child of a group <details> — true when the pointer is over the header or
+    // any chip in it, false over the expanded subtable below.
+    const summary = e.target.closest('details[data-group-key] > summary');
+    setHover(summary ? summary.parentElement.getAttribute('data-group-key') : null);
+  });
+  // mouseleave (not mouseout) fires once when the pointer truly exits the
+  // container, so a header left stale by the last in-list mouseover is cleared.
+  root.addEventListener('mouseleave', () => setHover(null));
+}
+
 function bindGroupTitleToggle() {
   document.addEventListener('click', e => {
     const summary = e.target.closest('summary');
@@ -3720,7 +3766,7 @@ async function stopAgentReq(conv, label, force) {
 }
 
 export {
-  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindSortHeaders,
+  bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
   maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, openWorktreeCleanup,
   groupMembersByStatus, countGroupMembersByStatus,
