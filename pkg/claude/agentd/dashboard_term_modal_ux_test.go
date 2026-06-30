@@ -58,25 +58,39 @@ func TestTermModal_BackdropDoesNotCloseDirectly(t *testing.T) {
 }
 
 // TestTermModal_DetachVsClose pins the two-button split: the Detach button is
-// the instant, no-confirm path (binds straight to closeTermModal), while the ×
-// Close button now asks first (routes through confirmAndClose). Both keep the
-// underlying session alive — the only difference is the confirmation gate, so
-// these guard the wiring, not the copy.
+// the instant, no-confirm path (binds straight to detachAndClose), while the ×
+// Close button asks first (routes through confirmAndClose). Both keep the
+// underlying agent session alive — the only difference is the confirmation
+// gate, so these guard the wiring, not the copy.
 func TestTermModal_DetachVsClose(t *testing.T) {
 	src := readTermModalSrc(t)
 
-	// Detach = instant close, no confirm.
-	if !strings.Contains(src, "$('#term-session-detach').addEventListener('click', closeTermModal)") {
-		t.Error("modal-term.js Detach button must bind directly to closeTermModal " +
+	// Detach = instant detach+close, no confirm.
+	if !strings.Contains(src, "$('#term-session-detach').addEventListener('click', detachAndClose)") {
+		t.Error("modal-term.js Detach button must bind directly to detachAndClose " +
 			"(instant, no confirm)")
 	}
-	// × Close must confirm first — it must NOT be the old direct-close path.
-	if strings.Contains(src, "$('#term-session-close').addEventListener('click', closeTermModal)") {
-		t.Error("modal-term.js × Close still binds directly to closeTermModal — it must " +
-			"confirm first (confirmAndClose) now that Detach is the instant path")
+	// × Close must confirm first — it must NOT bind directly to the close/detach
+	// path.
+	if strings.Contains(src, "$('#term-session-close').addEventListener('click', closeTermModal)") ||
+		strings.Contains(src, "$('#term-session-close').addEventListener('click', detachAndClose)") {
+		t.Error("modal-term.js × Close must confirm first (confirmAndClose), not bind " +
+			"directly to a close/detach handler")
 	}
 	if !strings.Contains(src, "$('#term-session-close').addEventListener('click', confirmAndClose)") {
 		t.Error("modal-term.js × Close must route through confirmAndClose (ask first)")
+	}
+}
+
+// TestTermModal_DetachCallsHideAPI pins the actual fix: the detach path issues
+// the server-side detach (POST /api/hide/{conv}) — the same reliable mechanism
+// the per-agent "hide" eye button uses — rather than only closing the
+// WebSocket (which did not reliably detach the open-window tmux client).
+func TestTermModal_DetachCallsHideAPI(t *testing.T) {
+	src := readTermModalSrc(t)
+	if !strings.Contains(src, "/api/hide/") {
+		t.Error("modal-term.js detach path must POST /api/hide/{conv} — closing the " +
+			"WebSocket alone did not reliably detach the open-window tmux client")
 	}
 }
 
