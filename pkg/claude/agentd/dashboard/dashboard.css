@@ -862,7 +862,16 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
-.group-links-section > button { margin-left: 6px; }
+/* The "+ link" button sits alongside the row-action edit/× buttons, so it
+   wears the same dark chrome — an unthemed inline <button> would render with
+   the browser's white default (too bright against the dark dashboard). */
+.group-links-section > button {
+  margin-left: 6px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.group-links-section > button:hover { color: #d4d4d4; border-color: #58a6ff; }
 /* Per-group link chips in the <summary> header — an at-a-glance, always-
    visible (even when the group is collapsed) view of who this group can
    message (→) and who can message it (←). Clicking any chip opens the
