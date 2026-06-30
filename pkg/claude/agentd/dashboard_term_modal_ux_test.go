@@ -122,6 +122,54 @@ func TestTermModal_DetachCallsHideAPI(t *testing.T) {
 		t.Error("modal-term.js detach path must POST /api/hide/{conv} — closing the " +
 			"WebSocket alone did not reliably detach the open-window tmux client")
 	}
+	// Gated on hideConv: a null hideConv (ad hoc web-term) must NOT fire a hide.
+	// /api/hide resolves to the agent's MAIN session, so hiding from a throwaway
+	// terminal would detach the agent's real window.
+	if !strings.Contains(src, "if (hideConv) {") {
+		t.Error("modal-term.js detach must be gated on `if (hideConv)` so a null " +
+			"hideConv (web-term) never POSTs /api/hide")
+	}
+	// Order: close (which nulls ws.onclose) BEFORE the awaited hide. /api/hide
+	// drops this window's own client → agentd closes the WS; if onclose were
+	// still armed it would fire a spurious "Terminal disconnected" reconnect
+	// prompt over the just-closed modal. Pin closeTermModal() immediately ahead
+	// of the hide block.
+	if !strings.Contains(src, "closeTermModal();\n  if (hideConv) {") {
+		t.Error("modal-term.js detachAndClose must call closeTermModal() BEFORE the " +
+			"awaited /api/hide — otherwise the server-side WS close races a spurious " +
+			"reconnect prompt onto the screen")
+	}
+}
+
+// TestTermModal_OnlyOpenWindowPassesHideConv pins the load-bearing wiring and
+// guards a footgun. The open-window row action must thread the agent selector
+// through as hideConv so the modal's detach hits /api/hide for the agent's live
+// session. Crucially, EXACTLY ONE openTermModal caller may pass hideConv: the
+// web-term / term-dir callers attach to a THROWAWAY tclaude-term-… session, but
+// /api/hide resolves to the agent's MAIN spwn-… session — so passing hideConv
+// there would detach the agent's real window when its throwaway terminal closes.
+// The count invariant fails the build if a future edit copy-pastes hideConv onto
+// one of those callers.
+func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
+	src := readRowActionsSrc(t)
+	if !strings.Contains(src, "hideConv: agent") {
+		t.Error("row-actions.js open-window caller must pass `hideConv: agent` to " +
+			"openTermModal — without it the web window's Detach/Close can't hit /api/hide")
+	}
+	if n := strings.Count(src, "hideConv:"); n != 1 {
+		t.Errorf("exactly one openTermModal caller may pass hideConv (the open-window "+
+			"action); found %d — a web-term/term-dir caller passing hideConv would detach "+
+			"the agent's MAIN session when its throwaway terminal closes", n)
+	}
+}
+
+func readRowActionsSrc(t *testing.T) string {
+	t.Helper()
+	data, err := fs.ReadFile(dashboardAssetsFS, "js/row-actions.js")
+	if err != nil {
+		t.Fatalf("read js/row-actions.js: %v", err)
+	}
+	return string(data)
 }
 
 // TestTermModal_DetachButtonInMarkup pins the Detach button into the modal
