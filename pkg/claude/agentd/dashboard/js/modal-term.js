@@ -37,7 +37,7 @@ let currentWsPath = null;
 // closing the WebSocket is enough.
 let hideConv = null;
 // True while ANY term-modal confirmation (the disconnect prompt OR the
-// "Close terminal?" confirm shared by the × button and the backdrop click) is
+// detach/close confirm shared by the × button and the backdrop click) is
 // open. confirmModal is a shared singleton (one #confirm-modal element);
 // opening a second over a pending first would double up its button/Escape
 // listeners so one click resolves both promises — clicking "Reconnect" could
@@ -139,7 +139,7 @@ function setStatus(text) {
 // reconnect to the same session, or close the modal. Escape / the cancel
 // button both close (the connection is already dead). Bails if a term-modal
 // confirm is already open (the shared-singleton guard) so a burst of
-// close/error events — or a drop landing while the backdrop "Close terminal?"
+// close/error events — or a drop landing while the backdrop detach/close
 // confirm is up — can't stack a second dialog. When it bails for the latter
 // reason, the backdrop handler re-offers the reconnect once its own confirm
 // resolves, so the prompt is deferred, not lost.
@@ -210,12 +210,20 @@ async function detachAndClose() {
   closeTermModal();
 }
 
-// confirmAndClose runs the "Close terminal?" confirm and, if the human accepts,
-// detaches + closes (detachAndClose). Shared by the × Close button and the
-// backdrop click — both are the cautious, ask-first path (a plain × press, and
-// an outside click while reaching for the terminal, are both easy accidents).
-// The Detach button skips the confirm (detachAndClose directly): detaching is
-// the deliberate "drop my view now" action, so it needs no confirmation.
+// confirmAndClose runs the ask-first confirm and, if the human accepts, runs
+// detachAndClose. Shared by the × Close button and the backdrop click — both are
+// the cautious, ask-first path (a plain × press, and an outside click while
+// reaching for the terminal, are both easy accidents). The Detach button skips
+// the confirm (detachAndClose directly): detaching is the deliberate "drop my
+// view now" action, so it needs no confirmation.
+//
+// The copy depends on which kind of view this is, keyed off hideConv:
+//   • Web window (hideConv set — a terminal on the agent's LIVE tmux session):
+//     closing detaches the tmux client via /api/hide while the agent keeps
+//     running, so it asks to DETACH, not to shut down.
+//   • Ad hoc web terminal (hideConv null — its own throwaway shell, no agent
+//     client to hand back): closing just drops the WebSocket, so it asks to
+//     CLOSE, exactly as it did before.
 //
 // Shares the disconnect prompt's in-flight guard (confirmModal is a single
 // shared element); if a confirm is already up, this is a no-op.
@@ -224,7 +232,12 @@ async function confirmAndClose() {
   termConfirmOpen = true;
   let close;
   try {
-    close = await confirmModal({
+    close = await confirmModal(hideConv ? {
+      title: 'Detach terminal?',
+      body: 'This only drops your view — the agent keeps running, and you can reopen it to reattach.',
+      okLabel: 'Detach',
+      cancelLabel: 'Keep open',
+    } : {
       title: 'Close terminal?',
       body: 'The underlying session keeps running — you can reopen it to reattach.',
       okLabel: 'Close terminal',

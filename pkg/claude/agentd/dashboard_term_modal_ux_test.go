@@ -51,9 +51,39 @@ func TestTermModal_BackdropDoesNotCloseDirectly(t *testing.T) {
 		t.Error("modal-term.js backdrop handler must early-return on a non-backdrop " +
 			"target before deciding to close")
 	}
+	// Route the actual close through the ask-first confirm (confirmAndClose), not
+	// a direct teardown. The exact copy (detach vs close) varies by view type and
+	// is pinned in TestTermModal_BackdropDetachVsCloseByViewType.
+	if !strings.Contains(src, "confirmAndClose();") {
+		t.Error("modal-term.js backdrop handler must route the close through " +
+			"confirmAndClose() (ask first), not tear the terminal down directly")
+	}
+}
+
+// TestTermModal_BackdropDetachVsCloseByViewType pins the copy split keyed on
+// hideConv. A web window (the live-agent "open window" attach, hideConv set) is
+// a view onto the agent's real tmux session: clicking outside it must read as a
+// DETACH — it only drops the tmux client (via /api/hide) while the agent keeps
+// running — not as a shutdown. The ad hoc web terminal (hideConv null, its own
+// throwaway shell) keeps asking to CLOSE, exactly as before. Both gestures still
+// route through the same confirmAndClose → detachAndClose; only the wording and
+// the server-side hide differ.
+func TestTermModal_BackdropDetachVsCloseByViewType(t *testing.T) {
+	src := readTermModalSrc(t)
+
+	// The confirm copy is chosen off hideConv (set = web window, null = web term).
+	if !strings.Contains(src, "confirmModal(hideConv ?") {
+		t.Error("modal-term.js confirmAndClose must pick its copy off hideConv — a web " +
+			"window detaches (agent keeps running) while an ad hoc web terminal closes")
+	}
+	// Web window → ask to detach.
+	if !strings.Contains(src, "okLabel: 'Detach'") {
+		t.Error("modal-term.js web-window confirm must offer 'Detach' — clicking outside a " +
+			"web window must ask to detach, not to shut the agent down")
+	}
+	// Web terminal → ask to close (unchanged).
 	if !strings.Contains(src, "okLabel: 'Close terminal'") {
-		t.Error("modal-term.js backdrop close must go through a confirmModal " +
-			"offering 'Close terminal' — the outside click must ask first")
+		t.Error("modal-term.js ad hoc web-terminal confirm must keep offering 'Close terminal'")
 	}
 }
 
