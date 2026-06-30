@@ -20,11 +20,12 @@ func TestDashboardAssets_MailPrevGensToggleWired(t *testing.T) {
 	for _, needle := range []string{
 		// HTML: the footer checkbox.
 		`id="mail-show-prev-gens"`,
-		// JS: the predecessor-conv set is derived from the snapshot's
-		// replaced[], the toggle handler exists, and the sidebar filter applies
-		// it to the agent listing.
+		// JS: the predecessor-conv set is kept warm from the /api/replaced
+		// endpoint (the snapshot no longer ships the full replaced[]), the
+		// toggle handler exists, and the sidebar filter applies it to the agent
+		// listing.
 		"function prevGenConvSet(",
-		"snap.replaced",
+		"fetchListFull('replaced')",
 		"function setShowPrevGens(",
 		"mail.showPrevGens",
 		"const prevGens = prevGenConvSet();",

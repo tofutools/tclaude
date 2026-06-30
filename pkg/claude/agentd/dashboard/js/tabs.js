@@ -101,20 +101,20 @@ function renderGroupsTab() {
   // somewhere visible on the tab instead of vanishing the moment it
   // leaves its last group. On by default for the same reason.
   if (retiredVisible()) {
-    list.push(virtualRetiredGroup(lastSnapshot.retired || []));
+    list.push(virtualRetiredGroup(lastSnapshot.retired || [], lastSnapshot.paging?.retired));
   }
   // The virtual "Conversations" group sorts below even Ungrouped —
   // it's the rawest bucket (not even agents yet). Opt-in via its
   // checkbox.
   if (conversationsVisible()) {
-    list.push(virtualConversationsGroup(lastSnapshot.conversations || []));
+    list.push(virtualConversationsGroup(lastSnapshot.conversations || [], lastSnapshot.paging?.conversations));
   }
   // The virtual "Replaced generations" group sits at the very bottom — it's
   // the most archival bucket (superseded past generations of agents, left
   // behind by reincarnate / /clear). Opt-in via its checkbox (default off),
   // like Conversations: it grows over an agent's life and is read-mostly.
   if (replacedVisible()) {
-    list.push(virtualReplacedGroup(lastSnapshot.replaced || []));
+    list.push(virtualReplacedGroup(lastSnapshot.replaced || [], lastSnapshot.paging?.replaced));
   }
   const filtered = filterGroups(list, q);
   $('#groups-list').innerHTML = renderGroups(filtered);

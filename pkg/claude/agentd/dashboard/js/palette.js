@@ -240,7 +240,9 @@ function buildCommands() {
   //     /api/cleanup/agents {mode:"delete"}. 🗑 distinguishes it from the ♻
   //     retire commands. Gated on ≥1 retired agent so the palette never
   //     offers a no-op.
-  const retiredCount = (snap.retired || []).length;
+  // retired[] is windowed in the snapshot now — the true count lives in the
+  // pagination envelope. (The modal itself fetches the full list on open.)
+  const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0;
   if (retiredCount) {
     cmds.push({
       icon: '🗑', label: 'Delete retired agents…',

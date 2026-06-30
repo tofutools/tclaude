@@ -75,6 +75,7 @@ import { initMailResize } from './mail-resize.js';
 // and refresh.js's confirmModal/toast are hoisted function declarations.
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast } from './refresh.js';
+import { fetchListFull } from './list-paging.js';
 
 const HUMAN_ID = 'human';
 const ALL_ID = 'all';
@@ -160,6 +161,9 @@ const mail = {
   // sidebar paint reads it; the snapshot's replaced[] names the convs.
   // Sticky so the operator's choice survives a reload.
   showPrevGens: dashPrefs.getItem(SHOW_PREV_GENS_KEY) === '1',
+  // The set of predecessor-generation conv-ids, kept warm from /api/replaced
+  // (the snapshot no longer ships the full replaced[]). See loadPrevGenIds.
+  prevGenIds: new Set(),
   messages: [],
   selectedMsgId: null,
   selectedMsgs: new Set(),
@@ -225,17 +229,13 @@ function onlineAgents() {
 // prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
 // generations of a still-existing actor — a reincarnate / Claude Code
 // /clear advanced the actor's live pointer and left these behind (JOH-26).
-// Read straight from the main snapshot's replaced[] (the same list the
-// Groups tab's "show replaced generations" group renders), so the Messages
-// tab hides the same archival folders by default. The snapshot is refreshed
-// every 2s tick regardless of the active tab, so this stays current without
-// its own round-trip. Returns an empty Set until the snapshot first loads —
-// fail-open, showing every folder until we actually know which are stale.
+// The full set now comes from /api/replaced (the snapshot only ships one
+// page); loadPrevGenIds keeps mail.prevGenIds warm while the Messages tab is
+// open. Returns an empty Set until that first fetch lands — fail-open, showing
+// every folder until we actually know which are stale (matching the prior
+// snapshot-derived behaviour).
 function prevGenConvSet() {
-  const set = new Set();
-  const snap = lastSnapshot || {};
-  (snap.replaced || []).forEach(r => { if (r && r.conv_id) set.add(r.conv_id); });
-  return set;
+  return mail.prevGenIds || new Set();
 }
 
 // --- data loading ---------------------------------------------------
@@ -251,6 +251,27 @@ async function loadMailboxes() {
     const data = await r.json();
     mail.mailboxes = data.mailboxes || [];
   } catch { /* transient; keep the last roster painted */ }
+}
+
+// prevGenFetchedAt throttles the full /api/replaced pull (see loadPrevGenIds).
+let prevGenFetchedAt = 0;
+
+// loadPrevGenIds keeps mail.prevGenIds (the predecessor-generation conv-ids the
+// "hide previous generations" folder filter uses) warm. Predecessor convs only
+// change on reincarnate / /clear, and the full replaced list would be heavy to
+// pull every 2s — so this fetches at most every 15s while the tab is open
+// (force=true on a mutation, which can change the set immediately). Keeps the
+// last set on a transient failure.
+async function loadPrevGenIds(force) {
+  // Gate on prevGenFetchedAt (have we fetched at all), NOT on prevGenIds.size —
+  // an empty replaced set is the common "nothing reincarnated yet" case, and
+  // gating on .size there would defeat the throttle and refetch every 2s.
+  if (!force && prevGenFetchedAt && Date.now() - prevGenFetchedAt < 15000) return;
+  try {
+    const rows = await fetchListFull('replaced');
+    mail.prevGenIds = new Set(rows.map(r => r.conv_id).filter(Boolean));
+    prevGenFetchedAt = Date.now();
+  } catch { /* keep the last cached set */ }
 }
 
 async function loadMessages() {
@@ -304,7 +325,7 @@ async function loadMail() {
   if (mail.inflight || mail.busy) return;
   mail.inflight = true;
   try {
-    await Promise.all([loadMailboxes(), loadMessages()]);
+    await Promise.all([loadMailboxes(), loadMessages(), loadPrevGenIds()]);
     pruneSelections();
     paintMail();
   } finally {
@@ -317,7 +338,7 @@ async function loadMail() {
 // than waiting up to 2s for the next tick.
 async function reloadMail() {
   if (mail.busy) return;
-  await Promise.all([loadMailboxes(), loadMessages()]);
+  await Promise.all([loadMailboxes(), loadMessages(), loadPrevGenIds(true)]);
   pruneSelections();
   paintMail();
 }

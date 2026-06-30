@@ -17,6 +17,7 @@ import {
 } from './sort.js';
 import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity } from './group-activity.js';
 import { dashPrefs } from './prefs.js';
+import { listPagerHTML } from './list-paging.js';
 import { getDashDefaultProfile } from './profiles.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
@@ -148,6 +149,10 @@ function renderVirtualConversationsGroup(g) {
   const members = g.members || [];
   const key = g.key || g.name;
   const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
+  // members is one server page now; the count + pager read the full total off
+  // the list's pagination envelope (g.paging), falling back to the page length.
+  const total = g.paging ? g.paging.total : members.length;
+  const pager = listPagerHTML('conversations', g.paging);
   const body = members.length === 0
     ? '<div class="muted">(no non-agent conversations)</div>'
     : `
@@ -172,10 +177,11 @@ function renderVirtualConversationsGroup(g) {
       <summary>
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — recent conversations that aren't agents. Drag one onto a group, or click promote, to make it an agent.">virtual</span>
-        <span class="muted">— ${members.length} conversation${members.length === 1 ? '' : 's'} that aren't agents</span>
+        <span class="muted">— ${total} conversation${total === 1 ? '' : 's'} that aren't agents</span>
       </summary>
       <div class="subtable">
         ${body}
+        ${pager}
       </div>
     </details>
   `;
@@ -196,6 +202,10 @@ function renderVirtualRetiredGroup(g) {
   const members = g.members || [];
   const key = g.key || g.name;
   const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
+  // members is one server page now; the count + pager read the full total off
+  // the list's pagination envelope (g.paging), falling back to the page length.
+  const total = g.paging ? g.paging.total : members.length;
+  const pager = listPagerHTML('retired', g.paging);
   const body = members.length === 0
     ? '<div class="muted">(no retired agents)</div>'
     : `
@@ -222,10 +232,11 @@ function renderVirtualRetiredGroup(g) {
       <summary>
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — agents that were retired (demoted back to plain conversations). Drag an agent here to retire it; drag a retired row onto a group, or click reinstate, to bring it back.">virtual</span>
-        <span class="muted">— ${members.length} retired agent${members.length === 1 ? '' : 's'}</span>
+        <span class="muted">— ${total} retired agent${total === 1 ? '' : 's'}</span>
       </summary>
       <div class="subtable">
         ${body}
+        ${pager}
       </div>
     </details>
   `;
@@ -247,6 +258,10 @@ function renderVirtualReplacedGroup(g) {
   const members = g.members || [];
   const key = g.key || g.name;
   const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) === '1';
+  // members is one server page now; the count + pager read the full total off
+  // the list's pagination envelope (g.paging), falling back to the page length.
+  const total = g.paging ? g.paging.total : members.length;
+  const pager = listPagerHTML('replaced', g.paging);
   const body = members.length === 0
     ? '<div class="muted">(no replaced generations)</div>'
     : `
@@ -277,10 +292,11 @@ function renderVirtualReplacedGroup(g) {
       <summary>
         <strong class="group-name">${esc(g.name)}</strong>
         <span class="group-virtual-badge" title="A virtual group, not a real one — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.">virtual</span>
-        <span class="muted">— ${members.length} replaced generation${members.length === 1 ? '' : 's'}</span>
+        <span class="muted">— ${total} replaced generation${total === 1 ? '' : 's'}</span>
       </summary>
       <div class="subtable">
         ${body}
+        ${pager}
       </div>
     </details>
   `;

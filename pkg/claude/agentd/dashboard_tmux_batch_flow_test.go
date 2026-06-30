@@ -62,7 +62,10 @@ func TestDashboardSnapshot_OneTmuxListZeroHasSession(t *testing.T) {
 	lsBefore := f.World.Tmux.CommandCount("list-sessions")
 	hsBefore := f.World.Tmux.CommandCount("has-session")
 
-	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	// Snapshot-only fetch: the invariant is about the /api/snapshot handler's
+	// own tmux cost, so it must not be inflated by the moved-list endpoints
+	// (each does its own one list-sessions probe) that fetchDashSnapshot bundles.
+	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
 
 	lsAfter := f.World.Tmux.CommandCount("list-sessions")
 	hsAfter := f.World.Tmux.CommandCount("has-session")

@@ -166,13 +166,32 @@ type dashState struct {
 	RemoteControl     bool    `json:"remote_control,omitempty"`
 }
 
-func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
+// fetchSnapshotOnly fetches ONLY /api/snapshot (a single request). Use it when
+// a test asserts on the snapshot's own fields or its request-level cost (e.g.
+// the one-tmux-list invariant); fetchDashSnapshot bundles three extra requests
+// for the moved lists and would inflate such counts.
+func fetchSnapshotOnly(t *testing.T, mux http.Handler) dashSnapshot {
 	t.Helper()
 	r := testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil)
 	rec := testharness.Serve(mux, r)
 	require.Equal(t, http.StatusOK, rec.Code, "/api/snapshot body=%s", rec.Body.String())
 	var snap dashSnapshot
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap), "decode snapshot")
+	return snap
+}
+
+func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
+	t.Helper()
+	snap := fetchSnapshotOnly(t, mux)
+	// The retired / conversations / replaced lists no longer ride on the 2s
+	// snapshot — each moved to its own paginated endpoint (GET /api/retired,
+	// /api/conversations, /api/replaced) so the poll stops shipping the full
+	// lists. Re-assemble them here from those endpoints (unbounded, limit=0) so
+	// the many existing assertions over snap.Retired/.Conversations/.Replaced
+	// keep verifying the same data at its new real surface.
+	snap.Conversations = fetchListRows[dashConversation](t, mux, "/api/conversations?limit=0")
+	snap.Retired = fetchListRows[dashRetired](t, mux, "/api/retired?limit=0")
+	snap.Replaced = fetchListRows[dashReplaced](t, mux, "/api/replaced?limit=0")
 	return snap
 }
 
