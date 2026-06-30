@@ -781,7 +781,7 @@ function bindSortHeaders() {
 // confirm popped on top of a form modal cancels only the confirm —
 // the Escape never leaks down to the underlying form's own dismiss
 // handler.
-export function confirmModal({title, body, meta, okLabel}) {
+export function confirmModal({title, body, meta, okLabel, cancelLabel}) {
   return new Promise(resolve => {
     const overlay = $('#confirm-modal');
     $('#confirm-title').textContent = title;
@@ -791,6 +791,10 @@ export function confirmModal({title, body, meta, okLabel}) {
     const okBtn = $('#confirm-ok');
     okBtn.textContent = okLabel || 'Confirm';
     const cancelBtn = $('#confirm-cancel');
+    // The cancel button text is reset every call (the modal is a shared
+    // singleton); default 'Cancel' matches the static HTML, so callers that
+    // don't pass cancelLabel are unaffected.
+    cancelBtn.textContent = cancelLabel || 'Cancel';
     const cleanup = (result) => {
       overlay.classList.remove('show');
       okBtn.removeEventListener('click', onOk);
