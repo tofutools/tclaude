@@ -936,7 +936,7 @@ function joinMenuGroups(groups) {
 // The cog is always present and enabled.
 function memberActions(g, m, canRemote) {
   const menu = joinMenuGroups([
-    viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m),
+    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + exportAgentButton(m),
     editMemberButton(g, m) + ownerToggleButton(g, m) + permMemberButton(m) + sudoMemberButton(m)
       + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
     cloneAgentButton(m) + reincarnateAgentButton(m),
@@ -1016,6 +1016,17 @@ function viewMessagesButton(m) {
 function termButton(m) {
   const label = m.title || m.conv_id;
   return `<button data-act="term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory">term</button>`;
+}
+
+// webTermButton renders the "web term" affordance — the same shell-in-the-
+// working-directory as `term`, but ALWAYS streamed into an in-browser xterm
+// (modal-term.js) instead of a native window. `term` only falls back to the
+// browser when the daemon host can't pop a native window; this button forces
+// it, which is what you want when reaching the dashboard remotely (e.g. from a
+// phone) even though the host itself has a display.
+function webTermButton(m) {
+  const label = m.title || m.conv_id;
+  return `<button data-act="web-term" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Open a terminal in this agent's working directory, in the browser (always a web terminal — never a native window)">web term</button>`;
 }
 
 // openWindowButton renders the explicit "open a terminal attached to
@@ -1144,7 +1155,7 @@ function retireMemberButton(m) {
 // ungrouped agent INTO a group, drag its row onto a group header.
 function ungroupedMemberActions(m, canRemote) {
   const menu = joinMenuGroups([
-    viewMessagesButton(m) + termButton(m) + openWindowButton(m) + exportAgentButton(m),
+    viewMessagesButton(m) + termButton(m) + webTermButton(m) + openWindowButton(m) + exportAgentButton(m),
     permMemberButton(m) + sudoMemberButton(m)
       + notifyMenuItem(m) + remoteControlMenuItem(m, canRemote) + cronMemberButton(m),
     cloneAgentButton(m) + reincarnateAgentButton(m),

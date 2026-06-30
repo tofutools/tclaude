@@ -273,6 +273,11 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Which string `json:"which"`
+		// Web forces the in-browser PTY terminal even when a native GUI
+		// window could be popped — the dashboard's dedicated "web term"
+		// button sets it. The plain "term" button leaves it false and
+		// keeps the native-first / browser-fallback behaviour below.
+		Web bool `json:"web"`
 	}
 	// Optional body; empty (io.EOF) is fine, malformed JSON is a 400.
 	if r.Body != nil {
@@ -292,11 +297,20 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no known "+which+" directory for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	if err := openTerminal(openShellCmd(dir)); err != nil {
-		// No native window (no display, no terminal emulator installed,
-		// …) — fall back to an in-browser terminal instead of failing
-		// outright. modal-term.js opens a WebSocket at ws and streams a
-		// PTY attached to an ad hoc tmux session at dir (handleDashboardTermWS).
+	// The "web term" button (body.Web) wants the in-browser terminal
+	// unconditionally, so skip the native attempt entirely. Otherwise try a
+	// native window first and fall back to the browser only if one can't be
+	// popped (no display, no terminal emulator installed, …) instead of
+	// failing outright.
+	useBrowser := body.Web
+	if !useBrowser {
+		if err := openTerminal(openShellCmd(dir)); err != nil {
+			useBrowser = true
+		}
+	}
+	if useBrowser {
+		// modal-term.js opens a WebSocket at ws and streams a PTY attached to
+		// an ad hoc tmux session at dir (handleDashboardTermWS).
 		writeJSON(w, http.StatusOK, map[string]string{
 			"dir": dir, "which": which, "mode": "browser",
 			"ws": "/api/term-ws/" + url.PathEscape(res.ConvID) + "?which=" + url.QueryEscape(which),

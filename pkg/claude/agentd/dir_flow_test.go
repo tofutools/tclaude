@@ -348,6 +348,48 @@ func TestDir_DashboardTermButtonFallsBackToBrowser(t *testing.T) {
 		"ws path must target the same conv + which the request asked for")
 }
 
+// Scenario: the human clicks the dashboard's dedicated "web term"
+// button (body web:true) on a host that CAN pop a native window.
+//
+// Expected: POST /api/term/{conv} skips the native window entirely
+// (openTerminal is never called) and reports mode:"browser" with a
+// term-ws path, so the dashboard always streams the in-browser PTY.
+func TestDir_DashboardWebTermButtonForcesBrowser(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirwt-aaaa-bbbb-cccc-dddd"
+	const startDir = "/home/u/git"
+
+	f.HaveConvWithTitle(conv, "dash-web-term")
+	f.HaveAliveSession(conv, "lbl-dirwt", "tclaude-dirwt", startDir)
+
+	// A native open WOULD succeed here — proving web:true bypasses it
+	// rather than relying on the no-display fallback.
+	nativeOpened := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		nativeOpened = true
+		return nil
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/term/"+conv, map[string]any{"which": "start", "web": true}))
+	require.Equal(t, http.StatusOK, rec.Code, "web term: body=%s", rec.Body.String())
+	var info struct {
+		Dir   string `json:"dir"`
+		Which string `json:"which"`
+		Mode  string `json:"mode"`
+		WS    string `json:"ws"`
+	}
+	testharness.DecodeJSON(t, rec, &info)
+	assert.False(t, nativeOpened, "web:true must never attempt a native window")
+	assert.Equal(t, "browser", info.Mode, "web:true must always report mode:browser")
+	assert.Equal(t, startDir, info.Dir)
+	assert.Equal(t, "/api/term-ws/"+conv+"?which=start", info.WS,
+		"ws path must target the same conv + which the request asked for")
+}
+
 // Scenario: same as above but for the "open window" (attach to live
 // session) action.
 //
