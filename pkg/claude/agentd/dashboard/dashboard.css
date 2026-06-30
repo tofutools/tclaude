@@ -1714,6 +1714,18 @@ details[open] > summary .spawn-btn { opacity: 1; }
   font-size: 20px; line-height: 1; padding: 0 4px;
 }
 .term-session-close:hover { color: #c9d1d9; }
+/* Detach: a small bordered pill, deliberately distinct from the borderless ×
+   glyph so the two close affordances read as different actions (Detach is the
+   instant, no-confirm path; × asks first). Explicit dark-theme colours — an
+   inline dashboard <button> otherwise renders with the browser's white
+   default. */
+.term-session-detach {
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 4px 9px;
+  font-family: ui-monospace, monospace;
+}
+.term-session-detach:hover { background: #2d333b; border-color: #3d4450; }
 .term-session-xterm { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
 .term-session-xterm .xterm { height: 100%; }
 /* The "auto" self-rename checkbox sits under the Title input in the

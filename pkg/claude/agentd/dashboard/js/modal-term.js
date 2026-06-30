@@ -29,12 +29,13 @@ let fitAddon = null;
 let ws = null;
 let currentWsPath = null;
 // True while ANY term-modal confirmation (the disconnect prompt OR the
-// backdrop "Close terminal?" confirm) is open. confirmModal is a shared
-// singleton (one #confirm-modal element); opening a second over a pending
-// first would double up its button/Escape listeners so one click resolves
-// both promises — clicking "Reconnect" could then close the terminal, and a
-// stranded promise could wedge the disconnect prompt for the page's life.
-// This single in-flight guard keeps the two confirms mutually exclusive.
+// "Close terminal?" confirm shared by the × button and the backdrop click) is
+// open. confirmModal is a shared singleton (one #confirm-modal element);
+// opening a second over a pending first would double up its button/Escape
+// listeners so one click resolves both promises — clicking "Reconnect" could
+// then close the terminal, and a stranded promise could wedge the disconnect
+// prompt for the page's life. This single in-flight guard keeps the confirms
+// mutually exclusive.
 let termConfirmOpen = false;
 
 // openTermModal opens the modal and (re)connects an xterm.js terminal
@@ -173,43 +174,70 @@ export function closeTermModal() {
   $('#term-session-modal').classList.remove('show');
 }
 
-// bindTermModal wires the close button / backdrop click. Called once at
+// confirmAndClose runs the "Close terminal?" confirm and closes the modal if
+// the human accepts. Shared by the × Close button and the backdrop click —
+// both are the cautious, ask-first path (a plain × press, and an outside
+// click while reaching for the terminal, are both easy accidents). The
+// Detach button skips this entirely (closeTermModal directly): detaching is
+// the deliberate "drop my view now" action, so it needs no confirmation.
+//
+// Shares the disconnect prompt's in-flight guard (confirmModal is a single
+// shared element); if a confirm is already up, this is a no-op.
+async function confirmAndClose() {
+  if (termConfirmOpen) return;
+  termConfirmOpen = true;
+  let close;
+  try {
+    close = await confirmModal({
+      title: 'Close terminal?',
+      body: 'The underlying session keeps running — you can reopen it to reattach.',
+      okLabel: 'Close terminal',
+      cancelLabel: 'Keep open',
+    });
+  } finally {
+    termConfirmOpen = false;
+  }
+  if (close) { closeTermModal(); return; }
+  // Kept open: if the socket dropped while this confirm was up (its onclose
+  // saw the guard set and skipped the prompt), surface the reconnect choice
+  // now instead of leaving a silently-dead terminal on screen. Gate on
+  // readyState (not a bool) so a still-CONNECTING socket isn't mistaken for
+  // a drop.
+  const dropped = ws && (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING);
+  if (dropped && $('#term-session-modal').classList.contains('show')) promptReconnect();
+}
+
+// bindTermModal wires the header buttons + backdrop click. Called once at
 // dashboard init (dashboard.js).
 //
-// The × button is the explicit, deliberate close — no confirm. A backdrop
-// click is easy to do by accident while reaching for the terminal, so it
-// asks first rather than tearing the session view down. Escape is NOT a
-// close key here: it's a control character the terminal itself needs
-// (vim, less, and the Claude Code TUI all lean on it), so it must pass
-// straight through to xterm. (The disconnect prompt's own confirmModal
-// still handles Escape = cancel while it's up.)
+// Two deliberate-close affordances, genuinely different by intent — but both
+// do the same thing to the backend (detach the WebSocket, which gracefully
+// detaches the tmux client and leaves the underlying session running). The
+// only difference is the confirmation gate:
+//   • Detach — instant, no confirm. The deliberate "drop my view now, the
+//     agent keeps running" action; the human reached for exactly this.
+//   • × Close — asks first (confirmAndClose). A plain close is also where an
+//     accidental click lands, so it confirms before tearing the view down.
+// A backdrop click is the easiest accident of all, so it routes through the
+// same confirm as ×.
+//
+// Escape is NOT a close key here: it's a control character the terminal
+// itself needs (vim, less, and the Claude Code TUI all lean on it), so it
+// must pass straight through to xterm. (The confirm's own confirmModal still
+// handles Escape = cancel while it's up.)
+//
+// Detach binds straight to closeTermModal with no termConfirmOpen guard: it
+// doesn't need one because a confirm, when open, covers it. #confirm-modal is
+// a full-viewport overlay at z-index 1000, above this modal's z-index 100, so
+// the Detach button isn't clickable while any confirm (×, backdrop, or the
+// disconnect prompt) is up. That layering is the guard — keep #confirm-modal
+// above #term-session-modal if either z-index ever changes.
 export function bindTermModal() {
   const overlay = $('#term-session-modal');
-  $('#term-session-close').addEventListener('click', closeTermModal);
-  overlay.addEventListener('click', async (e) => {
+  $('#term-session-detach').addEventListener('click', closeTermModal);
+  $('#term-session-close').addEventListener('click', confirmAndClose);
+  overlay.addEventListener('click', (e) => {
     if (e.target !== overlay) return;
-    // Share the disconnect prompt's in-flight guard (confirmModal is a single
-    // shared element). If a confirm is already up, ignore the backdrop click.
-    if (termConfirmOpen) return;
-    termConfirmOpen = true;
-    let close;
-    try {
-      close = await confirmModal({
-        title: 'Close terminal?',
-        body: 'The underlying session keeps running — you can reopen it to reattach.',
-        okLabel: 'Close terminal',
-        cancelLabel: 'Keep open',
-      });
-    } finally {
-      termConfirmOpen = false;
-    }
-    if (close) { closeTermModal(); return; }
-    // Kept open: if the socket dropped while this confirm was up (its onclose
-    // saw the guard set and skipped the prompt), surface the reconnect choice
-    // now instead of leaving a silently-dead terminal on screen. Gate on
-    // readyState (not a bool) so a still-CONNECTING socket isn't mistaken for
-    // a drop.
-    const dropped = ws && (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING);
-    if (dropped && $('#term-session-modal').classList.contains('show')) promptReconnect();
+    confirmAndClose();
   });
 }

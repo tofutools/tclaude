@@ -57,6 +57,42 @@ func TestTermModal_BackdropDoesNotCloseDirectly(t *testing.T) {
 	}
 }
 
+// TestTermModal_DetachVsClose pins the two-button split: the Detach button is
+// the instant, no-confirm path (binds straight to closeTermModal), while the ×
+// Close button now asks first (routes through confirmAndClose). Both keep the
+// underlying session alive — the only difference is the confirmation gate, so
+// these guard the wiring, not the copy.
+func TestTermModal_DetachVsClose(t *testing.T) {
+	src := readTermModalSrc(t)
+
+	// Detach = instant close, no confirm.
+	if !strings.Contains(src, "$('#term-session-detach').addEventListener('click', closeTermModal)") {
+		t.Error("modal-term.js Detach button must bind directly to closeTermModal " +
+			"(instant, no confirm)")
+	}
+	// × Close must confirm first — it must NOT be the old direct-close path.
+	if strings.Contains(src, "$('#term-session-close').addEventListener('click', closeTermModal)") {
+		t.Error("modal-term.js × Close still binds directly to closeTermModal — it must " +
+			"confirm first (confirmAndClose) now that Detach is the instant path")
+	}
+	if !strings.Contains(src, "$('#term-session-close').addEventListener('click', confirmAndClose)") {
+		t.Error("modal-term.js × Close must route through confirmAndClose (ask first)")
+	}
+}
+
+// TestTermModal_DetachButtonInMarkup pins the Detach button into the modal
+// header (dashboard.html) so the JS binding above has an element to attach to.
+func TestTermModal_DetachButtonInMarkup(t *testing.T) {
+	data, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
+	if err != nil {
+		t.Fatalf("read dashboard.html: %v", err)
+	}
+	if !strings.Contains(string(data), `id="term-session-detach"`) {
+		t.Error(`dashboard.html missing id="term-session-detach" — the Detach affordance ` +
+			"has no element for bindTermModal to wire")
+	}
+}
+
 func readTermModalSrc(t *testing.T) string {
 	t.Helper()
 	data, err := fs.ReadFile(dashboardAssetsFS, "js/modal-term.js")
