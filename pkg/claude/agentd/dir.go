@@ -358,14 +358,39 @@ func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
+	var body struct {
+		// Web forces the in-browser PTY terminal even when a native GUI
+		// window could be popped — the dashboard's dedicated "web window"
+		// button sets it. The plain "open window" button sends no body,
+		// leaving it false and keeping the native-first / browser-fallback
+		// behaviour below.
+		Web bool `json:"web"`
+	}
+	// Optional body; empty (io.EOF) is fine, malformed JSON is a 400.
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			http.Error(w, "malformed JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	sess := pickAliveSession(res.ConvID)
 	if sess == nil {
 		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
-		// No native window — fall back to an in-browser terminal
-		// attached to the same live session (handleDashboardOpenWindowWS).
+	// The "web window" button (body.Web) wants the in-browser terminal
+	// unconditionally, so skip the native attempt entirely. Otherwise try a
+	// native window first and fall back to the browser only if one can't be
+	// popped, instead of failing outright.
+	useBrowser := body.Web
+	if !useBrowser {
+		if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
+			useBrowser = true
+		}
+	}
+	if useBrowser {
+		// In-browser terminal attached to the same live session
+		// (handleDashboardOpenWindowWS).
 		writeJSON(w, http.StatusOK, map[string]string{
 			"conv_id": res.ConvID, "label": sess.ID, "mode": "browser",
 			"ws": "/api/open-window-ws/" + url.PathEscape(res.ConvID),

@@ -426,6 +426,49 @@ func TestDir_DashboardOpenWindowButtonFallsBackToBrowser(t *testing.T) {
 	assert.Equal(t, "/api/open-window-ws/"+conv, info.WS)
 }
 
+// Scenario: the human clicks the dashboard's dedicated "web window"
+// button (body web:true) on a host that CAN pop a native window.
+//
+// Expected: POST /api/open-window/{conv} skips the native window
+// entirely (openTerminal is never called) and reports mode:"browser"
+// with the open-window-ws path, so the dashboard always streams the
+// in-browser PTY attached to the live session.
+func TestDir_DashboardWebOpenWindowButtonForcesBrowser(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirwow-aaaa-bbbb-cccc-dddd"
+	const label = "lbl-dirwow"
+	const startDir = "/home/u/git"
+
+	f.HaveConvWithTitle(conv, "dash-web-window")
+	f.HaveAliveSession(conv, label, "tclaude-dirwow", startDir)
+
+	// A native open WOULD succeed here — proving web:true bypasses it
+	// rather than relying on the no-display fallback.
+	nativeOpened := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		nativeOpened = true
+		return nil
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/open-window/"+conv, map[string]any{"web": true}))
+	require.Equal(t, http.StatusOK, rec.Code, "web window: body=%s", rec.Body.String())
+	var info struct {
+		ConvID string `json:"conv_id"`
+		Label  string `json:"label"`
+		Mode   string `json:"mode"`
+		WS     string `json:"ws"`
+	}
+	testharness.DecodeJSON(t, rec, &info)
+	assert.False(t, nativeOpened, "web:true must never attempt a native window")
+	assert.Equal(t, "browser", info.Mode, "web:true must always report mode:browser")
+	assert.Equal(t, label, info.Label)
+	assert.Equal(t, "/api/open-window-ws/"+conv, info.WS)
+}
+
 // Scenario: the new term/open-window WebSocket upgrade routes carry
 // the same human-consent threat model as every other dashboard /api/*
 // route.

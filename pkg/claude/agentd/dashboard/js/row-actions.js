@@ -458,12 +458,21 @@ function bindRowActions() {
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
-        case 'open-window': {
+        case 'open-window':
+        case 'web-open-window': {
           // Open a terminal attached to the agent's live session — the
           // explicit way to get a console. Non-destructive, changes no
-          // dashboard state, so skip the refresh.
+          // dashboard state, so skip the refresh. `web-open-window` sets
+          // web:true so the daemon ALWAYS streams an in-browser PTY
+          // (mode:"browser") instead of trying a native window first —
+          // see handleDashboardOpenWindowAPI.
+          const web = act === 'web-open-window';
           const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
+            ...(web ? {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ web: true }),
+            } : {}),
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
