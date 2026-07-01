@@ -780,17 +780,21 @@ function fmtCost(cost) {
 }
 
 // costTokenHTML renders the API cost as one top-bar token. It always
-// carries the month-to-date headline ("$0.42 (mtd)") and, when today's
-// spend is a distinct slice of it, today's figure too ("$0.12 (today)
-// $0.42 (mtd)"). The today figure is suppressed when it would equal the
-// mtd within a cent — a month whose whole spend is today's would
-// otherwise print the same number twice. The token links to the Costs
-// tab (data-goto-tab, wired in costs.js).
+// carries the month-to-date headline ("$0.42 (mtd)") and, whenever any
+// spend was recorded today, today's figure ahead of it ("$0.12 (today)
+// $0.42 (mtd)"). Today is shown even when it equals the mtd — e.g. on the
+// first of the month, when the whole month's spend is today's, both read
+// the same number on purpose, so the "(today)" figure never silently
+// vanishes on the day a user is most likely to be watching it. (today is
+// always ≤ mtd — the same DB delta walk windowed to today vs. the month,
+// both scaled by the same cost factor — so the pair never reads inverted;
+// see the TodayCostUSD ≤ TotalCostUSD invariant in usage.go.) The token
+// links to the Costs tab (data-goto-tab, wired in costs.js).
 function costTokenHTML(today, mtd) {
   const amt = (v, label) => '<span class="ucost-amt">' + esc(fmtCost(v)) + '</span>'
     + ' <span class="urem">(' + label + ')</span>';
   const parts = [];
-  if (today > 0 && mtd - today >= 0.005) parts.push(amt(today, 'today'));
+  if (today > 0) parts.push(amt(today, 'today'));
   parts.push(amt(mtd, 'mtd'));
   return '<span class="uw ucost" data-goto-tab="costs">'
     + '<span class="ulabel">api</span>' + parts.join(' ') + '</span>';
