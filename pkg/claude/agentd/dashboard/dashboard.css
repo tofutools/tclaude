@@ -5242,6 +5242,34 @@ body.wizard #perm-edit-modal .modal-buttons button.primary:disabled {
   background: #3a2a63; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; opacity: 0.6;
 }
 
+/* ─── Wizard permission-editor copy — "📕 The Grimoire" ─────────────
+   #694 gave this editor its arcane chrome (surface, banner, list, tri-state,
+   the gilded Save lever above); this layer adds the *naming* the Enchant
+   dialog's "Grimoire…" button promises — the tome it opens. Title + the two
+   secondary button labels swap per theme via pure-CSS span pairs
+   (.perm-edit-title-* / .pe-btn-*); the Save primary is re-lettered via a
+   ::before glyph. All scoped to #perm-edit-modal. No JS. */
+.perm-edit-title-wizard { display: none; }
+body.wizard #perm-edit-title .perm-edit-title-regular { display: none; }
+body.wizard #perm-edit-title .perm-edit-title-wizard { display: inline; }
+
+.pe-btn-wizard { display: none; }
+body.wizard #perm-edit-modal .pe-btn-regular { display: none; }
+body.wizard #perm-edit-modal .pe-btn-wizard { display: inline; }
+
+/* Save = ✒ Bind! — #694 already re-skinned the .primary lever chrome, so here
+   we only hide its "Save" text (font-size: 0) and print the glyph via ::before,
+   the same mechanism as the Summon / Banish / Enchant levers. The Save handler
+   only toggles :disabled (no JS text swap), so the disabled (mid-save) state
+   swaps the glyph to "✒ Binding…" — the in-progress twin of "🔮 Summoning…",
+   keeping the copy in voice. The click already sprays cast sparks via
+   wizard-fx's global handler, so no extra JS is needed. */
+body.wizard #perm-edit-modal #perm-edit-submit { font-size: 0; }
+body.wizard #perm-edit-modal #perm-edit-submit::before {
+  content: "✒ Bind!"; font-size: 14px; letter-spacing: 1px;
+}
+body.wizard #perm-edit-modal #perm-edit-submit:disabled::before { content: "✒ Binding…"; }
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
