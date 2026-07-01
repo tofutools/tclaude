@@ -430,8 +430,14 @@ function groupActionsHTML(g, members) {
   // accessible name can't span-swap, so it names both up front.
   return `<button class="spawn-btn" data-act="spawn-agent" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Spawn a new tclaude session and join this group" aria-label="Summon — spawn a new agent into this group">${SPAWN_ICO_SVG}<span class="spawn-btn-label-regular">spawn</span><span class="spawn-btn-label-wizard">🔮 Summon</span></button>`
     + `<span class="group-actions">`
-    + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on</button>`
-    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown</button>`
+    // Power on / shutdown re-flavour to "✨ Awaken" / "🌙 Slumber" in 🧙 mode
+    // via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks which
+    // shows — see the wizard power-controls rules in dashboard.css). The
+    // aria-label names both voices ("Awaken — power on…") so speech input
+    // matches either theme's visible label (WCAG Label-in-Name), the same way
+    // the Summon button above does.
+    + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on</span><span class="pwr-label-wizard">✨ Awaken</span></button>`
+    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
     + actionCog('group-menu', menu)
     + `</span>`;
 }

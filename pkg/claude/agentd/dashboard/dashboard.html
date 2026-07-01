@@ -107,8 +107,13 @@
   </span>
   <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
   <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
-  <button id="power-on-all-btn" data-act="power-on-all" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created.">🟢 power on all</button>
-  <button id="shutdown-all-btn" data-act="shutdown-all" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed.">🛑 shutdown all</button>
+  <!-- Power on / shutdown re-flavour to "✨ Awaken all" / "🌙 Slumber all" in
+       🧙 mode via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks
+       which shows — see the wizard power-controls rules in dashboard.css). The
+       aria-label names both voices so speech input matches either theme's
+       visible label (WCAG Label-in-Name), as the group buttons do. -->
+  <button id="power-on-all-btn" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
+  <button id="shutdown-all-btn" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
   </div>
 </header>
 <!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via
