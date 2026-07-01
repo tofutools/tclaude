@@ -227,6 +227,50 @@ func TestDashboardHTML_CostsIncludeWeekendsWired(t *testing.T) {
 	must("proj.weekendsIncluded ? 'day' : 'weekday'", "summary unit label tracks the flag")
 }
 
+// TestDashboardHTML_CostsMonthStepperWired guards the Costs tab's
+// completed-month browser across dashboard.html (the ‹ label › stepper),
+// costs.js (the 'calmonth' span, the from/to range, the offset stepping
+// and bounds) and dashboard.css (the stepper styling). It lets you view
+// last month and earlier completed months; the current month stays the
+// dedicated "This month" button (the only span with a projection). Pieces
+// span three files with no JS test runner, so this asserts on the embedded
+// concatenation at `go test ./...`.
+func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+
+	// dashboard.html: the stepper group with its prev / month / next
+	// buttons, the month button carrying the dynamic 'calmonth' span.
+	must(`id="costs-month-nav"`, "month stepper group present")
+	must(`id="costs-month-prev"`, "older-month arrow present")
+	must(`id="costs-month-cur"`, "month-label button present")
+	must(`id="costs-month-next"`, "newer-month arrow present")
+	must(`data-span="calmonth"`, "completed-month span carried on the label button")
+
+	// costs.js: the completed-month range (from = first of month,
+	// to = last of month) is sent as an explicit &to= bound so the server
+	// caps the upper edge instead of running to today.
+	must("function spanRange", "span range (from + to) computed")
+	must("'calmonth'", "completed-month span key handled")
+	must("&to=", "range's upper bound sent to /api/costs")
+
+	// costs.js: entering the stepper, paging with the arrows, and the
+	// bounds (› stops at last month, ‹ stops at first-data month).
+	must("function activateCalmonth", "stepper activation implemented")
+	must("function goMonth", "arrow stepping implemented")
+	must("function syncMonthNav", "arrow enable/disable bounds implemented")
+	must("data.first_day", "‹ bound anchored at the first-ever costed month")
+	must("MONTH_NAMES", "stepper label shows the month name")
+
+	// dashboard.css: the stepper group is styled (divider + tight arrows).
+	must("#costs-month-nav", "stepper group styled")
+	must("costs-month-step", "arrow buttons styled")
+}
+
 // The cost display multiplier is editable in two places — live on the
 // Costs tab and persisted via the Config tab — both backed by
 // /api/cost-factor. Pin the wiring so a rename of an id or endpoint

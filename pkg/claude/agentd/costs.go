@@ -179,9 +179,14 @@ type costsResponse struct {
 // into the response.
 const maxCostSpanDays = 366
 
-// collectCosts aggregates the daily cost table over [from, today].
+// collectCosts aggregates the daily cost table over [from, to].
 // Pure assembly over costDeltasFromRows; the handler owns HTTP
 // concerns, this owns the shape.
+//
+// to bounds the span's upper edge — today for the trailing/current-month
+// spans, or a completed month's last day for the "browse an earlier
+// month" spans. The maxCostSpanDays cap is measured back from to, so a
+// far-past from can't zero-fill years of empty points.
 //
 // factor is the display multiplier from config (config.ResolvedCostFactor):
 // every dollar figure in the response — the per-day bars, the per-agent
@@ -193,13 +198,12 @@ const maxCostSpanDays = 366
 // whatif selects the column: false → real pay-per-token spend (cost_usd),
 // true → the subscription WHAT-IF estimate (virtual_cost_usd). The response
 // shape is identical either way; only the source column differs.
-func collectCosts(from time.Time, factor float64, whatif bool) (costsResponse, error) {
-	now := time.Now()
-	if min := now.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
+func collectCosts(from, to time.Time, factor float64, whatif bool) (costsResponse, error) {
+	if min := to.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
 	}
 	fromKey := from.Format(costDayKey)
-	toKey := now.Format(costDayKey)
+	toKey := to.Format(costDayKey)
 
 	rows, err := db.AllCostDailyRows()
 	if err != nil {
@@ -339,13 +343,16 @@ func costRowRecencyKey(a costAgentRow) string {
 	return ""
 }
 
-// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&whatif=1] —
+// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&to=YYYY-MM-DD][&whatif=1] —
 // the Costs tab's data source. from defaults to the first of the current
-// month (the tab's default span); to is always today. whatif=1 sources the
-// WHAT-IF (subscription pay-per-token-equivalent) figures from
-// virtual_cost_usd instead of the real cost_usd; the response shape is
-// identical. Fetched on tab activation and span change, not on the 2s
-// snapshot tick — history doesn't move that fast.
+// month (the tab's default span); to defaults to today. The "browse an
+// earlier month" spans pass an explicit to (a completed month's last day)
+// so a bounded past window can be shown; the trailing/current-month spans
+// omit it and get today. whatif=1 sources the WHAT-IF (subscription
+// pay-per-token-equivalent) figures from virtual_cost_usd instead of the
+// real cost_usd; the response shape is identical. Fetched on tab
+// activation and span change, not on the 2s snapshot tick — history
+// doesn't move that fast.
 func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -364,9 +371,18 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		}
 		from = t
 	}
+	to := now
+	if q := r.URL.Query().Get("to"); q != "" {
+		t, err := time.ParseInLocation(costDayKey, q, now.Location())
+		if err != nil {
+			http.Error(w, "bad to date, want YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		to = t
+	}
 	whatif := r.URL.Query().Get("whatif") == "1"
 	cfg, _ := config.Load()
-	out, err := collectCosts(from, cfg.ResolvedCostFactor(), whatif)
+	out, err := collectCosts(from, to, cfg.ResolvedCostFactor(), whatif)
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return
