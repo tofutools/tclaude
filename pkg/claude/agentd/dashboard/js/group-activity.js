@@ -308,11 +308,11 @@ export function styledBotsHTML(summary, style, theme) {
 // (themedSummaryText, from PR #678) for the wizard row. No live-theme arg is
 // needed here — the visible wrapper is always correctly flavoured, even the
 // instant a theme flips, since its title is baked at render time and CSS
-// just reveals it. wizardStyle is on/off (the wizard row has a single visual
-// — its glyphs) with no per-style config knob today; production always
-// passes it on. An absent/'off' value drops the wizard wrapper (so the
-// pre-4th-arg callers keep the old two-wrapper output) and leaves a clean
-// seam if an on/off knob is ever wired up. Returns '' when EVERY mode
+// just reveals it. wizardStyle is a per-mode style —
+// 'emoji'(glyphs, the default) / 'sprites'(pixel wizards) / 'off' — dispatched
+// through styledWizardBotsHTML, mirroring the regular/slop emoji-vs-sprites
+// knob. An absent/'off' value drops the wizard wrapper (so the pre-4th-arg
+// callers keep the old two-wrapper output). Returns '' when EVERY mode
 // resolves to nothing (off / empty group).
 export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle) {
   const s = activitySummary(members);

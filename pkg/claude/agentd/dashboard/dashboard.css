@@ -883,8 +883,12 @@ body.wizard .ga-wizard { display: inline-flex; }
    wins on specificity over the generic .actbot-sprite.actbot-* aspect rules)
    swaps in wizard aspect-ratios. Keep these in sync with the trimmed frame
    dimensions (trim.go prints them): cast 45×59, ask 37×52, error 30×52,
-   idle/static 28×52. crashed + offline reuse the static standing frame,
-   greyed / toppled by the shared .actbot-crashed/-offline rules. */
+   idle/static 28×52. Unlike the slop set (trimmed to even ~49px heights),
+   cast is DELIBERATELY taller — the raised staff extends the box upward — so
+   at the fixed 30px row height the casting wizard reads a touch smaller-bodied
+   than the others; that's the intended "arms up mid-spell" silhouette, not a
+   trim slip. crashed + offline reuse the static standing frame, greyed /
+   toppled by the shared .actbot-crashed/-offline rules. */
 .actbot-sprite.actbot-wiz.actbot-working  { aspect-ratio: 45 / 59; }
 .actbot-sprite.actbot-wiz.actbot-asking   { aspect-ratio: 37 / 52; }
 .actbot-sprite.actbot-wiz.actbot-error    { aspect-ratio: 30 / 52; }
