@@ -490,7 +490,36 @@ func shellSingleQuote(s string) string {
 // `exec.exe`, and the `/k` wrapper already keeps the window open by
 // design after the command exits.
 func openAttachCmd(label string) string {
-	cmd := clcommon.DetectAbsoluteCmd("session", "attach") + " " + shellSingleQuote(label)
+	return attachCmd(label, false)
+}
+
+// openAttachCmdForce is openAttachCmd with `--force`, i.e. the attach maps to
+// tmux `attach-session -d`: it atomically detaches any client already on the
+// session and then attaches, instead of the unforced attach's bail ("already
+// attached in another terminal", attaching nothing).
+//
+// The web-window open path (handleDashboardOpenWindowWS) uses this. Opening a
+// web window is an explicit "give me a console on this agent HERE" gesture, and
+// a browser pane can't meaningfully fall back to the unforced attach's
+// TryFocusAttachedSession (raising a native OS window is pointless when the
+// human is in the browser). Without --force the pane would attach nothing and
+// exit, and runPTYOverWS's teardown detach would then drop the OLD window — the
+// bug this fixes. `attach-session -d` detaches the old client as an atomic
+// precondition of attaching the new one, so no separate detach/confirm step is
+// needed.
+func openAttachCmdForce(label string) string {
+	return attachCmd(label, true)
+}
+
+// attachCmd is the shared core of openAttachCmd / openAttachCmdForce. force adds
+// `--force` (tmux `attach-session -d`). See openAttachCmd's doc for the `exec `
+// prefix rationale (tab-close on hide) and the absolute-path reasoning.
+func attachCmd(label string, force bool) string {
+	cmd := clcommon.DetectAbsoluteCmd("session", "attach")
+	if force {
+		cmd += " --force"
+	}
+	cmd += " " + shellSingleQuote(label)
 	if runtime.GOOS == "windows" {
 		return cmd
 	}

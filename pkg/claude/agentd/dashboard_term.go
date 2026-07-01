@@ -148,7 +148,17 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, openAttachCmd(sess.ID), sess.TmuxSession)
+	// Force the attach (tmux `attach-session -d`): it atomically detaches any
+	// client already on this session before attaching ours. Without --force,
+	// `tclaude session attach` sees the session still "attached in another
+	// terminal", bails without attaching, and this PTY exits at once;
+	// runPTYOverWS's teardown detach then drops the OLD window — so the new web
+	// window flashes an "already attached" error while the previous window
+	// silently closes. Detaching the old client is exactly what we want here
+	// (opening a web window is an explicit "console on this agent HERE"
+	// gesture), and doing it atomically as part of the attach needs no separate
+	// detach/confirm round-trip. See openAttachCmdForce.
+	runPTYOverWS(w, r, openAttachCmdForce(sess.ID), sess.TmuxSession)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
