@@ -218,6 +218,34 @@ func TestGatherLogLines_IncludeRotated(t *testing.T) {
 	}
 }
 
+func TestGatherLogLines_TruncatingReadStopsRotatedWalk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.log")
+	mustWrite(t, path,
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "active-old-line-long-enough-to-be-cut")+"\n"+
+			jsonLine("2026-07-01T12:00:01.000Z", "INFO", "active-newest")+"\n")
+	mustWrite(t, path+".1", jsonLine("2026-07-01T11:00:00.000Z", "INFO", "rotated-should-not-appear")+"\n")
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// Cap 10 bytes short of the active file so its read truncates. Because
+	// the cap is reached, the walk must NOT descend into the rotated
+	// sibling and read a mid-record sliver off it (LOW-1 regression).
+	lines, truncated := gatherLogLines(path, true, info.Size()-10)
+	if !truncated {
+		t.Fatal("expected truncated=true")
+	}
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "rotated-should-not-appear") {
+		t.Fatalf("rotated sliver leaked after a truncating active read: %v", lines)
+	}
+	if !strings.Contains(joined, "active-newest") {
+		t.Fatalf("newest active line should survive: %v", lines)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

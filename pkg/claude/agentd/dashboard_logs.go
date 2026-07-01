@@ -252,6 +252,12 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 		// We iterate newest → oldest, so each file we visit is older than
 		// everything gathered so far: prepend to stay chronological.
 		lines = append(fileLines, lines...)
+		// A truncating read means the byte cap is reached — the dropped
+		// leading partial line leaves budget just above zero, so stop here
+		// rather than reading tiny mid-record slivers off older siblings.
+		if tr {
+			break
+		}
 	}
 	return lines, truncated
 }

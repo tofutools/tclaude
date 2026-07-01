@@ -34,13 +34,20 @@ let loadSeq = 0;
 // Debounce the search box so a few keystrokes settle into one fetch.
 let searchTimer = null;
 
+// levelKey maps a raw level string to a whitelisted class token. Anything
+// outside the known slog levels (empty, or a tampered/foreign value)
+// collapses to "raw" — so the token is always safe to interpolate into a
+// class name and can never inject markup from log content.
+function levelKey(level) {
+  return { debug: 'debug', info: 'info', warn: 'warn', error: 'error' }[(level || '').toLowerCase()] || 'raw';
+}
+
 // levelPill colourises a log level. Unknown / empty (raw, non-JSON lines)
 // render as a neutral "raw" chip so they stay visible and distinct.
 function levelPill(level) {
-  const l = (level || '').toUpperCase();
-  const cls = { DEBUG: 'debug', INFO: 'info', WARN: 'warn', ERROR: 'error' }[l];
-  if (!cls) return `<span class="log-level log-raw" title="not a structured log line">raw</span>`;
-  return `<span class="log-level log-${cls}">${esc(l.toLowerCase())}</span>`;
+  const key = levelKey(level);
+  if (key === 'raw') return `<span class="log-level log-raw" title="not a structured log line">raw</span>`;
+  return `<span class="log-level log-${key}">${key}</span>`;
 }
 
 // fmtAbsTime renders a record's timestamp as a stable local
@@ -96,7 +103,7 @@ function renderLogs() {
         ${rows.map(e => {
           const ft = fieldsText(e.fields);
           return `
-          <tr class="log-row log-row-${(e.level || 'raw').toLowerCase()}">
+          <tr class="log-row log-row-${levelKey(e.level)}">
             <td class="logs-nowrap">${whenCellHTML(e)}</td>
             <td class="logs-nowrap">${levelPill(e.level)}</td>
             <td class="logs-msg-cell">
