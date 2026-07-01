@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {
   memberVariant, activitySummary, activityBotsHTML, groupActivityHTML,
   spriteBotsHTML, styledBotsHTML, aggregateActivity, VARIANT_ORDER,
+  variantLabel, themedSummaryText,
 } from '../dashboard/js/group-activity.js';
 
 // Tiny member factory — online unless overridden, with a status string.
@@ -89,6 +90,43 @@ test('empty membership yields nothing to render', () => {
 test('summaryText reads as a human breakdown', () => {
   const s = activitySummary([on('error'), on('working'), on('working'), on('idle')]);
   assert.equal(s.summaryText, '1 error · 2 working · 1 idle');
+});
+
+test('variantLabel: plain nouns by default, arcane verbs in the wizard theme', () => {
+  // Regular / blank / unknown theme → the honest noun.
+  assert.equal(variantLabel('working', 2), '2 working');
+  assert.equal(variantLabel('idle', 1, ''), '1 idle');
+  assert.equal(variantLabel('working', 3, 'slop'), '3 working'); // slop keeps honest nouns
+  // Wizard → "N familiar(s) <verb>", pluralised on the count.
+  assert.equal(variantLabel('working', 2, 'wizard'), '2 familiars channeling');
+  assert.equal(variantLabel('idle', 1, 'wizard'), '1 familiar meditating');
+  assert.equal(variantLabel('asking', 1, 'wizard'), '1 familiar awaiting a decree');
+  assert.equal(variantLabel('crashed', 1, 'wizard'), '1 familiar slain by a grue');
+  assert.equal(variantLabel('offline', 3, 'wizard'), '3 familiars departed');
+});
+
+test('themedSummaryText re-flavours the breakdown for wizard, plain otherwise', () => {
+  const s = activitySummary([on('working'), on('working'), on('idle')]);
+  assert.equal(themedSummaryText(s), '2 working · 1 idle');           // default = regular
+  assert.equal(themedSummaryText(s, ''), '2 working · 1 idle');       // blank = regular
+  assert.equal(themedSummaryText(s, 'wizard'), '2 familiars channeling · 1 familiar meditating');
+  assert.equal(themedSummaryText(activitySummary([]), 'wizard'), ''); // nothing present
+});
+
+test('wizard theme threads its flavour into bot tooltips and the wrapper title', () => {
+  const members = [on('working'), on('working'), on('idle')];
+  // Per-bot tooltip + aria-label carry the arcane phrasing.
+  const bots = activityBotsHTML(activitySummary(members), 'wizard');
+  assert.ok(bots.includes('title="2 familiars channeling"'));
+  assert.ok(bots.includes('aria-label="1 familiar meditating"'));
+  // Sprite bots too (the slop-style row).
+  assert.ok(spriteBotsHTML(activitySummary(members), 'wizard').includes('title="2 familiars channeling"'));
+  // The group chip's wrapper title is the wizard breakdown; blank theme stays plain.
+  const wiz = groupActivityHTML(members, 'emoji', 'sprites', 'wizard');
+  assert.ok(wiz.includes('title="2 familiars channeling · 1 familiar meditating"'));
+  const plain = groupActivityHTML(members, 'emoji', 'sprites');
+  assert.ok(plain.includes('title="2 working · 1 idle"'));
+  assert.ok(!plain.includes('familiar'));
 });
 
 test('botsHTML emits one bot per present variant, count badge only when >1', () => {
