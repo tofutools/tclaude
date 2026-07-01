@@ -111,7 +111,7 @@ nav button:hover { color: #d4d4d4; }
    open panes — informational, not an unread (Messages, red) or a needs-attention
    (Plugins, amber, see .warn below). .count tones it to a quiet neutral chip so
    opening a web terminal doesn't read as an alert demanding action. */
-.tab-badge.count { background: #21262d; color: #7d8590; font-weight: 500; }
+.tab-badge.count { background: #21262d; color: #8b949e; font-weight: 500; }
 
 /* === Messages tab — mail client (mail.js) ===
    Three columns: a mailbox sidebar, the selected folder's message list,
