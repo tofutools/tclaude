@@ -23,8 +23,12 @@ const costDayKey = "2006-01-02"
 // costDelta is one recovered slice of actual spend: on this local day,
 // the agent (conv) spent this many dollars. Derived from consecutive
 // cumulative snapshots, baselined per conversation — so multiple
-// sessions of the same conv (a resume) telescope into one running
-// total rather than each re-counting the conversation's cumulative.
+// sessions of the same conv (a carry-forward resume) telescope into one
+// running total rather than each re-counting the conversation's
+// cumulative, while a resume-after-exit's fresh per-session counter is
+// still counted (see db.CostDeltas). The agentd-local twin of
+// db.CostDelta, kept lowercase so collectCosts and the sort/first-day
+// helpers read the same field names they always have.
 type costDelta struct {
 	day       string
 	convID    string
@@ -34,50 +38,20 @@ type costDelta struct {
 	model     string // model display name denormalised onto the row; "" if unknown
 }
 
-// costDeltasFromRows turns cumulative (conv, day) snapshots into per-day
-// spend deltas. Rows must be ordered (conv-key, day, session_id) — the
-// order AllCostDailyRows returns. The high-water baseline is carried per
-// CONVERSATION, not per session: Claude Code's total_cost_usd is
-// cumulative across the whole conversation and persists across resume, so
-// when a conv is resumed under a new tclaude session (a new day, or just
-// a fresh pane) that session's first snapshot already includes the prior
-// spend. Baselining per conv recovers only the genuine rise — the
-// session's first day no longer re-counts the conversation's whole
-// cumulative, which was the multi-day (and same-day double-resume)
-// double-count bug. The conv-key falls back to session_id for the rare
-// row with no denormalised conv_id, so unrelated sessions never merge.
-// A day's spend is its snapshot minus the conversation's high-water mark
-// across all earlier rows; the conversation's first day carries its whole
-// cumulative value (for rows born in the v51 backfill that means
-// pre-existing history lands on the migration day). The high-water
-// baseline clamps a dip-and-recover: only the rise above the previous
-// maximum counts, never a negative day.
-//
-// whatif selects which cumulative column the walk reads: false → cost_usd
-// (real pay-per-token spend), true → virtual_cost_usd (the subscription
-// WHAT-IF estimate). The delta logic is identical — virtual cost is the same
-// cumulative total_cost_usd, just captured on the subscription path.
+// costDeltasFromRows recovers per-day spend deltas from cumulative
+// (conv, day) snapshots. It is a thin adapter over db.CostDeltas — the
+// canonical walk shared with the top bar's SumCostSinceDay so the two cost
+// surfaces can never drift — mapping each delta onto the agentd-local
+// costDelta the rest of this file consumes. See db.CostDeltas for the
+// per-conversation high-water baseline and its session-boundary reset (the
+// resume-after-exit case that was hiding a conversation from every span
+// after its first). whatif selects the cumulative column: false → cost_usd,
+// true → virtual_cost_usd (the WHAT-IF estimate).
 func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
-	var out []costDelta
-	prevKey := ""
-	baseline := 0.0
-	for _, r := range rows {
-		val := r.CostUSD
-		if whatif {
-			val = r.VirtualCostUSD
-		}
-		key := r.ConvID
-		if key == "" {
-			key = r.SessionID
-		}
-		if key != prevKey {
-			prevKey = key
-			baseline = 0
-		}
-		if d := val - baseline; d > 0 {
-			out = append(out, costDelta{day: r.Day, convID: r.ConvID, sessionID: r.SessionID, usd: d, updatedAt: r.UpdatedAt, model: r.Model})
-			baseline = val
-		}
+	deltas := db.CostDeltas(rows, whatif)
+	out := make([]costDelta, 0, len(deltas))
+	for _, d := range deltas {
+		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAt: d.UpdatedAt, model: d.Model})
 	}
 	return out
 }

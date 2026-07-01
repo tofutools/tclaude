@@ -313,6 +313,94 @@ func TestSumCostSinceDay(t *testing.T) {
 	assert.Zero(t, total, "no snapshots in window sums to 0")
 }
 
+// TestSumCostSinceDay_SessionResetAcrossExit pins the cross-month bug fix
+// on the top-bar surface, to the SAME fixture and totals as agentd's
+// TestCostDeltasFromRows_SessionResetAcrossExit — a conversation whose
+// spawn session peaked at 8.42 one day, exited, then resumed the next day
+// under a new session whose per-session counter started fresh at 2.28.
+// Both independent counters must sum; a window opening on the resume day
+// must still see the 2.28 rather than clamping it to the prior 8.42 peak
+// (which had the agent vanishing from the current month while still
+// showing in the previous).
+func TestSumCostSinceDay_SessionResetAcrossExit(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	for _, r := range []CostDailyRow{
+		{SessionID: "spwn-x", Day: "2026-06-30", ConvID: "conv-r", CostUSD: 8.42},
+		{SessionID: "conv-r", Day: "2026-07-01", ConvID: "conv-r", CostUSD: 2.28},
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
+			VALUES (?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD)
+		require.NoError(t, err, "seed %s/%s", r.SessionID, r.Day)
+	}
+
+	total, err := SumCostSinceDay("2026-06-30")
+	require.NoError(t, err)
+	assert.InDelta(t, 10.70, total, 1e-9, "both independent per-session counters sum (8.42 + 2.28)")
+
+	total, err = SumCostSinceDay("2026-07-01")
+	require.NoError(t, err)
+	assert.InDelta(t, 2.28, total, 1e-9,
+		"a window opening on the resume day sees the resumed session's spend, not 0")
+}
+
+// TestCostDeltas pins the canonical delta walk both cost surfaces share
+// (the Costs tab via agentd's costDeltasFromRows, the top bar via
+// SumCostSinceDay): a carry-forward resume telescopes to the rise, a
+// same-session dip-and-recover never goes negative, and a resume under a
+// new session whose counter drops below the conversation's peak restarts
+// the baseline so its spend is counted rather than swallowed.
+func TestCostDeltas(t *testing.T) {
+	rows := []CostDailyRow{
+		// conv-1: grows, then a carry-forward resume under a new session
+		// (higher cumulative) — counts only the rise.
+		{SessionID: "s-a1", Day: "2026-06-01", ConvID: "conv-1", CostUSD: 1.00},
+		{SessionID: "s-a1", Day: "2026-06-02", ConvID: "conv-1", CostUSD: 2.50},
+		{SessionID: "s-a2", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 4.00}, // carry-forward
+		// conv-2: same session dips (stale render) then recovers — no reset,
+		// only the rise above the running peak counts.
+		{SessionID: "s-b1", Day: "2026-06-01", ConvID: "conv-2", CostUSD: 3.00},
+		{SessionID: "s-b1", Day: "2026-06-02", ConvID: "conv-2", CostUSD: 1.00}, // dip within a session
+		{SessionID: "s-b1", Day: "2026-06-03", ConvID: "conv-2", CostUSD: 3.50},
+		// conv-3: resume-after-exit under a new session with a FRESH lower
+		// counter — the baseline resets, so both counters are counted.
+		{SessionID: "spwn-c", Day: "2026-06-30", ConvID: "conv-3", CostUSD: 8.42},
+		{SessionID: "conv-3", Day: "2026-07-01", ConvID: "conv-3", CostUSD: 2.28},
+	}
+
+	byDayConv := map[string]float64{}
+	for _, d := range CostDeltas(rows, false) {
+		byDayConv[d.Day+"/"+d.ConvID] += d.USD
+	}
+	assert.InDelta(t, 1.00, byDayConv["2026-06-01/conv-1"], 1e-9, "first day carries the cumulative")
+	assert.InDelta(t, 1.50, byDayConv["2026-06-02/conv-1"], 1e-9, "growth within a session")
+	assert.InDelta(t, 1.50, byDayConv["2026-06-03/conv-1"], 1e-9, "carry-forward counts only the rise (4.00-2.50)")
+	assert.InDelta(t, 3.00, byDayConv["2026-06-01/conv-2"], 1e-9)
+	assert.NotContains(t, byDayConv, "2026-06-02/conv-2", "the same-session dip produces no delta")
+	assert.InDelta(t, 0.50, byDayConv["2026-06-03/conv-2"], 1e-9, "only the rise above the running peak")
+	assert.InDelta(t, 8.42, byDayConv["2026-06-30/conv-3"], 1e-9, "first session's peak")
+	assert.InDelta(t, 2.28, byDayConv["2026-07-01/conv-3"], 1e-9,
+		"resumed session's fresh counter is counted, not clamped to 8.42")
+}
+
+// TestCostDeltas_WhatIf pins the column switch: whatif reads
+// virtual_cost_usd and the real walk sees nothing on the same
+// subscription rows, and the session-reset logic applies to the virtual
+// column identically.
+func TestCostDeltas_WhatIf(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "spwn-v", Day: "2026-06-30", ConvID: "conv-v", VirtualCostUSD: 6.00},
+		{SessionID: "conv-v", Day: "2026-07-01", ConvID: "conv-v", VirtualCostUSD: 1.50}, // fresh counter
+	}
+	var whatif float64
+	for _, d := range CostDeltas(rows, true) {
+		whatif += d.USD
+	}
+	assert.InDelta(t, 7.50, whatif, 1e-9, "virtual counters reset the same way (6.00 + 1.50)")
+	assert.Empty(t, CostDeltas(rows, false), "real walk sees nothing — these are subscription rows")
+}
+
 // TestSumCostSinceDay_EmptyDB pins the zero state: no rows at all must
 // read back 0, not a NULL scan failure — this is every
 // subscription-only install on the 2s snapshot tick.

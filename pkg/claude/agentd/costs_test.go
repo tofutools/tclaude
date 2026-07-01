@@ -108,6 +108,51 @@ func TestCostDeltasFromRows_WhatIf(t *testing.T) {
 	assert.Empty(t, real, "the real-cost walk sees nothing — these are subscription rows (cost_usd 0)")
 }
 
+// TestCostDeltasFromRows_SessionResetAcrossExit pins the cross-month /
+// cross-span bug fix: a conversation spawned one day (a spwn- session
+// peaking at 8.42), that EXITS, then is resumed the next day under a NEW
+// session whose per-session total_cost_usd counter starts fresh at a LOWER
+// cumulative (2.28). The high-water baseline must NOT clamp the resumed
+// session's spend away — the session boundary plus the drop below the peak
+// mark it as an independent counter, so its 2.28 is counted on its own day
+// (day 2) instead of vanishing. Before the fix the resumed day produced no
+// delta, so the agent showed only on day 1 and disappeared from any span
+// starting on day 2 (the "only shows in the previous month" report).
+func TestCostDeltasFromRows_SessionResetAcrossExit(t *testing.T) {
+	rows := []db.CostDailyRow{
+		{SessionID: "spwn-x", Day: "2026-06-30", ConvID: "conv-r", CostUSD: 8.42},
+		{SessionID: "conv-r", Day: "2026-07-01", ConvID: "conv-r", CostUSD: 2.28},
+	}
+	deltas := costDeltasFromRows(rows, false)
+
+	got := map[string]float64{}
+	for _, d := range deltas {
+		got[d.day] += d.usd
+	}
+	assert.InDelta(t, 8.42, got["2026-06-30"], 1e-9, "first session's peak counts on its own day")
+	assert.InDelta(t, 2.28, got["2026-07-01"], 1e-9,
+		"resumed session's fresh counter is counted, not clamped to the prior 8.42 peak")
+	assert.InDelta(t, 10.70, sumCostDeltas(deltas, "", ""), 1e-9, "both independent counters sum (8.42 + 2.28)")
+	assert.InDelta(t, 2.28, sumCostDeltas(deltas, "2026-07-01", ""), 1e-9,
+		"a span starting on the resume day still sees the resumed spend")
+}
+
+// TestCostDeltasFromRows_CarryForwardNotReset is the counterpart guard: a
+// resume whose new session CARRIES the prior cost forward (its cumulative
+// is at or above the peak, e.g. the same-process spwn→conv-id migration)
+// must still telescope to the rise, never double-count. Only a DROP below
+// the peak triggers the reset, so the double-count protection the per-conv
+// baseline exists for is intact.
+func TestCostDeltasFromRows_CarryForwardNotReset(t *testing.T) {
+	rows := []db.CostDailyRow{
+		{SessionID: "spwn-y", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 7.86},
+		{SessionID: "conv-c", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 12.26}, // carry-forward, higher
+	}
+	deltas := costDeltasFromRows(rows, false)
+	assert.InDelta(t, 12.26, sumCostDeltas(deltas, "", ""), 1e-9,
+		"carry-forward resume counts only the rise: 7.86 + (12.26 - 7.86), not 7.86 + 12.26")
+}
+
 // TestFirstCostDay covers the first-ever-costed-day helper the Costs
 // tab's month projection anchors its weekday average on: it's the min
 // day across all deltas regardless of input order, and "" when nothing
