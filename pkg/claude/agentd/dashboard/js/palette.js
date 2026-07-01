@@ -50,6 +50,7 @@ import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
+import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
 
@@ -94,12 +95,21 @@ async function bulkWindowOp(payload, what) {
     const extra = out.failed ? `, ${out.failed} failed` : '';
     toast(`${what}: ${out.focused} focused${extra}`, out.failed > 0);
   } else {
+    // Close the multiplexer panes of exactly the agents this bulk unfocus
+    // detached (out.agents carries the per-agent outcome), so their terminal
+    // tabs don't linger showing "disconnected". Precise — panes for agents
+    // outside the op's scope are untouched.
+    closeTerminalsForWindowOp(out.agents);
     const extra = out.failed ? `, ${out.failed} failed` : '';
     toast(`${what}: ${out.detached} detached${extra}`, out.failed > 0);
   }
 }
 
 async function jumpAgent(conv, label) {
+  // If this agent already has an open web terminal / window pane in the
+  // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
+  // the per-agent 'jump' row action.
+  if (focusTerminalForConv([conv])) { toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',
@@ -118,6 +128,10 @@ async function hideAgent(conv, label) {
     });
     if (!r.ok) { toast(`hide ${label}: ${await r.text()}`, true); return; }
     const out = await r.json().catch(() => ({}));
+    // Close this agent's multiplexer pane too (if open) — its live-session
+    // client was just detached, so the terminal tab would otherwise linger
+    // showing "disconnected". Server-side detach already ran → close, don't hide.
+    closeTerminalsForConvs([conv]);
     toast(out.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
   } catch (e) {
     toast(`hide ${label}: ${(e && e.message) || e}`, true);

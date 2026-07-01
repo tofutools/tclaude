@@ -24,7 +24,7 @@ func TestTermModal_NoSilentReconnect(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"import { confirmModal } from './refresh.js'", // the prompt primitive
-		"promptReconnect",                             // the disconnect handler
+		"promptReconnect", // the disconnect handler
 	} {
 		if !strings.Contains(src, needle) {
 			t.Errorf("modal-term.js missing %q — disconnect prompt wiring broken", needle)
@@ -173,18 +173,22 @@ func TestTermModal_DetachCallsHideAPI(t *testing.T) {
 }
 
 // TestTermModal_OnlyOpenWindowPassesHideConv pins the load-bearing wiring and
-// guards a footgun WITHIN row-actions.js. The open-window row action must thread
-// the agent selector through as hideConv so the modal's detach hits /api/hide for
-// the agent's live session. Crucially, of row-actions.js's openTermModal callers
-// EXACTLY ONE may pass hideConv: the web-term / term-dir callers attach to a
-// THROWAWAY tclaude-term-… session, but /api/hide resolves to the agent's MAIN
-// spwn-… session — so passing hideConv there would detach the agent's real window
-// when its throwaway terminal closes. The count invariant fails the build if a
-// future edit copy-pastes hideConv onto one of those callers.
+// guards a footgun WITHIN row-actions.js. The live-session attach actions must
+// thread the agent selector through as hideConv so their detach hits /api/hide
+// for the agent's live session. There are exactly TWO such callers:
+//   - `open-window` → openTermModal (the native-window fallback's in-page modal);
+//   - `web-open-window` → openTerminalPane (the in-SPA Terminals-tab pane).
+//
+// Both attach to the agent's MAIN spwn-… session, so both correctly detach it on
+// close. Crucially, the web-term / term-dir callers attach to a THROWAWAY
+// tclaude-term-… session, but /api/hide resolves to the agent's MAIN session — so
+// passing hideConv there would detach the agent's real window when its throwaway
+// terminal closes. The count invariant (exactly 2) fails the build if a future
+// edit copy-pastes hideConv onto one of those throwaway callers.
 //
 // hideConv is legitimate from OTHER files too when the view attaches to the
-// agent's main session — the spawn auto-focus fallback in modal-spawn.js is the
-// other such caller (see TestTermModal_SpawnAutoFocusDetaches). This count is
+// agent's main session — the spawn auto-focus fallback in modal-spawn.js is
+// another such caller (see TestTermModal_SpawnAutoFocusDetaches). This count is
 // scoped to row-actions.js precisely so those legitimate callers don't relax it.
 func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
 	src := readRowActionsSrc(t)
@@ -192,10 +196,11 @@ func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
 		t.Error("row-actions.js open-window caller must pass `hideConv: agent` to " +
 			"openTermModal — without it the web window's Detach/Close can't hit /api/hide")
 	}
-	if n := strings.Count(src, "hideConv:"); n != 1 {
-		t.Errorf("exactly one row-actions.js openTermModal caller may pass hideConv (the "+
-			"open-window action); found %d — a web-term/term-dir caller passing hideConv would "+
-			"detach the agent's MAIN session when its throwaway terminal closes", n)
+	if n := strings.Count(src, "hideConv:"); n != 2 {
+		t.Errorf("exactly two row-actions.js callers may pass hideConv (the live-session "+
+			"`open-window` and `web-open-window` actions); found %d — a web-term/term-dir "+
+			"caller passing hideConv would detach the agent's MAIN session when its throwaway "+
+			"terminal closes", n)
 	}
 }
 

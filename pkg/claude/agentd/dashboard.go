@@ -97,6 +97,7 @@ func initDashboardToken() {
 // the human only ever wants one process serving them.
 func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
+	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)

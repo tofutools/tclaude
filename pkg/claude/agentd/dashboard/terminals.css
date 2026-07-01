@@ -1,0 +1,40 @@
+/* terminals.css — the standalone /terminals page SHELL (terminals.html +
+   js/terminals.js). Since the multiplexer moved into the dashboard's own
+   "Terminals" tab, this page exists only for the "⧉ tab" pop-out (?solo=1: one
+   terminal in its own window).
+
+   Deliberately self-contained: this page is NOT the dashboard SPA, so it does
+   not pull in dashboard.css. The reusable pane / tab / button widgets are
+   shared with the in-dashboard tab via mux.css; this file adds only the
+   full-page shell + empty state + solo tweak. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  background: #0d1117; color: #c9d1d9;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+#mux {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+}
+
+/* Empty state — shown when no terminals are open (e.g. a hand-navigated
+   /terminals with no seed, or after the last terminal is closed). */
+#mux-empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  color: #7d8590; text-align: center; padding: 24px;
+}
+#mux-empty .mux-empty-title { color: #c9d1d9; font-size: 15px; }
+#mux-empty code {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 1px 5px; font-family: ui-monospace, monospace; color: #c9d1d9;
+}
+
+/* Solo pop-out: no tab strip, just the one terminal (the core also hides it
+   inline — this is belt-and-suspenders). */
+body.solo .mux-tabs { display: none !important; }

@@ -18,6 +18,7 @@ import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
+import { openTerminalPane, closeTerminalsForConvs, focusTerminalForConv } from './terminals-tab.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -420,6 +421,10 @@ function bindRowActions() {
           return;
         }
         case 'jump': {
+          // If this agent already has an open web terminal / window pane in the
+          // dashboard's Terminals tab, jump to THAT instead of raising a native
+          // OS window — the browser terminal is the live view the human means.
+          if (focusTerminalForConv([agent])) { toast(`focused: ${label}`); return; }
           // Non-destructive; no confirm modal, just fire-and-toast.
           const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
@@ -442,26 +447,28 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Hide failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          // The agent's live-session tmux client was just detached — close its
+          // multiplexer pane too (if one is open) so the terminal tab doesn't
+          // linger showing "disconnected". The server-side detach already ran,
+          // so this closes WITHOUT re-hiding.
+          closeTerminalsForConvs([agent]);
           // Skip the default refresh — detaching a window doesn't
           // change any dashboard state (the agent stays online).
           toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
           return;
         }
-        case 'term':
-        case 'web-term': {
+        case 'term': {
           // Pick which directory, then ask the daemon to spawn a
           // terminal window there. Non-destructive and changes no
-          // dashboard state, so skip the refresh. `web-term` sets
-          // web:true so the daemon ALWAYS streams an in-browser PTY
-          // (mode:"browser") instead of trying a native window first —
-          // see handleDashboardTermAPI.
-          const web = act === 'web-term';
+          // dashboard state, so skip the refresh. Native-first: the
+          // daemon falls back to an in-browser PTY (mode:"browser") only
+          // when it can't pop a native window — see handleDashboardTermAPI.
           const which = await termDirModal({ label });
           if (!which) return;
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(web ? { which, web: true } : { which }),
+            body: JSON.stringify({ which }),
           });
           if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
@@ -469,21 +476,39 @@ function bindRowActions() {
           toast(`terminal opened: ${info.dir || label}`);
           return;
         }
-        case 'open-window':
-        case 'web-open-window': {
+        case 'web-term': {
+          // The dedicated "web term" button ALWAYS streams an in-browser
+          // PTY. Open it in the dashboard's own "Terminals" tab
+          // (js/terminals-tab.js) — an in-SPA nav tab that holds many live
+          // terminals at once — instead of the blocking in-page modal, so
+          // several agents' terminals can be open simultaneously without
+          // covering the dashboard. The which-dir choice resolves into the WS
+          // path the multiplexer connects to (/api/term-ws/{conv});
+          // openTerminalPane takes the picker promise directly and reveals the
+          // tab once it resolves (a cancelled pick is a no-op).
+          openTerminalPane(
+            termDirModal({ label }).then((which) => (which
+              ? {
+                ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
+                label,
+                key: `term:${conv}:${which}`,
+                // agent: which agent this pane belongs to — lets the "focus"
+                // button jump to an already-open pane. (No detach field — a
+                // web-term is a throwaway session, nothing to detach on close.)
+                agent,
+              }
+              : null)),
+          );
+          return;
+        }
+        case 'open-window': {
           // Open a terminal attached to the agent's live session — the
           // explicit way to get a console. Non-destructive, changes no
-          // dashboard state, so skip the refresh. `web-open-window` sets
-          // web:true so the daemon ALWAYS streams an in-browser PTY
-          // (mode:"browser") instead of trying a native window first —
-          // see handleDashboardOpenWindowAPI.
-          const web = act === 'web-open-window';
+          // dashboard state, so skip the refresh. Native-first; the daemon
+          // falls back to an in-browser PTY only when it can't pop a native
+          // window — see handleDashboardOpenWindowAPI.
           const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
-            ...(web ? {
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ web: true }),
-            } : {}),
           });
           if (!r.ok) { toast(`Open window failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
@@ -494,6 +519,28 @@ function bindRowActions() {
           // gets this; web-term opens its own throwaway session.
           if (info.mode === 'browser') { openTermModal({ wsPath: info.ws, label, hideConv: agent }); return; }
           toast(`window opened: ${label}`);
+          return;
+        }
+        case 'web-open-window': {
+          // Like "web term" but attached to the agent's live session (its
+          // Claude Code TUI) rather than a fresh shell. ALWAYS a browser
+          // terminal, opened in the Terminals tab. No dir choice, so no
+          // await before the open — connects to /api/open-window-ws/{conv}.
+          // hideConv makes closing the pane (× / pop-out) run the reliable
+          // server-side detach (/api/hide) — a live-session attach forks the
+          // tmux client, and without that detach the session stays "attached"
+          // and can't be reattached. (web-term above is a throwaway session, so
+          // it gets no hideConv.)
+          openTerminalPane({
+            ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
+            label,
+            key: `window:${conv}`,
+            hideConv: agent,
+            // agent: lets the "focus" button jump to this pane (see the 'jump'
+            // case). Same value as hideConv here, but distinct in meaning —
+            // hideConv drives the detach, agent drives focus/dedup matching.
+            agent,
+          });
           return;
         }
         case 'focus-pending': {

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tclaude terminals</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="70" text-anchor="middle" dominant-baseline="central">🖥️</text></svg>'>
+<link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+<!-- Shared multiplexer widget styles (also loaded by the dashboard's Terminals
+     tab); terminals.css adds only this page's full-page shell. -->
+<link rel="stylesheet" href="/static/mux.css">
+<link rel="stylesheet" href="/static/terminals.css">
+</head>
+<body>
+<!-- The standalone /terminals page. Since the multiplexer moved into the
+     dashboard's own "Terminals" tab, this page is now used only for the "⧉ tab"
+     pop-out (?solo=1: one terminal in its own OS/browser window). It runs the
+     same shared pane core (js/terminals-core.js) over the same /api/term-ws /
+     /api/open-window-ws endpoints, fed the seed carried in the URL hash. See
+     js/terminals.js. -->
+<div id="mux">
+  <div id="mux-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
+  <div id="mux-panes" class="mux-panes"></div>
+  <div id="mux-empty">
+    <div class="mux-empty-title">No terminals open</div>
+    <div>Open one from the dashboard with the <code>web term</code> or <code>web window</code> buttons — they open in the dashboard's <code>Terminals</code> tab.</div>
+    <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser window here.</div>
+  </div>
+</div>
+<!-- Vendored xterm.js as classic (non-module) scripts so Terminal / FitAddon
+     are plain globals by the time the module below runs — same arrangement as
+     dashboard.html. -->
+<script src="/static/vendor/xterm/xterm.min.js"></script>
+<script src="/static/vendor/xterm/addon-fit.min.js"></script>
+<script type="module" src="/static/js/terminals.js"></script>
+</body>
+</html>
