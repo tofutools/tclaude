@@ -3,7 +3,7 @@ import { fmtRemaining } from './tabs.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey } from './slop.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
-  bindWizardMarquee, bindWizardSpectacle,
+  bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner,
 } from './wizard-fx.js';
 import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
@@ -171,6 +171,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindWizardStatusWatch();
   bindWizardMarquee();
   bindWizardSpectacle();
+  // Flash "It's wizard time!" when the operator flips INTO wizard mode from
+  // another theme. Bound here (after the top-level applySlopThemeIfRequested)
+  // so a ?wizard=1 page load — which isn't "entering from another mode" —
+  // fires its initial event before this listener exists and stays silent.
+  bindWizardEnterBanner();
   // Slop-mode extras, all hung off the tclaude:slopfx bus slop-fx emits:
   // synthesized casino sound (default-muted, header toggle), a credits
   // counter + high-rollers leaderboard, and the Konami mega-jackpot / side

@@ -191,6 +191,43 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 	must(".wizard-summon-banner", "the summon banner font-clamp variant is styled")
 }
 
+// TestDashboardHTML_WizardEnterBanner pins the "It's wizard time!" enter banner
+// wiring — the flash shown when the operator flips INTO wizard mode from another
+// theme. Unlike the per-spawn summon banner it carries one fixed line (no
+// rotation), reusing the same banner + shower style. Purely front-end like the
+// rest of the wizard theme, so we string-search the embedded source rather than
+// running the JS — a dropped call or a renamed export would otherwise lose the
+// feature silently in the browser.
+func TestDashboardHTML_WizardEnterBanner(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Public surface + both sides of the wiring: wizard-fx exports the enter
+	// banner + its edge-event binder, and dashboard.js installs that binder at
+	// bootstrap.
+	must("export function wizardEnter(", "wizard-fx.js exports the enter-mode banner")
+	must("export function bindWizardEnterBanner(", "wizard-fx.js exports the enter-banner binder")
+	must("bindWizardEnterBanner();", "dashboard.js installs the enter banner at bootstrap")
+
+	// The banner rides slop.js's tclaude:wizard edge event, firing ONLY on the
+	// into-wizard edge (detail.active === true). Pin the gate so a refactor that
+	// drops the active check — flashing the banner when LEAVING wizard mode too —
+	// trips here.
+	must("if (e.detail && e.detail.active) wizardEnter();", "the enter banner fires only on the into-wizard edge")
+
+	// The enter line is a fixed constant, not a pick from the rotating summon
+	// pool — pin the constant so a refactor that wires the enter banner to
+	// SUMMON_QUOTES (reintroducing rotation) fails here.
+	must("const ENTER_WIZARD_QUOTE = '🧙 It", "the enter banner carries the fixed It's-wizard-time line")
+
+	// It reuses the summon banner's font-clamp variant so the two share a look.
+	must(".wizard-summon-banner", "the enter banner reuses the summon font-clamp variant")
+}
+
 // TestDashboardHTML_WizardPowerButtons pins the wizard re-skin of the Power On
 // / Shutdown chips at both scopes: global (top-bar #power-on-all-btn /
 // #shutdown-all-btn) and per-group (.group-actions data-act="power-on-group" /
