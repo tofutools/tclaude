@@ -806,6 +806,24 @@ function contextMeterTooltip(state, pct, known) {
   return `context: ${Math.round(pct)}% full`;
 }
 
+// contextManaTooltip is the 🧙 wizard-theme twin of contextMeterTooltip —
+// the same three cases (real tokens / percent-only / not-yet-reported)
+// re-flavoured as a wizard's mana reserve. The context window is the pool the
+// agent channels from; a fuller meter means more of that mana has been spent.
+// Purely cosmetic: the honest figure still rides in the regular meter's own
+// tooltip (one theme-flip away) and `tclaude agent context-info`.
+function contextManaTooltip(state, pct, known) {
+  if (!known) return '🔮 Mana reserves: not yet divined';
+  const tin = Number((state && state.tokens_input) || 0);
+  const tout = Number((state && state.tokens_output) || 0);
+  const win = Number((state && state.context_window_size) || 0);
+  const total = tin + tout;
+  if (win > 0 && total > 0) {
+    return `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled — ${Math.round(pct)}%`;
+  }
+  return `🔮 Mana: ${Math.round(pct)}% channeled`;
+}
+
 // contextMeter renders a vertical segmented gauge of an agent's
 // context-window fill. It reads state.context_pct — Claude Code's
 // authoritative figure, surfaced by /api/snapshot from the same DB
@@ -837,8 +855,18 @@ function contextMeter(state) {
     else if (i >= 2) band = 'yellow';
     segs += `<span class="ctx-seg${i < filled ? ' lit-' + band : ''}"></span>`;
   }
+  // Regular + wizard ("mana") twins — both always emitted, CSS reveals the one
+  // for the active theme (body.wizard). A theme flip swaps the meter's colours
+  // AND its tooltip with no re-render, the same "always emit, theme picks"
+  // trick as the slot machine / wizard state pill. The segments (fill level +
+  // traffic-light band classes) are shared verbatim; only the tooltip wording
+  // and — via CSS — the lit-segment colours differ, so the honest "context
+  // filling up" signal survives the re-skin as glowing mana crystals.
+  const unk = known ? '' : ' ctx-unknown';
   const tip = contextMeterTooltip(state, pct, known);
-  return `<span class="ctx-meter${known ? '' : ' ctx-unknown'}" title="${esc(tip)}">${segs}</span>`;
+  const manaTip = contextManaTooltip(state, pct, known);
+  return `<span class="ctx-meter ctx-regular${unk}" title="${esc(tip)}">${segs}</span>`
+    + `<span class="ctx-meter ctx-mana${unk}" title="${esc(manaTip)}">${segs}</span>`;
 }
 
 // activityBadges renders the small "background work still running" marker

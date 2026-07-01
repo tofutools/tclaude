@@ -591,6 +591,15 @@ table tr:hover { background: #161b22; }
 .ctx-seg.lit-yellow { background: #d29922; border-color: #bb8009; }
 .ctx-seg.lit-red    { background: #f85149; border-color: #da3633; }
 .ctx-meter.ctx-unknown { opacity: 0.45; }
+/* The meter is emitted as a regular + a wizard "mana" twin (contextMeter());
+   CSS reveals exactly one per theme, so a theme flip swaps the gauge AND its
+   tooltip with no re-render (same trick as the .ga-* activity wrappers). The
+   arcane crystal recolour lives in the wizard-theme block below. Unlike the
+   three-variant .ga-* system there is no slop twin — slop mode carries no ctx
+   rule, so it falls back to the regular gauge (the default-mode branch). */
+.ctx-mana { display: none; }
+body.wizard .ctx-regular { display: none; }
+body.wizard .ctx-mana { display: inline-flex; }
 .cwd {
   display: inline-block; max-width: 280px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
@@ -4292,6 +4301,33 @@ body.wizard .state-working   { border-color: #a97bd6; }
 body.wizard .state-idle      { border-color: #6ee7b7; }
 body.wizard .state-awaiting  { border-color: #d9b45a; }
 body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.5); }
+
+/* ─── Mana meter — the wizard twin of the context-window gauge ─────────
+   The context window IS the agent's mana reserve; the vertical gauge shows
+   how much has been channeled (spent) — a fuller crystal means less headroom
+   left, so the honest low→mid→high urgency of the traffic-light bands is
+   PRESERVED, just re-skinned. Unlit segments are a dark violet void; lit ones
+   glow like enchanted gems: cool mana-blue while reserves run deep, tarnished
+   gold as the wizard channels harder, fel-crimson at near-exhaustion. Pure
+   CSS on the shared segment classes — no extra markup, no per-frame work. */
+body.wizard .ctx-mana .ctx-seg {
+  background: #1b1338; border-color: #2f2653;
+}
+body.wizard .ctx-mana .ctx-seg.lit-green {
+  background: #4dd0e1; border-color: #26c6da;
+  box-shadow: 0 0 4px rgba(77, 208, 225, 0.75);
+}
+body.wizard .ctx-mana .ctx-seg.lit-yellow {
+  background: #e2b64e; border-color: #c79a2f;
+  box-shadow: 0 0 4px rgba(226, 182, 78, 0.75);
+}
+body.wizard .ctx-mana .ctx-seg.lit-red {
+  background: #ff5d73; border-color: #e0344f;
+  box-shadow: 0 0 5px rgba(255, 93, 115, 0.85);
+}
+/* The no-usage dim (.ctx-unknown, opacity 0.45) is already carried by the
+   theme-neutral `.ctx-meter.ctx-unknown` base rule — both twins wear
+   .ctx-meter — so it needs no wizard-specific restatement here. */
 @keyframes wizard-shimmer {
   0%   { background-position: 0% 0%; }
   100% { background-position: 200% 0%; }
