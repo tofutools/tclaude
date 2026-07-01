@@ -4588,10 +4588,13 @@ body.wizard #retire-modal .modal-buttons button:not(#retire-ok):hover {
    conjuring lever, the destructive twin of the spawn dialog's 🔮 Summon!.
    Same mechanism: the button's own "Retire" text is hidden (font-size: 0)
    and replaced by a ::before glyph; the busy state (JS disables the button
-   and swaps in a "Retiring…" spinner via setBusy) restores a font-size so
-   that fallback shows instead of the glyph. The click already sprays cast
-   sparks via wizard-fx's global cast-FX handler, so no extra JS is needed.
-   #retire-modal keeps it out-specifying the base .confirm-danger rule. */
+   and swaps in a "Retiring…" spinner via setBusy) keeps that raw text hidden
+   and paints a themed "Banishing…" via ::after instead — a familiar is
+   *banished*, not retired, so the busy copy stays in the arcane voice too.
+   The copy swap is pure-CSS, like the ::before idle label; the click already
+   sprays cast sparks via wizard-fx's global cast-FX handler, so no extra JS
+   is needed. #retire-modal keeps it out-specifying the base .confirm-danger
+   rule. */
 body.wizard #retire-modal #retire-ok {
   font-size: 0;
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
@@ -4620,11 +4623,19 @@ body.wizard #retire-modal #retire-ok:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #retire-modal #retire-ok:disabled {
-  /* Restore the font so the JS "Retiring…" spinner fallback shows. */
-  font-size: 13px;
+  /* Busy state: setBusy injects a "Retiring…" text node next to the spinner.
+     Keep font-size: 0 so that raw label stays hidden (the .btn-spinner is a
+     fixed 12px circle, unaffected by font-size, so it stays visible) and paint
+     a themed "Banishing…" via ::after below. */
+  font-size: 0;
   opacity: 0.7;
 }
 body.wizard #retire-modal #retire-ok:disabled::before { content: none; }
+body.wizard #retire-modal #retire-ok:disabled::after {
+  content: "Banishing…";
+  font-size: 13px;
+  letter-spacing: 1px;
+}
 
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
