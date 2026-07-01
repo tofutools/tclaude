@@ -110,6 +110,11 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must(`content: "🔮 Summon!"`, "the submit button reads Summon in wizard mode")
 	must("body.wizard #agent-spawn-modal #agent-spawn-submit", "the submit re-skin is scoped to the spawn modal")
 
+	// Mid-submit, the disabled state re-skins the ::before to "🔮 Summoning…"
+	// (rather than surfacing the JS "Spawning…" fallback) so the in-progress
+	// copy stays in voice with the "🔮 Summon!" button it started as.
+	must(`content: "🔮 Summoning…"`, "the in-progress button reads Summoning in wizard mode")
+
 	// The whole dialog is re-skinned arcane.
 	must("body.wizard #agent-spawn-modal .cron-create-modal", "the spawn dialog surface is re-skinned")
 }
