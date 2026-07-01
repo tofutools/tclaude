@@ -189,6 +189,51 @@ func TestDashboardCosts_FromParam(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "malformed from rejected")
 }
 
+// Scenario: the completed-month browser. An explicit to= bounds the span's
+// upper edge to a past month's last day, so a whole prior month can be
+// viewed without today's spend bleeding in and the series ends at the
+// month boundary rather than today. A malformed to is a 400, mirroring
+// from.
+func TestDashboardCosts_ToParamBoundsCompletedMonth(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	now := time.Now()
+	thisMonthFirst := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	lastMonthLast := thisMonthFirst.AddDate(0, 0, -1)
+	lastMonthFirst := time.Date(lastMonthLast.Year(), lastMonthLast.Month(), 1, 0, 0, 0, 0, now.Location())
+	// A day inside last month (its 15th is always a real day) plus today.
+	midLast := time.Date(lastMonthLast.Year(), lastMonthLast.Month(), 15, 0, 0, 0, 0, now.Location())
+
+	const convLast = "wcml-1111-2222-3333-4444"
+	const convNow = "wcmn-1111-2222-3333-4444"
+	conn, err := db.Open()
+	require.NoError(t, err)
+	_, err = conn.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+		VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+		"spwn-last", midLast.Format("2006-01-02"), convLast, 4.20, midLast.Format(time.RFC3339Nano),
+		"spwn-now", now.Format("2006-01-02"), convNow, 9.99, now.Format(time.RFC3339Nano))
+	require.NoError(t, err, "seed last-month + today spend")
+
+	fromKey := lastMonthFirst.Format("2006-01-02")
+	toKey := lastMonthLast.Format("2006-01-02")
+	out := fetchCosts(t, mux, "?from="+fromKey+"&to="+toKey)
+
+	assert.Equal(t, fromKey, out.From, "explicit from echoed")
+	assert.Equal(t, toKey, out.To, "to bounds the upper edge at the month's last day, not today")
+	assert.Equal(t, daysInclusive(t, fromKey, toKey), len(out.Days), "one point per day of the completed month")
+	assert.Equal(t, toKey, out.Days[len(out.Days)-1].Day, "series ends at to, not today")
+	assert.InDelta(t, 4.20, out.TotalUSD, 1e-9, "only last-month spend is in the window; today's is excluded")
+
+	require.Len(t, out.Agents, 1, "only the last-month conversation falls in the window")
+	assert.Equal(t, convLast, out.Agents[0].ConvID, "today's conversation is excluded by the to bound")
+
+	r := testharness.JSONRequest(t, http.MethodGet, "/api/costs?to=junk", nil)
+	rec := testharness.Serve(mux, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "malformed to rejected")
+}
+
 // Scenario: the per-agent breakdown's ordering and model column. Two
 // agents spent today on different models; a third spent more, but
 // days ago and its sessions row is long gone. Rows must come back
