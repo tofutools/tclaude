@@ -4829,6 +4829,72 @@ body.wizard #retire-modal #retire-ok:disabled::after {
   letter-spacing: 1px;
 }
 
+/* ─── Wizard shared confirm dialog — the arcane "are you sure?" ───────
+   #confirm-modal is the shared confirm singleton (confirmModal in
+   refresh.js): move-agent-to-another-group, remove-from-group, the
+   backdrop-discard guards, mail deletes, … all pop this one element.
+   Its title / body / OK label are JS-set per action ("Move", "Remove",
+   …), so unlike the retire dialog there is no ::before copy swap — the
+   honest label stays and only the chrome goes arcane: the same
+   midnight-violet surface, parchment text, tarnished-gold Cancel and
+   gilded-lever confirm as the Summon / Banish dialogs. Scoped to
+   #confirm-modal for the same reason the retire rules are scoped
+   (TestDashboardCSS_WizardRetireModalScoped): an unscoped body.wizard
+   .modal would repaint every sibling dialog. */
+body.wizard #confirm-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #confirm-modal .modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #confirm-modal .modal p { color: #e7d9f5; }
+body.wizard #confirm-modal .modal .modal-meta {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+/* Cancel — the tarnished-gold secondary treatment the spawn / retire
+   dialogs' secondary buttons get. Scoped away from #confirm-ok, which
+   takes the gilded lever below. */
+body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+/* The confirm button — Summon / Banish's gilded-lever sibling, minus the
+   font-size:0 label swap: the caller-supplied text ("Move", "Remove", …)
+   stays visible. The #confirm-modal id out-specifies the base
+   .confirm-danger rule. */
+body.wizard #confirm-modal #confirm-ok {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  transition: transform 0.08s ease;
+}
+body.wizard #confirm-modal #confirm-ok:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #d9b45a;
+  color: #f3e6c0;
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #confirm-modal #confirm-ok:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+
 /* ─── Wizard cron dialog — "⏳ Bind a recurring ritual" ──────────────
    A cron job is a standing spell the wizard binds to the turning of the
    hourglass: each tick it whispers to its target familiar. So the 🧙 theme

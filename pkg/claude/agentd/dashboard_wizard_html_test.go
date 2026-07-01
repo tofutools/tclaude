@@ -436,6 +436,25 @@ func TestDashboardCSS_WizardRetireModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardConfirmModal pins the wizard re-skin of the shared
+// confirm dialog (#confirm-modal — confirmModal in refresh.js), the element the
+// move-agent-to-another-group / remove-from-group / backdrop-discard confirms
+// pop. Its title / body / OK label are JS-set per action, so unlike the retire
+// dialog there is no copy swap — only the chrome is re-skinned; string-search
+// the embedded CSS for the modal-scoped rules.
+func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #confirm-modal .modal", "the confirm dialog surface is re-skinned")
+	must("body.wizard #confirm-modal #confirm-ok", "the OK button gets the gilded lever, scoped to the confirm modal")
+	must("body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok)", "Cancel gets the tarnished-gold secondary treatment")
+}
+
 // TestDashboardHTML_WizardEditMemberModal pins the wizard re-skin of the
 // edit-agent dialog ("Enchant this familiar") — the dialog the per-agent "+ role"
 // cell and the ⚙ "edit" affordance open. Like the spawn / retire re-skins it is a
