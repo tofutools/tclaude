@@ -280,6 +280,70 @@ func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardProfilesManage pins the wizard re-skin of the "Spawn
+// profiles" management overlay — the picker you choose a profile to edit from,
+// the sibling of the arcane editor it launches. Purely front-end like the rest
+// of the wizard theme, so we string-search the embedded source.
+func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The overlay surface + the gilded "+ new profile" action, both scoped.
+	must("body.wizard #profiles-manage-modal .manage-modal", "the profiles overlay surface is re-skinned")
+	must("body.wizard #profiles-manage-modal #profile-create-open.primary", "the + new profile button gets the gilded-arcane treatment")
+	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
+}
+
+// TestDashboardCSS_WizardProfilesManageScoped guards that the wizard
+// profiles-overlay re-skin stays scoped to #profiles-manage-modal — it's a
+// .manage-modal shared with the Templates… / Links… overlays, so an unscoped
+// `body.wizard .manage-modal { … }` would repaint those too.
+func TestDashboardCSS_WizardProfilesManageScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .manage-modal {") {
+		t.Error("wizard profiles-overlay re-skin is unscoped — will repaint the Templates/Links overlays too")
+	}
+}
+
+// TestDashboardHTML_WizardPermEditor pins the wizard re-skin of the permanent-
+// permissions tri-state editor (#perm-edit-modal), shared by the live-agent path
+// and the spawn / profile buffer editors. Front-end only, so we string-search
+// the embedded source.
+func TestDashboardHTML_WizardPermEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The editor surface is re-skinned arcane, scoped to the perm-edit modal.
+	must("body.wizard #perm-edit-modal .perm-edit-modal", "the permissions editor surface is re-skinned")
+
+	// The active Grant/Deny tri-state fills are the safety signal and must stay
+	// their base green/red. The re-skin protects them by repainting only the
+	// INACTIVE cells (:not(.active)) — pin that mechanism so a refactor to a
+	// blanket `.perm-tristate button` rule (which would swallow the green/red via
+	// the id's specificity) trips here.
+	must("body.wizard #perm-edit-modal .perm-tristate button:not(.active)", "only inactive tri-state cells are repainted (Grant/Deny keep their green/red)")
+}
+
+// TestDashboardCSS_WizardPermEditorScoped guards that the wizard perm-editor
+// re-skin never leaks onto the generic tri-state control: .perm-tristate /
+// .perm-row are plain classes (the perm editor is the only user today, but they
+// are not id-bound), so every wizard rule must carry the #perm-edit-modal id. An
+// unscoped `body.wizard .perm-tristate button { … }` would repaint any tri-state
+// anywhere — and, worse, out-specify the base active Grant/Deny fills and clobber
+// the green/red safety signal.
+func TestDashboardCSS_WizardPermEditorScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .perm-tristate button {") {
+		t.Error("wizard perm-editor tri-state re-skin is unscoped — would leak onto any tri-state control and clobber Grant/Deny fills")
+	}
+}
+
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
 // re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
 // (unlike the spawn dialog's .cron-create-modal), so an unscoped
