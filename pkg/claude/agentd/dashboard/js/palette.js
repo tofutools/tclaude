@@ -64,6 +64,19 @@ const WIZARD_PLACEHOLDER =
 const WIZARD_EMPTY = 'No such incantation in this tome';
 let defaultPlaceholder = '';
 
+// wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
+// one. buildCommands wraps every command's PRESENTED label + hint (and its
+// action icon) in it, so the Spellbook reads Summon / Slumber / Veil / Banish
+// under body.wizard while the functional wording lives on. The per-command
+// keywords are NOT wizard-gated — they always carry BOTH vocabularies (the old
+// plain terms AND the new arcane synonyms), so every command stays findable by
+// either word in either theme: the wizard set is ADDED, never swapped in. Read
+// live (not cached at build) so the tclaude:wizard listener's rebuild re-skins
+// the open list on a mid-session theme flip, matching the placeholder swap.
+function wiz(regular, wizard) {
+  return isWizardActive() ? wizard : regular;
+}
+
 // Module state for the current open. commands is the full list built at
 // open time; filtered is the current query's subset; selected indexes
 // into filtered. Cached element refs are filled in bindCommandPalette.
@@ -206,25 +219,33 @@ function buildCommands() {
   const cmds = [];
 
   // 1) Global window ops — "hide all windows" (and its inverse), plus
-  //    the modal for picking an arbitrary subset.
+  //    the modal for picking an arbitrary subset. In 🧙 mode a terminal
+  //    window is a familiar's "scrying portal", so hide → Veil, focus →
+  //    Reveal (arcane presented label; the plain keywords stay searchable).
   cmds.push({
-    icon: '⏏', label: 'Hide all windows',
-    hint: 'detach every agent terminal window (agents keep running)',
-    keywords: 'hide unfocus all windows declutter detach panic minimize',
+    icon: wiz('⏏', '🌫'), label: wiz('Hide all windows', 'Veil all familiars'),
+    hint: wiz('detach every agent terminal window (agents keep running)',
+      "draw the veil over every familiar's scrying portal (they keep channeling)"),
+    keywords: 'hide unfocus all windows declutter detach panic minimize'
+      + ' veil conceal cloak shroud portal scrying vision familiars',
     run: () => bulkWindowOp({ direction: 'unfocus', scope: 'all' },
       'hide all windows'),
   });
   cmds.push({
-    icon: '◎', label: 'Focus all windows',
-    hint: 'raise / open a terminal window for every running agent',
-    keywords: 'show all windows raise focus bring up',
+    icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all familiars'),
+    hint: wiz('raise / open a terminal window for every running agent',
+      'conjure a scrying portal for every channeling familiar'),
+    keywords: 'show all windows raise focus bring up'
+      + ' reveal behold conjure portal scrying vision familiars',
     run: () => bulkWindowOp({ direction: 'focus', scope: 'all' },
       'focus all windows'),
   });
   cmds.push({
-    icon: '▦', label: 'Pick windows to focus / hide…',
-    hint: 'open the window modal to choose a subset',
-    keywords: 'windows subset choose select modal some',
+    icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose familiars to reveal / veil…'),
+    hint: wiz('open the window modal to choose a subset',
+      'open the scrying circle to choose which portals to reveal or veil'),
+    keywords: 'windows subset choose select modal some'
+      + ' reveal veil portals scrying familiars',
     run: () => openWindowModal('all', null),
   });
 
@@ -240,18 +261,24 @@ function buildCommands() {
   const onlineAll = (snap.agents || []).filter(a => a.online).length;
   const offlineAll = (snap.agents || []).filter(a => !a.online).length;
   if (onlineAll) {
+    const plural = onlineAll === 1 ? '' : 's';
     cmds.push({
-      icon: '⏻', label: 'Shut down all agents',
-      hint: `stop ${onlineAll} running agent${onlineAll === 1 ? '' : 's'} (resumable; no data deleted)`,
-      keywords: 'shutdown shut down stop kill power off halt all agents global everything batch',
+      icon: wiz('⏻', '🌙'), label: wiz('Shut down all agents', 'Slumber all familiars'),
+      hint: wiz(`stop ${onlineAll} running agent${plural} (resumable; no data deleted)`,
+        `lull ${onlineAll} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
+      keywords: 'shutdown shut down stop kill power off halt all agents global everything batch'
+        + ' slumber sleep rest lull dormant quell still familiars',
       run: () => shutdownScope('all', null),
     });
   }
   if (offlineAll) {
+    const plural = offlineAll === 1 ? '' : 's';
     cmds.push({
-      icon: '⏼', label: 'Power on all agents',
-      hint: `resume ${offlineAll} offline agent${offlineAll === 1 ? '' : 's'} onto their conversations`,
-      keywords: 'power on start resume wake boot up all agents global everything batch',
+      icon: wiz('⏼', '✨'), label: wiz('Power on all agents', 'Awaken all familiars'),
+      hint: wiz(`resume ${offlineAll} offline agent${plural} onto their conversations`,
+        `rouse ${offlineAll} slumbering familiar${plural} back onto their scrolls`),
+      keywords: 'power on start resume wake boot up all agents global everything batch'
+        + ' awaken rouse stir revive kindle familiars',
       run: () => powerOnScope('all', null),
     });
   }
@@ -268,10 +295,13 @@ function buildCommands() {
   // pagination envelope. (The modal itself fetches the full list on open.)
   const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0;
   if (retiredCount) {
+    const plural = retiredCount === 1 ? '' : 's';
     cmds.push({
-      icon: '🗑', label: 'Delete retired agents…',
-      hint: `preview + permanently delete any of ${retiredCount} retired agent${retiredCount === 1 ? '' : 's'} (cannot be undone)`,
-      keywords: 'delete purge retired cleanup remove wipe agents',
+      icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…'),
+      hint: wiz(`preview + permanently delete any of ${retiredCount} retired agent${plural} (cannot be undone)`,
+        `preview + forever dispel any of ${retiredCount} banished familiar${plural} (cannot be undone)`),
+      keywords: 'delete purge retired cleanup remove wipe agents'
+        + ' dispel banished obliterate destroy erase vanquish incinerate familiars',
       run: () => openDeleteRetiredPreview(),
     });
   }
@@ -285,11 +315,13 @@ function buildCommands() {
   const lastGroup = lastInteractedGroup();
   const lastGroupLive = groups.some(g => g.name === lastGroup);
   cmds.push({
-    icon: '＋', label: 'Spawn agent…',
+    icon: wiz('＋', '🔮'), label: wiz('Spawn agent…', 'Summon a familiar…'),
     hint: lastGroupLive
-      ? `open the spawn dialog (defaults to ${lastGroup} — last used)`
-      : 'open the spawn dialog',
+      ? wiz(`open the spawn dialog (defaults to ${lastGroup} — last used)`,
+        `open the summoning circle (defaults to ${lastGroup} — last used)`)
+      : wiz('open the spawn dialog', 'open the summoning circle'),
     keywords: 'new agent create spawn launch start'
+      + ' summon conjure invoke call forth familiar'
       + (lastGroupLive ? ' ' + lastGroup : ''),
     run: () => openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {}),
   });
@@ -297,9 +329,11 @@ function buildCommands() {
   // named group without first picking it in the dialog.
   for (const g of groups) {
     cmds.push({
-      icon: '＋', label: `Spawn agent in ${g.name}…`,
-      hint: 'open the spawn dialog pinned to this group',
-      keywords: 'new agent create spawn launch start group ' + g.name,
+      icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
+      hint: wiz('open the spawn dialog pinned to this group',
+        'open the summoning circle bound to this coven'),
+      keywords: 'new agent create spawn launch start group ' + g.name
+        + ' summon conjure invoke familiar coven',
       run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
     });
   }
@@ -313,17 +347,25 @@ function buildCommands() {
   const slopOn = isSlopActive();
   cmds.push({
     icon: slopOn ? '🤝' : '🎰',
-    label: slopOn ? 'Switch off slop theme' : 'Switch to slop theme',
-    hint: 'toggle the dashboard theme',
-    keywords: 'toggle switch theme slop regular vegas casino mode appearance',
+    // slopOn ⇒ slop is the live theme ⇒ wizard is off, so wiz() falls to the
+    // plain "Switch off slop theme"; the arcane variant only ever shows from
+    // wizard mode, where it reads as leaving the Tower for the casino halls.
+    label: slopOn ? 'Switch off slop theme' : wiz('Switch to slop theme', 'Descend to the slop machine'),
+    hint: wiz('toggle the dashboard theme', 'trade the Tower for the slot-machine halls'),
+    keywords: 'toggle switch theme slop regular vegas casino mode appearance'
+      + ' descend leave depart halls machine',
     run: () => toggleSlop(),
   });
   const wizardOn = isWizardActive();
   cmds.push({
     icon: wizardOn ? '🤝' : '🧙',
-    label: wizardOn ? 'Switch off wizard theme' : 'Switch to wizard theme',
-    hint: 'toggle the dashboard theme',
-    keywords: 'toggle switch theme wizard magic arcane dnd dungeon fantasy mode appearance',
+    // wizardOn ⇒ wizard is live ⇒ wiz() returns the arcane "Leave the Tower";
+    // when it's off the plain "Switch to wizard theme" shows (the string the
+    // wizard HTML guard pins), since labels only re-skin inside wizard mode.
+    label: wizardOn ? wiz('Switch off wizard theme', "Leave the Wizard's Tower") : 'Switch to wizard theme',
+    hint: wiz('toggle the dashboard theme', 'doff the robes and return to the plain dashboard'),
+    keywords: 'toggle switch theme wizard magic arcane dnd dungeon fantasy mode appearance'
+      + ' robes tower doff leave depart spellbook',
     run: () => toggleWizard(),
   });
 
@@ -337,9 +379,10 @@ function buildCommands() {
     const name = (btn.textContent || '').replace(/\s*\d+\s*$/, '').trim();
     if (!name) continue;
     cmds.push({
-      icon: '⤢', label: `Go to ${name}`,
-      hint: 'switch tab',
-      keywords: 'tab navigate go open ' + (btn.dataset.tab || ''),
+      icon: wiz('⤢', '🪞'), label: wiz(`Go to ${name}`, `Scry the ${name}`),
+      hint: wiz('switch tab', 'peer into this chamber of the Tower'),
+      keywords: 'tab navigate go open ' + (btn.dataset.tab || '')
+        + ' scry peer gaze behold chamber vision',
       run: () => btn.click(),
     });
   }
@@ -348,28 +391,32 @@ function buildCommands() {
   //    apply to EVERY group (even idle ones — folding an idle group is
   //    valid), unlike the window ops below which need a running member.
   cmds.push({
-    icon: '⊟', label: 'Collapse all groups',
-    hint: 'fold every group on the Groups tab',
-    keywords: 'collapse fold close all groups view rows',
+    icon: wiz('⊟', '📕'), label: wiz('Collapse all groups', 'Furl all covens'),
+    hint: wiz('fold every group on the Groups tab', "roll up every coven's scroll on the Groups tab"),
+    keywords: 'collapse fold close all groups view rows'
+      + ' furl seal roll scroll covens',
     run: () => setAllGroupsOpen(false),
   });
   cmds.push({
-    icon: '⊞', label: 'Expand all groups',
-    hint: 'unfold every group on the Groups tab',
-    keywords: 'expand unfold open all groups view rows',
+    icon: wiz('⊞', '📖'), label: wiz('Expand all groups', 'Unfurl all covens'),
+    hint: wiz('unfold every group on the Groups tab', "unroll every coven's scroll on the Groups tab"),
+    keywords: 'expand unfold open all groups view rows'
+      + ' unfurl unseal unroll scroll covens',
     run: () => setAllGroupsOpen(true),
   });
   for (const g of groups) {
     cmds.push({
-      icon: '⊟', label: `Collapse group: ${g.name}`,
-      hint: 'fold this group',
-      keywords: 'collapse fold close group ' + g.name,
+      icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl coven: ${g.name}`),
+      hint: wiz('fold this group', 'roll up this coven'),
+      keywords: 'collapse fold close group ' + g.name
+        + ' furl seal roll scroll coven',
       run: () => setGroupOpen(g.name, false),
     });
     cmds.push({
-      icon: '⊞', label: `Expand group: ${g.name}`,
-      hint: 'unfold this group',
-      keywords: 'expand unfold open group ' + g.name,
+      icon: wiz('⊞', '📖'), label: wiz(`Expand group: ${g.name}`, `Unfurl coven: ${g.name}`),
+      hint: wiz('unfold this group', 'unroll this coven'),
+      keywords: 'expand unfold open group ' + g.name
+        + ' unfurl unseal unroll scroll coven',
       run: () => setGroupOpen(g.name, true),
     });
   }
@@ -380,18 +427,21 @@ function buildCommands() {
     const online = (g.members || []).filter(m => m.online).length;
     if (!online) continue;
     const n = `${online} window${online === 1 ? '' : 's'}`;
+    const nPortals = `${online} scrying portal${online === 1 ? '' : 's'}`;
     cmds.push({
-      icon: '⏏', label: `Hide group: ${g.name}`,
-      hint: `hide ${n}`,
-      keywords: 'hide unfocus group windows ' + g.name,
+      icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil coven: ${g.name}`),
+      hint: wiz(`hide ${n}`, `draw the veil over ${nPortals}`),
+      keywords: 'hide unfocus group windows ' + g.name
+        + ' veil conceal cloak portal scrying coven',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'unfocus', scope: 'group', group: g.name },
         `hide group ${g.name}`); },
     });
     cmds.push({
-      icon: '◎', label: `Focus group: ${g.name}`,
-      hint: `raise ${n}`,
-      keywords: 'focus show group windows ' + g.name,
+      icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal coven: ${g.name}`),
+      hint: wiz(`raise ${n}`, `conjure ${nPortals}`),
+      keywords: 'focus show group windows ' + g.name
+        + ' reveal behold conjure portal scrying coven',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'focus', scope: 'group', group: g.name },
         `focus group ${g.name}`); },
@@ -407,19 +457,25 @@ function buildCommands() {
   for (const g of groups) {
     const onlineG = g.online || 0;
     if (onlineG) {
+      const plural = onlineG === 1 ? '' : 's';
       cmds.push({
-        icon: '⏻', label: `Shut down group: ${g.name}`,
-        hint: `stop ${onlineG} running agent${onlineG === 1 ? '' : 's'} (resumable; no data deleted)`,
-        keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name,
+        icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber coven: ${g.name}`),
+        hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
+          `lull ${onlineG} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
+        keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name
+          + ' slumber sleep rest lull dormant coven familiars',
         run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
       });
     }
     const offlineG = (g.members || []).filter(m => !m.online).length;
     if (offlineG) {
+      const plural = offlineG === 1 ? '' : 's';
       cmds.push({
-        icon: '⏼', label: `Power on group: ${g.name}`,
-        hint: `resume ${offlineG} offline agent${offlineG === 1 ? '' : 's'} onto their conversations`,
-        keywords: 'power on start resume wake boot up group batch ' + g.name,
+        icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken coven: ${g.name}`),
+        hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
+          `rouse ${offlineG} slumbering familiar${plural} back onto their scrolls`),
+        keywords: 'power on start resume wake boot up group batch ' + g.name
+          + ' awaken rouse stir revive kindle coven familiars',
         run: () => { recordGroupInteraction(g.name); powerOnScope('group', g.name); },
       });
     }
@@ -433,15 +489,17 @@ function buildCommands() {
     // pre-identity row); the server resolves it via agent.ResolveSelector.
     const sel = a.agent_id || a.conv_id;
     cmds.push({
-      icon: '◎', label: `Focus window: ${label}`,
-      hint: "raise / open this agent's terminal",
-      keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || ''),
+      icon: wiz('◎', '👁'), label: wiz(`Focus window: ${label}`, `Reveal familiar: ${label}`),
+      hint: wiz("raise / open this agent's terminal", "conjure this familiar's scrying portal"),
+      keywords: 'focus show jump bring up window agent ' + label + ' ' + (a.conv_id || '')
+        + ' reveal behold conjure portal scrying familiar',
       run: () => jumpAgent(sel, label),
     });
     cmds.push({
-      icon: '⏏', label: `Hide window: ${label}`,
-      hint: "detach this agent's terminal",
-      keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || ''),
+      icon: wiz('⏏', '🌫'), label: wiz(`Hide window: ${label}`, `Veil familiar: ${label}`),
+      hint: wiz("detach this agent's terminal", "draw the veil over this familiar's scrying portal"),
+      keywords: 'hide detach window agent ' + label + ' ' + (a.conv_id || '')
+        + ' veil conceal cloak portal scrying familiar',
       run: () => hideAgent(sel, label),
     });
   }
@@ -458,16 +516,20 @@ function buildCommands() {
     const sel = a.agent_id || a.conv_id;
     if (a.online) {
       cmds.push({
-        icon: '⏻', label: `Stop agent: ${label}`,
-        hint: 'soft-exit, then force-kill if it does not exit (resumable)',
-        keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || ''),
+        icon: wiz('⏻', '🌙'), label: wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`),
+        hint: wiz('soft-exit, then force-kill if it does not exit (resumable)',
+          'lull into slumber: a gentle /exit, then a firmer hand if it lingers (rousable)'),
+        keywords: 'stop shutdown shut down kill power off halt agent ' + label + ' ' + (a.conv_id || '')
+          + ' slumber sleep rest lull dormant familiar',
         run: () => stopAgentInteractive(sel, label),
       });
     } else {
       cmds.push({
-        icon: '⏼', label: `Resume agent: ${label}`,
-        hint: 'restart in a fresh tmux session, resumed onto its conversation',
-        keywords: 'resume start power on wake boot up agent ' + label + ' ' + (a.conv_id || ''),
+        icon: wiz('⏼', '✨'), label: wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`),
+        hint: wiz('restart in a fresh tmux session, resumed onto its conversation',
+          'rouse into a fresh tmux session, resumed onto its scroll'),
+        keywords: 'resume start power on wake boot up agent ' + label + ' ' + (a.conv_id || '')
+          + ' awaken rouse stir revive kindle familiar',
         run: () => resumeAgentReq(sel, label),
       });
     }
@@ -486,10 +548,13 @@ function buildCommands() {
     for (const status of ['idle', 'offline']) {
       const n = countGroupMembersByStatus(g.name, status);
       if (!n) continue;
+      const plural = n === 1 ? '' : 's';
       cmds.push({
-        icon: '♻', label: `Retire ${status} agents in ${g.name}`,
-        hint: `preview + demote ${n} ${status} agent${n === 1 ? '' : 's'} to plain conversations`,
-        keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name,
+        icon: wiz('♻', '🪄'), label: wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`),
+        hint: wiz(`preview + demote ${n} ${status} agent${plural} to plain conversations`,
+          `preview + banish ${n} ${status} familiar${plural} back to plain scrolls`),
+        keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name
+          + ' banish exile dismiss familiars coven',
         run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },
       });
     }
@@ -506,9 +571,11 @@ function buildCommands() {
     const scannable = (g.default_cwd && g.default_cwd.trim()) || (g.members && g.members.length);
     if (!scannable) continue;
     cmds.push({
-      icon: '🧹', label: `Cleanup worktrees in ${g.name}`,
-      hint: "scan this group's repo for stale worktrees and remove the ones you pick",
-      keywords: 'cleanup worktree worktrees tidy remove stale orphan branch git group ' + g.name,
+      icon: wiz('🧹', '🍂'), label: wiz(`Cleanup worktrees in ${g.name}`, `Prune stray branches in ${g.name}`),
+      hint: wiz("scan this group's repo for stale worktrees and remove the ones you pick",
+        "scan this coven's grove for withered branches and prune the ones you pick"),
+      keywords: 'cleanup worktree worktrees tidy remove stale orphan branch git group ' + g.name
+        + ' prune withered grove branches coven',
       run: () => { recordGroupInteraction(g.name); openWorktreeCleanup(g.name); },
     });
   }
@@ -522,9 +589,10 @@ function buildCommands() {
     const label = a.title || (a.conv_id || '').slice(0, 8);
     const status = a.online ? ((a.state && a.state.status) || 'online') : 'offline';
     cmds.push({
-      icon: '♻', label: `Retire agent: ${label}`,
-      hint: `demote to a plain conversation (${status})`,
-      keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status,
+      icon: wiz('♻', '🪄'), label: wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`),
+      hint: wiz(`demote to a plain conversation (${status})`, `banish back to a plain scroll (${status})`),
+      keywords: 'retire demote cleanup remove agent ' + label + ' ' + (a.conv_id || '') + ' ' + status
+        + ' banish exile dismiss familiar',
       // Retire stays conv-keyed (not agent_id): the server's dangling-agent
       // recovery only triggers for a UUID-shaped selector that fails to
       // resolve, so a stable agent_id would silently demote a dangling
@@ -697,11 +765,22 @@ export function bindCommandPalette() {
   // Theme flipped WHILE the palette is open (the +W hotkey fires even with
   // focus in the search box). The CSS re-skin — the Spellbook title, the
   // arcane chrome — swaps instantly on the body.wizard class, so re-apply the
-  // JS-driven copy (placeholder + the empty-state line via a re-render) so it
-  // doesn't lag a theme behind. slop.js dispatches tclaude:wizard per toggle.
+  // JS-driven copy so it doesn't lag a theme behind: the placeholder (via
+  // applyThemeCopy), the empty-state line (via the re-render), AND the command
+  // labels/hints themselves — those are baked by buildCommands' wiz() calls at
+  // open time, so we rebuild the list here to re-skin every Summon/Slumber/Veil
+  // presented label for the new theme. slop.js dispatches tclaude:wizard per
+  // toggle. Rebuilding re-reads lastSnapshot, same as a fresh open.
   document.addEventListener('tclaude:wizard', () => {
     if (!isOpen()) return;
+    // Reset the selection before re-ranking: a theme flip can re-order the
+    // filtered list (e.g. "veil" jumps from a weak keyword hit in the plain
+    // theme to a label-prefix hit in wizard mode), so a preserved index would
+    // land on a different command than the one that was highlighted. Start
+    // fresh at the top, the same way a keystroke does.
     applyThemeCopy();
+    commands = buildCommands();
+    selected = 0;
     render(input.value);
   });
 

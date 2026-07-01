@@ -62,8 +62,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the plain spawn reads the last-interacted group")
 	must("openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {})",
 		"the plain spawn defaults the picker to the last group (still changeable)")
-	must("label: `Spawn agent in ${g.name}…`",
-		"the palette offers a pinned spawn per group")
+	must("label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`)",
+		"the palette offers a pinned spawn per group (plain label + arcane wizard label)")
 	must("openAgentSpawnModal({ groupName: g.name })",
 		"each per-group spawn pins its group")
 
@@ -91,8 +91,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("data-group-key=", "fold targets the group's <details data-group-key>")
 
 	// Consistent presentation: every detach command reads "Hide", every
-	// raise command reads "Focus" (no stray "Unfocus" in a label).
-	must("label: 'Hide all windows'", "the bulk detach command reads Hide, not Unfocus")
+	// raise command reads "Focus" (no stray "Unfocus" in a label). In 🧙 mode
+	// the presented label re-skins to "Veil all familiars" via the wiz() helper
+	// — both copies are pinned in the one needle. The plain word stays the
+	// keyword vocabulary, so old search terms keep working (TestDashboardHTML_
+	// WizardCommandPaletteSynonyms covers the arcane→plain synonym bridge).
+	must("wiz('Hide all windows', 'Veil all familiars')", "the bulk detach command reads Hide (plain) / Veil (wizard), not Unfocus")
 
 	// Power control: stop / start agent PROCESSES (distinct from the
 	// window ops, which only detach/raise terminals). Each tier delegates
@@ -105,21 +109,25 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// wrong verb.
 	must("shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq",
 		"palette imports the existing power-control ops from refresh.js")
+	// Each presented label is a wiz(plain, arcane) pair — the plain wording in
+	// the default/slop theme, the 🧙 Slumber/Awaken wording under body.wizard —
+	// pinned in one needle so dropping either copy fails CI. The plain verbs
+	// stay in the keywords so old search terms keep working.
 	// Global all-agents.
-	must("label: 'Shut down all agents'", "the palette offers a global shutdown")
+	must("wiz('Shut down all agents', 'Slumber all familiars')", "the palette offers a global shutdown (plain + arcane label)")
 	must("shutdownScope('all', null)", "global shutdown reuses shutdownScope")
-	must("label: 'Power on all agents'", "the palette offers a global power-on")
+	must("wiz('Power on all agents', 'Awaken all familiars')", "the palette offers a global power-on (plain + arcane label)")
 	must("powerOnScope('all', null)", "global power-on reuses powerOnScope")
 	// Per-group batch.
-	must("label: `Shut down group: ${g.name}`", "the palette offers a per-group shutdown")
+	must("wiz(`Shut down group: ${g.name}`, `Slumber coven: ${g.name}`)", "the palette offers a per-group shutdown (plain + arcane label)")
 	must("shutdownScope('group', g.name)", "per-group shutdown reuses shutdownScope")
-	must("label: `Power on group: ${g.name}`", "the palette offers a per-group power-on")
+	must("wiz(`Power on group: ${g.name}`, `Awaken coven: ${g.name}`)", "the palette offers a per-group power-on (plain + arcane label)")
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
-	must("label: `Stop agent: ${label}`", "the palette offers a per-agent stop")
+	must("wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
 	must("stopAgentInteractive(sel, label)",
 		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
-	must("label: `Resume agent: ${label}`", "the palette offers a per-agent resume")
+	must("wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`)", "the palette offers a per-agent resume (plain + arcane label)")
 	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
 	// Retire: the palette can demote agents back to plain conversations.
@@ -131,13 +139,13 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// list to /api/groups/{name}/retire — so the BE retires exactly what
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
-	must("label: `Retire agent: ${label}`", "the palette offers a per-agent retire")
+	must("wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`)", "the palette offers a per-agent retire (plain + arcane Banish label)")
 	must("retireAgentInteractive(a.conv_id, label)",
 		"per-agent retire reuses the shared confirm + POST flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")
-	must("label: `Retire ${status} agents in ${g.name}`",
-		"the palette offers a per-group bulk retire by status")
+	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`)",
+		"the palette offers a per-group bulk retire by status (plain + arcane Banish label)")
 	must("countGroupMembersByStatus(g.name, status)",
 		"the bulk retire command is gated on a live match count (no no-op)")
 	must("openRetirePreview(g.name, status)",
@@ -147,8 +155,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("./palette-score.js", "palette imports the pure ranking module")
 	must("rankCommands(commands", "rendering ranks via the shared scorer")
 	must("export const SYNONYMS", "the scorer defines a synonym map")
-	must("hide: ['unfocus']", "hide is a synonym for unfocus")
-	must("show: ['focus']", "show is a synonym for focus")
+	must("hide: ['unfocus', 'veil']", "hide bridges to unfocus (plain) and veil (wizard)")
+	must("show: ['focus', 'reveal']", "show bridges to focus (plain) and reveal (wizard)")
 
 	// Accessibility + focus hygiene: the combobox input points its
 	// aria-activedescendant at the keyboard-selected option (each option

@@ -596,6 +596,68 @@ func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 	must("function applyThemeCopy(", "the palette centralises the theme-flavoured copy")
 }
 
+// TestDashboardHTML_WizardCommandPaletteSynonyms pins the wizard re-flavour of
+// the palette's COMMANDS themselves (not just the chrome): every presented
+// label + hint re-skins arcane under body.wizard via the wiz() helper, while
+// the plain verbs stay in the keywords and the scorer's SYNONYMS map bridges
+// the arcane words to the plain ones (and back) so old search terms never stop
+// working. Purely front-end like the rest of the wizard theme, so we
+// string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The helper that picks the arcane vs plain PRESENTED string per theme,
+	// read live so the tclaude:wizard listener's rebuild re-skins an open list.
+	must("function wiz(regular, wizard) {", "palette.js defines the per-theme presented-copy helper")
+	must("return isWizardActive() ? wizard : regular;", "wiz() returns the arcane string only in wizard mode")
+
+	// A representative arcane label from each command family — the presented
+	// wording that re-skins the Spellbook. (The plain twin in each pair is
+	// pinned by TestDashboardHTML_CommandPalette.)
+	must("'Veil all familiars'", "hide-windows presents as Veil in wizard mode")
+	must("'Reveal all familiars'", "focus-windows presents as Reveal in wizard mode")
+	must("'Slumber all familiars'", "global shutdown presents as Slumber in wizard mode")
+	must("'Awaken all familiars'", "global power-on presents as Awaken in wizard mode")
+	must("'Summon a familiar…'", "spawn presents as Summon in wizard mode")
+	must("'Dispel banished familiars…'", "delete-retired presents as Dispel in wizard mode")
+	must("`Banish familiar: ${label}`", "per-agent retire presents as Banish in wizard mode")
+	must("`Scry the ${name}`", "tab navigation presents as Scry in wizard mode")
+	must("`Furl coven: ${g.name}`", "group collapse presents as Furl in wizard mode")
+	must("`Prune stray branches in ${g.name}`", "worktree cleanup presents as Prune in wizard mode")
+
+	// The arcane vocabulary rides in the keywords (always, both themes) so a
+	// wizard-minded search finds a plain-labelled command too — spot-check a
+	// few of the noun/verb sets appended to the plain keyword strings.
+	must("summon conjure invoke call forth familiar", "spawn carries the arcane summon keywords")
+	must("slumber sleep rest lull dormant quell still familiars", "global shutdown carries the arcane slumber keywords")
+	must("banish exile dismiss familiar", "per-agent retire carries the arcane banish keywords")
+	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
+
+	// A mid-open theme flip must re-skin the baked labels, not just the
+	// placeholder — the tclaude:wizard listener rebuilds the command list AND
+	// resets the selection before re-rendering. Pin the exact 3-line sequence
+	// (rebuild → reset → re-render with the live query): openPalette also calls
+	// `commands = buildCommands();` but follows it with `input.value = ''`, not
+	// `render(input.value)`, so this needle is unique to the listener — deleting
+	// the listener's rebuild fails here rather than passing on openPalette's copy.
+	must("commands = buildCommands();\n    selected = 0;\n    render(input.value);",
+		"the tclaude:wizard listener rebuilds + resets selection so labels re-skin live without a stale highlight")
+
+	// The scorer's SYNONYMS map bridges the arcane verbs to the plain ones so
+	// typing either vocabulary finds the command in either theme.
+	must("summon: ['spawn']", "summon bridges to spawn")
+	must("slumber: ['shutdown', 'stop']", "slumber bridges to shutdown/stop")
+	must("awaken: ['resume']", "awaken bridges to resume")
+	must("banish: ['retire']", "banish bridges to retire")
+	must("veil: ['hide']", "veil bridges to hide")
+	must("reveal: ['focus', 'show']", "reveal bridges to focus/show")
+}
+
 // TestDashboardCSS_WizardCommandPaletteScoped guards that the wizard palette
 // re-skin stays scoped to #command-palette-modal — an unscoped
 // `body.wizard .palette-box { … }` is the kind of leak the sibling
