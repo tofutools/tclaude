@@ -219,6 +219,42 @@ func TestDashboardHTML_WizardSummonButton(t *testing.T) {
 	must("body.wizard .spawn-btn {", "the spawn button gets the arcane chrome re-skin")
 }
 
+// TestDashboardHTML_WizardPartyButton pins the wizard re-skin of the filter
+// bar's "+ new group" primary ("⚔ Form a party"): the per-theme label span
+// swap, the button re-skin, and the matching swap in the "No groups yet…"
+// empty-state hint. Front-end only, so we string-search the embedded source.
+func TestDashboardHTML_WizardPartyButton(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Label copy: a pure-CSS span swap, "+ new group" → "⚔ Form a party".
+	// Both spans must exist and the swap rules must be present in CSS.
+	must(`<span class="group-create-label-regular">+ new group</span>`, "the default new-group label span")
+	must(`<span class="group-create-label-wizard">⚔ Form a party</span>`, "the wizard party label span")
+	// The default-hide rule is load-bearing: without it the wizard label has no
+	// rule in the default/slop theme and BOTH labels would render side by side.
+	// Pin the literal so a dropped line fails CI rather than the browser.
+	must(".group-create-label-wizard { display: none; }", "the default theme hides the wizard label")
+	must("body.wizard .group-create-label-regular", "wizard hides the default label")
+	must("body.wizard .group-create-label-wizard", "wizard shows the party label")
+
+	// The button itself is re-skinned arcane, scoped to its id so the base
+	// .filter-bar button.primary rule still styles it in the default theme.
+	must("body.wizard #group-create-open.primary", "the party button is re-skinned in wizard mode")
+
+	// The same span pair swaps the empty-state hint that names the button, so
+	// "No groups yet…" reads "⚔ Form a party" in wizard mode too. render.js
+	// emits both variants; the swap rules above reveal the active one. Pin the
+	// full markup (through the wizard span) so dropping the wizard variant from
+	// the hint alone still fails — a looser prefix needle would pass on the
+	// button's identical regular span.
+	must(`No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong>`, "the empty-state hint carries both swappable labels")
+}
+
 // TestDashboardCSS_WizardSpawnModalScoped guards that the wizard spawn-dialog
 // re-skin stays scoped to #agent-spawn-modal — an unscoped
 // `body.wizard .cron-create-modal { … }` would repaint every sibling modal
