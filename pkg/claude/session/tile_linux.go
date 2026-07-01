@@ -357,6 +357,13 @@ type wslWin struct {
 // current rect of each "tclaude:<id>" window; Go then picks the first
 // window's monitor and computes the layout; the second SetWindowPos's each
 // window. HWNDs are OS-wide handles, so they carry across the two passes.
+//
+// Caveat (mixed-DPI): Screen.WorkingArea, GetWindowRect and SetWindowPos
+// only agree when the PowerShell host is per-monitor-DPI-aware. On a
+// hiDPI or mixed-DPI multi-monitor Windows host a non-DPI-aware host
+// reports DPI-virtualised rectangles, so placements can be scaled/offset.
+// Left as-is (best-effort) — the result is a placement offset, never a
+// crash — pending validation on such a setup.
 func tileWSLWindows(specs []TileSpec, opts TileOptions) {
 	psPath := findPowerShell()
 	if psPath == "" {

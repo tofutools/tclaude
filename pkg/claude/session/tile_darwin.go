@@ -132,21 +132,50 @@ func macMonitors() []Rect {
 
 // macScreensScript emits one "originX topY width height" line per screen.
 // NSScreen frames use a bottom-left origin with y measured up from the
-// MAIN screen's bottom; window `bounds` use a top-left origin with y down
-// from the main screen's top. The conversion for a screen whose
-// visibleFrame is (ox, oy, w, h) is topY = mainFullHeight - (oy + h);
+// PRIMARY screen's bottom; window `bounds` use a top-left origin with y
+// down from the primary screen's top. So the conversion for a screen whose
+// visibleFrame is (ox, oy, w, h) is topY = primaryFullHeight - (oy + h);
 // x is identical in both systems.
+//
+// The reference height MUST be the PRIMARY screen's — the menu-bar screen,
+// the one whose AppKit frame origin is (0,0) — NOT NSScreen mainScreen(),
+// which is the screen with keyboard focus and, for a background osascript,
+// is whatever the user last touched (often a non-primary monitor). Using
+// the focused screen's height would shift every monitor's Y by the height
+// difference on a mixed-height multi-monitor setup, landing tiled windows
+// off-screen. We find the primary by its (0,0) origin and fall back to
+// screens()[0] if none reports it.
+//
+// rectOf() normalises whatever `frame()/visibleFrame() as list` yields —
+// a flat {x,y,w,h} or a nested {{x,y},{w,h}}, depending on the OS /
+// AppleScriptObjC version — to a flat 4-item list, so the parsing is
+// robust to both. On any failure the whole script errors and macMonitors
+// falls back to the whole-desktop bounds.
 const macScreensScript = `use framework "AppKit"
 use scripting additions
-set mainH to item 2 of (item 2 of ((current application's NSScreen's mainScreen()'s frame()) as list))
+on rectOf(r)
+	set f to (r as list)
+	if (class of (item 1 of f)) is list then
+		return {item 1 of (item 1 of f), item 2 of (item 1 of f), item 1 of (item 2 of f), item 2 of (item 2 of f)}
+	else
+		return {item 1 of f, item 2 of f, item 3 of f, item 4 of f}
+	end if
+end rectOf
+set screenList to (current application's NSScreen's screens()) as list
+set primaryH to 0
+repeat with s in screenList
+	set fr to rectOf((contents of s)'s frame())
+	if ((item 1 of fr) = 0 and (item 2 of fr) = 0) then set primaryH to (item 4 of fr)
+end repeat
+if primaryH = 0 then set primaryH to (item 4 of rectOf((contents of (item 1 of screenList))'s frame()))
 set out to ""
-repeat with s in (current application's NSScreen's screens())
-	set vf to ((s's visibleFrame()) as list)
-	set ox to (item 1 of (item 1 of vf))
-	set oy to (item 2 of (item 1 of vf))
-	set w to (item 1 of (item 2 of vf))
-	set h to (item 2 of (item 2 of vf))
-	set out to out & (ox as integer) & " " & ((mainH - (oy + h)) as integer) & " " & (w as integer) & " " & (h as integer) & linefeed
+repeat with s in screenList
+	set vf to rectOf((contents of s)'s visibleFrame())
+	set ox to (item 1 of vf)
+	set oy to (item 2 of vf)
+	set w to (item 3 of vf)
+	set h to (item 4 of vf)
+	set out to out & (ox as integer) & " " & ((primaryH - (oy + h)) as integer) & " " & (w as integer) & " " & (h as integer) & linefeed
 end repeat
 return out`
 
