@@ -158,6 +158,16 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// (opening a web window is an explicit "console on this agent HERE"
 	// gesture), and doing it atomically as part of the attach needs no separate
 	// detach/confirm round-trip. See openAttachCmdForce.
+	//
+	// Caveat — this is fully clean only when the displaced client is a NATIVE
+	// terminal (no runPTYOverWS behind it). If the displaced client is ANOTHER
+	// web window on this same session, `-d` detaches it and its runPTYOverWS
+	// exits, whose teardown then runs a whole-session detachTmuxSession (see its
+	// comment) that also drops the client we just attached — the new web window
+	// blanks moments after opening. Closing that residual needs the per-client
+	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
+	// until then this is still strictly better than the pre-fix behaviour and
+	// correct for the common native-terminal case.
 	runPTYOverWS(w, r, openAttachCmdForce(sess.ID), sess.TmuxSession)
 }
 

@@ -507,6 +507,11 @@ func openAttachCmd(label string) string {
 // bug this fixes. `attach-session -d` detaches the old client as an atomic
 // precondition of attaching the new one, so no separate detach/confirm step is
 // needed.
+//
+// This is fully clean when the displaced client is a native terminal. When it
+// is another web window on the same session, the caller comment in
+// handleDashboardOpenWindowWS explains the residual whole-session-teardown race
+// that a per-client (#{client_tty}) detach would close.
 func openAttachCmdForce(label string) string {
 	return attachCmd(label, true)
 }
