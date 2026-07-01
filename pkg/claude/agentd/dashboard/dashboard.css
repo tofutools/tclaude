@@ -5614,15 +5614,15 @@ body.wizard .mail-row-dot { color: #c0392b; text-shadow: 0 0 6px rgba(192, 57, 4
 
 body.wizard .mail-row-wrap[data-kind="decree"] .mail-row.unread { border-left-color: #d9b45a; }
 body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-dot { color: #e6c46a; text-shadow: 0 0 7px rgba(230, 196, 106, 0.9); }
-body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-subject::before { content: "♛ "; color: #d9b45a; }
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-subject::before { content: "♛ " / ""; color: #d9b45a; }
 
 body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row.unread { border-left-color: #c99a3e; }
 body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-dot { color: #e0a93f; text-shadow: 0 0 7px rgba(224, 169, 63, 0.85); }
-body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-subject::before { content: "❧ "; color: #c99a3e; }
+body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-subject::before { content: "❧ " / ""; color: #c99a3e; }
 
 body.wizard .mail-row-wrap[data-kind="reply"] .mail-row.unread { border-left-color: #a97bd6; }
 body.wizard .mail-row-wrap[data-kind="reply"] .mail-row-dot { color: #a97bd6; text-shadow: 0 0 7px rgba(169, 123, 214, 0.85); }
-body.wizard .mail-row-wrap[data-kind="reply"] .mail-row-subject::before { content: "⤷ "; color: #a97bd6; }
+body.wizard .mail-row-wrap[data-kind="reply"] .mail-row-subject::before { content: "⤷ " / ""; color: #a97bd6; }
 
 /* ─── Bulk bars + pager (arcane chrome) ─────────────────────────────── */
 body.wizard .mail-bulk-bar,
@@ -5781,22 +5781,25 @@ body.wizard .mail-reader[data-kind="decree"] .mail-reader-body a {
 body.wizard .mail-reader[data-kind="decree"] .mail-state-unread { color: #f0b3b3; }
 body.wizard .mail-reader[data-kind="decree"] .mail-state-pending { color: #e6c46a; }
 
-/* The wax seals — one emblem + colour per kind. */
+/* The wax seals — one emblem + colour per kind. The `content: "x" / ""`
+   form gives each decorative glyph (here and on the .mail-row-subject::before
+   kind markers above) an empty ALT string, so screen readers skip it rather
+   than announcing "♛ / ❧ / ⤷ / ✦" noise before every subject + header. */
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-head::after {
-  content: "✦"; color: #f0d3ba; border: 1px solid #6e1f18;
+  content: "✦" / ""; color: #f0d3ba; border: 1px solid #6e1f18;
   background: radial-gradient(circle at 35% 30%, #d1503f, #a5342e 60%, #7a251d);
 }
 body.wizard .mail-reader[data-kind="reply"] .mail-reader-head::after {
-  content: "⤷"; color: #f3e6c0; border: 1px solid #4a2f7a;
+  content: "⤷" / ""; color: #f3e6c0; border: 1px solid #4a2f7a;
   background: radial-gradient(circle at 35% 30%, #a97bd6, #5a3f8a 60%, #3a2760);
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-head::after {
-  content: "♛"; color: #f3e6c0; border: 1px solid #d9b45a;
+  content: "♛" / ""; color: #f3e6c0; border: 1px solid #d9b45a;
   background: radial-gradient(circle at 35% 30%, #8f6fca, #4a2f7a 60%, #2e1b52);
   box-shadow: 0 0 10px rgba(217, 180, 90, 0.5), inset 0 -2px 4px rgba(0, 0, 0, 0.35);
 }
 body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-head::after {
-  content: "❧"; color: #f3e6c0; border: 1px solid #5f4519;
+  content: "❧" / ""; color: #f3e6c0; border: 1px solid #5f4519;
   background: radial-gradient(circle at 35% 30%, #c99a3e, #8a6a2e 60%, #5f4519);
 }
 
