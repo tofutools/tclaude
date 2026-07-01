@@ -174,7 +174,11 @@ function cronStatusPill(s) {
 
 function renderCron(jobs) {
   if (!jobs || !jobs.length) {
-    return '<div class="empty">No cron jobs yet. Create one with the <strong>+ new cron job</strong> button above.</div>';
+    // The button label the hint names swaps per theme too (the same
+    // .cron-open-label-* span pair as the filter-bar button), so the empty
+    // state reads "⏳ Bind a recurring ritual" in 🧙 wizard mode — CSS reveals
+    // the active variant, no JS theme read needed.
+    return '<div class="empty">No cron jobs yet. Create one with the <strong><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.</div>';
   }
   return `
     <table>

@@ -540,6 +540,78 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must(`No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong>`, "the empty-state hint carries both swappable labels")
 }
 
+// TestDashboardHTML_WizardCronDialog pins the wizard re-skin of the cron tab's
+// "+ new cron job" flow ("⏳ Bind a recurring ritual"): the per-theme open-button
+// label span swap + its empty-state hint twin, the arcane dialog surface, the
+// JS-set title/submit glyph copy (create *and* edit via the .cron-editing mode
+// class), and the picked-chip highlight. Front-end only, so we string-search the
+// embedded source (html + css + js) rather than running the JS.
+func TestDashboardHTML_WizardCronDialog(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Open button: a pure-CSS span swap, "+ new cron job" → "⏳ Bind a
+	// recurring ritual". Both spans and the swap rules must be present.
+	must(`<span class="cron-open-label-regular">+ new cron job</span>`, "the default open-button label span")
+	must(`<span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>`, "the wizard open-button label span")
+	// The default-hide rule is load-bearing: without it the wizard label has no
+	// rule in the default/slop theme and BOTH labels render side by side.
+	must(".cron-open-label-wizard { display: none; }", "the default theme hides the wizard label")
+	must("body.wizard .cron-open-label-regular", "wizard hides the default label")
+	must("body.wizard .cron-open-label-wizard", "wizard shows the ritual label")
+	must("body.wizard #cron-create-open.primary", "the open button is re-skinned in wizard mode")
+	must("body.wizard #cron-create-open.primary:hover", "the open button has a wizard hover re-skin")
+
+	// The same span pair swaps the "No cron jobs yet…" empty-state hint that
+	// names the button (tabs.js emits both variants). Pin the full markup
+	// through the wizard span so dropping the wizard variant still fails.
+	must(`No cron jobs yet. Create one with the <strong><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong>`, "the empty-state hint carries both swappable labels")
+
+	// The dialog surface + title are re-skinned, scoped to #cron-create-modal so
+	// the sibling .cron-create-modal dialogs keep the default chrome.
+	must("body.wizard #cron-create-modal .cron-create-modal", "the cron dialog surface is re-skinned")
+	// Title/submit copy is JS-set, so it's swapped via font-size:0 + ::before
+	// glyphs, with the create/edit split driven by the .cron-editing mode class.
+	must(`body.wizard #cron-create-modal #cron-create-title::before {`, "the title uses a ::before glyph swap")
+	must(`content: "⏳ Bind a recurring ritual";`, "create-mode title copy")
+	must(`content: "⏳ Re-bind the ritual";`, "edit-mode title copy")
+	must("body.wizard #cron-create-modal.cron-editing #cron-create-title::before", "edit-mode title is keyed on the .cron-editing class")
+	must(`content: "⏳ Bind it!";`, "create-mode submit-lever copy")
+	must(`content: "⏳ Re-bind it!";`, "edit-mode submit-lever copy")
+	must("body.wizard #cron-create-modal #cron-create-submit {", "the submit button becomes a gilded lever")
+	// The brief in-flight (disabled) submit copy stays in the arcane voice — pin
+	// both mode variants so a dropped busy label fails CI rather than the browser.
+	must(`content: "⏳ Binding…";`, "create-mode in-flight submit copy")
+	must(`content: "⏳ Re-binding…";`, "edit-mode in-flight submit copy")
+
+	// The JS toggles the mode class on the modal (a MODE flag, not a theme read).
+	must("$('#cron-create-modal').classList.add('cron-editing')", "edit-open JS sets the edit mode class")
+	must("$('#cron-create-modal').classList.remove('cron-editing')", "create-open JS clears the edit mode class")
+
+	// The picked "Every" chip keeps a distinct gilded highlight over the row of
+	// tarnished-gold chips. Excluding the submit via :not(.primary) (not
+	// :not(#id)) is what lets this .selected rule out-specify the chip skin.
+	must("body.wizard #cron-create-modal .cron-schedule-chips button.selected", "the picked schedule chip gets a gilded highlight")
+	must("body.wizard #cron-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+}
+
+// TestDashboardCSS_WizardCronDialogScoped guards that the wizard cron-dialog
+// re-skin stays scoped to #cron-create-modal — the dialog shares the
+// .cron-create-modal class with the spawn / clone / reincarnate / group-import
+// / message-create modals, so an unscoped rule would repaint all of them. This
+// mirrors TestDashboardCSS_WizardSpawnModalScoped; the shared unscoped-needle
+// guard below covers both, but a dedicated check documents this dialog's
+// dependence on the scoping too.
+func TestDashboardCSS_WizardCronDialogScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard cron re-skin is unscoped — will repaint spawn/clone/message modals too")
+	}
+}
+
 // TestDashboardCSS_WizardSpawnModalScoped guards that the wizard spawn-dialog
 // re-skin stays scoped to #agent-spawn-modal — an unscoped
 // `body.wizard .cron-create-modal { … }` would repaint every sibling modal
