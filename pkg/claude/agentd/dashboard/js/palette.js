@@ -597,6 +597,14 @@ function runSelected() {
 
 // -- Open / close ------------------------------------------------------
 
+// applyThemeCopy re-flavours the JS-driven text (the input placeholder) for
+// the live theme — the wizard "Spellbook" prompt vs. the captured regular
+// one. Called on each open AND on a mid-open theme flip (the CSS chrome
+// swaps instantly via body.wizard, so the JS copy must follow to match).
+function applyThemeCopy() {
+  input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder;
+}
+
 function openPalette() {
   // Remember where focus was so closePalette can return it.
   lastFocus = document.activeElement;
@@ -605,7 +613,7 @@ function openPalette() {
   input.value = '';
   // Re-flavour the prompt per the live theme — wizard mode may have been
   // toggled since the last open, so pick fresh each time.
-  input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder;
+  applyThemeCopy();
   overlay.classList.add('show');
   render('');
   // Focus after the show so the box is laid out; select-all is moot on
@@ -684,6 +692,17 @@ export function bindCommandPalette() {
   // Backdrop click closes (a click on the box itself does not).
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closePalette();
+  });
+
+  // Theme flipped WHILE the palette is open (the +W hotkey fires even with
+  // focus in the search box). The CSS re-skin — the Spellbook title, the
+  // arcane chrome — swaps instantly on the body.wizard class, so re-apply the
+  // JS-driven copy (placeholder + the empty-state line via a re-render) so it
+  // doesn't lag a theme behind. slop.js dispatches tclaude:wizard per toggle.
+  document.addEventListener('tclaude:wizard', () => {
+    if (!isOpen()) return;
+    applyThemeCopy();
+    render(input.value);
   });
 
   // The header 🔍 button is the discoverable entry point for anyone who

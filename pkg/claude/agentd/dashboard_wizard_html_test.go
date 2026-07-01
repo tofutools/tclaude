@@ -268,6 +268,11 @@ func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
 	must("input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder",
 		"the palette swaps the placeholder per theme on open")
 	must("isWizardActive() ? WIZARD_EMPTY", "the no-match line is wizard-flavoured")
+	// The theme copy is centralised so a theme flip WHILE the palette is open
+	// (the +W hotkey fires with focus in the box) re-applies it — the CSS
+	// chrome swaps instantly, so the JS copy must follow rather than lag a
+	// theme behind until the next open.
+	must("function applyThemeCopy(", "the palette centralises the theme-flavoured copy")
 }
 
 // TestDashboardCSS_WizardCommandPaletteScoped guards that the wizard palette
