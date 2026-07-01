@@ -4565,9 +4565,12 @@ body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93
 /* Spawn = 🔮 Summon! — the submit button re-skinned into a gilded conjuring
    button, the wizard twin of slop's 🎰 PULL! lever. Same mechanism: the
    button's own "Spawn" text is hidden (font-size: 0) and replaced by a
-   ::before glyph; the disabled state (JS swaps in "Spawning…") restores a
-   font-size so that fallback shows instead. The click already sprays cast
-   sparks via wizard-fx's global cast-FX handler, so no extra JS is needed.
+   ::before glyph. Where slop's disabled state restores the font to surface the
+   JS "Spawning…" fallback, wizard keeps the text hidden and re-skins the
+   disabled ::before to "🔮 Summoning…" (see below) — the in-progress copy stays
+   in the Summon voice rather than reverting to the neutral "Spawning…". The
+   click already sprays cast sparks via wizard-fx's global cast-FX handler, so
+   no extra JS is needed.
    The generic secondary-button rule above can't touch this button: its
    :not(#agent-spawn-submit) excludes it, so the two rules never overlap. */
 body.wizard #agent-spawn-modal #agent-spawn-submit {
@@ -4597,11 +4600,13 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #agent-spawn-modal #agent-spawn-submit:disabled {
-  /* Restore the font so the JS "Spawning…" fallback shows over the ::before. */
-  font-size: 13px;
+  /* Mid-summon: keep the button's own text hidden (font-size: 0 from the base
+     rule) and re-skin the ::before to "🔮 Summoning…" below, instead of
+     restoring the font to show the JS "Spawning…" fallback. Since the button
+     started as "🔮 Summon!", the in-progress label stays in voice. */
   opacity: 0.7;
 }
-body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: none; }
+body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: "🔮 Summoning…"; }
 
 /* ─── Wizard retire modal — "Banish this familiar?" ─────────────────
    The arcane counterpart to the Summon dialog above: retiring a familiar
