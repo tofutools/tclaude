@@ -51,6 +51,17 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// dead wait that every stop/retire/reincarnate flow — and the
 	// WaitForBackgroundForTest drain — would otherwise pay.
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
+	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
+	// now runs a tiling gate, and no flow test should read the developer's
+	// real config.json or move a real OS window as a side effect of one.
+	// Off + no-op dispatch + zero settle keeps every focus scenario
+	// hermetic; a test that exercises tiling re-swaps these (its later
+	// Cleanup restores to this neutral pair, then ours restores production).
+	t.Cleanup(agentd.SetTileConfigForFocusForTest(func() (bool, session.TileOptions) {
+		return false, session.TileOptions{}
+	}))
+	t.Cleanup(agentd.SetTileAgentWindowsForTest(func([]session.TileSpec, session.TileOptions) {}))
+	t.Cleanup(agentd.SetTileSettleDelayForTest(0))
 
 	w := testharness.New(t)
 	m := w.DefaultMocks(t)

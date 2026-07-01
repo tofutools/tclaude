@@ -167,7 +167,8 @@ member** (a searchable keyboard-navigable overlay), **⏰ multicast** cron,
 **✉ message** (a one-shot message to the group or a ticked subset),
 **rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
 cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
-**🪟 windows…** (bulk focus/unfocus the members' terminal windows), **🟢
+**🪟 windows…** (bulk focus/unfocus the members' terminal windows —
+optionally auto-tiled into a grid, see [Config](#config)), **🟢
 power on** (resume every offline member), **🛑 shutdown** (stop every
 running member), and **delete group**. The
 header also carries three click-to-edit chips: **📁 start-dir** (the default
@@ -272,6 +273,15 @@ build of tclaude recognises. Edits are staged in the form until you press
 **Save changes**, which shows a confirm diff before anything is written. Most
 settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
+
+The **Window focus** field also holds an opt-in **auto-tile** toggle: when
+on, focusing/​showing more than one agent's window (the 🪟 windows… modal or
+the command palette) rearranges that set into a tidy layout — `grid`
+(default), `columns`, `rows`, or `cascade` — instead of leaving each window
+where the OS dropped it, with configurable inter-tile **gap** and screen-edge
+**margin**. It is best-effort per platform (macOS AppleScript, Linux
+xdotool/kdotool, WSL PowerShell); an unsupported desktop simply leaves the
+windows as-is. A single focused window is never tiled.
 
 ## Spawning agents from the dashboard
 

@@ -409,6 +409,15 @@ function populateConfigForm(cfg) {
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
 
+  // focus.tile — auto-tiling after a bulk focus. Layout blank/absent
+  // shows as "grid" (its resolved default); gap/margin blank when unset
+  // so the human sees exactly what's on disk (an explicit 0 stays 0).
+  const tile = (cfg.focus && cfg.focus.tile) || {};
+  $('#cfg-focus-tile').checked = !!tile.enabled;
+  $('#cfg-focus-tile-layout').value = tile.layout || 'grid';
+  $('#cfg-focus-tile-gap').value = (tile.gap != null) ? tile.gap : '';
+  $('#cfg-focus-tile-margin').value = (tile.margin != null) ? tile.margin : '';
+
   // Cost display multiplier — blank when unset (no adjustment); a stored
   // value shows as-is so the human sees exactly what's on disk.
   const cf = cfg.cost && cfg.cost.estimate_factor;
@@ -646,6 +655,22 @@ function assembleConfig() {
   // had no focus key.
   const fc = (cfg.focus && typeof cfg.focus === 'object') ? cfg.focus : {};
   if ($('#cfg-focus-raiseonly').checked) fc.raise_only = true; else delete fc.raise_only;
+
+  // focus.tile sub-block. Clone the existing one so a future sub-field
+  // round-trips, then set only the form-owned keys. Each key is dropped
+  // at its default (layout=grid, blank gap/margin) so an untouched form
+  // leaves the block genuinely absent rather than marshalling a spurious
+  // diff. gap/margin honour an explicit 0 (flush) vs blank (default).
+  const tc = (fc.tile && typeof fc.tile === 'object') ? fc.tile : {};
+  if ($('#cfg-focus-tile').checked) tc.enabled = true; else delete tc.enabled;
+  const tileLayout = $('#cfg-focus-tile-layout').value;
+  if (tileLayout && tileLayout !== 'grid') tc.layout = tileLayout; else delete tc.layout;
+  const tileGap = $('#cfg-focus-tile-gap').value.trim();
+  if (tileGap !== '' && Number.isFinite(parseInt(tileGap, 10))) tc.gap = parseInt(tileGap, 10); else delete tc.gap;
+  const tileMargin = $('#cfg-focus-tile-margin').value.trim();
+  if (tileMargin !== '' && Number.isFinite(parseInt(tileMargin, 10))) tc.margin = parseInt(tileMargin, 10); else delete tc.margin;
+  if (Object.keys(tc).length) fc.tile = tc; else delete fc.tile;
+
   if (Object.keys(fc).length) cfg.focus = fc; else delete cfg.focus;
 
   // log_rotation is an optional block. Clone the existing one so a
