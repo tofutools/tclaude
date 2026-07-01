@@ -1070,7 +1070,11 @@
 </div>
 <div class="modal-overlay" id="edit-member-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title">
-    <h3 id="edit-member-title">Edit agent</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, the same mechanism as the
+         spawn dialog's .spawn-title-* / retire dialog's .retire-title-* pairs): a
+         plain "Edit agent" normally, an arcane "Enchant this familiar" in 🧙 wizard
+         mode — re-tuning a familiar's attributes rather than summoning or banishing one. -->
+    <h3 id="edit-member-title"><span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this familiar</span></h3>
     <div class="modal-meta" id="edit-member-meta"></div>
     <div class="field">
       <label for="edit-member-title-input">Title</label>
@@ -1093,9 +1097,13 @@
     </div>
     <div class="cron-create-error" id="edit-member-error"></div>
     <div class="modal-buttons">
-      <button id="edit-member-perms" type="button" title="Open the permanent-permission editor for this agent (grant / deny / inherit per slug)">Permissions…</button>
+      <!-- Secondary button labels swap per theme (same pure-CSS span-swap as the
+           title): Permissions… → Grimoire…, Cancel → Dispel under body.wizard. The
+           Save primary keeps its plain "Save" text and is re-lettered to a gilded
+           "✨ Enchant!" lever via a ::before glyph (see the wizard CSS block). -->
+      <button id="edit-member-perms" type="button" title="Open the permanent-permission editor for this agent (grant / deny / inherit per slug)"><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
       <span class="spacer"></span>
-      <button id="edit-member-cancel">Cancel</button>
+      <button id="edit-member-cancel"><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
       <button id="edit-member-save">Save</button>
     </div>
   </div>
