@@ -25,8 +25,27 @@ import { lastSnapshot } from './dashboard.js';
 
 // Arcane sparks for the cursor trail and cast bursts…
 const SPARK_EMOJIS = ['✨', '⭐', '💫', '🪄', '🔥', '🌟'];
-// …and the louder set the Meteor Swarm rains from the top edge.
+// …and the louder set the Meteor Swarm + summon shower rain from the top edge.
 const METEOR_EMOJIS = ['☄️', '🔥', '✨', '💥', '⭐', '🌟'];
+
+// Silly spell-flavoured one-liners the summon banner flashes when a new
+// familiar is conjured — the 🧙 twin of slop's "🎰 JACKPOT! 🎰". One is picked
+// at random per spawn so a busy operator sees variety. Kept short so the
+// banner reads at a glance; the CSS clamps the font on narrow viewports.
+const SUMMON_QUOTES = [
+  '🧙 It\'s wizard time!',
+  '🔥 Fireball!',
+  '✨ You shall not pass!',
+  '🪄 Abracadabra!',
+  '⚡ Lightning bolt! Lightning bolt!',
+  '📜 A new familiar answers the call',
+  '🔮 By the arcane, it lives!',
+  '🐉 The summoning circle glows',
+  '🎲 Natural 20 on the summon check',
+  '🧪 It\'s alive… mostly',
+  '👁️ The tower gains an apprentice',
+  '☄️ Rise, familiar, rise!',
+];
 
 // reducedMotion gates every effect so a user with
 // `prefers-reduced-motion: reduce` sees nothing extra. Read at call time
@@ -226,6 +245,24 @@ export function bindWizardMarquee() {
   });
 }
 
+// ─── Summon celebration ──────────────────────────────────────────────────
+// The 🧙 twin of slop-fx's slopJackpot(): fired by the spawn modal on a
+// successful POST. Flashes a random silly spell quote and rains an arcane
+// shower from the top edge — the wizard-mode "It's wizard time!" moment when a
+// new familiar is conjured. Silently no-ops when wizard mode is off (mirroring
+// slopJackpot's slop-off no-op) so modal-spawn can call it unconditionally
+// next to slopJackpot; the two themes are mutually exclusive, so only the
+// active one ever paints. reduced-motion suppresses it like every other
+// wizard effect.
+export function wizardSummon() {
+  if (!isWizardActive() || reducedMotion()) return;
+  const quote = SUMMON_QUOTES[Math.floor(Math.random() * SUMMON_QUOTES.length)];
+  showBanner(quote, 'wizard-summon-banner');
+  // A lighter shower than the Konami Meteor Swarm (70) — celebratory, not the
+  // full spectacle, reusing the same top-edge fall so the two share a look.
+  meteorStorm(34);
+}
+
 // ─── Meteor Swarm (Konami) ───────────────────────────────────────────────
 // Type ↑↑↓↓←→←→ B A and the page erupts: a banner, an ember storm from the
 // top edge, and a screen shake. Self-contained spectacle (wizard mode has no
@@ -237,12 +274,19 @@ const KONAMI = [
 let konamiProgress = 0;
 
 // showBanner is a centred flash banner (see .wizard-banner in dashboard.css),
-// self-cleaning on animationend.
-function showBanner(str) {
+// self-cleaning on animationend. `extraClass` (optional) adds a variant class
+// — the summon banner uses it to clamp the font so a longer spell quote fits.
+// The text rides an inner .wizard-banner-text span so a variant can cap its
+// width and let it wrap while the full-viewport flex container keeps centring
+// it (the Meteor Swarm's short text is unaffected).
+function showBanner(str, extraClass) {
   const banner = document.createElement('div');
-  banner.className = 'wizard-banner';
-  banner.textContent = str;
+  banner.className = extraClass ? 'wizard-banner ' + extraClass : 'wizard-banner';
   banner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'wizard-banner-text';
+  text.textContent = str;
+  banner.appendChild(text);
   document.body.appendChild(banner);
   banner.addEventListener('animationend', () => banner.remove(), { once: true });
 }
