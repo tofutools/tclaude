@@ -78,10 +78,11 @@ export function variantLabel(variant, n, theme) {
 }
 
 // themedSummaryText renders a summary's per-variant breakdown as one tooltip
-// line ("2 working · 1 idle", or the wizard flavour). activitySummary caches
-// the regular breakdown in `.summaryText`; callers reach for this when the
-// active theme may re-flavour it (render.js, per theme). Empty when nothing
-// is present.
+// line ("2 working · 1 idle", or the wizard flavour). This is the production
+// render path for both tooltip sites (render.js calls it for every theme,
+// blank included), so the line can re-flavour when the theme flips;
+// activitySummary's cached `.summaryText` is the regular-only convenience
+// twin. Empty when nothing is present.
 export function themedSummaryText(summary, theme) {
   if (!summary || !summary.present || !summary.present.length) return '';
   return summary.present.map(v => variantLabel(v, summary.counts[v], theme)).join(' · ');
@@ -139,17 +140,23 @@ export function activitySummary(members) {
     return true;
   });
   const level = present[0] || 'empty';
-  // `.summaryText` caches the regular-theme breakdown (the common case + what
-  // the unit tests assert); themedSummaryText re-derives it for the wizard
-  // flavour when a caller needs it.
+  // `.summaryText` is the regular-theme breakdown, kept as a convenience field
+  // (and asserted by the unit tests). The production render path no longer
+  // reads it — both tooltip sites go through themedSummaryText so they can
+  // re-flavour per theme — but it stays for tests / any external reader of the
+  // summary shape, and reads identically to themedSummaryText(s) for the
+  // blank theme.
   const summaryText = present.map(v => variantLabel(v, counts[v])).join(' · ');
   return { total, online, counts, present, level, summaryText };
 }
 
 // botHTML renders one bot for a single variant. `n` (a number) feeds the
 // count badge (shown only when >1) and the per-bot tooltip; `theme` flavours
-// that tooltip (wizard vs plain). No string interpolation of caller input —
-// safe to drop into innerHTML.
+// that tooltip (wizard vs plain). In wizard mode the aria-label carries the
+// same flair as the title (there's no separate visible text to hold the
+// honest word) — a deliberate call for this full-cosmetic theme; the honest
+// status stays one hop away in every per-row wizard pill's own tooltip +
+// data-status. No string interpolation of caller input — safe for innerHTML.
 function botHTML(variant, n, theme) {
   const tagGlyph = VARIANT_TAG[variant];
   const tag = tagGlyph ? `<span class="actbot-tag">${tagGlyph}</span>` : '';
