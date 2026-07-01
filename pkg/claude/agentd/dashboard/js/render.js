@@ -487,7 +487,11 @@ function groupActivityChip(members) {
 
 function renderGroups(groups) {
   if (!groups || !groups.length) {
-    return '<div class="empty">No groups yet. Create one with the <strong>+ new group</strong> button above.</div>';
+    // The button label the hint names swaps per theme too (the same
+    // .group-create-label-* span pair as the filter-bar button), so the empty
+    // state reads "⚔ Form a party" in 🧙 wizard mode — CSS reveals the active
+    // variant, no JS theme read needed.
+    return '<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>';
   }
   return groups.map(g => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)

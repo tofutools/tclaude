@@ -4637,6 +4637,35 @@ body.wizard #retire-modal #retire-ok:disabled::after {
   letter-spacing: 1px;
 }
 
+/* ─── Wizard "⚔ Form a party" button — the 🧙 re-skin of the filter bar's
+   "+ new group" primary. Its label is a pure-CSS span swap (the
+   .group-create-label-regular / .group-create-label-wizard pair, same idiom as
+   the Summon dialog title and the music tab label), so a mid-session theme
+   flip is instantly correct with no JS. The same span pair also swaps the
+   "No groups yet…" empty-state hint that names the button — hence the swap
+   rules are unscoped, not tied to #group-create-open. The button itself becomes
+   a small gilded-arcane action — violet gradient, candle-gold frame, mystic
+   glow + fantasy serif — matching the header chrome without shouting like the
+   modal's 🔮 Summon lever. The #group-create-open id out-specifies the base
+   .filter-bar button.primary rule, so it wins without !important. */
+.group-create-label-wizard { display: none; }
+body.wizard .group-create-label-regular { display: none; }
+body.wizard .group-create-label-wizard { display: inline; }
+body.wizard #group-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #group-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
