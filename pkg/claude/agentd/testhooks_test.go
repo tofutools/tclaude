@@ -345,13 +345,15 @@ func SetTileAgentWindowsForTest(fn func([]session.TileSpec, session.TileOptions)
 	return func() { tileAgentWindows = prev }
 }
 
-// SetTileSettleDelayForTest zeros (or overrides) the post-focus settle
-// delay so a flow test doesn't sit on the production wait for
-// freshly-opened windows to appear. Returns a restore for t.Cleanup.
-func SetTileSettleDelayForTest(d time.Duration) func() {
-	prev := tileSettleDelay
-	tileSettleDelay = d
-	return func() { tileSettleDelay = prev }
+// SetTileSettleWaitForTest no-ops the post-focus settle wait (the poll
+// for the focused windows' tmux clients to come up) so a flow test
+// doesn't sit at the stability timeout — the TmuxSim answers
+// list-clients empty, so no target would ever look attached. Returns a
+// restore for t.Cleanup.
+func SetTileSettleWaitForTest() func() {
+	prev := waitForFocusedWindows
+	waitForFocusedWindows = func([]windowTarget) {}
+	return func() { waitForFocusedWindows = prev }
 }
 
 // SetGitInfoResolverForTest swaps the git/gh resolver behind the

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -172,11 +174,67 @@ var tileAgentWindows = func(specs []session.TileSpec, opts session.TileOptions) 
 	session.TileAgentWindows(specs, opts)
 }
 
-// tileSettleDelay is how long tileFocusedWindows waits after the focus
-// dispatch before moving windows, so a freshly-OPENED terminal has time
-// to create its OS window (a raise is instant; an open is not). A package
-// var so flow tests can zero it.
-var tileSettleDelay = 600 * time.Millisecond
+// Settle knobs for the post-focus tiling pass. Instead of sleeping a
+// fixed delay, tileFocusedWindows POLLS tmux for each target session's
+// attached client: a freshly-opened terminal registers its tmux client
+// the moment its `tclaude session attach` runs, so "every target has a
+// client" is the all-windows-are-up signal — and a pure-raise bulk focus
+// (every window already open) passes the first poll and tiles
+// immediately. tileSettleMaxWait caps the wait on a window that never
+// comes up (open failed, focus.raise_only); tileSettleStableFor gives up
+// early once the attached set has stopped growing — no more windows are
+// coming, tile what's there. (Flow tests don't touch these knobs — they
+// no-op the whole waitForFocusedWindows seam instead.)
+var (
+	tileSettlePollEvery = 150 * time.Millisecond
+	tileSettleMaxWait   = 5 * time.Second
+	tileSettleStableFor = 1200 * time.Millisecond
+)
+
+// tmuxSessionHasClient reports whether the tmux session has at least one
+// attached client — i.e. its terminal window exists. Goes through the
+// clcommon tmux seam like every other tmux call.
+func tmuxSessionHasClient(tmuxSession string) bool {
+	out, err := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+// waitForFocusedWindows blocks until every target session has an attached
+// client, the attached set stops growing for tileSettleStableFor, or
+// tileSettleMaxWait passes — whichever comes first. A package var seam:
+// flow tests no-op it (the TmuxSim answers list-clients empty, which
+// would otherwise hold every tiling flow test at the stability timeout).
+var waitForFocusedWindows = func(targets []windowTarget) {
+	start := time.Now()
+	deadline := start.Add(tileSettleMaxWait)
+	grew := start
+	seen := 0
+	for {
+		n := 0
+		for _, t := range targets {
+			if tmuxSessionHasClient(t.sess.TmuxSession) {
+				n++
+			}
+		}
+		if n == len(targets) {
+			return
+		}
+		now := time.Now()
+		if n > seen {
+			seen, grew = n, now
+		}
+		// The stable-set cutoff only applies once at least one window has
+		// attached: an all-fresh open whose terminal app is cold-launching
+		// can sit at zero past tileSettleStableFor and still come up —
+		// give that case the full deadline.
+		if !now.Before(deadline) || (n > 0 && now.Sub(grew) >= tileSettleStableFor) {
+			slog.Debug("tiling: gave up waiting for windows to come up",
+				"attached", n, "targets", len(targets), "waited", now.Sub(start), "module", "tile")
+			return
+		}
+		time.Sleep(tileSettlePollEvery)
+	}
+}
 
 // tileFocusedWindows runs the opt-in auto-tiling pass after a bulk focus.
 // It no-ops unless more than one window was focused AND config
@@ -198,9 +256,7 @@ func tileFocusedWindows(alive []windowTarget) {
 	for _, t := range sorted {
 		specs = append(specs, session.TileSpec{TmuxSession: t.sess.TmuxSession, SessionID: t.sess.ID})
 	}
-	if d := tileSettleDelay; d > 0 {
-		time.Sleep(d)
-	}
+	waitForFocusedWindows(sorted)
 	tileAgentWindows(specs, opts)
 }
 
@@ -337,10 +393,10 @@ func runWindowOp(direction, scope, group string, universe, convs []string) agent
 
 	// Follow a bulk focus with the opt-in auto-tiling pass (no-op when
 	// disabled or when only one window was focused). It runs in the
-	// BACKGROUND: the pass sleeps a settle delay for freshly-opened windows
-	// and then reads + moves each window (a second or two of scripting on a
-	// large set), none of which the focus response needs to wait on. unfocus
-	// never tiles. Drained by WaitForBackgroundForTest so flow tests observe it.
+	// BACKGROUND: the pass polls until the focused windows have come up
+	// and then reads + moves them (window scripting), none of which the
+	// focus response needs to wait on. unfocus never tiles. Drained by
+	// WaitForBackgroundForTest so flow tests observe it.
 	if direction == "focus" {
 		goBackground(func() { tileFocusedWindows(alive) })
 	}
