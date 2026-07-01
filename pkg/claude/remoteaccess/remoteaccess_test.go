@@ -20,6 +20,9 @@ func mustParseCert(t *testing.T, pemBytes []byte) *x509.Certificate {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		t.Fatal("no PEM block")
+		return nil // unreachable: t.Fatal exits the goroutine. Kept so staticcheck's
+		// SA5011 nil-analysis sees block is non-nil below without relying on it
+		// recognizing t.Fatal as terminating (which it does only with a warm cache).
 	}
 	c, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

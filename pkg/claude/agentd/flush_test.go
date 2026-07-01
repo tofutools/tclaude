@@ -21,6 +21,15 @@ func setupTestDB(t *testing.T) {
 	// Windows test run stays in the temp dir instead of the real home.
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	// Drain fire-and-forget goroutines (e.g. the nudge drain a send
+	// handler kicks off via goBackground) before this test's TempDir
+	// RemoveAll runs. Registered last → runs first (LIFO), so an
+	// orphaned goroutine can't still be scribbling into $HOME/.tclaude/
+	// db.sqlite when RemoveAll fires — the macOS "directory not empty"
+	// cleanup race. newFlow drains the same WG for the flow tests; the
+	// internal (package agentd) tests need it too whenever the handler
+	// under test enqueues a nudge.
+	t.Cleanup(WaitForBackgroundForTest)
 }
 
 // resetFlushState clears the per-conv debounce map between subtests.
