@@ -14,7 +14,7 @@
 // Terminal / FitAddon are globals from the vendored classic scripts loaded
 // before this module (same arrangement as the dashboard).
 
-import { mountMux } from './terminals-core.js';
+import { mountMux, normalizeSeed } from './terminals-core.js';
 
 const solo = new URLSearchParams(location.search).has('solo');
 if (solo) document.body.classList.add('solo');
@@ -39,12 +39,32 @@ function decodeOpenHash() {
 }
 
 function consumeHash() {
-  const seed = decodeOpenHash();
+  const seed = normalizeSeed(decodeOpenHash());
   // Clear the hash either way so a manual reload doesn't re-open a stale seed,
   // and so the NEXT open — even an identical one — still changes the hash and
   // fires hashchange. The core dedupes by key, so a repeat is harmless.
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-  if (seed) mux.openPane(seed);
+  if (!seed) return;
+  mux.openPane(seed);
+  if (seed.hideConv) armDetachBeacon(seed.hideConv);
+}
+
+// armDetachBeacon detaches this popped-out LIVE-session terminal server-side
+// when the tab goes away (closed / navigated). A pop-out is a real tmux client;
+// without this, closing the tab leaves the session "attached" and
+// unreattachable — the same reason the multiplexer's × runs /api/hide. Only
+// armed for a live-session seed (hideConv); a throwaway web-term needs no
+// detach. sendBeacon survives unload where a fetch would be cancelled (and
+// carries the same-origin dashboard cookie); pagehide covers tab-close + bfcache.
+// Deduped per conv so multiple seeds on a hand-navigated page don't stack
+// duplicate handlers.
+const beaconed = new Set();
+function armDetachBeacon(conv) {
+  if (beaconed.has(conv)) return;
+  beaconed.add(conv);
+  window.addEventListener('pagehide', () => {
+    try { navigator.sendBeacon('/api/hide/' + encodeURIComponent(conv)); } catch (_) { /* best-effort */ }
+  });
 }
 
 window.addEventListener('hashchange', consumeHash);

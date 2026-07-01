@@ -513,10 +513,16 @@ function bindRowActions() {
           // Claude Code TUI) rather than a fresh shell. ALWAYS a browser
           // terminal, opened in the Terminals tab. No dir choice, so no
           // await before the open — connects to /api/open-window-ws/{conv}.
+          // hideConv makes closing the pane (× / pop-out) run the reliable
+          // server-side detach (/api/hide) — a live-session attach forks the
+          // tmux client, and without that detach the session stays "attached"
+          // and can't be reattached. (web-term above is a throwaway session, so
+          // it gets no hideConv.)
           openTerminalPane({
             ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
             label,
             key: `window:${conv}`,
+            hideConv: agent,
           });
           return;
         }

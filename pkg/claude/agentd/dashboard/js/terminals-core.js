@@ -107,6 +107,23 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     try { old.close(); } catch (_) { /* already closed */ }
   }
 
+  // hideOnDetach runs the RELIABLE server-side tmux detach for a pane that
+  // attached to an agent's LIVE session (seed.hideConv set) — the same
+  // /api/hide the modal and the per-agent "hide" eye button use
+  // (DetachSessionClients → tmux detach-client for every client on the
+  // session). tclaude forks the tmux client, and closing the WebSocket alone
+  // does NOT reliably detach it, so without this the session stays "attached"
+  // and the next attach fails. Best-effort; returns the promise so callers can
+  // sequence a reattach after the detach lands. A no-op for the ad hoc web-term
+  // (its own throwaway session, no agent client to hand back).
+  function hideOnDetach(p) {
+    const conv = p.seed && p.seed.hideConv;
+    if (!conv) return Promise.resolve();
+    return fetch('/api/hide/' + encodeURIComponent(conv), { method: 'POST', credentials: 'same-origin' })
+      .then((res) => { if (!res.ok) console.warn('terminal detach (hide) failed:', res.status); })
+      .catch((e) => { console.warn('terminal detach (hide) request error:', e); });
+  }
+
   function connect(p) {
     closeSocket(p);
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -245,9 +262,13 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
   function closePane(key) {
     const p = panes.get(key);
     if (!p) return;
-    // Closing only detaches the socket; the underlying tmux/PTY session keeps
-    // running, so reopening this agent reattaches to the same shell.
+    // Close the socket AND, for a live-session attach (seed.hideConv), run the
+    // reliable server-side tmux detach — otherwise the forked client stays
+    // attached and reopening fails. closeSocket first (it nulls the handlers) so
+    // the detach's server-side WS close lands silently. The tmux/PTY session
+    // keeps running, so reopening reattaches to the same shell.
     closeSocket(p);
+    hideOnDetach(p);
     if (p.ro) { try { p.ro.disconnect(); } catch (_) { /* already gone */ } }
     try { p.term.dispose(); } catch (_) { /* already disposed */ }
     p.wrap.remove();
@@ -265,7 +286,9 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
   function popOut(key) {
     const p = panes.get(key);
     if (!p) return;
-    const seed = { ws: p.seed.ws, label: p.label, key: p.seed.key };
+    // Carry hideConv through so the popped-out tab remains a detachable
+    // live-session client (it re-serializes the seed via the URL hash).
+    const seed = { ws: p.seed.ws, label: p.label, key: p.seed.key, hideConv: p.seed.hideConv };
     const payload = encodeURIComponent(JSON.stringify(seed));
     // A fresh, UNNAMED tab so it's independent; solo=1 strips the standalone
     // page down to just this one terminal (its own OS/browser window). Only
@@ -276,6 +299,9 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     let win = null;
     try { win = window.open('/terminals?solo=1#open=' + payload, '_blank'); }
     catch (_) { win = null; }
+    // closePane detaches THIS pane's tmux client (hideOnDetach) right away; the
+    // popped-out tab reattaches only after a full page load, so the detach lands
+    // first and the two never collide on a live-session attach.
     if (win) closePane(key);
   }
 

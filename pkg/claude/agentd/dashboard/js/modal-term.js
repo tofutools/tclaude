@@ -309,16 +309,23 @@ export function bindTermModal() {
   // "⧉ tab" — hand this same WebSocket terminal to the dashboard's Terminals
   // tab (which holds several at once), then tear down this modal view. The
   // underlying tmux/PTY session outlives the modal, so the new pane reattaches
-  // to the very same shell; detachAndClose drops this window's own client first
-  // (and, for an open-window attach, /api/hide-s it) so the new pane isn't
-  // size-clamped by a now-defunct viewer. openTerminalPane opens on a
-  // microtask, so the synchronous detach below lands first. Lets the
-  // gesture-less fallbacks that land in this modal (spawn auto-focus,
-  // native-window-unavailable) escape the single blocking overlay into the
-  // multi-terminal view.
-  $('#term-session-pop').addEventListener('click', () => {
-    if (currentWsPath) openTerminalPane({ ws: currentWsPath, label: currentLabel });
-    detachAndClose();
+  // to the very same shell; hideConv rides along so closing the new pane later
+  // still runs the reliable server-side detach.
+  //
+  // We AWAIT detachAndClose (which /api/hide-s an open-window attach) BEFORE
+  // opening the new pane: /api/hide detaches EVERY client on the session, and
+  // the in-SPA pane reattaches almost immediately (a microtask), so opening it
+  // first would race the hide and get the fresh client detached out from under
+  // it. Detaching first, then attaching, is race-free. Lets the gesture-less
+  // fallbacks that land in this modal (spawn auto-focus, native-window-
+  // unavailable) escape the single blocking overlay into the multi-terminal
+  // view.
+  $('#term-session-pop').addEventListener('click', async () => {
+    // Capture the seed synchronously — detachAndClose / a concurrent open could
+    // reset these module-level vars while we await.
+    const seed = currentWsPath ? { ws: currentWsPath, label: currentLabel, hideConv } : null;
+    await detachAndClose();
+    if (seed) openTerminalPane(seed);
   });
   overlay.addEventListener('click', (e) => {
     if (e.target !== overlay) return;
