@@ -18,11 +18,12 @@ import (
 // Node suite jstest/group-activity.test.mjs.)
 func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 	needles := []string{
-		// group-activity.js — pure module surface (emoji + sprite + dispatch).
+		// group-activity.js — pure module surface (emoji + sprite + wizard + dispatch).
 		"export function activitySummary(",
 		"export function groupActivityHTML(",
 		"export function memberVariant(",
 		"export function spriteBotsHTML(",
+		"export function wizardBotsHTML(",
 		"export function styledBotsHTML(",
 		"export function aggregateActivity(",
 		// render.js — wired into the group summary and the global slot.
@@ -34,9 +35,11 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"renderGlobalActivity()",
 		// dashboard.html — the global mount point.
 		`id="global-activity"`,
-		// dashboard.css — emoji bots, sprite bots, and the per-mode swap.
+		// dashboard.css — emoji bots, sprite bots, wizard bots, and the swaps.
 		".ga-regular",
 		".ga-slop",
+		".ga-wizard",
+		"body.wizard .ga-wizard", // wizard theme shows its own bot row
 		".actbot-working",
 		"@keyframes actbot-dance",
 		".actbot-sprite",

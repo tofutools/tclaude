@@ -15,7 +15,7 @@ import {
   RETIRED_COLS, RETIRED_ACCESSORS, CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
-import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
+import { groupActivityHTML, activitySummary, styledBotsHTML, wizardBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
 import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
@@ -457,22 +457,25 @@ function remoteControlPolicyMenuItem(g) {
 // activityStyles reads the per-mode activity-bot styles from the snapshot
 // (config dashboard.activity_bots). Falls back to the Go-side defaults
 // (regular emoji, slop sprites) when the flag is absent — a pre-flag
-// daemon, or the moment before the first snapshot lands.
+// daemon, or the moment before the first snapshot lands. The wizard row is a
+// single fantasy-glyph re-skin (no emoji/sprites choice) with no config knob
+// today, so it defaults ON — the 🧙 theme always gets its own bots; the
+// `ab.wizard` read is just a forward-compatible hook for a future on/off.
 function activityStyles() {
   const ab = (lastSnapshot && lastSnapshot.activity_bots) || {};
-  return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites' };
+  return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites', wizard: ab.wizard || 'wizard' };
 }
 
-// groupActivityChip builds the dual-mode bot row for a group <summary>
-// using the configured per-mode styles. Empty when both modes are 'off'
+// groupActivityChip builds the tri-mode bot row for a group <summary>
+// using the configured per-mode styles. Empty when every mode is 'off'
 // or the group has no members.
 function groupActivityChip(members) {
   const st = activityStyles();
-  // The 🧙 wizard theme re-flavours the hover tooltips ("2 familiars
-  // channeling" vs "2 working"); slop keeps the honest nouns. Read live so a
-  // mid-session theme flip lands on the next 2s re-render.
-  const theme = isWizardActive() ? 'wizard' : '';
-  return groupActivityHTML(members, st.regular, st.slop, theme);
+  // No live-theme arg: each wrapper carries its own fixed-flavour tooltip
+  // (regular/slop → plain nouns, wizard → the arcane "N familiars channeling"),
+  // and CSS reveals the one for the active theme — so a mid-session flip is
+  // instantly correct, no 2s re-render lag on the hover text.
+  return groupActivityHTML(members, st.regular, st.slop, st.wizard);
 }
 
 function renderGroups(groups) {
@@ -960,21 +963,23 @@ function renderGlobalActivity() {
   // aggregateActivity dedups by conv_id — an agent in several groups is in
   // each group's member list, so a naive flatten would multiply its counts.
   const s = aggregateActivity(lists);
-  // Emit a regular-mode + a slop-mode wrapper in their configured styles,
-  // exactly like the group chips — CSS shows the right one per mode. Clear
-  // out when both modes render nothing (style off, or zero members).
+  // Emit a regular-mode + slop-mode + wizard-mode wrapper in their configured
+  // styles, exactly like the group chips — CSS shows the right one per active
+  // theme. Clear out when every mode renders nothing (style off, or zero
+  // members).
   const st = activityStyles();
-  // Wizard theme re-flavours the tooltip nouns; read live so a mid-session
-  // flip lands on the next poll (the container title below is set via the DOM
-  // property, so it can't CSS-swap — it just re-renders with the poll).
+  // The container's own title (a DOM property, set below) can't CSS-swap, so
+  // it's re-flavoured live per theme; the per-wrapper bots carry fixed
+  // flavours (regular/slop plain, wizard arcane) and CSS reveals the active
+  // one, so a mid-session flip re-flavours the container title on the next
+  // 2s poll while the bot glyphs + their tooltips swap instantly.
   const theme = isWizardActive() ? 'wizard' : '';
-  const wrap = (cls, style) => {
-    const inner = styledBotsHTML(s, style, theme);
-    return inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
-  };
-  const reg = wrap('ga-regular', st.regular);
-  const slop = wrap('ga-slop', st.slop);
-  if (!reg && !slop) { el.innerHTML = ''; el.removeAttribute('title'); return; }
+  const wrap = (cls, inner) =>
+    inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
+  const reg = wrap('ga-regular', styledBotsHTML(s, st.regular));
+  const slop = wrap('ga-slop', styledBotsHTML(s, st.slop));
+  const wiz = wrap('ga-wizard', (st.wizard && st.wizard !== 'off') ? wizardBotsHTML(s) : '');
+  if (!reg && !slop && !wiz) { el.innerHTML = ''; el.removeAttribute('title'); return; }
   // Per-source breakdown for the tooltip — skip sources that are only
   // offline so the list highlights what's actually live.
   const lines = [];
@@ -984,7 +989,7 @@ function renderGlobalActivity() {
   }
   const ung = activitySummary(snap.ungrouped || []);
   if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${themedSummaryText(ung, theme)}`);
-  el.innerHTML = reg + slop;
+  el.innerHTML = reg + slop + wiz;
   syncBotAnimations(); // re-phase to wall-clock so the 2s poll doesn't restart-jump
   el.title = `Activity across all groups — ${themedSummaryText(s, theme)}`
     + (lines.length ? '\n' + lines.join('\n') : '');

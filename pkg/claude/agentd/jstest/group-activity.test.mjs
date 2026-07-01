@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   memberVariant, activitySummary, activityBotsHTML, groupActivityHTML,
-  spriteBotsHTML, styledBotsHTML, aggregateActivity, VARIANT_ORDER,
+  spriteBotsHTML, wizardBotsHTML, styledBotsHTML, aggregateActivity, VARIANT_ORDER,
   variantLabel, themedSummaryText,
 } from '../dashboard/js/group-activity.js';
 
@@ -168,6 +168,30 @@ test('styledBotsHTML switches emoji / sprites / off', () => {
   assert.equal(styledBotsHTML(s, 'off'), '');                      // hidden
 });
 
+test('wizardBotsHTML re-skins each variant with a fantasy glyph, no tags', () => {
+  const html = wizardBotsHTML(activitySummary([on('working'), on('awaiting_permission'), on('idle')]));
+  // Reuses the emoji-bot structure (so the shared animations apply) but with
+  // wizard glyphs carrying the state — a dancing 🧙 leads.
+  assert.ok(html.includes('actbot-face'));
+  assert.ok(html.includes('🧙'));                    // working → mage
+  assert.ok(html.includes('📜'));                    // asking → scroll
+  assert.ok(html.includes('🕯️'));                   // idle → candle
+  assert.ok(html.includes('actbot-working'));
+  assert.ok(!html.includes('actbot-spr'));           // not sprites
+  assert.ok(!html.includes('❓'));                    // glyph carries state; no corner tag
+  // The wizard row is inherently the 🧙 theme, so its tooltips speak the
+  // arcane vocabulary (reusing PR #678's variantLabel), not the plain nouns.
+  assert.ok(html.includes('title="1 familiar channeling"'));  // working
+  assert.ok(html.includes('title="1 familiar meditating"'));  // idle
+  assert.ok(!html.includes('title="1 working"'));
+});
+
+test('wizardBotsHTML keeps the count badge and is empty for no members', () => {
+  const html = wizardBotsHTML(activitySummary([on('working'), on('working')]));
+  assert.ok(html.includes('<span class="actbot-count">2</span>'));
+  assert.equal(wizardBotsHTML(activitySummary([])), '');
+});
+
 test('groupActivityHTML emits a per-mode wrapper in each configured style', () => {
   const html = groupActivityHTML([on('awaiting_input'), on('working')], 'emoji', 'sprites');
   // regular wrapper = emoji bots, slop wrapper = sprite bots, both tinted
@@ -178,11 +202,28 @@ test('groupActivityHTML emits a per-mode wrapper in each configured style', () =
   assert.ok(html.includes('actbot-spr'));   // sprites in the slop wrapper
 });
 
-test('groupActivityHTML drops a wrapper whose mode is off; empty when both off', () => {
+test('groupActivityHTML drops a wrapper whose mode is off; empty when all off', () => {
   const onlyRegular = groupActivityHTML([on('working')], 'emoji', 'off');
   assert.ok(onlyRegular.includes('ga-regular'));
   assert.ok(!onlyRegular.includes('ga-slop'));
+  // An absent 4th arg (pre-wizard callers) yields NO wizard wrapper.
+  assert.ok(!onlyRegular.includes('ga-wizard'));
   assert.equal(groupActivityHTML([on('working')], 'off', 'off'), '');
+  // All three off → nothing, even with the wizard arg present.
+  assert.equal(groupActivityHTML([on('working')], 'off', 'off', 'off'), '');
+});
+
+test('groupActivityHTML adds a wizard wrapper when wizardStyle is on', () => {
+  const html = groupActivityHTML([on('awaiting_input'), on('working')], 'emoji', 'sprites', 'wizard');
+  assert.ok(html.includes('class="ga-regular level-asking"'));
+  assert.ok(html.includes('class="ga-slop level-asking"'));
+  assert.ok(html.includes('class="ga-wizard level-asking"'));
+  assert.ok(html.includes('🧙'));   // wizard glyph in the wizard wrapper
+  // Wizard-only config (regular + slop off) still emits the wizard row.
+  const wizOnly = groupActivityHTML([on('working')], 'off', 'off', 'wizard');
+  assert.ok(wizOnly.includes('ga-wizard'));
+  assert.ok(!wizOnly.includes('ga-regular'));
+  assert.ok(!wizOnly.includes('ga-slop'));
 });
 
 test('groupActivityHTML output is injection-safe (no caller strings)', () => {

@@ -688,16 +688,19 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
   display: inline-flex; align-items: center;
   margin: 0 6px; vertical-align: middle; line-height: 1;
 }
-/* Each group emits BOTH a regular-mode and a slop-mode wrapper; CSS shows
-   exactly one per mode, so flipping slop swaps the visual with no
-   re-render (same trick as the slot-machine state pill). Either wrapper is
-   empty when its configured style is 'off'. */
-.ga-regular, .ga-slop {
+/* Each group emits a regular-mode, a slop-mode AND a wizard-mode wrapper;
+   CSS shows exactly one per active theme, so flipping a theme swaps the
+   visual with no re-render (same trick as the slot-machine / wizard state
+   pill). Any wrapper is empty when its configured style is 'off'; the two
+   re-skins are mutually exclusive (body.slop / body.wizard never coexist). */
+.ga-regular, .ga-slop, .ga-wizard {
   display: inline-flex; align-items: center; gap: 3px; line-height: 1;
 }
-.ga-slop { display: none; }
+.ga-slop, .ga-wizard { display: none; }
 body.slop .ga-regular { display: none; }
 body.slop .ga-slop { display: inline-flex; }
+body.wizard .ga-regular { display: none; }
+body.wizard .ga-wizard { display: inline-flex; }
 
 .actbot {
   position: relative; display: inline-block;
@@ -766,9 +769,16 @@ body.slop .ga-slop { display: inline-flex; }
 
 /* Wrapper level tint — a faint glow so the group's loudest state reads in
    peripheral vision; the bots carry the real signal. */
-.ga-regular.level-error,  .ga-slop.level-error,
-.ga-regular.level-asking, .ga-slop.level-asking { filter: drop-shadow(0 0 3px rgba(248, 81, 73, 0.45)); }
+.ga-regular.level-error,  .ga-slop.level-error,  .ga-wizard.level-error,
+.ga-regular.level-asking, .ga-slop.level-asking, .ga-wizard.level-asking { filter: drop-shadow(0 0 3px rgba(248, 81, 73, 0.45)); }
 .ga-regular.level-working, .ga-slop.level-working { filter: drop-shadow(0 0 3px rgba(63, 185, 80, 0.40)); }
+/* The wizard row's working glow is arcane purple instead of green — the
+   channeling mage casts violet, matching the theme's mystic-purple chrome. */
+.ga-wizard.level-working { filter: drop-shadow(0 0 4px rgba(169, 123, 214, 0.55)); }
+/* The shared crashed rule rotates the face 90° so a toppled ROBOT lies on
+   its side; a 💀 skull reads clearer upright, so the wizard row keeps it
+   unrotated (the greyed opacity from .actbot-crashed still marks it dead). */
+.ga-wizard .actbot-crashed .actbot-face { transform: none; }
 
 /* Top-bar global indicator — same bot row(s), aggregated across every group
    + the ungrouped bucket. Collapses out of the flex header when empty

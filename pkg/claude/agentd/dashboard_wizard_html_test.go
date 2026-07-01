@@ -65,6 +65,14 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("wizardPill,", "helpers.js exports the wizard pill")
 	must("wizardPill(state, m.online, m.conv_id)", "render.js emits the wizard pill in the state cell")
 
+	// The activity-bot row gets a wizard re-skin too: a third wrapper
+	// (.ga-wizard) with fantasy glyphs, emitted alongside regular + slop and
+	// CSS-swapped in via body.wizard (same "always emit, theme picks" trick).
+	must("export function wizardBotsHTML(", "group-activity.js exports the wizard bot row")
+	must("wizardBotsHTML,", "render.js imports the wizard bot row")
+	must("body.wizard .ga-wizard", "dashboard.css shows the wizard bot row in wizard mode")
+	must("body.wizard .ga-regular { display: none", "wizard mode hides the plain bot row")
+
 	// Command palette offers a wizard theme command.
 	must("'Switch to wizard theme'", "the palette offers a wizard theme command")
 	must("run: () => toggleWizard(),", "the wizard palette command runs toggleWizard")
