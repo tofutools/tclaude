@@ -171,6 +171,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("case 'ArrowUp':", "ArrowUp moves the selection")
 	must("case 'PageDown':", "PageDown jumps the selection down a page")
 	must("case 'PageUp':", "PageUp jumps the selection up a page")
+	must("case 'Enter':", "Enter runs the selected command")
+	must("case 'Escape':", "Escape closes the palette")
 	must("function movePage(", "the page jump clamps at the ends (distinct from the wrapping move)")
 	must("function pageSize(", "the page jump is a measured viewport-worth of rows")
 	// The footer advertises the page-jump keys alongside the ↑/↓ nav hint.

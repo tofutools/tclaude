@@ -651,12 +651,15 @@ function move(d) {
   paintSelection();
 }
 
-// pageSize is how many rows a PageUp/PageDown jumps — the count of items
-// that fit in the visible scroll viewport (clientHeight / an item's
-// rendered height), floored to at least 1. Measured live off the DOM so a
-// resized window or a shorter list scales the jump; falls back to a
-// constant when the list isn't measurable yet (no rows, or zero-height
-// pre-layout).
+// pageSize is roughly how many rows a PageUp/PageDown jumps — the count
+// of items that fit in the visible scroll viewport (clientHeight / an
+// item's rendered height), floored to at least 1. clientHeight includes
+// the list's padding, so this can round up by a row versus a strict page;
+// harmless (scrollIntoView keeps the landing row visible and every row
+// stays reachable), so it's not worth reading computed padding to shave.
+// Measured live off the DOM so a resized window or a shorter list scales
+// the jump; falls back to a constant when the list isn't measurable yet
+// (no rows, or zero-height pre-layout).
 const PAGE_FALLBACK = 10;
 function pageSize() {
   const first = list.querySelector('.palette-item');
