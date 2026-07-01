@@ -212,7 +212,7 @@ const TICKER_QUOTES = [
   '🔮 +2 to your saving throw vs. merge conflicts',
   '🍺 The Tavern radio never closes',
   '🗡️ Choose wisely: some spells cannot be un-cast',
-  '🧙 A wizard is never late — his CI is',
+  '⏳ A wizard is never late — his CI is',
   '🐉 Here be dragons (see: legacy code)',
   '📖 The spellbook is just Stack Overflow with a leather cover',
   '🧪 Do not taste the potions in prod',
@@ -309,6 +309,9 @@ export function bindWizardMarquee() {
     updateMarqueeText(text);
   });
   // Scroll-loop boundary: the one visually-quiet moment to swap quotes.
+  // Under prefers-reduced-motion the CSS kills the scroll animation, so this
+  // never fires and the current sample stays frozen — intended: reduced
+  // motion means static content, and a theme flip still refreshes it.
   track.addEventListener('animationiteration', () => {
     if (!isWizardActive()) return;
     rollTickerQuotes();

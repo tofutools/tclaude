@@ -62,7 +62,8 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("const TICKER_QUOTES = [", "wizard-fx.js carries the ticker quote pool")
 	must("const TICKER_QUOTES_PER_PASS", "the marquee samples a fixed few quotes per pass")
 	must("function rollTickerQuotes()", "the per-pass sampler exists")
-	must("rollTickerQuotes();\n    updateMarqueeText(text);", "the sample re-rolls at the scroll-loop boundary / theme flip, then repaints")
+	must("rollTickerQuotes();\n    updateMarqueeText(text);", "the sample re-rolls at the scroll-loop boundary, then repaints")
+	must("rollTickerQuotes();\n      updateMarqueeText(text);", "a theme flip into wizard mode re-rolls + repaints too")
 
 	// The +W hotkey identity: physical W key (layout-independent), Shift+Alt,
 	// and either Ctrl or Cmd — the wizard twin of the +S slop hotkey. Pin each
