@@ -123,6 +123,7 @@
   <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
   <button data-tab="costs">Costs</button>
   <button data-tab="audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts">Audit</button>
+  <button data-tab="logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail">Logs</button>
   <button data-tab="config">Config</button>
   <!-- Vegas — the slop-mode soundtrack tab. CSS-hidden unless body.slop
        is set (see dashboard.css); vegas.js owns the player inside it. -->
@@ -771,6 +772,45 @@
     </div>
     <div id="audit-list"></div>
     <div id="audit-pager" class="audit-pager" hidden></div>
+  </section>
+  <!-- Logs tab — a read-only viewer over tclaude's own log file
+       (~/.tclaude/output.log, JSON lines). Rendered by logs.js from
+       /api/logs, where level/time filtering, search and pagination all
+       run server-side. Fetched on tab activation, the ⟳ refresh button,
+       and — when the operator ticks "stream" — a 2s tail-follow poll
+       (default off). Never on the 2s snapshot tick. -->
+  <section id="tab-logs">
+    <div class="filter-bar">
+      <input id="filter-logs" type="text" placeholder="Search (message / level / fields) — server-side" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-logs-count"></span>
+      <button class="clear-filter" id="filter-logs-clear" title="Clear search">×</button>
+      <label class="filter-toggle" title="Minimum severity to show (e.g. warn shows warn + error)"><span>level</span>
+        <select id="logs-level">
+          <option value="">all</option>
+          <option value="debug">debug+</option>
+          <option value="info">info+</option>
+          <option value="warn">warn+</option>
+          <option value="error">error</option>
+        </select>
+      </label>
+      <label class="filter-toggle" title="Only show entries newer than this"><span>since</span>
+        <select id="logs-range">
+          <option value="">all</option>
+          <option value="900000">15m</option>
+          <option value="3600000">1h</option>
+          <option value="21600000">6h</option>
+          <option value="86400000">24h</option>
+          <option value="604800000">7d</option>
+        </select>
+      </label>
+      <label class="filter-toggle" title="Also scan rotated log files (output.log.1, .2, …) for older history"><input type="checkbox" id="logs-rotated" /> <span>rotated</span></label>
+      <button class="tool" id="logs-refresh" title="Reload the log now">⟳ refresh</button>
+      <label class="filter-toggle" title="Auto-refresh the newest entries every couple of seconds (live tail). Off by default."><input type="checkbox" id="logs-stream" /> <span>stream</span></label>
+      <span class="spacer"></span>
+      <span id="logs-status" class="muted"></span>
+    </div>
+    <div id="logs-list"></div>
+    <div id="logs-pager" class="audit-pager" hidden></div>
   </section>
   <!-- Messages tab — a mail client for introspecting every mailbox the
        daemon stores: agent-to-agent mail plus the human.notify channel.

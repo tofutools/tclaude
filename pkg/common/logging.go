@@ -19,7 +19,15 @@ func OutputLogPath() string {
 	return filepath.Join(home, ".tclaude", "output.log")
 }
 
-// SetupLogging configures slog to write to ~/.tclaude/output.log (file only, not stderr).
+// SetupLogging configures slog to write to ~/.tclaude/output.log (file
+// only, not stderr).
+//
+// The file is written as JSON lines (one slog.JSONHandler record per
+// line) so the dashboard's Logs tab — and any other tooling — can parse
+// it structurally (level, time, msg, attrs) instead of scraping text.
+// slog's JSON time is fixed-width RFC3339-with-millis. A `grep msg`
+// against the file still works: the message text is a plain JSON string
+// value on each line.
 func SetupLogging(level slog.Level) {
 	rw := fileWriter()
 	if rw == nil {
@@ -27,11 +35,15 @@ func SetupLogging(level slog.Level) {
 		// existing slog handler in place rather than blanking it.
 		return
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(rw, &slog.HandlerOptions{Level: level})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(rw, &slog.HandlerOptions{Level: level})))
 }
 
-// SetupLoggingWithStderr configures slog to write to both ~/.tclaude/output.log and stderr.
-// Stderr output uses \r\n line endings for compatibility with raw terminal mode.
+// SetupLoggingWithStderr configures slog to write to both
+// ~/.tclaude/output.log and stderr. The file gets JSON lines (see
+// SetupLogging — machine-parseable for the Logs tab); stderr keeps the
+// human-readable text format, since a person is reading the terminal.
+// Stderr output uses \r\n line endings for compatibility with raw
+// terminal mode.
 func SetupLoggingWithStderr(level slog.Level) {
 	stderrHandler := slog.NewTextHandler(crlfWriter{w: os.Stderr}, &slog.HandlerOptions{Level: level})
 	rw := fileWriter()
@@ -39,7 +51,7 @@ func SetupLoggingWithStderr(level slog.Level) {
 		slog.SetDefault(slog.New(stderrHandler))
 		return
 	}
-	fileHandler := slog.NewTextHandler(rw, &slog.HandlerOptions{Level: level})
+	fileHandler := slog.NewJSONHandler(rw, &slog.HandlerOptions{Level: level})
 	slog.SetDefault(slog.New(multiHandler{handlers: []slog.Handler{fileHandler, stderrHandler}}))
 }
 

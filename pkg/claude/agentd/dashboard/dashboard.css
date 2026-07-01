@@ -981,6 +981,31 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   background: #161b22; color: #d4d4d4; border: 1px solid #2a3340;
   border-radius: 4px; padding: 1px 4px; cursor: pointer;
 }
+/* Logs tab — the read-only viewer over ~/.tclaude/output.log (JSON lines).
+   The message column is greedy + monospace; When / Level shrink to fit.
+   Warn/error rows get a faint tinted gutter so they catch the eye. */
+.logs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.logs-table th {
+  text-align: left; padding: 4px 8px; border-bottom: 1px solid #2a3340;
+  color: #7d8590; font-weight: 600; white-space: nowrap;
+}
+.logs-table td { vertical-align: top; padding: 3px 8px; border-bottom: 1px solid #1b2029; }
+.logs-table td.logs-nowrap { white-space: nowrap; width: 1%; }
+.logs-table td.logs-msg-cell { white-space: normal; overflow-wrap: anywhere; width: 100%; }
+.logs-msg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #d4d4d4; }
+.logs-fields { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.log-level {
+  display: inline-block; padding: 0 6px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  border: 1px solid #2a3340; color: #7d8590;
+}
+.log-level.log-info  { border-color: #1f6feb; color: #58a6ff; }
+.log-level.log-warn  { border-color: #9e6a03; color: #d29922; }
+.log-level.log-error { border-color: #da3633; color: #ff7b72; }
+.log-level.log-raw   { border-color: #2a3340; color: #6e7681; font-style: italic; }
+.log-row-error { background: rgba(218, 54, 51, 0.06); }
+.log-row-warn  { background: rgba(210, 153, 34, 0.05); }
+.logs-warn { color: #d29922; }
 /* Per-list pager footer inside the Retired / Conversations / Replaced virtual
    groups — mirrors the Audit/Messages pager chrome. Explicit dark theme: an
    unthemed inline <button> would render with the browser's white default. */

@@ -101,6 +101,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/snapshot", handleDashboardSnapshot)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
+	mux.HandleFunc("/api/logs", handleDashboardLogs)
 	mux.Handle("/static/", handleDashboardStatic())
 	registerDashboardEditRoutes(mux)
 }
