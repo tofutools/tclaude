@@ -264,6 +264,56 @@ func TestDashboardCSS_WizardRetireModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardEditMemberModal pins the wizard re-skin of the
+// edit-agent dialog ("Enchant this familiar") — the dialog the per-agent "+ role"
+// cell and the ⚙ "edit" affordance open. Like the spawn / retire re-skins it is a
+// pure-CSS span swap (title + the two secondary button labels) plus a ::before
+// glyph on the Save primary, so we string-search the embedded source.
+func TestDashboardHTML_WizardEditMemberModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Edit agent" → "Enchant this familiar".
+	must(`<span class="edit-member-title-regular">Edit agent</span>`, "the default edit-agent title span")
+	must(`<span class="edit-member-title-wizard">Enchant this familiar</span>`, "the wizard edit-agent title span")
+	must("body.wizard #edit-member-title .edit-member-title-regular", "wizard hides the default title")
+	must("body.wizard #edit-member-title .edit-member-title-wizard", "wizard shows the enchant title")
+
+	// Secondary buttons swap their labels the same way: Permissions… → Grimoire…,
+	// Cancel → Dispel.
+	must(`<span class="em-btn-wizard">Grimoire…</span>`, "the Permissions button reads Grimoire in wizard mode")
+	must(`<span class="em-btn-wizard">Dispel</span>`, "the Cancel button reads Dispel in wizard mode")
+	must("body.wizard #edit-member-modal .em-btn-regular", "wizard hides the default button labels")
+	must("body.wizard #edit-member-modal .em-btn-wizard", "wizard shows the arcane button labels")
+
+	// The Save primary becomes a "✨ Enchant!" gilded lever (Summon / Banish's twin)
+	// — the ::before glyph + the modal-scoped re-skin.
+	must(`content: "✨ Enchant!"`, "the Save button reads Enchant in wizard mode")
+	must("body.wizard #edit-member-modal #edit-member-save", "the Save re-skin is scoped to the edit-member modal")
+
+	// The whole dialog surface is re-skinned arcane.
+	must("body.wizard #edit-member-modal .modal", "the edit-agent dialog surface is re-skinned")
+}
+
+// TestDashboardCSS_WizardEditMemberModalScoped guards that the wizard edit-agent
+// re-skin stays scoped to #edit-member-modal. The edit-agent modal is a generic
+// .modal (like the retire modal), so an unscoped `body.wizard .modal { … }` would
+// repaint every sibling confirm dialog. The shared retire-scope test already
+// rejects that literal; this asserts the positive — the re-skin is present and
+// carries the #edit-member-modal scope prefix.
+func TestDashboardCSS_WizardEditMemberModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #edit-member-modal .modal") {
+		t.Error("wizard edit-agent re-skin missing its #edit-member-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .modal {") {
+		t.Error("wizard edit-agent re-skin is unscoped — will repaint sibling confirm dialogs too")
+	}
+}
+
 // TestDashboardHTML_WizardSummonButton pins the wizard re-skin of the
 // group-header spawn button (the blue .spawn-btn that opens the dialog): the
 // per-theme label swap "spawn" → "🔮 Summon" and the arcane chrome hooks.

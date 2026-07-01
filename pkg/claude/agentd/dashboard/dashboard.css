@@ -4965,6 +4965,115 @@ body.wizard #profile-editor-modal #profile-editor-submit:disabled {
 }
 body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { content: none; }
 
+/* ─── Wizard edit-agent modal — "Enchant this familiar" ─────────────
+   The third of the arcane dialog re-skins (Summon a familiar / Banish a
+   familiar / Enchant a familiar): the per-agent "+ role" cell and the ⚙
+   "edit" affordance both open this dialog to re-tune a familiar's title,
+   role, description and ownership. Like the retire modal it is a generic
+   .modal, so every rule is scoped to #edit-member-modal — the sibling
+   confirm / shutdown / term dialogs share the .modal class and must keep
+   the default chrome.
+
+   Title text is a pure-CSS span swap (.edit-member-title-regular /
+   .edit-member-title-wizard in the HTML), the same mechanism as the spawn
+   / retire titles — no JS. The two secondary buttons swap their labels the
+   same way (.em-btn-regular / .em-btn-wizard); the Save primary is
+   re-lettered via a ::before glyph below. */
+.edit-member-title-wizard { display: none; }
+body.wizard #edit-member-title .edit-member-title-regular { display: none; }
+body.wizard #edit-member-title .edit-member-title-wizard { display: inline; }
+
+/* Secondary button label swap: Permissions… → Grimoire…, Cancel → Dispel.
+   The classes only appear inside this modal, but the reveal is scoped to
+   #edit-member-modal for symmetry with the title swap above. */
+.em-btn-wizard { display: none; }
+body.wizard #edit-member-modal .em-btn-regular { display: none; }
+body.wizard #edit-member-modal .em-btn-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the spawn / retire dialogs. */
+body.wizard #edit-member-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #edit-member-modal .modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #edit-member-modal .modal .modal-meta {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+/* Field labels + the checkbox-row labels/hints go violet-parchment; the
+   inputs/textareas take the void + mystic-purple frame, gold on focus. */
+body.wizard #edit-member-modal .modal .field label { color: #b39ddb; }
+body.wizard #edit-member-modal .modal .field input,
+body.wizard #edit-member-modal .modal .field textarea {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.6); color: #e7d9f5;
+}
+body.wizard #edit-member-modal .modal .field input:focus,
+body.wizard #edit-member-modal .modal .field textarea:focus { border-color: #d9b45a; }
+body.wizard #edit-member-modal .modal .field input::placeholder,
+body.wizard #edit-member-modal .modal .field textarea::placeholder { color: #7a6ba0; }
+body.wizard #edit-member-modal .cron-create-error { color: #f0b7a6; }
+
+/* Secondary buttons (Grimoire… / Dispel) — the same tarnished-gold
+   treatment the spawn / retire dialogs give their non-primary buttons.
+   Scoped away from #edit-member-save, which keeps its gilded Enchant lever
+   below. */
+body.wizard #edit-member-modal .modal-buttons button:not(#edit-member-save) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #edit-member-modal .modal-buttons button:not(#edit-member-save):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+
+/* Save = ✨ Enchant! — the primary button re-skinned into a gilded
+   conjuring lever, the sibling of the spawn dialog's 🔮 Summon! and the
+   retire dialog's 🪄 Banish!. Same mechanism: the button's own "Save" text
+   is hidden (font-size: 0) and replaced by a ::before glyph; a disabled
+   state restores a font-size so any future JS fallback text would show
+   instead of the glyph. The click already sprays cast sparks via
+   wizard-fx's global cast-FX handler, so no extra JS is needed. */
+body.wizard #edit-member-modal #edit-member-save {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #edit-member-modal #edit-member-save::before {
+  content: "✨ Enchant!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #edit-member-modal #edit-member-save:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #d9b45a;
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #edit-member-modal #edit-member-save:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #edit-member-modal #edit-member-save:disabled {
+  font-size: 13px;
+  opacity: 0.7;
+}
+body.wizard #edit-member-modal #edit-member-save:disabled::before { content: none; }
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
