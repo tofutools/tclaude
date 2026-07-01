@@ -4354,6 +4354,114 @@ body.wizard #slop-marquee-track {
   animation: slop-marquee-scroll 18s linear infinite;
 }
 
+/* ─── Wizard spawn modal — "Summon a new familiar" ──────────────────
+   The 🧙 twin of slop's "🎰 PULL!" spawn lever, but taken further: the
+   whole spawn dialog is re-skinned arcane (the slop theme only re-styles
+   its submit button). Scoped to #agent-spawn-modal so the sibling modals
+   (clone / reincarnate / cron / group create) keep the default chrome.
+
+   The title text is a pure-CSS span swap (the .spawn-title-regular /
+   .spawn-title-wizard pair in the HTML), matching how the music tab label
+   and the Vegas intro copy swap per theme — no JS involved. */
+.spawn-title-wizard { display: none; }
+body.wizard #agent-spawn-title .spawn-title-regular { display: none; }
+body.wizard #agent-spawn-title .spawn-title-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the header / music card. Like the
+   rest of the wizard re-skin we recolor the chrome; the input fields stay a
+   legible dark (violet-tinted) so the form is still readable. */
+body.wizard #agent-spawn-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #agent-spawn-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 uses. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #agent-spawn-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #agent-spawn-modal .cron-create-label,
+body.wizard #agent-spawn-modal .spawn-owner-toggle,
+body.wizard #agent-spawn-modal .spawn-perms-indicator,
+body.wizard #agent-spawn-modal .spawn-field-hint,
+body.wizard #agent-spawn-modal .spawn-attachments-hint { color: #b39ddb; }
+body.wizard #agent-spawn-modal .cron-create-row input[type=text],
+body.wizard #agent-spawn-modal .cron-create-row select,
+body.wizard #agent-spawn-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #agent-spawn-modal .cron-create-row input[type=text]:focus,
+body.wizard #agent-spawn-modal .cron-create-row select:focus,
+body.wizard #agent-spawn-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Open <select> / <datalist> options render on the OS layer — keep them dark
+   text on parchment so they stay readable (mirrors the music picker). */
+body.wizard #agent-spawn-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* Secondary + inline buttons (Clear / Save as profile… / Attach… / Browse… /
+   Permissions… / Cancel) — everything except the Summon button, which keeps
+   its own gilded-lever treatment below. The :not() also lifts specificity
+   above the base .dir-browse-btn / #agent-spawn-perms rules so they re-theme. */
+body.wizard #agent-spawn-modal button:not(#agent-spawn-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #agent-spawn-modal button:not(#agent-spawn-submit):hover { background: #3a2a63; }
+body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* Spawn = 🔮 Summon! — the submit button re-skinned into a gilded conjuring
+   button, the wizard twin of slop's 🎰 PULL! lever. Same mechanism: the
+   button's own "Spawn" text is hidden (font-size: 0) and replaced by a
+   ::before glyph; the disabled state (JS swaps in "Spawning…") restores a
+   font-size so that fallback shows instead. The click already sprays cast
+   sparks via wizard-fx's global cast-FX handler, so no extra JS is needed.
+   Selector carries #agent-spawn-modal so it out-specifies the generic
+   secondary-button rule above. */
+body.wizard #agent-spawn-modal #agent-spawn-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #agent-spawn-modal #agent-spawn-submit::before {
+  content: "🔮 Summon!";
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+body.wizard #agent-spawn-modal #agent-spawn-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #agent-spawn-modal #agent-spawn-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #agent-spawn-modal #agent-spawn-submit:disabled {
+  /* Restore the font so the JS "Spawning…" fallback shows over the ::before. */
+  font-size: 13px;
+  opacity: 0.7;
+}
+body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: none; }
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.

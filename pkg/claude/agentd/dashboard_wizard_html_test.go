@@ -78,6 +78,44 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("body.wizard-shake", "the Meteor Swarm screen shake is styled")
 }
 
+// TestDashboardHTML_WizardSpawnModal pins the wizard re-skin of the spawn
+// dialog ("Summon a new familiar"): the per-theme title copy swap and the
+// arcane CSS hooks. Purely front-end like the rest of the wizard theme, so we
+// string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Spawn a new agent" → "Summon a new
+	// familiar". Both spans must exist in the HTML and the swap rules in CSS.
+	must(`<span class="spawn-title-regular">Spawn a new agent</span>`, "the default spawn title span")
+	must(`<span class="spawn-title-wizard">Summon a new familiar</span>`, "the wizard spawn title span")
+	must("body.wizard #agent-spawn-title .spawn-title-regular", "wizard hides the default title")
+	must("body.wizard #agent-spawn-title .spawn-title-wizard", "wizard shows the familiar title")
+
+	// The submit button becomes a "🔮 Summon!" conjuring button (slop's PULL
+	// twin) — the ::before glyph + the modal-scoped submit re-skin.
+	must(`content: "🔮 Summon!"`, "the submit button reads Summon in wizard mode")
+	must("body.wizard #agent-spawn-modal #agent-spawn-submit", "the submit re-skin is scoped to the spawn modal")
+
+	// The whole dialog is re-skinned arcane.
+	must("body.wizard #agent-spawn-modal .cron-create-modal", "the spawn dialog surface is re-skinned")
+}
+
+// TestDashboardCSS_WizardSpawnModalScoped guards that the wizard spawn-dialog
+// re-skin stays scoped to #agent-spawn-modal — an unscoped
+// `body.wizard .cron-create-modal { … }` would repaint every sibling modal
+// (clone / reincarnate / cron / group create), which is not the intent.
+func TestDashboardCSS_WizardSpawnModalScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard spawn re-skin is unscoped — will repaint clone/reincarnate/cron modals too")
+	}
+}
+
 // TestDashboardCSS_WizardPillHideScopedToStateCell mirrors the slop guard:
 // the wizard pill replaces the plain state pill ONLY in the agent-row state
 // cell (render.js), so the hide rule MUST be scoped there — an unscoped
