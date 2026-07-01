@@ -227,14 +227,15 @@ func TestDashboardHTML_CostsIncludeWeekendsWired(t *testing.T) {
 	must("proj.weekendsIncluded ? 'day' : 'weekday'", "summary unit label tracks the flag")
 }
 
-// TestDashboardHTML_CostsMonthStepperWired guards the Costs tab's
-// completed-month browser across dashboard.html (the ‹ label › stepper),
-// costs.js (the 'calmonth' span, the from/to range, the offset stepping
-// and bounds) and dashboard.css (the stepper styling). It lets you view
-// last month and earlier completed months; the current month stays the
-// dedicated "This month" button (the only span with a projection). Pieces
-// span three files with no JS test runner, so this asserts on the embedded
-// concatenation at `go test ./...`.
+// TestDashboardHTML_CostsMonthStepperWired guards the Costs tab's month
+// browser across dashboard.html (the ‹ label › stepper), costs.js (the
+// 'calmonth' span, the from/to range, the offset stepping and bounds) and
+// dashboard.css (the stepper styling). The stepper is one continuous
+// browser from the current month (offset 0, folded back into the 'month'
+// span so it keeps its projection and lights the "This month" button
+// alongside the stepper) back through completed months to the first month
+// with recorded spend. Pieces span three files with no JS test runner, so
+// this asserts on the embedded concatenation at `go test ./...`.
 func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -259,12 +260,19 @@ func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
 	must("&to=", "range's upper bound sent to /api/costs")
 
 	// costs.js: entering the stepper, paging with the arrows, and the
-	// bounds (› stops at last month, ‹ stops at first-data month).
-	must("function activateCalmonth", "stepper activation implemented")
+	// bounds (› stops at the current month, ‹ stops at the first-data month).
+	must("function activateMonth", "stepper activation implemented")
 	must("function goMonth", "arrow stepping implemented")
 	must("function syncMonthNav", "arrow enable/disable bounds implemented")
 	must("data.first_day", "‹ bound anchored at the first-ever costed month")
 	must("MONTH_NAMES", "stepper label shows the month name")
+
+	// costs.js: the current month (offset 0) is the head of the stepper —
+	// "This month" routes through activateMonth(0), the span folds back into
+	// 'month' there, and syncSpanHighlight lights the "This month" button
+	// alongside the stepper so the two stay in sync and both read as active.
+	must("function syncSpanHighlight", "dual span highlight implemented")
+	must("activateMonth(0)", "This month is the stepper's offset-0 head")
 
 	// dashboard.css: the stepper group is styled (divider + tight arrows).
 	must("#costs-month-nav", "stepper group styled")
