@@ -40,6 +40,16 @@ func TestDashboardHTML_RemoteControlWired(t *testing.T) {
 	must("sandboxBadge, remoteControlBadge,", "remoteControlBadge is exported from helpers.js")
 	must("harnessCanRename, harnessCanRemoteControl,", "harnessCanRemoteControl is exported from helpers.js")
 
+	// helpers.js: the indicator is ALSO a click affordance — it carries the
+	// SAME data-act/conv/agent/label the ⚙-menu "web window" button uses, so
+	// clicking the 📱 opens the agent's live session (its Claude Code TUI) in a
+	// web terminal via the shared row-actions dispatch. A rename of the action
+	// token or the attributes silently unclicks the glyph in the browser.
+	must(`class="remote-badge" data-act="web-open-window" data-conv="${esc(m.conv_id)}"`, "the indicator dispatches the web-window action")
+	must(`data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}"`, "the clickable indicator carries the agent selector + label the action needs")
+	// CSS: the clickable indicator takes a pointer cursor + hover lift.
+	must(".remote-badge:hover", "the clickable remote indicator has a hover affordance")
+
 	// helpers.js: harnessLine appends the indicator to the END of the harness
 	// line, trailing the effort/cost tokens — "CC · O4.8 1M high 📱" — rather
 	// than a standalone chip in the control cell, so the symbol reads as part
