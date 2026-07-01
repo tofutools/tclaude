@@ -1404,6 +1404,18 @@ details[open] > summary .group-actions { opacity: 1; }
 .spawn-btn .spawn-ico { display: block; }
 details > summary:hover .spawn-btn,
 details[open] > summary .spawn-btn { opacity: 1; }
+/* Per-theme label swap: "spawn" normally, "🔮 Summon" in 🧙 wizard mode. Both
+   spans are always emitted by render.js; CSS picks which shows — the same
+   pure-CSS trick as the spawn dialog's .spawn-title-regular/.spawn-title-wizard
+   pair. The opacity fade (0.4 at rest → 1 on summary hover/open, above) is
+   theme-agnostic and applies to the wizard skin unchanged. The wizard chrome
+   re-skin itself lives next to the rest of the 🧙 spawn theme, further down. */
+.spawn-btn-label-wizard { display: none; }
+body.wizard .spawn-btn .spawn-btn-label-regular { display: none; }
+body.wizard .spawn-btn .spawn-btn-label-wizard { display: inline; }
+/* The SVG "users+" glyph gives way to the 🔮 in the wizard label (out-specifies
+   the .spawn-btn .spawn-ico { display: block } rule above via body.wizard). */
+body.wizard .spawn-btn .spawn-ico { display: none; }
 /* ⚙ options menu — collects a row's / group's less-used actions
    behind a cog. The cog and its .action-menu are siblings inside the
    .row-actions / .group-actions cluster (both position:relative
@@ -4387,6 +4399,27 @@ body.wizard #slop-marquee {
 }
 body.wizard #slop-marquee-track {
   animation: slop-marquee-scroll 18s linear infinite;
+}
+
+/* ─── Wizard Summon button — the group-header 🔮 trigger ─────────────
+   The blue .spawn-btn that opens the spawn dialog, re-skinned into a gilded
+   arcane chip in 🧙 mode (label + glyph swap live with the base .spawn-btn
+   rules above). Same violet-void / mystic-purple-frame / gold-edge / parchment
+   palette as the dialog it opens, so the trigger and the "Summon a new
+   familiar" modal read as one spell. The at-rest opacity fade is inherited from
+   the base rule; only the colours + serif change here. */
+body.wizard .spawn-btn {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+}
+body.wizard .spawn-btn:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.85);
 }
 
 /* ─── Wizard spawn modal — "Summon a new familiar" ──────────────────

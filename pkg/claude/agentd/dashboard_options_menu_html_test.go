@@ -71,7 +71,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 		must(`data-act="`+act+`"`, "group header keeps "+act+" top-level")
 	}
 	must(`class="spawn-btn"`, "the group spawn button carries the .spawn-btn primary-CTA skin")
-	must(`<span>spawn</span></button>`, "the group spawn button renders the word 'spawn'")
+	must(`<span class="spawn-btn-label-regular">spawn</span>`, "the group spawn button renders the word 'spawn' (default-theme label span)")
 	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
 	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
 	must("details[open] > summary .spawn-btn { opacity: 1; }",
