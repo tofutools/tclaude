@@ -112,8 +112,8 @@
        which shows — see the wizard power-controls rules in dashboard.css). The
        aria-label names both voices so speech input matches either theme's
        visible label (WCAG Label-in-Name), as the group buttons do. -->
-  <button id="power-on-all-btn" data-act="power-on-all" aria-label="Awaken all — power on every offline agent on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
-  <button id="shutdown-all-btn" data-act="shutdown-all" aria-label="Slumber all — shut down every running agent on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
+  <button id="power-on-all-btn" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
+  <button id="shutdown-all-btn" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
   </div>
 </header>
 <!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via

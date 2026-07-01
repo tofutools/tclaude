@@ -232,6 +232,16 @@ func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	// The regular-theme labels stay honest (both spans always emitted).
 	must(`<span class="pwr-label-regular">🟢 power on all</span>`, "the global Power On chip keeps its plain label")
 	must(`<span class="pwr-label-regular">🛑 shutdown</span>`, "the per-group Shutdown chip keeps its plain label")
+
+	// WCAG 2.5.3 Label-in-Name: since the visible label swaps per theme, the
+	// aria-label must contain BOTH the wizard word AND the *exact* regular
+	// visible phrase (so a speech-input user saying either matches). In
+	// particular the one-word "shutdown" — not "shut down" — has to appear, or
+	// the regular-theme fallback fails the guarantee.
+	must(`aria-label="Awaken all — power on all offline agents on the dashboard"`, "global Power On aria-label carries both 'Awaken all' and 'power on all'")
+	must(`aria-label="Slumber all — shutdown all running agents on the dashboard"`, "global Shutdown aria-label carries both 'Slumber all' and 'shutdown all'")
+	must(`aria-label="Awaken — power on every offline agent in this group"`, "per-group Power On aria-label carries both 'Awaken' and 'power on'")
+	must(`aria-label="Slumber — shutdown every running agent in this group"`, "per-group Shutdown aria-label carries both 'Slumber' and 'shutdown'")
 }
 
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog

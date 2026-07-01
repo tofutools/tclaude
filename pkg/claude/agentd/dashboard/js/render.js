@@ -437,7 +437,7 @@ function groupActionsHTML(g, members) {
     // matches either theme's visible label (WCAG Label-in-Name), the same way
     // the Summon button above does.
     + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on</span><span class="pwr-label-wizard">✨ Awaken</span></button>`
-    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shut down every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
+    + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
     + actionCog('group-menu', menu)
     + `</span>`;
 }
