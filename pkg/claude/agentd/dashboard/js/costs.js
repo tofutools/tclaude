@@ -373,9 +373,20 @@ function renderChart(data, proj) {
     + `</div>`;
 }
 
-function renderSummary(data, proj) {
+function renderSummary(data, proj, span) {
+  // The current-month span fetches only through today so the projection can
+  // fill the rest of the month (see monthProjection), but the header should
+  // read as the whole selected span — 1st → month-end — matching the "This
+  // month" button and the projected bars rather than stopping at today's
+  // last data point. Every other span shows its real upper edge: trailing
+  // windows genuinely end today, and 'calmonth' already ends on its month's
+  // last day.
+  const now = new Date();
+  const to = span === 'month'
+    ? dayKey(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+    : data.to;
   const bits = [`<span class="cost-total">Total: <strong>${esc(fmtUSD(data.total_usd))}</strong></span>`,
-    `<span class="muted">${esc(data.from)} → ${esc(data.to)}</span>`];
+    `<span class="muted">${esc(data.from)} → ${esc(to)}</span>`];
   if (proj) {
     const label = proj.fillEmpty ? 'Projected avg month total' : 'Projected month total';
     const unit = proj.weekendsIncluded ? 'day' : 'weekday';
@@ -632,7 +643,7 @@ async function loadCosts() {
     // step, so refresh the stepper's enabled state against the payload.
     syncMonthNav();
     const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
-    renderSummary(data, proj);
+    renderSummary(data, proj, span);
     renderChart(data, proj);
     renderTable(data);
   } catch (e) {
