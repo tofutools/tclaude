@@ -5827,6 +5827,197 @@ body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button {
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:hover { background: #3a2a63; }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button.danger:hover { color: #f2777a; border-color: #f2777a; }
 
+/* ─── Wizard config tab — "📜 The Wizard's Almanac" ─────────────────
+   The 🧙 re-skin of the Config tab (#tab-config) — the settings-book twin of
+   the palette's "📖 The Spellbook" and the permission editor's "📕 The
+   Grimoire". Everything else in wizard mode went arcane while this tab kept
+   its default GitHub-dark panels + blue headings, reading unthemed on the
+   violet void. This block re-skins the chrome — sections, headings, labels,
+   inputs, the live filter, the sticky footer + its gilded Save lever, and the
+   diff-confirm modal — into the shared midnight-violet / mystic-purple / gold /
+   parchment palette. Every rule is scoped to #tab-config (or #config-diff-modal
+   for the confirm dialog) so nothing leaks to another tab.
+
+   Deliberately LEFT ALONE — the semantic call-outs whose colour carries
+   meaning: the amber .cfg-notice, the red .cfg-errors, the ok/warn
+   .cfg-remote-status, the amber .wt-orphan-warn, the .ra-msg success/error
+   banner, and the diff's green/red add/del lines. Same discipline the
+   Grimoire's Grant/Deny tri-state cells follow — recolour the chrome, never
+   the safety signal. */
+
+/* The wizard-only title (hidden in the HTML by default). A fantasy-serif
+   "📜 The Wizard's Almanac" over the intro, the same treatment as the header
+   h1 / Spellbook / Grimoire titles. */
+.cfg-wizard-title { display: none; }
+body.wizard .cfg-wizard-title {
+  display: block;
+  margin: 4px 0 10px;
+  color: #f3e6c0;
+  /* Single-word family names unquoted (stylelint font-family-name-quotes);
+     names with spaces stay quoted. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 22px; letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+
+/* Intro copy + its inline code chips go violet-parchment on the void. */
+body.wizard #tab-config .cfg-intro { color: #b39ddb; }
+body.wizard #tab-config .cfg-intro code,
+body.wizard #tab-config .cfg-hint code,
+body.wizard #tab-config .cfg-field code,
+body.wizard #tab-config .cfg-inline code {
+  background: #241b3d; color: #f3e6c0;
+}
+
+/* Live section filter: void-tinted field, gold focus, violet count + note,
+   gold clear-×. Scoped to #tab-config so the Groups / Costs filter bars are
+   untouched. */
+body.wizard #tab-config .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #tab-config .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #tab-config .filter-bar .filter-count,
+body.wizard #tab-config .cfg-filter-note { color: #b39ddb; }
+body.wizard #tab-config .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard #tab-config .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+body.wizard #tab-config .cfg-filter-empty {
+  border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
+}
+
+/* Section panels: violet-void surface, mystic-purple frame; the small
+   uppercase h3 head goes tarnished-gold with an arcane glow (kept uppercase —
+   the serif is reserved for the true titles). */
+body.wizard #tab-config .cfg-section,
+body.wizard #tab-config .cfg-advanced {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #tab-config .cfg-section > h3 {
+  color: #d9b45a;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
+}
+/* The base theme draws a deliberate two-tier prominence on "Advanced …"
+   disclosures: a section-level `.cfg-advanced` summary is blue+uppercase (like
+   an h3 head), while a field-nested `.cfg-field details.cfg-advanced` summary is
+   muted grey. We carry that distinction across — section-level → tarnished-gold
+   here (heading-like), field-nested → violet down with the hints below (muted).
+   So the sudo / remote-setup toggles read gold and the raw-transition-rules
+   toggle reads violet BY DESIGN, matching their base-theme prominence. */
+body.wizard #tab-config .cfg-advanced > summary { color: #d9b45a; }
+
+/* Field labels + body text go parchment; hints, the field-nested advanced
+   summary (the muted tier — see the two-tier note above) + the empty-list note
+   go violet. */
+body.wizard #tab-config .cfg-field,
+body.wizard #tab-config .cfg-field .cfg-label { color: #e7d9f5; }
+body.wizard #tab-config .cfg-hint,
+body.wizard #tab-config .cfg-list-empty,
+body.wizard #tab-config .cfg-list-row .cfg-arrow,
+body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39ddb; }
+
+/* Inputs / selects / textareas: void field, mystic-purple frame, parchment
+   text, gold-violet on focus — the same legible-dark treatment the dialogs
+   give their fields. Open <select> options stay dark-on-parchment so the OS
+   layer keeps them readable. */
+body.wizard #tab-config .cfg-field input[type=text],
+body.wizard #tab-config .cfg-field input[type=number],
+body.wizard #tab-config .cfg-field select,
+body.wizard #tab-config .cfg-advanced textarea {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #tab-config .cfg-field input[type=text]:focus,
+body.wizard #tab-config .cfg-field input[type=number]:focus,
+body.wizard #tab-config .cfg-field select:focus,
+body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
+body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
+
+/* List add / delete chips get the tarnished-gold secondary skin. The delete
+   chip keeps its red hover — a destructive action's safety signal, left
+   intact like the semantic call-outs above. */
+body.wizard #tab-config .cfg-row-del,
+body.wizard #tab-config .cfg-list-add {
+  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard #tab-config .cfg-list-add:hover { border-color: #f3e6c0; }
+
+/* Remote-access cert chrome (neutral bits only): device rows, chips, the
+   inline link + form labels. The .ra-msg success/error banner is semantic and
+   left alone above. */
+body.wizard #tab-config .ra-chip,
+body.wizard #tab-config .ra-device {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #tab-config .ra-device-exp,
+body.wizard #tab-config .ra-form-grid label { color: #b39ddb; }
+body.wizard #tab-config .ra-link { color: #d9b45a; }
+body.wizard #tab-config .ra-link:hover { color: #f3e6c0; }
+
+/* Sticky footer: blend into the violet void, violet status text, arcane
+   secondary Reload, and a gilded Save lever (its honest "Save changes…" text
+   is kept — it opens a diff, and the confirm button's text carries the
+   corrupt-config warning, so no glyph swap here). */
+body.wizard #tab-config .cfg-footer {
+  background: #140f28; border-top-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #tab-config .cfg-status { color: #b39ddb; }
+body.wizard #tab-config .cfg-footer button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #tab-config .cfg-footer button:not(.primary):not(:disabled):hover {
+  border-color: #f3e6c0;
+}
+body.wizard #tab-config .cfg-footer button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #tab-config .cfg-footer button.primary:not(:disabled):hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* ─── Wizard config-diff modal — "seal the enchantment" confirm ──────
+   The diff-confirm dialog the Save lever opens, re-skinned arcane. Scoped to
+   #config-diff-modal. The green/red diff add/del lines + the red corrupt-config
+   warning are semantic and kept; only the surface, title, sub-line, diff panel
+   frame and the buttons are re-tinted. The confirm button's JS-set text
+   ("Save to config.json" / "Replace corrupt config.json") is kept visible — no
+   glyph swap — so the corrupt-config signal survives. */
+body.wizard #config-diff-modal .config-diff-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #config-diff-modal .config-diff-modal h3 {
+  color: #f3e6c0;
+  /* Single-word family names unquoted (stylelint); spaced names stay quoted. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #config-diff-modal .cfg-diff-sub { color: #b39ddb; }
+body.wizard #config-diff-modal .config-diff {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #config-diff-modal .modal-buttons button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #config-diff-modal .modal-buttons button:not(.primary):hover { background: #3a2a63; }
+body.wizard #config-diff-modal .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #config-diff-modal .modal-buttons button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
 /* prefers-reduced-motion — double-gated like slop: wizard-fx.js short-
    circuits before spawning, and this CSS layer kills any motion that slips
    through. The pills / HUD / tab stay visible (they're not motion). */

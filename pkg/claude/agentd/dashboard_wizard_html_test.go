@@ -718,3 +718,56 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 		t.Error("wizard cog rotation is not disabled under prefers-reduced-motion")
 	}
 }
+
+// TestDashboardHTML_WizardConfigTab pins the wizard re-skin of the Config tab
+// ("📜 The Wizard's Almanac"): the wizard-only title, the arcane re-skin of the
+// sections / headings / inputs / sticky footer + Save lever, and the matching
+// diff-confirm dialog. Purely front-end like the rest of the wizard theme, so
+// we string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardConfigTab(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The wizard-only title: present in the HTML, hidden by default, revealed +
+	// styled only under body.wizard — the sibling of the Spellbook / Grimoire
+	// titles. Pin the default-hide rule too (load-bearing: without it the title
+	// would show in every theme).
+	must(`<h2 class="cfg-wizard-title" aria-hidden="true">📜 The Wizard's Almanac</h2>`,
+		"the wizard-mode Almanac title exists in the config markup")
+	must(".cfg-wizard-title { display: none; }", "the title is hidden outside wizard mode")
+	must("body.wizard .cfg-wizard-title", "wizard mode reveals + styles the Almanac title")
+
+	// The tab chrome is re-skinned arcane, scoped to #tab-config so no other tab
+	// is touched.
+	must("body.wizard #tab-config .cfg-section", "the config sections are re-skinned in wizard mode")
+	must("body.wizard #tab-config .cfg-section > h3", "the section headings are re-skinned")
+	must("body.wizard #tab-config .cfg-field input[type=text]", "the config inputs are re-skinned")
+	must("body.wizard #tab-config .cfg-footer", "the sticky footer is re-skinned")
+	must("body.wizard #tab-config .cfg-footer button.primary", "the Save lever gets the gilded-arcane treatment")
+
+	// The diff-confirm dialog is re-skinned too, scoped to #config-diff-modal.
+	must("body.wizard #config-diff-modal .config-diff-modal", "the diff-confirm surface is re-skinned")
+	must("body.wizard #config-diff-modal .modal-buttons button.primary", "the diff-confirm Save lever is re-skinned")
+}
+
+// TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin
+// stays scoped. The re-skin recolours .filter-bar / .primary chrome that other
+// tabs also use, so an unscoped `body.wizard .filter-bar input { … }` or
+// `body.wizard .cfg-footer button.primary { … }`-shaped leak would repaint the
+// Groups / Costs filter bars (or beyond). Every config rule must carry the
+// #tab-config (or #config-diff-modal) scope.
+func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
+	// The live filter input is the highest-leak selector — .filter-bar is shared
+	// by every tab. An unscoped wizard rule for it would bleed everywhere.
+	if strings.Contains(dashboardAssets, "body.wizard .filter-bar input {") {
+		t.Error("wizard config filter re-skin is unscoped — will repaint every tab's filter bar")
+	}
+	// The confirm button's re-skin must not leak to sibling .primary buttons.
+	if strings.Contains(dashboardAssets, "body.wizard .cfg-footer button.primary {") {
+		t.Error("wizard config footer must be scoped to #tab-config, not bare .cfg-footer")
+	}
+}
