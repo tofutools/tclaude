@@ -47,6 +47,46 @@ const VARIANT_LABEL = {
   offline: 'offline',
 };
 
+// The 🧙 wizard theme re-flavours the same tooltips with arcane verbs (the
+// operator's ask): hovering a group's bots in wizard mode reads "2 familiars
+// channeling · 1 familiar meditating" instead of "2 working · 1 idle". The
+// verbs echo the wizard state pill's vocabulary (helpers.js WIZARD_STATE) so
+// the two indicators speak the same language; merged 'asking' (permission +
+// input) collapses to one generic decree line. Purely cosmetic flair — the
+// honest status still lives in every per-row pill's own tooltip, and the
+// regular / slop themes keep the plain nouns above.
+const WIZARD_VERB = {
+  error:   'backfired',
+  asking:  'awaiting a decree',
+  working: 'channeling',
+  idle:    'meditating',
+  crashed: 'slain by a grue',
+  offline: 'departed',
+};
+
+// variantLabel builds the count-prefixed tooltip fragment for one variant in
+// the given theme. Regular (and any unknown/blank theme) → the honest noun,
+// e.g. "2 working"; 'wizard' → arcane flavour with a pluralised familiar,
+// e.g. "2 familiars channeling" / "1 familiar meditating". Pure string work
+// over fixed vocab + an integer — no caller input, so it stays injection-safe.
+export function variantLabel(variant, n, theme) {
+  if (theme === 'wizard') {
+    const noun = n === 1 ? 'familiar' : 'familiars';
+    return `${n} ${noun} ${WIZARD_VERB[variant] || VARIANT_LABEL[variant]}`;
+  }
+  return `${n} ${VARIANT_LABEL[variant]}`;
+}
+
+// themedSummaryText renders a summary's per-variant breakdown as one tooltip
+// line ("2 working · 1 idle", or the wizard flavour). activitySummary caches
+// the regular breakdown in `.summaryText`; callers reach for this when the
+// active theme may re-flavour it (render.js, per theme). Empty when nothing
+// is present.
+export function themedSummaryText(summary, theme) {
+  if (!summary || !summary.present || !summary.present.length) return '';
+  return summary.present.map(v => variantLabel(v, summary.counts[v], theme)).join(' · ');
+}
+
 // Corner glyph layered over the 🤖 face for the variants whose animation
 // alone wouldn't read at a glance. working/idle differ by motion (dance
 // vs still) and carry no tag, keeping the common cases clean.
@@ -99,27 +139,31 @@ export function activitySummary(members) {
     return true;
   });
   const level = present[0] || 'empty';
-  const summaryText = present.map(v => `${counts[v]} ${VARIANT_LABEL[v]}`).join(' · ');
+  // `.summaryText` caches the regular-theme breakdown (the common case + what
+  // the unit tests assert); themedSummaryText re-derives it for the wizard
+  // flavour when a caller needs it.
+  const summaryText = present.map(v => variantLabel(v, counts[v])).join(' · ');
   return { total, online, counts, present, level, summaryText };
 }
 
 // botHTML renders one bot for a single variant. `n` (a number) feeds the
-// count badge (shown only when >1) and the per-bot tooltip. No string
-// interpolation of caller input — safe to drop into innerHTML.
-function botHTML(variant, n) {
+// count badge (shown only when >1) and the per-bot tooltip; `theme` flavours
+// that tooltip (wizard vs plain). No string interpolation of caller input —
+// safe to drop into innerHTML.
+function botHTML(variant, n, theme) {
   const tagGlyph = VARIANT_TAG[variant];
   const tag = tagGlyph ? `<span class="actbot-tag">${tagGlyph}</span>` : '';
   const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  const tip = `${n} ${VARIANT_LABEL[variant]}`;
+  const tip = variantLabel(variant, n, theme);
   return `<span class="actbot actbot-${variant}" title="${tip}" aria-label="${tip}">`
     + `<span class="actbot-face">🤖</span>${tag}${count}</span>`;
 }
 
 // activityBotsHTML emits the inner bot row for a summary (no wrapper).
 // Returns '' when there's nothing to show.
-export function activityBotsHTML(summary) {
+export function activityBotsHTML(summary, theme) {
   if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => botHTML(v, summary.counts[v])).join('');
+  return summary.present.map(v => botHTML(v, summary.counts[v], theme)).join('');
 }
 
 // === Sprite (pixel-art) bot row — the slop-mode default ==================
@@ -138,26 +182,27 @@ const SPRITE_ANIM = {
   offline: 'static',
 };
 
-function spriteBotHTML(variant, n) {
+function spriteBotHTML(variant, n, theme) {
   const anim = SPRITE_ANIM[variant] || 'static';
   const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  const tip = `${n} ${VARIANT_LABEL[variant]}`;
+  const tip = variantLabel(variant, n, theme);
   return `<span class="actbot actbot-sprite actbot-${variant}" title="${tip}" aria-label="${tip}">`
     + `<span class="actbot-spr spr-${anim}"></span>${count}</span>`;
 }
 
 // spriteBotsHTML emits the inner sprite row for a summary (no wrapper).
-export function spriteBotsHTML(summary) {
+export function spriteBotsHTML(summary, theme) {
   if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => spriteBotHTML(v, summary.counts[v])).join('');
+  return summary.present.map(v => spriteBotHTML(v, summary.counts[v], theme)).join('');
 }
 
 // styledBotsHTML renders the inner bot row for a summary in one of the
 // three styles. 'off' (or an empty summary) → ''. The single switchboard
 // both render call sites go through, so emoji/sprites stay interchangeable.
-export function styledBotsHTML(summary, style) {
+// `theme` flavours the per-bot tooltips (wizard vs plain).
+export function styledBotsHTML(summary, style, theme) {
   if (!summary || style === 'off' || !summary.present.length) return '';
-  return style === 'sprites' ? spriteBotsHTML(summary) : activityBotsHTML(summary);
+  return style === 'sprites' ? spriteBotsHTML(summary, theme) : activityBotsHTML(summary, theme);
 }
 
 // groupActivityHTML is the one-shot helper render.js drops into a group
@@ -166,15 +211,19 @@ export function styledBotsHTML(summary, style) {
 // exactly one per mode (body.slop), so toggling slop swaps the visual with
 // NO re-render (the same trick the slot-machine state pill uses). Each
 // wrapper carries the loudest-variant `level-*` class + a breakdown
-// tooltip. Returns '' when BOTH modes resolve to nothing (off / empty
+// tooltip, flavoured by `theme` ('wizard' → arcane verbs; blank → plain
+// nouns). Returns '' when BOTH modes resolve to nothing (off / empty
 // group), so the header stays uncluttered.
-export function groupActivityHTML(members, regularStyle, slopStyle) {
+export function groupActivityHTML(members, regularStyle, slopStyle, theme) {
   const s = activitySummary(members);
   if (!s.present.length) return '';
+  // One tooltip line for the active theme — both wrappers carry it; CSS shows
+  // only the one for the live theme, so the hidden wrapper's title is inert.
+  const tip = themedSummaryText(s, theme);
   const wrap = (cls, style) => {
-    const inner = styledBotsHTML(s, style);
+    const inner = styledBotsHTML(s, style, theme);
     return inner
-      ? `<span class="${cls} level-${s.level}" title="${s.summaryText}">${inner}</span>`
+      ? `<span class="${cls} level-${s.level}" title="${tip}">${inner}</span>`
       : '';
   };
   const reg = wrap('ga-regular', regularStyle);

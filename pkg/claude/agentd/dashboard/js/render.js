@@ -15,7 +15,8 @@ import {
   RETIRED_COLS, RETIRED_ACCESSORS, CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
-import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity } from './group-activity.js';
+import { groupActivityHTML, activitySummary, styledBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
+import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
 import { getDashDefaultProfile } from './profiles.js';
@@ -467,7 +468,11 @@ function activityStyles() {
 // or the group has no members.
 function groupActivityChip(members) {
   const st = activityStyles();
-  return groupActivityHTML(members, st.regular, st.slop);
+  // The 🧙 wizard theme re-flavours the hover tooltips ("2 familiars
+  // channeling" vs "2 working"); slop keeps the honest nouns. Read live so a
+  // mid-session theme flip lands on the next 2s re-render.
+  const theme = isWizardActive() ? 'wizard' : '';
+  return groupActivityHTML(members, st.regular, st.slop, theme);
 }
 
 function renderGroups(groups) {
@@ -959,8 +964,12 @@ function renderGlobalActivity() {
   // exactly like the group chips — CSS shows the right one per mode. Clear
   // out when both modes render nothing (style off, or zero members).
   const st = activityStyles();
+  // Wizard theme re-flavours the tooltip nouns; read live so a mid-session
+  // flip lands on the next poll (the container title below is set via the DOM
+  // property, so it can't CSS-swap — it just re-renders with the poll).
+  const theme = isWizardActive() ? 'wizard' : '';
   const wrap = (cls, style) => {
-    const inner = styledBotsHTML(s, style);
+    const inner = styledBotsHTML(s, style, theme);
     return inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
   };
   const reg = wrap('ga-regular', st.regular);
@@ -971,13 +980,13 @@ function renderGlobalActivity() {
   const lines = [];
   for (const g of groups) {
     const gs = activitySummary(g.members || []);
-    if (gs.present.length && gs.level !== 'offline') lines.push(`${g.name}: ${gs.summaryText}`);
+    if (gs.present.length && gs.level !== 'offline') lines.push(`${g.name}: ${themedSummaryText(gs, theme)}`);
   }
   const ung = activitySummary(snap.ungrouped || []);
-  if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${ung.summaryText}`);
+  if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${themedSummaryText(ung, theme)}`);
   el.innerHTML = reg + slop;
   syncBotAnimations(); // re-phase to wall-clock so the 2s poll doesn't restart-jump
-  el.title = `Activity across all groups — ${s.summaryText}`
+  el.title = `Activity across all groups — ${themedSummaryText(s, theme)}`
     + (lines.length ? '\n' + lines.join('\n') : '');
 }
 
