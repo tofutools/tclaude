@@ -125,7 +125,7 @@ func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
 	const conv = "dtof-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-dtof"
 	f.HaveConvWithTitle(conv, "sleepy-worker")
-	f.HaveAliveSession(conv, "spwn-dtof", tmuxSes, "/tmp/dtof")
+	f.HaveAliveSession(conv, "spwn-dtof", tmuxSes, f.World.HomeDir)
 	f.HaveEnrolledAgent(conv)
 
 	// Turn it off first so the grey dot is the real state under test.

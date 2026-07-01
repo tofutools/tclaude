@@ -195,7 +195,7 @@ func TestAgentResume_InheritsLiveModel(t *testing.T) {
 	const conv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6"
 	const label = "spwn-old-rsme"
 	const tmux = "tclaude-" + label
-	f.HaveAliveSession(conv, label, tmux, "/tmp/work")
+	f.HaveAliveSession(conv, label, tmux, f.World.HomeDir)
 	reportModel(t, label, "claude-fable-5", "high")
 	f.MarkOffline(tmux)
 
@@ -227,7 +227,7 @@ func TestAgentResume_1MModelIDWithSuffix_NoDoubleSuffix(t *testing.T) {
 	const conv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7"
 	const label = "spwn-old-1msfx"
 	const tmux = "tclaude-" + label
-	f.HaveAliveSession(conv, label, tmux, "/tmp/work")
+	f.HaveAliveSession(conv, label, tmux, f.World.HomeDir)
 	// model.id already carries [1m], window snapshot also says 1M.
 	reportModel(t, label, "claude-opus-4-8[1m]", "high")
 	require.NoError(t, db.UpdateContextSnapshot(label, 12, 120_000, 800, 1_000_000))

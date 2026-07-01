@@ -301,7 +301,7 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)
 				return
 			}
-			dashboardResumeAgent(w, convSelector)
+			dashboardResumeAgent(w, r, convSelector)
 			return
 		case "clone":
 			if r.Method != http.MethodPost {
@@ -1291,13 +1291,19 @@ func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSel
 // dashboardResumeAgent is the cookie-auth twin of POST
 // /v1/agent/{conv}/resume. Idempotent — already-online conv-ids
 // surface as `skipped:already_online`. No body.
-func dashboardResumeAgent(w http.ResponseWriter, convSelector string) {
+//
+// ?recreate=1 opts into recreating a deleted launch dir empty before the
+// relaunch. Without it, a resume whose recorded cwd was deleted comes back
+// as `error:missing_cwd` (Detail = the path); the wake button then pops a
+// confirm and retries with ?recreate=1 so the agent can start.
+func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	out := resumeOneConv(res.ConvID)
+	recreate := r.URL.Query().Get("recreate") == "1"
+	out := resumeOneConvRecreate(res.ConvID, recreate)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }

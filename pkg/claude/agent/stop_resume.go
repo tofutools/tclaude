@@ -97,7 +97,8 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 }
 
 type resumeParams struct {
-	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
+	Selector    string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
+	RecreateDir bool   `long:"recreate-dir" help:"If the agent's recorded launch directory was deleted, recreate it empty so the agent can start (otherwise resume reports missing_cwd and does nothing)"`
 }
 
 func resumeCmd() *cobra.Command {
@@ -111,6 +112,11 @@ func resumeCmd() *cobra.Command {
 			"\n\n" +
 			"Idempotent: agents already online come back as " +
 			"`skipped:already_online`. " +
+			"\n\n" +
+			"If that recorded launch directory was deleted since the agent last " +
+			"ran, resume reports `error:missing_cwd` and does nothing (spawning " +
+			"into a vanished cwd would wedge the agent at startup). Re-run with " +
+			"`--recreate-dir` to recreate the directory empty and start the agent. " +
 			"\n\n" +
 			"Auth: requires the agent.resume permission OR being an owner of a " +
 			"group containing the target. The single-conv variant of " +
@@ -136,6 +142,9 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/resume"
+	if p.RecreateDir {
+		path += "?recreate=1"
+	}
 	var resp struct {
 		ConvID        string `json:"conv_id"`
 		CallerConv    string `json:"caller_conv,omitempty"`
@@ -150,6 +159,11 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
 	if resp.Detail != "" {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
+	}
+	// The recorded launch dir was deleted; the daemon did nothing rather than
+	// wedge the agent at startup. Point the human at the recreate opt-in.
+	if resp.Action == "error:missing_cwd" {
+		fmt.Fprintf(stdout, "  launch directory no longer exists; re-run with --recreate-dir to recreate it empty and start the agent\n")
 	}
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "  called by: %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))

@@ -37,7 +37,6 @@ const (
 	clearAgentConv  = "c1ea0000-1111-2222-3333-444444444444"
 	clearAgentLabel = "spwn-clear-001"
 	clearAgentTmux  = "tclaude-spwn-clear-001"
-	clearAgentCwd   = "/tmp/clearwork"
 	clearAgentTitle = "clear-victim"
 	clearPeerConv   = "9ee50000-1111-2222-3333-555555555555"
 )
@@ -49,7 +48,7 @@ const (
 func setupClearedAgent(t *testing.T, f *testharness.Flow) *db.AgentGroup {
 	t.Helper()
 	g := f.HaveGroup(clearGroup)
-	f.HaveAliveSession(clearAgentConv, clearAgentLabel, clearAgentTmux, clearAgentCwd)
+	f.HaveAliveSession(clearAgentConv, clearAgentLabel, clearAgentTmux, f.World.HomeDir)
 	// Stamp the agent's display name into the .jsonl exactly as a real
 	// /rename would, so the hook's pre-migration scan picks it up via
 	// the production conv_index path. (HaveConvWithTitle would short-
@@ -332,7 +331,7 @@ func TestClearRotation_RetriesIdentityMigrationAfterTransientFailure(t *testing.
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		ConvID:        c.NewConv,
 		HookEventName: "UserPromptSubmit",
-		Cwd:           clearAgentCwd,
+		Cwd:           f.World.HomeDir,
 	}, clearAgentLabel))
 
 	// The retry converged: session row advanced to the new conv-id.

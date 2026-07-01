@@ -135,8 +135,12 @@ func NewCodexSim(t *testing.T, home, cwd string) *CodexSim {
 func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 	t.Helper()
 	if cwd == "" {
-		cwd = "/tmp/tclaude-sim-cwd"
+		cwd = filepath.Join(home, "sim-cwd")
 	}
+	// See NewCCSimWithID: model the invariant that a live/resumable session's
+	// working directory exists on disk, so resume flow tests take the normal
+	// path rather than the new missing-cwd guard. Best-effort.
+	_ = os.MkdirAll(cwd, 0o755)
 	created := time.Now()
 	cx := &CodexSim{
 		ConvID:        convID,

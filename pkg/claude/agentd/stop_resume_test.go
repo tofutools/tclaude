@@ -72,13 +72,16 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
+	// A real, existing launch dir: resume now refuses to relaunch into a
+	// vanished cwd, so the recorded path must exist for the spawn to proceed.
+	cwd := t.TempDir()
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      "worker-conv-id-12345678",
-		ProjectPath: "/tmp/worker",
+		ProjectPath: cwd,
 		IndexedAt:   time.Now(),
 	}))
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
@@ -94,7 +97,7 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
 	assert.Equal(t, "resumed", resp["action"], "full body=%s", w.Body.String())
 	assert.Equal(t, "worker-conv-id-12345678", rec.convID)
-	assert.Equal(t, "/tmp/worker", rec.cwd)
+	assert.Equal(t, cwd, rec.cwd)
 }
 
 // stopOneConv is the helper shared between the bulk and single-conv
@@ -128,10 +131,11 @@ func TestResumeOneConv_UsesConvIndexWhenSessionMissing(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
+	cwd := t.TempDir()
 	const convID = "codex-conv-id-12345678"
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      convID,
-		ProjectPath: "/tmp/codex-work",
+		ProjectPath: cwd,
 		Harness:     harness.CodexName,
 		IndexedAt:   time.Now(),
 	}))
@@ -139,7 +143,7 @@ func TestResumeOneConv_UsesConvIndexWhenSessionMissing(t *testing.T) {
 	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.Equal(t, convID, rec.convID)
-	assert.Equal(t, "/tmp/codex-work", rec.cwd)
+	assert.Equal(t, cwd, rec.cwd)
 	assert.Equal(t, harness.CodexName, rec.harness)
 	assert.Equal(t, harness.CodexAgentProfile, rec.sandbox)
 	assert.Equal(t, "never", rec.approval)
@@ -168,6 +172,95 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	assert.Equal(t, convID, rec.convID)
 	assert.Equal(t, cwd, rec.cwd)
 	assert.Equal(t, harness.CodexName, rec.harness)
+}
+
+// A resume whose recorded launch dir was deleted must NOT spawn into the
+// vanished cwd (that wedges the agent at startup). It reports
+// `error:missing_cwd` with the path in Detail so the caller can offer to
+// recreate it, and creates nothing on its own.
+func TestResumeOneConv_MissingCwdReportsErrorAndDoesNotSpawn(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	// Parent exists (writable temp), leaf is gone — the deleted-worktree shape.
+	gone := filepath.Join(t.TempDir(), "deleted-worktree")
+	const convID = "gone-conv-id-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		ProjectPath: gone,
+		IndexedAt:   time.Now(),
+	}))
+
+	res := resumeOneConv(convID)
+	assert.Equal(t, "error:missing_cwd", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, gone, res.Detail,
+		"Detail must carry the missing path so the dialog can name it and recreate it")
+	assert.Empty(t, rec.convID, "resume must not spawn a child into a vanished cwd")
+	assert.NoDirExists(t, gone, "resume without the recreate opt-in must not create the dir")
+}
+
+// With the recreate opt-in, resume recreates the deleted launch dir empty
+// and then relaunches into it — the "recreate the local dir so the agent
+// can start" path the dashboard confirm and `--recreate-dir` drive.
+func TestResumeOneConvRecreate_RecreatesMissingCwdThenSpawns(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	gone := filepath.Join(t.TempDir(), "deleted-worktree")
+	const convID = "recr-conv-id-12345678"
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID:      convID,
+		ProjectPath: gone,
+		IndexedAt:   time.Now(),
+	}))
+
+	res := resumeOneConvRecreate(convID, true)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.DirExists(t, gone, "the recreate opt-in must create the empty launch dir")
+	assert.Equal(t, gone, rec.cwd, "the resumed agent must launch into the recreated dir")
+}
+
+// End-to-end over the daemon mux: POST /v1/agent/{conv}/resume answers
+// `error:missing_cwd` and creates nothing when the launch dir is gone;
+// re-POSTing with ?recreate=1 (what the CLI's --recreate-dir and the
+// dashboard's confirm send) recreates the dir empty and resumes.
+func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	gone := filepath.Join(t.TempDir(), "deleted-worktree")
+	const convID = "httpr-conv-id-12345678"
+	gID, _ := db.CreateAgentGroup("team", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: convID})
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: gone, IndexedAt: time.Now(),
+	}))
+	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
+
+	resumePost := func(query string) map[string]any {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume"+query, nil)
+		r = r.WithContext(context.WithValue(r.Context(), peerKey{},
+			&peer{PID: 1, HasClaudeAncestor: true, ConvID: "manager"}))
+		handleAgentByConv(w, r)
+		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
+		return resp
+	}
+
+	// Without the opt-in: missing_cwd, nothing created, nothing spawned.
+	resp := resumePost("")
+	assert.Equal(t, "error:missing_cwd", resp["action"], "resp=%v", resp)
+	assert.Equal(t, gone, resp["detail"], "resp=%v", resp)
+	assert.NoDirExists(t, gone)
+	assert.Empty(t, rec.convID, "the plain resume must not spawn")
+
+	// With ?recreate=1: the dir is recreated empty and the agent resumes.
+	resp = resumePost("?recreate=1")
+	assert.Equal(t, "resumed", resp["action"], "resp=%v", resp)
+	assert.DirExists(t, gone)
+	assert.Equal(t, gone, rec.cwd)
 }
 
 type recordingResumeSpawner struct {
@@ -204,15 +297,16 @@ func TestResumeOneConv_ConvIndexProjectDirFallback(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
+	cwd := t.TempDir()
 	const convID = "claude-conv-id-12345678"
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:     convID,
-		ProjectDir: "/tmp/claude-project",
+		ProjectDir: cwd,
 		IndexedAt:  time.Now(),
 	}))
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, "/tmp/claude-project", rec.cwd)
+	assert.Equal(t, cwd, rec.cwd)
 	assert.True(t, rec.harness == "" || strings.EqualFold(rec.harness, harness.DefaultName))
 }
