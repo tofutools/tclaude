@@ -26,6 +26,7 @@ import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindCronModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
+import { initTerminalsTab } from './terminals-tab.js';
 import {
   bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal,
 } from './modal-message.js';
@@ -119,6 +120,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindPermEditModal();
   bindCronModal();
   bindTermModal();
+  // The in-SPA "Terminals" tab — mounts the multiplexer and starts hidden
+  // (it reveals itself once "web term" / "web window" opens the first pane).
+  initTerminalsTab();
   bindMessageModal();
   bindGroupCreateModal();
   bindTemplatesUI();

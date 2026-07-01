@@ -18,7 +18,7 @@ import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
-import { launchInTerminals } from './terminals-launch.js';
+import { openTerminalPane } from './terminals-tab.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -469,15 +469,15 @@ function bindRowActions() {
         }
         case 'web-term': {
           // The dedicated "web term" button ALWAYS streams an in-browser
-          // PTY. Open it in the standalone terminals multiplexer tab
-          // (js/terminals.js) — a separate browser tab that holds many
-          // live terminals at once — instead of the blocking in-page
-          // modal, so several agents' terminals can be open simultaneously
-          // without covering the dashboard. The which-dir choice resolves
-          // into the WS path the multiplexer connects to
-          // (/api/term-ws/{conv}); the tab is opened synchronously on the
-          // click so a pop-up blocker can't eat it (see launchInTerminals).
-          launchInTerminals(
+          // PTY. Open it in the dashboard's own "Terminals" tab
+          // (js/terminals-tab.js) — an in-SPA nav tab that holds many live
+          // terminals at once — instead of the blocking in-page modal, so
+          // several agents' terminals can be open simultaneously without
+          // covering the dashboard. The which-dir choice resolves into the WS
+          // path the multiplexer connects to (/api/term-ws/{conv});
+          // openTerminalPane takes the picker promise directly and reveals the
+          // tab once it resolves (a cancelled pick is a no-op).
+          openTerminalPane(
             termDirModal({ label }).then((which) => (which
               ? {
                 ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
@@ -511,9 +511,9 @@ function bindRowActions() {
         case 'web-open-window': {
           // Like "web term" but attached to the agent's live session (its
           // Claude Code TUI) rather than a fresh shell. ALWAYS a browser
-          // terminal, opened in the multiplexer tab. No dir choice, so no
+          // terminal, opened in the Terminals tab. No dir choice, so no
           // await before the open — connects to /api/open-window-ws/{conv}.
-          launchInTerminals({
+          openTerminalPane({
             ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
             label,
             key: `window:${conv}`,

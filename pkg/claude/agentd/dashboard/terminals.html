@@ -6,22 +6,25 @@
 <title>tclaude terminals</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="70" text-anchor="middle" dominant-baseline="central">🖥️</text></svg>'>
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+<!-- Shared multiplexer widget styles (also loaded by the dashboard's Terminals
+     tab); terminals.css adds only this page's full-page shell. -->
+<link rel="stylesheet" href="/static/mux.css">
 <link rel="stylesheet" href="/static/terminals.css">
 </head>
 <body>
-<!-- The standalone terminals multiplexer: a separate browser tab/window that
-     holds many live xterm.js terminals at once, each streamed over a
-     WebSocket to a real PTY on the agentd host (the same /api/term-ws and
-     /api/open-window-ws endpoints the in-dashboard modal uses). Opened/seeded
-     from the dashboard's "web term" / "web window" actions. See
+<!-- The standalone /terminals page. Since the multiplexer moved into the
+     dashboard's own "Terminals" tab, this page is now used only for the "⧉ tab"
+     pop-out (?solo=1: one terminal in its own OS/browser window). It runs the
+     same shared pane core (js/terminals-core.js) over the same /api/term-ws /
+     /api/open-window-ws endpoints, fed the seed carried in the URL hash. See
      js/terminals.js. -->
 <div id="mux">
-  <div id="mux-tabs" role="tablist" aria-label="Open terminals"></div>
-  <div id="mux-panes"></div>
+  <div id="mux-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
+  <div id="mux-panes" class="mux-panes"></div>
   <div id="mux-empty">
     <div class="mux-empty-title">No terminals open</div>
-    <div>Open one from the dashboard with the <code>web term</code> or <code>web window</code> buttons.</div>
-    <div>They'll appear here as tabs — each can be popped out into its own browser tab.</div>
+    <div>Open one from the dashboard with the <code>web term</code> or <code>web window</code> buttons — they open in the dashboard's <code>Terminals</code> tab.</div>
+    <div>Each terminal there has a <code>⧉ tab</code> button that pops it out into its own browser window here.</div>
   </div>
 </div>
 <!-- Vendored xterm.js as classic (non-module) scripts so Terminal / FitAddon

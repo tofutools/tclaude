@@ -12,6 +12,9 @@
 <!-- Vendored (not CDN, like every other dashboard asset) — backs the
      in-browser terminal modal (js/modal-term.js). -->
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+<!-- Shared terminal-multiplexer widget styles, used by the in-SPA "Terminals"
+     tab (#tab-terminals) and the standalone /terminals pop-out page. -->
+<link rel="stylesheet" href="/static/mux.css">
 </head>
 <body>
 <header>
@@ -117,6 +120,10 @@
 <nav title="Tip: cycle tabs with [ and ] (or ←/→ while the tab bar is focused)" aria-keyshortcuts="[ ]">
   <div class="bar-inner nav-inner">
   <button class="active" data-tab="groups">Groups</button>
+  <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
+       body.hide-terminals until "web term" / "web window" opens the first pane;
+       the badge counts the live terminals. -->
+  <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window.">Terminals<span id="terminals-badge" class="tab-badge" hidden></span></button>
   <button data-tab="cron">Cron</button>
   <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
   <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants">Access</button>
@@ -173,6 +180,15 @@
       any row → <em>Retired</em> (retire) ·
       <em>Retired</em> row → group (reinstate + join)
     </aside>
+  </section>
+  <!-- The in-SPA terminal multiplexer. js/terminals-tab.js mounts the shared
+       pane core (js/terminals-core.js) onto these containers; dashboard.css
+       flexes this section to full height (the same :has() app-shell trick the
+       Messages tab uses). The section + its nav button are CSS-hidden via
+       body.hide-terminals until the first pane opens. -->
+  <section id="tab-terminals">
+    <div id="term-tab-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
+    <div id="term-tab-panes" class="mux-panes"></div>
   </section>
   <section id="tab-cron">
     <div class="filter-bar">
@@ -982,7 +998,7 @@
       <button type="button" class="term-session-detach" id="term-session-detach"
         aria-label="Detach" title="Detach — drop this view now; the agent keeps running, reopen to reattach">Detach</button>
       <button type="button" class="term-session-pop" id="term-session-pop"
-        title="Move this terminal to its own browser tab (the terminals page), where several can be open at once">⧉ tab</button>
+        title="Move this terminal to the dashboard's Terminals tab, where several can be open at once">⧉ tab</button>
       <button type="button" class="term-session-close" id="term-session-close"
         aria-label="Close" title="Close — asks first; the agent keeps running, reopen to reattach">&times;</button>
     </div>

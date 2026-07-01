@@ -51,6 +51,7 @@ func TestDashboardTerminals_ServesPage(t *testing.T) {
 		`id="mux-tabs"`,
 		`/static/js/terminals.js`,
 		`/static/terminals.css`,
+		`/static/mux.css`,
 		`/static/vendor/xterm/xterm.min.js`,
 	} {
 		if !strings.Contains(body, needle) {

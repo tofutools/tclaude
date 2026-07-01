@@ -3,16 +3,17 @@ package agentd
 import "net/http"
 
 // terminalsPageHTML is terminals.html, read once at init — the standalone
-// multi-terminal page handleDashboardTerminals serves at /terminals.
+// /terminals page handleDashboardTerminals serves.
 var terminalsPageHTML = mustReadFS(dashboardAssetsFS, "terminals.html")
 
-// handleDashboardTerminals serves the standalone "terminals multiplexer" page
-// at /terminals, behind the same auth gate as the dashboard root. It's a
-// separate browser tab/window that holds many live xterm.js terminals at once
-// — opened from the dashboard's "web term" / "web window" row actions (see
-// js/row-actions.js → js/terminals-launch.js → js/terminals.js). The page only
-// ever loads /static/* assets and connects to the existing /api/term-ws and
-// /api/open-window-ws WebSocket endpoints, which carry their own auth checks.
+// handleDashboardTerminals serves the standalone /terminals page, behind the
+// same auth gate as the dashboard root. The multiplexer itself now lives in the
+// dashboard's own "Terminals" tab (js/terminals-tab.js); this page exists only
+// for the per-terminal "⧉ tab" pop-out (/terminals?solo=1 — one terminal in its
+// own OS/browser window, seeded via the URL hash; see js/terminals.js). The
+// page only ever loads /static/* assets and connects to the existing
+// /api/term-ws and /api/open-window-ws WebSocket endpoints, which carry their
+// own auth checks.
 func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)

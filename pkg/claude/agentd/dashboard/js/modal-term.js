@@ -23,7 +23,7 @@
 
 import { $ } from './helpers.js';
 import { confirmModal } from './refresh.js';
-import { launchInTerminals } from './terminals-launch.js';
+import { openTerminalPane } from './terminals-tab.js';
 
 let term = null;
 let fitAddon = null;
@@ -306,18 +306,18 @@ export function bindTermModal() {
   const overlay = $('#term-session-modal');
   $('#term-session-detach').addEventListener('click', detachAndClose);
   $('#term-session-close').addEventListener('click', confirmAndClose);
-  // "⧉ tab" — hand this same WebSocket terminal to the standalone terminals
-  // page (a separate browser tab that holds several at once), then tear down
-  // this modal view. The underlying tmux/PTY session outlives the modal, so
-  // the new tab reattaches to the very same shell; detachAndClose drops this
-  // window's own client first (and, for an open-window attach, /api/hide-s it)
-  // so the new tab isn't size-clamped by a now-defunct viewer — and for a
-  // fresh terminals tab the hide lands before the new attach (which waits on
-  // the page load). Lets the gesture-less fallbacks that land in this modal
-  // (spawn auto-focus, native-window-unavailable) escape the single blocking
-  // overlay into the multi-terminal view.
+  // "⧉ tab" — hand this same WebSocket terminal to the dashboard's Terminals
+  // tab (which holds several at once), then tear down this modal view. The
+  // underlying tmux/PTY session outlives the modal, so the new pane reattaches
+  // to the very same shell; detachAndClose drops this window's own client first
+  // (and, for an open-window attach, /api/hide-s it) so the new pane isn't
+  // size-clamped by a now-defunct viewer. openTerminalPane opens on a
+  // microtask, so the synchronous detach below lands first. Lets the
+  // gesture-less fallbacks that land in this modal (spawn auto-focus,
+  // native-window-unavailable) escape the single blocking overlay into the
+  // multi-terminal view.
   $('#term-session-pop').addEventListener('click', () => {
-    if (currentWsPath) launchInTerminals({ ws: currentWsPath, label: currentLabel });
+    if (currentWsPath) openTerminalPane({ ws: currentWsPath, label: currentLabel });
     detachAndClose();
   });
   overlay.addEventListener('click', (e) => {

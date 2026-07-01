@@ -1821,8 +1821,8 @@ details[open] > summary .spawn-btn { opacity: 1; }
   margin: 0; font-size: 13px; color: #d4d4d4; font-family: ui-monospace, monospace;
 }
 .term-session-status { font-size: 11px; color: #7d8590; flex: 1; }
-/* "⧉ tab" — pop this modal terminal out into the standalone terminals page
-   (js/terminals-launch.js). Themed dark: a bare <button> would render with
+/* "⧉ tab" — hand this modal terminal to the dashboard's Terminals tab
+   (js/terminals-tab.js). Themed dark: a bare <button> would render with
    the browser's white default. */
 .term-session-pop {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
@@ -3354,6 +3354,36 @@ body.hide-costs #groups-cost-toggle { display: none; }
    Plugins was showing). */
 body.hide-plugins nav button[data-tab="plugins"],
 body.hide-plugins #tab-plugins { display: none; }
+
+/* Terminals-tab auto-hide. body.hide-terminals is set by js/terminals-tab.js
+   whenever no terminal pane is open — the tab exists only while ≥1 web terminal
+   / window is live. Unlike Costs/Plugins (server flags), this is driven
+   client-side off the live pane count, but the shape is identical: hide the nav
+   button AND the section, and terminals-tab.js falls the active tab back to
+   Groups if Terminals was showing when it emptied. */
+body.hide-terminals nav button[data-tab="terminals"],
+body.hide-terminals #tab-terminals { display: none; }
+
+/* The Terminals tab is a full-height app-shell like Messages: flex the
+   body → main → section column to 100vh so the pane stack fills the space below
+   the chrome (same :has() trick, self-correcting, no JS). main's default
+   padding is dropped so the terminal grid sits edge-to-edge like the standalone
+   page. See the Messages block above for why the chrome rows are frozen. */
+body:has(#tab-terminals.active) {
+  height: 100vh;
+  display: flex; flex-direction: column;
+}
+body:has(#tab-terminals.active) main,
+body:has(#tab-terminals.active) #tab-terminals.active {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+body:has(#tab-terminals.active) main { padding: 0; }
+body:has(#tab-terminals.active) > header,
+body:has(#tab-terminals.active) > #slop-marquee,
+body:has(#tab-terminals.active) > nav {
+  flex: none;
+}
 
 /* The 💲 per-agent-cost toggle in the Groups filter bar. Dims when off so the
    pressed/unpressed state reads at a glance. */
