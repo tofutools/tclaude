@@ -1178,6 +1178,8 @@ function actionCog(act, items) {
   // U+FE0E (text variation selector) pins the gear to its monochrome
   // text glyph so the CSS amber colour applies — without it some
   // platforms render U+2699 as a colour emoji that ignores `color`.
+  // The glyph rides a .cog-glyph span so the wizard theme can spin just
+  // the gear (an enchanted cogwheel) without rotating the bordered box.
   //
   // ARIA menu-button pattern: the cog is aria-haspopup="menu" with an
   // aria-expanded the toggle handler / closeAllActionMenus keep in
@@ -1189,7 +1191,7 @@ function actionCog(act, items) {
   const menuItems = items.replaceAll('<button ', '<button role="menuitem" ');
   return `<button type="button" class="cog-btn" data-act="${esc(act)}"`
     + ` aria-haspopup="menu" aria-expanded="false"`
-    + ` title="More actions" aria-label="More actions">⚙︎</button>`
+    + ` title="More actions" aria-label="More actions"><span class="cog-glyph">⚙︎</span></button>`
     + `<div class="action-menu" role="menu">${menuItems}</div>`;
 }
 
