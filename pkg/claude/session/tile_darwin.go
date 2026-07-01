@@ -186,8 +186,8 @@ func platformTileWindows(specs []TileSpec, opts TileOptions) {
 // macEnumWindowBounds enumerates one app's windows in a single osascript,
 // returning tty → current window bounds for every tab/session. Best
 // effort: an app that isn't running is guarded inside the script (`is
-// running` doesn't launch it) and yields no lines; an app that isn't
-// installed makes osascript error, which reads as no windows.
+// running` doesn't launch it) and yields no lines, and the guard answers
+// false for an app that isn't installed at all — either way, no windows.
 func macEnumWindowBounds(app string) map[string]Rect {
 	script := buildMacEnumBoundsScript(app)
 	if script == "" {

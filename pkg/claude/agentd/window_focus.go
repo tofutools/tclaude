@@ -183,7 +183,8 @@ var tileAgentWindows = func(specs []session.TileSpec, opts session.TileOptions) 
 // immediately. tileSettleMaxWait caps the wait on a window that never
 // comes up (open failed, focus.raise_only); tileSettleStableFor gives up
 // early once the attached set has stopped growing — no more windows are
-// coming, tile what's there. Package vars so flow tests can shrink them.
+// coming, tile what's there. (Flow tests don't touch these knobs — they
+// no-op the whole waitForFocusedWindows seam instead.)
 var (
 	tileSettlePollEvery = 150 * time.Millisecond
 	tileSettleMaxWait   = 5 * time.Second
@@ -222,7 +223,11 @@ var waitForFocusedWindows = func(targets []windowTarget) {
 		if n > seen {
 			seen, grew = n, now
 		}
-		if !now.Before(deadline) || now.Sub(grew) >= tileSettleStableFor {
+		// The stable-set cutoff only applies once at least one window has
+		// attached: an all-fresh open whose terminal app is cold-launching
+		// can sit at zero past tileSettleStableFor and still come up —
+		// give that case the full deadline.
+		if !now.Before(deadline) || (n > 0 && now.Sub(grew) >= tileSettleStableFor) {
 			slog.Debug("tiling: gave up waiting for windows to come up",
 				"attached", n, "targets", len(targets), "waited", now.Sub(start), "module", "tile")
 			return
