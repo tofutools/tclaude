@@ -28,6 +28,7 @@ import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
 // row-actions rename-rollback). All deliberate, benign cycles (see
 // render.js): TDZ-safe — no top-level code reads a cyclic import.
 import { renameEditing } from './row-actions.js';
+import { closeTerminalsForWindowOp } from './terminals-tab.js';
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
@@ -2296,6 +2297,11 @@ function openWindowModal(scope, groupName) {
       const extra = out.failed ? `, ${out.failed} failed` : '';
       toast(`focus windows (${out.targeted} targeted): ${out.focused} focused${extra}`, out.failed > 0);
     } else {
+      // Close the multiplexer panes of exactly the agents this subset unfocus
+      // detached (out.agents), so their terminal tabs don't linger showing
+      // "disconnected". Precise — agents outside the ticked selection are
+      // untouched.
+      closeTerminalsForWindowOp(out.agents);
       const parts = [`${out.detached} detached`];
       if (out.no_window) parts.push(`${out.no_window} had no window`);
       if (out.failed) parts.push(`${out.failed} failed`);

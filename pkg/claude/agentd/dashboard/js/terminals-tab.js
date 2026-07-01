@@ -78,3 +78,31 @@ export function openTerminalPane(seedOrPromise) {
     mux.openPane(seed);
   });
 }
+
+// closeTerminalsForConvs closes any multiplexer pane attached to an agent's
+// LIVE session (seed.hideConv) whose selector is in `selectors` — the reaction
+// to an agent window being hidden/detached from OUTSIDE the multiplexer (the
+// per-agent eye button, the command palette's per-agent "Hide window"). The
+// detach already happened server-side, so the pane is closed WITHOUT re-running
+// /api/hide. A throwaway web-term pane (no hideConv) is never matched, and a
+// selector with no open pane is a no-op.
+export function closeTerminalsForConvs(selectors) {
+  if (mux) mux.closeForHide(selectors);
+}
+
+// closeTerminalsForWindowOp is the bulk twin: given a /api/agent-windows
+// response's `agents` outcome list, close the panes of every agent that was
+// actually DETACHED (ignoring focus / no_window / failed). Matches on BOTH the
+// stable agent_id and the conv_id, since a pane's hideConv is whichever the row
+// carried (agent_id ?? conv_id).
+export function closeTerminalsForWindowOp(agents) {
+  if (!Array.isArray(agents)) return;
+  const sels = [];
+  for (const o of agents) {
+    if (o && o.outcome === 'detached') {
+      if (o.agent_id) sels.push(o.agent_id);
+      if (o.conv_id) sels.push(o.conv_id);
+    }
+  }
+  if (sels.length) closeTerminalsForConvs(sels);
+}

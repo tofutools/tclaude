@@ -259,16 +259,19 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     connect(p);
   }
 
-  function closePane(key) {
+  function closePane(key, opts) {
     const p = panes.get(key);
     if (!p) return;
     // Close the socket AND, for a live-session attach (seed.hideConv), run the
     // reliable server-side tmux detach — otherwise the forked client stays
     // attached and reopening fails. closeSocket first (it nulls the handlers) so
     // the detach's server-side WS close lands silently. The tmux/PTY session
-    // keeps running, so reopening reattaches to the same shell.
+    // keeps running, so reopening reattaches to the same shell. opts.skipDetach
+    // suppresses the detach when the close is a REACTION to an external hide
+    // (eye button / palette / bulk unfocus) that already detached server-side —
+    // re-running /api/hide then would be redundant.
     closeSocket(p);
-    hideOnDetach(p);
+    if (!(opts && opts.skipDetach)) hideOnDetach(p);
     if (p.ro) { try { p.ro.disconnect(); } catch (_) { /* already gone */ } }
     try { p.term.dispose(); } catch (_) { /* already disposed */ }
     p.wrap.remove();
@@ -307,9 +310,25 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
 
   updateChrome();
 
+  // closeForHide closes every live-session pane (seed.hideConv set) whose
+  // selector is in `selectors` — the reaction to an EXTERNAL hide/detach (the
+  // per-agent eye button, the command palette, a bulk unfocus). The detach
+  // already happened server-side, so panes close WITHOUT re-running /api/hide
+  // (skipDetach). Throwaway web-term panes (no hideConv) are never matched.
+  function closeForHide(selectors) {
+    const set = new Set(selectors || []);
+    if (!set.size) return;
+    // Snapshot the entries — closePane mutates `panes` under us.
+    for (const [key, p] of [...panes]) {
+      const hc = p.seed && p.seed.hideConv;
+      if (hc && set.has(hc)) closePane(key, { skipDetach: true });
+    }
+  }
+
   return {
     openPane,
     closePane,
+    closeForHide,
     count: () => panes.size,
   };
 }

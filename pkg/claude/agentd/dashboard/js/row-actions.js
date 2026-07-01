@@ -18,7 +18,7 @@ import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
-import { openTerminalPane } from './terminals-tab.js';
+import { openTerminalPane, closeTerminalsForConvs } from './terminals-tab.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -443,6 +443,11 @@ function bindRowActions() {
           });
           if (!r.ok) { toast(`Hide failed: ${await r.text()}`, true); return; }
           const info = await r.json().catch(() => ({}));
+          // The agent's live-session tmux client was just detached — close its
+          // multiplexer pane too (if one is open) so the terminal tab doesn't
+          // linger showing "disconnected". The server-side detach already ran,
+          // so this closes WITHOUT re-hiding.
+          closeTerminalsForConvs([agent]);
           // Skip the default refresh — detaching a window doesn't
           // change any dashboard state (the agent stays online).
           toast(info.detached > 0 ? `hidden: ${label}` : `already hidden: ${label}`);
