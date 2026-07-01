@@ -37,7 +37,8 @@ func TestFormatModelName(t *testing.T) {
 	}{
 		{"claude-opus-4-5-20251101", "Opus-4-5"},
 		{"claude-sonnet-4-20250929", "Sonnet-4"},
-		{"claude-haiku-3-5-20241022", "Haiku-3-5-20241022"},
+		{"claude-haiku-3-5-20241022", "Haiku-3-5"}, // any -YYYYMMDD stamp is stripped, not just a hardcoded set
+		{"claude-fable-5", "Fable-5"},              // no date stamp: version segment survives untouched
 		{"opus", "Opus"},
 	}
 
