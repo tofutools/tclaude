@@ -113,19 +113,26 @@ test('themedSummaryText re-flavours the breakdown for wizard, plain otherwise', 
   assert.equal(themedSummaryText(activitySummary([]), 'wizard'), ''); // nothing present
 });
 
-test('wizard theme threads its flavour into bot tooltips and the wrapper title', () => {
+test('wizard flavour lands on the wizard wrapper; regular/slop stay plain', () => {
   const members = [on('working'), on('working'), on('idle')];
-  // Per-bot tooltip + aria-label carry the arcane phrasing.
+  // Per-bot tooltip + aria-label carry the arcane phrasing when a builder is
+  // asked for the wizard theme directly.
   const bots = activityBotsHTML(activitySummary(members), 'wizard');
   assert.ok(bots.includes('title="2 familiars channeling"'));
   assert.ok(bots.includes('aria-label="1 familiar meditating"'));
   // Sprite bots too (the slop-style row).
   assert.ok(spriteBotsHTML(activitySummary(members), 'wizard').includes('title="2 familiars channeling"'));
-  // The group chip's wrapper title is the wizard breakdown; blank theme stays plain.
+  // In the group chip, the theme↔wrapper mapping is 1:1, so each wrapper is
+  // FIXED-flavour: the dedicated .ga-wizard wrapper carries the arcane
+  // breakdown, while .ga-regular/.ga-slop keep the plain nouns even in the
+  // same render (they're CSS-hidden in wizard mode, but the title is baked).
   const wiz = groupActivityHTML(members, 'emoji', 'sprites', 'wizard');
-  assert.ok(wiz.includes('title="2 familiars channeling · 1 familiar meditating"'));
+  assert.ok(wiz.includes('class="ga-wizard level-working" title="2 familiars channeling · 1 familiar meditating"'));
+  assert.ok(wiz.includes('class="ga-regular level-working" title="2 working · 1 idle"'));
+  // A plain (pre-wizard-arg) call emits NO wizard wrapper — no arcane leak.
   const plain = groupActivityHTML(members, 'emoji', 'sprites');
   assert.ok(plain.includes('title="2 working · 1 idle"'));
+  assert.ok(!plain.includes('ga-wizard'));
   assert.ok(!plain.includes('familiar'));
 });
 
