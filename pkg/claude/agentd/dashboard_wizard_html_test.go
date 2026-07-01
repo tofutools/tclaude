@@ -217,6 +217,42 @@ func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	must(`body.wizard .group-actions button[data-act="shutdown-group"]`, "the per-group Shutdown chip is re-skinned in wizard mode")
 }
 
+// TestDashboardHTML_WizardProfileEditor pins the wizard re-skin of the
+// spawn-profile editor ("Inscribe a summoning recipe"): a spawn profile is a
+// saved recipe the Summon dialog pre-fills from, so its editor is themed as
+// inscribing that recipe — the same arcane chrome as the Summon dialog. Purely
+// front-end like the rest of the wizard theme, so we string-search the embedded
+// source rather than running the JS.
+func TestDashboardHTML_WizardProfileEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The whole dialog is re-skinned arcane, scoped to the profile editor modal.
+	must("body.wizard #profile-editor-modal .cron-create-modal", "the profile editor surface is re-skinned")
+
+	// The submit button becomes a "📜 Inscribe!" lever (Summon's twin) — the
+	// ::before glyph + the modal-scoped submit re-skin.
+	must(`content: "📜 Inscribe!"`, "the submit button reads Inscribe in wizard mode")
+	must("body.wizard #profile-editor-modal #profile-editor-submit", "the submit re-skin is scoped to the profile editor modal")
+}
+
+// TestDashboardCSS_WizardProfileEditorScoped guards that the wizard
+// profile-editor re-skin stays scoped to #profile-editor-modal — the editor is
+// a .cron-create-modal like the spawn dialog and its siblings, so an unscoped
+// `body.wizard .cron-create-modal { … }` would repaint every one of them. This
+// duplicates TestDashboardCSS_WizardSpawnModalScoped's assertion, but keeping a
+// dedicated guard here documents that BOTH .cron-create-modal re-skins depend
+// on the same scoping invariant.
+func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard profile-editor re-skin is unscoped — will repaint spawn/clone/reincarnate/cron modals too")
+	}
+}
+
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
 // re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
 // (unlike the spawn dialog's .cron-create-modal), so an unscoped
