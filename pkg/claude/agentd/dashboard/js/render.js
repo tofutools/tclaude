@@ -785,7 +785,10 @@ function fmtCost(cost) {
 // $0.42 (mtd)"). Today is shown even when it equals the mtd — e.g. on the
 // first of the month, when the whole month's spend is today's, both read
 // the same number on purpose, so the "(today)" figure never silently
-// vanishes on the day a user is most likely to be watching it. The token
+// vanishes on the day a user is most likely to be watching it. (today is
+// always ≤ mtd — the same DB delta walk windowed to today vs. the month,
+// both scaled by the same cost factor — so the pair never reads inverted;
+// see the TodayCostUSD ≤ TotalCostUSD invariant in usage.go.) The token
 // links to the Costs tab (data-goto-tab, wired in costs.js).
 function costTokenHTML(today, mtd) {
   const amt = (v, label) => '<span class="ucost-amt">' + esc(fmtCost(v)) + '</span>'
