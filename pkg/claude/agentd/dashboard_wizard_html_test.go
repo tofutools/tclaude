@@ -194,10 +194,10 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 // TestDashboardHTML_WizardPowerButtons pins the wizard re-skin of the Power On
 // / Shutdown chips at both scopes: global (top-bar #power-on-all-btn /
 // #shutdown-all-btn) and per-group (.group-actions data-act="power-on-group" /
-// "shutdown-group"). The re-skin keeps the emerald-vs-crimson semantic split
-// rather than letting the buttons flatten into the uniform gold header-button
-// skin. Purely front-end like the rest of the wizard theme, so we string-search
-// the embedded source rather than running the JS.
+// "shutdown-group"). In 🧙 mode they become gilded "✨ Awaken" / "🌙 Slumber"
+// levers (green/red tinted so the go/stop meaning survives) with a per-theme
+// visible-label swap. Purely front-end like the rest of the wizard theme, so we
+// string-search the embedded source rather than running the JS.
 func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -215,6 +215,23 @@ func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
 	// classes/attr out-specify the base .group-actions button (and .warn) rules.
 	must(`body.wizard .group-actions button[data-act="power-on-group"]`, "the per-group Power On chip is re-skinned in wizard mode")
 	must(`body.wizard .group-actions button[data-act="shutdown-group"]`, "the per-group Shutdown chip is re-skinned in wizard mode")
+
+	// Per-theme visible-label swap (same span-pair trick as the Summon button):
+	// both spans emitted, CSS picks which shows.
+	must(".pwr-label-wizard { display: none; }", "the wizard power label is hidden by default")
+	must("body.wizard .pwr-label-regular { display: none; }", "wizard mode hides the plain power labels")
+	must("body.wizard .pwr-label-wizard { display: inline; }", "wizard mode shows the arcane power labels")
+
+	// The wizard-flavoured copy at both scopes — Awaken (power on) / Slumber
+	// (shutdown). Global carries the "…all" variant, per-group the bare verb.
+	must(`<span class="pwr-label-wizard">✨ Awaken all</span>`, "the global Power On chip reads Awaken in wizard mode")
+	must(`<span class="pwr-label-wizard">🌙 Slumber all</span>`, "the global Shutdown chip reads Slumber in wizard mode")
+	must(`<span class="pwr-label-wizard">✨ Awaken</span>`, "the per-group Power On chip reads Awaken in wizard mode")
+	must(`<span class="pwr-label-wizard">🌙 Slumber</span>`, "the per-group Shutdown chip reads Slumber in wizard mode")
+
+	// The regular-theme labels stay honest (both spans always emitted).
+	must(`<span class="pwr-label-regular">🟢 power on all</span>`, "the global Power On chip keeps its plain label")
+	must(`<span class="pwr-label-regular">🛑 shutdown</span>`, "the per-group Shutdown chip keeps its plain label")
 }
 
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog

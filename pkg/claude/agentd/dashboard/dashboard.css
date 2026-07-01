@@ -4306,49 +4306,68 @@ body.wizard header h1 .slop-icon {
   50%      { transform: translateY(-3px) rotate(4deg); }
 }
 
-/* ─── Wizard power controls (power on / shutdown) ────────────────────
-   The Power On / Shutdown chips exist at two scopes — global (the top-bar
-   #power-on-all-btn / #shutdown-all-btn) and per-group (the .group-actions
-   data-act="power-on-group" / "shutdown-group" buttons). Out of the box the
-   global pair inherits the flat gold-on-violet `body.wizard header button`
-   skin (losing their green/red meaning) and the group pair keeps its plain
-   grey data-table chrome. Here we re-skin all four arcane while KEEPING the
-   semantic split: power on = an emerald rekindling glow (non-destructive
-   resume), shutdown = a crimson banishment glow (stop only). Pure recolor,
-   no label swap — these are utility chips, not the modal Summon/Banish
-   levers, so the words stay honest. ID + body.wizard out-specifies both the
-   base #…-btn rule and `body.wizard header button`; the group selector's
-   extra classes/attr out-specify `.group-actions button[.warn]`. */
+/* ─── Wizard power controls — "✨ Awaken" / "🌙 Slumber" ──────────────
+   The Power On / Shutdown chips at both scopes — global (top-bar
+   #power-on-all-btn / #shutdown-all-btn) and per-group (.group-actions
+   data-act="power-on-group" / "shutdown-group") — re-skinned into gilded
+   arcane levers, the spell-family twins of the 🔮 Summon trigger. Each keeps
+   its go/stop meaning through a tinted gradient + glow: power on = an emerald
+   ✨ Awaken (rouse the sleeping familiars — a non-destructive resume),
+   shutdown = a crimson 🌙 Slumber (send them to sleep — a reversible stop,
+   deliberately NOT the destructive Banish/retire). Gold edge, parchment text
+   and the fantasy serif tie them to the rest of the 🧙 chrome.
+
+   The visible label swaps per theme via the .pwr-label-regular /
+   .pwr-label-wizard span pair (same pure-CSS trick as the Summon button's
+   .spawn-btn-label-* spans); the buttons' aria-labels name both voices so
+   speech input matches either theme's visible text (WCAG Label-in-Name).
+
+   Specificity: id + body.wizard out-specifies the base #…-btn rule and
+   `body.wizard header button`; the group selector's extra classes/attr
+   out-specify `.group-actions button[.warn]`. */
+
+/* Per-theme visible-label swap — both spans always emitted; CSS picks one. */
+.pwr-label-wizard { display: none; }
+body.wizard .pwr-label-regular { display: none; }
+body.wizard .pwr-label-wizard { display: inline; }
+
+/* Shared gilded-lever chrome for both spells (gold edge + parchment serif).
+   A dark violet text-shadow lifts the parchment off the tinted gradients. */
+body.wizard #power-on-all-btn,
+body.wizard #shutdown-all-btn,
+body.wizard .group-actions button[data-act="power-on-group"],
+body.wizard .group-actions button[data-act="shutdown-group"] {
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 2px rgba(20, 15, 40, 0.7);
+}
+
+/* ✨ Awaken — emerald gradient + a rekindling glow. */
 body.wizard #power-on-all-btn,
 body.wizard .group-actions button[data-act="power-on-group"] {
-  background: #16241f;
-  border: 1px solid #6ee7b7;
-  color: #6ee7b7;
-  text-shadow: 0 0 6px rgba(110, 231, 183, 0.45);
-  box-shadow: 0 0 8px rgba(110, 231, 183, 0.20);
+  background: linear-gradient(180deg, #2b8560 0%, #16402f 100%);
+  box-shadow: 0 0 8px rgba(110, 231, 183, 0.45);
 }
 body.wizard #power-on-all-btn:hover,
 body.wizard .group-actions button[data-act="power-on-group"]:hover {
-  background: #6ee7b7;
-  color: #12261f;
-  border-color: #6ee7b7;
-  box-shadow: 0 0 14px rgba(110, 231, 183, 0.6);
+  background: linear-gradient(180deg, #37a374 0%, #1d5540 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 14px rgba(110, 231, 183, 0.85);
 }
+
+/* 🌙 Slumber — crimson gradient + glow (danger red kept, arcane-tinted). */
 body.wizard #shutdown-all-btn,
 body.wizard .group-actions button[data-act="shutdown-group"] {
-  background: #241322;
-  border: 1px solid #f2777a;
-  color: #f2777a;
-  text-shadow: 0 0 6px rgba(242, 119, 122, 0.45);
-  /* A purple undertone ties the danger red back into the arcane palette. */
-  box-shadow: 0 0 8px rgba(169, 123, 214, 0.22);
+  background: linear-gradient(180deg, #9c4453 0%, #3a1826 100%);
+  box-shadow: 0 0 8px rgba(242, 119, 122, 0.45);
 }
 body.wizard #shutdown-all-btn:hover,
 body.wizard .group-actions button[data-act="shutdown-group"]:hover {
-  background: #f2777a;
-  color: #241322;
-  border-color: #f2777a;
-  box-shadow: 0 0 14px rgba(242, 119, 122, 0.55);
+  background: linear-gradient(180deg, #bb5567 0%, #4d2131 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 14px rgba(242, 119, 122, 0.8);
 }
 
 /* ─── Wizard state pill (body.wizard) ───────────────────────────────
