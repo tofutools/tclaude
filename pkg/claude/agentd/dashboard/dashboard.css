@@ -875,6 +875,72 @@ body.wizard .ga-wizard { display: inline-flex; }
   75% { background-image: url(sprites/idle_3.png); }
 }
 
+/* ── Wizard sprites — the wizard-mode pixel opt-in (body.wizard) ───────
+   The same discrete background-image keyframe machinery as the slop robots,
+   driving the pixellab WIZARD sheets (a grumpy spellcaster) when
+   dashboard.activity_bots.wizard = "sprites". The wizard frames have their
+   OWN per-pose bounds, so the .actbot-wiz marker (three-class selector →
+   wins on specificity over the generic .actbot-sprite.actbot-* aspect rules)
+   swaps in wizard aspect-ratios. Keep these in sync with the trimmed frame
+   dimensions (trim.go prints them): cast 45×59, ask 37×52, error 30×52,
+   idle/static 28×52. crashed + offline reuse the static standing frame,
+   greyed / toppled by the shared .actbot-crashed/-offline rules. */
+.actbot-sprite.actbot-wiz.actbot-working  { aspect-ratio: 45 / 59; }
+.actbot-sprite.actbot-wiz.actbot-asking   { aspect-ratio: 37 / 52; }
+.actbot-sprite.actbot-wiz.actbot-error    { aspect-ratio: 30 / 52; }
+.actbot-sprite.actbot-wiz.actbot-idle     { aspect-ratio: 28 / 52; }
+.actbot-sprite.actbot-wiz.actbot-crashed,
+.actbot-sprite.actbot-wiz.actbot-offline  { aspect-ratio: 28 / 52; }
+
+.spr-wiz-cast   { background-image: url(sprites/wiz_cast_0.png);  animation: spr-wiz-cast  0.9s step-end infinite; }
+.spr-wiz-ask    { background-image: url(sprites/wiz_ask_0.png);   animation: spr-wiz-ask   1.2s step-end infinite; }
+.spr-wiz-error  { background-image: url(sprites/wiz_error_0.png); animation: spr-wiz-error 0.7s step-end infinite; }
+.spr-wiz-idle   { background-image: url(sprites/wiz_idle_0.png);  animation: spr-wiz-idle  2.0s step-end infinite; }
+.spr-wiz-static { background-image: url(sprites/wiz_bot.png); }
+
+@keyframes spr-wiz-cast {
+  0%     { background-image: url(sprites/wiz_cast_0.png); }
+  11.11% { background-image: url(sprites/wiz_cast_1.png); }
+  22.22% { background-image: url(sprites/wiz_cast_2.png); }
+  33.33% { background-image: url(sprites/wiz_cast_3.png); }
+  44.44% { background-image: url(sprites/wiz_cast_4.png); }
+  55.55% { background-image: url(sprites/wiz_cast_5.png); }
+  66.66% { background-image: url(sprites/wiz_cast_6.png); }
+  77.77% { background-image: url(sprites/wiz_cast_7.png); }
+  88.88% { background-image: url(sprites/wiz_cast_8.png); }
+}
+@keyframes spr-wiz-ask {
+  0%     { background-image: url(sprites/wiz_ask_0.png); }
+  11.11% { background-image: url(sprites/wiz_ask_1.png); }
+  22.22% { background-image: url(sprites/wiz_ask_2.png); }
+  33.33% { background-image: url(sprites/wiz_ask_3.png); }
+  44.44% { background-image: url(sprites/wiz_ask_4.png); }
+  55.55% { background-image: url(sprites/wiz_ask_5.png); }
+  66.66% { background-image: url(sprites/wiz_ask_6.png); }
+  77.77% { background-image: url(sprites/wiz_ask_7.png); }
+  88.88% { background-image: url(sprites/wiz_ask_8.png); }
+}
+@keyframes spr-wiz-error {
+  0%     { background-image: url(sprites/wiz_error_0.png); }
+  11.11% { background-image: url(sprites/wiz_error_1.png); }
+  22.22% { background-image: url(sprites/wiz_error_2.png); }
+  33.33% { background-image: url(sprites/wiz_error_3.png); }
+  44.44% { background-image: url(sprites/wiz_error_4.png); }
+  55.55% { background-image: url(sprites/wiz_error_5.png); }
+  66.66% { background-image: url(sprites/wiz_error_6.png); }
+  77.77% { background-image: url(sprites/wiz_error_7.png); }
+  88.88% { background-image: url(sprites/wiz_error_8.png); }
+}
+@keyframes spr-wiz-idle {
+  0%     { background-image: url(sprites/wiz_idle_0.png); }
+  14.28% { background-image: url(sprites/wiz_idle_1.png); }
+  28.57% { background-image: url(sprites/wiz_idle_2.png); }
+  42.85% { background-image: url(sprites/wiz_idle_3.png); }
+  57.14% { background-image: url(sprites/wiz_idle_4.png); }
+  71.42% { background-image: url(sprites/wiz_idle_5.png); }
+  85.71% { background-image: url(sprites/wiz_idle_6.png); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .actbot, .actbot-face, .actbot-tag, .actbot-spr { animation: none !important; }
 }

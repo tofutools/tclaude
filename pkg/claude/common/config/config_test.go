@@ -655,28 +655,34 @@ func TestHidePullLever(t *testing.T) {
 }
 
 // TestActivityBotsStyles covers the per-mode style resolvers behind the
-// dashboard's activity-bot indicator: regular defaults to "emoji", slop to
-// "sprites"; nil config / absent block / absent key / an unknown value all
-// fall back to those defaults; explicit values win. The JSON shape is
-// asserted so a default config stays clean (no block), while a non-default
-// pair round-trips through Save/Load.
+// dashboard's activity-bot indicator: regular + wizard default to "emoji",
+// slop to "sprites"; nil config / absent block / absent key / an unknown
+// value all fall back to those defaults; explicit values win. The JSON shape
+// is asserted so a default config stays clean (no block), while a non-default
+// trio round-trips through Save/Load.
 func TestActivityBotsStyles(t *testing.T) {
-	// Defaults: regular emoji, slop sprites.
+	// Defaults: regular + wizard emoji, slop sprites.
 	assert.Equal(t, ActivityBotsEmoji, (*Config)(nil).ActivityBotsRegular(), "nil → emoji")
 	assert.Equal(t, ActivityBotsSprites, (*Config)(nil).ActivityBotsSlop(), "nil → sprites")
+	assert.Equal(t, ActivityBotsEmoji, (*Config)(nil).ActivityBotsWizard(), "nil → emoji")
 	assert.Equal(t, ActivityBotsEmoji, (&Config{}).ActivityBotsRegular(), "no block → emoji")
 	assert.Equal(t, ActivityBotsSprites, (&Config{}).ActivityBotsSlop(), "no block → sprites")
+	assert.Equal(t, ActivityBotsEmoji, (&Config{}).ActivityBotsWizard(), "no block → emoji")
 	assert.Equal(t, ActivityBotsEmoji, (&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{}}}).ActivityBotsRegular(), "absent key → emoji")
+	assert.Equal(t, ActivityBotsEmoji, (&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{}}}).ActivityBotsWizard(), "absent key → emoji")
 
 	// An unknown (hand-edited garbage) value degrades to the default.
-	garbage := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: "wat", Slop: "nope"}}}
+	garbage := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: "wat", Slop: "nope", Wizard: "huh"}}}
 	assert.Equal(t, ActivityBotsEmoji, garbage.ActivityBotsRegular(), "unknown → emoji")
 	assert.Equal(t, ActivityBotsSprites, garbage.ActivityBotsSlop(), "unknown → sprites")
+	assert.Equal(t, ActivityBotsEmoji, garbage.ActivityBotsWizard(), "unknown → emoji")
 
-	// Explicit values win, including the cross/off combos.
-	explicit := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsSprites, Slop: ActivityBotsOff}}}
+	// Explicit values win, including the cross/off combos. Wizard opts INTO
+	// sprites (the whole point of the config knob).
+	explicit := &Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsSprites, Slop: ActivityBotsOff, Wizard: ActivityBotsSprites}}}
 	assert.Equal(t, ActivityBotsSprites, explicit.ActivityBotsRegular(), "explicit sprites")
 	assert.Equal(t, ActivityBotsOff, explicit.ActivityBotsSlop(), "explicit off")
+	assert.Equal(t, ActivityBotsSprites, explicit.ActivityBotsWizard(), "explicit wizard sprites")
 
 	// A fresh (all-default) config serializes no dashboard block.
 	clean, err := json.Marshal(&Config{})
@@ -684,13 +690,15 @@ func TestActivityBotsStyles(t *testing.T) {
 	assert.NotContains(t, string(clean), "activity_bots")
 	assert.NotContains(t, string(clean), "dashboard")
 
-	// A non-default pair survives Save/Load.
+	// A non-default trio survives Save/Load — including wizard opting into the
+	// spellcaster sprites.
 	t.Setenv("HOME", t.TempDir())
-	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsOff, Slop: ActivityBotsEmoji}}}))
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{ActivityBots: &ActivityBotsConfig{Regular: ActivityBotsOff, Slop: ActivityBotsEmoji, Wizard: ActivityBotsSprites}}}))
 	loaded, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, ActivityBotsOff, loaded.ActivityBotsRegular(), "regular off survives round-trip")
 	assert.Equal(t, ActivityBotsEmoji, loaded.ActivityBotsSlop(), "slop emoji survives round-trip")
+	assert.Equal(t, ActivityBotsSprites, loaded.ActivityBotsWizard(), "wizard sprites survives round-trip")
 }
 
 // TestHScrollFollow covers the dashboard.hscroll_follow resolver: nil config

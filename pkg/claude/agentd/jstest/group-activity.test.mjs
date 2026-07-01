@@ -11,7 +11,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   memberVariant, activitySummary, activityBotsHTML, groupActivityHTML,
-  spriteBotsHTML, wizardBotsHTML, styledBotsHTML, aggregateActivity, VARIANT_ORDER,
+  spriteBotsHTML, wizardBotsHTML, wizardSpriteBotsHTML, styledWizardBotsHTML,
+  styledBotsHTML, aggregateActivity, VARIANT_ORDER,
   variantLabel, themedSummaryText,
 } from '../dashboard/js/group-activity.js';
 
@@ -197,6 +198,48 @@ test('wizardBotsHTML keeps the count badge and is empty for no members', () => {
   const html = wizardBotsHTML(activitySummary([on('working'), on('working')]));
   assert.ok(html.includes('<span class="actbot-count">2</span>'));
   assert.equal(wizardBotsHTML(activitySummary([])), '');
+});
+
+test('wizardSpriteBotsHTML emits pixel wizard sprites (spr-wiz-* + .actbot-wiz marker)', () => {
+  const html = wizardSpriteBotsHTML(activitySummary([on('working'), on('awaiting_permission'), on('error'), on('idle')]));
+  assert.ok(html.includes('actbot-sprite actbot-wiz')); // wizard aspect-ratio marker
+  assert.ok(html.includes('spr-wiz-cast'));   // working → cast
+  assert.ok(html.includes('spr-wiz-ask'));    // awaiting → ask
+  assert.ok(html.includes('spr-wiz-error'));  // error → error
+  assert.ok(html.includes('spr-wiz-idle'));   // idle → idle
+  assert.ok(!html.includes('🧙'));            // sprites, not glyphs
+  // Sprite bots in the wizard wrapper still speak the arcane tooltip vocab.
+  assert.ok(html.includes('title="1 familiar channeling"'));
+});
+
+test('wizard sprite crashed + offline reuse the static standing frame', () => {
+  const crashed = wizardSpriteBotsHTML(activitySummary([off('unexpected')]));
+  assert.ok(crashed.includes('spr-wiz-static'));
+  assert.ok(crashed.includes('actbot-crashed'));
+  const offline = wizardSpriteBotsHTML(activitySummary([off(''), off('')]));
+  assert.ok(offline.includes('spr-wiz-static'));
+  assert.ok(offline.includes('actbot-offline'));
+});
+
+test('styledWizardBotsHTML: sprites→pixel, emoji/default→glyphs, off→empty', () => {
+  const s = activitySummary([on('working')]);
+  assert.ok(styledWizardBotsHTML(s, 'sprites').includes('spr-wiz-cast')); // pixel wizards
+  assert.ok(styledWizardBotsHTML(s, 'emoji').includes('🧙'));             // glyph row (default)
+  assert.ok(styledWizardBotsHTML(s, 'anything').includes('🧙'));          // unknown → glyphs
+  assert.equal(styledWizardBotsHTML(s, 'off'), '');                       // hidden
+});
+
+test('groupActivityHTML wizard wrapper honours the sprites opt-in', () => {
+  // Default (emoji) wizard wrapper → glyphs; explicit sprites → pixel wizards.
+  const glyphs = groupActivityHTML([on('working')], 'emoji', 'sprites', 'emoji');
+  assert.ok(glyphs.includes('class="ga-wizard'));
+  assert.ok(glyphs.includes('🧙'));
+  assert.ok(!glyphs.includes('spr-wiz-'));
+  const sprites = groupActivityHTML([on('working')], 'emoji', 'sprites', 'sprites');
+  assert.ok(sprites.includes('class="ga-wizard'));
+  assert.ok(sprites.includes('spr-wiz-cast'));
+  // 'off' drops the wizard wrapper entirely.
+  assert.ok(!groupActivityHTML([on('working')], 'emoji', 'sprites', 'off').includes('ga-wizard'));
 });
 
 test('groupActivityHTML emits a per-mode wrapper in each configured style', () => {

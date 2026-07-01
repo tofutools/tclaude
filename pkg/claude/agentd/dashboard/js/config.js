@@ -426,10 +426,11 @@ function populateConfigForm(cfg) {
   $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
 
   // Activity bots — per-mode style of the deduped robot indicator.
-  // Defaults: regular emoji, slop sprites (mirrors the Go resolvers).
+  // Defaults: regular + wizard emoji, slop sprites (mirrors the Go resolvers).
   const ab = (cfg.dashboard && cfg.dashboard.activity_bots) || {};
   $('#cfg-dashboard-activity-bots-regular').value = ab.regular || 'emoji';
   $('#cfg-dashboard-activity-bots-slop').value = ab.slop || 'sprites';
+  $('#cfg-dashboard-activity-bots-wizard').value = ab.wizard || 'emoji';
 
   // Always show the Plugins tab even with no plugins installed. Default off
   // (the tab auto-hides when empty); lives in the dashboard block.
@@ -594,16 +595,18 @@ function assembleConfig() {
   if (Object.keys(slop).length) cfg.slop = slop; else delete cfg.slop;
 
   // dashboard is an optional block. activity_bots stores only the NON-
-  // default per-mode styles (regular default emoji, slop default sprites),
-  // dropping a default key — and the activity_bots / dashboard objects when
-  // empty — so an all-default config marshals no spurious "dashboard": {}.
-  // Mirrors the Go omitempty + per-mode-default resolvers.
+  // default per-mode styles (regular + wizard default emoji, slop default
+  // sprites), dropping a default key — and the activity_bots / dashboard
+  // objects when empty — so an all-default config marshals no spurious
+  // "dashboard": {}. Mirrors the Go omitempty + per-mode-default resolvers.
   const dashboard = (cfg.dashboard && typeof cfg.dashboard === 'object') ? cfg.dashboard : {};
   const ab = (dashboard.activity_bots && typeof dashboard.activity_bots === 'object') ? dashboard.activity_bots : {};
   const abReg = $('#cfg-dashboard-activity-bots-regular').value;
   const abSlop = $('#cfg-dashboard-activity-bots-slop').value;
+  const abWiz = $('#cfg-dashboard-activity-bots-wizard').value;
   if (abReg && abReg !== 'emoji') ab.regular = abReg; else delete ab.regular;
   if (abSlop && abSlop !== 'sprites') ab.slop = abSlop; else delete ab.slop;
+  if (abWiz && abWiz !== 'emoji') ab.wizard = abWiz; else delete ab.wizard;
   if (Object.keys(ab).length) dashboard.activity_bots = ab; else delete dashboard.activity_bots;
   // always_show_plugins_tab: true when checked, dropped otherwise (false is
   // the omitempty default) so an all-default dashboard block doesn't marshal a
