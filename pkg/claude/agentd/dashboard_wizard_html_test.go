@@ -450,9 +450,12 @@ func TestDashboardHTML_WizardConfirmModal(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #confirm-modal .modal", "the confirm dialog surface is re-skinned")
-	must("body.wizard #confirm-modal #confirm-ok", "the OK button gets the gilded lever, scoped to the confirm modal")
-	must("body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok)", "Cancel gets the tarnished-gold secondary treatment")
+	// Needles are " {"-anchored so a prefix match on a sibling rule (e.g. the
+	// h3 / :hover variants) can't satisfy them — same trick as the
+	// unscoped-needle guards above.
+	must("body.wizard #confirm-modal .modal {", "the confirm dialog surface is re-skinned")
+	must("body.wizard #confirm-modal #confirm-ok {", "the OK button gets the gilded lever, scoped to the confirm modal")
+	must("body.wizard #confirm-modal .modal-buttons button:not(#confirm-ok) {", "Cancel gets the tarnished-gold secondary treatment")
 }
 
 // TestDashboardHTML_WizardEditMemberModal pins the wizard re-skin of the
