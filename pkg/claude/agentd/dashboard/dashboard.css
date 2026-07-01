@@ -4232,6 +4232,51 @@ body.wizard header h1 .slop-icon {
   50%      { transform: translateY(-3px) rotate(4deg); }
 }
 
+/* ─── Wizard power controls (power on / shutdown) ────────────────────
+   The Power On / Shutdown chips exist at two scopes — global (the top-bar
+   #power-on-all-btn / #shutdown-all-btn) and per-group (the .group-actions
+   data-act="power-on-group" / "shutdown-group" buttons). Out of the box the
+   global pair inherits the flat gold-on-violet `body.wizard header button`
+   skin (losing their green/red meaning) and the group pair keeps its plain
+   grey data-table chrome. Here we re-skin all four arcane while KEEPING the
+   semantic split: power on = an emerald rekindling glow (non-destructive
+   resume), shutdown = a crimson banishment glow (stop only). Pure recolor,
+   no label swap — these are utility chips, not the modal Summon/Banish
+   levers, so the words stay honest. ID + body.wizard out-specifies both the
+   base #…-btn rule and `body.wizard header button`; the group selector's
+   extra classes/attr out-specify `.group-actions button[.warn]`. */
+body.wizard #power-on-all-btn,
+body.wizard .group-actions button[data-act="power-on-group"] {
+  background: #16241f;
+  border: 1px solid #6ee7b7;
+  color: #6ee7b7;
+  text-shadow: 0 0 6px rgba(110, 231, 183, 0.45);
+  box-shadow: 0 0 8px rgba(110, 231, 183, 0.20);
+}
+body.wizard #power-on-all-btn:hover,
+body.wizard .group-actions button[data-act="power-on-group"]:hover {
+  background: #6ee7b7;
+  color: #12261f;
+  border-color: #6ee7b7;
+  box-shadow: 0 0 14px rgba(110, 231, 183, 0.6);
+}
+body.wizard #shutdown-all-btn,
+body.wizard .group-actions button[data-act="shutdown-group"] {
+  background: #241322;
+  border: 1px solid #f2777a;
+  color: #f2777a;
+  text-shadow: 0 0 6px rgba(242, 119, 122, 0.45);
+  /* A purple undertone ties the danger red back into the arcane palette. */
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.22);
+}
+body.wizard #shutdown-all-btn:hover,
+body.wizard .group-actions button[data-act="shutdown-group"]:hover {
+  background: #f2777a;
+  color: #241322;
+  border-color: #f2777a;
+  box-shadow: 0 0 14px rgba(242, 119, 122, 0.55);
+}
+
 /* ─── Wizard state pill (body.wizard) ───────────────────────────────
    The wizard-mode replacement for statePill — an arcane pill with a
    sarcastic DnD label (helpers.js wizardPill). Always emitted; CSS shows it
