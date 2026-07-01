@@ -5896,10 +5896,18 @@ body.wizard #tab-config .cfg-section > h3 {
   color: #d9b45a;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.4);
 }
+/* The base theme draws a deliberate two-tier prominence on "Advanced …"
+   disclosures: a section-level `.cfg-advanced` summary is blue+uppercase (like
+   an h3 head), while a field-nested `.cfg-field details.cfg-advanced` summary is
+   muted grey. We carry that distinction across — section-level → tarnished-gold
+   here (heading-like), field-nested → violet down with the hints below (muted).
+   So the sudo / remote-setup toggles read gold and the raw-transition-rules
+   toggle reads violet BY DESIGN, matching their base-theme prominence. */
 body.wizard #tab-config .cfg-advanced > summary { color: #d9b45a; }
 
-/* Field labels + body text go parchment; hints, the advanced summary + the
-   empty-list note go violet. */
+/* Field labels + body text go parchment; hints, the field-nested advanced
+   summary (the muted tier — see the two-tier note above) + the empty-list note
+   go violet. */
 body.wizard #tab-config .cfg-field,
 body.wizard #tab-config .cfg-field .cfg-label { color: #e7d9f5; }
 body.wizard #tab-config .cfg-hint,
