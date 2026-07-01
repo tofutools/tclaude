@@ -775,9 +775,61 @@ func (c *Config) GroupQuickOptions() string {
 // open-on-focus fallback pops up / raises a window unexpectedly on every
 // dashboard "show" that resolves to a detached agent. The explicit
 // dashboard "open window" action opens a console regardless of this flag.
+//
+// Tile configures the opt-in auto-tiling pass that runs after a bulk
+// window "focus" op (the 🪟 windows… modal, the command palette, or a
+// group's focus button) — see TileConfig. Absent / disabled (the
+// default) leaves each terminal wherever the OS placed it.
 type FocusConfig struct {
-	RaiseOnly bool `json:"raise_only,omitempty"`
+	RaiseOnly bool        `json:"raise_only,omitempty"`
+	Tile      *TileConfig `json:"tile,omitempty"`
 }
+
+// Tile layout modes — config focus.tile.layout. "grid" packs windows
+// into a near-square grid (the default); "columns" lays them out as
+// full-height side-by-side columns; "rows" as full-width stacked rows;
+// "cascade" overlaps them with a fixed diagonal step (macOS-style stagger).
+// An empty / unknown value falls back to the default (grid) — see TileLayout.
+const (
+	TileLayoutGrid    = "grid"
+	TileLayoutColumns = "columns"
+	TileLayoutRows    = "rows"
+	TileLayoutCascade = "cascade"
+)
+
+// TileConfig configures the auto-tiling pass. When Enabled, a bulk
+// window "focus" op that raises/opens more than one window follows up by
+// arranging just that focused set into the chosen Layout, so the desktop
+// is neatly tiled instead of leaving every window where the OS dropped
+// it. It is best-effort and platform-specific (AppleScript on macOS,
+// xdotool/kdotool on native Linux, PowerShell on WSL); an unsupported
+// desktop simply no-ops. A single-window focus is never tiled (there is
+// nothing to arrange — tiling one window would just maximise it).
+//
+// Gap is the pixel spacing left between adjacent tiles; Margin is the
+// pixel inset kept from the screen work-area edges (useful to clear a
+// menu bar / panel the platform's screen query doesn't already exclude).
+// Both are pointers so "absent" is distinguishable from an explicit 0:
+// nil falls back to the built-in default (defaultTileGap / defaultTileMargin),
+// an explicit 0 means flush. See ResolvedTileGeometry.
+type TileConfig struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Layout  string `json:"layout,omitempty"`
+	Gap     *int   `json:"gap,omitempty"`
+	Margin  *int   `json:"margin,omitempty"`
+}
+
+// Tiling geometry defaults + the sanity cap Validate/ResolvedTileGeometry
+// enforce. An 8px gap gives a visible seam between tiled terminals; the
+// default margin is 0 (the platform screen query already excludes the
+// dock/taskbar in the common cases). maxTilePixels bounds a hand-edited
+// gap/margin so a fat-finger can't shrink every tile to nothing or push
+// the whole grid off-screen.
+const (
+	defaultTileGap    = 8
+	defaultTileMargin = 0
+	maxTilePixels     = 1000
+)
 
 // RaiseOnlyFocus reports whether window focus should be raise-only (raise
 // an existing window but never open a fresh one). Nil-safe so callers
@@ -787,6 +839,57 @@ func (c *Config) RaiseOnlyFocus() bool {
 		return false
 	}
 	return c.Focus.RaiseOnly
+}
+
+// TileOnFocus reports whether a bulk window "focus" op should follow up
+// by auto-tiling the focused windows — config focus.tile.enabled. Off by
+// default (absent block / key). Nil-safe on the receiver.
+func (c *Config) TileOnFocus() bool {
+	return c != nil && c.Focus != nil && c.Focus.Tile != nil && c.Focus.Tile.Enabled
+}
+
+// normalizeTileLayout returns s when it's a known layout, else "" (so the
+// resolver falls back to its default for a blank or hand-edited garbage
+// value).
+func normalizeTileLayout(s string) string {
+	switch s {
+	case TileLayoutGrid, TileLayoutColumns, TileLayoutRows, TileLayoutCascade:
+		return s
+	default:
+		return ""
+	}
+}
+
+// TileLayout reports the tiling layout mode — config focus.tile.layout.
+// Default "grid" (absent block/key or an unknown value). Nil-safe on the
+// receiver.
+func (c *Config) TileLayout() string {
+	if c != nil && c.Focus != nil && c.Focus.Tile != nil {
+		if l := normalizeTileLayout(c.Focus.Tile.Layout); l != "" {
+			return l
+		}
+	}
+	return TileLayoutGrid
+}
+
+// ResolvedTileGeometry returns the effective (gap, margin) in pixels for
+// the tiling pass, defaulting each absent value to the built-in default
+// and clamping a hand-edited out-of-range value to [0, maxTilePixels] so
+// readers always get a usable geometry (Validate reports the out-of-range
+// value to the Config tab). Nil-safe on the receiver.
+func (c *Config) ResolvedTileGeometry() (gap, margin int) {
+	gap, margin = defaultTileGap, defaultTileMargin
+	if c == nil || c.Focus == nil || c.Focus.Tile == nil {
+		return gap, margin
+	}
+	t := c.Focus.Tile
+	if t.Gap != nil {
+		gap = min(maxTilePixels, max(0, *t.Gap))
+	}
+	if t.Margin != nil {
+		margin = min(maxTilePixels, max(0, *t.Margin))
+	}
+	return gap, margin
 }
 
 // LogRotationConfig holds the agentd log-rotation knobs. agentd caps
@@ -1731,6 +1834,22 @@ func Validate(c *Config) []string {
 		}
 		if lr.Keep < 0 {
 			errs = append(errs, fmt.Sprintf("log_rotation.keep %d must not be negative (0 = built-in default)", lr.Keep))
+		}
+	}
+
+	if f := c.Focus; f != nil && f.Tile != nil {
+		t := f.Tile
+		// An empty/absent layout resolves to the default (grid); only a
+		// non-empty value outside the known set is worth flagging.
+		if t.Layout != "" && normalizeTileLayout(t.Layout) == "" {
+			errs = append(errs, fmt.Sprintf("focus.tile.layout %q is not one of %s, %s, %s, %s",
+				t.Layout, TileLayoutGrid, TileLayoutColumns, TileLayoutRows, TileLayoutCascade))
+		}
+		if t.Gap != nil && (*t.Gap < 0 || *t.Gap > maxTilePixels) {
+			errs = append(errs, fmt.Sprintf("focus.tile.gap %d is out of range (0–%d pixels)", *t.Gap, maxTilePixels))
+		}
+		if t.Margin != nil && (*t.Margin < 0 || *t.Margin > maxTilePixels) {
+			errs = append(errs, fmt.Sprintf("focus.tile.margin %d is out of range (0–%d pixels)", *t.Margin, maxTilePixels))
 		}
 	}
 

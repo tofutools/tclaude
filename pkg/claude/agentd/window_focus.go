@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -132,6 +134,71 @@ var detachAgentWindows = func(sess *db.SessionRow) (int, error) {
 	return session.DetachSessionClients(sess.TmuxSession)
 }
 
+// windowTarget pairs a selected conv with its resolved live tmux session
+// — the row a per-agent window op (focus / unfocus / tile) acts on.
+type windowTarget struct {
+	convID string
+	sess   *db.SessionRow
+}
+
+// Auto-tiling seams. After a bulk "focus" op, agentd optionally arranges
+// the focused windows into a grid (config focus.tile.enabled). Like the
+// focus/unfocus seams above, the OS-window effect is not unit-testable —
+// so config resolution, the settle delay, and the per-platform dispatch
+// are all package vars a flow test swaps to force tiling on and observe
+// the dispatched spec set without a live desktop.
+
+// tileConfigForFocus reports whether the post-focus tiling pass should run
+// and, if so, the resolved layout options. Production reads config.json
+// (config.Load returns a usable DefaultConfig even on error, so the
+// resolvers are nil-safe); tests swap it to force tiling on.
+var tileConfigForFocus = func() (bool, session.TileOptions) {
+	cfg, _ := config.Load()
+	if !cfg.TileOnFocus() {
+		return false, session.TileOptions{}
+	}
+	gap, margin := cfg.ResolvedTileGeometry()
+	return true, session.TileOptions{Layout: cfg.TileLayout(), Gap: gap, Margin: margin}
+}
+
+// tileAgentWindows dispatches the per-platform window arrangement. Seam:
+// tests swap in a recorder and assert the spec set.
+var tileAgentWindows = func(specs []session.TileSpec, opts session.TileOptions) {
+	session.TileAgentWindows(specs, opts)
+}
+
+// tileSettleDelay is how long tileFocusedWindows waits after the focus
+// dispatch before moving windows, so a freshly-OPENED terminal has time
+// to create its OS window (a raise is instant; an open is not). A package
+// var so flow tests can zero it.
+var tileSettleDelay = 600 * time.Millisecond
+
+// tileFocusedWindows runs the opt-in auto-tiling pass after a bulk focus.
+// It no-ops unless more than one window was focused AND config
+// focus.tile.enabled is set, then arranges that set into the configured
+// layout. Windows are tiled in a deterministic order (by conv id) so the
+// grid placement is stable across runs and the flow test can assert the
+// dispatched spec set.
+func tileFocusedWindows(alive []windowTarget) {
+	if len(alive) < 2 {
+		return // nothing to tile — a single window would just be maximised
+	}
+	enabled, opts := tileConfigForFocus()
+	if !enabled {
+		return
+	}
+	sorted := append([]windowTarget(nil), alive...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].convID < sorted[j].convID })
+	specs := make([]session.TileSpec, 0, len(sorted))
+	for _, t := range sorted {
+		specs = append(specs, session.TileSpec{TmuxSession: t.sess.TmuxSession, SessionID: t.sess.ID})
+	}
+	if d := tileSettleDelay; d > 0 {
+		time.Sleep(d)
+	}
+	tileAgentWindows(specs, opts)
+}
+
 // handleAgentWindows is the cookie-auth endpoint behind the
 // dashboard's group-level and whole-dashboard window focus/unfocus
 // triggers. Body:
@@ -243,14 +310,10 @@ func runWindowOp(direction, scope, group string, universe, convs []string) agent
 	// agents have neither a session to focus nor a window to detach, so
 	// they drop out here with no outcome row — same collection rule as
 	// the shutdown buttons.
-	type aliveTarget struct {
-		convID string
-		sess   *db.SessionRow
-	}
-	var alive []aliveTarget
+	var alive []windowTarget
 	for _, convID := range targets {
 		if sess := pickAliveSession(convID); sess != nil {
-			alive = append(alive, aliveTarget{convID: convID, sess: sess})
+			alive = append(alive, windowTarget{convID: convID, sess: sess})
 		}
 	}
 
@@ -266,6 +329,14 @@ func runWindowOp(direction, scope, group string, universe, convs []string) agent
 		}(i)
 	}
 	wg.Wait()
+
+	// Follow a bulk focus with the opt-in auto-tiling pass (no-op when
+	// disabled or when only one window was focused). Runs after the focus
+	// dispatch so every window exists (or has been opened) before we move
+	// it. unfocus never tiles.
+	if direction == "focus" {
+		tileFocusedWindows(alive)
+	}
 
 	// Deterministic order so the dashboard list (and the flow test)
 	// don't depend on goroutine scheduling.

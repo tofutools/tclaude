@@ -326,6 +326,34 @@ func UnfocusAllAgentWindowsForTest() (targeted, detached, noWindow, failed int, 
 	return resp.Targeted, resp.Detached, resp.NoWindow, resp.Failed, nil
 }
 
+// SetTileConfigForFocusForTest swaps the post-focus tiling config gate so
+// a flow test can force auto-tiling on (and pick the layout options)
+// without writing a config.json. Returns a restore for t.Cleanup.
+func SetTileConfigForFocusForTest(fn func() (bool, session.TileOptions)) func() {
+	prev := tileConfigForFocus
+	tileConfigForFocus = fn
+	return func() { tileConfigForFocus = prev }
+}
+
+// SetTileAgentWindowsForTest swaps the per-platform tiling dispatch behind
+// the bulk focus op so a flow test can assert the ORDERED spec set the
+// tiling pass was handed — layout math included — without moving a real
+// OS window. Returns a restore for t.Cleanup. Mirrors the focus seam.
+func SetTileAgentWindowsForTest(fn func([]session.TileSpec, session.TileOptions)) func() {
+	prev := tileAgentWindows
+	tileAgentWindows = fn
+	return func() { tileAgentWindows = prev }
+}
+
+// SetTileSettleDelayForTest zeros (or overrides) the post-focus settle
+// delay so a flow test doesn't sit on the production wait for
+// freshly-opened windows to appear. Returns a restore for t.Cleanup.
+func SetTileSettleDelayForTest(d time.Duration) func() {
+	prev := tileSettleDelay
+	tileSettleDelay = d
+	return func() { tileSettleDelay = prev }
+}
+
 // SetGitInfoResolverForTest swaps the git/gh resolver behind the
 // dashboard's branch-link enrichment with a deterministic fake. The
 // fake is handed a (repoDir, branch) pair and returns the repo's

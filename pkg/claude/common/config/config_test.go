@@ -460,6 +460,81 @@ func TestFocusConfig_RoundTrips(t *testing.T) {
 	assert.NotContains(t, string(none), "focus")
 }
 
+// TileOnFocus is nil-safe and off by default: only focus.tile.enabled
+// flips it on.
+func TestTileOnFocus(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.TileOnFocus(), "nil config → false")
+	assert.False(t, (&Config{}).TileOnFocus(), "no focus block → false")
+	assert.False(t, (&Config{Focus: &FocusConfig{}}).TileOnFocus(), "focus block, no tile → false")
+	assert.False(t, (&Config{Focus: &FocusConfig{Tile: &TileConfig{}}}).TileOnFocus(), "tile block, enabled unset → false")
+	assert.True(t, (&Config{Focus: &FocusConfig{Tile: &TileConfig{Enabled: true}}}).TileOnFocus(), "enabled → true")
+}
+
+// TileLayout defaults to grid and normalizes an unknown/blank value back
+// to grid; a known value passes through.
+func TestTileLayout(t *testing.T) {
+	var nilCfg *Config
+	assert.Equal(t, TileLayoutGrid, nilCfg.TileLayout(), "nil config → grid")
+	assert.Equal(t, TileLayoutGrid, (&Config{Focus: &FocusConfig{Tile: &TileConfig{}}}).TileLayout(), "blank → grid")
+	assert.Equal(t, TileLayoutGrid, (&Config{Focus: &FocusConfig{Tile: &TileConfig{Layout: "spiral"}}}).TileLayout(), "unknown → grid")
+	for _, l := range []string{TileLayoutGrid, TileLayoutColumns, TileLayoutRows, TileLayoutCascade} {
+		assert.Equal(t, l, (&Config{Focus: &FocusConfig{Tile: &TileConfig{Layout: l}}}).TileLayout(), l)
+	}
+}
+
+// ResolvedTileGeometry defaults each absent value, distinguishes an
+// explicit 0 from absent, and clamps out-of-range values into range.
+func TestResolvedTileGeometry(t *testing.T) {
+	gap, margin := (*Config)(nil).ResolvedTileGeometry()
+	assert.Equal(t, defaultTileGap, gap, "nil → default gap")
+	assert.Equal(t, defaultTileMargin, margin, "nil → default margin")
+
+	zero := 0
+	gap, margin = (&Config{Focus: &FocusConfig{Tile: &TileConfig{Gap: &zero, Margin: &zero}}}).ResolvedTileGeometry()
+	assert.Equal(t, 0, gap, "explicit 0 gap is honoured, not defaulted")
+	assert.Equal(t, 0, margin, "explicit 0 margin is honoured, not defaulted")
+
+	huge, neg := maxTilePixels+500, -20
+	gap, margin = (&Config{Focus: &FocusConfig{Tile: &TileConfig{Gap: &huge, Margin: &neg}}}).ResolvedTileGeometry()
+	assert.Equal(t, maxTilePixels, gap, "over-range gap clamps down")
+	assert.Equal(t, 0, margin, "negative margin clamps up to 0")
+}
+
+// focus.tile round-trips through the config file, and an absent block
+// stays absent (omitempty).
+func TestTileConfig_RoundTrips(t *testing.T) {
+	g := 12
+	in := &Config{Focus: &FocusConfig{Tile: &TileConfig{Enabled: true, Layout: TileLayoutColumns, Gap: &g}}}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"tile"`)
+	assert.Contains(t, string(data), `"layout":"columns"`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.True(t, out.TileOnFocus())
+	assert.Equal(t, TileLayoutColumns, out.TileLayout())
+	gap, _ := out.ResolvedTileGeometry()
+	assert.Equal(t, 12, gap)
+}
+
+// Validate flags a bad layout and out-of-range gap/margin, but accepts a
+// well-formed tile block.
+func TestValidate_Tile(t *testing.T) {
+	ok := DefaultConfig()
+	g, m := 8, 0
+	ok.Focus = &FocusConfig{Tile: &TileConfig{Enabled: true, Layout: TileLayoutGrid, Gap: &g, Margin: &m}}
+	assert.Empty(t, Validate(ok), "well-formed tile block validates clean")
+
+	bad := DefaultConfig()
+	huge := maxTilePixels + 1
+	bad.Focus = &FocusConfig{Tile: &TileConfig{Layout: "spiral", Gap: &huge}}
+	errs := Validate(bad)
+	assert.Contains(t, strings.Join(errs, "\n"), "focus.tile.layout")
+	assert.Contains(t, strings.Join(errs, "\n"), "focus.tile.gap")
+}
+
 // NotifyHumanMessages gates the notify-human OS notification: off unless
 // the master switch is on, and within that defaulting ON (nil) but
 // suppressible by an explicit false.
