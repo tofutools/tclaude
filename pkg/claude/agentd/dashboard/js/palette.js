@@ -47,7 +47,7 @@ import {
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
-import { toggleSlop, isSlopActive } from './slop.js';
+import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv } from './terminals-tab.js';
@@ -294,17 +294,27 @@ function buildCommands() {
     });
   }
 
-  // 3) Theme toggle — regular ↔ slop, the only two themes today (the
-  //    header 🤝/🎰 icon does the same). Labelled by the DESTINATION so
-  //    it reads as an action, not a state. When more themes arrive this
-  //    becomes a picker; a two-state toggle is enough for now.
+  // 3) Theme toggles — regular, slop (🎰) and wizard (🧙). Each command
+  //    toggles ONE re-skin on or off (the header 🤝/🎰/🧙 icon cycles all
+  //    three). Labelled by the DESTINATION so each reads as an action, not a
+  //    state: "Switch to slop theme" when off, "Switch off slop theme" when
+  //    it's the active one. slop and wizard are mutually exclusive, so at
+  //    most one shows an "off" label at a time.
   const slopOn = isSlopActive();
   cmds.push({
     icon: slopOn ? '🤝' : '🎰',
-    label: slopOn ? 'Switch to regular theme' : 'Switch to slop theme',
+    label: slopOn ? 'Switch off slop theme' : 'Switch to slop theme',
     hint: 'toggle the dashboard theme',
     keywords: 'toggle switch theme slop regular vegas casino mode appearance',
     run: () => toggleSlop(),
+  });
+  const wizardOn = isWizardActive();
+  cmds.push({
+    icon: wizardOn ? '🤝' : '🧙',
+    label: wizardOn ? 'Switch off wizard theme' : 'Switch to wizard theme',
+    hint: 'toggle the dashboard theme',
+    keywords: 'toggle switch theme wizard magic arcane dnd dungeon fantasy mode appearance',
+    run: () => toggleWizard(),
   });
 
   // 4) Navigation — one command per VISIBLE nav button, reusing its own

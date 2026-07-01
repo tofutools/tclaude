@@ -538,16 +538,23 @@ type SlopConfig struct {
 	HidePullLever      *bool   `json:"hide_pull_lever,omitempty"`
 }
 
-// SlopChannels is the allowlist of SomaFM channel ids slop mode's Vegas
-// radio can tune to. It is the SINGLE SOURCE OF TRUTH shared by config
-// validation (here), the now-playing proxy's SSRF gate (agentd), and the
-// browser's channel picker (js/vegas.js carries a matching catalog with
-// human labels, pinned to this set by TestSlopNowPlaying_ChannelMatchesVegasJS).
+// SlopChannels is the allowlist of SomaFM channel ids the dashboard radio
+// can tune to. It is the SINGLE SOURCE OF TRUTH shared by config validation
+// (here), the now-playing proxy's SSRF gate (agentd), and the browser's
+// channel picker (js/vegas.js carries a matching catalog with human labels,
+// pinned to this set by TestSlopNowPlaying_ChannelMatchesVegasJS).
 //
-// Adding a channel is a one-line entry here plus a matching {id,label}
+// The radio is theme-agnostic: this one flat allowlist backs both the 🎰
+// slop/Vegas soundtrack and the 🧙 wizard soundtrack. The browser groups
+// these ids into "Vegas Lounge" vs "Wizard's Realm" for its two-level
+// picker (js/vegas.js's CHANNELS carry the group), but the server only
+// cares that a requested id is allowlisted — the group is a pure UI filter.
+//
+// Adding a channel is a one-line entry here plus a matching {id,label,group}
 // in vegas.js. Every other URL (stream, station home, songs feed) derives
 // from the id by SomaFM's fixed URL shape, so the id is all that's shared.
 var SlopChannels = []string{
+	// Vegas Lounge group — the original slop-mode soundtrack.
 	"illstreet",   // Illinois Street Lounge — vintage cocktail / Rat-Pack
 	"secretagent", // Secret Agent — spy-jazz & surf
 	"groovesalad", // Groove Salad — ambient / downtempo
@@ -555,7 +562,22 @@ var SlopChannels = []string{
 	"bootliquor",  // Boot Liquor — americana roots
 	"u80s",        // Underground 80s — early alternative / new wave
 	"defcon",      // DEF CON Radio — music for hacking
+	// Wizard's Realm group — fantasy-flavored SomaFM channels for 🧙 mode.
+	"thistle",      // ThistleRadio — Celtic roots ("The Tavern", wizard default)
+	"folkfwd",      // Folk Forward — indie / alt-folk ("The Bard's Rest")
+	"dronezone",    // Drone Zone — atmospheric ambient ("The Astral Plane")
+	"darkzone",     // The Dark Zone — dark ambient ("The Dungeon")
+	"doomed",       // Doomed — dark industrial ambient ("The Crypt")
+	"deepspaceone", // Deep Space One — deep-space ambient ("The Cosmos")
 }
+
+// DefaultWizardChannel is the station the wizard soundtrack tunes to for a
+// fresh listener (one who has never explicitly picked a channel). It is the
+// Celtic "Tavern" — the closest thing SomaFM has to a fantasy tavern. The
+// server treats it like any other allowlisted id; only the browser knows it
+// is the wizard group's default (see js/vegas.js). Kept here beside the
+// allowlist so the two never drift.
+const DefaultWizardChannel = "thistle"
 
 // DefaultSlopChannel is the channel the Vegas radio plays when none is
 // configured — the original vintage lounge, so a fresh config keeps the
@@ -565,6 +587,19 @@ const DefaultSlopChannel = "illstreet"
 // IsKnownSlopChannel reports whether id is in the SlopChannels allowlist.
 func IsKnownSlopChannel(id string) bool {
 	return slices.Contains(SlopChannels, id)
+}
+
+// HasExplicitSlopChannel reports whether the config carries a real, known
+// channel choice — as opposed to falling back to DefaultSlopChannel because
+// nothing was set. The dashboard radio uses this to tell a fresh listener
+// (who should hear the active theme's default station — the Tavern in wizard
+// mode) apart from someone who deliberately picked a station. Nil-safe on the
+// receiver.
+func (c *Config) HasExplicitSlopChannel() bool {
+	if c == nil || c.Slop == nil || c.Slop.Channel == nil {
+		return false
+	}
+	return IsKnownSlopChannel(strings.TrimSpace(*c.Slop.Channel))
 }
 
 // ResolvedSlopChannel returns the effective channel id: the configured one

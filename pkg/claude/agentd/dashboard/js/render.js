@@ -5,7 +5,7 @@
 // dashboard.js as part of the Stage 2 module split.
 
 import {
-  $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
@@ -81,6 +81,7 @@ function memberRowHTML(m, ctx) {
                   ${contextMeter(state)}
                   ${statePill(state, m.online)}
                   ${slopMachine(state, m.online, m.conv_id)}
+                  ${wizardPill(state, m.online, m.conv_id)}
                   ${m.online ? activityBadges(state) : ''}
                 </td>
                 <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>

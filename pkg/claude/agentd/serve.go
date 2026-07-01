@@ -29,6 +29,7 @@ type serveParams struct {
 	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
+	Wizard               bool   `long:"wizard" help:"Open the auto-launched dashboard in 🧙 wizard theme — a purely cosmetic re-skin, same data. Mutually exclusive with --slop (slop wins)."`
 	Terminal             string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 	AgentCloneCooldown   string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
 	DashboardPort        int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
@@ -147,7 +148,15 @@ func runServe(p *serveParams) error {
 	// `tclaude agent dashboard` after every daemon start. Best-effort:
 	// a failed launch is logged, never fatal.
 	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
-		autoLaunchDashboard(p.Slop)
+		// slop and wizard are mutually exclusive re-skins; slop wins if both
+		// flags are set, matching the client's applySlopThemeIfRequested.
+		theme := ""
+		if p.Slop {
+			theme = "slop"
+		} else if p.Wizard {
+			theme = "wizard"
+		}
+		autoLaunchDashboard(theme)
 	}
 
 	// Optional network-exposed dashboard listener (LAN / mesh / tunnel),

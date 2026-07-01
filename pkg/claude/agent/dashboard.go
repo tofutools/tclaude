@@ -37,8 +37,9 @@ func dashboardCmd() *cobra.Command {
 }
 
 type dashboardParams struct {
-	Print bool `long:"print" help:"Print the one-shot URL instead of opening a browser (expires in ~60s)"`
-	Slop  bool `long:"slop" help:"Open the dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
+	Print  bool `long:"print" help:"Print the one-shot URL instead of opening a browser (expires in ~60s)"`
+	Slop   bool `long:"slop" help:"Open the dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
+	Wizard bool `long:"wizard" help:"Open the dashboard in 🧙 wizard theme — a purely cosmetic re-skin, same data. Mutually exclusive with --slop (slop wins)."`
 }
 
 func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
@@ -49,8 +50,12 @@ func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 		URL string `json:"url"`
 	}
 	path := "/v1/dashboard/open"
+	// slop and wizard are mutually exclusive re-skins; slop wins if both
+	// flags are set, matching the client's applySlopThemeIfRequested.
 	if p.Slop {
 		path += "?slop=1"
+	} else if p.Wizard {
+		path += "?wizard=1"
 	}
 	if err := DaemonGet(path, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

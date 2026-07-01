@@ -737,6 +737,45 @@ function slopMachine(state, online, convID) {
   return `<span class="slop-machine" data-status="${esc(status)}" data-conv="${conv}" title="${esc(tip)}" aria-label="${esc(tip)}">${reels}</span>`;
 }
 
+// === Wizard state pill — the wizard-mode replacement for statePill ===
+//
+// In wizard mode (body.wizard) the plain state pill is hidden via CSS and
+// this arcane-flavored pill appears in its place (same swap trick as the
+// slop machine: always emitted, CSS shows the one for the active theme, so
+// toggling in-place needs no re-render). Each agent status maps to a
+// sarcastic Dungeons-&-Dragons label + glyph; the REAL status (plus any
+// detail) stays in the title/aria-label so hovering and screen readers get
+// the honest state. data-conv + data-status let wizard-fx.js watch for the
+// working→idle "spell resolved" sparkle, mirroring slop-fx's slot-machine
+// watch.
+const WIZARD_STATE = {
+  working:             { glyph: '⚗️', label: 'Channeling' },
+  main_agent_idle:     { glyph: '⚗️', label: 'Channeling' },
+  idle:                { glyph: '🕯️', label: 'Meditating' },
+  awaiting_permission: { glyph: '📜', label: 'Awaiting decree' },
+  awaiting_input:      { glyph: '🗝️', label: 'Awaiting a key' },
+  error:               { glyph: '💥', label: 'Spell backfired' },
+  crashed:             { glyph: '💀', label: 'Slain by a grue' },
+  exited:              { glyph: '🪦', label: 'Departed' },
+  offline:             { glyph: '🪦', label: 'Departed' },
+};
+
+function wizardPill(state, online, convID) {
+  let status;
+  if (!online) {
+    status = ((state && state.exit_reason) || '') === 'unexpected' ? 'crashed' : 'offline';
+  } else {
+    status = (state && state.status) || 'idle';
+  }
+  const detail = (state && state.status_detail) || '';
+  // Honest tooltip: the real status (and detail), same as statePill — the
+  // sarcastic label is flair, not a replacement for the truth.
+  const tip = detail ? `${status}: ${detail}` : status;
+  const conv = esc(convID || '');
+  const m = WIZARD_STATE[status] || { glyph: '✨', label: status };
+  return `<span class="wizard-pill" data-status="${esc(status)}" data-conv="${conv}" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="wizard-pill-glyph">${m.glyph}</span> ${esc(m.label)}</span>`;
+}
+
 // CTX_SEGMENTS is the block count of the context-window meter — a
 // value in the 3-6 design range. 5 splits cleanly into 20%-wide
 // bands and leaves room for 2 green / 2 yellow / 1 red.
@@ -1472,7 +1511,7 @@ function syncBotAnimations() {
 // composition details of the exported builders above.
 export {
   syncBotAnimations,
-  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,

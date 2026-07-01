@@ -131,9 +131,11 @@
   <button data-tab="costs">Costs</button>
   <button data-tab="audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts">Audit</button>
   <button data-tab="config">Config</button>
-  <!-- Vegas — the slop-mode soundtrack tab. CSS-hidden unless body.slop
-       is set (see dashboard.css); vegas.js owns the player inside it. -->
-  <button data-tab="vegas">🎰 Vegas</button>
+  <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
+       body.wizard, or the regular-mode opt-in (body.vegas) is set (see
+       dashboard.css); vegas.js owns the player inside it. The label swaps to
+       "🍺 The Tavern" in wizard mode (CSS body.wizard). -->
+  <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard">🍺 The Tavern</span></button>
   </div>
 </nav>
 <main>
@@ -884,13 +886,17 @@
          player, and an empty #vegas-player would otherwise leave this text
          floating above a blank gold box. -->
     <div class="vegas-card">
-      <p class="vegas-intro">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
+      <!-- Two intros, one shown per theme (CSS): the casino welcome for
+           slop / regular-opt-in, the tavern welcome for wizard mode. -->
+      <p class="vegas-intro vegas-intro-vegas">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
+      <p class="vegas-intro vegas-intro-wizard">🍺 Welcome to the Tavern, traveller. Rest by the fire, mind your coin purse, and let the bard play on. 🔮</p>
       <div id="vegas-player"></div>
     </div>
-    <!-- Two hints, one shown per mode (CSS, body.vegas:not(.slop)). In
-         slop mode the music is tied to the 🎰 theme; in regular mode it's
-         a config setting governed by the header sound/volume controls. -->
+    <!-- Hints, one shown per mode (CSS). slop: music tied to the 🎰 theme.
+         wizard: music tied to the 🧙 theme. regular opt-in: a config setting
+         governed by the header sound/volume controls. -->
     <p class="vegas-hint vegas-hint-slop">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
+    <p class="vegas-hint vegas-hint-wizard">The Tavern radio plays as long as wizard mode is on — leave the mode (click the 🧙 in the header) to stop it.</p>
     <p class="vegas-hint vegas-hint-regular">Music plays whenever the dashboard is open. Use the 🔊 and 🎚️ controls in the header to mute or set the volume; turn this off again under <strong>Vegas music</strong> on the Config tab.</p>
     <!-- High-rollers leaderboard — slop-credits.js renders agent jackpot
          rankings (this session) in here, with a 🔥 on any agent on a

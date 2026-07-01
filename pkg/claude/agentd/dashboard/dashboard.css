@@ -3432,10 +3432,13 @@ body:has(#tab-terminals.active) > nav {
 }
 /* One hint per mode: the slop-flavoured "leave slop mode to stop it" line
    by default, the config-flavoured one only in the regular-mode Vegas view
-   (body.vegas without the casino re-skin). */
+   (body.vegas without the casino re-skin). Wizard mode is excluded from the
+   regular-view rule (it carries body.wizard, and may ALSO carry body.vegas if
+   the opt-in is on) so its own wizard hint — shown by the higher-priority
+   body.wizard rules in the wizard block — isn't joined by the regular one. */
 .vegas-hint-regular { display: none; }
 body.vegas:not(.slop) .vegas-hint-slop { display: none; }
-body.vegas:not(.slop) .vegas-hint-regular { display: block; }
+body.vegas:not(.slop):not(.wizard) .vegas-hint-regular { display: block; }
 /* #vegas-player is just the dynamic content holder now (the card styling
    moved to .vegas-card). The gap below the intro only appears once vegas.js
    has injected content, so a muted/empty player shows just the intro header
@@ -4112,3 +4115,334 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .export-history-item button:hover { border-color: #58a6ff; }
 .export-history-item button.ehi-del:hover { border-color: #f85149; color: #f85149; }
 .export-history-empty { font-size: 12px; color: #6e7681; padding: 4px 2px; }
+
+/* ═══ Wizard theme (body.wizard) ═════════════════════════════════════
+   The 🧙 "it's wizard time" re-skin — activated by ?wizard=1 on the URL
+   (see js/slop.js). Sibling of the slop machine theme: same data, same
+   routes, same auth, purely cosmetic. Arcane palette — a midnight-violet
+   void, tarnished-gold + candle-amber accents, mystic-purple glow, a
+   fantasy-serif header. Like slop we only re-skin the chrome (header, nav,
+   footer, top buttons, state cell, marquee, music card) so the data tables
+   keep their readable dark default. Mutually exclusive with body.slop. */
+body.wizard {
+  background: #140f28;
+}
+body.wizard header {
+  background: linear-gradient(
+    90deg,
+    #1e1640 0%, #3a2a63 25%, #7a5db0 50%, #3a2a63 75%, #1e1640 100%
+  );
+  background-size: 200% 100%;
+  animation: wizard-shimmer 8s linear infinite;
+  border-bottom: 2px solid #d9b45a;
+}
+body.wizard header h1 {
+  color: #f3e6c0;
+  /* A fantasy-serif stack: Papyrus / Luminari ship on macOS; Palatino and
+     the generic serif carry every other platform. No web font to embed. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard header .meta { color: #e7d9f5; opacity: 0.85; }
+body.wizard header button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  border-radius: 4px; padding: 4px 10px;
+}
+body.wizard header button:hover { background: #3a2a63; }
+body.wizard nav {
+  background: #1c1436;
+  border-bottom: 1px solid #d9b45a;
+}
+body.wizard nav button { color: #b39ddb; }
+body.wizard nav button:hover { color: #f3e6c0; }
+body.wizard nav button.active {
+  color: #f3e6c0;
+  border-bottom-color: #d9b45a;
+}
+body.wizard footer {
+  background: #1c1436;
+  border-top: 1px solid #d9b45a;
+}
+body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
+/* State pills keep their default fill; a purple/gold/emerald edge makes them
+   pop on the violet background (mirrors slop's gold-edge tweak). */
+body.wizard .state-working   { border-color: #a97bd6; }
+body.wizard .state-idle      { border-color: #6ee7b7; }
+body.wizard .state-awaiting  { border-color: #d9b45a; }
+body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.5); }
+@keyframes wizard-shimmer {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+/* The header icon (the shared .slop-icon click target) bobs like a floating
+   familiar in wizard mode — the wizard twin of slop's jiggle. */
+body.wizard header h1 .slop-icon {
+  animation: wizard-float 3s ease-in-out infinite;
+}
+@keyframes wizard-float {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50%      { transform: translateY(-3px) rotate(4deg); }
+}
+
+/* ─── Wizard state pill (body.wizard) ───────────────────────────────
+   The wizard-mode replacement for statePill — an arcane pill with a
+   sarcastic DnD label (helpers.js wizardPill). Always emitted; CSS shows it
+   only in wizard mode and hides the plain pill + the slot machine in the
+   agent-row state cell, so flipping the theme swaps the cell without a
+   re-render. Scoped to .state-cell so other tabs' .state-pill (Audit
+   Outcome, Plugins) are untouched — same care slop takes. */
+.wizard-pill { display: none; }
+body.wizard .state-cell .state-pill,
+body.wizard .state-cell .slop-machine { display: none; }
+body.wizard .wizard-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  vertical-align: middle;
+  padding: 1px 8px;
+  border: 1px solid #7a5db0; border-radius: 10px;
+  background: linear-gradient(180deg, #241b3d 0%, #1a1330 100%);
+  color: #e7d9f5; font-size: 12px;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5), 0 0 6px rgba(169, 123, 214, 0.25);
+}
+.wizard-pill-glyph { font-size: 12px; }
+/* Per-state frame treatments — the label is the JS's job; the glow belongs
+   here so each state reads at a glance. Mirrors slop's per-status frames. */
+body.wizard .wizard-pill[data-status="working"],
+body.wizard .wizard-pill[data-status="main_agent_idle"] {
+  border-color: #a97bd6;
+  animation: wizard-channel 1.8s ease-in-out infinite;
+}
+@keyframes wizard-channel {
+  0%, 100% { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(169, 123, 214, 0.4); }
+  50%      { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 12px rgba(169, 123, 214, 0.85); }
+}
+body.wizard .wizard-pill[data-status="idle"] {
+  border-color: #6ee7b7;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5), 0 0 8px rgba(110, 231, 183, 0.5);
+}
+body.wizard .wizard-pill[data-status="awaiting_permission"],
+body.wizard .wizard-pill[data-status="awaiting_input"] {
+  border-color: #d9b45a;
+  animation: wizard-await 1s ease-in-out infinite;
+}
+@keyframes wizard-await {
+  0%, 100% { border-color: #d9b45a; box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(217, 180, 90, 0.4); }
+  50%      { border-color: #a97bd6; box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 10px rgba(169, 123, 214, 0.6); }
+}
+body.wizard .wizard-pill[data-status="error"] {
+  border-color: #f2777a;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5), 0 0 8px rgba(242, 119, 122, 0.55);
+}
+body.wizard .wizard-pill[data-status="crashed"] { border-color: #f2777a; opacity: 0.85; }
+body.wizard .wizard-pill[data-status="offline"],
+body.wizard .wizard-pill[data-status="exited"] {
+  border-color: #5a5470; opacity: 0.55; box-shadow: none;
+}
+/* The "spell resolved" flash wizard-fx.js adds on a real working→idle. */
+body.wizard .wizard-pill.wizard-pill-flash { animation: wizard-resolve 1.4s ease-out; }
+@keyframes wizard-resolve {
+  0%   { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 4px rgba(110, 231, 183, 0.4); }
+  30%  { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 20px rgba(110, 231, 183, 0.95); transform: scale(1.06); }
+  100% { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 4px rgba(110, 231, 183, 0.4); transform: scale(1); }
+}
+
+/* ─── Shared radio group picker + wizard music tab ──────────────────
+   The top-level group <select> (Vegas Lounge / Wizard's Realm) shows in
+   BOTH themes, so its base chrome matches the casino channel picker; the
+   wizard overrides below recolor it (and the rest of the card) arcane. */
+.vegas-group {
+  font: inherit;
+  color: #ffe88c;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-right: 4px;
+  cursor: pointer;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.3);
+}
+.vegas-group:hover { border-color: rgba(255, 215, 0, 0.75); }
+.vegas-group:focus-visible { outline: 2px solid #ffd700; outline-offset: 1px; }
+.vegas-group option { color: #1a1a1a; background: #f3e6c0; }
+
+/* Tab label swap: "🎰 Vegas" for slop / regular-opt-in, "🍺 The Tavern" in
+   wizard mode. */
+.tab-label-wizard { display: none; }
+body.wizard .tab-label-vegas { display: none; }
+body.wizard .tab-label-wizard { display: inline; }
+
+/* The music tab shows in wizard mode too (like slop / the regular opt-in). */
+body.wizard nav button[data-tab="vegas"] { display: block; }
+
+/* Intro + hint copy per theme. Both intros carry .vegas-intro; the wizard
+   one is hidden by default and swapped in under body.wizard. */
+.vegas-intro-wizard { display: none; }
+.vegas-hint-wizard { display: none; }
+body.wizard .vegas-intro-vegas { display: none; }
+body.wizard .vegas-intro-wizard { display: block; }
+body.wizard .vegas-hint-slop,
+body.wizard .vegas-hint-regular { display: none; }
+body.wizard .vegas-hint-wizard { display: block; }
+
+/* Arcane re-paint of the music card (casino gold → mystic purple/parchment). */
+body.wizard .vegas-card {
+  background: linear-gradient(180deg, #1c1436 0%, #241b3d 100%);
+  border-color: #7a5db0;
+  box-shadow: 0 0 24px rgba(122, 93, 176, 0.3);
+}
+body.wizard .vegas-intro { color: #e7d9f5; text-shadow: 0 0 6px rgba(169, 123, 214, 0.5); }
+body.wizard .vegas-artist,
+body.wizard .vegas-title { color: #f3e6c0; text-shadow: 0 0 8px rgba(169, 123, 214, 0.5); }
+body.wizard .vegas-song a { color: #e7d9f5; border-bottom-color: rgba(231, 217, 245, 0.5); }
+body.wizard .vegas-song a:hover { color: #fff; border-bottom-color: #fff; }
+body.wizard .vegas-station {
+  color: #b39ddb;
+  border-top-color: rgba(122, 93, 176, 0.35);
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.3);
+}
+body.wizard .vegas-channel,
+body.wizard .vegas-group {
+  color: #f3e6c0;
+  border-color: rgba(122, 93, 176, 0.5);
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.3);
+}
+body.wizard .vegas-channel:hover,
+body.wizard .vegas-group:hover { border-color: rgba(169, 123, 214, 0.85); }
+body.wizard .vegas-channel:focus-visible,
+body.wizard .vegas-group:focus-visible { outline-color: #a97bd6; }
+body.wizard .vegas-channel option,
+body.wizard .vegas-group option { color: #1a1330; background: #e7d9f5; }
+body.wizard .vegas-elapsed-line,
+body.wizard .vegas-hint { color: #b39ddb; }
+
+/* Header HUD (sound switch + volume) shows in wizard mode; the 🪙 credits
+   tally, 🔔 FX slider and high-rollers leaderboard are casino-FX-only (there
+   is no synthesized wizard audio), so they hide — mirroring the regular-mode
+   Vegas view. */
+body.wizard .slop-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+}
+body.wizard .slop-credits,
+body.wizard .slop-vol-row-fx,
+body.wizard #vegas-leaderboard { display: none; }
+body.wizard .slop-hud-btn {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+  border-radius: 4px; padding: 2px 7px; cursor: pointer;
+}
+body.wizard .slop-hud-btn:hover { background: #3a2a63; }
+
+/* Marquee ticker — the shared #slop-marquee node, shown + re-tinted arcane
+   in wizard mode (wizard-fx.js writes the wizard one-liners; the slop-marquee
+   -scroll keyframes are theme-agnostic, so we reuse them). */
+body.wizard #slop-marquee {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(90deg, #1c1436 0%, #3a2a63 50%, #1c1436 100%);
+  border-bottom: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-size: 13px;
+  height: 22px;
+  line-height: 22px;
+  letter-spacing: 0.4px;
+  text-shadow: 0 0 4px rgba(169, 123, 214, 0.5);
+}
+body.wizard #slop-marquee-track {
+  animation: slop-marquee-scroll 18s linear infinite;
+}
+
+/* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
+   Short-lived nodes spawned per click / pointer-move / big cast, each
+   animating once and self-removing on animationend — no DOM accumulation.
+   The wizard twin of slop's coin / confetti / shake. */
+.wizard-spark, .wizard-trail-spark {
+  position: fixed;
+  pointer-events: none;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  user-select: none;
+  will-change: transform, opacity;
+}
+.wizard-spark { font-size: 18px; animation: wizard-spark-arc 0.9s ease-out forwards; }
+@keyframes wizard-spark-arc {
+  0%   { transform: translate(-50%, -50%) translate(0, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--rot, 0deg)); opacity: 0; }
+}
+.wizard-trail-spark { font-size: 14px; animation: wizard-trail-fade 0.7s ease-out forwards; }
+@keyframes wizard-trail-fade {
+  0%   { transform: translate(-50%, -50%) translate(0, 0) scale(1); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) translate(var(--dx, 0px), var(--dy, 0px)) scale(0.4); opacity: 0; }
+}
+.wizard-meteor {
+  position: fixed;
+  pointer-events: none;
+  font-size: 22px;
+  line-height: 1;
+  z-index: 10001;
+  will-change: transform, opacity;
+  animation: wizard-meteor-fall 1.8s ease-in forwards;
+}
+@keyframes wizard-meteor-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0.95; }
+  100% { transform: translate(var(--dx, 0px), var(--dy, 600px)) rotate(var(--rot, 360deg)); opacity: 0; }
+}
+.wizard-banner {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10000;
+  font-size: 76px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', Palatino, serif;
+  text-shadow:
+    0 0 24px rgba(169, 123, 214, 0.9),
+    0 0 8px rgba(217, 180, 90, 0.6),
+    0 4px 0 #1e1640,
+    0 -2px 0 #1e1640;
+  animation: wizard-banner-flash 1.6s ease-out forwards;
+  user-select: none;
+}
+@keyframes wizard-banner-flash {
+  0%   { transform: scale(0.5) rotate(-6deg); opacity: 0; }
+  20%  { transform: scale(1.2) rotate(3deg);  opacity: 1; }
+  40%  { transform: scale(1.0) rotate(-2deg); opacity: 1; }
+  80%  { transform: scale(1.05) rotate(0deg); opacity: 1; }
+  100% { transform: scale(1.15) rotate(0deg); opacity: 0; }
+}
+body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
+@keyframes wizard-shake {
+  0%, 100% { transform: translate(0, 0); }
+  15% { transform: translate(-8px, 4px) rotate(-0.4deg); }
+  30% { transform: translate(7px, -5px) rotate(0.4deg); }
+  45% { transform: translate(-6px, 6px); }
+  60% { transform: translate(6px, -3px) rotate(0.3deg); }
+  75% { transform: translate(-4px, 3px); }
+}
+
+/* prefers-reduced-motion — double-gated like slop: wizard-fx.js short-
+   circuits before spawning, and this CSS layer kills any motion that slips
+   through. The pills / HUD / tab stay visible (they're not motion). */
+@media (prefers-reduced-motion: reduce) {
+  body.wizard header { animation: none; }
+  body.wizard header h1 .slop-icon { animation: none; }
+  body.wizard #slop-marquee-track { animation: none; }
+  body.wizard .wizard-pill[data-status="working"],
+  body.wizard .wizard-pill[data-status="main_agent_idle"],
+  body.wizard .wizard-pill[data-status="idle"],
+  body.wizard .wizard-pill[data-status="awaiting_permission"],
+  body.wizard .wizard-pill[data-status="awaiting_input"],
+  body.wizard .wizard-pill.wizard-pill-flash { animation: none; }
+  .wizard-spark, .wizard-trail-spark, .wizard-meteor, .wizard-banner {
+    display: none; animation: none;
+  }
+  body.wizard-shake { animation: none; }
+}
