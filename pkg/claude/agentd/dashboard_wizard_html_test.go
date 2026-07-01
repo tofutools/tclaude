@@ -114,6 +114,46 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must("body.wizard #agent-spawn-modal .cron-create-modal", "the spawn dialog surface is re-skinned")
 }
 
+// TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
+// confirmation ("Banish this familiar?"): the per-theme title copy swap and the
+// arcane CSS hooks — the destructive twin of the spawn dialog's Summon re-skin.
+// Purely front-end like the rest of the wizard theme, so we string-search the
+// embedded source rather than running the JS.
+func TestDashboardHTML_WizardRetireModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Retire this agent?" → "Banish this
+	// familiar?". Both spans must exist in the HTML and the swap rules in CSS.
+	must(`<span class="retire-title-regular">Retire this agent?</span>`, "the default retire title span")
+	must(`<span class="retire-title-wizard">Banish this familiar?</span>`, "the wizard retire title span")
+	must("body.wizard #retire-title .retire-title-regular", "wizard hides the default title")
+	must("body.wizard #retire-title .retire-title-wizard", "wizard shows the banish title")
+
+	// The confirm button becomes a "🪄 Banish!" lever (Summon's twin) — the
+	// ::before glyph + the modal-scoped confirm re-skin.
+	must(`content: "🪄 Banish!"`, "the confirm button reads Banish in wizard mode")
+	must("body.wizard #retire-modal #retire-ok", "the confirm re-skin is scoped to the retire modal")
+
+	// The whole dialog is re-skinned arcane.
+	must("body.wizard #retire-modal .modal", "the retire dialog surface is re-skinned")
+}
+
+// TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
+// re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
+// (unlike the spawn dialog's .cron-create-modal), so an unscoped
+// `body.wizard .modal { … }` would repaint every sibling confirm dialog
+// (shutdown / delete-agent / power-on), which is not the intent.
+func TestDashboardCSS_WizardRetireModalScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .modal {") {
+		t.Error("wizard retire re-skin is unscoped — will repaint shutdown/delete-agent confirms too")
+	}
+}
+
 // TestDashboardCSS_WizardSpawnModalScoped guards that the wizard spawn-dialog
 // re-skin stays scoped to #agent-spawn-modal — an unscoped
 // `body.wizard .cron-create-modal { … }` would repaint every sibling modal

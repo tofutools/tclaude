@@ -984,7 +984,11 @@
 </div>
 <div class="modal-overlay" id="retire-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="retire-title">
-    <h3 id="retire-title">Retire this agent?</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, the wizard twin of the
+         spawn dialog's .spawn-title-* pair): a plain "Retire this agent?"
+         normally, an arcane "Banish this familiar?" in 🧙 wizard mode — the
+         antonym of the spawn dialog's "Summon a new familiar". -->
+    <h3 id="retire-title"><span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span></h3>
     <p>Demotes the agent to a plain conversation: revokes its group memberships and
       permission grants so it stops being an agent. The conversation itself stays on
       disk and can be reinstated later — this is the non-destructive soft-delete.</p>

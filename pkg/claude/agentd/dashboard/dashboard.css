@@ -4500,6 +4500,99 @@ body.wizard #agent-spawn-modal #agent-spawn-submit:disabled {
 }
 body.wizard #agent-spawn-modal #agent-spawn-submit:disabled::before { content: none; }
 
+/* ─── Wizard retire modal — "Banish this familiar?" ─────────────────
+   The arcane counterpart to the Summon dialog above: retiring a familiar
+   is the antonym of summoning one, so the 🧙 theme re-skins the retire
+   confirmation to match. Unlike the spawn dialog (a .cron-create-modal),
+   the retire modal is a generic .modal, so every rule is scoped to
+   #retire-modal — the sibling shutdown / delete-agent / power confirms
+   share the .modal class and must keep the default chrome.
+
+   Title text is a pure-CSS span swap (the .retire-title-regular /
+   .retire-title-wizard pair in the HTML), the same mechanism as the spawn
+   title / music tab label — no JS involved. */
+.retire-title-wizard { display: none; }
+body.wizard #retire-title .retire-title-regular { display: none; }
+body.wizard #retire-title .retire-title-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the spawn dialog / header / music
+   card. Chrome is recolored; the copy stays honest and legible. */
+body.wizard #retire-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #retire-modal .modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #retire-modal .modal p { color: #e7d9f5; }
+body.wizard #retire-modal .modal .modal-meta {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+/* Checkbox labels + their grey hint notes go violet/parchment. */
+body.wizard #retire-modal .delete-agent-wt { color: #e7d9f5; }
+body.wizard #retire-modal .delete-agent-wt .wt-note { color: #b39ddb; }
+
+/* Cancel (and any other non-confirm button) — the same tarnished-gold
+   secondary treatment the spawn dialog's Clear / Cancel get. Scoped away
+   from #retire-ok, which keeps its gilded Banish lever below. */
+body.wizard #retire-modal .modal-buttons button:not(#retire-ok) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #retire-modal .modal-buttons button:not(#retire-ok):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+
+/* Retire = 🪄 Banish! — the confirm button re-skinned into a gilded
+   conjuring lever, the destructive twin of the spawn dialog's 🔮 Summon!.
+   Same mechanism: the button's own "Retire" text is hidden (font-size: 0)
+   and replaced by a ::before glyph; the busy state (JS disables the button
+   and swaps in a "Retiring…" spinner via setBusy) restores a font-size so
+   that fallback shows instead of the glyph. The click already sprays cast
+   sparks via wizard-fx's global cast-FX handler, so no extra JS is needed.
+   #retire-modal keeps it out-specifying the base .confirm-danger rule. */
+body.wizard #retire-modal #retire-ok {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #retire-modal #retire-ok::before {
+  content: "🪄 Banish!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #retire-modal #retire-ok:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #d9b45a;
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #retire-modal #retire-ok:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #retire-modal #retire-ok:disabled {
+  /* Restore the font so the JS "Retiring…" spinner fallback shows. */
+  font-size: 13px;
+  opacity: 0.7;
+}
+body.wizard #retire-modal #retire-ok:disabled::before { content: none; }
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
