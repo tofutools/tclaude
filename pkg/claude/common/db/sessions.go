@@ -845,36 +845,118 @@ type CostDailyRow struct {
 	Model string
 }
 
-// SumCostSinceDay totals the actual spend recorded on or after fromDay
-// (a "2006-01-02" key) — the top bar's month-to-date figure, computed
-// DB-side so the 2s snapshot tick never scans cost history into Go.
+// CostDelta is one recovered slice of actual spend: on this local day,
+// the conversation spent this many dollars. Derived from consecutive
+// cumulative snapshots, baselined per conversation (see CostDeltas). The
+// fields are the CostDailyRow fields the cost surfaces attribute a slice
+// on — day, actor keys, the timestamp and the model — minus the raw
+// cumulative the walk consumes.
+type CostDelta struct {
+	Day       string
+	ConvID    string
+	SessionID string
+	USD       float64
+	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
+	Model     string // model display name denormalised onto the row; "" if unknown
+}
+
+// CostDeltas turns cumulative (conv, day) snapshots into per-day spend
+// deltas — the ONE walk both cost surfaces build on (the Costs tab via
+// agentd's costDeltasFromRows, the top bar via SumCostSinceDay), so the
+// headline figure and the tab's breakdown can never drift. Rows must be
+// ordered (conv-key, day, session_id) — the order AllCostDailyRows
+// returns.
 //
-// Per conversation (NOT per session), spend within the window is the
-// peak cumulative snapshot in the window minus the high-water mark
-// before it, clamped at zero — the closed form of the day-by-day delta
-// walk agentd's Costs tab aggregation performs (rises above a running
-// maximum telescope to final-peak − initial-peak), so the two surfaces
-// always agree. Grouping per conversation is what defeats the
-// resume-across-sessions double-count: Claude Code's cumulative cost
-// persists across resume, so a conv resumed under a new session id must
-// not have that session's whole cumulative counted afresh. The grouping
-// key falls back to session_id for the rare row with no denormalised
-// conv_id, so unrelated sessions never merge. The agentd unit tests pin
-// both surfaces to the same fixture.
+// The high-water baseline is carried per CONVERSATION, not per session:
+// Claude Code's total_cost_usd is cumulative within a session and, on a
+// carry-forward resume, the resuming session's first snapshot already
+// includes the prior spend. Baselining per conv recovers only the genuine
+// rise, so a resume's first day no longer re-counts the whole cumulative
+// (the multi-day / same-day double-count). The conv-key falls back to
+// session_id for the rare row with no denormalised conv_id, so unrelated
+// sessions never merge. A day's spend is its snapshot minus the running
+// high-water mark; a conversation's first day carries its whole cumulative
+// (for rows born in the v51 backfill, pre-existing history lands on the
+// migration day). The high-water baseline clamps a dip-and-recover: only
+// the rise above the previous maximum counts, never a negative day.
+//
+// BUT total_cost_usd is a PER-SESSION counter, and a resume after the
+// prior session has EXITED starts a fresh one — the new session's
+// cumulative begins near zero, BELOW the conversation's prior peak,
+// rather than carrying it forward. Clamping that to the old high-water
+// mark would swallow the new session's entire spend, so the conversation
+// vanishes from every span after the one holding its first (higher-cost)
+// session — the cross-month "agent only shows in the previous month" bug.
+// So at a SESSION boundary (session_id changed within the same conv) where
+// the cumulative DROPS below the baseline, restart the baseline: that drop
+// can only be a fresh independent counter (a carry-forward resume is
+// monotonic and stays at or above the peak), so its spend is counted from
+// scratch. The reset is gated on the session change — a dip WITHIN a
+// session is still a stale render and stays clamped, never a reset.
+//
+// whatif selects which cumulative column the walk reads: false → cost_usd
+// (real pay-per-token spend), true → virtual_cost_usd (the subscription
+// WHAT-IF estimate). The delta logic is identical — virtual cost is the
+// same cumulative total_cost_usd, just captured on the subscription path.
+func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
+	var out []CostDelta
+	prevKey := ""
+	prevSession := ""
+	baseline := 0.0
+	for _, r := range rows {
+		val := r.CostUSD
+		if whatif {
+			val = r.VirtualCostUSD
+		}
+		key := r.ConvID
+		if key == "" {
+			key = r.SessionID
+		}
+		switch {
+		case key != prevKey:
+			// New conversation — restart the baseline.
+			baseline = 0
+		case r.SessionID != prevSession && val < baseline:
+			// Same conv, new session, cumulative below the running peak: a
+			// fresh per-session counter (resume-after-exit), not a
+			// carry-forward. Count it from scratch rather than clamping its
+			// whole spend away.
+			baseline = 0
+		}
+		prevKey = key
+		prevSession = r.SessionID
+		if d := val - baseline; d > 0 {
+			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAt: r.UpdatedAt, Model: r.Model})
+			baseline = val
+		}
+	}
+	return out
+}
+
+// SumCostSinceDay totals the actual spend recorded on or after fromDay
+// (a "2006-01-02" key) — the top bar's month-to-date figure.
+//
+// It runs the SAME per-conversation delta walk (CostDeltas) the Costs tab
+// aggregates, summing the slices whose day is in the window, so the
+// headline number and the tab's breakdown always agree — the agentd unit
+// tests pin both surfaces to one fixture. It reads the whole
+// session_cost_daily table (small — sessions × active days) and walks it
+// in Go rather than a closed-form aggregate query: the walk's
+// session-boundary baseline reset (a resume-after-exit's fresh per-session
+// counter, see CostDeltas) is path-dependent and has no clean SQL closed
+// form, and the scan is negligible even on the 2s snapshot tick.
 func SumCostSinceDay(fromDay string) (float64, error) {
-	db, err := Open()
+	rows, err := AllCostDailyRows()
 	if err != nil {
 		return 0, err
 	}
-	var total float64
-	err = db.QueryRow(`
-		SELECT COALESCE(SUM(MAX(0, w.peak - COALESCE(b.base, 0))), 0)
-		FROM (SELECT COALESCE(NULLIF(conv_id, ''), session_id) AS k, MAX(cost_usd) AS peak
-		      FROM session_cost_daily WHERE day >= ? GROUP BY k) w
-		LEFT JOIN (SELECT COALESCE(NULLIF(conv_id, ''), session_id) AS k, MAX(cost_usd) AS base
-		           FROM session_cost_daily WHERE day < ? GROUP BY k) b
-		  ON b.k = w.k`, fromDay, fromDay).Scan(&total)
-	return total, err
+	total := 0.0
+	for _, d := range CostDeltas(rows, false) {
+		if d.Day >= fromDay {
+			total += d.USD
+		}
+	}
+	return total, nil
 }
 
 // AllCostDailyRows returns every session_cost_daily row ordered by
