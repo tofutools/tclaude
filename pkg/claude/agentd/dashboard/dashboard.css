@@ -107,6 +107,11 @@ nav button:hover { color: #d4d4d4; }
    never hide and a bright-red `0` would always show. This restores
    hide-at-0; the red badge then appears only when unread > 0. */
 .tab-badge[hidden] { display: none; }
+/* The Terminals badge reuses .tab-badge, but its number is just a live count of
+   open panes — informational, not an unread (Messages, red) or a needs-attention
+   (Plugins, amber, see .warn below). .count tones it to a quiet neutral chip so
+   opening a web terminal doesn't read as an alert demanding action. */
+.tab-badge.count { background: #21262d; color: #7d8590; font-weight: 500; }
 
 /* === Messages tab — mail client (mail.js) ===
    Three columns: a mailbox sidebar, the selected folder's message list,
