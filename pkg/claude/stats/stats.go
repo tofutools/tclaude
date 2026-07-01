@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,14 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
 )
+
+// modelDateSuffixRe matches the trailing "-YYYYMMDD" release-date stamp on a
+// full model ID (e.g. the "-20251101" in "claude-opus-4-5-20251101"). Version
+// segments are only ever 1-2 digits ("-4-8", "-3-5"), so an exact 8-digit
+// trailing group unambiguously identifies the date stamp and never a version.
+// Matching the shape rather than an enumerated set of dates keeps the display
+// cleanup working for every future dated model without a code change.
+var modelDateSuffixRe = regexp.MustCompile(`-\d{8}$`)
 
 // StatsCache represents the stats-cache.json file structure
 type StatsCache struct {
@@ -230,8 +239,7 @@ func formatModelName(model string) string {
 	// Clean up model names for display
 	name := model
 	name = strings.TrimPrefix(name, "claude-")
-	name = strings.TrimSuffix(name, "-20251101")
-	name = strings.TrimSuffix(name, "-20250929")
+	name = modelDateSuffixRe.ReplaceAllString(name, "")
 	// Capitalize first letter
 	if len(name) > 0 {
 		name = strings.ToUpper(name[:1]) + name[1:]
