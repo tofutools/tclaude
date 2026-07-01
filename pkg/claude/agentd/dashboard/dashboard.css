@@ -594,7 +594,9 @@ table tr:hover { background: #161b22; }
 /* The meter is emitted as a regular + a wizard "mana" twin (contextMeter());
    CSS reveals exactly one per theme, so a theme flip swaps the gauge AND its
    tooltip with no re-render (same trick as the .ga-* activity wrappers). The
-   arcane crystal recolour lives in the wizard-theme block below. */
+   arcane crystal recolour lives in the wizard-theme block below. Unlike the
+   three-variant .ga-* system there is no slop twin — slop mode carries no ctx
+   rule, so it falls back to the regular gauge (the default-mode branch). */
 .ctx-mana { display: none; }
 body.wizard .ctx-regular { display: none; }
 body.wizard .ctx-mana { display: inline-flex; }
