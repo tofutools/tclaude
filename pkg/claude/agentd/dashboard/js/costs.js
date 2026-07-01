@@ -47,8 +47,9 @@ const COST_HIDDEN_KEY = 'tclaude.dash.agentCost.hidden';
 // The fixed date spans (the four buttons). "month" is the calendar month
 // to date (the only span that gets a projection); the rest are trailing
 // windows ending today. A fifth, dynamic span — 'calmonth' — browses one
-// completed calendar month at a time via the ‹ › stepper; it isn't in
-// this array because its range depends on monthOffset (below).
+// calendar month at a time via the ‹ › stepper (the current month at
+// offset 0 folds back into 'month'); it isn't in this array because its
+// range depends on monthOffset (below).
 const SPANS = [
   { key: 'month', label: 'This month' },
   { key: '7d', label: 'Last 7d', days: 7 },
@@ -58,13 +59,15 @@ const SPANS = [
 
 // currentSpan is a fixed key above OR 'calmonth' (a completed month
 // browsed with the stepper). monthOffset counts calendar months back from
-// the current one: 1 = last month, 2 = two months ago, … It never reaches
-// 0 — the current month is the dedicated "This month" button, the only
-// span with a projection — so the stepper only ever shows completed
-// months. It persists across span switches so returning to the stepper
-// resumes where you left off.
+// the current one: 0 = this month, 1 = last month, 2 = two months ago, …
+// Offset 0 is the current month — the same span as the "This month" button
+// (currentSpan flips to 'month' there, keeping its projection), so the
+// stepper is one continuous browser from this month back through history,
+// and the current month stays in sync with (and highlighted alongside) the
+// "This month" button. It persists across span switches so returning to the
+// stepper resumes where you left off.
 let currentSpan = 'month';
-let monthOffset = 1;
+let monthOffset = 0;
 
 // The furthest back the ‹ stepper may go. The server caps a span at
 // maxCostSpanDays days measured from `to`, but a whole-month span is only
@@ -737,11 +740,13 @@ function syncFillToggle() {
   }
 }
 
-// clampMonthOffset keeps the stepper within [1, MAX_MONTH_OFFSET] — never
-// the current month (that's the "This month" button), never past the sane
-// paging floor. syncMonthNav enforces the data-driven upper bound.
+// clampMonthOffset keeps the stepper within [0, MAX_MONTH_OFFSET] — offset
+// 0 is the current month (the head of the browse, shared with the "This
+// month" button), and MAX_MONTH_OFFSET is the sane paging floor.
+// syncMonthNav enforces the data-driven back bound (the first month with
+// recorded spend).
 function clampMonthOffset(o) {
-  return Math.max(1, Math.min(MAX_MONTH_OFFSET, o));
+  return Math.max(0, Math.min(MAX_MONTH_OFFSET, o));
 }
 
 // updateMonthLabel writes the stepper button's month name ("June 2026")
@@ -753,69 +758,93 @@ function updateMonthLabel() {
   cur.textContent = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-// setActiveSpanButton highlights exactly one span control. The four fixed
-// buttons and the stepper's month button share the .active style (both
-// live under #costs-spans), but only one span is active at a time.
-function setActiveSpanButton(btn) {
+// syncSpanHighlight lights the control(s) for the active span. A trailing
+// window lights its own fixed button. A browsed month lights the stepper's
+// month button; when that month is the current one (offset 0) the dedicated
+// "This month" button lights up alongside it — the same span shown in two
+// places, so both read as active and stay in sync. All span controls share
+// the .active style and live under #costs-spans, so a clear-then-set keeps
+// exactly the intended one(s) lit.
+function syncSpanHighlight() {
   $$('#costs-spans button.tool').forEach(x => x.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  if (currentSpan === 'month' || currentSpan === 'calmonth') {
+    const cur = $('#costs-month-cur');
+    if (cur) cur.classList.add('active');
+    // Offset 0 is the current month — also light "This month" (the same
+    // span, surfaced as a dedicated button). currentSpan === 'month' already
+    // implies offset 0, but the guard keeps the intent explicit.
+    if (monthOffset === 0) {
+      const thisMonth = $('#costs-spans > button.tool[data-span="month"]');
+      if (thisMonth) thisMonth.classList.add('active');
+    }
+  } else {
+    const btn = $(`#costs-spans > button.tool[data-span="${currentSpan}"]`);
+    if (btn) btn.classList.add('active');
+  }
 }
 
-// syncMonthNav updates the ‹ › stepper's enabled state. › (newer) stops
-// at offset 1 — the current month is the dedicated "This month" button,
-// not part of the completed-month browse. ‹ (older) stops at
-// MAX_MONTH_OFFSET and, once a payload names the first-ever costed day
-// (first_day, across all history), at that month — so you can't page into
-// months that never had data.
+// syncMonthNav updates the ‹ › stepper's enabled state. › (newer) stops at
+// offset 0 — the current month is the newest, there's no future to page
+// into. ‹ (older) stops at MAX_MONTH_OFFSET and, once a payload names the
+// first-ever costed day (first_day, across all history), at that month — so
+// you can only page back as far as recorded spend exists (the operator's
+// "prev month only if data there exists"). When the first-ever spend is
+// this month, off is 0 and ‹ disables right at the current month.
 function syncMonthNav() {
   const prev = $('#costs-month-prev');
   const next = $('#costs-month-next');
-  if (next) next.disabled = monthOffset <= 1;
+  if (next) next.disabled = monthOffset <= 0;
   let oldest = MAX_MONTH_OFFSET;
   const first = lastCostData && lastCostData.first_day;
   if (first) {
     const fd = new Date(first + 'T12:00:00');
     const now = new Date();
     const off = (now.getFullYear() - fd.getFullYear()) * 12 + (now.getMonth() - fd.getMonth());
-    oldest = Math.min(MAX_MONTH_OFFSET, Math.max(1, off));
+    oldest = Math.min(MAX_MONTH_OFFSET, Math.max(0, off));
   }
   if (prev) prev.disabled = monthOffset >= oldest;
 }
 
-// activateCalmonth switches to the completed-month span at `offset`,
-// updating the label, the active highlight and the stepper bounds, then
-// reloads. The projection toggles go inert (syncFillToggle) since only
-// "This month" projects.
-function activateCalmonth(offset) {
+// activateMonth switches to the browsed month at `offset` (0 = the current
+// month, which keeps its projection; ≥1 = a completed month), updating the
+// label, the active highlight and the stepper bounds, then reloads. At
+// offset 0 currentSpan flips to 'month' so the projection and its toggles
+// stay live and the "This month" button lights up with the stepper; a
+// completed month is 'calmonth', where the projection toggles go inert
+// (syncFillToggle).
+function activateMonth(offset) {
   monthOffset = clampMonthOffset(offset);
-  currentSpan = 'calmonth';
+  currentSpan = monthOffset === 0 ? 'month' : 'calmonth';
   updateMonthLabel();
-  setActiveSpanButton($('#costs-month-cur'));
+  syncSpanHighlight();
   syncFillToggle();
   syncMonthNav();
   loadCosts();
 }
 
-// selectFixedSpan activates one of the four fixed-span buttons
-// programmatically (shared by the button click handler and the code path
-// that leaves the stepper).
+// selectFixedSpan activates a fixed-span button. "This month" is the
+// current month at the head of the month stepper, so it routes through
+// activateMonth(0) — keeping the stepper label, bounds and the dual
+// highlight in sync. The trailing windows (7d/30d/90d) are their own spans.
 function selectFixedSpan(key) {
+  if (key === 'month') { activateMonth(0); return; }
   currentSpan = key;
-  setActiveSpanButton($(`#costs-spans > button.tool[data-span="${key}"]`));
+  syncSpanHighlight();
   syncFillToggle();
   syncMonthNav();
   loadCosts();
 }
 
-// goMonth handles a ‹/› arrow. When already browsing a completed month it
-// steps the offset (‹ delta +1 older, › delta -1 newer); when a fixed
-// span is active it instead just enters the stepper at the month already
-// shown on the label — so the first arrow press reveals that month rather
-// than skipping over it. clampMonthOffset + the disabled arrows keep it in
-// range (› never re-enters the current month; use "This month").
+// goMonth handles a ‹/› arrow. While browsing a month — the current one
+// ('month') or a completed one ('calmonth') — it steps the offset (‹ delta
+// +1 older, › delta -1 newer); from a trailing-window span it instead just
+// enters the stepper at the month already shown on the label, so the first
+// press reveals that month rather than skipping it. clampMonthOffset + the
+// disabled arrows keep it in range (› stops at the current month, ‹ at the
+// first month with recorded data).
 function goMonth(delta) {
-  const target = currentSpan === 'calmonth' ? monthOffset + delta : monthOffset;
-  activateCalmonth(target);
+  const inMonthView = currentSpan === 'month' || currentSpan === 'calmonth';
+  activateMonth(inMonthView ? monthOffset + delta : monthOffset);
 }
 
 // bindCostsTab wires the tab: load on activation, reload on span
@@ -851,12 +880,16 @@ function bindCostsTab() {
   // calendar month). The label enters/re-enters the stepper at the shown
   // month; the arrows page older/newer (bounds enforced by syncMonthNav).
   const monthCur = $('#costs-month-cur');
-  if (monthCur) monthCur.addEventListener('click', () => activateCalmonth(monthOffset));
+  if (monthCur) monthCur.addEventListener('click', () => activateMonth(monthOffset));
   const monthPrev = $('#costs-month-prev');
   if (monthPrev) monthPrev.addEventListener('click', () => goMonth(1));
   const monthNext = $('#costs-month-next');
   if (monthNext) monthNext.addEventListener('click', () => goMonth(-1));
   updateMonthLabel();
+  // Light the stepper's month button alongside the default "This month"
+  // span (offset 0), so the current month reads as selected in the stepper
+  // from the first paint — not just after a span click.
+  syncSpanHighlight();
   syncMonthNav();
   // "Fill empty weekdays" toggle — restores its persisted state (off
   // when never touched), reloads on change. dashPrefs is loaded before

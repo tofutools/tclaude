@@ -705,13 +705,14 @@
       <button class="tool" data-span="7d" title="Trailing 7 days">Last 7d</button>
       <button class="tool" data-span="30d" title="Trailing 30 days">Last 30d</button>
       <button class="tool" data-span="90d" title="Trailing 90 days">Last 90d</button>
-      <!-- Completed-month browser: click the month to view it, ‹ / › to
-           step older / newer. Capped at last month (the current month is
-           the "This month" button, the only span with a projection) and,
-           going back, at the first month with recorded spend. -->
-      <span id="costs-month-nav" title="Browse a completed month — click the month, then ‹ / › to step">
+      <!-- Month browser: click the month to view it, ‹ / › to step older /
+           newer. Starts on the current month (in sync with, and lit
+           alongside, the "This month" button — the only month with a
+           projection); › stops there, and ‹ pages back as far as the first
+           month with recorded spend. -->
+      <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
         <button class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month">‹</button>
-        <button class="tool" id="costs-month-cur" data-span="calmonth" title="View this completed month">Last month</button>
+        <button class="tool" id="costs-month-cur" data-span="calmonth" title="View this month">This month</button>
         <button class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month">›</button>
       </span>
       <label class="filter-toggle" id="costs-fill-weekdays-label" title="Fill the empty weekdays before your first run this month with the per-weekday average, so the projection reflects a representative full month (&quot;projected average month cost&quot;) rather than one skewed low by starting mid-month. Only affects the This month projection."><input id="costs-fill-weekdays" type="checkbox" /><span>fill empty weekdays</span></label>
