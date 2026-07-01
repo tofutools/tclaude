@@ -137,6 +137,7 @@ func TestDashboardHTML_DeleteRetiredWired(t *testing.T) {
 	must("const retiredCount = (snap.paging && snap.paging.retired && snap.paging.retired.total) || 0",
 		"the palette command gates on the retired total from the pagination envelope (retired[] is windowed now)")
 	must("if (retiredCount) {", "the command is only listed when there is at least one retired agent")
-	must("icon: '🗑', label: 'Delete retired agents…'", "the palette command carries the distinct 🗑 delete label")
+	must("icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
+		"the palette command carries the distinct 🗑 delete label (arcane 🔥 Dispel in wizard mode)")
 	must("keywords: 'delete purge retired cleanup remove wipe agents'", "the command's search keywords")
 }

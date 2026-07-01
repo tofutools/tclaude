@@ -13,11 +13,34 @@
 // bulk window ops are labelled "Unfocus all" / "Focus all", but a human
 // thinks "hide" / "show". Bidirectional within each pair so either
 // spelling finds the other. Extend by adding pairs here.
+//
+// The second block bridges the 🧙 wizard theme's arcane command labels to
+// their plain verbs and back. Under body.wizard the palette PRESENTS "Summon
+// a familiar…" / "Slumber all familiars" / "Veil …" / "Banish …", but the plain
+// words ("spawn", "shutdown", "hide", "retire") must still find them — and the
+// arcane words must find the plain labels when the theme is off. Because this
+// map feeds both directions of expandQuery, one entry per word bridges both
+// themes at once. Every command also carries the arcane terms in its keywords,
+// so this map is about RANKING (lifting a wizard word to a label prefix hit),
+// not mere findability. Keep the value lists short — expandQuery is a capped
+// cross-product, so a fat synonym list on a common word bloats it fast.
 export const SYNONYMS = {
-  hide: ['unfocus'],
+  hide: ['unfocus', 'veil'],
   unfocus: ['hide'],
-  show: ['focus'],
-  focus: ['show'],
+  veil: ['hide'],
+  show: ['focus', 'reveal'],
+  focus: ['show', 'reveal'],
+  reveal: ['focus', 'show'],
+  // Wizard verb ↔ plain verb (JOH — wizard command-palette synonyms).
+  spawn: ['summon'],
+  summon: ['spawn'],
+  shutdown: ['slumber'],
+  stop: ['slumber'],
+  slumber: ['shutdown', 'stop'],
+  resume: ['awaken'],
+  awaken: ['resume'],
+  retire: ['banish'],
+  banish: ['retire'],
 };
 
 // scoreMatch ranks how directly a (possibly synonym-substituted) query

@@ -17,22 +17,40 @@ import {
 // Fixture mirroring the real palette commands (label + keywords), in the
 // SAME build order palette.js pushes them — so the stable-sort
 // tie-break-by-build-order is exercised too. Verbs match the unified
-// Hide/Focus presentation.
+// Hide/Focus presentation. Keywords carry BOTH the plain vocabulary AND the
+// 🧙 wizard synonyms palette.js appends unconditionally (veil/reveal/summon/
+// slumber/awaken/banish…), so the scorer sees exactly what ships.
 const COMMANDS = [
-  { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize' },
-  { label: 'Focus all windows', keywords: 'show all windows raise focus bring up' },
-  { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some' },
-  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start' },
-  { label: 'Switch to slop theme', keywords: 'toggle switch theme slop regular vegas casino mode appearance' },
-  { label: 'Go to Groups', keywords: 'tab navigate go open groups' },
-  { label: 'Hide group: alpha', keywords: 'hide unfocus group windows alpha' },
-  { label: 'Focus group: alpha', keywords: 'focus show group windows alpha' },
-  { label: 'Focus window: worker-7', keywords: 'focus show jump bring up window agent worker-7' },
-  { label: 'Hide window: worker-7', keywords: 'hide detach window agent worker-7' },
+  { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
+  { label: 'Focus all windows', keywords: 'show all windows raise focus bring up reveal behold conjure portal scrying vision familiars' },
+  { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some reveal veil portals scrying familiars' },
+  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
+  { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
+  { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle familiars' },
+  { label: 'Switch to slop theme', keywords: 'toggle switch theme slop regular vegas casino mode appearance descend leave depart halls machine' },
+  { label: 'Go to Groups', keywords: 'tab navigate go open groups scry peer gaze behold chamber vision' },
+  { label: 'Hide group: alpha', keywords: 'hide unfocus group windows alpha veil conceal cloak portal scrying coven' },
+  { label: 'Focus group: alpha', keywords: 'focus show group windows alpha reveal behold conjure portal scrying coven' },
+  { label: 'Focus window: worker-7', keywords: 'focus show jump bring up window agent worker-7 reveal behold conjure portal scrying familiar' },
+  { label: 'Hide window: worker-7', keywords: 'hide detach window agent worker-7 veil conceal cloak portal scrying familiar' },
+  { label: 'Retire agent: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
+];
+
+// The wizard-mode twin: the SAME commands as they PRESENT under body.wizard —
+// arcane labels, identical keywords. buildCommands' wiz() picks these labels in
+// wizard mode, so a plain-word search (spawn / shutdown / retire / hide) must
+// still land them via the SYNONYMS bridge. This fixture exercises that reverse
+// direction (plain query → arcane label), the one that matters in wizard mode.
+const WIZ_COMMANDS = [
+  { label: 'Veil all familiars', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
+  { label: 'Summon a familiar…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
+  { label: 'Slumber all familiars', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
+  { label: 'Banish familiar: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
 ];
 
 const labels = (q) => rankCommands(COMMANDS, q).map((c) => c.label);
 const top = (q) => labels(q)[0];
+const wizTop = (q) => rankCommands(WIZ_COMMANDS, q).map((c) => c.label)[0];
 
 test('empty / whitespace query returns the whole list in build order', () => {
   assert.deepEqual(labels(''), COMMANDS.map((c) => c.label));
@@ -87,13 +105,67 @@ test('expandQuery maps synonyms bidirectionally', () => {
   assert.ok(expandQuery('focus').includes('show'));
   // The typed query is always a variant itself.
   assert.ok(expandQuery('hide all').includes('hide all'));
+  // Wizard verbs expand to their plain twins and vice versa.
+  assert.ok(expandQuery('summon').includes('spawn'));
+  assert.ok(expandQuery('slumber').includes('shutdown'));
+  assert.ok(expandQuery('slumber').includes('stop'));
+  assert.ok(expandQuery('awaken').includes('resume'));
+  assert.ok(expandQuery('banish').includes('retire'));
+  assert.ok(expandQuery('veil').includes('hide'));
+  assert.ok(expandQuery('reveal').includes('focus'));
+  assert.ok(expandQuery('hide').includes('veil'));
 });
 
 test('SYNONYMS pairs are bidirectional', () => {
-  assert.deepEqual(SYNONYMS.hide, ['unfocus']);
+  assert.deepEqual(SYNONYMS.hide, ['unfocus', 'veil']);
   assert.deepEqual(SYNONYMS.unfocus, ['hide']);
-  assert.deepEqual(SYNONYMS.show, ['focus']);
-  assert.deepEqual(SYNONYMS.focus, ['show']);
+  assert.deepEqual(SYNONYMS.veil, ['hide']);
+  assert.deepEqual(SYNONYMS.show, ['focus', 'reveal']);
+  assert.deepEqual(SYNONYMS.focus, ['show', 'reveal']);
+  assert.deepEqual(SYNONYMS.reveal, ['focus', 'show']);
+  // Wizard verb ↔ plain verb bridges.
+  assert.deepEqual(SYNONYMS.spawn, ['summon']);
+  assert.deepEqual(SYNONYMS.summon, ['spawn']);
+  assert.deepEqual(SYNONYMS.shutdown, ['slumber']);
+  assert.deepEqual(SYNONYMS.stop, ['slumber']);
+  assert.deepEqual(SYNONYMS.slumber, ['shutdown', 'stop']);
+  assert.deepEqual(SYNONYMS.resume, ['awaken']);
+  assert.deepEqual(SYNONYMS.awaken, ['resume']);
+  assert.deepEqual(SYNONYMS.retire, ['banish']);
+  assert.deepEqual(SYNONYMS.banish, ['retire']);
+});
+
+// -- Wizard-theme synonyms: the arcane vocabulary must find the plain-labelled
+//    commands, and (the direction that matters in wizard mode) the plain
+//    vocabulary must find the arcane-labelled ones. --------------------------
+
+test('wizard verb finds the plain command: "summon" → Spawn agent…', () => {
+  assert.equal(top('summon'), 'Spawn agent…');
+});
+
+test('wizard verb finds the plain command: "slumber" → Shut down all agents', () => {
+  assert.equal(top('slumber'), 'Shut down all agents');
+});
+
+test('wizard verb finds the plain command: "awaken" → Power on all agents', () => {
+  assert.equal(top('awaken'), 'Power on all agents');
+});
+
+test('wizard verb finds the plain command: "banish" → Retire agent', () => {
+  assert.equal(top('banish'), 'Retire agent: worker-7');
+});
+
+test('wizard verb finds the plain command: "veil all" → Hide all windows', () => {
+  assert.equal(top('veil all'), 'Hide all windows');
+});
+
+test('plain verb still finds the arcane label in wizard mode', () => {
+  // The load-bearing direction: under body.wizard the LABELS are arcane, so
+  // old muscle memory (spawn / shutdown / retire / hide) must still land them.
+  assert.equal(wizTop('spawn'), 'Summon a familiar…');
+  assert.equal(wizTop('shutdown'), 'Slumber all familiars');
+  assert.equal(wizTop('retire'), 'Banish familiar: worker-7');
+  assert.equal(wizTop('hide'), 'Veil all familiars');
 });
 
 test('scoreMatch ladder: exact > prefix > word-start > substring', () => {
