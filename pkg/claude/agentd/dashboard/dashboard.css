@@ -4657,6 +4657,19 @@ body.wizard #retire-modal #retire-ok:disabled::before { content: none; }
   80%  { transform: scale(1.05) rotate(0deg); opacity: 1; }
   100% { transform: scale(1.15) rotate(0deg); opacity: 0; }
 }
+/* The banner text rides an inner span so a variant can cap its width and let a
+   longer line wrap while the full-viewport flex banner keeps centring it. */
+.wizard-banner-text {
+  display: inline-block;
+  max-width: 92vw;
+  text-align: center;
+  line-height: 1.12;
+}
+/* Summon banner (wizard-fx.js wizardSummon) — the spawn-celebration twin of
+   slop's JACKPOT. Its spell quotes run longer than the Meteor Swarm's short
+   title, so clamp the font down from the base 76px so lines like "Lightning
+   bolt! Lightning bolt!" fit and stay legible on narrow viewports. */
+.wizard-summon-banner { font-size: clamp(30px, 6.4vw, 60px); }
 body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
 @keyframes wizard-shake {
   0%, 100% { transform: translate(0, 0); }

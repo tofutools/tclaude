@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -141,6 +142,42 @@ func TestDashboardHTML_WizardRetireModal(t *testing.T) {
 
 	// The whole dialog is re-skinned arcane.
 	must("body.wizard #retire-modal .modal", "the retire dialog surface is re-skinned")
+}
+
+// TestDashboardHTML_WizardSummonFx pins the wizard spawn-celebration wiring
+// ("It's wizard time!"): the wizard twin of slop's spawn jackpot. Like the rest
+// of the wizard theme it is purely front-end, so we string-search the embedded
+// source rather than running the JS — a dropped call or a renamed export would
+// otherwise lose the feature silently in the browser.
+func TestDashboardHTML_WizardSummonFx(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The module is embedded — without it modal-spawn.js's import would 404.
+	if _, err := fs.ReadFile(dashboardAssetsFS, "js/wizard-fx.js"); err != nil {
+		t.Fatalf("embedded js/wizard-fx.js missing: %v", err)
+	}
+
+	// Public surface + both sides of the wiring: wizard-fx exports the summon
+	// celebration and modal-spawn fires it on a successful spawn, right next to
+	// the slop jackpot (the two themes are mutually exclusive, so calling both
+	// paints at most one).
+	must("export function wizardSummon(", "wizard-fx.js exports the summon celebration modal-spawn.js calls")
+	must("wizardSummon();", "modal-spawn.js fires the summon celebration on a successful spawn")
+
+	// The banner text is theme flavour, not just an emoji — pin a couple of the
+	// silly spell quotes so a refactor that empties the pool trips here.
+	must("wizard time!", "the summon banner carries the headline spell quote")
+	must("🔥 Fireball!", "the summon quote pool keeps its silly spells")
+
+	// CSS hooks the JS creates by classname: the width-capped inner text span
+	// and the font-clamped summon-banner variant.
+	must(".wizard-banner-text", "the summon banner text wrapper is styled")
+	must(".wizard-summon-banner", "the summon banner font-clamp variant is styled")
 }
 
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog

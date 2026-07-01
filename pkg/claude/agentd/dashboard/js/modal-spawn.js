@@ -16,6 +16,7 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, confirmModal, bindBackdropDiscard } from './refresh.js';
 import { slopJackpot } from './slop-fx.js';
+import { wizardSummon } from './wizard-fx.js';
 import { openTermModal } from './modal-term.js';
 import { recordGroupInteraction } from './last-group.js';
 import { openSpawnPermEditor } from './modal-message.js';
@@ -1313,8 +1314,12 @@ async function submitAgentSpawn() {
     } else {
       toast(`spawned ${label} → ${group}${autoFocus ? ' — opening terminal' : ''}`);
     }
-    // Vegas-themed celebration when slop is on; silent no-op otherwise.
+    // Per-theme spawn celebration: the Vegas jackpot when slop is on, the
+    // wizard "It's wizard time!" summon banner when wizard is on. Each is a
+    // silent no-op unless its theme is active, and the two themes are mutually
+    // exclusive, so calling both fires at most one.
     slopJackpot();
+    wizardSummon();
     // Keep the destination group expanded so the new member is visible.
     try { dashPrefs.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
     // Remember it as the last group touched so the palette's plain "Spawn
