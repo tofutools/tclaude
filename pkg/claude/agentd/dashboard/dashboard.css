@@ -3126,9 +3126,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 8px; min-height: 150px; resize: vertical; margin-top: 6px;
 }
 .cfg-advanced textarea:focus { outline: none; border-color: #58a6ff; }
+/* Sticky save bar — pinned so the Save/Reload buttons stay reachable while
+   the (tall) settings list scrolls under it. Pin ABOVE the global fixed
+   footer bar (var(--footer-h)), NOT at bottom:0: the footer bar is
+   position:fixed at bottom:0 with z-index 40, so a bottom:0 sticky bar has
+   its lower --footer-h occluded behind it — you'd see only the buttons'
+   upper edge until you scrolled to the very end (where the sticky bar drops
+   to its natural spot above body's --footer-h bottom-padding). Pinning at
+   --footer-h keeps the whole bar clear of the footer at every scroll pos. */
 .cfg-footer {
   display: flex; align-items: center; gap: 10px; margin-top: 14px;
-  position: sticky; bottom: 0; background: #0d1117; padding: 12px 0;
+  position: sticky; bottom: var(--footer-h); background: #0d1117; padding: 12px 0;
   border-top: 1px solid #21262d;
 }
 .cfg-footer .spacer { flex: 1; }
