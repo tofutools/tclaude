@@ -564,6 +564,7 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must("body.wizard .cron-open-label-regular", "wizard hides the default label")
 	must("body.wizard .cron-open-label-wizard", "wizard shows the ritual label")
 	must("body.wizard #cron-create-open.primary", "the open button is re-skinned in wizard mode")
+	must("body.wizard #cron-create-open.primary:hover", "the open button has a wizard hover re-skin")
 
 	// The same span pair swaps the "No cron jobs yet…" empty-state hint that
 	// names the button (tabs.js emits both variants). Pin the full markup
@@ -582,6 +583,10 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 	must(`content: "⏳ Bind it!";`, "create-mode submit-lever copy")
 	must(`content: "⏳ Re-bind it!";`, "edit-mode submit-lever copy")
 	must("body.wizard #cron-create-modal #cron-create-submit {", "the submit button becomes a gilded lever")
+	// The brief in-flight (disabled) submit copy stays in the arcane voice — pin
+	// both mode variants so a dropped busy label fails CI rather than the browser.
+	must(`content: "⏳ Binding…";`, "create-mode in-flight submit copy")
+	must(`content: "⏳ Re-binding…";`, "edit-mode in-flight submit copy")
 
 	// The JS toggles the mode class on the modal (a MODE flag, not a theme read).
 	must("$('#cron-create-modal').classList.add('cron-editing')", "edit-open JS sets the edit mode class")
