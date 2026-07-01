@@ -4437,9 +4437,12 @@ body.wizard #agent-spawn-modal .cron-create-row select option {
   color: #1a1330; background: #e7d9f5;
 }
 /* Secondary + inline buttons (Clear / Save as profile… / Attach… / Browse… /
-   Permissions… / Cancel) — everything except the Summon button, which keeps
-   its own gilded-lever treatment below. The :not() also lifts specificity
-   above the base .dir-browse-btn / #agent-spawn-perms rules so they re-theme. */
+   Permissions… / Cancel). The :not(#agent-spawn-submit) excludes the Summon
+   button (it keeps its own gilded-lever treatment below), so this rule and the
+   submit rule match disjoint elements and never fight — the exclusion, not
+   specificity, is what protects the Summon button. The #agent-spawn-modal id
+   already out-specifies the base .dir-browse-btn / #agent-spawn-perms rules,
+   so those inline buttons re-theme too. */
 body.wizard #agent-spawn-modal button:not(#agent-spawn-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -4452,8 +4455,8 @@ body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93
    ::before glyph; the disabled state (JS swaps in "Spawning…") restores a
    font-size so that fallback shows instead. The click already sprays cast
    sparks via wizard-fx's global cast-FX handler, so no extra JS is needed.
-   Selector carries #agent-spawn-modal so it out-specifies the generic
-   secondary-button rule above. */
+   The generic secondary-button rule above can't touch this button: its
+   :not(#agent-spawn-submit) excludes it, so the two rules never overlap. */
 body.wizard #agent-spawn-modal #agent-spawn-submit {
   font-size: 0;
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
