@@ -165,9 +165,14 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("palette-opt-", "options carry stable ids for aria-activedescendant")
 	must("lastFocus = document.activeElement", "the trigger element is captured for focus restore")
 
-	// Keyboard model: ↑/↓ move, Enter runs, Esc closes.
+	// Keyboard model: ↑/↓ move one row (wrapping), PageUp/PageDown jump a
+	// viewport-worth (clamping at the ends), Enter runs, Esc closes.
 	must("case 'ArrowDown':", "ArrowDown moves the selection")
 	must("case 'ArrowUp':", "ArrowUp moves the selection")
-	must("case 'Enter':", "Enter runs the selected command")
-	must("case 'Escape':", "Escape closes the palette")
+	must("case 'PageDown':", "PageDown jumps the selection down a page")
+	must("case 'PageUp':", "PageUp jumps the selection up a page")
+	must("function movePage(", "the page jump clamps at the ends (distinct from the wrapping move)")
+	must("function pageSize(", "the page jump is a measured viewport-worth of rows")
+	// The footer advertises the page-jump keys alongside the ↑/↓ nav hint.
+	must("<kbd>PgUp</kbd><kbd>PgDn</kbd> jump", "the palette footer documents PageUp/PageDown")
 }

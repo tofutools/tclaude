@@ -35,8 +35,9 @@
 // of the search box mid-type.
 //
 // Trigger: Ctrl/Cmd-K (claimed with preventDefault; pressing it again
-// closes). Esc or a backdrop click closes. ↑/↓ move the selection,
-// Enter runs it, typing filters.
+// closes). Esc or a backdrop click closes. ↑/↓ move the selection one
+// row (wrapping), PageUp/PageDown jump a viewport-worth (clamping at the
+// ends), Enter runs it, typing filters.
 
 import { $, $$, esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
@@ -650,6 +651,31 @@ function move(d) {
   paintSelection();
 }
 
+// pageSize is how many rows a PageUp/PageDown jumps — the count of items
+// that fit in the visible scroll viewport (clientHeight / an item's
+// rendered height), floored to at least 1. Measured live off the DOM so a
+// resized window or a shorter list scales the jump; falls back to a
+// constant when the list isn't measurable yet (no rows, or zero-height
+// pre-layout).
+const PAGE_FALLBACK = 10;
+function pageSize() {
+  const first = list.querySelector('.palette-item');
+  const itemH = first ? first.offsetHeight : 0;
+  if (!itemH) return PAGE_FALLBACK;
+  return Math.max(1, Math.floor(list.clientHeight / itemH));
+}
+
+// movePage jumps the selection by a page and CLAMPS at the ends — unlike
+// ↑/↓ (move), which wrap. A page jump that wrapped top↔bottom would be
+// disorienting, and clamping matches how PageUp/PageDown behave in a
+// native list: hitting the top/bottom parks the selection there.
+function movePage(d) {
+  if (!filtered.length) return;
+  const next = selected + d * pageSize();
+  selected = Math.min(filtered.length - 1, Math.max(0, next));
+  paintSelection();
+}
+
 function runSelected() {
   const cmd = filtered[selected];
   if (!cmd) return;
@@ -737,6 +763,8 @@ export function bindCommandPalette() {
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); move(1); break;
       case 'ArrowUp': e.preventDefault(); move(-1); break;
+      case 'PageDown': e.preventDefault(); movePage(1); break;
+      case 'PageUp': e.preventDefault(); movePage(-1); break;
       case 'Enter': e.preventDefault(); runSelected(); break;
       case 'Escape': e.preventDefault(); closePalette(); break;
       default: break;
