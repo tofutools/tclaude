@@ -71,7 +71,10 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     for (const [k, q] of panes) {
       const on = k === key;
       q.wrap.classList.toggle('active', on);
-      if (q.tab) q.tab.classList.toggle('active', on);
+      if (q.tab) {
+        q.tab.classList.toggle('active', on);
+        q.tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      }
     }
     // Fit now that it's visible. A background pane was left at its previous
     // size (fitting a display:none element measures 0×0 and is meaningless), so
@@ -200,9 +203,17 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     p.ro.observe(host);
 
     if (!solo) {
+      // The pane wrap is this tab's panel — link them so assistive tech pairs
+      // the tab with the terminal it controls.
+      wrap.setAttribute('role', 'tabpanel');
       const tab = document.createElement('div');
       tab.className = 'mux-tab';
       tab.setAttribute('role', 'tab');
+      // Keyboard-operable + AT-exposed: focusable, activatable with Enter/Space,
+      // and aria-selected kept in sync by activate().
+      tab.tabIndex = 0;
+      tab.setAttribute('aria-selected', 'false');
+      tab.setAttribute('aria-controls', wrap.id);
       const tl = document.createElement('span');
       tl.className = 'mux-tab-label';
       tl.textContent = label;
@@ -213,6 +224,10 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
       tc.setAttribute('aria-label', 'Close ' + label);
       tab.append(tl, tc);
       tab.addEventListener('click', (e) => { if (e.target !== tc) activate(key); });
+      tab.addEventListener('keydown', (e) => {
+        // Enter / Space activate the tab (Space also scrolls by default).
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(key); }
+      });
       tc.addEventListener('click', (e) => { e.stopPropagation(); closePane(key); });
       tabsEl.append(tab);
       p.tab = tab;
@@ -253,9 +268,15 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     const seed = { ws: p.seed.ws, label: p.label, key: p.seed.key };
     const payload = encodeURIComponent(JSON.stringify(seed));
     // A fresh, UNNAMED tab so it's independent; solo=1 strips the standalone
-    // page down to just this one terminal (its own OS/browser window).
-    window.open('/terminals?solo=1#open=' + payload, '_blank');
-    closePane(key);
+    // page down to just this one terminal (its own OS/browser window). Only
+    // drop the pane once the pop-out window actually opened: a blocked pop-up
+    // (or a throw) returns null/undefined, and closing the pane then would make
+    // the terminal vanish with nowhere to go. The tmux/PTY session survives
+    // either way, but a silent block shouldn't lose the visible pane.
+    let win = null;
+    try { win = window.open('/terminals?solo=1#open=' + payload, '_blank'); }
+    catch (_) { win = null; }
+    if (win) closePane(key);
   }
 
   updateChrome();

@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -57,6 +58,30 @@ func TestDashboardTerminals_ServesPage(t *testing.T) {
 		if !strings.Contains(body, needle) {
 			t.Errorf("terminals page missing %q", needle)
 		}
+	}
+}
+
+// TestDashboardTerminals_RemotePreAuthed: a request already authenticated at
+// the remote (mTLS + passphrase) listener boundary — tagged via
+// remoteAuthedCtxKey by remoteAuthMiddleware — is served the page directly,
+// with NO dashboard cookie. Guards the separate pre-auth branch so the remote
+// path doesn't regress silently.
+func TestDashboardTerminals_RemotePreAuthed(t *testing.T) {
+	withDashboardAuthForTest(t) // pins a session token we deliberately don't send
+
+	r := httptest.NewRequest(http.MethodGet, "/terminals", nil)
+	r = r.WithContext(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true))
+	rec := httptest.NewRecorder()
+	handleDashboardTerminals(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remote pre-authed /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	if !strings.Contains(rec.Body.String(), `id="mux-tabs"`) {
+		t.Error("remote pre-authed /terminals must serve the page body")
 	}
 }
 

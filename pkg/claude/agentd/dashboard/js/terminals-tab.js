@@ -16,7 +16,7 @@
 // only owns the tab's visibility + the entry point callers use.
 
 import { $, $$ } from './helpers.js';
-import { mountMux } from './terminals-core.js';
+import { mountMux, normalizeSeed } from './terminals-core.js';
 
 let mux = null;
 
@@ -64,7 +64,12 @@ function selectTab(name) {
 // cancelled the picker) is a no-op, so the tab is never revealed for nothing.
 export function openTerminalPane(seedOrPromise) {
   Promise.resolve(seedOrPromise).then((seed) => {
-    if (!seed || !seed.ws || !mux) return;
+    // Validate BEFORE revealing. A cancelled picker resolves to null and a
+    // malformed seed fails normalizeSeed — either way we must not reveal +
+    // switch to an empty Terminals tab that openPane would then refuse to
+    // populate, stranding the user on a blank revealed tab. openPane
+    // re-validates, so this is belt-and-suspenders, not the only gate.
+    if (!mux || !normalizeSeed(seed)) return;
     // Reveal + switch BEFORE opening so the pane mounts into a laid-out,
     // visible section and its first fit measures the real viewport (the
     // per-pane ResizeObserver is the backstop either way).
