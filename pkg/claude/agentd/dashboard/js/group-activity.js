@@ -196,6 +196,46 @@ export function spriteBotsHTML(summary, theme) {
   return summary.present.map(v => spriteBotHTML(v, summary.counts[v], theme)).join('');
 }
 
+// === Wizard-theme bot row — the 🧙 re-skin (body.wizard) =================
+//
+// The same deduped row, re-skinned for the wizard theme: each bot is a
+// fantasy glyph that CARRIES its status (a dancing 🧙 for working, a still
+// 🕯️ for idle, a shaking 💥 for a backfired spell, …). It reuses the exact
+// .actbot / .actbot-face / .actbot-<variant> structure of the emoji row, so
+// the per-variant motion (dance/breathe/tilt/shake) and syncBotAnimations
+// apply UNCHANGED — only the glyph differs. Like the sprite row (and unlike
+// the emoji row), the glyph itself distinguishes the states, so no corner
+// tag is layered on. Emitted alongside the regular + slop wrappers and
+// CSS-swapped by body.wizard — the same "always emit, theme picks" trick as
+// wizardPill in helpers.js. Glyphs mirror wizardPill's DnD flavour for
+// consistency, but working leads with the theme's mascot 🧙 (it's the icon
+// the operator asked to see dance).
+const WIZARD_FACE = {
+  working: '🧙',
+  idle:    '🕯️',
+  asking:  '📜',
+  error:   '💥',
+  crashed: '💀',
+  offline: '🪦',
+};
+
+function wizardBotHTML(variant, n) {
+  const glyph = WIZARD_FACE[variant] || '🧙';
+  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
+  // The wizard row is inherently the 🧙 theme, so its tooltips always speak
+  // the arcane vocabulary ("2 familiars channeling"), reusing PR #678's
+  // variantLabel — no theme arg to thread, it's fixed for this wrapper.
+  const tip = variantLabel(variant, n, 'wizard');
+  return `<span class="actbot actbot-${variant}" title="${tip}" aria-label="${tip}">`
+    + `<span class="actbot-face">${glyph}</span>${count}</span>`;
+}
+
+// wizardBotsHTML emits the inner wizard-glyph row for a summary (no wrapper).
+export function wizardBotsHTML(summary) {
+  if (!summary || !summary.present.length) return '';
+  return summary.present.map(v => wizardBotHTML(v, summary.counts[v])).join('');
+}
+
 // styledBotsHTML renders the inner bot row for a summary in one of the
 // three styles. 'off' (or an empty summary) → ''. The single switchboard
 // both render call sites go through, so emoji/sprites stay interchangeable.
@@ -206,30 +246,36 @@ export function styledBotsHTML(summary, style, theme) {
 }
 
 // groupActivityHTML is the one-shot helper render.js drops into a group
-// <summary>. It emits a regular-mode wrapper (.ga-regular) AND a slop-mode
-// wrapper (.ga-slop), each rendered in its configured style — CSS shows
-// exactly one per mode (body.slop), so toggling slop swaps the visual with
-// NO re-render (the same trick the slot-machine state pill uses). Each
-// wrapper carries the loudest-variant `level-*` class + a breakdown
-// tooltip, flavoured by `theme` ('wizard' → arcane verbs; blank → plain
-// nouns). Returns '' when BOTH modes resolve to nothing (off / empty
-// group), so the header stays uncluttered.
-export function groupActivityHTML(members, regularStyle, slopStyle, theme) {
+// <summary>. It emits a regular-mode wrapper (.ga-regular), a slop-mode
+// wrapper (.ga-slop) AND a wizard-mode wrapper (.ga-wizard), each rendered
+// in its configured style — CSS shows exactly one per active theme
+// (body.slop / body.wizard), so toggling a theme swaps the visual with NO
+// re-render (the same trick the slot-machine / wizard state pill uses).
+//
+// The theme↔wrapper mapping is now 1:1 (regular→.ga-regular, slop→.ga-slop,
+// wizard→.ga-wizard), so each wrapper carries a FIXED-flavour tooltip: the
+// plain nouns for regular/slop, and the arcane "N familiars channeling"
+// (themedSummaryText, from PR #678) for the wizard row. No live-theme arg is
+// needed here — the visible wrapper is always correctly flavoured, even the
+// instant a theme flips, since its title is baked at render time and CSS
+// just reveals it. wizardStyle is on/off (the wizard row has a single visual
+// — its glyphs); an absent/'off' value drops the wizard wrapper (so the
+// pre-4th-arg callers keep the old two-wrapper output). Returns '' when
+// EVERY mode resolves to nothing (off / empty group).
+export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle) {
   const s = activitySummary(members);
   if (!s.present.length) return '';
-  // One tooltip line for the active theme — both wrappers carry it; CSS shows
-  // only the one for the live theme, so the hidden wrapper's title is inert.
-  const tip = themedSummaryText(s, theme);
-  const wrap = (cls, style) => {
-    const inner = styledBotsHTML(s, style, theme);
-    return inner
+  const wrap = (cls, inner, tip) =>
+    inner
       ? `<span class="${cls} level-${s.level}" title="${tip}">${inner}</span>`
       : '';
-  };
-  const reg = wrap('ga-regular', regularStyle);
-  const slop = wrap('ga-slop', slopStyle);
-  if (!reg && !slop) return '';
-  return `<span class="group-activity">${reg}${slop}</span>`;
+  const reg = wrap('ga-regular', styledBotsHTML(s, regularStyle), s.summaryText);
+  const slop = wrap('ga-slop', styledBotsHTML(s, slopStyle), s.summaryText);
+  const wiz = wrap('ga-wizard',
+    (wizardStyle && wizardStyle !== 'off') ? wizardBotsHTML(s) : '',
+    themedSummaryText(s, 'wizard'));
+  if (!reg && !slop && !wiz) return '';
+  return `<span class="group-activity">${reg}${slop}${wiz}</span>`;
 }
 
 // aggregateActivity flattens several member lists (every group + the
