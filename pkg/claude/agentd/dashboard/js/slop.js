@@ -171,13 +171,20 @@ export function applySlopThemeIfRequested() {
   const params = new URLSearchParams(window.location.search);
   // slop and wizard are mutually exclusive; slop wins if both are somehow
   // present so the URL can never paint two re-skins at once.
-  if (params.get('slop') === '1') {
+  const wantSlop = params.get('slop') === '1';
+  const wantWizard = params.get('wizard') === '1';
+  if (wantSlop) {
     document.body.classList.add('slop');
     renderState();
-  } else if (params.get('wizard') === '1') {
+  } else if (wantWizard) {
     document.body.classList.add('wizard');
     renderState();
   }
+  // Canonicalise a hand-crafted ?slop=1&wizard=1 down to the single resolved
+  // theme so the address bar doesn't linger with both params. The body class
+  // is already exclusive above; this only tidies the URL, so it's a no-op for
+  // the normal single-param load.
+  if (wantSlop && wantWizard) syncThemeParams();
 }
 
 // isSlopActive checks the live body class instead of caching the URL

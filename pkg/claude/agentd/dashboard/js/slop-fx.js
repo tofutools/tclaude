@@ -525,6 +525,14 @@ export function bindSlopMarquee() {
     if (!isSlopActive()) return;
     updateMarqueeText(text);
   });
+  // A theme flip INTO slop mode should repaint the shared marquee node
+  // immediately rather than wait up to ~2s for the next snapshot tick —
+  // otherwise the red slop bar briefly shows whatever the previous theme
+  // (e.g. wizard) last wrote. slop.js dispatches tclaude:slop on every
+  // toggle; the wizard marquee has the symmetric tclaude:wizard handler.
+  document.addEventListener('tclaude:slop', (e) => {
+    if (e.detail && e.detail.active) updateMarqueeText(text);
+  });
   // Backstop: the lucky-symbol minute rolls over independently of
   // snapshot ticks, so refresh at scroll-loop boundaries too. Cheap
   // and visually quiet (a boundary refresh never causes a jump).

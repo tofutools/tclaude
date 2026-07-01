@@ -29,6 +29,15 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("params.get('wizard') === '1'", "applySlopThemeIfRequested applies ?wizard=1")
 	must("document.body.classList.add('wizard')", "?wizard=1 adds the body.wizard class")
 
+	// Mutual exclusion is the load-bearing invariant (the two re-skins must
+	// never both paint). Pin the class-clears so a refactor that drops one —
+	// leaving both body classes settable at once — fails CI rather than the
+	// browser. toggleSlop clears wizard, toggleWizard clears slop, cycleTheme
+	// clears both before setting the next.
+	must("document.body.classList.remove('wizard')", "toggleSlop clears wizard (mutual exclusion)")
+	must("document.body.classList.remove('slop')", "toggleWizard clears slop (mutual exclusion)")
+	must("classList.remove('slop', 'wizard')", "cycleTheme clears both before setting the next")
+
 	// The header icon cycles through the three themes rather than a 2-state
 	// toggle — regular → slop → wizard.
 	must("iconSpan.addEventListener('click', cycleTheme)", "the header icon cycles themes")
