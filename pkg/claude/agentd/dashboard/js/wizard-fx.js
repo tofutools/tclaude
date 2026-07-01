@@ -263,6 +263,34 @@ export function wizardSummon() {
   meteorStorm(34);
 }
 
+// ─── Enter-wizard-mode banner ────────────────────────────────────────────
+// The "It's wizard time!" the whole theme is named for: flipping *into* wizard
+// mode from another theme — via the +W hotkey, the palette's "Switch to wizard
+// theme" command, or the header cycle regular→slop→wizard — flashes the same
+// banner + arcane shower as a summon. Unlike wizardSummon()'s random spell
+// quote this is one fixed line: entering the mode is a single event with a
+// single greeting, where each summon wants variety, so no rotation here.
+const ENTER_WIZARD_QUOTE = '🧙 It\'s wizard time!';
+
+export function wizardEnter() {
+  if (!isWizardActive() || reducedMotion()) return;
+  showBanner(ENTER_WIZARD_QUOTE, 'wizard-summon-banner');
+  meteorStorm(34);
+}
+
+// bindWizardEnterBanner flashes the enter banner on slop.js's tclaude:wizard
+// edge event (detail.active === true means the theme just flipped INTO wizard
+// mode). dashboard.js installs it inside its bootstrap IIFE, which runs after
+// the top-level applySlopThemeIfRequested() — so a page that *loads* already in
+// wizard mode (?wizard=1) dispatches its initial event before this listener
+// exists and stays silent. A direct wizard-URL load isn't "entering from
+// another mode", so it earns no banner; only a live, user-driven flip does.
+export function bindWizardEnterBanner() {
+  document.addEventListener('tclaude:wizard', (e) => {
+    if (e.detail && e.detail.active) wizardEnter();
+  });
+}
+
 // ─── Meteor Swarm (Konami) ───────────────────────────────────────────────
 // Type ↑↑↓↓←→←→ B A and the page erupts: a banner, an ember storm from the
 // top edge, and a screen shake. Self-contained spectacle (wizard mode has no
