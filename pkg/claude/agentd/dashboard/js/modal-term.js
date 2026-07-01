@@ -322,8 +322,10 @@ export function bindTermModal() {
   // view.
   $('#term-session-pop').addEventListener('click', async () => {
     // Capture the seed synchronously — detachAndClose / a concurrent open could
-    // reset these module-level vars while we await.
-    const seed = currentWsPath ? { ws: currentWsPath, label: currentLabel, hideConv } : null;
+    // reset these module-level vars while we await. agent (= hideConv for a
+    // live-session attach) lets the "focus" button later jump to this pane; a
+    // web-term modal has no hideConv, so its popped pane isn't focus-jumpable.
+    const seed = currentWsPath ? { ws: currentWsPath, label: currentLabel, hideConv, agent: hideConv } : null;
     await detachAndClose();
     if (seed) openTerminalPane(seed);
   });

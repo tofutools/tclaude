@@ -325,10 +325,26 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     }
   }
 
+  // findPaneKey returns the key of the FIRST open pane belonging to an agent in
+  // `selectors` (matched on seed.agent — set for BOTH web-term and web-window
+  // panes), or null. Lets a caller jump to an already-open in-browser terminal
+  // instead of raising a native OS window.
+  function findPaneKey(selectors) {
+    const set = new Set(selectors || []);
+    if (!set.size) return null;
+    for (const [key, p] of panes) {
+      const a = p.seed && p.seed.agent;
+      if (a && set.has(a)) return key;
+    }
+    return null;
+  }
+
   return {
     openPane,
     closePane,
     closeForHide,
+    findPaneKey,
+    activatePane: activate,
     count: () => panes.size,
   };
 }

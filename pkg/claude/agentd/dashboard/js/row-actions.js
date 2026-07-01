@@ -18,7 +18,7 @@ import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { openTermModal } from './modal-term.js';
-import { openTerminalPane, closeTerminalsForConvs } from './terminals-tab.js';
+import { openTerminalPane, closeTerminalsForConvs, focusTerminalForConv } from './terminals-tab.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
   openReincarnateAgentModal,
@@ -421,6 +421,10 @@ function bindRowActions() {
           return;
         }
         case 'jump': {
+          // If this agent already has an open web terminal / window pane in the
+          // dashboard's Terminals tab, jump to THAT instead of raising a native
+          // OS window — the browser terminal is the live view the human means.
+          if (focusTerminalForConv([agent])) { toast(`focused: ${label}`); return; }
           // Non-destructive; no confirm modal, just fire-and-toast.
           const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
@@ -488,6 +492,10 @@ function bindRowActions() {
                 ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
                 label,
                 key: `term:${conv}:${which}`,
+                // agent: which agent this pane belongs to — lets the "focus"
+                // button jump to an already-open pane. (No detach field — a
+                // web-term is a throwaway session, nothing to detach on close.)
+                agent,
               }
               : null)),
           );
@@ -528,6 +536,10 @@ function bindRowActions() {
             label,
             key: `window:${conv}`,
             hideConv: agent,
+            // agent: lets the "focus" button jump to this pane (see the 'jump'
+            // case). Same value as hideConv here, but distinct in meaning —
+            // hideConv drives the detach, agent drives focus/dedup matching.
+            agent,
           });
           return;
         }

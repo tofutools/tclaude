@@ -50,7 +50,7 @@ import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
-import { closeTerminalsForConvs, closeTerminalsForWindowOp } from './terminals-tab.js';
+import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
 
@@ -106,6 +106,10 @@ async function bulkWindowOp(payload, what) {
 }
 
 async function jumpAgent(conv, label) {
+  // If this agent already has an open web terminal / window pane in the
+  // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
+  // the per-agent 'jump' row action.
+  if (focusTerminalForConv([conv])) { toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',

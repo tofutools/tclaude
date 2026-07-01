@@ -79,6 +79,22 @@ export function openTerminalPane(seedOrPromise) {
   });
 }
 
+// focusTerminalForConv reveals the Terminals tab and activates the FIRST open
+// pane belonging to an agent in `selectors` (matched on seed.agent). Returns
+// true when a pane was found + focused, so the caller (the per-agent "focus"
+// button / the palette's "Focus window") can jump to the already-open
+// in-browser terminal INSTEAD of raising a native OS window. Returns false when
+// no pane is open, so the caller falls through to its native focus path.
+export function focusTerminalForConv(selectors) {
+  if (!mux) return false;
+  const key = mux.findPaneKey(selectors);
+  if (!key) return false;
+  document.body.classList.remove('hide-terminals');
+  selectTab('terminals');
+  mux.activatePane(key);
+  return true;
+}
+
 // closeTerminalsForConvs closes any multiplexer pane attached to an agent's
 // LIVE session (seed.hideConv) whose selector is in `selectors` — the reaction
 // to an agent window being hidden/detached from OUTSIDE the multiplexer (the
