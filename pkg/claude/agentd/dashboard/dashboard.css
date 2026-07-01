@@ -4849,7 +4849,7 @@ body.wizard #cron-create-open.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
@@ -4877,7 +4877,7 @@ body.wizard #cron-create-modal #cron-create-title {
   font-size: 0;
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / Summon title use. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
