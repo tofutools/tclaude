@@ -259,7 +259,13 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     connect(p);
   }
 
-  function closePane(key, opts) {
+  // closePane closes (and, for a live-session attach, detaches) a pane. Async:
+  // it resolves only once the server-side detach has LANDED, so a caller that
+  // must reattach the same session afterwards (popOut) can await it and avoid
+  // racing the detach. Fire-and-forget callers (the × button) simply don't
+  // await — the pane's DOM is torn down synchronously before the await, so it
+  // vanishes immediately either way.
+  async function closePane(key, opts) {
     const p = panes.get(key);
     if (!p) return;
     // Close the socket AND, for a live-session attach (seed.hideConv), run the
@@ -271,7 +277,7 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
     // (eye button / palette / bulk unfocus) that already detached server-side —
     // re-running /api/hide then would be redundant.
     closeSocket(p);
-    if (!(opts && opts.skipDetach)) hideOnDetach(p);
+    const detached = (opts && opts.skipDetach) ? null : hideOnDetach(p);
     if (p.ro) { try { p.ro.disconnect(); } catch (_) { /* already gone */ } }
     try { p.term.dispose(); } catch (_) { /* already disposed */ }
     p.wrap.remove();
@@ -284,28 +290,33 @@ export function mountMux({ tabsEl, panesEl, emptyEl = null, solo = false, manage
       else if (manageTitle) document.title = 'tclaude terminals';
     }
     updateChrome();
+    // Let a caller (popOut) sequence a reattach strictly after the detach.
+    if (detached) await detached;
   }
 
-  function popOut(key) {
+  async function popOut(key) {
     const p = panes.get(key);
     if (!p) return;
     // Carry hideConv through so the popped-out tab remains a detachable
     // live-session client (it re-serializes the seed via the URL hash).
     const seed = { ws: p.seed.ws, label: p.label, key: p.seed.key, hideConv: p.seed.hideConv };
     const payload = encodeURIComponent(JSON.stringify(seed));
-    // A fresh, UNNAMED tab so it's independent; solo=1 strips the standalone
-    // page down to just this one terminal (its own OS/browser window). Only
-    // drop the pane once the pop-out window actually opened: a blocked pop-up
-    // (or a throw) returns null/undefined, and closing the pane then would make
-    // the terminal vanish with nowhere to go. The tmux/PTY session survives
-    // either way, but a silent block shouldn't lose the visible pane.
+    // Open a BLANK tab synchronously, inside the click gesture, so a pop-up
+    // blocker can't eat it — but DON'T navigate it to the terminal yet. A
+    // blocked pop-up (or a throw) returns null/undefined; closing the pane then
+    // would make the terminal vanish with nowhere to go (the tmux/PTY session
+    // survives, but a silent block shouldn't lose the visible pane), so bail.
     let win = null;
-    try { win = window.open('/terminals?solo=1#open=' + payload, '_blank'); }
+    try { win = window.open('about:blank', '_blank'); }
     catch (_) { win = null; }
-    // closePane detaches THIS pane's tmux client (hideOnDetach) right away; the
-    // popped-out tab reattaches only after a full page load, so the detach lands
-    // first and the two never collide on a live-session attach.
-    if (win) closePane(key);
+    if (!win) return;
+    // Detach THIS pane's tmux client and WAIT for the /api/hide to land BEFORE
+    // the new tab attaches — /api/hide detaches every client on the session, so
+    // navigating first could let the detach drop the freshly-reattached client.
+    // solo=1 strips the standalone page down to just this one terminal.
+    await closePane(key);
+    try { win.location.replace('/terminals?solo=1#open=' + payload); }
+    catch (_) { /* user closed the blank tab mid-detach — nothing to navigate */ }
   }
 
   updateChrome();
