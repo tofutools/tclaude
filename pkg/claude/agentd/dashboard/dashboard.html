@@ -1176,7 +1176,12 @@
 </div>
 <div class="modal-overlay" id="perm-edit-modal">
   <div class="perm-edit-modal" role="dialog" aria-modal="true" aria-labelledby="perm-edit-title">
-    <h3 id="perm-edit-title">Edit permanent permissions</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, same mechanism as the
+         Enchant dialog's title). #694 gave this editor its arcane chrome; this
+         adds the naming: a plain "Edit permanent permissions" normally, an
+         arcane "📕 The Grimoire" in 🧙 wizard mode — the tome this modal's opener
+         ("Grimoire…" on the Enchant dialog) promises. -->
+    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">Edit permanent permissions</span><span class="perm-edit-title-wizard">📕 The Grimoire</span></h3>
     <div class="perm-edit-banner">
       <strong>PERMANENT</strong> — these per-agent overrides persist until you change
       them again. They are <em>not</em> the time-bounded “+ sudo” elevation: a sudo grant
@@ -1188,12 +1193,16 @@
     <div class="perm-edit-owner-note" id="perm-edit-owner-note" hidden></div>
     <div class="perm-edit-toolbar">
       <input id="perm-edit-filter" type="text" placeholder="Filter slugs…" autocomplete="off" spellcheck="false" />
-      <button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)">all default</button>
+      <button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"><span class="pe-btn-regular">all default</span><span class="pe-btn-wizard">unbind all</span></button>
     </div>
     <div id="perm-edit-list" class="perm-edit-list"></div>
     <div class="sudo-grant-error" id="perm-edit-error"></div>
+    <!-- Secondary button labels swap per theme (same span-swap as the title):
+         all default → unbind all, Cancel → Dispel under body.wizard. The Save
+         primary (already a gilded lever from #694) is re-lettered to "✒ Bind!"
+         via a ::before glyph (see the wizard CSS block). -->
     <div class="modal-buttons">
-      <button id="perm-edit-cancel">Cancel</button>
+      <button id="perm-edit-cancel"><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary">Save</button>
     </div>
   </div>

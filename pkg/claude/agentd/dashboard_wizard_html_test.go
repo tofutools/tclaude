@@ -344,6 +344,40 @@ func TestDashboardCSS_WizardPermEditorScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardGrimoireCopy pins the naming layer on top of the
+// perm-editor chrome re-skin: the dialog and its controls are re-lettered to
+// match the "Grimoire…" button that opens them. #694 themed the CHROME (see
+// TestDashboardHTML_WizardPermEditor); this covers only the COPY — "Edit
+// permanent permissions" → "📕 The Grimoire", "all default" → "unbind all",
+// "Cancel" → "Dispel", and the Save primary → "✒ Bind!". Pure-CSS span swaps
+// plus a ::before glyph, so we string-search the embedded source.
+func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
+	must(`<span class="perm-edit-title-regular">Edit permanent permissions</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">📕 The Grimoire</span>`, "the wizard perm-editor title span")
+	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
+	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
+
+	// Secondary buttons swap their labels: all default → unbind all, Cancel → Dispel.
+	must(`<span class="pe-btn-wizard">unbind all</span>`, "the reset button reads unbind all in wizard mode")
+	must(`<span class="pe-btn-wizard">Dispel</span>`, "the Cancel button reads Dispel in wizard mode")
+	must("body.wizard #perm-edit-modal .pe-btn-regular", "wizard hides the default button labels")
+	must("body.wizard #perm-edit-modal .pe-btn-wizard", "wizard shows the arcane button labels")
+
+	// The Save primary is re-lettered to a "✒ Bind!" glyph (on #694's lever),
+	// with a "✒ Binding…" in-progress glyph on the disabled (mid-save) state.
+	must(`content: "✒ Bind!"`, "the Save button reads Bind in wizard mode")
+	must(`content: "✒ Binding…"`, "the mid-save button reads Binding in wizard mode")
+	must("body.wizard #perm-edit-modal #perm-edit-submit { font-size: 0; }", "the Save text is hidden so the glyph shows")
+}
+
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
 // re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
 // (unlike the spawn dialog's .cron-create-modal), so an unscoped
