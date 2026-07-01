@@ -4,7 +4,7 @@
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations } from './helpers.js';
+import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import {
   sortHead, applySort, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
@@ -122,6 +122,9 @@ function renderGroupsTab() {
   // innerHTML swap (every 2s poll, plus filter/sort/drag) doesn't restart
   // them with a visible jump. See helpers.syncBotAnimations.
   syncBotAnimations();
+  // Same for the wizard "Channeling" pill's orbiting mote — otherwise the
+  // light teleports back to its start on every poll. See syncWizardOrbit.
+  syncWizardOrbit();
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.
   const total = realGroups.length;

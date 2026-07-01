@@ -1534,6 +1534,31 @@ function syncBotAnimations() {
   }
 }
 
+// syncWizardOrbit re-phases the wizard "Channeling" pill's orbiting mote to the
+// same shared wall-clock as syncBotAnimations, for the same reason: the 2s
+// snapshot poll rebuilds the group rows' HTML wholesale, which restarts every
+// CSS animation from 0%. Left alone, the orbiting light would teleport back to
+// its start every tick. The mote animates on the pill's ::before, and a
+// pseudo-element takes no inline style — but it inherits custom properties from
+// its originating element, so we set animation-delay = -(now % period) on the
+// PILL via --wizard-orbit-delay and the ::before's `animation-delay: var(...)`
+// picks it up. Phase then depends on wall-clock alone (see syncBotAnimations
+// for the algebra), so a freshly-rendered mote resumes exactly where the
+// replaced one was, in lock-step across every channeling pill. Period is read
+// from the pseudo's computed animationDuration so it tracks the CSS with no
+// duplicated constant; a non-wizard theme (pills hidden, ::before rule unmatched)
+// reports 0 and is skipped. Called right after each group-row re-render.
+function syncWizardOrbit() {
+  const now = (typeof performance !== 'undefined' ? performance.now() : 0);
+  for (const pill of $$('.wizard-pill[data-status="working"], .wizard-pill[data-status="main_agent_idle"]')) {
+    const cs = getComputedStyle(pill, '::before');
+    const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when the ::before has no animation
+    if (!dur) continue;
+    const period = dur * 1000; // linear, non-alternating orbit
+    pill.style.setProperty('--wizard-orbit-delay', (-(now % period)) + 'ms');
+  }
+}
+
 // Public API — the helpers used outside this module. actionCog is
 // exported because render.js builds the group header's ⚙ menu with it.
 // The rest (statusPillClass, fmtTokens, contextMeterTooltip, the
@@ -1541,6 +1566,7 @@ function syncBotAnimations() {
 // composition details of the exported builders above.
 export {
   syncBotAnimations,
+  syncWizardOrbit,
   $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,

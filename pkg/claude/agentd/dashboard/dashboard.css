@@ -4444,11 +4444,52 @@ body.wizard .wizard-pill {
 body.wizard .wizard-pill[data-status="working"],
 body.wizard .wizard-pill[data-status="main_agent_idle"] {
   border-color: #a97bd6;
+  position: relative;
   animation: wizard-channel 1.8s ease-in-out infinite;
 }
 @keyframes wizard-channel {
   0%, 100% { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(169, 123, 214, 0.4); }
   50%      { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 12px rgba(169, 123, 214, 0.85); }
+}
+/* A bright mote of arcane light that travels around the pill's rim while a
+   familiar channels — the "it's ALIVE" cue layered over the box-shadow pulse
+   so the active state reads at a glance.
+
+   Driven by offset-path (CSS Motion Path), NOT a conic gradient: the mote
+   rides the pill's rounded border, and offset-distance 0%→100% under linear
+   timing is a fraction of the path's TOTAL LENGTH, so the mote moves at a
+   constant speed all the way around the perimeter, corners included. (A
+   rotating conic gradient sweeps a constant ANGLE instead, which on this
+   wide-but-short pill reads as fast along the long edges and stalled at the
+   short ends.) offset-path's reference box is the element's containing block —
+   the pill — so `border-box` traces the pill's rounded border-box, not the
+   tiny dot; the corner radius is honoured automatically.
+
+   animation-delay is wall-clock-phased via --wizard-orbit-delay (set by
+   syncWizardOrbit() after each re-render) so the 2s snapshot poll — which
+   rebuilds the row's HTML wholesale and would otherwise restart the orbit
+   from 0% every tick — resumes it mid-lap with no visible jump. Same trick
+   syncBotAnimations() uses for the activity bots; a pseudo-element can't take
+   an inline style, so the delay rides a custom property set on the pill and
+   inherited into ::before. */
+body.wizard .wizard-pill[data-status="working"]::before,
+body.wizard .wizard-pill[data-status="main_agent_idle"]::before {
+  content: "";
+  position: absolute;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #fffbe8;
+  box-shadow: 0 0 5px 1px rgba(243, 230, 192, 0.95), 0 0 9px 3px rgba(169, 123, 214, 0.55);
+  offset-path: border-box;
+  offset-anchor: center;
+  offset-rotate: 0deg;
+  offset-distance: 0%;
+  animation: wizard-orbit 2.4s linear infinite;
+  animation-delay: var(--wizard-orbit-delay, 0ms);
+  pointer-events: none;
+}
+@keyframes wizard-orbit {
+  to { offset-distance: 100%; }
 }
 body.wizard .wizard-pill[data-status="idle"] {
   border-color: #6ee7b7;
@@ -6265,6 +6306,8 @@ body.wizard #config-diff-modal .modal-buttons button.primary:hover {
   body.wizard #slop-marquee-track { animation: none; }
   body.wizard .wizard-pill[data-status="working"],
   body.wizard .wizard-pill[data-status="main_agent_idle"],
+  body.wizard .wizard-pill[data-status="working"]::before,
+  body.wizard .wizard-pill[data-status="main_agent_idle"]::before,
   body.wizard .wizard-pill[data-status="idle"],
   body.wizard .wizard-pill[data-status="awaiting_permission"],
   body.wizard .wizard-pill[data-status="awaiting_input"],
