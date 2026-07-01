@@ -5472,10 +5472,366 @@ body.wizard .group-actions .action-menu button:hover {
   color: #f3e6c0; border-color: #d9b45a;
 }
 
+/* ═══ Wizard Messages tab — "The Rookery & the Unfurled Scroll" ═══════
+   Unlike the rest of the wizard re-skin (which only re-paints chrome and
+   leaves the data tables their readable dark default), the Messages tab is
+   themed all the way down — it's a mail client, and a wizard reads
+   correspondence delivered by familiars. The three panes become:
+     · sidebar → THE ROOKERY   — a roost of familiars (mailboxes)
+     · list    → THE SCROLLS    — sealed missives, one row per scroll
+     · reader  → THE UNFURLED SCROLL — the open letter (the showpiece)
+   Each message also gets a "kind" (mail.js msgKind → data-kind), and the
+   reader picks a different SURFACE per kind so the correspondence varies:
+     · raven / reply → aged PARCHMENT scroll (rolled-dowel ends, wax seal)
+     · decree        → an arcane SLAB (the operator's word = a royal decree)
+     · proclamation  → a weathered BROADSHEET (a multicast notice, tacked up)
+   Pure CSS over unchanged markup + the theme-agnostic data-kind hook, so it
+   vanishes the instant the 🧙 theme flips off. Same violet-void / mystic-
+   purple / gold palette as the rest of the wizard chrome, plus a warm
+   parchment + ink palette that only the scroll/broadsheet surfaces use. */
+
+/* ─── The panes: arcane void bodies + "scroll"-bar thumbs ────────────
+   The literal scrollbars go arcane too — a small pun on the theme. */
+body.wizard .mail-sidebar,
+body.wizard .mail-list {
+  background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
+  border-color: #4a3a6b;
+}
+body.wizard .mail-sidebar::-webkit-scrollbar,
+body.wizard .mail-list::-webkit-scrollbar,
+body.wizard .mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard .mail-sidebar::-webkit-scrollbar-track,
+body.wizard .mail-list::-webkit-scrollbar-track,
+body.wizard .mail-reader::-webkit-scrollbar-track { background: #140f28; }
+body.wizard .mail-sidebar::-webkit-scrollbar-thumb,
+body.wizard .mail-list::-webkit-scrollbar-thumb,
+body.wizard .mail-reader::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #7a5db0, #3a2a63);
+  border: 1px solid #d9b45a; border-radius: 6px;
+}
+body.wizard .mail-sidebar::-webkit-scrollbar-thumb:hover,
+body.wizard .mail-list::-webkit-scrollbar-thumb:hover,
+body.wizard .mail-reader::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #8f6fca, #4a367d); }
+/* Empty-state prompts across the three panes read as muted arcane. */
+body.wizard .mail-sidebar .empty,
+body.wizard .mail-list .empty,
+body.wizard .mail-reader .empty { color: #8f7bbf; }
+
+/* ─── Filters, gutters ───────────────────────────────────────────── */
+body.wizard .mail-sidebar-filter,
+body.wizard .mail-list-filter input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard .mail-sidebar-filter::placeholder,
+body.wizard .mail-list-filter input::placeholder { color: #8f7bbf; font-style: italic; }
+body.wizard .mail-sidebar-filter:focus,
+body.wizard .mail-list-filter input:focus { border-color: #a97bd6; }
+body.wizard .mail-list-filter .filter-count { color: #b39ddb; }
+body.wizard .mail-list-filter button.clear-filter { color: #b39ddb; }
+body.wizard .mail-list-filter button.clear-filter:hover { color: #f3e6c0; }
+body.wizard .mail-list-filter button.tool { border-color: #d9b45a; color: #b39ddb; }
+body.wizard .mail-list-filter button.tool:hover { border-color: #a97bd6; color: #f3e6c0; }
+body.wizard .mail-gutter:hover,
+body.wizard .mail-gutter.dragging { background: #a97bd6; }
+
+/* ─── The Rookery (sidebar roster) ──────────────────────────────────
+   Section headers gild into a fantasy serif; each roost (mailbox) glows
+   violet on hover and gold when active; the online dot becomes a living
+   emerald ember; unread counts become gilded runes. */
+body.wizard .mailbox-section,
+body.wizard .mailbox-section-toggle {
+  color: #d9b45a;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.6px;
+  text-shadow: 0 0 6px rgba(217, 180, 90, 0.25);
+}
+body.wizard .mailbox-section-toggle:hover { color: #f3e6c0; }
+body.wizard .mailbox-section-help { color: #9a86c4; }
+body.wizard .mailbox { border: 1px solid #33284d; color: #d8cef0; }
+body.wizard .mailbox:hover { background: #241b3d; border-color: #7a5db0; }
+body.wizard .mailbox.active {
+  background: linear-gradient(180deg, #2c2150 0%, #1c1436 100%);
+  border-color: #d9b45a;
+  box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
+}
+body.wizard .mailbox.has-unread .mailbox-name { color: #f3e6c0; }
+body.wizard .mailbox-count { color: #9a86c4; }
+/* Unread tallies become gilded runes (both the per-roost badge and the
+   "All agent mailboxes" section badge share .mailbox-unread). */
+body.wizard .mailbox-unread {
+  background: linear-gradient(180deg, #e6c46a, #b8912f);
+  color: #1a1330; font-weight: 700;
+}
+body.wizard .mail-dot.online {
+  color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.85);
+  animation: wizard-ember 2.2s ease-in-out infinite;
+}
+body.wizard .mail-dot.offline { color: #5a5470; }
+@keyframes wizard-ember {
+  0%, 100% { opacity: 0.85; text-shadow: 0 0 4px rgba(110, 231, 183, 0.5); }
+  50%      { opacity: 1;    text-shadow: 0 0 9px rgba(110, 231, 183, 0.95); }
+}
+body.wizard .mailbox-tag { border-color: #7a5db0; color: #b39ddb; }
+body.wizard .mail-group-caret { color: #9a86c4; }
+body.wizard .mail-group-caret:hover { color: #f3e6c0; }
+body.wizard .mailbox-nested-empty { color: #7d719c; }
+body.wizard .mail-sidebar-foot { color: #9a86c4; }
+
+/* ─── The Scrolls (message list) ────────────────────────────────────
+   Each row is a sealed missive. The unread dot + left edge become a wax
+   seal whose colour tells the scroll's kind at a glance; a read row has no
+   seal (it's been opened). Direction arrows recolour: received = emerald
+   raven (←), sent = amber (→). */
+body.wizard .mail-row {
+  background: linear-gradient(180deg, #1e1640 0%, #181030 100%);
+  border-color: #33284d; color: #d8cef0;
+}
+body.wizard .mail-row:hover {
+  background: linear-gradient(180deg, #2a2050 0%, #1c1338 100%);
+  border-color: #7a5db0;
+}
+body.wizard .mail-row.active {
+  background: linear-gradient(180deg, #2c2150 0%, #1c1436 100%);
+  border-color: #d9b45a; box-shadow: inset 0 0 10px rgba(169, 123, 214, 0.25);
+}
+body.wizard .mail-row-party { color: #e7d9f5; }
+body.wizard .mail-row-subject { color: #cbbfe8; }
+body.wizard .mail-row.unread .mail-row-subject { color: #f3e6c0; }
+body.wizard .mail-row-time,
+body.wizard .mail-row-group { color: #9a86c4; }
+body.wizard .mail-row-arrow { color: #9a86c4; }
+body.wizard .mail-dir.in { color: #6ee7b7; }
+body.wizard .mail-dir.out { color: #d9b45a; }
+body.wizard .mail-row-del { color: #9a86c4; }
+body.wizard .mail-row-del:hover { color: #f2777a; border-color: #f2777a; }
+
+/* Per-kind wax seal — the unread dot recoloured + haloed, and the row's
+   left edge tinted to match. Read rows keep the default (no seal). Base =
+   raven (crimson wax); the three other kinds override below. A small glyph
+   before the subject flags the kind on read rows too. */
+body.wizard .mail-row.unread { border-left-color: #c0392b; }
+body.wizard .mail-row-dot { color: #c0392b; text-shadow: 0 0 6px rgba(192, 57, 43, 0.85); }
+
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row.unread { border-left-color: #d9b45a; }
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-dot { color: #e6c46a; text-shadow: 0 0 7px rgba(230, 196, 106, 0.9); }
+body.wizard .mail-row-wrap[data-kind="decree"] .mail-row-subject::before { content: "♛ " / ""; color: #d9b45a; }
+
+body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row.unread { border-left-color: #c99a3e; }
+body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-dot { color: #e0a93f; text-shadow: 0 0 7px rgba(224, 169, 63, 0.85); }
+body.wizard .mail-row-wrap[data-kind="proclamation"] .mail-row-subject::before { content: "❧ " / ""; color: #c99a3e; }
+
+body.wizard .mail-row-wrap[data-kind="reply"] .mail-row.unread { border-left-color: #a97bd6; }
+body.wizard .mail-row-wrap[data-kind="reply"] .mail-row-dot { color: #a97bd6; text-shadow: 0 0 7px rgba(169, 123, 214, 0.85); }
+body.wizard .mail-row-wrap[data-kind="reply"] .mail-row-subject::before { content: "⤷ " / ""; color: #a97bd6; }
+
+/* ─── Bulk bars + pager (arcane chrome) ─────────────────────────────── */
+body.wizard .mail-bulk-bar,
+body.wizard .mail-pager {
+  background: #1c1436; border-color: #4a3a6b; color: #d8cef0;
+}
+body.wizard .mail-bulk-bar button,
+body.wizard .mail-pager button {
+  background: #241b3d; border-color: #d9b45a; color: #b39ddb;
+}
+body.wizard .mail-bulk-bar button:hover:not(:disabled),
+body.wizard .mail-pager button:hover:not(:disabled) { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .mail-bulk-bar button.danger { color: #d8cef0; }
+body.wizard .mail-bulk-bar button.danger:hover:not(:disabled) { color: #f2777a; border-color: #f2777a; }
+body.wizard .mail-pager-pos,
+body.wizard .mail-pager-size { color: #b39ddb; }
+body.wizard .mail-pager-size select {
+  background: #140f28; border-color: #4a3a6b; color: #f3e6c0;
+}
+body.wizard .mail-pager-size select option { color: #1a1330; background: #e7d9f5; }
+body.wizard .mail-progress-label { color: #d8cef0; }
+body.wizard .mail-progress { background: #241b3d; }
+body.wizard .mail-progress-fill { background: linear-gradient(90deg, #7a5db0, #d9b45a); }
+
+/* ─── The Unfurled Scroll (reader) ──────────────────────────────────
+   The empty reader (no data-kind) sits on the arcane void; once a message
+   opens, [data-kind] selects one of three surfaces below. */
+body.wizard .mail-reader {
+  background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
+  border-color: #4a3a6b;
+}
+
+/* Shared seal + head layout for any opened scroll: the header leaves room
+   on the right for a round wax seal (::after), pressed at a jaunty angle. */
+body.wizard .mail-reader[data-kind] .mail-reader-head {
+  position: relative; padding-right: 52px;
+}
+body.wizard .mail-reader[data-kind] .mail-reader-head::after {
+  position: absolute; right: 2px; top: 0;
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; line-height: 1;
+  transform: rotate(-8deg);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 -2px 4px rgba(0, 0, 0, 0.3), inset 0 2px 3px rgba(255, 255, 255, 0.22);
+}
+
+/* Surface 1 — PARCHMENT scroll (raven + reply). Aged cream paper with
+   rolled wooden dowels baked into the top/bottom of the background (so they
+   stay pinned while the body scrolls), foxing blooms, dark-ink serif body.
+   Readable light-on-dark inversion — thematic AND legible. */
+body.wizard .mail-reader[data-kind="raven"],
+body.wizard .mail-reader[data-kind="reply"] {
+  color: #3a2c17;
+  border: 1px solid #7a5a2e; border-radius: 3px;
+  padding: 26px 30px;
+  background:
+    linear-gradient(180deg, #7a5320 0%, #a5792f 42%, #5f4019 78%, rgba(95, 64, 25, 0) 100%) top / 100% 16px no-repeat,
+    linear-gradient(0deg, #7a5320 0%, #a5792f 42%, #5f4019 78%, rgba(95, 64, 25, 0) 100%) bottom / 100% 16px no-repeat,
+    radial-gradient(ellipse at 22% 14%, rgba(150, 110, 50, 0.13), transparent 45%),
+    radial-gradient(ellipse at 80% 86%, rgba(120, 80, 30, 0.15), transparent 45%),
+    linear-gradient(180deg, #efe3c6 0%, #e4d5af 55%, #d7c597 100%);
+  box-shadow: inset 0 0 50px rgba(120, 90, 40, 0.15), 0 6px 22px rgba(0, 0, 0, 0.55);
+}
+
+/* Surface 2 — arcane SLAB (decree / the Archmage's word). Stays dark like
+   the rest of the wizard chrome, but gilded + haloed so it reads as regal. */
+body.wizard .mail-reader[data-kind="decree"] {
+  color: #e7d9f5;
+  border: 1px solid #d9b45a; border-radius: 4px;
+  padding: 24px 28px;
+  background:
+    radial-gradient(ellipse at 50% -12%, rgba(217, 180, 90, 0.16), transparent 55%),
+    linear-gradient(180deg, #241b3d 0%, #1a1330 60%, #140f28 100%);
+  box-shadow: inset 0 0 40px rgba(122, 93, 176, 0.25), 0 0 26px rgba(169, 123, 214, 0.22), 0 6px 22px rgba(0, 0, 0, 0.55);
+}
+
+/* Surface 3 — weathered BROADSHEET (proclamation / a multicast notice).
+   Coarser, more-yellowed poster stock with two dark tacks pinning the top
+   corners, a faint vertical grain, and the same dark-ink serif body. */
+body.wizard .mail-reader[data-kind="proclamation"] {
+  color: #3a2c17;
+  border: 1px solid #8a6a2e; border-radius: 2px;
+  padding: 24px 28px;
+  background:
+    radial-gradient(circle at 14px 14px, #4a3115 0 3px, transparent 3px),
+    radial-gradient(circle at calc(100% - 14px) 14px, #4a3115 0 3px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(120, 90, 40, 0.05) 0 2px, transparent 2px 7px),
+    radial-gradient(ellipse at 16% 12%, rgba(0, 0, 0, 0.06), transparent 42%),
+    radial-gradient(ellipse at 84% 88%, rgba(120, 80, 30, 0.13), transparent 45%),
+    linear-gradient(180deg, #e7d9b0 0%, #dccb98 60%, #cdb87f 100%);
+  box-shadow: inset 0 0 40px rgba(110, 80, 30, 0.2), 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+
+/* Ink + letterhead on the two parchment surfaces (raven/reply/proclamation):
+   dark serif ink, muted brown labels, a hairline rule under the head. */
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-body,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-body,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-body {
+  color: #3a2c17;
+  font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+  font-size: 14px; line-height: 1.65;
+}
+body.wizard .mail-reader[data-kind="raven"] .mail-subject,
+body.wizard .mail-reader[data-kind="reply"] .mail-subject,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-subject {
+  color: #2a1f0e;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  text-shadow: none;
+}
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-head,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-head,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-head { border-bottom-color: rgba(122, 90, 46, 0.45); }
+body.wizard .mail-reader[data-kind="raven"] .mail-id,
+body.wizard .mail-reader[data-kind="reply"] .mail-id,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-id,
+body.wizard .mail-reader[data-kind="raven"] .mail-hlabel,
+body.wizard .mail-reader[data-kind="reply"] .mail-hlabel,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-hlabel,
+body.wizard .mail-reader[data-kind="raven"] .mail-cid,
+body.wizard .mail-reader[data-kind="reply"] .mail-cid,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-cid { color: #7a5a2e; }
+body.wizard .mail-reader[data-kind="raven"] .mail-hval,
+body.wizard .mail-reader[data-kind="reply"] .mail-hval,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-hval { color: #4a3a1e; }
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-body a,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-body a,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-body a {
+  color: #7a3b1a; border-bottom: 1px solid rgba(122, 59, 26, 0.4); text-decoration: none;
+}
+body.wizard .mail-reader[data-kind="raven"] .mail-state-unread,
+body.wizard .mail-reader[data-kind="reply"] .mail-state-unread,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-state-unread { color: #a5342e; }
+body.wizard .mail-reader[data-kind="raven"] .mail-state-pending,
+body.wizard .mail-reader[data-kind="reply"] .mail-state-pending,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-state-pending { color: #9a6a1a; }
+
+/* Letterhead on the arcane decree slab — parchment-gold text on the void. */
+body.wizard .mail-reader[data-kind="decree"] .mail-subject {
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  text-shadow: 0 0 8px rgba(217, 180, 90, 0.5), 0 1px 0 #1e1640;
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-body {
+  color: #e7d9f5;
+  font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+  font-size: 14px; line-height: 1.6;
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-head { border-bottom-color: rgba(217, 180, 90, 0.4); }
+body.wizard .mail-reader[data-kind="decree"] .mail-id,
+body.wizard .mail-reader[data-kind="decree"] .mail-hlabel,
+body.wizard .mail-reader[data-kind="decree"] .mail-cid { color: #b39ddb; }
+body.wizard .mail-reader[data-kind="decree"] .mail-hval { color: #e7d9f5; }
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-body a {
+  color: #f3e6c0; border-bottom: 1px solid rgba(243, 230, 192, 0.4); text-decoration: none;
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-state-unread { color: #f0b3b3; }
+body.wizard .mail-reader[data-kind="decree"] .mail-state-pending { color: #e6c46a; }
+
+/* The wax seals — one emblem + colour per kind. The `content: "x" / ""`
+   form gives each decorative glyph (here and on the .mail-row-subject::before
+   kind markers above) an empty ALT string, so screen readers skip it rather
+   than announcing "♛ / ❧ / ⤷ / ✦" noise before every subject + header. */
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-head::after {
+  content: "✦" / ""; color: #f0d3ba; border: 1px solid #6e1f18;
+  background: radial-gradient(circle at 35% 30%, #d1503f, #a5342e 60%, #7a251d);
+}
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-head::after {
+  content: "⤷" / ""; color: #f3e6c0; border: 1px solid #4a2f7a;
+  background: radial-gradient(circle at 35% 30%, #a97bd6, #5a3f8a 60%, #3a2760);
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-head::after {
+  content: "♛" / ""; color: #f3e6c0; border: 1px solid #d9b45a;
+  background: radial-gradient(circle at 35% 30%, #8f6fca, #4a2f7a 60%, #2e1b52);
+  box-shadow: 0 0 10px rgba(217, 180, 90, 0.5), inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-head::after {
+  content: "❧" / ""; color: #f3e6c0; border: 1px solid #5f4519;
+  background: radial-gradient(circle at 35% 30%, #c99a3e, #8a6a2e 60%, #5f4519);
+}
+
+/* Reader action buttons: gilded-on-parchment for the paper surfaces, dark
+   arcane for the decree slab (so each reads against its own ground). */
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button {
+  background: linear-gradient(180deg, #e0cf9f, #cbb478);
+  border: 1px solid #7a5a2e; color: #3a2c17;
+}
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button:hover,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button:hover,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button:hover {
+  background: linear-gradient(180deg, #ecdcae, #d4bd82); border-color: #5f4519;
+}
+body.wizard .mail-reader[data-kind="raven"] .mail-reader-actions button.danger:hover,
+body.wizard .mail-reader[data-kind="reply"] .mail-reader-actions button.danger:hover,
+body.wizard .mail-reader[data-kind="proclamation"] .mail-reader-actions button.danger:hover {
+  color: #a5342e; border-color: #a5342e;
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button:hover { background: #3a2a63; }
+body.wizard .mail-reader[data-kind="decree"] .mail-reader-actions button.danger:hover { color: #f2777a; border-color: #f2777a; }
+
 /* prefers-reduced-motion — double-gated like slop: wizard-fx.js short-
    circuits before spawning, and this CSS layer kills any motion that slips
    through. The pills / HUD / tab stay visible (they're not motion). */
 @media (prefers-reduced-motion: reduce) {
+  body.wizard .mail-dot.online { animation: none; }
   body.wizard header { animation: none; }
   body.wizard header h1 .slop-icon { animation: none; }
   body.wizard #slop-marquee-track { animation: none; }
