@@ -5093,6 +5093,155 @@ body.wizard #edit-member-modal #edit-member-save:disabled {
 }
 body.wizard #edit-member-modal #edit-member-save:disabled::before { content: none; }
 
+/* ─── Wizard profiles manage overlay — the familiars' recipe book ────
+   The 🧙 re-skin of the "Spawn profiles" management overlay (Groups cog →
+   ⧉ profiles…) — the list you pick a recipe to edit from. It launches the
+   arcane editor (📜 Inscribe!), so the picker it opens from gets the matching
+   arcane chrome. Scoped to #profiles-manage-modal so the sibling manage
+   overlays (Templates… / Links…), which share .manage-overlay/.manage-modal,
+   keep the default chrome. The title stays informative — rendered in the
+   arcane serif, no text swap (its copy is static, but a swap would be pure
+   flavour; the ask is the re-skin). */
+body.wizard #profiles-manage-modal .manage-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #profiles-manage-modal .manage-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / dialog titles use. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #profiles-manage-modal .manage-intro { color: #b39ddb; }
+
+/* Filter bar: violet-tinted field, violet count, gold clear-×. */
+body.wizard #profiles-manage-modal .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #profiles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #profiles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
+body.wizard #profiles-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard #profiles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+
+/* "+ new profile" — the small gilded-arcane action, the same treatment the
+   filter bar's "⚔ Form a party" primary gets. #profile-create-open out-
+   specifies the base .filter-bar button.primary rule, so it wins without
+   !important. */
+body.wizard #profiles-manage-modal #profile-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #profiles-manage-modal #profile-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* Recipe cards: violet-framed void, gilt name, violet summary + arcane
+   edit/delete actions. */
+body.wizard #profiles-manage-modal .template-card {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #profiles-manage-modal .template-card .tc-name { color: #f3e6c0; }
+body.wizard #profiles-manage-modal .template-card .tc-descr { color: #b39ddb; }
+body.wizard #profiles-manage-modal .template-card .tc-actions button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #profiles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #profiles-manage-modal .template-empty { color: #b39ddb; }
+
+/* Close (and any other non-primary footer button): tarnished-gold secondary. */
+body.wizard #profiles-manage-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #profiles-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+
+/* ─── Wizard permissions editor — binding a familiar's powers ────────
+   The 🧙 re-skin of the permanent-permissions tri-state editor
+   (#perm-edit-modal), shared by the live-agent path AND the spawn / profile
+   buffer editors — so it picks up the arcane chrome the moment wizard mode is
+   on, whichever opened it. Every rule is scoped to #perm-edit-modal so nothing
+   leaks. Crucially, the active Grant (green) / Deny (red) tri-state fills are
+   LEFT ALONE — they're the safety signal and must stay legible; we recolor the
+   surrounding chrome only. */
+body.wizard #perm-edit-modal .perm-edit-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e7d9f5;
+}
+body.wizard #perm-edit-modal .perm-edit-modal h3 {
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+/* The PERMANENT banner is already violet — nudge it onto the arcane palette so
+   it reads as themed, while staying a distinct bordered call-out (the "these
+   persist" warning must still land). */
+body.wizard #perm-edit-modal .perm-edit-banner {
+  background: #140f28; border-color: #3a2d5c; border-left-color: #a97bd6; color: #d2b8f5;
+}
+body.wizard #perm-edit-modal .perm-edit-banner strong { color: #f3e6c0; }
+body.wizard #perm-edit-modal .perm-edit-subtitle { color: #b39ddb; }
+/* Owner note keeps its gold call-out feel (it already sits on a dark gold). */
+body.wizard #perm-edit-modal .perm-edit-owner-note code { color: #f0c674; }
+/* Toolbar: violet-tinted filter + arcane "all default" button. */
+body.wizard #perm-edit-modal .perm-edit-toolbar input[type=text] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #perm-edit-modal .perm-edit-toolbar input[type=text]:focus { border-color: #a97bd6; }
+body.wizard #perm-edit-modal .perm-edit-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #perm-edit-modal .perm-edit-toolbar button:hover { background: #3a2a63; }
+/* Slug list: violet frame + dividers, gilt slug label, violet description. */
+body.wizard #perm-edit-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
+body.wizard #perm-edit-modal .perm-row-slug { color: #f3e6c0; }
+body.wizard #perm-edit-modal .perm-row-desc { color: #b39ddb; }
+/* Tri-state control: recolor the frame + dividers, and repaint the INACTIVE
+   cells + the active Default cell to the arcane palette. The active Grant / Deny
+   cells are matched by :not(.active) exclusion and by not being re-stated here,
+   so their base green / red safety fills survive untouched — the id-scoped
+   inactive rule below can't bleed into them because :not(.active) excludes
+   them. */
+body.wizard #perm-edit-modal .perm-tristate { border-color: rgba(122, 93, 176, 0.5); }
+body.wizard #perm-edit-modal .perm-tristate button { border-right-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .perm-tristate button:not(.active) { background: #140f28; color: #b39ddb; }
+body.wizard #perm-edit-modal .perm-tristate button:not(.active):hover { background: #241b3d; }
+body.wizard #perm-edit-modal .perm-tristate button.active[data-effect=default] {
+  background: #3a2a63; color: #f3e6c0;
+}
+/* Footer: gilded Save lever + tarnished-gold Cancel, mirroring the dialogs. */
+body.wizard #perm-edit-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .modal-buttons button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #perm-edit-modal .modal-buttons button:not(.primary):hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #perm-edit-modal .modal-buttons button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+body.wizard #perm-edit-modal .modal-buttons button.primary:disabled {
+  background: #3a2a63; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; opacity: 0.6;
+}
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
