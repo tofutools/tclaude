@@ -191,6 +191,32 @@ func TestDashboardHTML_WizardSummonFx(t *testing.T) {
 	must(".wizard-summon-banner", "the summon banner font-clamp variant is styled")
 }
 
+// TestDashboardHTML_WizardPowerButtons pins the wizard re-skin of the Power On
+// / Shutdown chips at both scopes: global (top-bar #power-on-all-btn /
+// #shutdown-all-btn) and per-group (.group-actions data-act="power-on-group" /
+// "shutdown-group"). The re-skin keeps the emerald-vs-crimson semantic split
+// rather than letting the buttons flatten into the uniform gold header-button
+// skin. Purely front-end like the rest of the wizard theme, so we string-search
+// the embedded source rather than running the JS.
+func TestDashboardHTML_WizardPowerButtons(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Global (top-bar) chips: re-skinned by id so body.wizard out-specifies both
+	// the base #…-btn rule and the flat `body.wizard header button` skin.
+	must("body.wizard #power-on-all-btn", "the global Power On chip is re-skinned in wizard mode")
+	must("body.wizard #shutdown-all-btn", "the global Shutdown chip is re-skinned in wizard mode")
+
+	// Per-group chips: re-skinned via the data-act attribute so the extra
+	// classes/attr out-specify the base .group-actions button (and .warn) rules.
+	must(`body.wizard .group-actions button[data-act="power-on-group"]`, "the per-group Power On chip is re-skinned in wizard mode")
+	must(`body.wizard .group-actions button[data-act="shutdown-group"]`, "the per-group Shutdown chip is re-skinned in wizard mode")
+}
+
 // TestDashboardCSS_WizardRetireModalScoped guards that the wizard retire-dialog
 // re-skin stays scoped to #retire-modal. The retire modal is a generic .modal
 // (unlike the spawn dialog's .cron-create-modal), so an unscoped
