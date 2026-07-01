@@ -457,9 +457,10 @@ function remoteControlPolicyMenuItem(g) {
 // activityStyles reads the per-mode activity-bot styles from the snapshot
 // (config dashboard.activity_bots). Falls back to the Go-side defaults
 // (regular emoji, slop sprites) when the flag is absent — a pre-flag
-// daemon, or the moment before the first snapshot lands. The wizard row has
-// no emoji/sprites choice (it's a single fantasy-glyph re-skin), just
-// on/off; it defaults ON so the 🧙 theme always gets its own bots.
+// daemon, or the moment before the first snapshot lands. The wizard row is a
+// single fantasy-glyph re-skin (no emoji/sprites choice) with no config knob
+// today, so it defaults ON — the 🧙 theme always gets its own bots; the
+// `ab.wizard` read is just a forward-compatible hook for a future on/off.
 function activityStyles() {
   const ab = (lastSnapshot && lastSnapshot.activity_bots) || {};
   return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites', wizard: ab.wizard || 'wizard' };

@@ -775,6 +775,10 @@ body.wizard .ga-wizard { display: inline-flex; }
 /* The wizard row's working glow is arcane purple instead of green — the
    channeling mage casts violet, matching the theme's mystic-purple chrome. */
 .ga-wizard.level-working { filter: drop-shadow(0 0 4px rgba(169, 123, 214, 0.55)); }
+/* The shared crashed rule rotates the face 90° so a toppled ROBOT lies on
+   its side; a 💀 skull reads clearer upright, so the wizard row keeps it
+   unrotated (the greyed opacity from .actbot-crashed still marks it dead). */
+.ga-wizard .actbot-crashed .actbot-face { transform: none; }
 
 /* Top-bar global indicator — same bot row(s), aggregated across every group
    + the ungrouped bucket. Collapses out of the flex header when empty
