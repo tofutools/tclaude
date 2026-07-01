@@ -486,3 +486,38 @@ func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
 		t.Error("wizard-mode pill hide is unscoped — will blank Audit/Plugins pills")
 	}
 }
+
+// TestDashboardHTML_WizardCogs pins the wizard re-skin of the ⚙ "more actions"
+// cogs — the filter-bar "more group actions" cog, the per-row cog and the
+// per-group-header cog all become gilded, self-turning "enchanted clockwork"
+// gears in 🧙 mode. The glyph rides a .cog-glyph span so only the gear spins,
+// not the bordered box. Purely front-end like the rest of the wizard theme, so
+// we string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardCogs(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Both emit sites wrap the gear in a .cog-glyph span: actionCog (row/group
+	// menus, helpers.js) and the filter-bar button (dashboard.html). Without the
+	// span the CSS would have to rotate the whole bordered button box.
+	must(`<span class="cog-glyph">⚙︎</span>`, "the cog glyph rides a .cog-glyph span so only the gear rotates")
+
+	// All three cogs get the gilded arcane skin.
+	must("body.wizard .filter-bar-cog .cog-btn", "the filter-bar cog is re-skinned in wizard mode")
+	must("body.wizard .row-actions .cog-btn", "the per-row cog is re-skinned in wizard mode")
+	must("body.wizard .group-actions .cog-btn", "the per-group cog is re-skinned in wizard mode")
+
+	// The enchanted rotation + its keyframes — the "self-turning clockwork" gag.
+	must("animation: wizard-cog-turn", "the wizard cog glyph spins under its own enchantment")
+	must("@keyframes wizard-cog-turn", "the cog-turn keyframes are defined")
+
+	// The rotation is dropped under prefers-reduced-motion (belt-and-suspenders
+	// CSS layer), scoped to the .cog-glyph so the gilded skin/glow survives.
+	if !strings.Contains(dashboardAssets, "body.wizard .group-actions .cog-btn .cog-glyph { animation: none; }") {
+		t.Error("wizard cog rotation is not disabled under prefers-reduced-motion")
+	}
+}
