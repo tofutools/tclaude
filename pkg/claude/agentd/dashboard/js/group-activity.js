@@ -280,9 +280,12 @@ export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle)
       : '';
   const reg = wrap('ga-regular', styledBotsHTML(s, regularStyle), s.summaryText);
   const slop = wrap('ga-slop', styledBotsHTML(s, slopStyle), s.summaryText);
+  // Only build the arcane breakdown when the wizard wrapper is actually on —
+  // otherwise `wrap` discards both the bots and the title.
+  const wizOn = wizardStyle && wizardStyle !== 'off';
   const wiz = wrap('ga-wizard',
-    (wizardStyle && wizardStyle !== 'off') ? wizardBotsHTML(s) : '',
-    themedSummaryText(s, 'wizard'));
+    wizOn ? wizardBotsHTML(s) : '',
+    wizOn ? themedSummaryText(s, 'wizard') : '');
   if (!reg && !slop && !wiz) return '';
   return `<span class="group-activity">${reg}${slop}${wiz}</span>`;
 }
