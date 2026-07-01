@@ -32,6 +32,69 @@ type Rect struct {
 	X, Y, W, H int
 }
 
+// Size is a window's current pixel dimensions, read before arranging so
+// the default (no-resize) layout can reposition windows without changing
+// how big they are.
+type Size struct {
+	W, H int
+}
+
+// center returns the rect's center point.
+func (r Rect) center() (int, int) { return r.X + r.W/2, r.Y + r.H/2 }
+
+// pointInRect reports whether (px,py) lies inside r (half-open on the
+// far edges, so adjacent monitors don't both claim a boundary pixel).
+func pointInRect(px, py int, r Rect) bool {
+	return px >= r.X && px < r.X+r.W && py >= r.Y && py < r.Y+r.H
+}
+
+// pickMonitor returns the work-area of the monitor that should host the
+// tiled set: the monitor containing (px,py) — the first window's center —
+// else the nearest monitor by center distance. ok is false only when
+// monitors is empty, so the caller can fall back to a whole-desktop area.
+func pickMonitor(px, py int, monitors []Rect) (Rect, bool) {
+	if len(monitors) == 0 {
+		return Rect{}, false
+	}
+	for _, m := range monitors {
+		if pointInRect(px, py, m) {
+			return m, true
+		}
+	}
+	best, bestD := monitors[0], monitorDist2(px, py, monitors[0])
+	for _, m := range monitors[1:] {
+		if d := monitorDist2(px, py, m); d < bestD {
+			best, bestD = m, d
+		}
+	}
+	return best, true
+}
+
+// monitorDist2 is the squared distance from (px,py) to a monitor's center
+// — used only to rank "nearest" when no monitor contains the point.
+func monitorDist2(px, py int, m Rect) int {
+	cx, cy := m.center()
+	dx, dy := px-cx, py-cy
+	return dx*dx + dy*dy
+}
+
+// clampTopLeft nudges r's top-left so the window stays reachable inside
+// area (its size is untouched — a window wider/taller than the monitor
+// may still overflow the far edge, but its title bar stays grabbable).
+func clampTopLeft(r, area Rect) Rect {
+	if r.X < area.X {
+		r.X = area.X
+	} else if maxX := area.X + area.W - 1; r.X > maxX {
+		r.X = maxX
+	}
+	if r.Y < area.Y {
+		r.Y = area.Y
+	} else if maxY := area.Y + area.H - 1; r.Y > maxY {
+		r.Y = maxY
+	}
+	return r
+}
+
 // TileSpec identifies one agent whose terminal window the tiling pass
 // should place. It carries the same two handles the focus path keys on:
 // TmuxSession (to find the attached client's tty on macOS/Linux) and
@@ -43,11 +106,13 @@ type TileSpec struct {
 }
 
 // TileOptions carries the resolved layout knobs (already read from
-// config by the caller). Layout is one of config.TileLayout*; Gap is the
-// pixels left between adjacent tiles; Margin is the pixels of inset kept
-// from the screen work-area edges.
+// config by the caller). Layout is one of config.TileLayout*; Resize
+// stretches windows to fill their cells (false = keep current size, only
+// reposition); Gap is the pixels left between adjacent tiles; Margin is
+// the pixels of inset kept from the screen work-area edges.
 type TileOptions struct {
 	Layout string
+	Resize bool
 	Gap    int
 	Margin int
 }
@@ -191,3 +256,75 @@ func cascadeRects(n int, area Rect) []Rect {
 // occupies. 65% leaves room for the diagonal travel while keeping each
 // window comfortably large.
 const cascadeSizePct = 65
+
+// noResizeCascadeStep is the diagonal offset (px) between windows in the
+// no-resize cascade layout — big enough that each window's title bar
+// stays visible above the one below it.
+const noResizeCascadeStep = 34
+
+// arrangeRects positions n windows at their CURRENT sizes (the default
+// no-resize behaviour): it never changes a window's dimensions, only
+// where its top-left lands, so an overlapping pile is spread out without
+// being stretched to fill the screen. The layout controls the pattern:
+//
+//   - grid  — flow-pack left-to-right, wrapping to a new row when the
+//     next window would run past the work-area's right edge.
+//   - columns — a single left-to-right row (no wrap).
+//   - rows    — a single top-to-bottom column.
+//   - cascade — a diagonal stagger, windows overlapping by design.
+//
+// area is the target monitor's work-area; gap is the spacing left between
+// windows; margin is the inset from the work-area edges. Returned rects
+// carry each window's original size (sizes[i]) with a new position; a
+// window larger than the work-area is placed at the inset origin and
+// allowed to overflow (best-effort — we never shrink it).
+func arrangeRects(sizes []Size, layout string, area Rect, gap, margin int) []Rect {
+	n := len(sizes)
+	if n == 0 {
+		return nil
+	}
+	if gap < 0 {
+		gap = 0
+	}
+	if margin < 0 {
+		margin = 0
+	}
+	ox, oy := area.X+margin, area.Y+margin
+	maxRight := area.X + area.W - margin
+	rects := make([]Rect, n)
+
+	switch layout {
+	case config.TileLayoutCascade:
+		for i := range n {
+			rects[i] = Rect{X: ox + i*noResizeCascadeStep, Y: oy + i*noResizeCascadeStep, W: sizes[i].W, H: sizes[i].H}
+		}
+	case config.TileLayoutColumns:
+		x := ox
+		for i := range n {
+			rects[i] = Rect{X: x, Y: oy, W: sizes[i].W, H: sizes[i].H}
+			x += sizes[i].W + gap
+		}
+	case config.TileLayoutRows:
+		y := oy
+		for i := range n {
+			rects[i] = Rect{X: ox, Y: y, W: sizes[i].W, H: sizes[i].H}
+			y += sizes[i].H + gap
+		}
+	default: // grid — flow-pack with wrapping
+		x, y, rowH := ox, oy, 0
+		for i := range n {
+			w, h := sizes[i].W, sizes[i].H
+			if x > ox && x+w > maxRight { // won't fit on this row → wrap
+				x = ox
+				y += rowH + gap
+				rowH = 0
+			}
+			rects[i] = Rect{X: x, Y: y, W: w, H: h}
+			x += w + gap
+			if h > rowH {
+				rowH = h
+			}
+		}
+	}
+	return rects
+}

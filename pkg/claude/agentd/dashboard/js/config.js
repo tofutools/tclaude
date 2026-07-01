@@ -415,6 +415,7 @@ function populateConfigForm(cfg) {
   const tile = (cfg.focus && cfg.focus.tile) || {};
   $('#cfg-focus-tile').checked = !!tile.enabled;
   $('#cfg-focus-tile-layout').value = tile.layout || 'grid';
+  $('#cfg-focus-tile-resize').checked = !!tile.resize;
   $('#cfg-focus-tile-gap').value = (tile.gap != null) ? tile.gap : '';
   $('#cfg-focus-tile-margin').value = (tile.margin != null) ? tile.margin : '';
 
@@ -667,6 +668,7 @@ function assembleConfig() {
   if ($('#cfg-focus-tile').checked) tc.enabled = true; else delete tc.enabled;
   const tileLayout = $('#cfg-focus-tile-layout').value;
   if (tileLayout && tileLayout !== 'grid') tc.layout = tileLayout; else delete tc.layout;
+  if ($('#cfg-focus-tile-resize').checked) tc.resize = true; else delete tc.resize;
   const tileGap = $('#cfg-focus-tile-gap').value.trim();
   if (tileGap !== '' && Number.isFinite(parseInt(tileGap, 10))) tc.gap = parseInt(tileGap, 10); else delete tc.gap;
   const tileMargin = $('#cfg-focus-tile-margin').value.trim();

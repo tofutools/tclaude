@@ -158,7 +158,12 @@ var tileConfigForFocus = func() (bool, session.TileOptions) {
 		return false, session.TileOptions{}
 	}
 	gap, margin := cfg.ResolvedTileGeometry()
-	return true, session.TileOptions{Layout: cfg.TileLayout(), Gap: gap, Margin: margin}
+	return true, session.TileOptions{
+		Layout: cfg.TileLayout(),
+		Resize: cfg.TileResize(),
+		Gap:    gap,
+		Margin: margin,
+	}
 }
 
 // tileAgentWindows dispatches the per-platform window arrangement. Seam:

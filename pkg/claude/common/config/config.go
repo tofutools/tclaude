@@ -801,10 +801,18 @@ const (
 // window "focus" op that raises/opens more than one window follows up by
 // arranging just that focused set into the chosen Layout, so the desktop
 // is neatly tiled instead of leaving every window where the OS dropped
-// it. It is best-effort and platform-specific (AppleScript on macOS,
-// xdotool/kdotool on native Linux, PowerShell on WSL); an unsupported
-// desktop simply no-ops. A single-window focus is never tiled (there is
-// nothing to arrange — tiling one window would just maximise it).
+// it. All focused windows are gathered onto ONE monitor — the monitor the
+// first window is on — so a multi-monitor setup doesn't scatter them or
+// straddle the gap. It is best-effort and platform-specific (AppleScript
+// on macOS, xdotool/kdotool on native Linux, PowerShell on WSL); an
+// unsupported desktop simply no-ops. A single-window focus is never tiled
+// (there is nothing to arrange).
+//
+// Resize controls whether windows are RESIZED to fill the layout. The
+// default (false) keeps each window at its current size and only
+// repositions it so the set no longer overlaps — the least-intrusive
+// "just line them up" behaviour. Set it true for the older screen-filling
+// grid, where each window is stretched to fill its layout cell.
 //
 // Gap is the pixel spacing left between adjacent tiles; Margin is the
 // pixel inset kept from the screen work-area edges (useful to clear a
@@ -815,6 +823,7 @@ const (
 type TileConfig struct {
 	Enabled bool   `json:"enabled,omitempty"`
 	Layout  string `json:"layout,omitempty"`
+	Resize  bool   `json:"resize,omitempty"`
 	Gap     *int   `json:"gap,omitempty"`
 	Margin  *int   `json:"margin,omitempty"`
 }
@@ -858,6 +867,14 @@ func normalizeTileLayout(s string) string {
 	default:
 		return ""
 	}
+}
+
+// TileResize reports whether the tiling pass should RESIZE windows to
+// fill their layout cells — config focus.tile.resize. Default false
+// (absent block/key): windows keep their current size and are only
+// repositioned. Nil-safe on the receiver.
+func (c *Config) TileResize() bool {
+	return c != nil && c.Focus != nil && c.Focus.Tile != nil && c.Focus.Tile.Resize
 }
 
 // TileLayout reports the tiling layout mode — config focus.tile.layout.

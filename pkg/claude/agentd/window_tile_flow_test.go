@@ -67,7 +67,7 @@ func TestAgentWindows_Focus_TilesWhenEnabled(t *testing.T) {
 	rec.installFocus(t)
 	tr := &tileRecorder{}
 	tr.install(t)
-	wantOpts := session.TileOptions{Layout: config.TileLayoutColumns, Gap: 12, Margin: 4}
+	wantOpts := session.TileOptions{Layout: config.TileLayoutColumns, Resize: true, Gap: 12, Margin: 4}
 	enableTiling(t, wantOpts)
 
 	const group = "tclaude-dev"

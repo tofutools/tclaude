@@ -64,3 +64,51 @@ func TestBuildMacTileScript(t *testing.T) {
 		t.Errorf("empty terminal should yield empty script, got %q", s)
 	}
 }
+
+// NSScreen enumeration output parses one Rect per screen; malformed and
+// non-positive lines are skipped.
+func TestParseMacMonitors(t *testing.T) {
+	// Two monitors: main 1920x1055 (menu bar excluded) and a right one at
+	// x=1920. A blank line and a garbage line are dropped.
+	out := "0 25 1920 1055\n1920 0 2560 1440\n\nbad line here\n0 0 0 100\n"
+	mons := parseMacMonitors(out)
+	if len(mons) != 2 {
+		t.Fatalf("expected 2 monitors, got %d: %+v", len(mons), mons)
+	}
+	if mons[0] != (Rect{X: 0, Y: 25, W: 1920, H: 1055}) {
+		t.Errorf("monitor 0: %+v", mons[0])
+	}
+	if mons[1] != (Rect{X: 1920, Y: 0, W: 2560, H: 1440}) {
+		t.Errorf("monitor 1: %+v", mons[1])
+	}
+	if parseMacMonitors("") != nil {
+		t.Errorf("empty output → nil")
+	}
+}
+
+// The read-bounds script targets the right app/tty and returns the
+// four bounds items; unsupported terminals yield an empty script.
+func TestBuildMacReadBoundsScript(t *testing.T) {
+	term := buildMacReadBoundsScript("Terminal", "/dev/ttys003")
+	if !strings.Contains(term, `tell application "Terminal"`) ||
+		!strings.Contains(term, `"/dev/ttys003"`) ||
+		!strings.Contains(term, "bounds of w") {
+		t.Errorf("Terminal read script wrong: %s", term)
+	}
+	iterm := buildMacReadBoundsScript("iTerm2", "/dev/ttys004")
+	if !strings.Contains(iterm, "sessions of t") || !strings.Contains(iterm, "bounds of w") {
+		t.Errorf("iTerm read script wrong: %s", iterm)
+	}
+	if s := buildMacReadBoundsScript("kitty", "/dev/ttys005"); s != "" {
+		t.Errorf("unsupported terminal → empty read script, got %q", s)
+	}
+}
+
+// The window-bounds parser reuses the desktop parser: "L, T, R, B" →
+// origin + size. Sanity-check the shared behavior for a window.
+func TestParseWindowBounds_ReusesDesktopParser(t *testing.T) {
+	r, ok := parseMacDesktopBounds("100, 200, 740, 680")
+	if !ok || r != (Rect{X: 100, Y: 200, W: 640, H: 480}) {
+		t.Errorf("window bounds parse: ok=%v r=%+v", ok, r)
+	}
+}
