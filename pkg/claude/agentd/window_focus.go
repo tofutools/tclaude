@@ -158,7 +158,12 @@ var tileConfigForFocus = func() (bool, session.TileOptions) {
 		return false, session.TileOptions{}
 	}
 	gap, margin := cfg.ResolvedTileGeometry()
-	return true, session.TileOptions{Layout: cfg.TileLayout(), Gap: gap, Margin: margin}
+	return true, session.TileOptions{
+		Layout: cfg.TileLayout(),
+		Resize: cfg.TileResize(),
+		Gap:    gap,
+		Margin: margin,
+	}
 }
 
 // tileAgentWindows dispatches the per-platform window arrangement. Seam:
@@ -331,11 +336,13 @@ func runWindowOp(direction, scope, group string, universe, convs []string) agent
 	wg.Wait()
 
 	// Follow a bulk focus with the opt-in auto-tiling pass (no-op when
-	// disabled or when only one window was focused). Runs after the focus
-	// dispatch so every window exists (or has been opened) before we move
-	// it. unfocus never tiles.
+	// disabled or when only one window was focused). It runs in the
+	// BACKGROUND: the pass sleeps a settle delay for freshly-opened windows
+	// and then reads + moves each window (a second or two of scripting on a
+	// large set), none of which the focus response needs to wait on. unfocus
+	// never tiles. Drained by WaitForBackgroundForTest so flow tests observe it.
 	if direction == "focus" {
-		tileFocusedWindows(alive)
+		goBackground(func() { tileFocusedWindows(alive) })
 	}
 
 	// Deterministic order so the dashboard list (and the flow test)

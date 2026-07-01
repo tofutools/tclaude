@@ -279,9 +279,13 @@ on, focusing/​showing more than one agent's window (the 🪟 windows… modal 
 the command palette) rearranges that set into a tidy layout — `grid`
 (default), `columns`, `rows`, or `cascade` — instead of leaving each window
 where the OS dropped it, with configurable inter-tile **gap** and screen-edge
-**margin**. It is best-effort per platform (macOS AppleScript, Linux
-xdotool/kdotool, WSL PowerShell); an unsupported desktop simply leaves the
-windows as-is. A single focused window is never tiled.
+**margin**. All windows are gathered onto **one monitor** — the one the first
+window is on — so a multi-monitor setup isn't scattered across screens. By
+default windows keep their **current size** and are only repositioned; tick
+**resize windows to fill the screen** for the older screen-filling grid. It is
+best-effort per platform (macOS AppleScript, Linux xdotool/kdotool, WSL
+PowerShell); an unsupported desktop simply leaves the windows as-is. A single
+focused window is never tiled.
 
 ## Spawning agents from the dashboard
 

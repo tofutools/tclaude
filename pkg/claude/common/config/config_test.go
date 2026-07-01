@@ -501,22 +501,38 @@ func TestResolvedTileGeometry(t *testing.T) {
 	assert.Equal(t, 0, margin, "negative margin clamps up to 0")
 }
 
+// TileResize is nil-safe and off by default (keep current sizes): only
+// focus.tile.resize flips it on.
+func TestTileResize(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.TileResize(), "nil config → false")
+	assert.False(t, (&Config{Focus: &FocusConfig{Tile: &TileConfig{}}}).TileResize(), "tile block, resize unset → false")
+	assert.True(t, (&Config{Focus: &FocusConfig{Tile: &TileConfig{Resize: true}}}).TileResize(), "resize true → true")
+}
+
 // focus.tile round-trips through the config file, and an absent block
 // stays absent (omitempty).
 func TestTileConfig_RoundTrips(t *testing.T) {
 	g := 12
-	in := &Config{Focus: &FocusConfig{Tile: &TileConfig{Enabled: true, Layout: TileLayoutColumns, Gap: &g}}}
+	in := &Config{Focus: &FocusConfig{Tile: &TileConfig{Enabled: true, Layout: TileLayoutColumns, Resize: true, Gap: &g}}}
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"tile"`)
 	assert.Contains(t, string(data), `"layout":"columns"`)
+	assert.Contains(t, string(data), `"resize":true`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.TileOnFocus())
+	assert.True(t, out.TileResize())
 	assert.Equal(t, TileLayoutColumns, out.TileLayout())
 	gap, _ := out.ResolvedTileGeometry()
 	assert.Equal(t, 12, gap)
+
+	// resize omits when false (omitempty), so an untouched default stays clean.
+	none, err := json.Marshal(&Config{Focus: &FocusConfig{Tile: &TileConfig{Enabled: true}}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), "resize")
 }
 
 // Validate flags a bad layout and out-of-range gap/margin, but accepts a

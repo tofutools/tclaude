@@ -67,7 +67,7 @@ func TestAgentWindows_Focus_TilesWhenEnabled(t *testing.T) {
 	rec.installFocus(t)
 	tr := &tileRecorder{}
 	tr.install(t)
-	wantOpts := session.TileOptions{Layout: config.TileLayoutColumns, Gap: 12, Margin: 4}
+	wantOpts := session.TileOptions{Layout: config.TileLayoutColumns, Resize: true, Gap: 12, Margin: 4}
 	enableTiling(t, wantOpts)
 
 	const group = "tclaude-dev"
@@ -87,6 +87,7 @@ func TestAgentWindows_Focus_TilesWhenEnabled(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, 2, resp.Focused)
 
+	agentd.WaitForBackgroundForTest() // tiling is dispatched in the background
 	calls, specs, opts := tr.snapshot()
 	require.Equal(t, 1, calls, "tiling dispatched exactly once for a bulk focus")
 	require.Len(t, specs, 2)
@@ -122,6 +123,7 @@ func TestAgentWindows_Focus_SingleWindowNotTiled(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, 1, resp.Focused)
 
+	agentd.WaitForBackgroundForTest() // tiling is dispatched in the background
 	calls, _, _ := tr.snapshot()
 	assert.Equal(t, 0, calls, "a single focused window is never tiled")
 }
@@ -157,6 +159,7 @@ func TestAgentWindows_Focus_NoTileWhenDisabled(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, 2, resp.Focused)
 
+	agentd.WaitForBackgroundForTest() // tiling is dispatched in the background
 	calls, _, _ := tr.snapshot()
 	assert.Equal(t, 0, calls, "tiling must not run when focus.tile is disabled")
 }
@@ -190,6 +193,7 @@ func TestAgentWindows_Unfocus_NeverTiles(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, 2, resp.Detached)
 
+	agentd.WaitForBackgroundForTest() // tiling is dispatched in the background
 	calls, _, _ := tr.snapshot()
 	assert.Equal(t, 0, calls, "unfocus must never trigger the tiling pass")
 }

@@ -168,3 +168,107 @@ func TestTileAgentWindows_GuardsSmallSets(t *testing.T) {
 	TileAgentWindows([]TileSpec{{TmuxSession: "a"}}, TileOptions{})
 	// No panic == pass.
 }
+
+// arrangeRects keeps every window's ORIGINAL size — it only moves them.
+func TestArrangeRects_PreservesSizes(t *testing.T) {
+	sizes := []Size{{300, 200}, {640, 480}, {800, 600}}
+	for _, layout := range []string{config.TileLayoutGrid, config.TileLayoutColumns, config.TileLayoutRows, config.TileLayoutCascade} {
+		rects := arrangeRects(sizes, layout, testArea, 10, 5)
+		if len(rects) != len(sizes) {
+			t.Fatalf("%s: got %d rects", layout, len(rects))
+		}
+		for i := range sizes {
+			if rects[i].W != sizes[i].W || rects[i].H != sizes[i].H {
+				t.Errorf("%s: rect[%d] resized: got %dx%d want %dx%d",
+					layout, i, rects[i].W, rects[i].H, sizes[i].W, sizes[i].H)
+			}
+		}
+	}
+}
+
+// Grid flow-pack lays windows left-to-right and wraps to a new row when
+// the next one won't fit.
+func TestArrangeRects_GridWraps(t *testing.T) {
+	// area width 1000, margin 0, gap 0; three 400-wide windows → 2 per row.
+	sizes := []Size{{400, 100}, {400, 120}, {400, 100}}
+	rects := arrangeRects(sizes, config.TileLayoutGrid, Rect{W: 1000, H: 1000}, 0, 0)
+	if rects[0].X != 0 || rects[1].X != 400 {
+		t.Errorf("first two should share row 0: %+v %+v", rects[0], rects[1])
+	}
+	if rects[2].X != 0 {
+		t.Errorf("third should wrap to x=0: %+v", rects[2])
+	}
+	// Row height is the tallest in row 0 (120), so row 1 starts at y=120.
+	if rects[2].Y != 120 {
+		t.Errorf("third should drop below the tallest row-0 window (120): %+v", rects[2])
+	}
+}
+
+// Columns = one row; Rows = one column — both at current sizes.
+func TestArrangeRects_ColumnsAndRows(t *testing.T) {
+	sizes := []Size{{200, 100}, {300, 150}}
+	cols := arrangeRects(sizes, config.TileLayoutColumns, Rect{W: 2000, H: 2000}, 10, 0)
+	if cols[0].Y != cols[1].Y {
+		t.Errorf("columns share a row: %+v %+v", cols[0], cols[1])
+	}
+	if cols[1].X != 200+10 {
+		t.Errorf("second column offset by first width + gap: %+v", cols[1])
+	}
+	rows := arrangeRects(sizes, config.TileLayoutRows, Rect{W: 2000, H: 2000}, 10, 0)
+	if rows[0].X != rows[1].X {
+		t.Errorf("rows share a column: %+v %+v", rows[0], rows[1])
+	}
+	if rows[1].Y != 100+10 {
+		t.Errorf("second row offset by first height + gap: %+v", rows[1])
+	}
+}
+
+// pickMonitor returns the monitor containing the point; the nearest when
+// none contains it; and ok=false only when there are no monitors.
+func TestPickMonitor(t *testing.T) {
+	left := Rect{X: 0, Y: 0, W: 1920, H: 1080}
+	right := Rect{X: 1920, Y: 0, W: 2560, H: 1440}
+	mons := []Rect{left, right}
+
+	m, ok := pickMonitor(100, 100, mons)
+	if !ok || m != left {
+		t.Errorf("point on left monitor: ok=%v m=%+v", ok, m)
+	}
+	m, ok = pickMonitor(3000, 200, mons)
+	if !ok || m != right {
+		t.Errorf("point on right monitor: ok=%v m=%+v", ok, m)
+	}
+	// A point below both (in neither) picks the nearest by center.
+	m, ok = pickMonitor(200, 5000, mons)
+	if !ok || m != left {
+		t.Errorf("point off both picks nearest (left): ok=%v m=%+v", ok, m)
+	}
+	if _, ok := pickMonitor(0, 0, nil); ok {
+		t.Errorf("no monitors → ok=false")
+	}
+}
+
+// clampTopLeft keeps a window's top-left inside the area without touching
+// its size.
+func TestClampTopLeft(t *testing.T) {
+	area := Rect{X: 0, Y: 0, W: 1000, H: 800}
+	// Off the right/bottom → pulled back inside; size unchanged.
+	got := clampTopLeft(Rect{X: 5000, Y: 5000, W: 400, H: 300}, area)
+	if got.X >= area.W || got.Y >= area.H {
+		t.Errorf("top-left not clamped inside: %+v", got)
+	}
+	if got.W != 400 || got.H != 300 {
+		t.Errorf("size changed by clamp: %+v", got)
+	}
+	// Already inside → unchanged.
+	in := Rect{X: 100, Y: 100, W: 400, H: 300}
+	if clampTopLeft(in, area) != in {
+		t.Errorf("in-bounds rect should be unchanged")
+	}
+	// Negative origin monitor: clamp respects the origin.
+	neg := Rect{X: -1920, Y: 0, W: 1920, H: 1080}
+	g := clampTopLeft(Rect{X: -5000, Y: 0, W: 300, H: 200}, neg)
+	if g.X < neg.X {
+		t.Errorf("clamp ignored negative monitor origin: %+v", g)
+	}
+}

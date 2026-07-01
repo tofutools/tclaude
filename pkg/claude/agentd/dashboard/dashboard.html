@@ -334,9 +334,10 @@
             <option value="cascade">cascade</option>
           </select>
         </label>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-focus-tile-resize" /> resize windows to fill the screen</label>
         <label class="cfg-inline">gap <input type="number" id="cfg-focus-tile-gap" min="0" max="1000" placeholder="8" aria-label="Tiling gap (pixels)" style="width:6em" /> px</label>
         <label class="cfg-inline">margin <input type="number" id="cfg-focus-tile-margin" min="0" max="1000" placeholder="0" aria-label="Tiling margin (pixels)" style="width:6em" /> px</label>
-        <span class="cfg-hint">When on, using the 🪟 windows… modal / command palette to focus <em>more than one</em> agent's window rearranges them into a tidy layout instead of leaving them where the OS dropped them. Best-effort per platform (macOS AppleScript, Linux xdotool/kdotool, WSL PowerShell); an unsupported desktop leaves windows as-is. <strong>Gap</strong> = pixels between tiles; <strong>margin</strong> = inset from the screen edges (raise it to clear a menu bar / panel). A single focused window is never tiled. Off (default).</span>
+        <span class="cfg-hint">When on, using the 🪟 windows… modal / command palette to focus <em>more than one</em> agent's window rearranges them into a tidy layout instead of leaving them where the OS dropped them. All windows are gathered onto <em>one</em> monitor — the one the first window is on — so a multi-monitor setup isn't scattered. By default windows keep their <em>current size</em> and are only repositioned; tick <strong>resize windows to fill the screen</strong> for the older screen-filling grid. Best-effort per platform (macOS AppleScript, Linux xdotool/kdotool, WSL PowerShell); an unsupported desktop leaves windows as-is. <strong>Gap</strong> = pixels between tiles; <strong>margin</strong> = inset from the screen edges. A single focused window is never tiled. Off (default).</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Pre-compact guard</span>
