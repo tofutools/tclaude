@@ -4439,11 +4439,51 @@ body.wizard .wizard-pill {
 body.wizard .wizard-pill[data-status="working"],
 body.wizard .wizard-pill[data-status="main_agent_idle"] {
   border-color: #a97bd6;
+  position: relative;
   animation: wizard-channel 1.8s ease-in-out infinite;
 }
 @keyframes wizard-channel {
   0%, 100% { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 5px rgba(169, 123, 214, 0.4); }
   50%      { box-shadow: inset 0 0 6px rgba(0,0,0,0.5), 0 0 12px rgba(169, 123, 214, 0.85); }
+}
+/* A bright mote of arcane light that orbits the pill's rim while a familiar
+   channels — the extra "it's ALIVE" cue layered over the box-shadow pulse so
+   the active state reads at a glance. A conic gradient (mostly transparent,
+   one bright comet-tail arc) fills the pseudo-element's border-box; the
+   two-layer mask punches out the interior so only the 1px rim paints, and
+   animating --wizard-orbit-angle sweeps the arc around the border. The pill's
+   static purple border shows through the transparent stretch, so the mote
+   reads as a spark circling the ring. --wizard-orbit-angle is a registered
+   custom property so the conic angle can be interpolated (a bare custom prop
+   would jump, not animate). */
+@property --wizard-orbit-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+body.wizard .wizard-pill[data-status="working"]::before,
+body.wizard .wizard-pill[data-status="main_agent_idle"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--wizard-orbit-angle),
+      transparent 0deg,
+      transparent 260deg,
+      rgba(231, 217, 245, 0.35) 312deg,
+      #f3e6c0 344deg,
+      #fffbe8 356deg,
+      transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: wizard-orbit 2.4s linear infinite;
+  pointer-events: none;
+}
+@keyframes wizard-orbit {
+  to { --wizard-orbit-angle: 360deg; }
 }
 body.wizard .wizard-pill[data-status="idle"] {
   border-color: #6ee7b7;
@@ -6194,6 +6234,8 @@ body.wizard #config-diff-modal .modal-buttons button.primary:hover {
   body.wizard #slop-marquee-track { animation: none; }
   body.wizard .wizard-pill[data-status="working"],
   body.wizard .wizard-pill[data-status="main_agent_idle"],
+  body.wizard .wizard-pill[data-status="working"]::before,
+  body.wizard .wizard-pill[data-status="main_agent_idle"]::before,
   body.wizard .wizard-pill[data-status="idle"],
   body.wizard .wizard-pill[data-status="awaiting_permission"],
   body.wizard .wizard-pill[data-status="awaiting_input"],
