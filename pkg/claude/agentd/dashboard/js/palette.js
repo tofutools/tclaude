@@ -54,6 +54,16 @@ import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv
 
 const MODAL_ID = 'command-palette-modal';
 
+// Wizard-mode copy — the placeholder + empty-state line get an arcane
+// re-flavour when body.wizard is set (the palette becomes "The Spellbook").
+// The placeholder can't be swapped in pure CSS (it's an attribute, not
+// content), so openPalette sets it per-theme on each open; the regular text
+// is captured from the HTML at bind time so the two never drift.
+const WIZARD_PLACEHOLDER =
+  'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
+const WIZARD_EMPTY = 'No such incantation in this tome';
+let defaultPlaceholder = '';
+
 // Module state for the current open. commands is the full list built at
 // open time; filtered is the current query's subset; selected indexes
 // into filtered. Cached element refs are filled in bindCommandPalette.
@@ -533,7 +543,8 @@ function render(q) {
   if (selected >= filtered.length) selected = filtered.length - 1;
   if (selected < 0) selected = 0;
   if (!filtered.length) {
-    list.innerHTML = '<div class="palette-empty">No matching commands</div>';
+    const empty = isWizardActive() ? WIZARD_EMPTY : 'No matching commands';
+    list.innerHTML = `<div class="palette-empty">${esc(empty)}</div>`;
     input.removeAttribute('aria-activedescendant');
     return;
   }
@@ -586,12 +597,23 @@ function runSelected() {
 
 // -- Open / close ------------------------------------------------------
 
+// applyThemeCopy re-flavours the JS-driven text (the input placeholder) for
+// the live theme — the wizard "Spellbook" prompt vs. the captured regular
+// one. Called on each open AND on a mid-open theme flip (the CSS chrome
+// swaps instantly via body.wizard, so the JS copy must follow to match).
+function applyThemeCopy() {
+  input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder;
+}
+
 function openPalette() {
   // Remember where focus was so closePalette can return it.
   lastFocus = document.activeElement;
   commands = buildCommands();
   selected = 0;
   input.value = '';
+  // Re-flavour the prompt per the live theme — wizard mode may have been
+  // toggled since the last open, so pick fresh each time.
+  applyThemeCopy();
   overlay.classList.add('show');
   render('');
   // Focus after the show so the box is laid out; select-all is moot on
@@ -619,6 +641,10 @@ export function bindCommandPalette() {
   // Defensive: if the markup ever goes missing, do nothing rather than
   // throw and break the rest of boot.
   if (!overlay || !input || !list) return;
+
+  // Capture the HTML's placeholder as the regular-theme prompt so the
+  // wizard swap in openPalette can restore it without duplicating the copy.
+  defaultPlaceholder = input.getAttribute('placeholder') || '';
 
   // Global trigger. e.key is layout-stable for a plain letter; lower-
   // case both so Shift+Ctrl+K (some setups) still matches. e.repeat is
@@ -666,6 +692,17 @@ export function bindCommandPalette() {
   // Backdrop click closes (a click on the box itself does not).
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closePalette();
+  });
+
+  // Theme flipped WHILE the palette is open (the +W hotkey fires even with
+  // focus in the search box). The CSS re-skin — the Spellbook title, the
+  // arcane chrome — swaps instantly on the body.wizard class, so re-apply the
+  // JS-driven copy (placeholder + the empty-state line via a re-render) so it
+  // doesn't lag a theme behind. slop.js dispatches tclaude:wizard per toggle.
+  document.addEventListener('tclaude:wizard', () => {
+    if (!isOpen()) return;
+    applyThemeCopy();
+    render(input.value);
   });
 
   // The header 🔍 button is the discoverable entry point for anyone who

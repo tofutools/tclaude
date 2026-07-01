@@ -2211,6 +2211,11 @@
      re-render from yanking focus out of the search box. -->
 <div class="modal-overlay palette-overlay" id="command-palette-modal">
   <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+    <!-- Wizard-mode identity: the palette becomes "The Spellbook". Hidden by
+         default (CSS display:none), shown only under body.wizard — purely
+         decorative flair, so aria-hidden keeps it out of the a11y tree (the
+         dialog's aria-label already names it). -->
+    <div class="palette-title" aria-hidden="true">📖 The Spellbook</div>
     <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
            role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
            placeholder="Type a command…  (hide all windows · focus an agent · go to a tab · spawn…)" />

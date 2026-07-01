@@ -302,6 +302,63 @@ func TestDashboardCSS_WizardSpawnModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardCommandPalette pins the wizard re-skin of the
+// Ctrl/⌘-K command palette ("📖 The Spellbook"): the wizard-only title bar,
+// the arcane CSS surface, the launcher-glyph swap, and the JS-driven
+// placeholder / empty-state copy. Purely front-end like the rest of the
+// wizard theme, so we string-search the embedded source rather than running
+// the JS.
+func TestDashboardHTML_WizardCommandPalette(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The title bar: present in the HTML, hidden by default, revealed +
+	// styled only under body.wizard. "The Spellbook" is the palette's
+	// wizard-mode name, the sibling of "The Wizard's Tower" page title.
+	must(`<div class="palette-title" aria-hidden="true">📖 The Spellbook</div>`,
+		"the wizard-mode Spellbook title bar exists in the palette markup")
+	must(".palette-title { display: none; }", "the title is hidden outside wizard mode")
+	must("body.wizard #command-palette-modal .palette-title",
+		"wizard mode reveals + styles the Spellbook title")
+
+	// The whole palette is re-skinned arcane, scoped to the palette overlay.
+	must("body.wizard #command-palette-modal .palette-box",
+		"the palette surface is re-skinned in wizard mode")
+
+	// The header 🔍 launcher becomes a 📖 spellbook via the ::before glyph
+	// swap (the same technique the Summon / Banish levers use).
+	must("body.wizard #command-palette-btn", "the launcher button is re-skinned in wizard mode")
+	must(`content: "📖";`, "the launcher shows a spellbook glyph in wizard mode")
+
+	// The placeholder + empty-state copy are wizard-flavoured by palette.js
+	// (attribute/text can't be swapped in CSS), gated on isWizardActive().
+	must("const WIZARD_PLACEHOLDER", "palette.js defines the wizard placeholder copy")
+	must("const WIZARD_EMPTY", "palette.js defines the wizard empty-state copy")
+	must("input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder",
+		"the palette swaps the placeholder per theme on open")
+	must("isWizardActive() ? WIZARD_EMPTY", "the no-match line is wizard-flavoured")
+	// The theme copy is centralised so a theme flip WHILE the palette is open
+	// (the +W hotkey fires with focus in the box) re-applies it — the CSS
+	// chrome swaps instantly, so the JS copy must follow rather than lag a
+	// theme behind until the next open.
+	must("function applyThemeCopy(", "the palette centralises the theme-flavoured copy")
+}
+
+// TestDashboardCSS_WizardCommandPaletteScoped guards that the wizard palette
+// re-skin stays scoped to #command-palette-modal — an unscoped
+// `body.wizard .palette-box { … }` is the kind of leak the sibling
+// spawn/retire guards catch, so pin the intent here too even though
+// .palette-box is currently palette-unique.
+func TestDashboardCSS_WizardCommandPaletteScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .palette-box {") {
+		t.Error("wizard palette re-skin is unscoped — should be scoped to #command-palette-modal")
+	}
+}
+
 // TestDashboardCSS_WizardPillHideScopedToStateCell mirrors the slop guard:
 // the wizard pill replaces the plain state pill ONLY in the agent-row state
 // cell (render.js), so the hide rule MUST be scoped there — an unscoped
