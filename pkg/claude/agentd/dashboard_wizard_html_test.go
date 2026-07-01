@@ -55,6 +55,15 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("bindWizardMarquee();", "dashboard.js installs the wizard marquee")
 	must("bindWizardSpectacle();", "dashboard.js installs the wizard spectacle (Meteor Swarm)")
 
+	// The marquee shows a short random sample per scroll pass, not the whole
+	// quote pool joined into one wall of text: the pool + the per-pass sampler
+	// exist, and the re-roll happens at the scroll-loop boundary
+	// (animationiteration) so quotes never shuffle mid-scroll.
+	must("const TICKER_QUOTES = [", "wizard-fx.js carries the ticker quote pool")
+	must("const TICKER_QUOTES_PER_PASS", "the marquee samples a fixed few quotes per pass")
+	must("function rollTickerQuotes()", "the per-pass sampler exists")
+	must("rollTickerQuotes();\n    updateMarqueeText(text);", "the sample re-rolls at the scroll-loop boundary / theme flip, then repaints")
+
 	// The +W hotkey identity: physical W key (layout-independent), Shift+Alt,
 	// and either Ctrl or Cmd — the wizard twin of the +S slop hotkey. Pin each
 	// clause so a refactor can't quietly widen the accident surface.

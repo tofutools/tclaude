@@ -192,21 +192,93 @@ export function bindWizardStatusWatch() {
 // Reuses the shared #slop-marquee node (CSS shows it in wizard mode too).
 // slop-fx.js's marquee writer gates on isSlopActive() and this one on
 // isWizardActive(); the two themes are mutually exclusive, so only the active
-// theme ever writes — no contention on the shared node. Lines are joined with
-// ✦ so one CSS scroll animation does the work; we rewrite on each snapshot
-// (refresh.js dispatches `tclaude:snapshot`) and at scroll-loop boundaries.
+// theme ever writes — no contention on the shared node.
+//
+// Each scroll pass shows the live familiar-count line plus a small random
+// sample from TICKER_QUOTES, joined with ✦ — short enough to actually read
+// before it slides off (the old design joined the whole pool into one wall of
+// text). The sample is re-rolled ONLY at scroll-loop boundaries
+// (animationiteration) and on a theme flip into wizard mode; snapshot ticks
+// (refresh.js dispatches `tclaude:snapshot`) re-render the same sample so a
+// live count change can land without shuffling the quotes mid-scroll.
+
+// The quote pool the ticker samples from — short, arcane, and sarcastic; one
+// gag per line so a pass reads at a glance. Add freely: a bigger pool just
+// means more variety, no pass gets longer.
+const TICKER_QUOTES = [
+  '🎲 Rolling for initiative…',
+  '📜 The dice gods demand a rebase',
+  '⚗️ A wild segfault appears — it was super effective',
+  '🔮 +2 to your saving throw vs. merge conflicts',
+  '🍺 The Tavern radio never closes',
+  '🗡️ Choose wisely: some spells cannot be un-cast',
+  '🧙 A wizard is never late — his CI is',
+  '🐉 Here be dragons (see: legacy code)',
+  '📖 The spellbook is just Stack Overflow with a leather cover',
+  '🧪 Do not taste the potions in prod',
+  '⚔️ Roll a d20 to approve this PR',
+  '🔥 Fireball fixes most problems. Not this one.',
+  '🏰 The dungeon is fully containerized',
+  '👻 A ghost process haunts port 8080',
+  '🦉 The owl delivers your scrolls at 2am',
+  '🗝️ The key was in .env the whole time',
+  '🍄 You found a mushroom. It does nothing.',
+  '📜 Scroll of Undo: single use only',
+  '🐸 The familiar got turned into a frog. Still passes CI.',
+  '🎩 Pulling a hotfix out of the hat',
+  '🕸️ The crypt has excellent Wi-Fi',
+  '⚗️ Alchemy is just chemistry without unit tests',
+  '🗡️ Critical hit! The bug takes 2d6 damage',
+  '🎲 The DM says your deploy succeeds. Roll anyway.',
+  '🔮 The crystal ball shows… another meeting',
+  '🧟 The zombie process shambles on',
+  '🐲 Feed the dragon or it eats your RAM',
+  '🪶 Quill and parchment, but make it Markdown',
+  '🌋 The volcano accepts YAML sacrifices',
+  '🏹 You have 99 arrows. The bug needs 100.',
+  '🧹 The broom sweeps the cache at midnight',
+  '📿 Chanting "works on my machine" grants no protection',
+  '🕯️ Rubber duck of True Seeing equipped',
+  '🗿 The golem compiles… slowly',
+  '⛲ Mana potion = coffee. This is canon.',
+  '🃏 The jester rewrote the tests to always pass',
+  '🧭 A maze of twisty little passages, all alike',
+  '🪙 A copper piece for your stand-up update',
+  '🐺 Werewolves only attack during full-moon deploys',
+  '🏺 Ancient artifact detected: jQuery',
+  '✨ Sparkles are 90% of wizardry',
+  '📚 RTFM: Read The Forbidden Manuscript',
+  '🧊 Frozen dependencies keep the lich fresh',
+  '🚪 That settings dialog might be a mimic',
+  '⚖️ Lawful neutral: obeys the linter without question',
+  '🦴 The skeleton crew ships on weekends',
+  '🌀 Teleportation is just SSH with extra steps',
+  '👑 The lich king demands 2FA',
+];
+
+// How many quotes ride along with the count line each pass. Two keeps a pass
+// readable in one 18 s scroll; the pool above provides the variety.
+const TICKER_QUOTES_PER_PASS = 2;
+let currentTickerQuotes = [];
+
+// rollTickerQuotes re-samples the per-pass selection — distinct picks so a
+// pass never repeats itself.
+function rollTickerQuotes() {
+  const pool = TICKER_QUOTES.slice();
+  const picks = [];
+  for (let i = 0; i < TICKER_QUOTES_PER_PASS && pool.length; i++) {
+    picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  currentTickerQuotes = picks;
+}
 
 function tickerLines() {
   const snap = lastSnapshot || {};
   const onlineCount = (snap.agents || []).filter(a => a.online).length;
+  if (!currentTickerQuotes.length) rollTickerQuotes();
   return [
     `🧙 ${onlineCount} familiar${onlineCount === 1 ? '' : 's'} channeling the arcane`,
-    '🎲 Rolling for initiative…',
-    '📜 The dice gods demand a rebase',
-    '⚗️ A wild segfault appears — it was super effective',
-    '🔮 +2 to your saving throw vs. merge conflicts',
-    '🍺 The Tavern radio never closes',
-    '🗡️ Choose wisely: some spells cannot be un-cast',
+    ...currentTickerQuotes,
   ];
 }
 
@@ -230,18 +302,26 @@ export function bindWizardMarquee() {
   // count reads 0 for one poll round-trip, then the snapshot event corrects
   // it — the same trade slop-fx makes.
   if (isWizardActive()) updateMarqueeText(text);
+  // Snapshot ticks re-render the CURRENT sample (live count refresh) — no
+  // re-roll, so the quotes never shuffle mid-scroll.
   document.addEventListener('tclaude:snapshot', () => {
     if (!isWizardActive()) return;
     updateMarqueeText(text);
   });
+  // Scroll-loop boundary: the one visually-quiet moment to swap quotes.
   track.addEventListener('animationiteration', () => {
     if (!isWizardActive()) return;
+    rollTickerQuotes();
     updateMarqueeText(text);
   });
   // A theme flip into wizard mode should repaint immediately rather than wait
   // for the next snapshot — slop.js dispatches tclaude:wizard on every toggle.
+  // Fresh roll too, so re-entering the theme doesn't replay the last pass.
   document.addEventListener('tclaude:wizard', (e) => {
-    if (e.detail && e.detail.active) updateMarqueeText(text);
+    if (e.detail && e.detail.active) {
+      rollTickerQuotes();
+      updateMarqueeText(text);
+    }
   });
 }
 
