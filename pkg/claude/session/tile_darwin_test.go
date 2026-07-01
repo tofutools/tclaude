@@ -3,6 +3,7 @@
 package session
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,30 @@ func TestBuildMacReadBoundsScript(t *testing.T) {
 	}
 	if s := buildMacReadBoundsScript("kitty", "/dev/ttys005"); s != "" {
 		t.Errorf("unsupported terminal → empty read script, got %q", s)
+	}
+}
+
+// Regression: the emit fragment must evaluate to TEXT ("L, T, R, B").
+// AppleScript's & with an integer left operand builds a LIST instead,
+// which osascript prints as "L, , , T, …" — parseMacDesktopBounds then
+// rejects it, every window fails its bounds read, and the tiling pass
+// silently no-ops. Execute the real fragment through osascript with a
+// stubbed window record and assert the round-trip through the parser.
+func TestMacReadBoundsEmit_YieldsParseableText(t *testing.T) {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		t.Skip("osascript not available")
+	}
+	script := "set w to {bounds:{100, 200, 900, 800}}\n" + macReadBoundsEmit
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if err != nil {
+		t.Fatalf("osascript failed: %v (output %q)", err, out)
+	}
+	r, ok := parseMacDesktopBounds(string(out))
+	if !ok {
+		t.Fatalf("emit output %q did not parse — the fragment must yield text, not a list", strings.TrimSpace(string(out)))
+	}
+	if r != (Rect{X: 100, Y: 200, W: 800, H: 600}) {
+		t.Errorf("parsed rect: %+v", r)
 	}
 }
 

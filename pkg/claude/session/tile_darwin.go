@@ -224,13 +224,22 @@ func macReadWindowBounds(termApp, tty string) (Rect, bool) {
 	return parseMacDesktopBounds(string(out))
 }
 
+// macReadBoundsEmit is the fragment that returns a matched window's
+// bounds as the "L, T, R, B" line parseMacDesktopBounds expects. The
+// leading "" is load-bearing: AppleScript's & with an integer LEFT
+// operand builds a LIST (which osascript prints as "L, , , T, …" —
+// unparseable, so every window fails the bounds read and tiling
+// silently no-ops); a text left operand makes the whole chain string
+// concatenation.
+const macReadBoundsEmit = `set b to bounds of w
+				return ("" & ((item 1 of b) as integer) & ", " & ((item 2 of b) as integer) & ", " & ((item 3 of b) as integer) & ", " & ((item 4 of b) as integer))`
+
 // buildMacReadBoundsScript returns the AppleScript that reads the bounds
 // of the window owning `tty` in `termApp` as "L, T, R, B". Mirrors
 // buildMacTileScript's tty-matching structure. Pure/unit-testable.
 func buildMacReadBoundsScript(termApp, tty string) string {
 	ttyLit := strconv.Quote(tty)
-	const emit = `set b to bounds of w
-				return ((item 1 of b) as integer) & ", " & ((item 2 of b) as integer) & ", " & ((item 3 of b) as integer) & ", " & ((item 4 of b) as integer)`
+	const emit = macReadBoundsEmit // local alias keeps the Sprintf bodies short
 	switch termApp {
 	case "Terminal":
 		return fmt.Sprintf(`tell application "Terminal"
