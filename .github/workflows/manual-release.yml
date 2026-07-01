@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -55,7 +55,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-latest]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -76,7 +76,7 @@ jobs:
       new_version: ${{ steps.version.outputs.new_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -127,7 +127,7 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -161,7 +161,7 @@ jobs:
     needs: [test, lint, version, build]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
