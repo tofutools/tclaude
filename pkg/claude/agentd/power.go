@@ -401,8 +401,12 @@ func runPowerOn(targets []string) []powerAgentOutcome {
 			// Raced — the agent came online between collection and now.
 			out.Outcome = powerOnAlreadyOnline
 		default:
-			// "error" — the resume spawn failed. ("skipped:no_conv_id"
-			// can't reach here: offlineConvIDs already drops empty ids.)
+			// "error" — the resume spawn failed — or "error:missing_cwd", the
+			// agent's recorded launch dir was deleted (Detail carries the path).
+			// A bulk power-on can't recreate dirs interactively, so it surfaces
+			// the failure; the human recreates via `agent resume --recreate-dir`
+			// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
+			// here: offlineConvIDs already drops empty ids.)
 			out.Outcome = powerOnFailed
 			out.Detail = res.Detail
 			if out.Detail == "" {

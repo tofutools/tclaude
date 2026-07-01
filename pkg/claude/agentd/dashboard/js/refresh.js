@@ -3712,10 +3712,18 @@ export async function openCleanupModal(opts) {
 // resumeAgentReq POSTs the resume endpoint, toasts the per-conv
 // outcome, and refreshes on success. Driven by the offline status-dot
 // click. Returns true on success.
-async function resumeAgentReq(conv, label) {
+//
+// When the agent's recorded launch directory was deleted, the daemon
+// answers {action: "error:missing_cwd", detail: <path>} instead of
+// spawning a child that would wedge at startup. We pop a confirm and, on
+// OK, retry with ?recreate=1 so the daemon recreates the dir empty first —
+// the recreate opt-in is never automatic. The internal `recreate` flag is
+// set only on that second call.
+async function resumeAgentReq(conv, label, recreate) {
   let r;
+  const q = recreate ? '?recreate=1' : '';
   try {
-    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume`, {
+    r = await fetch(`/api/agents/${encodeURIComponent(conv)}/resume${q}`, {
       method: 'POST', credentials: 'same-origin',
     });
   } catch (e) {
@@ -3728,13 +3736,25 @@ async function resumeAgentReq(conv, label) {
   }
   // Surface the daemon's per-conv result so an "already-online" no-op
   // shows up distinctly from a real wake. The body is JSON shaped
-  // like {action: "resumed" | "skipped:already_online" | ...}.
-  try {
-    const out = await r.json();
-    toast(`wake ${label}: ${out.action || 'ok'}`);
-  } catch (_) {
-    toast(`wake ${label}: ok`);
+  // like {action: "resumed" | "skipped:already_online" | "error:missing_cwd" | ...}.
+  let out = {};
+  try { out = await r.json(); } catch (_) { /* non-JSON body: treat as bare ok */ }
+  if (out.action === 'error:missing_cwd') {
+    const dir = out.detail || 'the launch directory';
+    const confirmed = await confirmModal({
+      title: 'Launch directory missing',
+      body: `${label}'s launch directory no longer exists, so it can't start. `
+        + `Recreate it empty so the agent can wake up?`,
+      meta: dir,
+      okLabel: 'Recreate & wake',
+    });
+    if (!confirmed) {
+      toast(`wake ${label}: cancelled — launch dir missing`);
+      return false;
+    }
+    return resumeAgentReq(conv, label, true);
   }
+  toast(`wake ${label}: ${out.action || 'ok'}`);
   refresh();
   return true;
 }

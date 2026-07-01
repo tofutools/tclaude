@@ -131,7 +131,16 @@ func NewCCSim(t *testing.T, home, cwd string) *CCSim {
 func NewCCSimWithID(t *testing.T, home, convID, cwd string) *CCSim {
 	t.Helper()
 	if cwd == "" {
-		cwd = "/tmp/tclaude-sim-cwd"
+		// Default to a real, home-rooted working dir (home is a t.TempDir, so
+		// it's writable and auto-cleaned) and create it. A real spawned/resumed
+		// session always has an existing cwd, and the resume path now refuses to
+		// relaunch into a vanished one (error:missing_cwd) — so the sim's default
+		// must exist. Only the default is created: an explicit cwd is left
+		// untouched, so the sim never litters arbitrary absolute paths (e.g.
+		// /tmp/...) on disk. A test that needs its explicit cwd to exist passes a
+		// real one (t.TempDir() / f.World.HomeDir).
+		cwd = filepath.Join(home, "sim-cwd")
+		_ = os.MkdirAll(cwd, 0o755)
 	}
 	projectDir := filepath.Join(home, ".claude", "projects", convops.PathToProjectDir(cwd))
 	cc := &CCSim{

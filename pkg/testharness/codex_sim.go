@@ -135,7 +135,11 @@ func NewCodexSim(t *testing.T, home, cwd string) *CodexSim {
 func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 	t.Helper()
 	if cwd == "" {
-		cwd = "/tmp/tclaude-sim-cwd"
+		// See NewCCSimWithID: create only the home-rooted default so a
+		// live/resumable session's cwd exists for the resume guard, without
+		// littering arbitrary explicit paths on disk.
+		cwd = filepath.Join(home, "sim-cwd")
+		_ = os.MkdirAll(cwd, 0o755)
 	}
 	created := time.Now()
 	cx := &CodexSim{

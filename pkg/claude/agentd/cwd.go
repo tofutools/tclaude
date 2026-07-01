@@ -65,6 +65,38 @@ func resolveSpawnCwd(raw string) (string, error) {
 	return abs, nil
 }
 
+// launchDirMissing classifies a resolved launch directory for the resume
+// path, where the recorded cwd may have been deleted since the agent last
+// ran (a worktree pruned, a scratch dir cleaned up). Unlike resolveSpawnCwd
+// — which rejects a missing dir outright — resume needs to distinguish the
+// recoverable "dir was deleted" case from a real access error so it can
+// offer to recreate the empty dir rather than spawn a child that wedges at
+// startup with no clear error.
+//
+//   - a blank cwd (the daemon's default, always present) is never "missing";
+//   - a path that does not exist yields missing=true, err=nil — the caller
+//     may recreate it empty and continue;
+//   - a stat error other than not-exist (e.g. a permission failure), or a
+//     path that exists but is not a directory, yields err != nil — those are
+//     not the empty-recreate case and the caller should surface them rather
+//     than silently mkdir over them.
+func launchDirMissing(cwd string) (missing bool, err error) {
+	if strings.TrimSpace(cwd) == "" {
+		return false, nil
+	}
+	info, statErr := os.Stat(cwd)
+	if statErr == nil {
+		if !info.IsDir() {
+			return false, fmt.Errorf("launch path is not a directory: %s", cwd)
+		}
+		return false, nil
+	}
+	if os.IsNotExist(statErr) {
+		return true, nil
+	}
+	return false, fmt.Errorf("cannot access launch directory %s: %v", cwd, statErr)
+}
+
 // resolveGroupDefaultCwd validates a working directory being stored as
 // a group's default spawn dir. Unlike resolveSpawnCwd it does NOT
 // require the directory to exist — a default may legitimately be set

@@ -323,7 +323,23 @@ func resolveConvLaunchMetadata(convID string) (cwd, effort, model, harnessName s
 	return "", "", "", "", false
 }
 
+// resumeOneConv resumes convID without recreating a deleted launch dir:
+// a resume into a vanished cwd surfaces as `error:missing_cwd` (Detail =
+// the path) so the caller can decide whether to recreate it. Thin wrapper
+// over resumeOneConvRecreate — the default for the bulk groups.resume /
+// power-on loops, which must not silently recreate directories en masse.
 func resumeOneConv(convID string) memberOpResult {
+	return resumeOneConvRecreate(convID, false)
+}
+
+// resumeOneConvRecreate is resumeOneConv with an explicit opt-in for the
+// deleted-launch-dir case. When recreateMissingDir is true and the recorded
+// cwd no longer exists, it recreates that directory empty before relaunching
+// — the "recreate the local dir so the agent can start" path the dashboard's
+// wake button and `tclaude agent resume --recreate-dir` drive after the human
+// confirms. When false, a missing cwd short-circuits to `error:missing_cwd`
+// instead of spawning a child that would wedge at startup.
+func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResult {
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
@@ -346,6 +362,32 @@ func resumeOneConv(convID string) memberOpResult {
 		res.Action = "error"
 		res.Detail = "no resumable session metadata for this agent (no sessions row, conversation index row, or harness-native conversation); delete/recreate the orphaned agent or restore it from a real conversation"
 		return res
+	}
+	// The recorded launch dir may have been deleted since the agent last ran.
+	// Spawning `session new -r` into a non-existent cwd leaves the child
+	// wedged at startup with no clear error, so detect it here. Without an
+	// explicit recreate opt-in, report `error:missing_cwd` (Detail = the path)
+	// so the caller can offer to recreate the dir empty; with the opt-in,
+	// MkdirAll the empty dir and continue so the agent can start.
+	missingCwd, dirErr := launchDirMissing(cwd)
+	if dirErr != nil {
+		res.Action = "error"
+		res.Detail = dirErr.Error()
+		return res
+	}
+	if missingCwd {
+		if !recreateMissingDir {
+			res.Action = "error:missing_cwd"
+			res.Detail = cwd
+			return res
+		}
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			res.Action = "error"
+			res.Detail = "failed to recreate launch directory " + cwd + ": " + err.Error()
+			return res
+		}
+		slog.Info("resume: recreated missing launch directory before relaunch",
+			"conv", short8(convID), "cwd", cwd)
 	}
 	// Re-arm Remote Access if the conv's own persisted best-known state was on
 	// (JOH-261). Read BEFORE relaunch: resume keeps the conv-id but mints a NEW
@@ -960,7 +1002,12 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	if !ok {
 		return
 	}
-	res := resumeOneConv(targetConv)
+	// ?recreate=1 opts into recreating a deleted launch dir empty before the
+	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
+	// Absent it, a vanished cwd comes back as `error:missing_cwd` so the caller
+	// can decide.
+	recreate := r.URL.Query().Get("recreate") == "1"
+	res := resumeOneConvRecreate(targetConv, recreate)
 	resp := map[string]any{
 		"conv_id": res.ConvID,
 		"action":  res.Action,

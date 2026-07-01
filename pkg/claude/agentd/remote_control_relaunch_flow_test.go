@@ -130,7 +130,7 @@ func TestResume_ArmedCarriesRemoteControl(t *testing.T) {
 	const conv = "eeeeeeee-eeee-4eee-8eee-eeeeeeeee261"
 	const label = "spwn-rc-rsme"
 	const tmux = "tclaude-" + label
-	f.HaveAliveSession(conv, label, tmux, "/tmp/work")
+	f.HaveAliveSession(conv, label, tmux, f.World.HomeDir)
 	armSource(t, label)
 	f.MarkOffline(tmux)
 
@@ -157,7 +157,7 @@ func TestResume_UnarmedCarriesNothing(t *testing.T) {
 	const conv = "ffffffff-ffff-4fff-8fff-fffffffff261"
 	const label = "spwn-rc-rsme-un"
 	const tmux = "tclaude-" + label
-	f.HaveAliveSession(conv, label, tmux, "/tmp/work")
+	f.HaveAliveSession(conv, label, tmux, f.World.HomeDir)
 	f.MarkOffline(tmux)
 
 	r := f.AsHuman().Resume(conv)
