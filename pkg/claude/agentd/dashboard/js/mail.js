@@ -638,8 +638,8 @@ function setShowPrevGens(on) {
 }
 
 function mailboxLabel(mb) {
-  if (mb.kind === 'all') return 'All agent messages';
-  if (mb.kind === 'human') return 'Human notifications';
+  if (mb.kind === 'all') return wz('All agent messages', 'All ravens');
+  if (mb.kind === 'human') return wz('Human notifications', 'The Archmage');
   if (mb.kind === 'group') return mb.title || '(group)';
   // A nameless agent folder leads with its stable agt_ handle (shortAgentId),
   // falling back to the short conv-id prefix only when no agent_id is known.
@@ -766,7 +766,7 @@ function paintSidebar() {
 
   let html = pinned.map(mb => mailboxRowHTML(mb)).join('');
   if (groups.length) {
-    html += '<div class="mailbox-section">Groups</div>';
+    html += `<div class="mailbox-section">${wz('Groups', 'Parties')}</div>`;
     for (const g of groups) {
       html += mailboxRowHTML(g);
       if (!isGroupExpanded(g.title)) continue;
@@ -802,14 +802,14 @@ function paintSidebar() {
     // narrowing the mailbox filter, whose handler only repaints the sidebar.
     const expanded = filtering || isAgentsExpanded() || mail.selectedBoxes.size > 0;
     if (filtering) {
-      html += '<div class="mailbox-section">All agent mailboxes</div>';
+      html += `<div class="mailbox-section">${wz('All agent mailboxes', 'The Rookery')}</div>`;
     } else {
       // Collapsed hides every per-agent unread badge, so roll them up onto the
       // header — otherwise unread agent mail would silently vanish behind the
       // fold. Expanded needs no rollup: each row shows its own badge.
       const unread = expanded ? 0 : agents.reduce((n, mb) => n + (mb.unread || 0), 0);
       const unreadBadge = unread ? ` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : '';
-      html += `<button type="button" class="mailbox-section mailbox-section-toggle${unread ? ' has-unread' : ''}" data-act="mailbox-toggle-agents-section" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse the agent list' : 'Expand the agent list'}"><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span> All agent mailboxes (${agents.length})${unreadBadge}</button>`;
+      html += `<button type="button" class="mailbox-section mailbox-section-toggle${unread ? ' has-unread' : ''}" data-act="mailbox-toggle-agents-section" aria-expanded="${expanded ? 'true' : 'false'}" title="${expanded ? 'Collapse the agent list' : 'Expand the agent list'}"><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span> ${wz('All agent mailboxes', 'The Rookery')} (${agents.length})${unreadBadge}</button>`;
     }
     if (expanded) {
       html += '<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>';
@@ -884,6 +884,49 @@ function msgPreview(m) {
   return firstNonBlank || '(no subject)';
 }
 
+// msgKind classifies a message into one of the wizard-theme "scroll kinds",
+// which style the list row + reader per correspondence type. Purely cosmetic
+// and theme-agnostic: the data-kind is emitted in EVERY theme, and only the
+// body.wizard CSS reacts to it (regular / slop modes ignore it), matching how
+// the rest of the wizard re-skin is a pure CSS opt-in over unchanged markup.
+//   decree       — the operator/Archmage channel (the Human folder). Regal
+//                  arcane slab; the human's word reads as a royal decree.
+//   proclamation — a multicast addressed to many. A weathered broadsheet.
+//   reply        — a threaded reply (carries a parent). A continued scroll.
+//   raven        — the default 1:1 agent-to-agent missive. Plain parchment.
+// Precedence: decree > proclamation > reply > raven. Decree is folder-scoped
+// (the whole Human folder) rather than per-message, so a human notification
+// surfacing in the "all" firehose reads as a raven there — an accepted, minor
+// simplification that avoids brittle per-message operator detection.
+function msgKind(m) {
+  if (mail.selected === HUMAN_ID) return 'decree';
+  if ((m.to_recipients || []).length > 1) return 'proclamation';
+  if (m.parent_id) return 'reply';
+  return 'raven';
+}
+
+// wz picks wizard-voice copy when the 🧙 theme is on, else the plain string.
+// The mail panes are repainted on every tclaude:wizard flip (see initMail), so
+// the copy tracks the live theme without a data refresh.
+function wz(plain, wizardly) {
+  return document.body.classList.contains('wizard') ? wizardly : plain;
+}
+
+// applyMailThemeText swaps the two mail-filter placeholders to match the live
+// theme. The empty-state + reader strings are chosen at paint time via wz();
+// these placeholders live on static inputs that are never rebuilt, so they're
+// set imperatively here (called from initMail + on every tclaude:wizard flip).
+function applyMailThemeText() {
+  const box = $('#filter-mailboxes');
+  if (box) box.placeholder = wz('Filter mailboxes (name / id)', 'Seek a familiar…');
+  const msg = $('#filter-messages');
+  if (msg) {
+    msg.placeholder = wz(
+      'Filter messages (sender / recipient / subject / body)',
+      'Search the scrolls…');
+  }
+}
+
 // filteredMessages is the set of messages currently in view — with
 // server-side search + pagination that is exactly the current page
 // (mail.messages). Shared by the list paint, the bulk bar, and select-all
@@ -912,8 +955,8 @@ function paintList() {
 
   if (!filtered.length) {
     el.innerHTML = totalUnfiltered
-      ? '<div class="empty">No messages match the filter.</div>'
-      : '<div class="empty">This mailbox is empty.</div>';
+      ? `<div class="empty">${wz('No messages match the filter.', 'No scrolls match your seeking.')}</div>`
+      : `<div class="empty">${wz('This mailbox is empty.', 'This roost holds no scrolls.')}</div>`;
     return;
   }
   // Both the "all" firehose and a group folder are aggregates with no
@@ -958,7 +1001,9 @@ function paintList() {
       head = `${arrow}${partyHTML}`;
     }
     const grp = m.group ? `<span class="mail-row-group">${esc(m.group)}</span>` : '';
-    return `<div class="mail-row-wrap">
+    // data-kind drives the wizard-theme per-scroll styling (msgKind); it is
+    // emitted in every theme and only body.wizard CSS reads it.
+    return `<div class="mail-row-wrap" data-kind="${msgKind(m)}">
       <input type="checkbox" class="mail-msg-check" data-id="${m.id}"${checked} title="Select message" />
       <button class="mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}"
         data-act="mail-open" data-id="${m.id}">
@@ -1084,9 +1129,13 @@ function paintReader() {
   if (!el) return;
   const m = mail.messages.find(x => x.id === mail.selectedMsgId);
   if (!m) {
-    el.innerHTML = '<div class="empty">Select a message to read.</div>';
+    el.removeAttribute('data-kind');
+    el.innerHTML = `<div class="empty">${wz('Select a message to read.', 'Unfurl a scroll to read it.')}</div>`;
     return;
   }
+  // Tag the reader with the open message's kind so the wizard theme can pick
+  // its surface (parchment scroll / arcane decree slab / broadsheet).
+  el.dataset.kind = msgKind(m);
   const when = m.created_at ? new Date(m.created_at).toLocaleString() : '';
   // From / To lead with the stable agent_id (name + agt_xxxxxxxx), with the
   // full "agent_id / conv-id" pair on hover — the same handle the roster/audit
@@ -1630,6 +1679,16 @@ function initMail() {
   // the freshly-set class.
   $$('nav button[data-tab="messages"]').forEach(b =>
     b.addEventListener('click', renderMailTab));
+
+  // Seed the theme-aware placeholder copy, and re-apply it (plus repaint the
+  // panes so the empty-state / reader copy + per-kind scroll styling refresh)
+  // whenever the 🧙 wizard theme flips. slop.js dispatches tclaude:wizard on
+  // every toggle; paintMail repaints from cache (no server round-trip).
+  applyMailThemeText();
+  document.addEventListener('tclaude:wizard', () => {
+    applyMailThemeText();
+    paintMail();
+  });
 }
 
 export { renderMailTab, initMail, onMailSearchChanged, openMailbox };
