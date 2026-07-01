@@ -24,34 +24,65 @@ import (
 // need. Other terminals (Alacritty, kitty, Warp, …) have no bounds API we
 // can drive by tty, so their windows are left in place (best-effort, logged).
 
+// macTileTarget is one spec resolved to a scriptable window.
+type macTileTarget struct {
+	tty string
+	app string // "Terminal" | "iTerm2"
+}
+
 // platformTileWindows arranges the focused Terminal/iTerm windows into
-// the configured layout. Best-effort: a missing screen size, an
-// untrackable tty, or an unscriptable terminal each skip that window with
-// a debug log rather than erroring.
+// the configured layout. It resolves each spec to a scriptable window
+// FIRST and sizes the grid to the windows that actually exist — so an
+// agent with no attached client (e.g. focus.raise_only left it
+// windowless, or the terminal isn't scriptable) drops out and doesn't
+// leave a hole or shrink the rest. If fewer than two real windows remain,
+// nothing is tiled (a lone window is left alone, not maximised).
+// Best-effort throughout: a missing screen size or a failed set-bounds
+// logs at debug rather than erroring.
 func platformTileWindows(specs []TileSpec, opts TileOptions) {
 	area, ok := macScreenArea()
 	if !ok {
 		slog.Debug("tiling: could not read desktop bounds; leaving windows as-is", "module", "tile")
 		return
 	}
-	rects := tileRects(len(specs), opts.Layout, area, opts.Gap, opts.Margin)
-	for i, spec := range specs {
+	targets := make([]macTileTarget, 0, len(specs))
+	for _, spec := range specs {
 		tty := getTmuxClientTTY(spec.TmuxSession)
 		if tty == "" {
 			slog.Debug("tiling: no attached client tty; skipping", "tmux", spec.TmuxSession, "module", "tile")
 			continue
 		}
 		termApp := terminalFromTTY(tty)
-		script := buildMacTileScript(termApp, tty, rects[i])
-		if script == "" {
+		if !macTileScriptable(termApp) {
 			slog.Debug("tiling: terminal has no scriptable bounds; skipping",
 				"tmux", spec.TmuxSession, "app", termApp, "module", "tile")
 			continue
 		}
+		targets = append(targets, macTileTarget{tty: tty, app: termApp})
+	}
+	if len(targets) < 2 {
+		slog.Debug("tiling: fewer than two scriptable windows; leaving as-is",
+			"resolved", len(targets), "module", "tile")
+		return
+	}
+	rects := tileRects(len(targets), opts.Layout, area, opts.Gap, opts.Margin)
+	for i, tg := range targets {
+		script := buildMacTileScript(tg.app, tg.tty, rects[i])
+		if script == "" {
+			continue // pre-filtered by macTileScriptable; defensive
+		}
 		if err := exec.Command("osascript", "-e", script).Run(); err != nil {
-			slog.Debug("tiling: osascript set-bounds failed", "tmux", spec.TmuxSession, "err", err, "module", "tile")
+			slog.Debug("tiling: osascript set-bounds failed", "tty", tg.tty, "err", err, "module", "tile")
 		}
 	}
+}
+
+// macTileScriptable reports whether buildMacTileScript can drive termApp
+// — the two apps that script a window's bounds by tty without the
+// Accessibility permission. Keeps the resolve-phase filter and the
+// script switch in agreement.
+func macTileScriptable(termApp string) bool {
+	return termApp == "Terminal" || termApp == "iTerm2"
 }
 
 // macScreenArea reads the primary desktop's pixel bounds via Finder,

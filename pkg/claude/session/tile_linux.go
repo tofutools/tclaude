@@ -39,7 +39,12 @@ func platformTileWindows(specs []TileSpec, opts TileOptions) {
 }
 
 // tileNativeLinuxWindows arranges the focused windows on a native X11 /
-// KDE-Wayland session via xdotool/kdotool.
+// KDE-Wayland session via xdotool/kdotool. It resolves each spec to a
+// window id FIRST and sizes the grid to the windows that actually exist —
+// so an agent with no attached client (e.g. focus.raise_only left it
+// windowless) or an unresolvable window drops out and doesn't leave a
+// hole or shrink the rest. Fewer than two real windows → nothing is tiled
+// (a lone window is left alone, not maximised).
 func tileNativeLinuxWindows(specs []TileSpec, opts TileOptions) {
 	tool := resolveLinuxFocusTool()
 	if tool == "" {
@@ -51,8 +56,8 @@ func tileNativeLinuxWindows(specs []TileSpec, opts TileOptions) {
 		slog.Debug("tiling: could not read screen geometry; leaving windows as-is", "module", "tile")
 		return
 	}
-	rects := tileRects(len(specs), opts.Layout, area, opts.Gap, opts.Margin)
-	for i, spec := range specs {
+	windowIDs := make([]string, 0, len(specs))
+	for _, spec := range specs {
 		tty := linuxTmuxClientTTY(spec.TmuxSession)
 		if tty == "" {
 			slog.Debug("tiling: no attached client tty; skipping", "tmux", spec.TmuxSession, "module", "tile")
@@ -63,7 +68,16 @@ func tileNativeLinuxWindows(specs []TileSpec, opts TileOptions) {
 			slog.Debug("tiling: no window found for tty; skipping", "tmux", spec.TmuxSession, "tty", tty, "module", "tile")
 			continue
 		}
-		placeLinuxWindow(tool, windowID, rects[i])
+		windowIDs = append(windowIDs, windowID)
+	}
+	if len(windowIDs) < 2 {
+		slog.Debug("tiling: fewer than two resolvable windows; leaving as-is",
+			"resolved", len(windowIDs), "module", "tile")
+		return
+	}
+	rects := tileRects(len(windowIDs), opts.Layout, area, opts.Gap, opts.Margin)
+	for i, id := range windowIDs {
+		placeLinuxWindow(tool, id, rects[i])
 	}
 }
 
@@ -180,6 +194,14 @@ func parseXrandrCurrent(out string) (Rect, bool) {
 // "tclaude:<id>" pattern (the same pattern focusWindowByTitlePattern
 // matches). One PowerShell invocation for the whole set — start-up cost
 // dominates, so batching matters.
+//
+// Unlike the native path, window resolution happens inside PowerShell, so
+// the grid is sized to the candidate spec count rather than to windows
+// that actually exist. A pattern with no matching window is simply
+// skipped (its cell goes unused). This is best-effort: in the uncommon
+// combination of focus.raise_only + focus.tile where some agents are
+// windowless, the windows that DO exist are placed into the larger grid
+// rather than re-packed. The caller already gates on len(specs) >= 2.
 func tileWSLWindows(specs []TileSpec, opts TileOptions) {
 	psPath := findPowerShell()
 	if psPath == "" {

@@ -656,11 +656,13 @@ function assembleConfig() {
   const fc = (cfg.focus && typeof cfg.focus === 'object') ? cfg.focus : {};
   if ($('#cfg-focus-raiseonly').checked) fc.raise_only = true; else delete fc.raise_only;
 
-  // focus.tile sub-block. Clone the existing one so a future sub-field
-  // round-trips, then set only the form-owned keys. Each key is dropped
-  // at its default (layout=grid, blank gap/margin) so an untouched form
-  // leaves the block genuinely absent rather than marshalling a spurious
-  // diff. gap/margin honour an explicit 0 (flush) vs blank (default).
+  // focus.tile sub-block. Reuse the existing block object (a reference, so
+  // a future sub-field with no widget round-trips untouched — same pattern
+  // as fc / log_rotation above), then set only the form-owned keys. Each
+  // key is dropped at its default (layout=grid, blank gap/margin) so an
+  // untouched form leaves the block genuinely absent rather than
+  // marshalling a spurious diff. gap/margin honour an explicit 0 (flush)
+  // vs blank (default).
   const tc = (fc.tile && typeof fc.tile === 'object') ? fc.tile : {};
   if ($('#cfg-focus-tile').checked) tc.enabled = true; else delete tc.enabled;
   const tileLayout = $('#cfg-focus-tile-layout').value;
