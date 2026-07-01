@@ -85,16 +85,20 @@ type logFilter struct {
 	from, to time.Time
 	hasFrom  bool
 	hasTo    bool
+	hideRaw  bool // drop non-JSON (raw) lines entirely
 }
 
 // match reports whether an entry passes the filter.
 //
-// Level: entries with no parseable level (raw / non-JSON lines) are kept
-// regardless of the level filter — their severity is unknown and hiding
-// them would silently lose content. Time: entries with no parseable
-// timestamp are likewise kept even when a range is set (raw lines are
-// rare and dropping them would mislead).
+// Raw (non-JSON) lines — legacy pre-cutover text records, panics, stray
+// stdout writes — are KEPT by default and pass the level/time filters
+// (they have no parseable level or timestamp to compare against), so a
+// crash dump is never silently hidden. The operator can opt into dropping
+// them with hideRaw when the transition noise gets in the way.
 func (f logFilter) match(e logEntryView) bool {
+	if e.Raw != "" {
+		return !f.hideRaw && (f.search == "" || strings.Contains(logEntryHaystack(e), f.search))
+	}
 	if f.hasLevel && e.Level != "" {
 		if common.ParseLogLevel(e.Level) < f.minLevel {
 			return false
@@ -375,6 +379,7 @@ func handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeRotated := q.Get("include_rotated") == "1" || q.Get("include_rotated") == "true"
+	filter.hideRaw = q.Get("hide_raw") == "1" || q.Get("hide_raw") == "true"
 
 	page := max(atoiOr(q.Get("page"), 1), 1)
 	pageSize := atoiOr(q.Get("page_size"), defaultLogPageSize)

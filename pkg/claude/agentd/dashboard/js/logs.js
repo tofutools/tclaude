@@ -169,6 +169,7 @@ async function loadLogs() {
   const rangeMs = Number($('#logs-range')?.value || 0);
   if (rangeMs > 0) params.set('from', String(Date.now() - rangeMs));
   if ($('#logs-rotated')?.checked) params.set('include_rotated', '1');
+  if ($('#logs-hide-raw')?.checked) params.set('hide_raw', '1');
 
   try {
     const r = await fetch('/api/logs?' + params.toString(), { credentials: 'same-origin' });
@@ -241,7 +242,7 @@ function bindLogsTab() {
       reloadFromFirstPage();
     });
   }
-  ['#logs-level', '#logs-range', '#logs-rotated'].forEach(sel => {
+  ['#logs-level', '#logs-range', '#logs-rotated', '#logs-hide-raw'].forEach(sel => {
     const el = $(sel);
     if (el) el.addEventListener('change', reloadFromFirstPage);
   });

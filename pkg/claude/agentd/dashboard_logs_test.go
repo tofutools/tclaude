@@ -100,6 +100,34 @@ func TestBuildLogsResponse_LevelMinFilter(t *testing.T) {
 	}
 }
 
+func TestBuildLogsResponse_HideRaw(t *testing.T) {
+	path := writeLog(t,
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "structured"),
+		"a bare non-json line",
+		"time=2026-07-01T12:00:02Z level=INFO msg=legacy-text-format",
+	)
+	// Default: raw lines are kept.
+	kept := buildLogsResponse(path, false, logFilter{}, "all", 1, 100)
+	if kept.Total != 3 {
+		t.Fatalf("default Total = %d, want 3 (raw kept)", kept.Total)
+	}
+	// hideRaw: only the structured JSON line survives.
+	hidden := buildLogsResponse(path, false, logFilter{hideRaw: true}, "all", 1, 100)
+	if hidden.Total != 1 || hidden.Entries[0].Msg != "structured" {
+		t.Fatalf("hideRaw should leave only the JSON line, got %+v", msgs(hidden.Entries))
+	}
+	// TotalUnfiltered still counts every line read, filter or not.
+	if hidden.TotalUnfiltered != 3 {
+		t.Fatalf("TotalUnfiltered = %d, want 3", hidden.TotalUnfiltered)
+	}
+	// hideRaw + search still matches raw content that is NOT hidden... i.e.
+	// hideRaw wins: a raw line is dropped even if it matches the search.
+	both := buildLogsResponse(path, false, logFilter{hideRaw: true, search: "legacy-text"}, "all", 1, 100)
+	if both.Total != 0 {
+		t.Fatalf("hideRaw must drop raw lines even when they match search, got %+v", msgs(both.Entries))
+	}
+}
+
 func TestBuildLogsResponse_Search(t *testing.T) {
 	path := writeLog(t,
 		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "spawning agent", "conv", "deadbeef"),

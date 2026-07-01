@@ -26,6 +26,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 	must(`id="logs-level"`, "the minimum-level filter select")
 	must(`id="logs-range"`, "the time-range (since) filter select")
 	must(`id="logs-rotated"`, "the include-rotated-files toggle")
+	must(`id="logs-hide-raw"`, "the hide-raw (non-JSON) toggle")
 	must(`id="logs-refresh"`, "the manual refresh button")
 	must(`id="logs-stream"`, "the streaming (tail-follow) toggle")
 	must(`id="logs-pager"`, "the pagination footer mount")
@@ -38,6 +39,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 	// Server-side search / filter / pagination wiring.
 	must("page_size", "logs.js sends the page size to the server")
 	must("include_rotated", "logs.js sends the rotated-files flag")
+	must("hide_raw", "logs.js sends the hide-raw flag")
 	must("logs-page-next", "the pager's next-page control")
 	must("reloadFromFirstPage", "a filter change resets to page 1")
 	must("STREAM_MS", "logs.js has a tail-follow poll interval")

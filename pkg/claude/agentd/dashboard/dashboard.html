@@ -804,6 +804,7 @@
         </select>
       </label>
       <label class="filter-toggle" title="Also scan rotated log files (output.log.1, .2, …) for older history"><input type="checkbox" id="logs-rotated" /> <span>rotated</span></label>
+      <label class="filter-toggle" title="Hide non-JSON lines (legacy text-format records, panics, stray writes). Off by default so nothing is lost."><input type="checkbox" id="logs-hide-raw" /> <span>hide raw</span></label>
       <button class="tool" id="logs-refresh" title="Reload the log now">⟳ refresh</button>
       <label class="filter-toggle" title="Auto-refresh the newest entries every couple of seconds (live tail). Off by default."><input type="checkbox" id="logs-stream" /> <span>stream</span></label>
       <span class="spacer"></span>
