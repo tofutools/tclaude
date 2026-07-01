@@ -588,12 +588,22 @@ function sandboxBadge(m) {
 // app/phone. There is no "off" indicator — off is the silent default.
 // Best-known: the harness has no readback, so this reflects the last
 // recorded intent and reconciles on the next refresh.
+//
+// The glyph is also a click affordance: it carries data-act="web-open-window"
+// with the same conv/agent/label the ⚙-menu "web window" button uses, so
+// clicking it opens the agent's live session (its Claude Code TUI) in a
+// browser terminal — the natural "reach this reachable agent now" action.
+// It is a clickable <span> (no <button>) to match the .cwd-link precedent and
+// stay inline in the harness line; the delegated row-actions router dispatches
+// any [data-act] element, so the span routes identically to the menu button.
 function remoteControlBadge(m) {
   const on = !!(m && m.state && m.state.remote_control);
   if (!on) return '';
+  const label = m.title || m.conv_id;
   const tip = 'Remote Access is ON — this agent is reachable from the Claude app/phone. '
+    + 'Click to open its live session (Claude Code TUI) in a web terminal. '
     + 'Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
-  return `<span class="remote-badge" title="${esc(tip)}">📱</span>`;
+  return `<span class="remote-badge" data-act="web-open-window" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="${esc(tip)}">📱</span>`;
 }
 
 // statusPillClass mirrors session/list.go's getStatusColorFunc so
