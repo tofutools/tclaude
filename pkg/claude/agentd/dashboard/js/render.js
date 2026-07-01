@@ -15,7 +15,7 @@ import {
   RETIRED_COLS, RETIRED_ACCESSORS, CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
-import { groupActivityHTML, activitySummary, styledBotsHTML, wizardBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
+import { groupActivityHTML, activitySummary, styledBotsHTML, styledWizardBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
 import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
@@ -463,14 +463,14 @@ function remoteControlPolicyMenuItem(g) {
 
 // activityStyles reads the per-mode activity-bot styles from the snapshot
 // (config dashboard.activity_bots). Falls back to the Go-side defaults
-// (regular emoji, slop sprites) when the flag is absent — a pre-flag
-// daemon, or the moment before the first snapshot lands. The wizard row is a
-// single fantasy-glyph re-skin (no emoji/sprites choice) with no config knob
-// today, so it defaults ON — the 🧙 theme always gets its own bots; the
-// `ab.wizard` read is just a forward-compatible hook for a future on/off.
+// (regular + wizard emoji, slop sprites) when the flag is absent — a pre-flag
+// daemon, or the moment before the first snapshot lands. The wizard row
+// defaults to its fantasy-glyph re-skin ('emoji'); config
+// dashboard.activity_bots.wizard = 'sprites' opts into the pixel spellcasters
+// instead (or 'off' hides it), mirroring the regular/slop style choice.
 function activityStyles() {
   const ab = (lastSnapshot && lastSnapshot.activity_bots) || {};
-  return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites', wizard: ab.wizard || 'wizard' };
+  return { regular: ab.regular || 'emoji', slop: ab.slop || 'sprites', wizard: ab.wizard || 'emoji' };
 }
 
 // groupActivityChip builds the tri-mode bot row for a group <summary>
@@ -989,7 +989,7 @@ function renderGlobalActivity() {
     inner ? `<span class="${cls} level-${s.level}">${inner}</span>` : '';
   const reg = wrap('ga-regular', styledBotsHTML(s, st.regular));
   const slop = wrap('ga-slop', styledBotsHTML(s, st.slop));
-  const wiz = wrap('ga-wizard', (st.wizard && st.wizard !== 'off') ? wizardBotsHTML(s) : '');
+  const wiz = wrap('ga-wizard', (st.wizard && st.wizard !== 'off') ? styledWizardBotsHTML(s, st.wizard) : '');
   if (!reg && !slop && !wiz) { el.innerHTML = ''; el.removeAttribute('title'); return; }
   // Per-source breakdown for the tooltip — skip sources that are only
   // offline so the list highlights what's actually live.

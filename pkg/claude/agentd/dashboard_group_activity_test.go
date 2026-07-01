@@ -24,6 +24,8 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"export function memberVariant(",
 		"export function spriteBotsHTML(",
 		"export function wizardBotsHTML(",
+		"export function wizardSpriteBotsHTML(", // wizard pixel-sprite opt-in row
+		"export function styledWizardBotsHTML(", // wizard glyph/sprite/off switchboard
 		"export function styledBotsHTML(",
 		"export function aggregateActivity(",
 		// render.js — wired into the group summary and the global slot.
@@ -45,9 +47,14 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		".actbot-sprite",
 		"@keyframes spr-dance",
 		"url(sprites/dance_0.png)", // sprite frames referenced
+		// Wizard pixel-sprite opt-in: the aspect marker, keyframes + a frame.
+		".actbot-sprite.actbot-wiz.actbot-working",
+		"@keyframes spr-wiz-cast",
+		"url(sprites/wiz_bot.png)",
 		// Config per-mode dropdowns + snapshot flag.
 		`id="cfg-dashboard-activity-bots-regular"`,
 		`id="cfg-dashboard-activity-bots-slop"`,
+		`id="cfg-dashboard-activity-bots-wizard"`,
 		"lastSnapshot.activity_bots", // render reads the snapshot styles
 		"activity_bots",              // assemble/populate in config.js
 	}
@@ -62,14 +69,16 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 // frame the sprite-bot CSS references is actually embedded under
 // dashboard/sprites — a missing PNG would otherwise 404 only in the
 // browser (an invisible bot), never at `go test`. Frame counts match the
-// @keyframes blocks in dashboard.css (dance/asking/error = 9, idle = 4)
-// plus the shared static frame.
+// @keyframes blocks in dashboard.css: the slop robots (dance/asking/error =
+// 9, idle = 4) and the wizard sprites (wiz_cast/ask/error = 9, wiz_idle = 7),
+// plus each set's shared static frame.
 func TestDashboardAssets_SpriteFramesEmbedded(t *testing.T) {
-	want := []string{"sprites/bot.png"}
+	want := []string{"sprites/bot.png", "sprites/wiz_bot.png"}
 	for _, a := range []struct {
 		name string
 		n    int
-	}{{"dance", 9}, {"asking", 9}, {"error", 9}, {"idle", 4}} {
+	}{{"dance", 9}, {"asking", 9}, {"error", 9}, {"idle", 4},
+		{"wiz_cast", 9}, {"wiz_ask", 9}, {"wiz_error", 9}, {"wiz_idle", 7}} {
 		for i := 0; i < a.n; i++ {
 			want = append(want, fmt.Sprintf("sprites/%s_%d.png", a.name, i))
 		}

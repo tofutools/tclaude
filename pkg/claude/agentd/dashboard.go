@@ -602,9 +602,10 @@ type snapshotPayload struct {
 	// ActivityBots mirrors config dashboard.activity_bots — the per-mode
 	// STYLE of the deduped "activity bot" indicator in group headers + the
 	// top bar. Each field is "emoji" | "sprites" | "off"; the front-end
-	// (render.js) emits both a regular-mode and a slop-mode row and CSS
-	// shows the one for the current mode. Defaults: regular emoji, slop
-	// sprites. See ActivityBotsRegular / ActivityBotsSlop.
+	// (render.js) emits a regular-mode, a slop-mode and a wizard-mode row and
+	// CSS shows the one for the current mode. Defaults: regular + wizard emoji
+	// (wizard's opt-in "sprites" resolves to the wizard sheets), slop sprites.
+	// See ActivityBotsRegular / ActivityBotsSlop / ActivityBotsWizard.
 	ActivityBots activityBotsView `json:"activity_bots"`
 	// HScrollFollow mirrors config dashboard.hscroll_follow — whether the
 	// full-bleed chrome bars (header / nav / slop marquee) keep their content
@@ -642,10 +643,12 @@ type snapshotPayload struct {
 // activityBotsView carries the resolved per-mode activity-bot style to the
 // dashboard — each is "emoji" | "sprites" | "off" (config
 // dashboard.activity_bots, defaulted by ActivityBotsRegular /
-// ActivityBotsSlop). The front-end picks Regular vs Slop off body.slop.
+// ActivityBotsSlop / ActivityBotsWizard). The front-end picks Regular vs Slop
+// vs Wizard off body.slop / body.wizard.
 type activityBotsView struct {
 	Regular string `json:"regular"`
 	Slop    string `json:"slop"`
+	Wizard  string `json:"wizard"`
 }
 
 // dashboardRemoteAccess is the snapshot view of the remote-access feature's
@@ -1311,6 +1314,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ActivityBots: activityBotsView{
 			Regular: cfg.ActivityBotsRegular(),
 			Slop:    cfg.ActivityBotsSlop(),
+			Wizard:  cfg.ActivityBotsWizard(),
 		},
 		HScrollFollow:     cfg.HScrollFollow(),
 		GroupQuickOptions: cfg.GroupQuickOptions(),

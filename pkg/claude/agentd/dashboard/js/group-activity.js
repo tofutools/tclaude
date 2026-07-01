@@ -243,6 +243,49 @@ export function wizardBotsHTML(summary) {
   return summary.present.map(v => wizardBotHTML(v, summary.counts[v])).join('');
 }
 
+// === Wizard-theme SPRITE row — the pixel-art opt-in (body.wizard) =========
+//
+// The wizard theme's bots default to the glyph row above, but you can opt into
+// pixellab WIZARD sprites (a grumpy spellcaster) via config
+// dashboard.activity_bots.wizard = "sprites" — mirroring the regular/slop
+// emoji-vs-sprites choice. Same status→pose mapping as the slop robots, driven
+// by the same discrete background-image keyframes (dashboard.css → spr-wiz-* +
+// /static/sprites/wiz_*.png). The wizard sheets have their OWN per-pose
+// dimensions, so the bots carry an .actbot-wiz marker that swaps in wizard
+// aspect-ratios; crashed + offline share the static standing frame (greyed /
+// toppled by CSS). Tooltips speak the same arcane vocabulary as the glyph row.
+const WIZ_SPRITE_ANIM = {
+  working: 'wiz-cast',
+  asking: 'wiz-ask',
+  error: 'wiz-error',
+  idle: 'wiz-idle',
+  crashed: 'wiz-static',
+  offline: 'wiz-static',
+};
+
+function wizardSpriteBotHTML(variant, n) {
+  const anim = WIZ_SPRITE_ANIM[variant] || 'wiz-static';
+  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
+  const tip = variantLabel(variant, n, 'wizard');
+  return `<span class="actbot actbot-sprite actbot-wiz actbot-${variant}" title="${tip}" aria-label="${tip}">`
+    + `<span class="actbot-spr spr-${anim}"></span>${count}</span>`;
+}
+
+// wizardSpriteBotsHTML emits the inner wizard-sprite row for a summary (no wrapper).
+export function wizardSpriteBotsHTML(summary) {
+  if (!summary || !summary.present.length) return '';
+  return summary.present.map(v => wizardSpriteBotHTML(v, summary.counts[v])).join('');
+}
+
+// styledWizardBotsHTML is the wizard-wrapper switchboard: 'off' / empty → '';
+// 'sprites' → the pixel spellcasters; anything else (the 'emoji' default) →
+// the fantasy-glyph row. Lets the wizard theme opt into sprites via config
+// while keeping the glyph row as the zero-config default.
+export function styledWizardBotsHTML(summary, style) {
+  if (!summary || style === 'off' || !summary.present.length) return '';
+  return style === 'sprites' ? wizardSpriteBotsHTML(summary) : wizardBotsHTML(summary);
+}
+
 // styledBotsHTML renders the inner bot row for a summary in one of the
 // three styles. 'off' (or an empty summary) → ''. The single switchboard
 // both render call sites go through, so emoji/sprites stay interchangeable.
@@ -265,11 +308,11 @@ export function styledBotsHTML(summary, style, theme) {
 // (themedSummaryText, from PR #678) for the wizard row. No live-theme arg is
 // needed here — the visible wrapper is always correctly flavoured, even the
 // instant a theme flips, since its title is baked at render time and CSS
-// just reveals it. wizardStyle is on/off (the wizard row has a single visual
-// — its glyphs) with no per-style config knob today; production always
-// passes it on. An absent/'off' value drops the wizard wrapper (so the
-// pre-4th-arg callers keep the old two-wrapper output) and leaves a clean
-// seam if an on/off knob is ever wired up. Returns '' when EVERY mode
+// just reveals it. wizardStyle is a per-mode style —
+// 'emoji'(glyphs, the default) / 'sprites'(pixel wizards) / 'off' — dispatched
+// through styledWizardBotsHTML, mirroring the regular/slop emoji-vs-sprites
+// knob. An absent/'off' value drops the wizard wrapper (so the pre-4th-arg
+// callers keep the old two-wrapper output). Returns '' when EVERY mode
 // resolves to nothing (off / empty group).
 export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle) {
   const s = activitySummary(members);
@@ -284,7 +327,7 @@ export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle)
   // otherwise `wrap` discards both the bots and the title.
   const wizOn = wizardStyle && wizardStyle !== 'off';
   const wiz = wrap('ga-wizard',
-    wizOn ? wizardBotsHTML(s) : '',
+    wizOn ? styledWizardBotsHTML(s, wizardStyle) : '',
     wizOn ? themedSummaryText(s, 'wizard') : '');
   if (!reg && !slop && !wiz) return '';
   return `<span class="group-activity">${reg}${slop}${wiz}</span>`;

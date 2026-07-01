@@ -86,10 +86,11 @@ type Config struct {
 }
 
 // Activity-bot style values — the per-mode choices in ActivityBotsConfig.
-// "emoji" is the lightweight emoji+CSS bot row; "sprites" is the pixel-art
-// robot animation; "off" hides the indicator. An empty / unknown value
-// falls back to the per-mode default (see ActivityBotsRegular /
-// ActivityBotsSlop).
+// "emoji" is the lightweight emoji/glyph+CSS bot row (fantasy glyphs in wizard
+// mode); "sprites" is the pixel-art animation (robots in slop mode,
+// spellcasters in wizard mode); "off" hides the indicator. An empty / unknown
+// value falls back to the per-mode default (see ActivityBotsRegular /
+// ActivityBotsSlop / ActivityBotsWizard).
 const (
 	ActivityBotsEmoji   = "emoji"
 	ActivityBotsSprites = "sprites"
@@ -167,13 +168,15 @@ type DashboardConfig struct {
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
 // so the lightweight emoji bots can ride the plain dashboard while the full
 // pixel-art robots come out for slop ("casino") mode — the defaults — or
-// any other mix, or off entirely. Each field is one of
+// any other mix, or off entirely. Wizard mode defaults to its own fantasy
+// glyphs and can opt into the wizard sprite sheets. Each field is one of
 // ActivityBots{Emoji,Sprites,Off}; empty / unknown falls back to that
 // mode's default. prefers-reduced-motion already drops just the animation
 // (keeping the bots); these are the change-the-style / turn-it-off knobs.
 type ActivityBotsConfig struct {
 	Regular string `json:"regular,omitempty"` // plain dashboard; default emoji
-	Slop    string `json:"slop,omitempty"`    // slop mode; default sprites
+	Slop    string `json:"slop,omitempty"`    // slop mode; default sprites (robots)
+	Wizard  string `json:"wizard,omitempty"`  // wizard mode; default emoji (glyphs); "sprites" = wizards
 }
 
 // ClaudeResumeConfig tunes Claude Code's interactive "Resume from summary"
@@ -700,6 +703,20 @@ func (c *Config) ActivityBotsSlop() string {
 		}
 	}
 	return ActivityBotsSprites
+}
+
+// ActivityBotsWizard reports the activity-bot style for wizard mode — config
+// dashboard.activity_bots.wizard. Default "emoji", which the wizard wrapper
+// renders as its fantasy-glyph row; "sprites" opts into the WIZARD spellcaster
+// sheets instead, and "off" hides it. Absent block/key or an unknown value
+// falls back to the default. Nil-safe on the receiver.
+func (c *Config) ActivityBotsWizard() string {
+	if c != nil && c.Dashboard != nil && c.Dashboard.ActivityBots != nil {
+		if s := normalizeActivityBotsStyle(c.Dashboard.ActivityBots.Wizard); s != "" {
+			return s
+		}
+	}
+	return ActivityBotsEmoji
 }
 
 // ShowPluginsTabAlways reports whether the dashboard should keep the Plugins
