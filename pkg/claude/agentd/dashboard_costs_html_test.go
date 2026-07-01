@@ -8,7 +8,7 @@ import (
 // TestDashboardHTML_TopBarTotalCostWired guards the top bar's cost
 // token: render.js reads usage.total_cost_usd and usage.today_cost_usd
 // off the snapshot and renders "$X.XX (mtd)" — with "$Y.YY (today)"
-// ahead of it when today's spend is a distinct slice — next to or
+// ahead of it whenever anything was spent today — next to or
 // instead of the subscription windows, so an API-billing account sees
 // its spend where "usage: n/a" used to sit. The token links to the
 // Costs tab (costs.js). Pieces span render.js + costs.js + dashboard.css
@@ -30,12 +30,13 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	must("cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢'",
 		"two-decimal dollar format with a sub-cent floor")
 
-	// The today figure is rendered ahead of mtd, and suppressed when it
-	// would duplicate the mtd within a cent (a single-day month).
+	// The today figure is rendered ahead of mtd whenever anything was spent
+	// today — including when it equals mtd (e.g. the first of the month),
+	// so the "(today)" figure never silently vanishes.
 	must("amt(today, 'today')", "today's figure rendered with its own label")
 	must("amt(mtd, 'mtd')", "month-to-date figure rendered with its own label")
-	must("today > 0 && mtd - today >= 0.005",
-		"today suppressed when it equals mtd within a cent")
+	must("if (today > 0) parts.push(amt(today, 'today'))",
+		"today shown whenever anything was spent today, even when it equals mtd")
 
 	// The token links to the Costs tab: render.js tags it, costs.js
 	// delegates the click to the nav button.
