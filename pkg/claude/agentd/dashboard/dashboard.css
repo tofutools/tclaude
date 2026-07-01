@@ -1720,6 +1720,10 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
   box-shadow: 0 12px 40px rgba(0,0,0,0.6);
   display: flex; flex-direction: column; overflow: hidden;
 }
+/* The "📖 The Spellbook" title bar is wizard-mode-only flair — the regular
+   palette has no header (its placeholder + the 🔍 tooltip are enough). Hidden
+   here; the body.wizard block near the wizard theme reveals + styles it. */
+.palette-title { display: none; }
 #palette-input {
   border: none; outline: none; background: transparent;
   color: #d4d4d4; font-size: 16px; padding: 14px 16px;
@@ -4625,6 +4629,83 @@ body.wizard #retire-modal #retire-ok:disabled {
   opacity: 0.7;
 }
 body.wizard #retire-modal #retire-ok:disabled::before { content: none; }
+
+/* ─── Wizard command palette — "📖 The Spellbook" ────────────────────
+   The Ctrl/⌘-K launcher (palette.js) re-skinned arcane, the sibling of the
+   Summon / Banish dialog re-skins above. Same midnight-violet void, mystic-
+   purple frame + glow, tarnished-gold + parchment accents. Every rule is
+   scoped to #command-palette-modal (mirroring the #agent-spawn-modal /
+   #retire-modal scoping) so the re-skin can never leak onto another overlay.
+   The command rows keep a legible parchment-on-violet so the list stays
+   readable — we recolor the chrome, not the data. The wizard-flavoured
+   placeholder + empty-state copy are set by palette.js (attribute/text can't
+   be swapped in CSS); this block owns the paint. */
+
+/* The title bar (hidden by default) reveals in wizard mode: a fantasy-serif
+   "📖 The Spellbook" header, the same treatment as the header h1 / dialog
+   titles, with a tarnished-gold underline separating it from the input. */
+body.wizard #command-palette-modal .palette-title {
+  display: block;
+  padding: 10px 16px;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 16px; letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+  border-bottom: 1px solid #d9b45a;
+}
+
+/* The box surface: midnight-violet void, mystic-purple frame + glow. */
+body.wizard #command-palette-modal .palette-box {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.45), 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* The search field: parchment text on the violet void, violet placeholder,
+   a mystic-purple separator under it. */
+body.wizard #command-palette-modal #palette-input {
+  color: #f3e6c0;
+  border-bottom-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #command-palette-modal #palette-input::placeholder { color: #b39ddb; }
+
+/* Command rows — parchment label, violet icon + hint. */
+body.wizard #command-palette-modal .palette-item { color: #e7d9f5; }
+body.wizard #command-palette-modal .palette-item .palette-ico,
+body.wizard #command-palette-modal .palette-item .palette-hint { color: #b39ddb; }
+
+/* The keyboard-selected row glows mystic-purple instead of the default blue. */
+body.wizard #command-palette-modal .palette-item.selected {
+  background: rgba(122, 93, 176, 0.3);
+  color: #fff;
+  box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.35);
+}
+body.wizard #command-palette-modal .palette-item.selected .palette-ico,
+body.wizard #command-palette-modal .palette-item.selected .palette-hint { color: #e7d9f5; }
+
+/* No-match line + the foot legend go violet; the kbd chips get the
+   tarnished-gold-on-violet treatment the header buttons use. */
+body.wizard #command-palette-modal .palette-empty { color: #b39ddb; }
+body.wizard #command-palette-modal .palette-foot {
+  border-top-color: rgba(122, 93, 176, 0.4);
+  color: #b39ddb;
+}
+body.wizard #command-palette-modal .palette-foot kbd {
+  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+}
+
+/* The header 🔍 launcher becomes a 📖 spellbook in wizard mode — the same
+   font-size:0 + ::before glyph swap the Summon / Banish levers use. Its own
+   ID rule (#command-palette-btn) out-specifies the header-button re-skin, so
+   we re-state the arcane chrome here. */
+body.wizard #command-palette-btn {
+  font-size: 0;
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #command-palette-btn::before {
+  content: "📖"; font-size: 11px;
+}
+body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
 
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each

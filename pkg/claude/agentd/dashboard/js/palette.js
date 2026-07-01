@@ -54,6 +54,16 @@ import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv
 
 const MODAL_ID = 'command-palette-modal';
 
+// Wizard-mode copy — the placeholder + empty-state line get an arcane
+// re-flavour when body.wizard is set (the palette becomes "The Spellbook").
+// The placeholder can't be swapped in pure CSS (it's an attribute, not
+// content), so openPalette sets it per-theme on each open; the regular text
+// is captured from the HTML at bind time so the two never drift.
+const WIZARD_PLACEHOLDER =
+  'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
+const WIZARD_EMPTY = 'No such incantation in this tome';
+let defaultPlaceholder = '';
+
 // Module state for the current open. commands is the full list built at
 // open time; filtered is the current query's subset; selected indexes
 // into filtered. Cached element refs are filled in bindCommandPalette.
@@ -533,7 +543,8 @@ function render(q) {
   if (selected >= filtered.length) selected = filtered.length - 1;
   if (selected < 0) selected = 0;
   if (!filtered.length) {
-    list.innerHTML = '<div class="palette-empty">No matching commands</div>';
+    const empty = isWizardActive() ? WIZARD_EMPTY : 'No matching commands';
+    list.innerHTML = `<div class="palette-empty">${esc(empty)}</div>`;
     input.removeAttribute('aria-activedescendant');
     return;
   }
@@ -592,6 +603,9 @@ function openPalette() {
   commands = buildCommands();
   selected = 0;
   input.value = '';
+  // Re-flavour the prompt per the live theme — wizard mode may have been
+  // toggled since the last open, so pick fresh each time.
+  input.placeholder = isWizardActive() ? WIZARD_PLACEHOLDER : defaultPlaceholder;
   overlay.classList.add('show');
   render('');
   // Focus after the show so the box is laid out; select-all is moot on
@@ -619,6 +633,10 @@ export function bindCommandPalette() {
   // Defensive: if the markup ever goes missing, do nothing rather than
   // throw and break the rest of boot.
   if (!overlay || !input || !list) return;
+
+  // Capture the HTML's placeholder as the regular-theme prompt so the
+  // wizard swap in openPalette can restore it without duplicating the copy.
+  defaultPlaceholder = input.getAttribute('placeholder') || '';
 
   // Global trigger. e.key is layout-stable for a plain letter; lower-
   // case both so Shift+Ctrl+K (some setups) still matches. e.repeat is
