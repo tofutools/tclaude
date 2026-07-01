@@ -25,6 +25,13 @@ import {
 // binders so the body class is in place when CSS-dependent modules first
 // measure the layout. applySlopThemeIfRequested applies whichever of the two
 // the URL carries.
+//
+// KEEP THIS BEFORE THE BOOTSTRAP IIFE'S BINDERS. It dispatches tclaude:wizard
+// synchronously here, so a ?wizard=1 load emits its initial active:true edge
+// *before* bindWizardEnterBanner() installs its listener — which is exactly why
+// a page that merely LOADS in wizard mode doesn't flash the "It's wizard time!"
+// enter banner (see wizard-fx.js). Moving this call into/after the IIFE, or
+// making the dispatch async, would silently start firing that banner on load.
 applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
