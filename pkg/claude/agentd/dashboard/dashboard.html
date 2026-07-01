@@ -1873,7 +1873,10 @@
 </div>
 <div class="modal-overlay" id="agent-spawn-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="agent-spawn-title">
-    <h3 id="agent-spawn-title">Spawn a new agent</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, like the music tab's
+         .tab-label-wizard / the .vegas-intro variants): a plain "Spawn a new
+         agent" normally, an arcane "Summon a new familiar" in 🧙 wizard mode. -->
+    <h3 id="agent-spawn-title"><span class="spawn-title-regular">Spawn a new agent</span><span class="spawn-title-wizard">Summon a new familiar</span></h3>
     <div class="modal-meta" id="agent-spawn-meta" style="display:none"></div>
     <label class="cron-create-row" id="agent-spawn-load-profile-row" title="Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). The group's default profile (or, failing that, the dashboard default) loads automatically when the dialog opens; pick a different one here, or Clear to start from blank. Manage profiles via the Groups cog ⚙ → ⧉ profiles…">
       <span class="cron-create-label">Profile</span>
