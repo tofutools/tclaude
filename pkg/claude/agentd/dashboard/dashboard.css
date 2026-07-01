@@ -4270,7 +4270,7 @@ body.wizard header h1 {
   color: #f3e6c0;
   /* A fantasy-serif stack: Papyrus / Luminari ship on macOS; Palatino and
      the generic serif carry every other platform. No web font to embed. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -4375,7 +4375,7 @@ body.wizard .group-actions button[data-act="power-on-group"],
 body.wizard .group-actions button[data-act="shutdown-group"] {
   border: 1px solid #d9b45a;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
   text-shadow: 0 1px 2px rgba(20, 15, 40, 0.7);
 }
@@ -4587,7 +4587,7 @@ body.wizard .spawn-btn {
   border: 1px solid #d9b45a;
   color: #f3e6c0;
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
 }
 body.wizard .spawn-btn:hover {
@@ -4622,7 +4622,7 @@ body.wizard #agent-spawn-modal .cron-create-modal {
 body.wizard #agent-spawn-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 uses. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -4739,7 +4739,7 @@ body.wizard #retire-modal .modal {
 body.wizard #retire-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -4834,7 +4834,7 @@ body.wizard #group-create-open.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
@@ -4863,7 +4863,7 @@ body.wizard #command-palette-modal .palette-title {
   display: block;
   padding: 10px 16px;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   font-size: 16px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
   border-bottom: 1px solid #d9b45a;
@@ -4944,7 +4944,7 @@ body.wizard #profile-editor-modal .cron-create-modal {
 body.wizard #profile-editor-modal .cron-create-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn title use. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -5056,7 +5056,7 @@ body.wizard #edit-member-modal .modal {
 body.wizard #edit-member-modal .modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / spawn / retire titles use. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -5147,7 +5147,7 @@ body.wizard #profiles-manage-modal .manage-modal {
 body.wizard #profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   /* The same fantasy-serif stack the header h1 / dialog titles use. */
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -5170,7 +5170,7 @@ body.wizard #profiles-manage-modal #profile-create-open.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.5px;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
@@ -5216,7 +5216,7 @@ body.wizard #perm-edit-modal .perm-edit-modal {
 }
 body.wizard #perm-edit-modal .perm-edit-modal h3 {
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
@@ -5354,7 +5354,7 @@ body.wizard #perm-edit-modal #perm-edit-submit:disabled::before { content: "✒ 
   font-weight: 900;
   letter-spacing: 2px;
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   text-shadow:
     0 0 24px rgba(169, 123, 214, 0.9),
     0 0 8px rgba(217, 180, 90, 0.6),
@@ -5541,7 +5541,7 @@ body.wizard .mail-gutter.dragging { background: #a97bd6; }
 body.wizard .mailbox-section,
 body.wizard .mailbox-section-toggle {
   color: #d9b45a;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 0.6px;
   text-shadow: 0 0 6px rgba(217, 180, 90, 0.25);
 }
@@ -5729,7 +5729,7 @@ body.wizard .mail-reader[data-kind="raven"] .mail-subject,
 body.wizard .mail-reader[data-kind="reply"] .mail-subject,
 body.wizard .mail-reader[data-kind="proclamation"] .mail-subject {
   color: #2a1f0e;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   text-shadow: none;
 }
 body.wizard .mail-reader[data-kind="raven"] .mail-reader-head,
@@ -5762,7 +5762,7 @@ body.wizard .mail-reader[data-kind="proclamation"] .mail-state-pending { color: 
 /* Letterhead on the arcane decree slab — parchment-gold text on the void. */
 body.wizard .mail-reader[data-kind="decree"] .mail-subject {
   color: #f3e6c0;
-  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   text-shadow: 0 0 8px rgba(217, 180, 90, 0.5), 0 1px 0 #1e1640;
 }
 body.wizard .mail-reader[data-kind="decree"] .mail-reader-body {
@@ -5853,8 +5853,6 @@ body.wizard .cfg-wizard-title {
   display: block;
   margin: 4px 0 10px;
   color: #f3e6c0;
-  /* Single-word family names unquoted (stylelint font-family-name-quotes);
-     names with spaces stay quoted. */
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   font-size: 22px; letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
@@ -5993,7 +5991,6 @@ body.wizard #config-diff-modal .config-diff-modal {
 }
 body.wizard #config-diff-modal .config-diff-modal h3 {
   color: #f3e6c0;
-  /* Single-word family names unquoted (stylelint); spaced names stay quoted. */
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
