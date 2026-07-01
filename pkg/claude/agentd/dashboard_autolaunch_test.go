@@ -52,7 +52,7 @@ func TestAutoLaunchDashboard_OpensSingleUseTokenURL(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard(false)
+	autoLaunchDashboard("")
 
 	const prefix = base + "/?init_token="
 	if !strings.HasPrefix(opened, prefix) {
@@ -88,7 +88,7 @@ func TestAutoLaunchDashboard_SlopMode(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard(true)
+	autoLaunchDashboard("slop")
 
 	if !strings.HasSuffix(opened, "&slop=1") {
 		t.Fatalf("opened URL %q missing &slop=1 suffix", opened)
@@ -100,6 +100,38 @@ func TestAutoLaunchDashboard_SlopMode(t *testing.T) {
 	tok := strings.TrimSuffix(strings.TrimPrefix(opened, prefix), "&slop=1")
 	if !consumeInitToken(tok, initScopeDashboard) {
 		t.Fatalf("slop-tagged URL carried an invalid init token: %q", tok)
+	}
+}
+
+// TestAutoLaunchDashboard_WizardMode is the wizard twin of _SlopMode:
+// theme "wizard" tags the auto-launched URL with &wizard=1. The init token
+// must still be valid — the theme rides on top of the regular auth flow.
+func TestAutoLaunchDashboard_WizardMode(t *testing.T) {
+	const base = "http://127.0.0.1:54321"
+	prevBase := popupBaseURL
+	popupBaseURL = base
+	t.Cleanup(func() { popupBaseURL = prevBase })
+
+	var opened string
+	prevOpener := dashboardBrowserOpener
+	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
+	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
+
+	autoLaunchDashboard("wizard")
+
+	if !strings.HasSuffix(opened, "&wizard=1") {
+		t.Fatalf("opened URL %q missing &wizard=1 suffix", opened)
+	}
+	if strings.Contains(opened, "slop") {
+		t.Fatalf("wizard launch %q must not carry the slop param", opened)
+	}
+	const prefix = base + "/?init_token="
+	if !strings.HasPrefix(opened, prefix) {
+		t.Fatalf("opened URL %q does not start with %q", opened, prefix)
+	}
+	tok := strings.TrimSuffix(strings.TrimPrefix(opened, prefix), "&wizard=1")
+	if !consumeInitToken(tok, initScopeDashboard) {
+		t.Fatalf("wizard-tagged URL carried an invalid init token: %q", tok)
 	}
 }
 
@@ -116,7 +148,7 @@ func TestAutoLaunchDashboard_NoLoopbackURL(t *testing.T) {
 	dashboardBrowserOpener = func(string) error { called = true; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard(false)
+	autoLaunchDashboard("")
 
 	if called {
 		t.Fatal("autoLaunchDashboard opened a browser with no loopback URL bound")

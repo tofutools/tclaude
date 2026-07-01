@@ -144,10 +144,17 @@ func handleDashboardSlopChannelAPI(w http.ResponseWriter, r *http.Request) {
 // writeSlopChannel returns the resolved current channel plus the catalog
 // the picker renders (id + human label), so the browser need not hardcode
 // either — the allowlist stays single-sourced in config.SlopChannels.
+//
+// `persisted` tells the browser whether `channel` is a deliberate saved
+// choice or just the default fallback: a fresh listener (persisted=false)
+// hears the active theme's default station (the wizard Tavern vs the Vegas
+// lounge), while an explicit pick is honored across both themes. See
+// js/vegas.js loadChannel.
 func writeSlopChannel(w http.ResponseWriter, cfg *config.Config) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"channel":  cfg.ResolvedSlopChannel(),
-		"channels": config.SlopChannels,
+		"channel":   cfg.ResolvedSlopChannel(),
+		"channels":  config.SlopChannels,
+		"persisted": cfg.HasExplicitSlopChannel(),
 	})
 }
 

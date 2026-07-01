@@ -1,0 +1,85 @@
+package agentd
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestDashboardHTML_WizardTheme pins the wizard ("it's wizard time") re-skin's
+// client-side wiring. Like the slop guards it is purely front-end, so we
+// string-search the embedded source (dashboard.html + dashboard.css + every
+// js/*.js) rather than running the JS — a dropped bootstrap call, a renamed
+// export or a refactored hotkey clause would otherwise break the theme
+// silently in the browser.
+func TestDashboardHTML_WizardTheme(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Public surface (slop.js owns the theme machinery, including wizard).
+	must("export function toggleWizard(", "slop.js exports the wizard toggle")
+	must("export function isWizardActive(", "slop.js exports the wizard-active check")
+	must("export function cycleTheme(", "slop.js exports the header-icon cycle")
+	must("export function bindWizardHotkey", "slop.js exports the wizard hotkey binder")
+
+	// URL param → body class, mutually exclusive with slop.
+	must("params.get('wizard') === '1'", "applySlopThemeIfRequested applies ?wizard=1")
+	must("document.body.classList.add('wizard')", "?wizard=1 adds the body.wizard class")
+
+	// The header icon cycles through the three themes rather than a 2-state
+	// toggle — regular → slop → wizard.
+	must("iconSpan.addEventListener('click', cycleTheme)", "the header icon cycles themes")
+
+	// The music features light up in wizard mode too (isVegasActive gates the
+	// radio/HUD): the class must be in the OR.
+	must("classList.contains('wizard')", "isVegasActive includes wizard mode")
+
+	// Bootstrap wiring: dashboard.js must install the hotkey + the FX binders.
+	must("bindWizardHotkey();", "dashboard.js installs the wizard hotkey at bootstrap")
+	must("bindWizardCursorTrail();", "dashboard.js installs the wizard cursor trail")
+	must("bindWizardCastFx();", "dashboard.js installs the wizard cast FX")
+	must("bindWizardStatusWatch();", "dashboard.js installs the wizard status watch")
+	must("bindWizardMarquee();", "dashboard.js installs the wizard marquee")
+	must("bindWizardSpectacle();", "dashboard.js installs the wizard spectacle (Meteor Swarm)")
+
+	// The +W hotkey identity: physical W key (layout-independent), Shift+Alt,
+	// and either Ctrl or Cmd — the wizard twin of the +S slop hotkey. Pin each
+	// clause so a refactor can't quietly widen the accident surface.
+	must("e.code !== 'KeyW'", "matches the physical W key, not layout-dependent e.key")
+	must("toggleWizard();", "the +W hotkey flips wizard mode")
+
+	// The wizard state pill replaces the plain pill in wizard mode: helper
+	// exported + called from render.js alongside the slot machine.
+	must("wizardPill,", "helpers.js exports the wizard pill")
+	must("wizardPill(state, m.online, m.conv_id)", "render.js emits the wizard pill in the state cell")
+
+	// Command palette offers a wizard theme command.
+	must("'Switch to wizard theme'", "the palette offers a wizard theme command")
+	must("run: () => toggleWizard(),", "the wizard palette command runs toggleWizard")
+
+	// CSS re-skin hooks.
+	must("body.wizard {", "dashboard.css carries the wizard re-skin")
+	must("body.wizard nav button[data-tab=\"vegas\"]", "the music tab shows in wizard mode")
+	must(".tab-label-wizard", "the music tab has a wizard label variant")
+	must("body.wizard #slop-marquee", "the marquee shows in wizard mode")
+	must(".wizard-spark", "the wizard cast/trail spark FX are styled")
+	must("body.wizard-shake", "the Meteor Swarm screen shake is styled")
+}
+
+// TestDashboardCSS_WizardPillHideScopedToStateCell mirrors the slop guard:
+// the wizard pill replaces the plain state pill ONLY in the agent-row state
+// cell (render.js), so the hide rule MUST be scoped there — an unscoped
+// `body.wizard .state-pill { display: none }` would blank the Audit Outcome
+// and Plugins pills too.
+func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard .state-cell .state-pill") {
+		t.Error("wizard-mode pill hide is not scoped to .state-cell — would blank other tabs' pills")
+	}
+	// And the plain pill must NOT be hidden unscoped in wizard mode.
+	if strings.Contains(dashboardAssets, "body.wizard .state-pill { display: none") {
+		t.Error("wizard-mode pill hide is unscoped — will blank Audit/Plugins pills")
+	}
+}

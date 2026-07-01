@@ -61,6 +61,11 @@ func TestDashboardLogin_UnauthedServesSignInPage(t *testing.T) {
 	rec = serveLogin(dash, httptest.NewRequest(http.MethodGet, "/?slop=1", nil))
 	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?slop=1"`,
 		"slop theme must thread into the login form action")
+
+	// The 🧙 wizard theme threads through the same way (?wizard=1).
+	rec = serveLogin(dash, httptest.NewRequest(http.MethodGet, "/?wizard=1", nil))
+	assert.Contains(t, rec.Body.String(), `action="/dashboard/login?wizard=1"`,
+		"wizard theme must thread into the login form action")
 }
 
 // Scenario: the operator pastes a valid operator token. The login

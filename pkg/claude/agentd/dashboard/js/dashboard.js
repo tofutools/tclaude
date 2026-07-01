@@ -1,6 +1,10 @@
 import { esc } from './helpers.js';
 import { fmtRemaining } from './tabs.js';
-import { applySlopThemeIfRequested, bindSlopHotkey } from './slop.js';
+import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey } from './slop.js';
+import {
+  bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
+  bindWizardMarquee, bindWizardSpectacle,
+} from './wizard-fx.js';
 import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
   bindSlopCursorTrail, bindSlopMarquee,
@@ -16,10 +20,11 @@ import {
   refresh,
 } from './refresh.js';
 
-// Slop theme — a purely cosmetic re-skin tagged onto the URL with ?slop=1
-// (see `tclaude agent dashboard --slop` / `tclaude agentd serve --slop`).
-// Run before any binders so the body class is in place when CSS-dependent
-// modules first measure the layout.
+// Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
+// exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
+// binders so the body class is in place when CSS-dependent modules first
+// measure the layout. applySlopThemeIfRequested applies whichever of the two
+// the URL carries.
 applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
@@ -154,6 +159,16 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindSlopStatusWatch();
   bindSlopCursorTrail();
   bindSlopMarquee();
+  // Wizard-mode flair — the 🧙 twin of the slop binders. Each installs a
+  // delegated listener (or an interval) once and no-ops while wizard mode is
+  // off (the body.wizard check inside each handler gates the effect), so a
+  // mid-session toggle needs no re-binding.
+  bindWizardHotkey();
+  bindWizardCursorTrail();
+  bindWizardCastFx();
+  bindWizardStatusWatch();
+  bindWizardMarquee();
+  bindWizardSpectacle();
   // Slop-mode extras, all hung off the tclaude:slopfx bus slop-fx emits:
   // synthesized casino sound (default-muted, header toggle), a credits
   // counter + high-rollers leaderboard, and the Konami mega-jackpot / side

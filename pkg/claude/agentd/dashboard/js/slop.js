@@ -21,6 +21,18 @@ const SLOP_REST = 'The slop machine';
 // Drop the leading emoji here; the favicon is enough.
 const SLOP_TITLE = 'The slop machine';
 
+// Wizard theme chrome — the 🧙 "it's wizard time" re-skin, sibling of the
+// slop constants above, tagged onto the URL with ?wizard=1. Same data, same
+// routes; a sarcastic over-the-top DnD paint job. Mutually exclusive with
+// slop (the header icon cycles regular → slop → wizard). The favicon carries
+// the 🧙 so the title, like SLOP_TITLE, doesn't repeat it.
+const WIZARD_FAVICON =
+  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
+  '<text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🧙</text></svg>';
+const WIZARD_EMOJI = '🧙';
+const WIZARD_REST = "The Wizard's Tower";
+const WIZARD_TITLE = "The Wizard's Tower";
+
 // Captured once on first apply so a click can restore the page to its
 // pre-slop state. Reading from the DOM rather than hard-coding the
 // strings keeps slop.js in sync with whatever dashboard.html ships.
@@ -63,19 +75,31 @@ function ensureH1Structure() {
   iconSpan = document.createElement('span');
   iconSpan.className = 'slop-icon';
   iconSpan.textContent = original.emoji;
-  iconSpan.addEventListener('click', toggleSlop);
+  // The header icon cycles regular → slop → wizard → regular. It's the
+  // discoverable easter-egg toggle; a single click steps to the next theme.
+  iconSpan.addEventListener('click', cycleTheme);
   restNode = document.createTextNode(' ' + original.rest);
   h1.appendChild(iconSpan);
   h1.appendChild(restNode);
 }
 
+// currentTheme reads the live cosmetic theme off the body class. slop and
+// wizard are mutually exclusive full re-skins; anything else is 'regular'.
+function currentTheme() {
+  if (document.body.classList.contains('slop')) return 'slop';
+  if (document.body.classList.contains('wizard')) return 'wizard';
+  return 'regular';
+}
+
 function renderState() {
-  const isSlop = document.body.classList.contains('slop');
-  document.title = isSlop ? SLOP_TITLE : original.title;
-  if (iconSpan) iconSpan.textContent = isSlop ? SLOP_EMOJI : original.emoji;
-  if (restNode) restNode.nodeValue = ' ' + (isSlop ? SLOP_REST : original.rest);
+  const theme = currentTheme();
+  const isSlop = theme === 'slop';
+  const isWizard = theme === 'wizard';
+  document.title = isSlop ? SLOP_TITLE : isWizard ? WIZARD_TITLE : original.title;
+  if (iconSpan) iconSpan.textContent = isSlop ? SLOP_EMOJI : isWizard ? WIZARD_EMOJI : original.emoji;
+  if (restNode) restNode.nodeValue = ' ' + (isSlop ? SLOP_REST : isWizard ? WIZARD_REST : original.rest);
   const link = document.querySelector('link[rel="icon"]');
-  if (link) link.setAttribute('href', isSlop ? SLOP_FAVICON : original.favicon);
+  if (link) link.setAttribute('href', isSlop ? SLOP_FAVICON : isWizard ? WIZARD_FAVICON : original.favicon);
   // Broadcast the current slop state so feature modules can react without
   // importing slop.js internals — slop-audio.js listens here to suspend /
   // resume its FX AudioContext. (slop-fx and the marquee don't subscribe;
@@ -83,35 +107,75 @@ function renderState() {
   // Fired on every apply/toggle; listeners that care about edges diff for
   // themselves. One-way, like the `tclaude:snapshot` event refresh.js emits.
   document.dispatchEvent(new CustomEvent('tclaude:slop', { detail: { active: isSlop } }));
+  // The wizard twin — wizard-fx.js listens here to reset its marquee on a
+  // theme flip. Its per-frame visual FX self-gate on body.wizard, same as
+  // slop-fx reads isSlopActive(), so this is just the edge signal.
+  document.dispatchEvent(new CustomEvent('tclaude:wizard', { detail: { active: isWizard } }));
   // The Vegas music features (tab / volume mixer / radio) are live in slop
-  // mode too, so re-sync them whenever slop flips. They read the combined
-  // isVegasActive() state (slop OR the regular-mode opt-in), not this
-  // event's detail — see vegas.js / slop-volume.js.
+  // AND wizard mode, so re-sync them whenever the theme flips. They read the
+  // combined isVegasActive() state (slop OR wizard OR the regular-mode
+  // opt-in), not this event's detail — see vegas.js / slop-volume.js.
   document.dispatchEvent(new CustomEvent('tclaude:vegas', { detail: { active: isVegasActive() } }));
 }
 
-// toggleSlop flips between the regular and slop themes — the same thing
-// the header 🤝/🎰 icon click and the global hotkey do. Exported so the
-// command palette can offer it as a "Switch theme" command.
-export function toggleSlop() {
-  document.body.classList.toggle('slop');
-  renderState();
+// syncThemeParams rewrites the URL query to match the live theme classes:
+// at most one of ?slop=1 / ?wizard=1 (or neither). replaceState (not
+// pushState) so a toggle doesn't litter back-button history; the URL still
+// reflects state so a refresh stays consistent.
+function syncThemeParams() {
   const u = new URL(window.location.href);
-  if (document.body.classList.contains('slop')) {
-    u.searchParams.set('slop', '1');
-  } else {
-    u.searchParams.delete('slop');
-  }
-  // replaceState (not pushState) so the toggle doesn't litter back-button
-  // history; the URL still reflects state so a refresh stays consistent.
+  u.searchParams.delete('slop');
+  u.searchParams.delete('wizard');
+  const theme = currentTheme();
+  if (theme === 'slop') u.searchParams.set('slop', '1');
+  else if (theme === 'wizard') u.searchParams.set('wizard', '1');
   window.history.replaceState({}, '', u.toString());
+}
+
+// toggleSlop flips slop mode on or off — the global hotkey does this too.
+// Enabling it clears wizard (the two re-skins are mutually exclusive).
+// Exported so the command palette can offer it as a "Switch theme" command.
+export function toggleSlop() {
+  const on = !document.body.classList.contains('slop');
+  document.body.classList.toggle('slop', on);
+  if (on) document.body.classList.remove('wizard');
+  renderState();
+  syncThemeParams();
+}
+
+// toggleWizard flips wizard mode on or off — the +W hotkey and a palette
+// command do this. Enabling it clears slop.
+export function toggleWizard() {
+  const on = !document.body.classList.contains('wizard');
+  document.body.classList.toggle('wizard', on);
+  if (on) document.body.classList.remove('slop');
+  renderState();
+  syncThemeParams();
+}
+
+// cycleTheme steps the header icon through the three themes in order:
+// regular → slop → wizard → regular. The one-click discoverable path; the
+// hotkeys and palette commands target a specific theme instead.
+export function cycleTheme() {
+  const theme = currentTheme();
+  document.body.classList.remove('slop', 'wizard');
+  if (theme === 'regular') document.body.classList.add('slop');
+  else if (theme === 'slop') document.body.classList.add('wizard');
+  // wizard → regular leaves both cleared.
+  renderState();
+  syncThemeParams();
 }
 
 export function applySlopThemeIfRequested() {
   ensureH1Structure();
   const params = new URLSearchParams(window.location.search);
+  // slop and wizard are mutually exclusive; slop wins if both are somehow
+  // present so the URL can never paint two re-skins at once.
   if (params.get('slop') === '1') {
     document.body.classList.add('slop');
+    renderState();
+  } else if (params.get('wizard') === '1') {
+    document.body.classList.add('wizard');
     renderState();
   }
 }
@@ -123,6 +187,12 @@ export function isSlopActive() {
   return document.body.classList.contains('slop');
 }
 
+// isWizardActive is the wizard twin of isSlopActive — wizard-fx.js re-checks
+// it on every click/timer so a mid-session toggle needs no re-binding.
+export function isWizardActive() {
+  return document.body.classList.contains('wizard');
+}
+
 // isVegasActive reports whether the Vegas music features — the Vegas tab,
 // the header volume mixer + sound switch, and the lounge radio — should
 // be live. That's true in slop ("casino") mode OR when the regular-mode
@@ -132,6 +202,7 @@ export function isSlopActive() {
 // flair (slop-fx, slot machines, marquee) stays keyed on body.slop alone.
 export function isVegasActive() {
   return document.body.classList.contains('slop') ||
+    document.body.classList.contains('wizard') ||
     document.body.classList.contains('vegas');
 }
 
@@ -174,5 +245,27 @@ export function bindSlopHotkey() {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     toggleSlop();
+  });
+}
+
+// bindWizardHotkey is the wizard twin of bindSlopHotkey — the same three-
+// modifier chord on the physical W key instead of S:
+//
+//   Ctrl + Alt + Shift + W   (Windows / Linux)
+//   ⌘   + ⌥   + Shift + W   (macOS)
+//
+// The same rationale applies (see bindSlopHotkey): three modifiers so it
+// never fires during normal work, e.code so it's layout-independent (⌥W
+// emits '∑' on macOS), e.repeat ignored so a held key doesn't strobe. W is
+// unclaimed with this trio (Ctrl+W closes a tab, but Ctrl+Alt+Shift+W is
+// free), so we take it for wizard mode.
+export function bindWizardHotkey() {
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.code !== 'KeyW') return;
+    if (!e.shiftKey || !e.altKey) return;
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    toggleWizard();
   });
 }

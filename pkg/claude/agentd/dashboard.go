@@ -181,17 +181,17 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			// so the human can re-authenticate in place.
 			renderDashboardLoginPage(w, http.StatusForbidden,
 				"That dashboard link has expired or was already used.",
-				r.URL.Query().Get("slop") == "1")
+				dashboardThemeParamKV(r))
 			return
 		}
 		setDashboardSessionCookie(w)
-		// Preserve the slop param across the redirect — it's purely a
-		// client-side theme switch the dashboard JS reads from the URL,
-		// so it needs to survive the bare-path bounce. Anything else
-		// (init_token included) is intentionally dropped.
+		// Preserve the cosmetic-theme param (?slop=1 / ?wizard=1) across the
+		// redirect — it's purely a client-side theme switch the dashboard JS
+		// reads from the URL, so it needs to survive the bare-path bounce.
+		// Anything else (init_token included) is intentionally dropped.
 		redirectTarget := r.URL.Path
-		if r.URL.Query().Get("slop") == "1" {
-			redirectTarget += "?slop=1"
+		if kv := dashboardThemeParamKV(r); kv != "" {
+			redirectTarget += "?" + kv
 		}
 		http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 		return
@@ -212,7 +212,26 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	// at `tclaude agent dashboard` (the zero-friction, no-secret path)
 	// and also offers an operator-token field so they can sign in from
 	// the browser without switching back to a terminal.
-	renderDashboardLoginPage(w, http.StatusForbidden, "", r.URL.Query().Get("slop") == "1")
+	renderDashboardLoginPage(w, http.StatusForbidden, "", dashboardThemeParamKV(r))
+}
+
+// dashboardThemeParamKV returns the active cosmetic-theme URL param as a
+// "key=value" fragment ("slop=1" / "wizard=1"), or "" when neither is set.
+// It's returned without a leading ? or & so callers join it with whichever
+// separator their URL needs. slop and wizard are mutually exclusive
+// client-side re-skins; slop wins if both are somehow present, matching
+// applySlopThemeIfRequested in slop.js. The result is one of a fixed set of
+// internal constants, never echoed user input, so it is injection-safe to
+// splice into a redirect target or the login form action.
+func dashboardThemeParamKV(r *http.Request) string {
+	q := r.URL.Query()
+	if q.Get("slop") == "1" {
+		return "slop=1"
+	}
+	if q.Get("wizard") == "1" {
+		return "wizard=1"
+	}
+	return ""
 }
 
 // setDashboardSessionCookie writes the long-lived dashboard session
@@ -258,25 +277,25 @@ func handleDashboardLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dashboard token not initialised", http.StatusServiceUnavailable)
 		return
 	}
-	slop := r.URL.Query().Get("slop") == "1"
+	themeKV := dashboardThemeParamKV(r)
 	if !checkLoginOrigin(r) {
 		renderDashboardLoginPage(w, http.StatusForbidden,
-			"Request blocked: it didn't come from the dashboard page.", slop)
+			"Request blocked: it didn't come from the dashboard page.", themeKV)
 		return
 	}
 	if !operatorTokenMatches(r.FormValue("token")) {
 		// Uniform message for "blank", "wrong", and "no token was ever
 		// minted" — never disclose which, and never echo the input back.
 		renderDashboardLoginPage(w, http.StatusForbidden,
-			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).", slop)
+			"That operator token wasn't accepted. Copy it from the agentd startup banner (it begins with `tclo_`).", themeKV)
 		return
 	}
 	setDashboardSessionCookie(w)
 	// 303 to the bare path: a refresh now rides the cookie, and the
 	// posted token never lingers in history or an access log.
 	redirectTarget := "/"
-	if slop {
-		redirectTarget += "?slop=1"
+	if themeKV != "" {
+		redirectTarget += "?" + themeKV
 	}
 	http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 }
@@ -352,8 +371,8 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
-	if r.URL.Query().Get("slop") == "1" {
-		url += "&slop=1"
+	if kv := dashboardThemeParamKV(r); kv != "" {
+		url += "&" + kv
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
@@ -381,22 +400,26 @@ func shouldAutoLaunchDashboard(flagSet bool, cfg *config.Config) bool {
 // dashboard" click: the daemon IS the human side, so no socket round-
 // trip through the human-only /v1/dashboard/open is needed.
 //
-// slop=true tags the URL with ?slop=1 so the dashboard JS swaps in the
-// 🎰 slop machine theme. Purely cosmetic — the data and routes are
-// identical; the param survives the auth redirect (see handleDashboardRoot)
-// so the bare-path URL ends up as /?slop=1 in the address bar.
+// theme ("slop" / "wizard", or "" for none) tags the URL with ?slop=1 /
+// ?wizard=1 so the dashboard JS swaps in the 🎰 slop machine or 🧙 wizard
+// theme. Purely cosmetic — the data and routes are identical; the param
+// survives the auth redirect (see handleDashboardRoot) so the bare-path URL
+// ends up as /?slop=1 (or ?wizard=1) in the address bar.
 //
 // Best-effort — a missing loopback listener or a failed browser launch
 // is logged and otherwise ignored; the daemon keeps running and the
 // human can still run `tclaude agent dashboard`.
-func autoLaunchDashboard(slop bool) {
+func autoLaunchDashboard(theme string) {
 	if popupBaseURL == "" {
 		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
 		return
 	}
 	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
-	if slop {
+	switch theme {
+	case "slop":
 		url += "&slop=1"
+	case "wizard":
+		url += "&wizard=1"
 	}
 	if err := dashboardBrowserOpener(url); err != nil {
 		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)

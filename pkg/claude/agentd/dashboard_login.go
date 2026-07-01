@@ -26,8 +26,8 @@ import (
 //
 // The two %s placeholders are the optional error banner (already
 // HTML-escaped, or empty) and the form action's query suffix (a fixed
-// "" or "?slop=1", never user input). Everything else is static, so
-// there is no other injection surface on this page.
+// "", "?slop=1" or "?wizard=1", never user input). Everything else is
+// static, so there is no other injection surface on this page.
 const dashboardLoginPageTemplate = `<!doctype html>
 <html lang="en">
 <head>
@@ -91,17 +91,21 @@ terminal — use the <code>tclaude agent dashboard</code> command above instead.
 
 // renderDashboardLoginPage writes the sign-in page with the given HTTP
 // status. errMsg, when non-empty, is HTML-escaped and shown in a banner
-// above the explanation; pass "" for the plain (first-visit) page. slop
-// carries the 🎰 theme across the login POST so it survives the
-// re-authentication round-trip.
-func renderDashboardLoginPage(w http.ResponseWriter, status int, errMsg string, slop bool) {
+// above the explanation; pass "" for the plain (first-visit) page.
+//
+// themeKV carries the active cosmetic theme ("slop=1" / "wizard=1", or "")
+// across the login POST so the 🎰 / 🧙 re-skin survives the re-authentication
+// round-trip. It is one of a fixed set of internal constants (from
+// dashboardThemeParamKV), never user input, so splicing it into the form
+// action is injection-safe.
+func renderDashboardLoginPage(w http.ResponseWriter, status int, errMsg string, themeKV string) {
 	banner := ""
 	if errMsg != "" {
 		banner = `<p class="err">` + html.EscapeString(errMsg) + "</p>\n"
 	}
 	formQuery := ""
-	if slop {
-		formQuery = "?slop=1"
+	if themeKV != "" {
+		formQuery = "?" + themeKV
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

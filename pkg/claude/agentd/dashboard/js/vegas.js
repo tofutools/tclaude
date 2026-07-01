@@ -42,23 +42,50 @@ import { isSlopSoundEnabled } from './slop-audio.js';
 // channel) is the default and the original Vegas-lounge soundtrack, so a
 // fresh dashboard keeps playing what it always did.
 //
-// Only {id, label, desc} is stored here: every URL (the ICE/MP3 stream,
-// the station home, the now-playing feed) derives from the id by SomaFM's
-// fixed URL shape (streamFor/homeFor below + the server's somaSongsURL), so
-// adding a channel is a one-line entry. The id set MUST match the server's
-// allowlist (config.SlopChannels) — TestSlopNowPlaying_ChannelMatchesVegasJS
-// pins them so a channel added on one side but not the other fails CI.
+// The radio is shared by both cosmetic themes: the 🎰 slop/Vegas soundtrack
+// and the 🧙 wizard soundtrack. `group` sorts each station into one of the
+// two — 'vegas' (lounge/jazz) or 'wizard' (fantasy ambient/celtic) — which
+// the two-level picker (a group <select> filtering the channel <select>)
+// reads. The wizard entries carry flavor labels ("The Tavern") over the
+// real SomaFM channels; `desc` names the actual station so it's never a
+// mystery what's playing.
+//
+// Only {id, label, desc, group} is stored here: every URL (the ICE/MP3
+// stream, the station home, the now-playing feed) derives from the id by
+// SomaFM's fixed URL shape (streamFor/homeFor below + the server's
+// somaSongsURL), so adding a channel is a one-line entry. The id set MUST
+// match the server's allowlist (config.SlopChannels) —
+// TestSlopNowPlaying_ChannelMatchesVegasJS pins them so a channel added on
+// one side but not the other fails CI. (The pin test scrapes `id: '…'`, so
+// keep the group catalog below on a different key — `key:` — to stay out of
+// its way.)
 const CHANNELS = [
-  { id: 'illstreet',   label: 'Illinois Street Lounge', desc: 'Vintage cocktail & exotica' },
-  { id: 'secretagent', label: 'Secret Agent',           desc: 'Spy-jazz & surf for your espionage' },
-  { id: 'groovesalad', label: 'Groove Salad',           desc: 'Ambient & downtempo chill' },
-  { id: 'lush',        label: 'Lush',                   desc: 'Mostly vocal, mostly chilled' },
-  { id: 'bootliquor',  label: 'Boot Liquor',            desc: 'Americana roots for cowboys' },
-  { id: 'u80s',        label: 'Underground 80s',        desc: 'Early alternative & new wave' },
-  { id: 'defcon',      label: 'DEF CON Radio',          desc: 'Music for hacking' },
+  { id: 'illstreet',    label: 'Illinois Street Lounge', desc: 'Vintage cocktail & exotica',      group: 'vegas'  },
+  { id: 'secretagent',  label: 'Secret Agent',           desc: 'Spy-jazz & surf for your espionage', group: 'vegas' },
+  { id: 'groovesalad',  label: 'Groove Salad',           desc: 'Ambient & downtempo chill',       group: 'vegas'  },
+  { id: 'lush',         label: 'Lush',                   desc: 'Mostly vocal, mostly chilled',    group: 'vegas'  },
+  { id: 'bootliquor',   label: 'Boot Liquor',            desc: 'Americana roots for cowboys',     group: 'vegas'  },
+  { id: 'u80s',         label: 'Underground 80s',        desc: 'Early alternative & new wave',    group: 'vegas'  },
+  { id: 'defcon',       label: 'DEF CON Radio',          desc: 'Music for hacking',               group: 'vegas'  },
+  { id: 'thistle',      label: '🍺 The Tavern',          desc: 'ThistleRadio — Celtic roots',     group: 'wizard' },
+  { id: 'folkfwd',      label: "🪕 The Bard's Rest",     desc: 'Folk Forward — indie & alt-folk', group: 'wizard' },
+  { id: 'dronezone',    label: '🔮 The Astral Plane',    desc: 'Drone Zone — atmospheric ambient', group: 'wizard' },
+  { id: 'darkzone',     label: '🕯️ The Dungeon',         desc: 'The Dark Zone — dark ambient',     group: 'wizard' },
+  { id: 'doomed',       label: '💀 The Crypt',           desc: 'Doomed — dark industrial ambient', group: 'wizard' },
+  { id: 'deepspaceone', label: '✨ The Cosmos',          desc: 'Deep Space One — deep-space ambient', group: 'wizard' },
 ];
 
-const DEFAULT_CHANNEL = 'illstreet';
+const DEFAULT_CHANNEL = 'illstreet';        // Vegas group default (config.DefaultSlopChannel)
+const WIZARD_DEFAULT_CHANNEL = 'thistle';   // Wizard group default (config.DefaultWizardChannel)
+
+// The channel groups the top-level picker offers. `key` matches each
+// channel's `group`; deliberately NOT keyed `id:` so the pin test's channel
+// scrape (id: '…') doesn't pick these up. label is what the group <select>
+// shows.
+const GROUPS = [
+  { key: 'vegas',  label: '🎰 Vegas Lounge' },
+  { key: 'wizard', label: "🧙 Wizard's Realm" },
+];
 
 // URL builders for a SomaFM channel id (the fixed shape SomaFM uses).
 const streamFor = (id) => 'https://ice1.somafm.com/' + id + '-128-mp3';
@@ -66,9 +93,26 @@ const homeFor   = (id) => 'https://somafm.com/' + id + '/';
 
 // channelById resolves an id to its catalog entry, falling back to the
 // first (default) channel for an unknown id so callers always get a valid
-// {id,label,desc}.
+// {id,label,desc,group}.
 function channelById(id) {
   return CHANNELS.find((c) => c.id === id) || CHANNELS[0];
+}
+
+// groupDefaultChannel returns the id of the first catalog channel in a
+// group — the station picking that group jumps to. Falls back to the global
+// default if a group somehow has no channels.
+function groupDefaultChannel(group) {
+  const c = CHANNELS.find((ch) => ch.group === group);
+  return c ? c.id : DEFAULT_CHANNEL;
+}
+
+// themeDefaultChannel is the station a FRESH listener (no persisted choice)
+// hears, chosen by the active cosmetic theme: the wizard soundtrack opens on
+// the Tavern, everything else on the Vegas lounge. An explicit saved channel
+// (loadChannel) always overrides this — the radio remembers your station.
+function themeDefaultChannel() {
+  return document.body.classList.contains('wizard')
+    ? WIZARD_DEFAULT_CHANNEL : DEFAULT_CHANNEL;
 }
 
 // activeChannelId is the channel the live player is (or will be) built on.
@@ -77,14 +121,19 @@ function channelById(id) {
 // user change. startMusic and the now-playing poll both read it, so a
 // channel switch is "set this + rebuild".
 let activeChannelId = DEFAULT_CHANNEL;
-let channelLoaded = false; // GET /api/slop/channel done (or in flight)
-let userPicked = false;    // a user pick supersedes a still-in-flight load
+let channelLoaded = false;        // GET /api/slop/channel done (or in flight)
+let userPicked = false;           // a user pick supersedes a still-in-flight load
+let hasExplicitChannel = false;   // a real saved choice exists (server-persisted or picked)
 
-// loadChannel fetches the persisted channel once, lazily on the first slop
+// loadChannel fetches the persisted channel once, lazily on the first radio
 // activation — like slop-volume.js's loadVolumes, the plain dashboard never
-// pays for it. If the saved channel differs from what's playing, it
-// switches the live player to it (best-effort: a failed GET just leaves the
-// default playing). The catalog the server returns is ignored here — the
+// pays for it. If a channel was EXPLICITLY saved and differs from what's
+// playing, it switches the live player to it (best-effort: a failed GET just
+// leaves the theme default playing). A fresh listener with no saved choice
+// keeps the theme default (Tavern in wizard mode, lounge otherwise) that
+// syncVegas already applied — so the server's `persisted` flag, not the bare
+// resolved id (which is the global default when nothing is saved), is what
+// gates the override. The catalog the server returns is ignored here — the
 // client renders from CHANNELS above; the pin test keeps the two in step.
 async function loadChannel() {
   if (channelLoaded) return;
@@ -99,9 +148,14 @@ async function loadChannel() {
     // `touched` guard against a late volumes GET.
     if (userPicked) return;
     const id = (d && d.channel) || '';
-    if (id && CHANNELS.some((c) => c.id === id)) applyChannel(id);
+    if (d && d.persisted && id && CHANNELS.some((c) => c.id === id)) {
+      hasExplicitChannel = true;
+      applyChannel(id);
+    }
+    // else: no explicit choice — leave the theme default in place so a fresh
+    // wizard listener stays on the Tavern instead of snapping to the lounge.
   } catch {
-    // Offline / blip — the default channel is already in place.
+    // Offline / blip — the theme default channel is already in place.
   }
 }
 
@@ -123,9 +177,22 @@ function applyChannel(id) {
 // autoplay-with-sound is granted.
 function switchChannel(id) {
   if (!CHANNELS.some((c) => c.id === id)) return;
-  userPicked = true; // beat a still-in-flight loadChannel (see its guard)
+  userPicked = true;          // beat a still-in-flight loadChannel (see its guard)
+  hasExplicitChannel = true;  // a deliberate pick — no longer a theme default
   persistChannel(id);
   applyChannel(id);
+}
+
+// switchGroup is the user-driven change from the top-level group picker: jump
+// to that group's default station (its first catalog channel). Treated as an
+// explicit pick — choosing "Wizard's Realm" is a deliberate act — so it
+// persists and survives a theme flip like any other channel choice.
+function switchGroup(group) {
+  const id = groupDefaultChannel(group);
+  // If the active channel is already in the chosen group, keep it — jumping
+  // to the group's first station would be a surprising demotion.
+  if (channelById(activeChannelId).group === group) return;
+  switchChannel(id);
 }
 
 // persistChannel POSTs the chosen channel to the backend. Best-effort: the
@@ -186,18 +253,37 @@ function startMusic() {
 
   const chan = channelById(activeChannelId);
 
-  // The station line doubles as the channel picker: a 📻 then a <select>
-  // listing every channel in the catalog. Switching is a one-click change;
-  // the choice persists to the backend and the now-playing feed follows.
+  // The station line doubles as a two-level picker: a 📻 then a group
+  // <select> (Vegas Lounge / Wizard's Realm) that filters a channel
+  // <select>. Switching either is a one-click change; the choice persists to
+  // the backend and the now-playing feed follows.
   const stationLine = document.createElement('div');
   stationLine.className = 'vegas-station';
   stationLine.append('📻 ');
 
+  const activeGroup = chan.group;
+
+  // Top-level group picker. Choosing a group jumps to its default station.
+  const groupSel = document.createElement('select');
+  groupSel.className = 'vegas-group';
+  groupSel.id = 'vegas-group';
+  groupSel.setAttribute('aria-label', 'Radio group');
+  for (const g of GROUPS) {
+    const opt = document.createElement('option');
+    opt.value = g.key;
+    opt.textContent = g.label;
+    groupSel.appendChild(opt);
+  }
+  groupSel.value = activeGroup;
+  groupSel.addEventListener('change', () => switchGroup(groupSel.value));
+
+  // Channel picker, filtered to the active group.
   const select = document.createElement('select');
   select.className = 'vegas-channel';
   select.id = 'vegas-channel';
   select.setAttribute('aria-label', 'Radio channel');
   for (const c of CHANNELS) {
+    if (c.group !== activeGroup) continue;
     const opt = document.createElement('option');
     opt.value = c.id;
     opt.textContent = c.label;
@@ -207,6 +293,9 @@ function startMusic() {
   select.value = chan.id;
   select.title = chan.desc || ('SomaFM — ' + chan.label);
   select.addEventListener('change', () => switchChannel(select.value));
+
+  stationLine.appendChild(groupSel);
+  stationLine.append(' ');
   stationLine.appendChild(select);
 
   label.appendChild(songLine);
@@ -499,6 +588,15 @@ function leaveVegasTabIfActive() {
 // fully inactive, so merely muting the sound never kicks you off the tab.
 function syncVegas() {
   if (isVegasActive()) {
+    // For a fresh listener (no explicit saved/picked channel), keep the
+    // station in step with the active theme — the wizard soundtrack opens on
+    // the Tavern, the lounge otherwise. Done before startMusic so the first
+    // build tunes to the right station (no lounge→tavern restart blip), and
+    // re-checked on every sync so a mid-session casino↔wizard flip re-tunes
+    // the auto default. An explicit pick (hasExplicitChannel) is untouched —
+    // the radio remembers your station across themes. applyChannel no-ops
+    // when the station is unchanged.
+    if (!hasExplicitChannel && !userPicked) applyChannel(themeDefaultChannel());
     // Load the persisted channel once (lazily, on first activation) so a
     // later unmute starts on the saved station.
     loadChannel();

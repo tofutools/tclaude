@@ -19,10 +19,11 @@ import (
 
 // slopChannelResp is the GET / POST response shape.
 type slopChannelResp struct {
-	Channel  string   `json:"channel"`
-	Channels []string `json:"channels"`
-	Error    string   `json:"error"`
-	Code     string   `json:"code"`
+	Channel   string   `json:"channel"`
+	Channels  []string `json:"channels"`
+	Persisted bool     `json:"persisted"`
+	Error     string   `json:"error"`
+	Code      string   `json:"code"`
 }
 
 func serveSlopChannel(t *testing.T, method, body string) (*httptest.ResponseRecorder, slopChannelResp) {
