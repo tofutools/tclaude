@@ -140,6 +140,11 @@ func TestDashboardHTML_WizardRetireModal(t *testing.T) {
 	must(`content: "🪄 Banish!"`, "the confirm button reads Banish in wizard mode")
 	must("body.wizard #retire-modal #retire-ok", "the confirm re-skin is scoped to the retire modal")
 
+	// Busy state: the JS spinner fallback injects "Retiring…" text, but a
+	// familiar is *banished*, not retired — the disabled button paints a
+	// themed "Banishing…" via ::after (pure-CSS, like the idle ::before label).
+	must(`content: "Banishing…"`, "the busy confirm button reads Banishing in wizard mode")
+
 	// The whole dialog is re-skinned arcane.
 	must("body.wizard #retire-modal .modal", "the retire dialog surface is re-skinned")
 }
