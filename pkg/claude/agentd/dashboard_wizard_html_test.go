@@ -154,6 +154,34 @@ func TestDashboardCSS_WizardRetireModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardSummonButton pins the wizard re-skin of the
+// group-header spawn button (the blue .spawn-btn that opens the dialog): the
+// per-theme label swap "spawn" → "🔮 Summon" and the arcane chrome hooks.
+// Purely front-end like the rest of the wizard theme, so we string-search the
+// embedded source rather than running the JS.
+func TestDashboardHTML_WizardSummonButton(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Label copy: a pure-CSS span swap emitted by render.js, mirroring the
+	// dialog title's .spawn-title-regular/.spawn-title-wizard pair. Both spans
+	// must exist in the rendered button and the swap rules in CSS.
+	must(`<span class="spawn-btn-label-regular">spawn</span>`, "the default spawn-button label span")
+	must(`<span class="spawn-btn-label-wizard">🔮 Summon</span>`, "the wizard spawn-button label span")
+	must("body.wizard .spawn-btn .spawn-btn-label-regular", "wizard hides the default button label")
+	must("body.wizard .spawn-btn .spawn-btn-label-wizard", "wizard shows the Summon button label")
+
+	// The SVG glyph gives way to the 🔮 in the wizard label.
+	must("body.wizard .spawn-btn .spawn-ico", "wizard hides the button's SVG glyph")
+
+	// The button chrome is re-skinned arcane (gilded gradient + parchment text).
+	must("body.wizard .spawn-btn {", "the spawn button gets the arcane chrome re-skin")
+}
+
 // TestDashboardCSS_WizardSpawnModalScoped guards that the wizard spawn-dialog
 // re-skin stays scoped to #agent-spawn-modal — an unscoped
 // `body.wizard .cron-create-modal { … }` would repaint every sibling modal
