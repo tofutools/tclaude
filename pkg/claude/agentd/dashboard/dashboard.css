@@ -4867,6 +4867,104 @@ body.wizard #command-palette-btn::before {
 }
 body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
 
+/* ─── Wizard profile editor — "Inscribe a summoning recipe" ─────────
+   The 🧙 re-skin of the spawn-profile editor (Groups cog → ⧉ profiles… →
+   edit / + new profile, and the spawn dialog's "Save as profile"). A spawn
+   profile is a saved recipe the Summon dialog pre-fills from, so the editor is
+   themed as inscribing that recipe — the same arcane chrome as the Summon
+   dialog. Scoped to #profile-editor-modal so the sibling create/clone/
+   reincarnate/cron modals (also .cron-create-modal) keep the default chrome,
+   the same discipline the spawn re-skin follows.
+
+   Unlike the spawn / retire titles (static spans, CSS-swapped per theme), this
+   dialog's title is JS-set — it carries the edited profile's name ("Edit
+   profile: X") — so there's no pure-CSS text swap; we just render the
+   informative title in the arcane serif. */
+body.wizard #profile-editor-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #profile-editor-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #profile-editor-modal .cron-create-label,
+body.wizard #profile-editor-modal .spawn-perms-indicator { color: #b39ddb; }
+body.wizard #profile-editor-modal .cron-create-row input[type=text],
+body.wizard #profile-editor-modal .cron-create-row select,
+body.wizard #profile-editor-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #profile-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #profile-editor-modal .cron-create-row select:focus,
+body.wizard #profile-editor-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Open <select> options render on the OS layer — keep them dark text on
+   parchment so they stay readable (mirrors the spawn dialog). */
+body.wizard #profile-editor-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* Secondary + inline buttons (Cancel / Permissions…). The
+   :not(#profile-editor-submit) excludes the Inscribe lever below, so this rule
+   and the submit rule match disjoint elements and never fight — the exclusion,
+   not specificity, is what protects the Inscribe button. The
+   #profile-editor-modal id already out-specifies the base button rules. */
+body.wizard #profile-editor-modal button:not(#profile-editor-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #profile-editor-modal button:not(#profile-editor-submit):hover { background: #3a2a63; }
+
+/* Save = 📜 Inscribe! — the submit button re-skinned into a gilded conjuring
+   lever, the twin of the Summon dialog's 🔮 Summon!. Same mechanism: the
+   button's own "Save profile" text is hidden (font-size: 0) and replaced by a
+   ::before glyph; the disabled state (submitProfileEditor sets btn.disabled
+   during the save) restores a font-size so that honest "Save profile" label
+   shows through instead of the glyph. The click already sprays cast sparks via
+   wizard-fx's global cast-FX handler, so no extra JS is needed. The generic
+   secondary-button rule above can't touch this button: its
+   :not(#profile-editor-submit) excludes it. #profile-editor-modal keeps it
+   out-specifying the base .primary rule. */
+body.wizard #profile-editor-modal #profile-editor-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #profile-editor-modal #profile-editor-submit::before {
+  content: "📜 Inscribe!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #profile-editor-modal #profile-editor-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #profile-editor-modal #profile-editor-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #profile-editor-modal #profile-editor-submit:disabled {
+  /* Restore the font so the honest "Save profile" label shows during save. */
+  font-size: 13px;
+  opacity: 0.7;
+}
+body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { content: none; }
+
 /* ─── Wizard spell FX (see js/wizard-fx.js) ─────────────────────────
    Short-lived nodes spawned per click / pointer-move / big cast, each
    animating once and self-removing on animationend — no DOM accumulation.
