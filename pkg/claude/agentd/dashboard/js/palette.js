@@ -773,8 +773,14 @@ export function bindCommandPalette() {
   // toggle. Rebuilding re-reads lastSnapshot, same as a fresh open.
   document.addEventListener('tclaude:wizard', () => {
     if (!isOpen()) return;
+    // Reset the selection before re-ranking: a theme flip can re-order the
+    // filtered list (e.g. "veil" jumps from a weak keyword hit in the plain
+    // theme to a label-prefix hit in wizard mode), so a preserved index would
+    // land on a different command than the one that was highlighted. Start
+    // fresh at the top, the same way a keystroke does.
     applyThemeCopy();
     commands = buildCommands();
+    selected = 0;
     render(input.value);
   });
 

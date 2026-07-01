@@ -568,8 +568,14 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
-	// placeholder — the listener rebuilds the command list.
-	must("commands = buildCommands();", "the tclaude:wizard listener rebuilds the list so labels re-skin live")
+	// placeholder — the tclaude:wizard listener rebuilds the command list AND
+	// resets the selection before re-rendering. Pin the exact 3-line sequence
+	// (rebuild → reset → re-render with the live query): openPalette also calls
+	// `commands = buildCommands();` but follows it with `input.value = ''`, not
+	// `render(input.value)`, so this needle is unique to the listener — deleting
+	// the listener's rebuild fails here rather than passing on openPalette's copy.
+	must("commands = buildCommands();\n    selected = 0;\n    render(input.value);",
+		"the tclaude:wizard listener rebuilds + resets selection so labels re-skin live without a stale highlight")
 
 	// The scorer's SYNONYMS map bridges the arcane verbs to the plain ones so
 	// typing either vocabulary finds the command in either theme.
