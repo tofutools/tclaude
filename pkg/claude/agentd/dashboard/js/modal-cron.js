@@ -233,6 +233,10 @@ function openCronCreateModal(prefill) {
   $('#cron-create-title').textContent = scopeGroup
     ? `Schedule a cron job for group "${scopeGroup}"`
     : 'Schedule a cron job';
+  // Mode flag (create vs edit) for the 🧙 wizard title/submit ::before copy.
+  // It reflects the modal's MODE, not the theme — the theme→copy mapping stays
+  // pure-CSS, so a mid-session theme flip is instantly correct with no JS.
+  $('#cron-create-modal').classList.remove('cron-editing');
   $('#cron-create-meta').style.display = 'none';
   $('#cron-create-submit').textContent = 'Create';
   $('#cron-create-save-another').style.display = '';
@@ -252,6 +256,9 @@ function openCronEditModal(job) {
   cronOriginalTarget = job.target_agent || job.target_conv || '';
   cronOriginalGroupID = job.group_id || 0;
   $('#cron-create-title').textContent = 'Edit cron job';
+  // Edit mode: the wizard title/submit ::before copy reads "Re-bind…" (see the
+  // .cron-editing rules in the wizard CSS block). Mode flag, not a theme read.
+  $('#cron-create-modal').classList.add('cron-editing');
   const meta = $('#cron-create-meta');
   meta.style.display = 'block';
   meta.textContent = `#${job.id} · ${job.name || '(unnamed)'}`;

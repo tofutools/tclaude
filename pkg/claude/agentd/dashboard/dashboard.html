@@ -207,7 +207,10 @@
       <span class="filter-count" id="filter-cron-count"></span>
       <button class="clear-filter" id="filter-cron-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job">+ new cron job</button>
+      <!-- Label copy swaps per theme (pure-CSS span swap, like the "+ new
+           group" → "⚔ Form a party" pair): a plain "+ new cron job" normally,
+           an arcane "⏳ Bind a recurring ritual" in 🧙 wizard mode. -->
+      <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"><span class="cron-open-label-regular">+ new cron job</span><span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></button>
     </div>
     <div id="cron-list"></div>
   </section>

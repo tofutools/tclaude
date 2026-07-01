@@ -4816,6 +4816,167 @@ body.wizard #retire-modal #retire-ok:disabled::after {
   letter-spacing: 1px;
 }
 
+/* ─── Wizard cron dialog — "⏳ Bind a recurring ritual" ──────────────
+   A cron job is a standing spell the wizard binds to the turning of the
+   hourglass: each tick it whispers to its target familiar. So the 🧙 theme
+   re-skins the whole schedule-a-cron dialog arcane — the sibling of the
+   Summon / Banish dialog re-skins above. Same midnight-violet void, mystic-
+   purple frame + glow, tarnished-gold + parchment accents.
+
+   The dialog is a .cron-create-modal, the SAME class the spawn / clone /
+   reincarnate / group-import / message-create modals reuse, so every rule
+   here is scoped to #cron-create-modal — an unscoped body.wizard
+   .cron-create-modal { … } would repaint all of them (guarded by
+   TestDashboardCSS_WizardSpawnModalScoped).
+
+   The title + submit copy is JS-set (create vs edit: "Schedule a cron job" /
+   "Edit cron job" and "Create" / "Save"), so unlike the pure span-swap titles
+   elsewhere these use the font-size:0 + ::before glyph trick (as the Summon /
+   Banish levers do). The create/edit split is driven by a .cron-editing class
+   the modal-open JS toggles — a MODE flag, not a theme read, so the theme→copy
+   mapping stays pure-CSS and a mid-session flip is instantly correct. */
+
+/* Open button "+ new cron job" → "⏳ Bind a recurring ritual": a pure-CSS
+   span swap (the .cron-open-label-regular / .cron-open-label-wizard pair),
+   same idiom as "+ new group" → "⚔ Form a party". The swap rules are unscoped
+   so the "No cron jobs yet…" empty-state hint that names the button swaps too;
+   the gilded re-skin is scoped to the #cron-create-open id, which out-specifies
+   the base .filter-bar button.primary rule. */
+.cron-open-label-wizard { display: none; }
+body.wizard .cron-open-label-regular { display: none; }
+body.wizard .cron-open-label-wizard { display: inline; }
+body.wizard #cron-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #cron-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the Summon / Banish dialogs. The input
+   fields stay a legible dark (violet-tinted) so the form is still readable. */
+body.wizard #cron-create-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+/* Title: hide the JS-set text (font-size:0) and paint the arcane copy via
+   ::before — "⏳ Bind a recurring ritual" in create mode, "⏳ Re-bind the
+   ritual" in edit mode (the .cron-editing class the open JS toggles). The
+   ::before inherits the serif/gold/glow set on the h3 itself. */
+body.wizard #cron-create-modal #cron-create-title {
+  font-size: 0;
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / Summon title use. */
+  font-family: 'Papyrus', 'Luminari', 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #cron-create-modal #cron-create-title::before {
+  content: "⏳ Bind a recurring ritual";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #cron-create-modal.cron-editing #cron-create-title::before {
+  content: "⏳ Re-bind the ritual";
+}
+body.wizard #cron-create-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #cron-create-modal .cron-create-label,
+body.wizard #cron-create-modal .cron-create-enabled { color: #b39ddb; }
+body.wizard #cron-create-modal .cron-create-row input[type=text],
+body.wizard #cron-create-modal .cron-create-row select,
+body.wizard #cron-create-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #cron-create-modal .cron-create-row input[type=text]:focus,
+body.wizard #cron-create-modal .cron-create-row select:focus,
+body.wizard #cron-create-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Open <select> options render on the OS layer — keep them dark-on-parchment
+   so the group dropdown stays readable (mirrors the Summon dialog). */
+body.wizard #cron-create-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* Every non-primary button (Cancel / Save & create another / the 🔍 owner
+   picker / target-picker buttons / the "Every" schedule chips) gets the
+   tarnished-gold secondary treatment. Excluded via :not(.primary) rather than
+   :not(#cron-create-submit) on purpose: the id form inflates specificity with
+   an extra id, which would beat the .selected chip rule below — the class form
+   keeps that override winning. The submit is the modal's only .primary, and it
+   gets its own gilded-lever rule (below) whose id out-specifies this anyway. */
+body.wizard #cron-create-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #cron-create-modal button:not(.primary):hover { background: #3a2a63; }
+/* The picked "Every" chip: gilded fill so the active interval still pops out
+   of the row of tarnished-gold chips. */
+body.wizard #cron-create-modal .cron-schedule-chips button.selected {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border-color: #f3e6c0;
+  color: #f3e6c0;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.55);
+}
+body.wizard #cron-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* Create = ⏳ Bind it! — the submit button re-skinned into a gilded conjuring
+   lever, the cron twin of the spawn dialog's 🔮 Summon! and the retire dialog's
+   🪄 Banish!. Same mechanism: the button's JS-set "Create" / "Save" text is
+   hidden (font-size: 0) and replaced by a ::before glyph, which reads
+   "Re-bind it!" in edit mode. The brief in-flight disabled state paints a
+   themed "Binding…" / "Re-binding…" via the same ::before, keeping the busy
+   copy in the arcane voice. The click already sprays cast sparks via
+   wizard-fx's global cast-FX handler, so no extra JS is needed. The
+   #cron-create-submit id out-specifies both the base .modal-buttons
+   button.primary rule and the :not(.primary) secondary skin above. */
+body.wizard #cron-create-modal #cron-create-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #cron-create-modal #cron-create-submit::before {
+  content: "⏳ Bind it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #cron-create-modal.cron-editing #cron-create-submit::before {
+  content: "⏳ Re-bind it!";
+}
+body.wizard #cron-create-modal #cron-create-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #cron-create-modal #cron-create-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #cron-create-modal #cron-create-submit:disabled { opacity: 0.7; }
+body.wizard #cron-create-modal #cron-create-submit:disabled::before { content: "⏳ Binding…"; }
+body.wizard #cron-create-modal.cron-editing #cron-create-submit:disabled::before { content: "⏳ Re-binding…"; }
+
 /* ─── Wizard "⚔ Form a party" button — the 🧙 re-skin of the filter bar's
    "+ new group" primary. Its label is a pure-CSS span swap (the
    .group-create-label-regular / .group-create-label-wizard pair, same idiom as
