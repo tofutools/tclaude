@@ -4710,6 +4710,14 @@ body.wizard .spawn-btn:hover {
 body.wizard #agent-spawn-title .spawn-title-regular { display: none; }
 body.wizard #agent-spawn-title .spawn-title-wizard { display: inline; }
 
+/* The "Group" field label swaps to "Party" in wizard mode — you Summon
+   Familiars into a party. Same pure-CSS span swap as the title above; the
+   .spawn-group-word-* pair is used only on this one label, so the plain
+   class-based reveal (no #id scope needed) stays effectively summon-only. */
+.spawn-group-word-wizard { display: none; }
+body.wizard .spawn-group-word-regular { display: none; }
+body.wizard .spawn-group-word-wizard { display: inline; }
+
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the same palette as the header / music card. Like the
    rest of the wizard re-skin we recolor the chrome; the input fields stay a

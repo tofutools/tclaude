@@ -167,6 +167,14 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 	must("body.wizard #agent-spawn-title .spawn-title-regular", "wizard hides the default title")
 	must("body.wizard #agent-spawn-title .spawn-title-wizard", "wizard shows the familiar title")
 
+	// The "Group" field label swaps to "Party" in wizard mode — same pure-CSS
+	// span swap as the title. Both spans + the swap rules must be present.
+	must(`<span class="spawn-group-word-regular">Group</span>`, "the default group-field label span")
+	must(`<span class="spawn-group-word-wizard">Party</span>`, "the wizard group-field label reads 'Party'")
+	must(".spawn-group-word-wizard { display: none; }", "the wizard party-word span is hidden by default")
+	must("body.wizard .spawn-group-word-regular { display: none; }", "wizard hides the default 'Group' label")
+	must("body.wizard .spawn-group-word-wizard { display: inline; }", "wizard shows the 'Party' label")
+
 	// The submit button becomes a "🔮 Summon!" conjuring button (slop's PULL
 	// twin) — the ::before glyph + the modal-scoped submit re-skin.
 	must(`content: "🔮 Summon!"`, "the submit button reads Summon in wizard mode")
