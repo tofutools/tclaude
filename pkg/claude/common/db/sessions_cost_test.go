@@ -345,6 +345,39 @@ func TestSumCostSinceDay_SessionResetAcrossExit(t *testing.T) {
 		"a window opening on the resume day sees the resumed session's spend, not 0")
 }
 
+// TestSumCostSinceDay_ReinstateSameDayNoDoubleCount is the reinstate
+// double-count regression, driven end-to-end through AllCostDailyRows' SQL
+// ordering (not a hand-ordered slice) so it fails if the chronological
+// tie-break is dropped. It reproduces the observed reinstate shape: an agent
+// spawned under spwn-1692c2 spends up to 42.39, is reinstated the SAME day
+// under a session whose id equals the conv id (43.27, a carry-forward that
+// includes the 42.39). The resumed session's id sorts BEFORE the spwn- id
+// lexically but AFTER it by updated_at; ordering by session_id would walk the
+// resume first and read the earlier, lower original as a below-peak drop,
+// resetting the baseline and counting 42.39 + 43.27 = 85.66 — the ~$95 the
+// human saw for a conv that opened at $43. Chronological order telescopes it
+// to the true 43.27.
+func TestSumCostSinceDay_ReinstateSameDayNoDoubleCount(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+	for _, r := range []CostDailyRow{
+		{SessionID: "spwn-1692c2", Day: "2026-07-02", ConvID: "conv-ws", CostUSD: 42.39,
+			UpdatedAt: "2026-07-02T12:45:09+02:00"}, // original spawn, earlier
+		{SessionID: "conv-ws", Day: "2026-07-02", ConvID: "conv-ws", CostUSD: 43.27,
+			UpdatedAt: "2026-07-02T15:23:11+02:00"}, // reinstated, carry-forward, later
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAt)
+		require.NoError(t, err, "seed %s", r.SessionID)
+	}
+
+	total, err := SumCostSinceDay("2026-07-02")
+	require.NoError(t, err)
+	assert.InDelta(t, 43.27, total, 1e-9,
+		"a same-day carry-forward reinstate telescopes to the resumed cumulative (43.27), not 42.39 + 43.27")
+}
+
 // TestCostDeltas pins the canonical delta walk both cost surfaces share
 // (the Costs tab via agentd's costDeltasFromRows, the top bar via
 // SumCostSinceDay): a carry-forward resume telescopes to the rise, a
@@ -411,11 +444,13 @@ func TestSumCostSinceDay_EmptyDB(t *testing.T) {
 	assert.Zero(t, total)
 }
 
-// TestAllCostDailyRows_OrderAndEmpty pins the (conv-key, day, session_id)
-// ordering the delta aggregation depends on — all of a conversation's
-// sessions grouped together so the per-day delta walk can carry one
-// high-water baseline across a resume — and the clean empty state (a
-// subscription-only install has no daily rows at all).
+// TestAllCostDailyRows_OrderAndEmpty pins the (conv-key, day, updated_at,
+// session_id) ordering the delta aggregation depends on — all of a
+// conversation's sessions grouped together so the per-day delta walk can carry
+// one high-water baseline across a resume, and CHRONOLOGICALLY (by last-spend
+// time) within a (conv, day) so a same-day resume is never processed before
+// the session it continues — and the clean empty state (a subscription-only
+// install has no daily rows at all).
 func TestAllCostDailyRows_OrderAndEmpty(t *testing.T) {
 	setupTestDB(t)
 
@@ -447,4 +482,37 @@ func TestAllCostDailyRows_OrderAndEmpty(t *testing.T) {
 		"day ascending within a conversation")
 	assert.Equal(t, []string{"s3", "s1", "s2"}, []string{rows[0].SessionID, rows[1].SessionID, rows[2].SessionID},
 		"c1's two sessions stay adjacent, ordered by day not session id")
+}
+
+// TestAllCostDailyRows_ChronologicalTieBreak pins the reinstate fix: two
+// sessions of the SAME conversation on the SAME day must come back ordered by
+// updated_at (last-spend time), NOT lexical session_id. The reinstated
+// session's id equals the conv id ("conv-re…"), which sorts BEFORE the
+// original "spwn-…" lexically but AFTER it in time; without the updated_at
+// tie-break the walk would see the resume (higher cumulative) first and
+// double-count the original as a below-peak drop.
+func TestAllCostDailyRows_ChronologicalTieBreak(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err, "open db")
+
+	// Same conv, same day; the resume (conv-id-named) session sorts first by
+	// session_id but has the LATER updated_at, so chronological order must put
+	// the original spwn- session first.
+	for _, r := range []CostDailyRow{
+		{SessionID: "conv-re", Day: "2026-07-02", ConvID: "conv-re", CostUSD: 43.27,
+			UpdatedAt: "2026-07-02T15:23:11+02:00"}, // resume, later
+		{SessionID: "spwn-1692c2", Day: "2026-07-02", ConvID: "conv-re", CostUSD: 42.39,
+			UpdatedAt: "2026-07-02T12:45:09+02:00"}, // original, earlier
+	} {
+		_, err := d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at)
+			VALUES (?, ?, ?, ?, ?)`, r.SessionID, r.Day, r.ConvID, r.CostUSD, r.UpdatedAt)
+		require.NoError(t, err, "seed %s", r.SessionID)
+	}
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	require.Len(t, rows, 2)
+	assert.Equal(t, []string{"spwn-1692c2", "conv-re"}, []string{rows[0].SessionID, rows[1].SessionID},
+		"same conv+day rows order by updated_at (chronological), earliest first — not lexical session_id")
 }
