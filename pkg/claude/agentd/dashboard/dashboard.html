@@ -426,6 +426,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-group-quick-fold" /> auto-fold quick options to icons, expand on hover</label>
         <span class="cfg-hint">Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Default terminal</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-default-web-terminal" /> open focus / windows / terminals as web terminals in the dashboard</label>
+        <span class="cfg-hint">The per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — normally pop a <em>native</em> OS terminal window. <strong>Checked</strong> routes them all to an <em>in-browser</em> terminal pane in the dashboard's <strong>Terminals</strong> tab instead — the same surface the dedicated "web term" / "web window" buttons always use — so you never leave the browser. The dedicated web buttons (already always web) and the native-window bulk 🪟 <em>windows…</em> modal are unaffected. Off by default. Stored as <code>dashboard.default_terminal</code> (the default <code>native</code> is omitted; checked writes <code>web</code>).</span>
+      </div>
     </div>
 
     <div class="cfg-section">

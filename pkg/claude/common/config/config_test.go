@@ -850,6 +850,34 @@ func TestGroupQuickOptions(t *testing.T) {
 	assert.Equal(t, GroupQuickOptionsExpanded, loaded.GroupQuickOptions(), "expanded survives round-trip")
 }
 
+// TestDefaultTerminal covers the dashboard.default_terminal resolver: nil
+// config / absent block / absent key / garbage all default to "native"; only
+// an explicit "web" opts in. A default config marshals no dashboard block, and
+// an explicit "web" survives Save/Load.
+func TestDefaultTerminal(t *testing.T) {
+	// Default is native for every "unset"/garbage shape.
+	assert.Equal(t, DefaultTerminalNative, (*Config)(nil).DefaultTerminal(), "nil → native")
+	assert.Equal(t, DefaultTerminalNative, (&Config{}).DefaultTerminal(), "no block → native")
+	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{}}).DefaultTerminal(), "absent key → native")
+	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: "wat"}}).DefaultTerminal(), "unknown → native")
+	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalNative}}).DefaultTerminal(), "explicit native → native")
+
+	// Only an explicit "web" opts into browser terminals.
+	assert.Equal(t, DefaultTerminalWeb, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalWeb}}).DefaultTerminal(), "explicit web → web")
+
+	// A fresh (all-default) config serializes no dashboard block / key.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "default_terminal")
+
+	// Explicit "web" survives Save/Load — the non-default is persisted.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalWeb}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, DefaultTerminalWeb, loaded.DefaultTerminal(), "web survives round-trip")
+}
+
 // TestMatchSudoOverride_Keying covers the C2 (JOH-324) addition: a sudo
 // override may be keyed on the stable `agt_` agent_id (exact or short
 // prefix), surviving conv rotation — alongside the pre-existing conv-id

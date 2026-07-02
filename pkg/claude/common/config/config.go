@@ -118,6 +118,24 @@ const (
 	GroupQuickOptionsExpanded = "expanded"
 )
 
+// Default-terminal modes — config dashboard.default_terminal. Chooses how the
+// dashboard's per-agent "focus" / "open window" / "open terminal" actions open
+// a console:
+//
+//	"native" — pop a native OS terminal window (the historical default),
+//	           falling back to an in-browser PTY only when no native window
+//	           can be opened. This is the default.
+//	"web"    — open the console as an in-browser terminal pane in the
+//	           dashboard's own Terminals tab, without touching the OS windowing
+//	           system — the same surface the dedicated "web term" / "web window"
+//	           buttons already always use.
+//
+// An empty / unknown value falls back to the default (see DefaultTerminal).
+const (
+	DefaultTerminalNative = "native"
+	DefaultTerminalWeb    = "web"
+)
+
 // DashboardConfig holds display toggles for the agentd web dashboard.
 type DashboardConfig struct {
 	// ActivityBots selects the style of the per-group + global "activity
@@ -163,6 +181,17 @@ type DashboardConfig struct {
 	// each poll and toggles body.group-quick-fold. See
 	// (*Config).GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options,omitempty"`
+	// DefaultTerminal selects how the dashboard's per-agent focus / open-window
+	// / open-terminal actions open a console — one of DefaultTerminal{Native,
+	// Web}. "native" (the default) pops a native OS window (falling back to an
+	// in-browser PTY only when it can't); "web" opens an in-browser terminal
+	// pane in the dashboard's Terminals tab instead, the same surface the
+	// dedicated "web term" / "web window" buttons use. Empty / unknown →
+	// default (native). The dashboard reads the resolved value off the snapshot
+	// each poll and routes its focus/open actions accordingly. The dedicated
+	// web buttons and the native-window bulk "windows…" modal are unaffected.
+	// See (*Config).DefaultTerminal.
+	DefaultTerminal string `json:"default_terminal,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -763,6 +792,32 @@ func (c *Config) GroupQuickOptions() string {
 		}
 	}
 	return GroupQuickOptionsHover
+}
+
+// normalizeDefaultTerminal returns s when it's a known mode, else "" (so the
+// resolver falls back to its default for a blank or hand-edited garbage value).
+func normalizeDefaultTerminal(s string) string {
+	switch s {
+	case DefaultTerminalNative, DefaultTerminalWeb:
+		return s
+	default:
+		return ""
+	}
+}
+
+// DefaultTerminal reports how the dashboard's per-agent focus / open-window /
+// open-terminal actions open a console — config dashboard.default_terminal.
+// Default "native" (absent block / key or an unknown value): pop a native OS
+// window (with the usual in-browser fallback when none can be opened). "web"
+// routes those actions to an in-browser terminal pane in the dashboard's
+// Terminals tab instead. Nil-safe on the receiver so callers need no guard.
+func (c *Config) DefaultTerminal() string {
+	if c != nil && c.Dashboard != nil {
+		if s := normalizeDefaultTerminal(c.Dashboard.DefaultTerminal); s != "" {
+			return s
+		}
+	}
+	return DefaultTerminalNative
 }
 
 // FocusConfig holds window-focus behavior knobs.

@@ -75,6 +75,16 @@ export let lastSnapshot = null;
 // stays declared here and both writers route through this setter.
 export function setLastSnapshot(v) { lastSnapshot = v; }
 
+// webTerminalDefault reports whether the operator has opted into in-browser
+// web terminals as the default for the dashboard's per-agent focus /
+// open-window / open-terminal actions (config dashboard.default_terminal="web").
+// Read off the latest snapshot so it tracks a live config change on the next
+// 2s poll. row-actions.js and palette.js gate their native-vs-web routing on
+// this; the dedicated "web term" / "web window" buttons ignore it (always web).
+export function webTerminalDefault() {
+  return !!(lastSnapshot && lastSnapshot.default_terminal === 'web');
+}
+
 // sudoBadge renders the per-row 🔓 indicator when an agent currently
 // holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
 // hovering tells the human everything they'd want to know without a
