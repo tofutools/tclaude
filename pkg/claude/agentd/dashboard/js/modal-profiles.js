@@ -24,14 +24,12 @@ import {
   loadProfiles, createProfile, updateProfile, deleteProfile, profileSummary,
 } from './profiles.js';
 import { openSpawnPermEditor } from './modal-message.js';
-import { isWizardActive } from './slop.js';
-
 // wizWord swaps the profile vocabulary for 🧙 wizard mode: in wizard mode we
 // Summon Familiars, so a saved spawn "profile" is re-lettered a "familiar
-// pattern". Mirrors the pure-CSS .profiles-word span swaps in dashboard.css
-// for the spots that are JS-rendered here (the editor title + the manage
-// overlay's empty-state).
-function wizWord(regular, wizard) { return isWizardActive() ? wizard : regular; }
+// pattern". Used here for the JS-rendered spots (the editor title + the manage
+// overlay's empty-state); the static spots use the pure-CSS .profiles-word span
+// swaps in dashboard.css.
+import { wizWord } from './slop.js';
 
 // Buffered per-slug permission overrides for the profile being edited.
 // slug → 'grant' | 'deny'; reset per openProfileEditor, written by the stacked
