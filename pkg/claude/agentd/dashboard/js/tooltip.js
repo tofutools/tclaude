@@ -29,6 +29,8 @@ let tip = null; // the shared floating element (created lazily on first show)
 let anchor = null; // element that currently owns the tooltip
 let stashed = ''; // its original title text, restored on hide
 let showTimer = 0;
+let ptrX = 0; // last known pointer position, so reanchor() can find the
+let ptrY = 0; // titled element under the cursor after a re-render
 
 // ensureTip lazily creates the one shared tooltip element. Kept out of the
 // document until first needed so a session that never hovers pays nothing.
@@ -97,6 +99,47 @@ function show() {
   el.setAttribute('aria-hidden', 'false');
 }
 
+// reanchor keeps a visible/pending tooltip alive across the dashboard's 2s
+// wholesale innerHTML re-render (the tclaude:snapshot tick). That render
+// DETACHES the anchor node and drops a fresh, identical one under the
+// (stationary) pointer. Naively hiding here and letting the next mouseover
+// re-show blinks the tooltip off and on again every 2s. Instead we adopt the
+// titled element now under the pointer and repaint it in place — seamless —
+// and hide only if nothing titled remains there.
+function reanchor() {
+  if (!anchor) return; // no tooltip owned (shown or pending) → nothing to keep
+  if (anchor.isConnected) return; // node survived the render (e.g. a top-bar
+  // button, not inside a re-rendered list) — leave it exactly as is.
+  const wasShown = !!(tip && tip.classList.contains('show'));
+  const under = document.elementFromPoint(ptrX, ptrY); // #tt is pointer-events:none, so it's skipped
+  const el = under && under.closest ? under.closest('[title], [data-tt]') : null;
+  const text = el ? el.getAttribute('title') : null;
+  if (!el || !text) {
+    // Pointer no longer over a titled element after the render. The old anchor
+    // is already detached (no title to restore), so just clear + hide.
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = 0;
+    }
+    anchor = null;
+    stashed = '';
+    if (tip) {
+      tip.classList.remove('show');
+      tip.setAttribute('aria-hidden', 'true');
+    }
+    return;
+  }
+  // Adopt the fresh node in place of the detached one.
+  anchor = el;
+  stashed = text;
+  el.setAttribute('data-tt', '');
+  el.removeAttribute('title');
+  // If it was already visible, repaint at the new node (same spot → no visible
+  // move; .show is already set → no re-fade). If it was still pending, the
+  // running showTimer will fire show() on the new anchor — nothing to do.
+  if (wasShown) show();
+}
+
 // bindTooltips installs the delegated listeners once, at boot. Delegation on
 // document means it needs no re-binding across the 2s innerHTML re-renders.
 function bindTooltips() {
@@ -132,6 +175,16 @@ function bindTooltips() {
     if (to && anchor.contains(to)) return;
     hide();
   });
+  // Track the pointer so reanchor() can find the titled element under the
+  // cursor after a re-render swaps DOM nodes. Passive + two assignments = cheap.
+  document.addEventListener(
+    'mousemove',
+    (e) => {
+      ptrX = e.clientX;
+      ptrY = e.clientY;
+    },
+    { passive: true },
+  );
   // Anything that moves the page or shifts focus makes a shown tooltip stale.
   window.addEventListener('scroll', hide, true); // capture: also catch inner scrollers
   window.addEventListener('wheel', hide, { passive: true });
@@ -140,10 +193,11 @@ function bindTooltips() {
     if (e.key === 'Escape') hide();
   });
   window.addEventListener('blur', hide);
-  // The 2s poll re-renders innerHTML, which can detach our anchor out from
-  // under a stationary cursor. Drop the tooltip so it never lingers orphaned;
-  // the next mouse move re-triggers it against the fresh node.
-  document.addEventListener('tclaude:snapshot', hide);
+  // The 2s poll re-renders innerHTML wholesale, detaching our anchor out from
+  // under a stationary cursor. reanchor() adopts the fresh node in place so the
+  // tooltip survives the tick without blinking (rather than hide → re-delay →
+  // re-show every 2s).
+  document.addEventListener('tclaude:snapshot', reanchor);
 }
 
 export { bindTooltips, TOOLTIP_DELAY_MS };

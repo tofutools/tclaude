@@ -353,7 +353,9 @@ func TestDashboardAssets_FastTooltipWired(t *testing.T) {
 		"el.removeAttribute('title')",         // suppresses the native (slow) tooltip
 		"closest('[title], [data-tt]')",       // marker keeps a stripped anchor findable (no nested-title flip)
 		"el.setAttribute('data-tt', '')",      // sets that marker on stash
-		"'tclaude:snapshot', hide",            // drops an orphaned tooltip on re-render
+		"function reanchor(",                  // re-anchors across the 2s re-render (no blink)
+		"document.elementFromPoint(ptrX, ptrY)", // finds the fresh node under the cursor
+		"'tclaude:snapshot', reanchor",        // snapshot re-anchors rather than tearing down
 		"#tt {",                       // the shared tooltip element's CSS
 		"#tt.show { opacity: 1; }",    // fade-in reveal rule
 	} {
