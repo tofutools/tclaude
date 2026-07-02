@@ -46,6 +46,10 @@ export const SYNONYMS = {
   // label hit whichever vocabulary the human types in either theme).
   profiles: ['patterns'],
   patterns: ['profiles'],
+  // "Create new group…" presents as "⚔ Form a party…" in wizard mode, so
+  // "party" must rank the plain label and "group" the arcane one.
+  party: ['group'],
+  group: ['party'],
 };
 
 // scoreMatch ranks how directly a (possibly synonym-substituted) query

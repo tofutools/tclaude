@@ -50,6 +50,7 @@ import {
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
+import { openGroupCreateModal } from './modal-message.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
@@ -336,6 +337,24 @@ function buildCommands() {
       run: () => openRetireUngroupedPreview(),
     });
   }
+
+  // 1e) Create a new group. Opens the very dialog the Groups-tab
+  //     "+ new group" button opens (openGroupCreateModal → POST
+  //     /api/groups on submit) — a thin surface over the existing flow,
+  //     no new behaviour. A headline "create" action that pairs with the
+  //     spawn commands just below: a fresh group is where you then summon
+  //     familiars. Unconditional — you can always form a new group. In 🧙
+  //     mode the group-create dialog already titles itself "⚔ Form a
+  //     party", so the command reads the same (icon ⚔ / label "Form a
+  //     party…") to match the button it fronts.
+  cmds.push({
+    icon: wiz('＋', '⚔'), label: wiz('Create new group…', 'Form a party…'),
+    hint: wiz('open the new-group dialog',
+      'gather a fresh coven — muster a new adventuring party'),
+    keywords: 'new group create make add team squad'
+      + ' party form fellowship warband adventuring muster gather assemble coven guild',
+    run: () => openGroupCreateModal(),
+  });
 
   // 2) Spawn a new agent. The plain command DEFAULTS the dialog's group
   //    picker to the group the operator last interacted with (folded /

@@ -24,6 +24,7 @@ const COMMANDS = [
   { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
   { label: 'Focus all windows', keywords: 'show all windows raise focus bring up reveal behold conjure portal scrying vision familiars' },
   { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some reveal veil portals scrying familiars' },
+  { label: 'Create new group…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble coven guild' },
   { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
   { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle familiars' },
@@ -43,6 +44,7 @@ const COMMANDS = [
 // direction (plain query → arcane label), the one that matters in wizard mode.
 const WIZ_COMMANDS = [
   { label: 'Veil all familiars', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
+  { label: 'Form a party…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble coven guild' },
   { label: 'Summon a familiar…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Slumber all familiars', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
   { label: 'Banish familiar: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
@@ -117,6 +119,9 @@ test('expandQuery maps synonyms bidirectionally', () => {
   // Profile ↔ familiar-pattern noun bridge.
   assert.ok(expandQuery('patterns').includes('profiles'));
   assert.ok(expandQuery('profiles').includes('patterns'));
+  // Group ↔ party (the wizard label for "Create new group…" is "Form a party…").
+  assert.ok(expandQuery('party').includes('group'));
+  assert.ok(expandQuery('group').includes('party'));
 });
 
 test('SYNONYMS pairs are bidirectional', () => {
@@ -138,6 +143,8 @@ test('SYNONYMS pairs are bidirectional', () => {
   assert.deepEqual(SYNONYMS.banish, ['retire']);
   assert.deepEqual(SYNONYMS.profiles, ['patterns']);
   assert.deepEqual(SYNONYMS.patterns, ['profiles']);
+  assert.deepEqual(SYNONYMS.party, ['group']);
+  assert.deepEqual(SYNONYMS.group, ['party']);
 });
 
 // -- Wizard-theme synonyms: the arcane vocabulary must find the plain-labelled
@@ -171,6 +178,19 @@ test('plain verb still finds the arcane label in wizard mode', () => {
   assert.equal(wizTop('shutdown'), 'Slumber all familiars');
   assert.equal(wizTop('retire'), 'Banish familiar: worker-7');
   assert.equal(wizTop('hide'), 'Veil all familiars');
+});
+
+test('create-group is reachable by both vocabularies in both themes', () => {
+  // Plain theme (label "Create new group…"): the literal terms rank it,
+  // and the wizard word "party" lands it via the party→group bridge.
+  assert.equal(top('new group'), 'Create new group…');
+  assert.equal(top('create group'), 'Create new group…');
+  assert.equal(top('party'), 'Create new group…');
+  // Wizard theme (label "Form a party…"): the arcane words rank it, and the
+  // plain word "group" lands it via the group→party bridge — the load-bearing
+  // direction, so old muscle memory ("new group") still finds it.
+  assert.equal(wizTop('party'), 'Form a party…');
+  assert.equal(wizTop('new group'), 'Form a party…');
 });
 
 test('scoreMatch ladder: exact > prefix > word-start > substring', () => {
