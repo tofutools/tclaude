@@ -572,6 +572,59 @@ func TestDashboardHTML_WizardPartyButton(t *testing.T) {
 	must(`No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong>`, "the empty-state hint carries both swappable labels")
 }
 
+// TestDashboardHTML_WizardGroupCreateDialog pins the wizard re-skin of the
+// dialog the "⚔ Form a party" button opens. The button was themed (covered by
+// TestDashboardHTML_WizardPartyButton above), but the modal it opens kept the
+// default chrome — this pins that the dialog surface, title span-swap and
+// submit-lever glyph are all re-skinned arcane. Front-end only, so we
+// string-search the embedded source (html + css) rather than running the JS.
+func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title: a pure-CSS span swap, "Create a new agent group" → "⚔ Form a
+	// party" (echoing the button, like the cron title echoes its opener). Both
+	// spans + the swap rules must be present.
+	must(`<span class="group-create-title-regular">Create a new agent group</span>`, "the default group-create title span")
+	must(`<span class="group-create-title-wizard">⚔ Form a party</span>`, "the wizard group-create title span")
+	// The default-hide rule is load-bearing: without it the wizard title has no
+	// rule in the default/slop theme and BOTH titles render side by side.
+	must(".group-create-title-wizard { display: none; }", "the default theme hides the wizard title")
+	must("body.wizard #group-create-title .group-create-title-regular", "wizard hides the default title")
+	must("body.wizard #group-create-title .group-create-title-wizard", "wizard shows the party title")
+
+	// The dialog surface is re-skinned, scoped to #group-create-modal so the
+	// sibling .cron-create-modal dialogs keep the default chrome.
+	must("body.wizard #group-create-modal .cron-create-modal", "the group-create dialog surface is re-skinned")
+	// The submit's static "Create" text is hidden and swapped for a ::before
+	// glyph lever, with a themed in-flight (disabled) copy.
+	must("body.wizard #group-create-modal #group-create-submit {", "the submit button becomes a gilded lever")
+	must(`content: "⚔ Form the party!";`, "the submit-lever copy")
+	must(`content: "⚔ Gathering the party…";`, "the in-flight submit copy")
+	// The number (Max members) input is re-skinned alongside the text/textarea
+	// fields so no field stays a bright default-dark against the violet.
+	must("body.wizard #group-create-modal .cron-create-row input[type=number]", "the number field is re-skinned")
+	// Non-primary buttons (Cancel / Browse…) get the secondary arcane skin.
+	must("body.wizard #group-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
+}
+
+// TestDashboardCSS_WizardGroupCreateModalScoped guards that the wizard
+// group-create dialog re-skin stays scoped to #group-create-modal — the dialog
+// shares the .cron-create-modal class with the spawn / clone / reincarnate /
+// cron / message-create modals, so an unscoped rule would repaint all of them.
+// Mirrors TestDashboardCSS_WizardSpawnModalScoped / …WizardCronDialogScoped; the
+// shared unscoped-needle guard below covers all three, but a dedicated check
+// documents this dialog's dependence on the scoping too.
+func TestDashboardCSS_WizardGroupCreateModalScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard group-create re-skin is unscoped — will repaint spawn/clone/cron modals too")
+	}
+}
+
 // TestDashboardHTML_WizardCronDialog pins the wizard re-skin of the cron tab's
 // "+ new cron job" flow ("⏳ Bind a recurring ritual"): the per-theme open-button
 // label span swap + its empty-state hint twin, the arcane dialog surface, the
