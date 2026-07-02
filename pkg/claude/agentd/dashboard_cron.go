@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -38,6 +40,10 @@ func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 	rest = strings.TrimSuffix(rest, "/")
 	if rest == "" {
 		http.Error(w, "expected /api/cron/{id}", http.StatusNotFound)
+		return
+	}
+	if rest == "explain" {
+		dashboardCronExplain(w, r)
 		return
 	}
 	parts := strings.SplitN(rest, "/", 2)
@@ -141,6 +147,55 @@ func handleDashboardCronCreate(w http.ResponseWriter, r *http.Request) {
 // passes without a slug check.
 func dashboardCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	handleCronPatch(w, asDashboardHumanPeer(r), id)
+}
+
+// dashboardCronExplain is the cron-expression "auto explainer" behind the
+// dialog's expression mode: POST /api/cron/explain {"expr": "*/5 * * * *"}
+// → {valid, error?, description?, next: [RFC3339…], tz}. It answers from
+// the same cronexpr parser the scheduler fires with, so what it predicts is
+// what will happen. The concrete next-fire times are the trustworthy part
+// of the answer; the English description is best-effort sugar and may be
+// empty (e.g. for @descriptors). tz names the daemon's local timezone —
+// what an expression without a CRON_TZ prefix evaluates in.
+func dashboardCronExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Expr string `json:"expr"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	expr := strings.TrimSpace(body.Expr)
+	resp := map[string]any{
+		"valid": false,
+		"next":  []string{},
+		"tz":    time.Local.String(),
+	}
+	if expr == "" {
+		resp["error"] = "empty expression"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if err := cronexpr.Validate(expr); err != nil {
+		resp["error"] = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	next, _ := cronexpr.NextN(expr, time.Now(), 3)
+	fires := make([]string, 0, len(next))
+	for _, t := range next {
+		fires = append(fires, t.Format(time.RFC3339))
+	}
+	resp["valid"] = true
+	resp["next"] = fires
+	if desc := cronexpr.Describe(expr); desc != "" {
+		resp["description"] = desc
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // dashboardCronLogs returns the recent run history for one job. Same

@@ -169,6 +169,17 @@ function cronTargetCell(j) {
   return '<span class="muted">(no target)</span>';
 }
 
+// cronScheduleCell renders a cron job's schedule for the info column:
+// the cron expression verbatim ("cron: */5 * * * *", with the English
+// description as the hover title when the server could render one) for
+// an expression job, else the familiar "every 5m" interval.
+function cronScheduleCell(j) {
+  if (j.cron_expr) {
+    return `<span class="id" title="${esc(j.cron_desc || '')}">cron: ${esc(j.cron_expr)}</span>`;
+  }
+  return `<span class="id">every ${esc(formatInterval(j.interval_seconds))}</span>`;
+}
+
 // cronStatusPill colorises the last_run_status. Empty / "ok" /
 // anything else map to neutral / green / red respectively.
 function cronStatusPill(s) {
@@ -217,7 +228,7 @@ function cronJobRowCells(j) {
     <td>${cronTargetCell(j)}<div class="muted" title="${esc(idTooltip(j.owner_agent, j.owner_conv))}">by ${esc(j.owner_label || shortAgentId(j.owner_agent, j.owner_conv))}</div></td>
     <td>${cronStatusPill(j.last_run_status)}</td>
     <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
-    <td><span class="id">every ${esc(formatInterval(j.interval_seconds))}</span></td>
+    <td>${cronScheduleCell(j)}</td>
     <td><div class="row-actions">${runBtn}${editBtn}${enableBtn}${delBtn}</div></td>`;
 }
 

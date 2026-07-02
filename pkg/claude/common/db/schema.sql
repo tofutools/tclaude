@@ -95,7 +95,7 @@ CREATE TABLE agent_cron_jobs (
 			last_run_at      TEXT NOT NULL DEFAULT '',
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')));
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 

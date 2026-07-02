@@ -2615,10 +2615,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-target {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
 }
-.cron-create-target .cron-target-modes {
+.cron-create-target .cron-target-modes,
+.cron-create-schedule .cron-target-modes {
   display: flex; gap: 12px; font-size: 12px; color: #c9d1d9;
 }
-.cron-create-target .cron-target-modes label { cursor: pointer; }
+.cron-create-target .cron-target-modes label,
+.cron-create-schedule .cron-target-modes label { cursor: pointer; }
 .cron-create-target .cron-target-input-row {
   display: flex; gap: 6px; align-items: center;
 }
@@ -2646,6 +2648,26 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-schedule .cron-schedule-chips button.selected {
   background: #1f6feb; border-color: #388bfd; color: white;
 }
+/* The two schedule-mode bodies (chips+custom interval vs cron expression);
+   modal-cron.js's setScheduleMode toggles which one is visible. */
+.cron-schedule-interval {
+  display: flex; flex-direction: column; gap: 6px;
+}
+#cron-create-cron {
+  width: 100%; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* The live "auto explainer" under the expression input — the debounced
+   /api/cron/explain result: an English description, the next fire times,
+   and the evaluation-timezone note (or the parse error while the
+   expression is invalid). :empty-collapsed like .cron-create-error. */
+.cron-explain {
+  font-size: 12px; color: #7d8590; line-height: 1.5;
+  display: flex; flex-direction: column; gap: 2px; margin-top: 4px;
+}
+.cron-explain:empty { display: none; }
+.cron-explain .cron-explain-desc { color: #c9d1d9; }
+.cron-explain .cron-explain-error { color: #ffa198; }
 .cron-create-enabled {
   display: flex; align-items: center; gap: 6px; font-size: 12px;
   color: #c9d1d9;

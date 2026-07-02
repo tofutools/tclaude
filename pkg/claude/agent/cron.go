@@ -50,6 +50,7 @@ type cronJobJSON struct {
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
+	CronExpr        string `json:"cron_expr,omitempty"`
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
@@ -89,11 +90,11 @@ func runCronLs(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no scheduled cron jobs)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-4s  %-10s  %-9s  %-16s  %-9s  %s\n",
-		"ID", "INTERVAL", "ENABLED", "TARGET", "LAST", "NAME / BODY")
+	fmt.Fprintf(stdout, "%-4s  %-14s  %-9s  %-16s  %-9s  %s\n",
+		"ID", "SCHEDULE", "ENABLED", "TARGET", "LAST", "NAME / BODY")
 	fmt.Fprintln(stdout, strings.Repeat("─", 80))
 	for _, j := range resp.Jobs {
-		interval := (time.Duration(j.IntervalSeconds) * time.Second).String()
+		interval := cronScheduleLabel(j)
 		enabled := "yes"
 		if !j.Enabled {
 			enabled = "no"
@@ -109,10 +110,20 @@ func runCronLs(stdout, stderr io.Writer) int {
 		if desc == "" {
 			desc = truncate(j.Body, 40)
 		}
-		fmt.Fprintf(stdout, "%-4d  %-10s  %-9s  %-16s  %-9s  %s\n",
+		fmt.Fprintf(stdout, "%-4d  %-14s  %-9s  %-16s  %-9s  %s\n",
 			j.ID, interval, enabled, cronTargetLabel(j), last, desc)
 	}
 	return rcOK
+}
+
+// cronScheduleLabel renders a job's schedule for the ls SCHEDULE column:
+// the cron expression verbatim for an expression job, else the interval
+// as a Go duration ("10m0s").
+func cronScheduleLabel(j cronJobJSON) string {
+	if j.CronExpr != "" {
+		return j.CronExpr
+	}
+	return (time.Duration(j.IntervalSeconds) * time.Second).String()
 }
 
 // cronTargetLabel renders a job's target for the ls TARGET column:
@@ -133,7 +144,8 @@ func cronTargetLabel(j cronJobJSON) string {
 
 type cronAddParams struct {
 	Target   string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
-	Interval string `long:"interval" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick)."`
+	Interval string `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
+	Cron     string `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
 	Body     string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
 	Subject  string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
@@ -144,7 +156,7 @@ func cronAddCmd() *cobra.Command {
 	return boa.CmdT[cronAddParams]{
 		Use:         "add",
 		Short:       "Schedule a new recurring cron job",
-		Long:        "Creates a job that fires every --interval and delivers a message body to --target. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string. Pass --target group:NAME to multicast each tick to every current member of a group (membership is resolved at fire time).",
+		Long:        "Creates a job that fires on a schedule and delivers a message body to --target. The schedule is either --interval (a fixed Go duration, e.g. 10m) or --cron (a cron expression, e.g. '*/5 * * * *' or '@daily'; evaluated in the daemon's local timezone unless prefixed with CRON_TZ=<zone>) — exactly one of the two. A --cron job that has never fired waits for the expression's first match after creation; an --interval job fires on the next tick. Defaults to self-targeted when --target is omitted. Give the body inline with --body, or with --file <path> (or --file - to read stdin) — the file form sidesteps shell quoting, including backticks the shell would otherwise eat from an inline string. Pass --target group:NAME to multicast each tick to every current member of a group (membership is resolved at fire time).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *cronAddParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -157,8 +169,14 @@ func cronAddCmd() *cobra.Command {
 }
 
 func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	if strings.TrimSpace(p.Interval) == "" {
-		fmt.Fprintln(stderr, "Error: --interval is required (e.g. --interval 10m)")
+	interval := strings.TrimSpace(p.Interval)
+	cronExpr := strings.TrimSpace(p.Cron)
+	if interval == "" && cronExpr == "" {
+		fmt.Fprintln(stderr, "Error: a schedule is required — pass --interval 10m or --cron '*/5 * * * *'")
+		return rcInvalidArg
+	}
+	if interval != "" && cronExpr != "" {
+		fmt.Fprintln(stderr, "Error: --interval and --cron are mutually exclusive — pick one schedule mode")
 		return rcInvalidArg
 	}
 	jobBody, rc := resolveBodyInput(p.Body, p.File, "--body", stdin, stderr)
@@ -179,9 +197,13 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		return rc
 	}
 	body := map[string]any{
-		"target":   target,
-		"interval": p.Interval,
-		"body":     jobBody,
+		"target": target,
+		"body":   jobBody,
+	}
+	if cronExpr != "" {
+		body["cron_expr"] = cronExpr
+	} else {
+		body["interval"] = interval
 	}
 	if p.Subject != "" {
 		body["subject"] = p.Subject
@@ -194,9 +216,13 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	interval := (time.Duration(resp.IntervalSeconds) * time.Second).String()
-	fmt.Fprintf(stdout, "Scheduled job #%d every %s → %s\n",
-		resp.ID, interval, cronTargetLabel(resp))
+	if resp.CronExpr != "" {
+		fmt.Fprintf(stdout, "Scheduled job #%d on cron %q → %s\n",
+			resp.ID, resp.CronExpr, cronTargetLabel(resp))
+	} else {
+		fmt.Fprintf(stdout, "Scheduled job #%d every %s → %s\n",
+			resp.ID, (time.Duration(resp.IntervalSeconds)*time.Second).String(), cronTargetLabel(resp))
+	}
 	switch {
 	case resp.TargetKind == "group":
 		fmt.Fprintln(stdout, "  Group multicast — each tick fans out to every current member of the group (resolved at fire time).")

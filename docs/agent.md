@@ -489,6 +489,7 @@ targets).
 
 ```bash
 tclaude agent cron add --interval 10m --body "status check?" [--target SEL --name N]
+tclaude agent cron add --cron "0 9 * * 1-5" --body "morning standup"   # cron expression instead of interval
 tclaude agent cron ls
 tclaude agent cron disable <id>      # pause without deleting
 tclaude agent cron enable <id>
