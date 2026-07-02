@@ -206,6 +206,16 @@ func runSetup(params *Params) error {
 		}
 	}
 
+	// 2a. Claude Code fullscreen TUI. tclaude runs Claude Code inside tmux
+	// panes it detaches and reattaches; the classic inline renderer flickers
+	// and fights tmux's scrollback, while the fullscreen (alternate-screen)
+	// renderer is flicker-free and tmux-friendly — so tclaude only works as
+	// intended with it. Offer to set "tui": "fullscreen" in
+	// ~/.claude/settings.json, but only on a fresh config: any existing "tui"
+	// value is a deliberate choice and is left untouched.
+	fmt.Println("\n=== Fullscreen TUI ===")
+	configureFullscreenTUI(params)
+
 	// 2b. Codex CLI status line (when codex is installed). Codex has no
 	// command-backed status line (openai/codex#17827), so tclaude can't
 	// install its renderer there; instead it curates Codex's built-in
@@ -733,6 +743,10 @@ func checkStatus(harnessName string) error {
 		fmt.Println("✗ Status bar not configured")
 		fmt.Println("  Run 'tclaude setup' to install")
 	}
+
+	// Check fullscreen TUI
+	fmt.Println("\n=== Fullscreen TUI ===")
+	checkFullscreenTUI()
 
 	// Check Codex status line
 	fmt.Println("\n=== Codex Status Bar ===")
