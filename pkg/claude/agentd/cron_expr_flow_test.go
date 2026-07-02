@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,6 +131,48 @@ func TestCronExpr_PatchSwitchesModes(t *testing.T) {
 	row, _ = db.GetAgentCronJob(id)
 	assert.Empty(t, row.CronExpr, "expression cleared on the switch back")
 	assert.EqualValues(t, 900, row.IntervalSeconds, "interval stored")
+}
+
+// Scenario: switching an existing job to an expression re-anchors the
+// schedule at the edit. Without the re-anchor, a match that already passed
+// relative to the job's OLD last_run_at would fire within one scheduler
+// tick of saving the edit — real crond evaluates an edited schedule forward
+// from the moment of the edit, and so do we.
+func TestCronExpr_PatchReanchorsSchedule(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "cxp5-tgt0-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(conv, "target")
+
+	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "anchor", OwnerConv: conv, TargetConv: conv,
+		IntervalSeconds: 86400, Body: "x", Enabled: true,
+	})
+	require.NoError(t, err, "InsertAgentCronJob")
+	// The job last fired hours ago — the stale anchor an unfixed PATCH
+	// would keep evaluating from.
+	require.NoError(t, db.UpdateAgentCronJobLastRun(id, time.Now().Add(-6*time.Hour), "ok"))
+
+	// The fix is pinned directly by the last_run_at bump below. "9am on
+	// Feb 29" (a match years away) keeps the follow-up not-due sweep
+	// deterministic — a daily expression would flake if the test straddled
+	// its fire minute.
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodPatch, "/v1/cron/"+strconv.FormatInt(id, 10),
+		map[string]any{"cron_expr": "0 9 29 2 *"})))
+	require.Equal(t, http.StatusOK, rec.Code, "PATCH body=%s", rec.Body.String())
+
+	row, _ := db.GetAgentCronJob(id)
+	assert.Equal(t, "0 9 29 2 *", row.CronExpr, "expression stored")
+	assert.WithinDuration(t, time.Now(), row.LastRunAt, time.Minute,
+		"expression PATCH re-anchors last_run_at at the edit")
+	assert.Equal(t, "ok", row.LastRunStatus, "status pill preserved across the re-anchor")
+
+	due, err := db.ListDueAgentCronJobs(time.Now())
+	require.NoError(t, err)
+	for _, j := range due {
+		assert.NotEqual(t, id, j.ID, "re-anchored expr job must not be immediately due")
+	}
 }
 
 // Scenario: the PATCH forms that would break the invariant are refused —

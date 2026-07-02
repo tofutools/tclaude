@@ -7,9 +7,11 @@
 // (minute hour dom month dow), @descriptors (@hourly, @daily, @weekly,
 // @monthly, @yearly, @every <duration>), and an optional CRON_TZ=<zone>
 // prefix. Without CRON_TZ, expressions evaluate in the daemon's local
-// timezone (ParseStandard pins time.Local into the schedule), so "0 9 * * *"
-// means 9am on the wall clock of the machine running agentd regardless of
-// what location the base timestamp carries.
+// timezone: robfig's Next(t) matches a zone-less schedule against t's OWN
+// location — and our stored bases are RFC3339 "Z" strings that parse as
+// UTC — so Next/NextN normalize the base to time.Local first. That is what
+// makes "0 9 * * *" mean 9am on the wall clock of the machine running
+// agentd regardless of what location the base timestamp carries.
 package cronexpr
 
 import (
@@ -29,24 +31,27 @@ func Parse(expr string) (rcron.Schedule, error) {
 
 // Next returns the first fire time strictly after base, or the zero time if
 // the expression can never fire again (robfig gives up after a bounded
-// search, e.g. "0 0 30 2 *").
+// search, e.g. "0 0 30 2 *"). The base is normalized to time.Local so a
+// zone-less expression matches the daemon's wall clock even when the base
+// was parsed from a UTC-serialized timestamp (see the package doc).
 func Next(expr string, base time.Time) (time.Time, error) {
 	sched, err := Parse(expr)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return sched.Next(base), nil
+	return sched.Next(base.In(time.Local)), nil
 }
 
 // NextN returns up to n consecutive fire times after base. Fewer than n
-// (possibly zero) come back when the expression stops matching.
+// (possibly zero) come back when the expression stops matching. Same
+// local-normalization as Next.
 func NextN(expr string, base time.Time, n int) ([]time.Time, error) {
 	sched, err := Parse(expr)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]time.Time, 0, n)
-	t := base
+	t := base.In(time.Local)
 	for range n {
 		t = sched.Next(t)
 		if t.IsZero() {
@@ -87,14 +92,25 @@ func Describe(expr string) string {
 	return desc
 }
 
+// minEveryDelay floors "@every <duration>" schedules. It mirrors the 30s
+// minimum the interval mode enforces (the agentd scheduler tick): a finer
+// @every would be silently capped to one fire per tick anyway, so the
+// explainer would predict fire times that can't happen.
+const minEveryDelay = 30 * time.Second
+
 // Validate is the write-path gate: a non-empty expression must parse and
 // must produce at least one future fire time, so an impossible date like
 // "0 0 30 2 *" (Feb 30) can't be stored as a job that silently never runs.
-// Returns a human-readable error.
+// "@every" delays below the scheduler tick are rejected for the same
+// prediction-must-match-reality reason (standard 5-field syntax is
+// minute-resolution and can't go that fine). Returns a human-readable error.
 func Validate(expr string) error {
 	sched, err := Parse(expr)
 	if err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
+	}
+	if cd, ok := sched.(rcron.ConstantDelaySchedule); ok && cd.Delay < minEveryDelay {
+		return fmt.Errorf("@every delay must be >= %s (the scheduler tick interval)", minEveryDelay)
 	}
 	if sched.Next(time.Now()).IsZero() {
 		return fmt.Errorf("cron expression never fires")

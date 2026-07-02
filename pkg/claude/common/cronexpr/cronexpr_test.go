@@ -36,6 +36,27 @@ func TestNextN(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 7, 2, 10, 15, 0, 0, time.UTC), got[2].UTC())
 }
 
+func TestNext_LocalWallClock_WithUTCBase(t *testing.T) {
+	// The due check feeds bases parsed from RFC3339 "Z" strings (UTC
+	// location). robfig matches a zone-less schedule against the base's OWN
+	// location, so without Next's time.Local normalization "0 9 * * *"
+	// would mean 9am UTC in the scheduler while the explainer (fed
+	// time.Now(), local) predicted 9am wall clock — the regression this
+	// pins. Swap time.Local for a fixed non-UTC zone so the test bites on
+	// UTC CI runners too.
+	prev := time.Local
+	time.Local = time.FixedZone("UTC+2", 2*3600)
+	t.Cleanup(func() { time.Local = prev })
+
+	// 06:30 UTC = 08:30 on the daemon's wall clock; the next "0 9 * * *"
+	// match is 09:00+02:00 — which is 07:00 UTC, not 09:00 UTC.
+	base := time.Date(2026, 7, 2, 6, 30, 0, 0, time.UTC)
+	next, err := Next("0 9 * * *", base)
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, 7, 2, 7, 0, 0, 0, time.UTC).Unix(), next.Unix(),
+		"9am must be the daemon's wall clock, not the UTC base's clock")
+}
+
 func TestNext_NeverFires(t *testing.T) {
 	// Feb 30 never exists; robfig's bounded search returns the zero time.
 	next, err := Next("0 0 30 2 *", time.Now())
@@ -55,6 +76,9 @@ func TestDescribe(t *testing.T) {
 func TestValidate(t *testing.T) {
 	assert.NoError(t, Validate("*/5 * * * *"))
 	assert.NoError(t, Validate("@hourly"))
+	assert.NoError(t, Validate("@every 30s"), "@every at the tick floor is fine")
 	assert.Error(t, Validate("banana"), "garbage rejected")
 	assert.Error(t, Validate("0 0 30 2 *"), "never-fires rejected")
+	assert.Error(t, Validate("@every 5s"),
+		"@every below the scheduler tick predicts fires that can't happen")
 }

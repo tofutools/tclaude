@@ -603,6 +603,21 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
 		return
 	}
+	// Setting an expression re-anchors the schedule at "now" (keeping the
+	// last-run status pill): the due check fires an expr job when its next
+	// match after last_run_at (or created_at) has passed, so without the
+	// re-anchor an edit at 14:00 to "0 9 * * *" would fire within one tick —
+	// this morning's 9:00 already passed relative to the old anchor. Real
+	// crond's semantics — an edited schedule evaluates forward from the
+	// moment of the edit — are what a human expects. Interval edits keep
+	// their long-standing behaviour (never bump last_run_at; one catch-up
+	// fire after a long idle is semantically true for "every N").
+	if n > 0 && patch.CronExpr != nil && *patch.CronExpr != "" {
+		if err := db.UpdateAgentCronJobLastRun(id, time.Now(), job.LastRunStatus); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "re-anchor: "+err.Error())
+			return
+		}
+	}
 	if n == 0 {
 		// Row vanished between Get and Update, or empty patch — both
 		// are 200 OK with the current row, just like POST returns the
@@ -671,6 +686,14 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 	// combination is interval + empty cron_expr (an explicit mode switch);
 	// interval + non-empty cron_expr is ambiguous, and an empty cron_expr
 	// alone would leave the job with no schedule at all.
+	//
+	// Presence-normalize first so the two mode-switch shapes are symmetric:
+	// {cron_expr: "...", interval: ""} means the same as cron_expr alone,
+	// mirroring the blessed {interval: "...", cron_expr: ""} form.
+	if body.Interval != nil && strings.TrimSpace(*body.Interval) == "" &&
+		body.CronExpr != nil && strings.TrimSpace(*body.CronExpr) != "" {
+		body.Interval = nil
+	}
 	if body.CronExpr != nil {
 		expr := strings.TrimSpace(*body.CronExpr)
 		if expr != "" {

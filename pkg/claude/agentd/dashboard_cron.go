@@ -170,10 +170,17 @@ func dashboardCronExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expr := strings.TrimSpace(body.Expr)
+	// Name the daemon's local zone. With TZ unset Go calls the location
+	// literally "Local", which tells the user nothing — fall back to the
+	// current abbreviation + offset (e.g. "CEST, UTC+02:00").
+	tz := time.Local.String()
+	if tz == "Local" {
+		tz = time.Now().Format("MST, UTC-07:00")
+	}
 	resp := map[string]any{
 		"valid": false,
 		"next":  []string{},
-		"tz":    time.Local.String(),
+		"tz":    tz,
 	}
 	if expr == "" {
 		resp["error"] = "empty expression"
