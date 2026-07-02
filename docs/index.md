@@ -81,6 +81,7 @@ The **baseline** always runs (you can't turn it off) and:
 - Checks that tmux is installed (offers to install it on macOS)
 - Installs hooks in `~/.claude/settings.json` for status tracking
 - Installs the status bar for Claude Code's statusline
+- Offers to enable Claude Code's fullscreen TUI (`"tui": "fullscreen"`) — tclaude runs Claude Code inside tmux, where the flicker-free alternate-screen renderer works best (only asked when you haven't already set `tui` yourself)
 - Sets up clickable notifications for your platform (terminal-notifier on macOS, D-Bus + xdotool/kdotool on Linux, the `tclaude://` protocol handler on WSL)
 - Asks if you want to enable desktop notifications
 
