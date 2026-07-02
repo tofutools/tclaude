@@ -53,6 +53,7 @@ function hide() {
   }
   if (anchor) {
     if (stashed && !anchor.hasAttribute('title')) anchor.setAttribute('title', stashed);
+    anchor.removeAttribute('data-tt'); // drop the closest()-visibility marker
     anchor = null;
     stashed = '';
   }
@@ -101,14 +102,25 @@ function show() {
 function bindTooltips() {
   document.addEventListener('mouseover', (e) => {
     if (!e.target || !e.target.closest) return;
-    const el = e.target.closest('[title]');
+    // Match BOTH a live `title` and our own `data-tt` marker. Once an anchor's
+    // `title` is stripped below (to kill the native tooltip), `[title]` alone
+    // would no longer see it — so a mouseover bubbling up from a *non-titled
+    // descendant* of the anchor (e.g. the inner `.qo-text` span of a titled
+    // group-header chip) would walk straight past the anchor and mis-match an
+    // outer titled ancestor (the `<summary>`'s "Drag to reorder" title),
+    // flipping the tooltip. The marker keeps the anchor findable so we detect
+    // "still inside it" and keep it; a genuinely titled *inner* element still
+    // wins via closest()'s nearest-match, so nested distinct titles switch
+    // correctly.
+    const el = e.target.closest('[title], [data-tt]');
     if (!el) return;
+    if (el === anchor) return; // still within the current anchor: keep it
     const text = el.getAttribute('title');
-    if (!text) return; // empty title carries nothing to show
-    if (el === anchor) return; // already ours
+    if (!text) return; // empty title (or a stray marker) carries nothing to show
     hide(); // switching anchors: restore the old one's title first
     anchor = el;
     stashed = text;
+    el.setAttribute('data-tt', ''); // keep it findable by closest() post-strip
     el.removeAttribute('title'); // suppress the native (slow) tooltip
     showTimer = setTimeout(show, TOOLTIP_DELAY_MS);
   });

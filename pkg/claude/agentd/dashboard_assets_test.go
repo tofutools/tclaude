@@ -350,8 +350,10 @@ func TestDashboardAssets_FastTooltipWired(t *testing.T) {
 		"function bindTooltips(", // module binder exists (tooltip.js)
 		"bindTooltips,",          // exported from tooltip.js
 		"bindTooltips()",         // dashboard.js calls it at boot
-		"el.removeAttribute('title')", // suppresses the native (slow) tooltip
-		"'tclaude:snapshot', hide",    // drops an orphaned tooltip on re-render
+		"el.removeAttribute('title')",         // suppresses the native (slow) tooltip
+		"closest('[title], [data-tt]')",       // marker keeps a stripped anchor findable (no nested-title flip)
+		"el.setAttribute('data-tt', '')",      // sets that marker on stash
+		"'tclaude:snapshot', hide",            // drops an orphaned tooltip on re-render
 		"#tt {",                       // the shared tooltip element's CSS
 		"#tt.show { opacity: 1; }",    // fade-in reveal rule
 	} {
