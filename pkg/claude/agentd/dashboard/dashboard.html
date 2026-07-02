@@ -1355,7 +1355,12 @@
 </div>
 <div class="modal-overlay" id="group-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
-    <h3 id="group-create-title">Create a new agent group</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, like the spawn dialog's
+         .spawn-title-regular / .spawn-title-wizard pair): a plain "Create a new
+         agent group" normally, the arcane "⚔ Form a party" in 🧙 wizard mode —
+         matching the button that opens it, the same way the cron dialog's title
+         echoes its "⏳ Bind a recurring ritual" opener. -->
+    <h3 id="group-create-title"><span class="group-create-title-regular">Create a new agent group</span><span class="group-create-title-wizard">⚔ Form a party</span></h3>
     <label class="cron-create-row">
       <span class="cron-create-label">Name</span>
       <input id="group-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />

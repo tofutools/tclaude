@@ -2481,7 +2481,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
+/* input[type=number] gets the same dark treatment as text/select/textarea —
+   without it the group-create dialog's Max members field falls back to the
+   browser's default (white) styling and clashes with the dialog, the same
+   white-default trap the #agent-spawn-perms button note below calls out. It's
+   the only number input in a .cron-create-row, so this touches just that
+   field. */
 .cron-create-row input[type=text],
+.cron-create-row input[type=number],
 .cron-create-row select,
 .cron-create-row textarea {
   flex: 1;
@@ -2521,6 +2528,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
 .cron-create-row input[type=text]:focus,
+.cron-create-row input[type=number]:focus,
 .cron-create-row select:focus,
 .cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
 .cron-create-row textarea {
@@ -5125,6 +5133,109 @@ body.wizard #group-create-open.primary:hover {
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
+
+/* ─── Wizard "⚔ Form a party" DIALOG — the modal the button above opens ──
+   The "⚔ Form a party" button was re-skinned above, but the dialog it opens
+   kept the default dark chrome, leaving a jarring seam between the arcane
+   button and the plain form. This block gives the dialog the same arcane
+   treatment as its sibling Summon / Bind-a-ritual dialogs so the whole flow
+   stays in voice — midnight-violet void, mystic-purple frame + glow,
+   tarnished-gold + parchment accents.
+
+   The dialog is a .cron-create-modal, the SAME class the spawn / clone /
+   reincarnate / cron / message-create modals reuse, so every rule here is
+   scoped to #group-create-modal — an unscoped body.wizard .cron-create-modal
+   would repaint all of them (guarded by TestDashboardCSS_WizardGroupCreateModalScoped,
+   the same shared-needle guard as the spawn / cron re-skins).
+
+   Unlike the cron dialog (whose title is JS-set create/edit, so it uses the
+   ::before glyph trick), the group-create title is static, so it swaps via the
+   pure-CSS span pair (.group-create-title-regular / -wizard) — the same idiom as
+   the Summon dialog title and the "⚔ Form a party" button label. The submit
+   button's static "Create" text is hidden (font-size:0) and replaced by a
+   ::before glyph lever, matching the Summon / Bind levers. */
+.group-create-title-wizard { display: none; }
+body.wizard #group-create-title .group-create-title-regular { display: none; }
+body.wizard #group-create-title .group-create-title-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the Summon / Bind dialogs. The input
+   fields stay a legible violet-tinted dark so the form is still readable. */
+body.wizard #group-create-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #group-create-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / Summon title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #group-create-modal .cron-create-label { color: #b39ddb; }
+/* Max members is a number input; the others are text / textarea — theme all
+   three so no field stays a bright default-dark against the violet surface. */
+body.wizard #group-create-modal .cron-create-row input[type=text],
+body.wizard #group-create-modal .cron-create-row input[type=number],
+body.wizard #group-create-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-create-modal .cron-create-row input[type=text]:focus,
+body.wizard #group-create-modal .cron-create-row input[type=number]:focus,
+body.wizard #group-create-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Secondary + inline buttons (Cancel / the Browse… dir picker). Excluded via
+   :not(.primary) so the Form-the-party lever below keeps its gilded treatment;
+   the #group-create-modal id already out-specifies the base .dir-browse-btn
+   rule, so the Browse… button re-themes too. */
+body.wizard #group-create-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-create-modal button:not(.primary):hover { background: #3a2a63; }
+body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* Create = ⚔ Form the party! — the submit button re-skinned into a gilded
+   conjuring lever, the party twin of the spawn dialog's 🔮 Summon! and the cron
+   dialog's ⏳ Bind it!. Same mechanism: the button's static "Create" text is
+   hidden (font-size: 0) and replaced by a ::before glyph; the brief in-flight
+   disabled state paints a themed "⚔ Gathering the party…" via the same ::before,
+   keeping the busy copy in the arcane voice. The click already sprays cast
+   sparks via wizard-fx's global cast-FX handler, so no extra JS is needed. The
+   #group-create-submit id out-specifies the base .modal-buttons button.primary
+   rule and the :not(.primary) secondary skin above. */
+body.wizard #group-create-modal #group-create-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #group-create-modal #group-create-submit::before {
+  content: "⚔ Form the party!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #group-create-modal #group-create-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-create-modal #group-create-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #group-create-modal #group-create-submit:disabled { opacity: 0.7; }
+body.wizard #group-create-modal #group-create-submit:disabled::before { content: "⚔ Gathering the party…"; }
 
 /* ─── Wizard command palette — "📖 The Spellbook" ────────────────────
    The Ctrl/⌘-K launcher (palette.js) re-skinned arcane, the sibling of the
