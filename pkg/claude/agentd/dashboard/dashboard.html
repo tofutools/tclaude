@@ -1284,16 +1284,26 @@
       <div class="cron-create-target" id="cron-create-target-mount"></div>
     </label>
     <label class="cron-create-row">
-      <span class="cron-create-label">Every</span>
+      <span class="cron-create-label">Schedule</span>
       <div class="cron-create-schedule">
-        <div class="cron-schedule-chips" id="cron-create-chips">
-          <button type="button" data-chip="5m">5m</button>
-          <button type="button" data-chip="15m">15m</button>
-          <button type="button" data-chip="1h">1h</button>
-          <button type="button" data-chip="4h">4h</button>
-          <button type="button" data-chip="24h">daily</button>
+        <div class="cron-target-modes">
+          <label><input type="radio" name="cron-create-schedule-mode" value="interval" checked /> Interval</label>
+          <label><input type="radio" name="cron-create-schedule-mode" value="cron" /> Cron expression</label>
         </div>
-        <input id="cron-create-interval" type="text" placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck="false" />
+        <div class="cron-schedule-interval" id="cron-create-schedule-interval">
+          <div class="cron-schedule-chips" id="cron-create-chips">
+            <button type="button" data-chip="5m">5m</button>
+            <button type="button" data-chip="15m">15m</button>
+            <button type="button" data-chip="1h">1h</button>
+            <button type="button" data-chip="4h">4h</button>
+            <button type="button" data-chip="24h">daily</button>
+          </div>
+          <input id="cron-create-interval" type="text" placeholder="custom (30s min, e.g. 10m, 2h, 1h30m)" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="cron-schedule-cron" id="cron-create-schedule-cron" style="display:none">
+          <input id="cron-create-cron" type="text" placeholder="min hour dom month dow — e.g. */5 * * * *, 0 9 * * 1-5, @daily" autocomplete="off" spellcheck="false" />
+          <div class="cron-explain" id="cron-create-cron-explain"></div>
+        </div>
       </div>
     </label>
     <label class="cron-create-row">

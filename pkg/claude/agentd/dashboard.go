@@ -15,6 +15,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
@@ -838,6 +839,8 @@ type dashboardCronJob struct {
 	GroupID         int64  `json:"group_id"`
 	GroupName       string `json:"group_name,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
+	CronExpr        string `json:"cron_expr,omitempty"`
+	CronDesc        string `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
@@ -1827,6 +1830,8 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
 		IntervalSeconds: j.IntervalSeconds,
+		CronExpr:        j.CronExpr,
+		CronDesc:        cronexpr.Describe(j.CronExpr),
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
@@ -1855,6 +1860,21 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 	}
 	if !j.LastRunAt.IsZero() {
 		row.LastRunAt = j.LastRunAt.Format(time.RFC3339)
+	}
+	// Next-due mirrors the scheduler's due check in db.ListDueAgentCronJobs:
+	// interval jobs project last_run + interval (never-run = due now, so no
+	// timestamp to show); expression jobs project the next match after
+	// last_run — or after created_at for a job that hasn't fired yet, which
+	// unlike an interval job has a well-defined first fire worth showing.
+	if j.CronExpr != "" {
+		base := j.LastRunAt
+		if base.IsZero() {
+			base = j.CreatedAt
+		}
+		if next, err := cronexpr.Next(j.CronExpr, base); err == nil && !next.IsZero() {
+			row.NextDueAt = next.Format(time.RFC3339)
+		}
+	} else if !j.LastRunAt.IsZero() {
 		next := j.LastRunAt.Add(time.Duration(j.IntervalSeconds) * time.Second)
 		row.NextDueAt = next.Format(time.RFC3339)
 	}

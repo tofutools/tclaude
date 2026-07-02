@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -89,6 +90,116 @@ func TestAgentCronJob_DueLogic(t *testing.T) {
 	assert.False(t, dueIDs[j2], "j2 (30s ago, 60s interval) should NOT be due")
 	assert.True(t, dueIDs[j3], "j3 (90s ago, 60s interval) should be due")
 	assert.False(t, dueIDs[j4], "j4 (disabled) should never be due")
+}
+
+// pinCronTimes rewrites a job's created_at (and optionally last_run_at)
+// directly, so due-logic tests control every timestamp the check reads and
+// never race a wall-clock minute boundary.
+func pinCronTimes(t *testing.T, id int64, created time.Time, lastRun *time.Time) {
+	t.Helper()
+	d, err := Open()
+	require.NoError(t, err, "Open")
+	mustExec(t, d, `UPDATE agent_cron_jobs SET created_at = '`+
+		created.UTC().Format(time.RFC3339)+`' WHERE id = `+fmt.Sprint(id))
+	if lastRun != nil {
+		mustExec(t, d, `UPDATE agent_cron_jobs SET last_run_at = '`+
+			lastRun.UTC().Format(time.RFC3339)+`' WHERE id = `+fmt.Sprint(id))
+	}
+}
+
+func TestAgentCronJob_DueLogic_CronExpr(t *testing.T) {
+	setupTestDB(t)
+
+	// A minute-aligned base makes every "* * * * *" fire time exact: the
+	// next fire after base is base+1m regardless of timezone (all tz
+	// offsets are minute-aligned).
+	base := time.Now().Truncate(time.Minute)
+
+	// jNew: never run — anchors on created_at, so it is NOT due until the
+	// first match after creation (unlike interval jobs, which fire at once).
+	jNew, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		CronExpr: "* * * * *", Body: "x", Enabled: true,
+	})
+	require.NoError(t, err)
+	pinCronTimes(t, jNew, base, nil)
+
+	// jRan: last fired exactly at base — next match is base+1m.
+	jRan, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		CronExpr: "* * * * *", Body: "x", Enabled: true,
+	})
+	require.NoError(t, err)
+	ranAt := base
+	pinCronTimes(t, jRan, base.Add(-time.Hour), &ranAt)
+
+	// jOff: due by schedule but disabled.
+	jOff, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		CronExpr: "* * * * *", Body: "x", Enabled: false,
+	})
+	require.NoError(t, err)
+	pinCronTimes(t, jOff, base.Add(-time.Hour), nil)
+
+	// jBad: an unparseable expression (only reachable by hand-editing the
+	// row — write paths validate). Must be skipped, never abort the sweep.
+	jBad, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		CronExpr: "* * * * *", Body: "x", Enabled: true,
+	})
+	require.NoError(t, err)
+	d, err := Open()
+	require.NoError(t, err)
+	mustExec(t, d, `UPDATE agent_cron_jobs SET cron_expr = 'not an expr' WHERE id = `+fmt.Sprint(jBad))
+
+	dueAt := func(now time.Time) map[int64]bool {
+		due, err := ListDueAgentCronJobs(now)
+		require.NoError(t, err, "ListDueAgentCronJobs")
+		ids := map[int64]bool{}
+		for _, j := range due {
+			ids[j.ID] = true
+		}
+		return ids
+	}
+
+	// 30s after base: no minute boundary has passed since created/last-run.
+	early := dueAt(base.Add(30 * time.Second))
+	assert.False(t, early[jNew], "never-run expr job waits for its first match")
+	assert.False(t, early[jRan], "ran-at-base job not due before the next match")
+
+	// 90s after base: the base+1m match has passed for everyone.
+	late := dueAt(base.Add(90 * time.Second))
+	assert.True(t, late[jNew], "never-run expr job due after its first match")
+	assert.True(t, late[jRan], "ran-at-base job due after the next match")
+	assert.False(t, late[jOff], "disabled expr job never due")
+	assert.False(t, late[jBad], "unparseable expr skipped, not fired")
+}
+
+func TestAgentCronJob_CronExpr_RoundTripAndPatch(t *testing.T) {
+	setupTestDB(t)
+
+	id, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "a", TargetConv: "b",
+		CronExpr: "*/10 * * * *", Body: "x", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	got, err := GetAgentCronJob(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "*/10 * * * *", got.CronExpr, "cron_expr round-trips")
+	assert.Equal(t, int64(0), got.IntervalSeconds, "expr job carries no interval")
+
+	// Patch to interval mode: set the interval, clear the expression.
+	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{
+		IntervalSeconds: new(int64(300)), CronExpr: new(""),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	got, err = GetAgentCronJob(id)
+	require.NoError(t, err)
+	assert.Equal(t, "", got.CronExpr, "expr cleared")
+	assert.Equal(t, int64(300), got.IntervalSeconds, "interval set")
 }
 
 func TestAgentCronRun_InsertListCascade(t *testing.T) {

@@ -218,6 +218,7 @@ function pickSudoAgentModal() {
 let cronEditId = null;
 let cronOriginalTarget = null;       // for PATCH: only send `target` if user changed it
 let cronOriginalGroupID = null;      // ditto for `group_id`
+let cronOriginalExpr = '';           // edit mode: the job's cron_expr on open ('' = interval job)
 
 // openCronCreateModal opens the modal in create mode. prefill is an
 // optional object: { targetMode, target, owner, name, subject, body,
@@ -229,6 +230,7 @@ function openCronCreateModal(prefill) {
   cronEditId = null;
   cronOriginalTarget = null;
   cronOriginalGroupID = null;
+  cronOriginalExpr = '';
   const scopeGroup = prefill && prefill.scopeGroup;
   $('#cron-create-title').textContent = scopeGroup
     ? `Schedule a cron job for group "${scopeGroup}"`
@@ -255,6 +257,7 @@ function openCronEditModal(job) {
   // target doesn't spuriously re-send it (JOH-312).
   cronOriginalTarget = job.target_agent || job.target_conv || '';
   cronOriginalGroupID = job.group_id || 0;
+  cronOriginalExpr = job.cron_expr || '';
   $('#cron-create-title').textContent = 'Edit cron job';
   // Edit mode: the wizard title/submit ::before copy reads "Re-bind…" (see the
   // .cron-editing rules in the wizard CSS block). Mode flag, not a theme read.
@@ -285,6 +288,7 @@ function jobToPrefill(job) {
     target: isGroup ? '' : (job.target_agent || job.target_conv || ''),
     groupName: isGroup ? (job.group_name || '') : '',
     interval: formatInterval(job.interval_seconds) || '',
+    cronExpr: job.cron_expr || '',
     subject: job.subject || '',
     body: job.body || '',
     enabled: !!job.enabled,
@@ -302,6 +306,14 @@ function populateCronForm(p) {
   const interval = p.interval || '';
   $('#cron-create-interval').value = interval;
   setSelectedChip(interval);
+  // Schedule mode: a job with a cron expression opens in expression mode
+  // (with an immediate explainer fetch so the edit dialog shows what the
+  // stored expression means); everything else in interval mode.
+  const cronExpr = p.cronExpr || '';
+  $('#cron-create-cron').value = cronExpr;
+  setScheduleMode(cronExpr ? 'cron' : 'interval');
+  $('#cron-create-cron-explain').innerHTML = '';
+  if (cronExpr) scheduleCronExplain(0);
   // Target — shared solo/group picker. Accepts { targetMode, target,
   // groupName } straight off the prefill object. scopeGroup, set only
   // by a group header's "⏰ multicast" button, locks the picker to
@@ -316,6 +328,68 @@ function populateCronForm(p) {
 function setSelectedChip(value) {
   const chips = $$('#cron-create-chips button');
   chips.forEach(c => c.classList.toggle('selected', c.dataset.chip === value));
+}
+
+// --- schedule mode (interval chips ⟷ cron expression) ----------------
+
+function setScheduleMode(mode) {
+  $$('input[name=cron-create-schedule-mode]').forEach(r => {
+    r.checked = r.value === mode;
+  });
+  $('#cron-create-schedule-interval').style.display = mode === 'cron' ? 'none' : '';
+  $('#cron-create-schedule-cron').style.display = mode === 'cron' ? '' : 'none';
+}
+
+function getScheduleMode() {
+  return ($$('input[name=cron-create-schedule-mode]:checked')[0] || {}).value || 'interval';
+}
+
+// The cron-expression "auto explainer": a debounced POST /api/cron/explain
+// as the user types, rendering the English description + concrete next
+// fire times (in the browser's locale) under the input — or the parse
+// error while the expression is invalid. The seq counter discards
+// out-of-order responses so a slow explain for an old keystroke can't
+// overwrite the answer for the current one.
+let cronExplainTimer = null;
+let cronExplainSeq = 0;
+
+function scheduleCronExplain(delay) {
+  clearTimeout(cronExplainTimer);
+  cronExplainTimer = setTimeout(runCronExplain, delay === undefined ? 350 : delay);
+}
+
+async function runCronExplain() {
+  const box = $('#cron-create-cron-explain');
+  const expr = $('#cron-create-cron').value.trim();
+  const seq = ++cronExplainSeq;
+  if (!expr) { box.innerHTML = ''; return; }
+  let resp;
+  try {
+    const r = await fetch('/api/cron/explain', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expr }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    resp = await r.json();
+  } catch (e) {
+    if (seq === cronExplainSeq) {
+      box.innerHTML = `<span class="cron-explain-error">explain failed: ${esc(e.message || String(e))}</span>`;
+    }
+    return;
+  }
+  if (seq !== cronExplainSeq) return; // stale — a newer keystroke owns the box
+  if (!resp.valid) {
+    box.innerHTML = `<span class="cron-explain-error">${esc(resp.error || 'invalid expression')}</span>`;
+    return;
+  }
+  const fires = (resp.next || [])
+    .map(t => esc(new Date(t).toLocaleString()))
+    .join(' · ');
+  box.innerHTML =
+    (resp.description ? `<div class="cron-explain-desc">${esc(resp.description)}</div>` : '') +
+    (fires ? `<div>next: ${fires}</div>` : '') +
+    `<div>evaluated in the daemon's timezone (${esc(resp.tz || 'local')}) unless the expression carries CRON_TZ=</div>`;
 }
 
 // --- shared solo/group target picker --------------------------------
@@ -507,6 +581,10 @@ function closeCronCreateModal() {
   // Drop the scope so the registry's lifetime matches the modal's;
   // the next open re-arms it from its prefill regardless.
   setTargetPickerScope('cron-create', null);
+  // Orphan any in-flight explain so a late response can't write into
+  // the (hidden) box the next open would otherwise inherit.
+  cronExplainSeq++;
+  clearTimeout(cronExplainTimer);
 }
 
 // submitCronForm POSTs (create) or PATCHes (edit). On success, the
@@ -519,6 +597,8 @@ async function submitCronForm(keepOpen) {
   const owner = $('#cron-create-owner').value.trim();
   const { mode, target } = readTargetPicker('cron-create');
   const interval = $('#cron-create-interval').value.trim();
+  const schedMode = getScheduleMode();
+  const cronExpr = $('#cron-create-cron').value.trim();
   const subject = $('#cron-create-subject').value.trim();
   const bodyText = $('#cron-create-body').value;
   const enabled = $('#cron-create-enabled').checked;
@@ -541,8 +621,16 @@ async function submitCronForm(keepOpen) {
     errEl.textContent = 'Body is required (the message text the cron job sends).';
     return;
   }
-  if (!cronEditId && !interval) {
+  if (schedMode === 'cron' && !cronExpr) {
+    errEl.textContent = 'Cron expression is required — type one (e.g. */5 * * * *) or switch back to Interval.';
+    return;
+  }
+  if (!cronEditId && schedMode === 'interval' && !interval) {
     errEl.textContent = 'Schedule is required — click a chip or type a custom duration.';
+    return;
+  }
+  if (cronEditId && schedMode === 'interval' && !interval && cronOriginalExpr) {
+    errEl.textContent = 'Type an interval (e.g. 10m) — switching away from the cron expression needs one.';
     return;
   }
 
@@ -554,7 +642,16 @@ async function submitCronForm(keepOpen) {
     if (cronEditId) {
       const patch = { name, body: bodyText, subject, enabled };
       if (owner) patch.owner = owner;
-      if (interval) patch.interval = interval;
+      // Schedule: send the active mode's value; the daemon keeps the
+      // exactly-one-mode invariant (an interval clears cron_expr and vice
+      // versa). Interval mode sends cron_expr:'' explicitly so editing an
+      // expression job over to interval mode actually switches it.
+      if (schedMode === 'cron') {
+        patch.cron_expr = cronExpr;
+      } else if (interval) {
+        patch.interval = interval;
+        patch.cron_expr = '';
+      }
       // Only send target/group_id if the user actually changed
       // them — avoids re-resolving and possibly tripping validation
       // on an unchanged field.
@@ -573,7 +670,9 @@ async function submitCronForm(keepOpen) {
         body: JSON.stringify(patch),
       });
     } else {
-      const payload = { name, target, interval, subject, body: bodyText, enabled };
+      const payload = { name, target, subject, body: bodyText, enabled };
+      if (schedMode === 'cron') payload.cron_expr = cronExpr;
+      else payload.interval = interval;
       if (owner) payload.owner = owner;
       r = await fetch('/api/cron', {
         method: 'POST', credentials: 'same-origin',
@@ -762,6 +861,12 @@ function bindCronModal() {
   $('#cron-create-interval').addEventListener('input', () => {
     setSelectedChip($('#cron-create-interval').value.trim());
   });
+  // Schedule-mode radios swap the chips+interval body for the cron
+  // expression body; typing an expression re-runs the debounced explainer.
+  $$('input[name=cron-create-schedule-mode]').forEach(rdo => {
+    rdo.addEventListener('change', () => setScheduleMode(rdo.value));
+  });
+  $('#cron-create-cron').addEventListener('input', () => scheduleCronExplain());
   // Owner picker reuses the cron-pick-target overlay (the target
   // picker's own 🔍 is wired by bindTargetPicker above).
   $('#cron-create-owner-pick').addEventListener('click', async () => {

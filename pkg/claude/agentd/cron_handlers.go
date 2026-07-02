@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -53,6 +54,7 @@ type jobJSON struct {
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
+	CronExpr        string `json:"cron_expr,omitempty"`
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
@@ -72,6 +74,7 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
 		IntervalSeconds: j.IntervalSeconds,
+		CronExpr:        j.CronExpr,
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
@@ -320,8 +323,9 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name     string `json:"name"`
 		Target   string `json:"target"`
-		Owner    string `json:"owner"`    // optional; humans may attribute the job to a specific conv (default: target)
-		Interval string `json:"interval"` // e.g. "10m", "1h" — parsed via time.ParseDuration
+		Owner    string `json:"owner"`     // optional; humans may attribute the job to a specific conv (default: target)
+		Interval string `json:"interval"`  // e.g. "10m", "1h" — parsed via time.ParseDuration
+		CronExpr string `json:"cron_expr"` // alternative schedule: a cronexpr expression; mutually exclusive with interval
 		Subject  string `json:"subject"`
 		Body     string `json:"body"`
 		Enabled  *bool  `json:"enabled,omitempty"` // optional; defaults to true
@@ -347,16 +351,34 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	d, err := time.ParseDuration(strings.TrimSpace(body.Interval))
-	if err != nil {
+	// Schedule: exactly one of interval / cron_expr. The expression path
+	// validates through the same parser the scheduler fires with.
+	cronSpec := strings.TrimSpace(body.CronExpr)
+	intervalSpec := strings.TrimSpace(body.Interval)
+	var intervalSeconds int64
+	switch {
+	case cronSpec != "" && intervalSpec != "":
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"interval must be a Go duration like 10m / 1h / 30s; got: "+body.Interval)
+			"interval and cron_expr are mutually exclusive — pick one schedule mode")
 		return
-	}
-	if d < 30*time.Second {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"interval must be >= 30s (the scheduler tick interval)")
-		return
+	case cronSpec != "":
+		if err := cronexpr.Validate(cronSpec); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+	default:
+		d, err := time.ParseDuration(intervalSpec)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"interval must be a Go duration like 10m / 1h / 30s; got: "+body.Interval)
+			return
+		}
+		if d < 30*time.Second {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"interval must be >= 30s (the scheduler tick interval)")
+			return
+		}
+		intervalSeconds = int64(d.Seconds())
 	}
 
 	ct, err := resolveCronTarget(body.Target)
@@ -371,7 +393,8 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	job := &db.AgentCronJob{
 		Name:            body.Name,
-		IntervalSeconds: int64(d.Seconds()),
+		IntervalSeconds: intervalSeconds,
+		CronExpr:        cronSpec,
 		Subject:         body.Subject,
 		Body:            body.Body,
 		Enabled:         enabled,
@@ -580,6 +603,21 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
 		return
 	}
+	// Setting an expression re-anchors the schedule at "now" (keeping the
+	// last-run status pill): the due check fires an expr job when its next
+	// match after last_run_at (or created_at) has passed, so without the
+	// re-anchor an edit at 14:00 to "0 9 * * *" would fire within one tick —
+	// this morning's 9:00 already passed relative to the old anchor. Real
+	// crond's semantics — an edited schedule evaluates forward from the
+	// moment of the edit — are what a human expects. Interval edits keep
+	// their long-standing behaviour (never bump last_run_at; one catch-up
+	// fire after a long idle is semantically true for "every N").
+	if n > 0 && patch.CronExpr != nil && *patch.CronExpr != "" {
+		if err := db.UpdateAgentCronJobLastRun(id, time.Now(), job.LastRunStatus); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "re-anchor: "+err.Error())
+			return
+		}
+	}
 	if n == 0 {
 		// Row vanished between Get and Update, or empty patch — both
 		// are 200 OK with the current row, just like POST returns the
@@ -611,6 +649,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		Target   *string `json:"target,omitempty"`
 		Owner    *string `json:"owner,omitempty"`
 		Interval *string `json:"interval,omitempty"`
+		CronExpr *string `json:"cron_expr,omitempty"`
 		Subject  *string `json:"subject,omitempty"`
 		Body     *string `json:"body,omitempty"`
 		Enabled  *bool   `json:"enabled,omitempty"`
@@ -640,6 +679,42 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 			"body must not be empty when present (the message text the cron job sends)")
 		return db.UpdateCronPatch{}, false
 	}
+	// Schedule fields preserve the exactly-one-mode invariant without
+	// reading the row: setting either mode also clears the other. A
+	// non-empty cron_expr switches to expression mode (interval → 0); an
+	// interval switches to interval mode (cron_expr → ""). The only legal
+	// combination is interval + empty cron_expr (an explicit mode switch);
+	// interval + non-empty cron_expr is ambiguous, and an empty cron_expr
+	// alone would leave the job with no schedule at all.
+	//
+	// Presence-normalize first so the two mode-switch shapes are symmetric:
+	// {cron_expr: "...", interval: ""} means the same as cron_expr alone,
+	// mirroring the blessed {interval: "...", cron_expr: ""} form.
+	if body.Interval != nil && strings.TrimSpace(*body.Interval) == "" &&
+		body.CronExpr != nil && strings.TrimSpace(*body.CronExpr) != "" {
+		body.Interval = nil
+	}
+	if body.CronExpr != nil {
+		expr := strings.TrimSpace(*body.CronExpr)
+		if expr != "" {
+			if body.Interval != nil {
+				writeError(w, http.StatusBadRequest, "invalid_arg",
+					"interval and cron_expr are mutually exclusive — pick one schedule mode")
+				return db.UpdateCronPatch{}, false
+			}
+			if err := cronexpr.Validate(expr); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+				return db.UpdateCronPatch{}, false
+			}
+			zero := int64(0)
+			patch.CronExpr = &expr
+			patch.IntervalSeconds = &zero
+		} else if body.Interval == nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"clearing cron_expr requires an interval in the same patch (a job must keep a schedule)")
+			return db.UpdateCronPatch{}, false
+		}
+	}
 	if body.Interval != nil {
 		d, err := time.ParseDuration(strings.TrimSpace(*body.Interval))
 		if err != nil {
@@ -654,6 +729,8 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		}
 		secs := int64(d.Seconds())
 		patch.IntervalSeconds = &secs
+		empty := ""
+		patch.CronExpr = &empty
 	}
 	if body.Target != nil {
 		ct, err := resolveCronTarget(*body.Target)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 )
 
 // Cron job target kinds — the value stored in agent_cron_jobs.target_kind
@@ -37,12 +39,13 @@ type AgentCronJob struct {
 	TargetKind      string // CronTargetConv | CronTargetGroup
 	TargetConv      string // recipient when TargetKind == CronTargetConv
 	GroupID         int64  // conv-kind: routing group (0 → solo send-keys). group-kind: the target group.
-	IntervalSeconds int64
+	IntervalSeconds int64  // fixed-interval mode; 0 when CronExpr is set
+	CronExpr        string // cron-expression mode (cronexpr syntax); "" = interval mode
 	Subject         string
 	Body            string
 	Enabled         bool
 	CreatedAt       time.Time
-	LastRunAt       time.Time // zero value → "never run, due immediately"
+	LastRunAt       time.Time // zero → interval jobs: "never run, due immediately"; expr jobs: due at first match after CreatedAt
 	LastRunStatus   string
 }
 
@@ -87,13 +90,13 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 15 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 16 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
-	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent
+	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -120,10 +123,10 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, interval_seconds,
-		 subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
+		 cron_expr, subject, body, enabled, created_at, last_run_at, last_run_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.IntervalSeconds,
-		j.Subject, j.Body, boolToInt(j.Enabled), now)
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), now)
 	if err != nil {
 		return 0, err
 	}
@@ -166,9 +169,13 @@ func ListAgentCronJobs() ([]*AgentCronJob, error) {
 	return out, rows.Err()
 }
 
-// ListDueAgentCronJobs returns enabled jobs whose next-fire time
-// has passed (now >= last_run_at + interval). Jobs that have never
-// run (last_run_at empty) are always due.
+// ListDueAgentCronJobs returns enabled jobs whose next-fire time has passed.
+//
+// Interval jobs are due when now >= last_run_at + interval; a never-run
+// interval job (last_run_at empty) is always due. Expression jobs are due
+// when the expression's next match after last_run_at has passed — and a
+// never-run expression job anchors on created_at instead, so "Mondays at 9"
+// waits for its first Monday rather than firing the moment it is created.
 func ListDueAgentCronJobs(now time.Time) ([]*AgentCronJob, error) {
 	jobs, err := ListAgentCronJobs()
 	if err != nil {
@@ -177,6 +184,23 @@ func ListDueAgentCronJobs(now time.Time) ([]*AgentCronJob, error) {
 	out := make([]*AgentCronJob, 0, len(jobs))
 	for _, j := range jobs {
 		if !j.Enabled {
+			continue
+		}
+		if j.CronExpr != "" {
+			base := j.LastRunAt
+			if base.IsZero() {
+				base = j.CreatedAt
+			}
+			next, err := cronexpr.Next(j.CronExpr, base)
+			if err != nil || next.IsZero() {
+				// Unparseable (write paths validate, so only reachable via a
+				// hand-edited row) or never-fires-again: never due, never an
+				// abort — one bad row must not stall the whole sweep.
+				continue
+			}
+			if !next.After(now) {
+				out = append(out, j)
+			}
 			continue
 		}
 		if j.LastRunAt.IsZero() {
@@ -236,6 +260,7 @@ type UpdateCronPatch struct {
 	TargetConv      *string
 	GroupID         *int64
 	IntervalSeconds *int64
+	CronExpr        *string
 	Subject         *string
 	Body            *string
 	Enabled         *bool
@@ -290,6 +315,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.IntervalSeconds != nil {
 		sets = append(sets, "interval_seconds = ?")
 		args = append(args, *p.IntervalSeconds)
+	}
+	if p.CronExpr != nil {
+		sets = append(sets, "cron_expr = ?")
+		args = append(args, *p.CronExpr)
 	}
 	if p.Subject != nil {
 		sets = append(sets, "subject = ?")
@@ -390,7 +419,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
-		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent)
+		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr)
 	if err != nil {
 		return nil, err
 	}

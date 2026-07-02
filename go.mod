@@ -17,7 +17,9 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.8.2
 	github.com/jezek/xgb v1.3.1
 	github.com/klauspost/compress v1.18.7
+	github.com/lnquy/cron v1.1.1
 	github.com/mattn/go-runewidth v0.0.24
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
