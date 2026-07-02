@@ -34,8 +34,9 @@ func TestDashboardHTML_NoStandaloneAgentsTab(t *testing.T) {
 	absent(`data-tab="agents"`, "the standalone Agents nav button was removed")
 	absent(`id="tab-agents"`, "the standalone Agents tab section was removed")
 
-	// The Groups tab is untouched — same label, same internal wiring.
-	present(`data-tab="groups">Groups<`, "the Groups tab keeps its label")
+	// The Groups tab keeps its plain label (now inside a plain/wizard span pair
+	// — see TestDashboardHTML_WizardTabNames) and its internal wiring.
+	present(`data-tab="groups"><span class="tab-label-regular">Groups</span>`, "the Groups tab keeps its label")
 	present(`id="tab-groups"`, "the Groups tab section keeps its id")
 	present("function renderGroupsTab(", "the tab still renders via renderGroupsTab")
 

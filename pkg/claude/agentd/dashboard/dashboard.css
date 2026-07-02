@@ -4540,10 +4540,15 @@ body.wizard .wizard-pill.wizard-pill-flash { animation: wizard-resolve 1.4s ease
 .vegas-group:focus-visible { outline: 2px solid #ffd700; outline-offset: 1px; }
 .vegas-group option { color: #1a1a1a; background: #f3e6c0; }
 
-/* Tab label swap: "🎰 Vegas" for slop / regular-opt-in, "🍺 The Tavern" in
-   wizard mode. */
+/* Tab label swap. Two families share the .tab-label-wizard arcane span:
+   - Vegas → "🎰 Vegas" for slop / regular-opt-in, "🍺 The Tavern" in wizard.
+   - Every other tab → its plain name normally, an arcane "chamber of the
+     Tower" name under body.wizard (⚔ Parties, ⏳ Rituals, 📜 Almanac, …).
+   The default-hide + wizard-show rules below cover BOTH the .tab-label-vegas
+   and .tab-label-regular plain spans; the wizard span rides the same pair. */
 .tab-label-wizard { display: none; }
-body.wizard .tab-label-vegas { display: none; }
+body.wizard .tab-label-vegas,
+body.wizard .tab-label-regular { display: none; }
 body.wizard .tab-label-wizard { display: inline; }
 
 /* The music tab shows in wizard mode too (like slop / the regular opt-in). */

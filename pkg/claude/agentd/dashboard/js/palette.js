@@ -376,8 +376,17 @@ function buildCommands() {
   //    offsetParent, so it isn't a place the human can currently go.
   for (const btn of $$('nav button')) {
     if (btn.offsetParent === null) continue;
-    // Strip a trailing badge count ("Messages3" → "Messages").
-    const name = (btn.textContent || '').replace(/\s*\d+\s*$/, '').trim();
+    // Each tab carries a plain/wizard label-span pair (dashboard.html). Read
+    // whichever the active theme SHOWS so the command reads "Go to Costs"
+    // plainly and "Scry the Coffers" in wizard mode — btn.textContent would
+    // concatenate BOTH spans (e.g. "Costs💰 Coffers") and any badge count.
+    // Fall back to the raw text (minus a trailing badge count) for any button
+    // that lacks the pair.
+    const wizEl = btn.querySelector('.tab-label-wizard');
+    const regEl = btn.querySelector('.tab-label-regular, .tab-label-vegas');
+    const name = (wizEl || regEl)
+      ? ((isWizardActive() ? (wizEl || regEl) : (regEl || wizEl)).textContent || '').trim()
+      : (btn.textContent || '').replace(/\s*\d+\s*$/, '').trim();
     if (!name) continue;
     cmds.push({
       icon: wiz('⤢', '🪞'), label: wiz(`Go to ${name}`, `Scry the ${name}`),
