@@ -43,6 +43,9 @@ func registerDashboardLists(mux *http.ServeMux) {
 	mux.HandleFunc("/api/retired", handleDashboardRetired)
 	mux.HandleFunc("/api/conversations", handleDashboardConversations)
 	mux.HandleFunc("/api/replaced", handleDashboardReplaced)
+	// The Jobs tab's unified export+cron listing shares this family's
+	// offset/limit/q contract + envelope (handler in dashboard_jobs.go).
+	mux.HandleFunc("/api/jobs", handleDashboardJobs)
 }
 
 // listPageParams parses the shared offset / limit / q query params. offset is

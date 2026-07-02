@@ -5,7 +5,7 @@
 // modal). Extracted from dashboard.js in the Stage 2 module split.
 
 import { $, $$, esc, shortAgentId, idTooltip } from './helpers.js';
-import { renderCronTab, formatInterval } from './tabs.js';
+import { renderJobsTab, formatInterval } from './tabs.js';
 // lastSnapshot / sudoBadge live in dashboard.js; refresh() / toast and
 // the sudo state (sudoGrantBlocklist, sudoByConv) live in refresh.js.
 // Imported back here — deliberate, benign cycles (see render.js).
@@ -590,13 +590,19 @@ async function submitCronForm(keepOpen) {
     toast(`cron ${verb}: ${resp.name || ('#' + (resp.id || ''))}`);
     // Optimistic insert/update so the table updates before the next
     // 2s snapshot poll. We just got the canonical row back; splice it
-    // into lastSnapshot.cron and re-render.
+    // into lastSnapshot.cron (the edit modal's lookup source) AND the
+    // unified Jobs window (what the table renders), then re-render. The
+    // next /api/jobs fetch replaces the window with the server's ordering.
     if (lastSnapshot) {
       lastSnapshot.cron = lastSnapshot.cron || [];
       const idx = lastSnapshot.cron.findIndex(j => j.id === resp.id);
       if (idx >= 0) lastSnapshot.cron[idx] = resp;
       else lastSnapshot.cron.push(resp);
-      renderCronTab();
+      lastSnapshot.jobs = lastSnapshot.jobs || [];
+      const jdx = lastSnapshot.jobs.findIndex(r => r.kind === 'cron' && r.cron && r.cron.id === resp.id);
+      if (jdx >= 0) lastSnapshot.jobs[jdx] = { kind: 'cron', cron: resp };
+      else lastSnapshot.jobs.unshift({ kind: 'cron', cron: resp });
+      renderJobsTab();
     }
     if (keepOpen) {
       // Reset body + name for the next entry; keep target/schedule

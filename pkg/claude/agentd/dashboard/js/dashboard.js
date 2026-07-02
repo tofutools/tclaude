@@ -134,11 +134,16 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindGroupReorder();
   bindFilter('groups');
   bindFilter('templates');
-  bindFilter('cron');
+  bindFilter('jobs');
   bindFilter('sudo');
   bindFilter('links');
   bindFilter('plugins');
   bindFilter('messages');
+  // The Jobs table's /api/jobs window is fetched only while its tab shows
+  // (refresh.js gates on jobsTabActive), so activating the tab kicks an
+  // immediate refresh instead of waiting up to 2s for the next poll — the
+  // same lazy-load-on-click idiom as the Costs / Audit / Logs tabs.
+  document.querySelector('nav button[data-tab="jobs"]')?.addEventListener('click', () => refresh());
   bindSudoModal();
   bindPermEditModal();
   bindCronModal();

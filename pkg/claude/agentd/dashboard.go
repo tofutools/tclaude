@@ -521,6 +521,12 @@ type snapshotPayload struct {
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
+	// ExportJobsActive counts the per-agent export jobs still in flight
+	// (neither ready nor failed) — the Jobs nav tab's badge. The job rows
+	// themselves do NOT ride the snapshot: the Jobs tab fetches its unified,
+	// paginated window from GET /api/jobs alongside the poll
+	// (dashboard_jobs.go), mirroring the retired/conversations/replaced split.
+	ExportJobsActive int `json:"export_jobs_active"`
 	// Sudo: every active grant across all agents, ordered by conv-id
 	// then soonest expiry. Powers the dedicated "Sudo" tab. Per-agent
 	// active state also surfaces on Agents[*].ActiveSudo so the Groups
@@ -1605,6 +1611,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// above to guard the roster.
 	out.Pending = collectPendingSnapshot(aliveSessions)
 	out.Cron = collectCronSnapshot()
+	// Badge-only: the Jobs tab's row window comes from /api/jobs, not the
+	// snapshot. A count read error degrades to 0 (no badge), never a failed poll.
+	if n, err := db.CountActiveExportJobs(); err == nil {
+		out.ExportJobsActive = n
+	}
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
 	// Costs-tab visibility: show when there is real pay-per-token spend to
@@ -1795,51 +1806,59 @@ func collectCronSnapshot() []dashboardCronJob {
 	// a per-row lookup.
 	groupNames := map[int64]string{}
 	for _, j := range jobs {
-		row := dashboardCronJob{
-			ID:              j.ID,
-			Name:            j.Name,
-			OwnerAgent:      j.OwnerAgent,
-			OwnerConv:       j.OwnerConv,
-			OwnerLabel:      labelForConv(j.OwnerConv),
-			TargetKind:      j.TargetKind,
-			TargetAgent:     j.TargetAgent,
-			TargetConv:      j.TargetConv,
-			GroupID:         j.GroupID,
-			IntervalSeconds: j.IntervalSeconds,
-			Subject:         j.Subject,
-			Body:            j.Body,
-			Enabled:         j.Enabled,
-			LastRunStatus:   j.LastRunStatus,
-		}
-		if j.TargetConv != "" {
-			row.TargetLabel = labelForConv(j.TargetConv)
-		}
-		// Resolve group_name ONLY for a group-target job. A conv-target
-		// job routed through a shared group also carries a non-zero
-		// group_id, but it is not a multicast — leaving group_name empty
-		// keeps target_kind the sole, unambiguous discriminator the
-		// dashboard renders off.
-		if j.IsGroupTarget() && j.GroupID > 0 {
-			name, ok := groupNames[j.GroupID]
-			if !ok {
-				if g, gerr := db.GetAgentGroupByID(j.GroupID); gerr == nil && g != nil {
-					name = g.Name
-				}
-				groupNames[j.GroupID] = name
-			}
-			row.GroupName = name
-		}
-		if !j.CreatedAt.IsZero() {
-			row.CreatedAt = j.CreatedAt.Format(time.RFC3339)
-		}
-		if !j.LastRunAt.IsZero() {
-			row.LastRunAt = j.LastRunAt.Format(time.RFC3339)
-			next := j.LastRunAt.Add(time.Duration(j.IntervalSeconds) * time.Second)
-			row.NextDueAt = next.Format(time.RFC3339)
-		}
-		out = append(out, row)
+		out = append(out, cronJobToView(j, groupNames))
 	}
 	return out
+}
+
+// cronJobToView maps one agent_cron_jobs row to its dashboard view. groupNames
+// caches group-id → name lookups across rows in the same collection pass.
+// Shared by the snapshot's cron list (above) and the Jobs tab's unified
+// /api/jobs listing (dashboard_jobs.go).
+func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCronJob {
+	row := dashboardCronJob{
+		ID:              j.ID,
+		Name:            j.Name,
+		OwnerAgent:      j.OwnerAgent,
+		OwnerConv:       j.OwnerConv,
+		OwnerLabel:      labelForConv(j.OwnerConv),
+		TargetKind:      j.TargetKind,
+		TargetAgent:     j.TargetAgent,
+		TargetConv:      j.TargetConv,
+		GroupID:         j.GroupID,
+		IntervalSeconds: j.IntervalSeconds,
+		Subject:         j.Subject,
+		Body:            j.Body,
+		Enabled:         j.Enabled,
+		LastRunStatus:   j.LastRunStatus,
+	}
+	if j.TargetConv != "" {
+		row.TargetLabel = labelForConv(j.TargetConv)
+	}
+	// Resolve group_name ONLY for a group-target job. A conv-target
+	// job routed through a shared group also carries a non-zero
+	// group_id, but it is not a multicast — leaving group_name empty
+	// keeps target_kind the sole, unambiguous discriminator the
+	// dashboard renders off.
+	if j.IsGroupTarget() && j.GroupID > 0 {
+		name, ok := groupNames[j.GroupID]
+		if !ok {
+			if g, gerr := db.GetAgentGroupByID(j.GroupID); gerr == nil && g != nil {
+				name = g.Name
+			}
+			groupNames[j.GroupID] = name
+		}
+		row.GroupName = name
+	}
+	if !j.CreatedAt.IsZero() {
+		row.CreatedAt = j.CreatedAt.Format(time.RFC3339)
+	}
+	if !j.LastRunAt.IsZero() {
+		row.LastRunAt = j.LastRunAt.Format(time.RFC3339)
+		next := j.LastRunAt.Add(time.Duration(j.IntervalSeconds) * time.Second)
+		row.NextDueAt = next.Format(time.RFC3339)
+	}
+	return row
 }
 
 // labelForConv returns a short display label for a conv-id. Resolves

@@ -17,7 +17,7 @@ import {
 } from './render.js';
 import { renderMailTab, onMailSearchChanged } from './mail.js';
 import {
-  renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
+  renderGroupsTab, renderJobsTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
@@ -114,7 +114,13 @@ function bindFilter(tab) {
       groupsFilterTimer = setTimeout(refresh, 250);
     }
     else if (tab === 'templates') renderTemplatesTab();
-    else if (tab === 'cron') renderCronTab();
+    // The Jobs filter is server-side like the Groups one (/api/jobs q param —
+    // it must search the whole set, not the loaded page), so a query change
+    // triggers a debounced refetch rather than a client repaint.
+    else if (tab === 'jobs') {
+      clearTimeout(jobsFilterTimer);
+      jobsFilterTimer = setTimeout(refresh, 250);
+    }
     else if (tab === 'sudo') renderSudoTab();
     else if (tab === 'links') renderLinksTab();
     else if (tab === 'plugins') renderPluginsTab();
@@ -129,8 +135,9 @@ function bindFilter(tab) {
     // A groups QUERY change resets the three paginated lists to page 1 — a
     // page-3 view of the old query is meaningless once the query (and its
     // server-side result set) changes. rerender() then triggers the debounced
-    // refetch that sends the new q.
+    // refetch that sends the new q. Same rule for the Jobs table's window.
     if (tab === 'groups') resetListOffsets();
+    else if (tab === 'jobs') syncServedOffset('jobs', 0);
     rerender();
   };
   input.addEventListener('input', onChange);
@@ -277,6 +284,18 @@ function bindFilter(tab) {
 // lacked, which let a slow older run clobber a newer page's offset.
 let refreshSeq = 0;
 
+// jobsFilterTimer debounces the server-side refetch the Jobs filter box
+// triggers (the /api/jobs q param), mirroring groupsFilterTimer below.
+let jobsFilterTimer = null;
+
+// jobsTabActive reports whether the Jobs tab is the visible one — used to
+// skip the /api/jobs sub-fetch while its table can't be on screen (the nav
+// badge stays live off the snapshot's export_jobs_active count instead).
+function jobsTabActive() {
+  const s = $('#tab-jobs');
+  return !!s && s.classList.contains('active');
+}
+
 // groupsFilterTimer debounces the server-side refetch the Groups filter box
 // triggers (the three paginated lists filter in SQL, so a query change needs a
 // round-trip — see bindFilter).
@@ -324,12 +343,17 @@ export async function refresh() {
     const seq = ++refreshSeq;
     const groupsQ = ($('#filter-groups')?.value || '').trim();
     const onGroups = groupsTabActive();
+    // The Jobs tab's unified table (exports + cron) is windowed the same way —
+    // fetched only while its tab is showing; the nav badge stays live off the
+    // snapshot's export_jobs_active count regardless.
+    const jobsQ = ($('#filter-jobs')?.value || '').trim();
     const get = (path) => fetch(path, { credentials: 'same-origin' }).catch(() => null);
-    const [snapR, retiredR, convR, replacedR] = await Promise.all([
+    const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
       fetch('/api/snapshot', { credentials: 'same-origin' }),
       get('/api/retired?' + listParams('retired', groupsQ)),
       (onGroups && conversationsVisible()) ? get('/api/conversations?' + listParams('conversations', groupsQ)) : Promise.resolve(undefined),
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
+      jobsTabActive() ? get('/api/jobs?' + listParams('jobs', jobsQ)) : Promise.resolve(undefined),
     ]);
     // A newer refresh() (a pager click, a filter change, or the next interval
     // tick) started while this one's fetches were in flight — drop this stale
@@ -358,6 +382,7 @@ export async function refresh() {
     await stitchListPage(data, 'retired', retiredR, prevSnap);
     await stitchListPage(data, 'conversations', convR, prevSnap);
     await stitchListPage(data, 'replaced', replacedR, prevSnap);
+    await stitchListPage(data, 'jobs', jobsR, prevSnap);
     // stitchListPage awaited resp.json() (async boundaries) — re-check the seq
     // (a newer refresh may have started) AND the suspend guard (a drag/modal may
     // have opened) before mutating shared offset state and the DOM.
@@ -369,6 +394,7 @@ export async function refresh() {
     syncServedOffset('retired', data.paging.retired.offset);
     syncServedOffset('conversations', data.paging.conversations.offset);
     syncServedOffset('replaced', data.paging.replaced.offset);
+    syncServedOffset('jobs', data.paging.jobs.offset);
     // Snapshot the keyboard focus before the renders below replace the
     // tab bodies wholesale, so a Tab-navigating user isn't bounced to
     // the top of the page on every poll. Restored at the end once the
@@ -391,7 +417,7 @@ export async function refresh() {
     renderGroupsTab();
     renderGlobalActivity();
     renderTemplatesTab();
-    renderCronTab();
+    renderJobsTab();
     renderSudoTab();
     renderLinksTab();
     renderPluginsTab();
@@ -475,23 +501,27 @@ async function stitchListPage(data, kind, resp, prevSnap) {
 // leaves them alone. A nav/size change updates the list's offset/limit, then
 // re-fetches via refresh() — keeping it the same single coordinated tick.
 export function bindListPagers() {
-  const root = $('#groups-list');
-  if (!root) return;
-  root.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-pager]');
-    if (!btn || btn.disabled) return;
-    const kind = btn.getAttribute('data-list');
-    const action = btn.getAttribute('data-pager');
-    const total = (lastSnapshot && lastSnapshot.paging && lastSnapshot.paging[kind]
-      && lastSnapshot.paging[kind].total) || 0;
-    if (listPagerNav(kind, action, total)) refresh();
-  });
-  root.addEventListener('change', (e) => {
-    const sel = e.target.closest('select[data-pager="size"]');
-    if (!sel) return;
-    setListPageSize(sel.getAttribute('data-list'), Number(sel.value) || 50);
-    refresh();
-  });
+  // Two pager roots: the Groups tab's virtual-group lists and the Jobs tab's
+  // unified job table — both re-render wholesale every tick, so the handlers
+  // delegate from the stable containers.
+  for (const root of [$('#groups-list'), $('#jobs-list')]) {
+    if (!root) continue;
+    root.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-pager]');
+      if (!btn || btn.disabled) return;
+      const kind = btn.getAttribute('data-list');
+      const action = btn.getAttribute('data-pager');
+      const total = (lastSnapshot && lastSnapshot.paging && lastSnapshot.paging[kind]
+        && lastSnapshot.paging[kind].total) || 0;
+      if (listPagerNav(kind, action, total)) refresh();
+    });
+    root.addEventListener('change', (e) => {
+      const sel = e.target.closest('select[data-pager="size"]');
+      if (!sel) return;
+      setListPageSize(sel.getAttribute('data-list'), Number(sel.value) || 50);
+      refresh();
+    });
+  }
 }
 
 function bindTabs() {
@@ -823,7 +853,7 @@ function bindSortHeaders() {
     if (tableKey === 'members' || tableKey === 'replaced'
         || tableKey === 'retired' || tableKey === 'conversations'
         || tableKey === 'pending') renderGroupsTab();
-    else if (tableKey === 'cron') renderCronTab();
+    else if (tableKey === 'jobs') renderJobsTab();
     else if (tableKey === 'sudo') renderSudoTab();
     else if (tableKey === 'links') renderLinksTab();
   });

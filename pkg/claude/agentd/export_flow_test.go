@@ -152,6 +152,48 @@ func TestExportFlow_HappyPath(t *testing.T) {
 	assert.Equal(t, "auth-research.md", view.ArtifactName)
 	assert.Equal(t, int64(len(artifact)), view.ArtifactSize)
 
+	// 5b. The job also appears on the Jobs tab's unified /api/jobs listing as
+	// a kind=export row with a resolved conv label. A settled job stays listed
+	// (until dismissed / TTL), so the check is race-free here. And the
+	// snapshot's badge count reads 0 — this job already settled.
+	jobsRec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/jobs", nil))
+	require.Equal(t, http.StatusOK, jobsRec.Code)
+	var jobsPage struct {
+		Rows []struct {
+			Kind   string `json:"kind"`
+			Export *struct {
+				ID        int64  `json:"id"`
+				ConvID    string `json:"conv_id"`
+				ConvLabel string `json:"conv_label"`
+				Status    string `json:"status"`
+				Ready     bool   `json:"ready"`
+			} `json:"export"`
+		} `json:"rows"`
+		Total int `json:"total"`
+	}
+	testharness.DecodeJSON(t, jobsRec, &jobsPage)
+	require.Equal(t, 1, jobsPage.Total, "the export job must appear on the unified Jobs listing")
+	require.Len(t, jobsPage.Rows, 1)
+	require.Equal(t, "export", jobsPage.Rows[0].Kind)
+	exportRow := jobsPage.Rows[0].Export
+	require.NotNil(t, exportRow)
+	assert.Equal(t, jobID, exportRow.ID)
+	assert.Equal(t, "exp00000-0000-4000-8000-000000000001", exportRow.ConvID)
+	// The exact label text depends on title-resolution details outside this
+	// flow (the conv monitor re-indexes the sim's .jsonl mid-test); what the
+	// Jobs tab needs is that SOME display label rides along with the row.
+	assert.NotEmpty(t, exportRow.ConvLabel, "the row carries the original's display label")
+	assert.Equal(t, "ready", exportRow.Status)
+	assert.True(t, exportRow.Ready)
+
+	snapRec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, snapRec.Code)
+	var snap struct {
+		ExportJobsActive int `json:"export_jobs_active"`
+	}
+	testharness.DecodeJSON(t, snapRec, &snap)
+	assert.Zero(t, snap.ExportJobsActive, "a settled export no longer counts toward the Jobs badge")
+
 	// 6. Download returns the bytes with an attachment disposition.
 	dlRec := testharness.Serve(dash, dashReq(t, http.MethodGet,
 		fmt.Sprintf("/api/export-jobs/%d/artifact", jobID), nil))

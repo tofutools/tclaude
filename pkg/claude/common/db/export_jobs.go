@@ -277,6 +277,56 @@ func ListExportJobsForConv(convID string, limit int) ([]*ExportJob, error) {
 	return out, rows.Err()
 }
 
+// ListExportJobs returns export jobs across ALL conversations, newest first
+// (by id = insertion order, NOT created_at — the RFC3339Nano lexical-sort
+// hazard, see ListHumanMessages). limit <= 0 returns all of them. Powers the
+// dashboard Jobs tab's export-jobs listing (rides the /api/snapshot poll).
+func ListExportJobs(limit int) ([]*ExportJob, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT id, conv_id, worker_conv_id, group_name, title, instructions, preset, status, error,
+		       artifact_path, artifact_name, artifact_size, content_type,
+		       created_at, updated_at
+		FROM export_jobs ORDER BY id DESC`
+	var args []any
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := d.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*ExportJob
+	for rows.Next() {
+		j, err := scanExportJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// CountActiveExportJobs returns how many export jobs are still in flight
+// (neither ready nor failed) — the dashboard's Jobs-tab badge count, cheap
+// enough to ride every 2s snapshot poll.
+func CountActiveExportJobs() (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM export_jobs WHERE status NOT IN (?, ?)`,
+		ExportStatusReady, ExportStatusFailed).Scan(&n)
+	return n, err
+}
+
 // DeleteExportJobsForConv hard-deletes every export job for a conversation and
 // returns their ids so the caller can remove the on-disk artifact dirs. The
 // "clear all" control behind the history panel.

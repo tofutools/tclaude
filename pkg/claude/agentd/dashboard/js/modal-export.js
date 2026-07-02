@@ -10,16 +10,20 @@
 //   1. The modal collects a format preset, an optional title, free-text
 //      instructions, and the "Clone into the same group" toggle, then POSTs
 //      /api/agents/{conv}/export → an export job id (status: cloning).
-//   2. The form is replaced by a spinner; the modal polls
-//      /api/export-jobs/{id} every 2s (cloning → requested → running → ready).
-//   3. On `ready` it triggers a browser download of the artifact, swaps the
-//      spinner for a success line, and offers a "Download again" button.
-//      On `failed` it shows the reason. The user can Close at any point — the
-//      job keeps running server-side. Re-opening the action starts a FRESH
+//   2. The form is replaced by a step CHECKLIST (export-progress.js) — one
+//      line per phase, checkmarks accruing as the job climbs its status
+//      ladder; the modal polls /api/export-jobs/{id} every 2s
+//      (cloning → requested → running → ready).
+//   3. On `ready` it triggers a browser download of the artifact, checks the
+//      last step, and offers a "Download again" button. On `failed` it marks
+//      the in-flight step ✗ with the reason. The user can Close at any
+//      point — the job keeps running server-side and stays trackable on the
+//      Jobs tab's "Agent exports" list. Re-opening the action starts a FRESH
 //      export, so a conversation that has gained context exports the new state.
 
 import { $, esc, shortId, relTime, bindModalSubmitHotkey } from './helpers.js';
 import { toast, bindBackdropDiscard } from './refresh.js';
+import { renderExportChecklist, triggerExportDownload, fmtBytes } from './export-progress.js';
 
 const POLL_INTERVAL_MS = 2000;
 // After this long with no result, nudge the human that the agent may be busy —
@@ -46,6 +50,15 @@ const PRESETS = {
 // preset change does not overwrite their text.
 let pollTimer = null;
 let instructionsSeeded = false;
+// Checklist bookkeeping for the CURRENT job: the last status actually
+// rendered (the checklist re-renders only on a status CHANGE, so the active
+// step's spinner isn't visibly restarted by every 2s poll), the last
+// non-terminal status seen (so a 'failed' can ✗ the step that was in
+// flight — the failed row itself carries no phase), and whether the job has
+// settled (ready/failed) so Close knows when to point at the Jobs tab.
+let lastRenderedStatus = null;
+let lastActiveStatus = 'cloning';
+let jobSettled = false;
 
 function openExportModal(conv, label) {
   clearPoll();
@@ -81,7 +94,14 @@ function openExportModal(conv, label) {
 
 function closeExportModal() {
   clearPoll();
-  $('#export-agent-modal').classList.remove('show');
+  const modal = $('#export-agent-modal');
+  // Closing on an in-flight job abandons only the VIEW — the job keeps
+  // running server-side. Point at the Jobs tab so the human knows where the
+  // progress (and the eventual download) now lives.
+  if (modal.dataset.jobId && !jobSettled) {
+    toast('Export still running — follow it on the Jobs tab');
+  }
+  modal.classList.remove('show');
 }
 
 function clearPoll() {
@@ -142,7 +162,7 @@ async function submitExport() {
   }
 }
 
-// enterWorkingPhase swaps the form for the spinner + status line.
+// enterWorkingPhase swaps the form for the step checklist.
 function enterWorkingPhase() {
   $('#export-agent-form').hidden = true;
   const submitBtn = $('#export-agent-submit');
@@ -150,27 +170,23 @@ function enterWorkingPhase() {
   submitBtn.disabled = true;
   $('#export-agent-status').hidden = false;
   $('#export-agent-cancel').textContent = 'Close';
-  $('#export-agent-spinner').style.display = '';
-  const row = $('#export-agent-status').querySelector('.export-status-row');
-  if (row) row.classList.remove('done');
   // The job starts in 'cloning' — the daemon is standing up the isolated clone.
-  setStatus(statusMessage('cloning'));
+  lastRenderedStatus = null;
+  lastActiveStatus = 'cloning';
+  jobSettled = false;
+  updateChecklist('cloning');
   $('#export-agent-status-note').textContent = '';
 }
 
-function setStatus(text) {
-  $('#export-agent-status-text').textContent = text;
-}
-
-// statusMessage maps a non-terminal job status to the spinner caption. The
-// export runs on an isolated clone (JOH-266): 'cloning' is the daemon spawning
-// it, 'requested' is the clone alive and nudged, 'running' is it producing.
-function statusMessage(status) {
-  switch (status) {
-    case 'cloning': return 'Cloning the conversation to summarize it safely…';
-    case 'running': return 'The agent is producing your export…';
-    default: return 'Waiting for the agent to pick up the request…';
-  }
+// updateChecklist re-renders the step checklist for `status` — but only when
+// the status actually CHANGED, so the 2s poll doesn't restart the active
+// step's spinner animation every tick. Non-terminal statuses are remembered in
+// lastActiveStatus so a later 'failed' can ✗ the right step.
+function updateChecklist(status) {
+  if (status !== 'ready' && status !== 'failed') lastActiveStatus = status;
+  if (status === lastRenderedStatus) return;
+  lastRenderedStatus = status;
+  $('#export-agent-checklist').innerHTML = renderExportChecklist(status, lastActiveStatus);
 }
 
 function startPoll(jobId) {
@@ -199,7 +215,7 @@ function startPoll(jobId) {
           onExportFailed(job);
           return;
         }
-        setStatus(statusMessage(job.status));
+        updateChecklist(job.status);
         if (Date.now() - startedAt > SLOW_NOTE_AFTER_MS) {
           $('#export-agent-status-note').textContent =
             'Still working — the agent may be busy with another task. Keep this open to download automatically when it lands.';
@@ -219,17 +235,16 @@ function startPoll(jobId) {
 
 function onExportReady(jobId, job) {
   clearPoll();
-  const row = $('#export-agent-status').querySelector('.export-status-row');
-  if (row) row.classList.add('done');
-  $('#export-agent-spinner').style.display = 'none';
+  jobSettled = true;
+  updateChecklist('ready');
   const name = job.artifact_name || 'export';
-  setStatus(`✅ Export ready: ${name}`);
-  $('#export-agent-status-note').textContent = 'Downloaded. Use “Download again” if your browser blocked it.';
-  triggerDownload(jobId);
+  $('#export-agent-status-note').textContent =
+    `Downloaded ${name}. Use “Download again” if your browser blocked it.`;
+  triggerExportDownload(jobId);
   const dl = $('#export-agent-download');
   dl.hidden = false;
   dl.textContent = 'Download again';
-  dl.onclick = () => triggerDownload(jobId);
+  dl.onclick = () => triggerExportDownload(jobId);
   const conv = $('#export-agent-modal').dataset.conv;
   const label = $('#export-agent-modal').dataset.label || shortId(conv);
   toast(`Export ready for ${label}`);
@@ -238,20 +253,10 @@ function onExportReady(jobId, job) {
 
 function onExportFailed(job) {
   clearPoll();
-  const row = $('#export-agent-status').querySelector('.export-status-row');
-  if (row) row.classList.add('done');
-  $('#export-agent-spinner').style.display = 'none';
-  setStatus('⚠️ Export failed');
-  $('#export-agent-status-note').textContent = job.error || 'the agent did not deliver an export';
-}
-
-function triggerDownload(jobId) {
-  const a = document.createElement('a');
-  a.href = `/api/export-jobs/${encodeURIComponent(jobId)}/artifact`;
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  jobSettled = true;
+  updateChecklist('failed');
+  $('#export-agent-status-note').textContent =
+    '⚠️ ' + (job.error || 'the agent did not deliver an export');
 }
 
 // --- "Previous exports" history panel ---
@@ -295,12 +300,6 @@ function renderHistoryItem(j) {
     + `</div>`;
 }
 
-function fmtBytes(n) {
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MiB`;
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KiB`;
-  return `${n} B`;
-}
-
 async function deleteHistoryItem(jobId) {
   try {
     await fetch(`/api/export-jobs/${encodeURIComponent(jobId)}`, {
@@ -339,7 +338,7 @@ function bindExportModal() {
     if (!btn) return;
     const jobId = btn.getAttribute('data-job');
     if (btn.getAttribute('data-export-act') === 'download') {
-      triggerDownload(jobId);
+      triggerExportDownload(jobId);
     } else if (btn.getAttribute('data-export-act') === 'delete') {
       deleteHistoryItem(jobId);
     }

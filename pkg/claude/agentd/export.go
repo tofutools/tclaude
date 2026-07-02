@@ -144,6 +144,15 @@ func exportJobToView(j *db.ExportJob) exportJobView {
 	return v
 }
 
+// dashboardExportJob is the Jobs-tab view of one export job: the modal's poll
+// projection plus a resolved display label for the ORIGINAL conversation — the
+// unified /api/jobs listing (dashboard_jobs.go) spans all agents, so each row
+// carries its own label instead of the front-end doing a per-row lookup.
+type dashboardExportJob struct {
+	exportJobView
+	ConvLabel string `json:"conv_label,omitempty"`
+}
+
 // --- create (dashboard) ---
 
 // dashboardCreateExport is the cookie-authed entry point reached from
