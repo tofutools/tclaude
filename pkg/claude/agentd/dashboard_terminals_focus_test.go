@@ -57,8 +57,8 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 func TestPaneSeedsCarryAgent(t *testing.T) {
 	tab := readDashboardJS(t, "terminals-tab.js")
 	for _, c := range []struct{ name, anchor string }{
-		{"openWebWindowPane", "key: `window:${conv}`"},
-		{"openWebTermPane", "key: `term:${conv}:${which}`"},
+		{"openWebWindowPane", "key: `window:${agent}`"},
+		{"openWebTermPane", "key: `term:${agent}:${which}`"},
 	} {
 		at := strings.Index(tab, c.anchor)
 		if at < 0 {

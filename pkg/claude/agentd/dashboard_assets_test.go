@@ -319,12 +319,12 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"export function openWebWindowPane(",
 		"export function openWebTermPane(",
 		// row-actions.js — the routed per-row actions (native → web branches).
-		"if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); toast(",
-		"if (webTerminalDefault()) { openWebTermPane(agent, conv, label, termDirModal({ label })); return; }",
-		"if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); return; }",
-		"if (webTerminalDefault()) { openWebTermPane(agent, conv, label, which); return; }",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label); toast(",
+		"if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }",
+		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
 		// palette.js — the command-palette "focus window" branch.
-		"if (webTerminalDefault()) { openWebWindowPane(conv, conv, label); toast(",
+		"if (webTerminalDefault()) { openWebWindowPane(conv, label); toast(",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
 		"dashboard.default_terminal = 'web'",

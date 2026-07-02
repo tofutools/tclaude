@@ -431,8 +431,10 @@ function bindRowActions() {
           // With web terminals as the default (config dashboard.default_terminal
           // = "web"), "focus" opens the agent's live session as a browser pane
           // rather than raising a native OS window. openWebWindowPane keys on
-          // the conv, so this focuses an existing pane instead of duplicating.
-          if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); toast(`focused: ${label}`); return; }
+          // the agent selector, so this focuses an existing pane rather than
+          // duplicating (the focusTerminalForConv check above already handled
+          // the common already-open case).
+          if (webTerminalDefault()) { openWebWindowPane(agent, label); toast(`focused: ${label}`); return; }
           // Non-destructive; no confirm modal, just fire-and-toast.
           const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
@@ -475,7 +477,7 @@ function bindRowActions() {
           // = "web"), route this straight to a browser web-term pane — same as
           // the dedicated "web term" button. Hand the picker promise through so
           // a cancelled pick is a clean no-op.
-          if (webTerminalDefault()) { openWebTermPane(agent, conv, label, termDirModal({ label })); return; }
+          if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }
           const which = await termDirModal({ label });
           if (!which) return;
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
@@ -499,7 +501,7 @@ function bindRowActions() {
           // promise directly and reveals the tab once it resolves (a cancelled
           // pick is a no-op). Same helper the "open terminal" action uses when
           // web terminals are the default.
-          openWebTermPane(agent, conv, label, termDirModal({ label }));
+          openWebTermPane(agent, label, termDirModal({ label }));
           return;
         }
         case 'open-window': {
@@ -513,7 +515,7 @@ function bindRowActions() {
           // = "web"), open the live session as a browser pane instead — same as
           // the dedicated "web window" button; the revealed Terminals tab is the
           // feedback (parity with web-open-window, which likewise doesn't toast).
-          if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); return; }
+          if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }
           const r = await fetch(`/api/open-window/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
           });
@@ -536,7 +538,7 @@ function bindRowActions() {
           // closing the pane runs the reliable server-side detach. Same helper
           // the "focus" / "open window" actions use when web terminals are the
           // default.
-          openWebWindowPane(agent, conv, label);
+          openWebWindowPane(agent, label);
           return;
         }
         case 'focus-pending': {
@@ -560,7 +562,7 @@ function bindRowActions() {
           // With web terminals as the default (config dashboard.default_terminal
           // = "web"), open a browser web-term pane in that directory instead of
           // a native window. The dir is already known, so no picker promise.
-          if (webTerminalDefault()) { openWebTermPane(agent, conv, label, which); return; }
+          if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }
           const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
@@ -1520,7 +1522,7 @@ function bindRowActions() {
           if (focusTerminalForConv([conv])) {
             toast(`focused: ${label}`);
           } else if (webTerminalDefault()) {
-            openWebWindowPane(conv, conv, label);
+            openWebWindowPane(conv, label);
             toast(`focused: ${label}`);
           } else {
             const jr = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {

@@ -137,7 +137,7 @@ async function jumpAgent(conv, label) {
   // With web terminals as the default (config dashboard.default_terminal =
   // "web"), open the agent's live session as a browser pane rather than raising
   // a native OS window — same as the per-agent 'jump' row action.
-  if (webTerminalDefault()) { openWebWindowPane(conv, conv, label); toast(`focused: ${label}`); return; }
+  if (webTerminalDefault()) { openWebWindowPane(conv, label); toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',

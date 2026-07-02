@@ -84,16 +84,19 @@ export function openTerminalPane(seedOrPromise) {
 // raising / attaching a native OS window. Used by the "web window" row action,
 // and by the plain "focus" / "open window" actions (the row button, the ⌘
 // palette, and a message's focus button) when config dashboard.default_terminal
-// = "web". `agent` is the stable action selector (agent_id ?? conv-id); `conv`
-// keys the pane so re-opening focuses the existing one rather than duplicating.
-// hideConv makes closing the pane run the reliable server-side detach — a
-// live-session attach forks the tmux client, so without the detach the session
-// stays "attached" and can't be reattached.
-export function openWebWindowPane(agent, conv, label) {
+// = "web". `agent` is the stable action selector (agent_id ?? conv-id) — it
+// drives the WS path, the detach (hideConv), the focus-match (seed.agent) AND
+// the pane key, so ONE agent maps to ONE pane no matter which entry point opens
+// it (a caller that keyed on a different identity, e.g. conv-id, would slip past
+// the openPane key-dedup and open a duplicate). hideConv makes closing the pane
+// run the reliable server-side detach — a live-session attach forks the tmux
+// client, so without the detach the session stays "attached" and can't be
+// reattached.
+export function openWebWindowPane(agent, label) {
   openTerminalPane({
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
     label,
-    key: `window:${conv}`,
+    key: `window:${agent}`,
     hideConv: agent,
     agent,
   });
@@ -105,15 +108,17 @@ export function openWebWindowPane(agent, conv, label) {
 // a CWD path click when config dashboard.default_terminal = "web".
 // `whichOrPromise` is the dir choice, or a Promise of it (the which-dir
 // picker) — a null/cancelled pick is a no-op, so the tab is never revealed for
-// nothing. No hideConv: a web-term is a throwaway session with nothing to
-// detach on close (the `agent` field still lets "focus" jump to it).
-export function openWebTermPane(agent, conv, label, whichOrPromise) {
+// nothing. Keyed on the `agent` selector + `which` so re-opening the same dir
+// focuses the existing pane (see openWebWindowPane on the keying rationale). No
+// hideConv: a web-term is a throwaway session with nothing to detach on close
+// (the `agent` field still lets "focus" jump to it).
+export function openWebTermPane(agent, label, whichOrPromise) {
   openTerminalPane(
     Promise.resolve(whichOrPromise).then((which) => (which
       ? {
         ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
         label,
-        key: `term:${conv}:${which}`,
+        key: `term:${agent}:${which}`,
         agent,
       }
       : null)),
