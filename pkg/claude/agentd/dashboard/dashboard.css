@@ -5324,9 +5324,10 @@ body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b
    the same discipline the spawn re-skin follows.
 
    Unlike the spawn / retire titles (static spans, CSS-swapped per theme), this
-   dialog's title is JS-set — it carries the edited profile's name ("Edit
-   profile: X") — so there's no pure-CSS text swap; we just render the
-   informative title in the arcane serif. */
+   dialog's title is JS-set — it carries the edited pattern's name — so its
+   per-theme copy swap ("New familiar pattern" / "Edit pattern: X") lives in
+   modal-profiles.js's wizWord(), not here; this block only lends it the arcane
+   serif. */
 body.wizard #profile-editor-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
@@ -5521,15 +5522,29 @@ body.wizard #edit-member-modal #edit-member-save:disabled {
 }
 body.wizard #edit-member-modal #edit-member-save:disabled::before { content: none; }
 
+/* ─── Wizard profile vocabulary — "Familiar patterns" ───────────────
+   In 🧙 wizard mode we Summon Familiars, so a saved spawn profile is
+   re-lettered a "familiar pattern" everywhere its name surfaces as static
+   copy: the Groups-cog ⧉ entry, the manage overlay's title + intro + the
+   "+ new" action, and the Summon dialog's "Save as…" button. Each of those
+   spots carries a .profiles-word-regular / .profiles-word-wizard span pair
+   (the same pure-CSS swap the spawn/retire titles use); these three rules do
+   the per-theme reveal. The pair is deliberately shared across every spot so
+   one rule governs the whole vocabulary — it is only ever used for this swap.
+   The editor dialog's title is JS-set (it carries the edited pattern's name),
+   so that one string is swapped in modal-profiles.js, not here. */
+.profiles-word-wizard { display: none; }
+body.wizard .profiles-word-regular { display: none; }
+body.wizard .profiles-word-wizard { display: inline; }
+
 /* ─── Wizard profiles manage overlay — the familiars' recipe book ────
    The 🧙 re-skin of the "Spawn profiles" management overlay (Groups cog →
    ⧉ profiles…) — the list you pick a recipe to edit from. It launches the
    arcane editor (📜 Inscribe!), so the picker it opens from gets the matching
    arcane chrome. Scoped to #profiles-manage-modal so the sibling manage
    overlays (Templates… / Links…), which share .manage-overlay/.manage-modal,
-   keep the default chrome. The title stays informative — rendered in the
-   arcane serif, no text swap (its copy is static, but a swap would be pure
-   flavour; the ask is the re-skin). */
+   keep the default chrome. The title now swaps its copy to "Familiar patterns"
+   too (the .profiles-word span pair above), on top of this arcane re-skin. */
 body.wizard #profiles-manage-modal .manage-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;

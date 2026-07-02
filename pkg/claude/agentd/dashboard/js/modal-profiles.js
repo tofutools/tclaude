@@ -24,6 +24,14 @@ import {
   loadProfiles, createProfile, updateProfile, deleteProfile, profileSummary,
 } from './profiles.js';
 import { openSpawnPermEditor } from './modal-message.js';
+import { isWizardActive } from './slop.js';
+
+// wizWord swaps the profile vocabulary for 🧙 wizard mode: in wizard mode we
+// Summon Familiars, so a saved spawn "profile" is re-lettered a "familiar
+// pattern". Mirrors the pure-CSS .profiles-word span swaps in dashboard.css
+// for the spots that are JS-rendered here (the editor title + the manage
+// overlay's empty-state).
+function wizWord(regular, wizard) { return isWizardActive() ? wizard : regular; }
 
 // Buffered per-slug permission overrides for the profile being edited.
 // slug → 'grant' | 'deny'; reset per openProfileEditor, written by the stacked
@@ -230,8 +238,10 @@ function paintProfilesList() {
   if (countEl) countEl.textContent = q ? `${list.length} / ${all.length}` : `${all.length}`;
   if (!list.length) {
     host.innerHTML = `<div class="template-empty">${all.length
-      ? 'No profiles match the filter.'
-      : 'No spawn profiles yet — press <b>+ new profile</b> to define one. A profile pre-fills the spawn dialog and can be a group or dashboard default.'}</div>`;
+      ? wizWord('No profiles match the filter.', 'No patterns match the filter.')
+      : wizWord(
+        'No spawn profiles yet — press <b>+ new profile</b> to define one. A profile pre-fills the spawn dialog and can be a group or dashboard default.',
+        'No familiar patterns yet — press <b>+ new pattern</b> to weave one. A pattern pre-fills the Summon dialog and can be a group or dashboard default.')}</div>`;
     return;
   }
   host.innerHTML = list.map(profileCardHTML).join('');
@@ -273,8 +283,9 @@ function profilesByName() {
 function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   profileEditorEditing = (editExisting && seed) ? seed : null;
   profileEditorOnSaved = onSaved;
-  $('#profile-editor-title').textContent =
-    profileEditorEditing ? `Edit profile: ${seed.name}` : 'New spawn profile';
+  $('#profile-editor-title').textContent = profileEditorEditing
+    ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`)
+    : wizWord('New spawn profile', 'New familiar pattern');
   $('#profile-editor-error').textContent = '';
   // Name field carries the existing name only when editing in place; a
   // pre-filled create starts blank so the human gives the new profile a name.

@@ -175,7 +175,7 @@
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)">⧉ templates…</button>
-          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default">⧉ profiles…</button>
+          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
@@ -1444,14 +1444,14 @@
 </div>
 <div class="manage-overlay" id="profiles-manage-modal">
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="profiles-manage-title">
-    <h3 id="profiles-manage-title">Spawn profiles</h3>
-    <p class="manage-intro">Reusable bundles of the spawn dialog's fields — harness, model, effort, sandbox, name, role, descr and the initial message (not the directory or worktree). A profile pre-fills the spawn dialog; set one as a group's default (the group 🧠 badge) or the dashboard default (the 🧠 chip above) to have it pre-fill automatically.</p>
+    <h3 id="profiles-manage-title"><span class="profiles-word-regular">Spawn profiles</span><span class="profiles-word-wizard">Familiar patterns</span></h3>
+    <p class="manage-intro"><span class="profiles-word-regular">Reusable bundles of the spawn dialog's fields — harness, model, effort, sandbox, name, role, descr and the initial message (not the directory or worktree). A profile pre-fills the spawn dialog; set one as a group's default (the group 🧠 badge) or the dashboard default (the 🧠 chip above) to have it pre-fill automatically.</span><span class="profiles-word-wizard">Reusable familiar patterns you weave once and reuse to summon familiars — harness, model, effort, sandbox, name, role, descr and the opening incantation (not the directory or worktree). A pattern pre-fills the Summon dialog; set one as a group's default (the group 🧠 badge) or the dashboard default (the 🧠 chip above) to weave it in automatically.</span></p>
     <div class="filter-bar">
       <input id="filter-profiles" type="text" placeholder="Filter (name / harness / model / role)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-profiles-count"></span>
       <button class="clear-filter" id="filter-profiles-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button id="profile-create-open" class="primary" title="Define a new spawn profile">+ new profile</button>
+      <button id="profile-create-open" class="primary" title="Define a new spawn profile"><span class="profiles-word-regular">+ new profile</span><span class="profiles-word-wizard">+ new pattern</span></button>
     </div>
     <div id="profiles-list"></div>
     <div class="modal-buttons">
@@ -1949,7 +1949,7 @@
         <div class="cron-target-input-row">
           <select id="agent-spawn-load-profile"><option value="">— none (blank form) —</option></select>
           <button id="agent-spawn-clear" type="button" title="Reset the profile-filled fields (harness / model / effort / name / role / …) to blank — leaves the group, directory and worktree untouched">Clear</button>
-          <button id="agent-spawn-save-profile" type="button" title="Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)">Save as profile…</button>
+          <button id="agent-spawn-save-profile" type="button" title="Save the current dialog fields as a reusable spawn profile — opens the profile editor pre-filled so you can name it (the directory and worktree aren't stored)"><span class="profiles-word-regular">Save as profile…</span><span class="profiles-word-wizard">Save as pattern…</span></button>
         </div>
       </div>
     </label>
