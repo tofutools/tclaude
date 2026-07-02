@@ -355,6 +355,42 @@ func TestDashboardCSS_WizardProfilesManageScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardProfileVocabulary pins the wizard copy swap that
+// re-letters a "spawn profile" as a "familiar pattern" — because in 🧙 wizard
+// mode we Summon Familiars, so the profiles dialog and every spot that names it
+// should say so. The static spots use a shared .profiles-word-regular /
+// .profiles-word-wizard span pair (CSS-swapped, like the spawn/retire titles);
+// the two JS-rendered spots (the editor title, the empty-state) swap via
+// modal-profiles.js's wizWord(). All of it lands in the embedded source, so we
+// string-search rather than run the JS.
+func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The shared CSS reveal for the .profiles-word span pair.
+	must(".profiles-word-wizard { display: none; }", "the wizard profile-word span is hidden by default")
+	must("body.wizard .profiles-word-regular { display: none; }", "wizard hides the default profile wording")
+	must("body.wizard .profiles-word-wizard { display: inline; }", "wizard shows the familiar-pattern wording")
+
+	// The static span-swap spots: the manage overlay title, its "+ new" action,
+	// the Groups-cog ⧉ entry, and the Summon dialog's "Save as…" button.
+	must(`<span class="profiles-word-wizard">Familiar patterns</span>`, "the manage overlay title reads 'Familiar patterns' in wizard mode")
+	must(`<span class="profiles-word-wizard">+ new pattern</span>`, "the + new action reads '+ new pattern' in wizard mode")
+	must(`<span class="profiles-word-wizard">⧉ patterns…</span>`, "the Groups-cog entry reads '⧉ patterns…' in wizard mode")
+	must(`<span class="profiles-word-wizard">Save as pattern…</span>`, "the Save-as button reads 'Save as pattern…' in wizard mode")
+	// The regular twin still ships (so non-wizard mode is unchanged).
+	must(`<span class="profiles-word-regular">Spawn profiles</span>`, "the default manage overlay title still reads 'Spawn profiles'")
+
+	// The JS-rendered spots swapped via wizWord() (editor title + empty-state).
+	must("New familiar pattern", "the editor title reads 'New familiar pattern' when creating in wizard mode")
+	must("Edit pattern: ${seed.name}", "the editor title reads 'Edit pattern: <name>' when editing in wizard mode")
+	must("No familiar patterns yet", "the empty-state reads 'No familiar patterns yet' in wizard mode")
+}
+
 // TestDashboardHTML_WizardPermEditor pins the wizard re-skin of the permanent-
 // permissions tri-state editor (#perm-edit-modal), shared by the live-agent path
 // and the spawn / profile buffer editors. Front-end only, so we string-search
