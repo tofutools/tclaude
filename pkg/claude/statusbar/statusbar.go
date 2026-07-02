@@ -351,6 +351,21 @@ func run() error {
 			sds = &usageapi.CachedBucket{Pct: rl.SevenDaySonnet.UsedPercentage, ResetsAt: time.Unix(rl.SevenDaySonnet.ResetsAt, 0)}
 		}
 		usageapi.UpdateFromStatusLine(fh, sd, sds)
+
+		// Persist the VERBATIM statusline payload (latest snapshot, one
+		// column, overwritten each render) so the full rate-limit picture
+		// can be inspected off the DB — including buckets StatusLineInput
+		// doesn't name yet (Go drops unknown JSON keys), e.g. Fable 5's
+		// separate usage limit. Gated on rate_limits being present: those
+		// renders carry the data we're after, and skipping the empty
+		// start-of-turn renders keeps a hollow payload from clobbering a
+		// good snapshot. Keyed by the stable tclaude session id (the
+		// sessions-row id), same as the model/cost writes above.
+		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+			if err := db.UpdateStatuslineSnapshot(sessionID, string(stdinData)); err != nil {
+				slog.Warn("status-bar: failed to update statusline snapshot", "error", err, "module", "hooks")
+			}
+		}
 	}
 
 	// Fallback: use Anthropic usage API cache when statusline input has no rate limits
