@@ -918,6 +918,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("'Slumber all familiars'", "global shutdown presents as Slumber in wizard mode")
 	must("'Awaken all familiars'", "global power-on presents as Awaken in wizard mode")
 	must("'Summon a familiar…'", "spawn presents as Summon in wizard mode")
+	must("'Form a party…'", "create-group presents as Form a party in wizard mode (matching the ⚔ Form a party dialog it opens)")
 	must("'Dispel banished familiars…'", "delete-retired presents as Dispel in wizard mode")
 	must("'Banish unbound familiars…'", "retire-ungrouped presents as Banish unbound familiars in wizard mode")
 	must("`Banish familiar: ${label}`", "per-agent retire presents as Banish in wizard mode")
@@ -934,6 +935,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("banish exile dismiss familiar", "per-agent retire carries the arcane banish keywords")
 	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
 	must("patterns pattern familiar weave inscribe grimoire", "the profiles manager carries the arcane pattern keywords")
+	must("party form fellowship warband adventuring muster gather assemble coven guild", "create-group carries the arcane party keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
 	// placeholder — the tclaude:wizard listener rebuilds the command list AND
@@ -955,6 +957,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("profiles: ['patterns']", "profiles bridges to patterns")
 	must("patterns: ['profiles']", "patterns bridges to profiles")
 	must("reveal: ['focus', 'show']", "reveal bridges to focus/show")
+	must("party: ['group']", "party bridges to group (Form a party ↔ Create new group)")
+	must("group: ['party']", "group bridges to party")
 }
 
 // TestDashboardCSS_WizardCommandPaletteScoped guards that the wizard palette

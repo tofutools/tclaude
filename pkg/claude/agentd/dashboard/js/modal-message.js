@@ -651,5 +651,6 @@ function bindGroupCreateModal() {
 
 export {
   openMessageCreateModal, bindMessageModal, bindSudoModal,
-  openPermEditModal, openSpawnPermEditor, bindPermEditModal, bindGroupCreateModal,
+  openPermEditModal, openSpawnPermEditor, bindPermEditModal,
+  bindGroupCreateModal, openGroupCreateModal,
 };

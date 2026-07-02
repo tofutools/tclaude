@@ -80,6 +80,22 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("run: () => openProfilesManageModal(),",
 		"the profiles command reuses the existing manage overlay")
 
+	// Create a new group: the palette fronts the SAME dialog the Groups-tab
+	// "+ new group" button opens (openGroupCreateModal → POST /api/groups on
+	// submit), so it adds no new behaviour — a thin surface, like every other
+	// command. Pinned by its wiz(plain, arcane) label and the reused opener +
+	// its import (the opener had to be exported from modal-message.js for the
+	// palette to reach it). The arcane "Form a party…" twin's presentation is
+	// covered by TestDashboardHTML_WizardCommandPaletteSynonyms.
+	must("import { openGroupCreateModal } from './modal-message.js'",
+		"palette imports the existing group-create modal opener")
+	must("bindGroupCreateModal, openGroupCreateModal,",
+		"modal-message.js exports the group-create opener for the palette")
+	must("wiz('Create new group…', 'Form a party…')",
+		"the palette offers a create-group command (plain label + arcane Form-a-party label)")
+	must("run: () => openGroupCreateModal()",
+		"create-group reuses the existing group-create modal, no new behaviour")
+
 	// The "last interacted group" memory MUST be stamped from the genuine
 	// group-title click/keyboard fold (bindGroupTitleToggle), NOT from the
 	// `toggle` event — the 2s re-render re-fires `toggle` on every open
