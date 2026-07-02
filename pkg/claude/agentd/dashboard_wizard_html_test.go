@@ -377,6 +377,48 @@ func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardExportModal pins the wizard re-skin of the per-agent
+// export dialog ("📜 Scribe a chronicle"): the Groups-tab agent cog → 📋 summary…
+// modal. An export is the familiar committing the tale of its work to a
+// shareable scroll, so the dialog gets the same arcane chrome as the Summon /
+// Inscribe dialogs. Purely front-end like the rest of the wizard theme, so we
+// string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardExportModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The whole dialog surface is re-skinned arcane, scoped to the export modal.
+	must("body.wizard #export-agent-modal .cron-create-modal", "the export dialog surface is re-skinned")
+
+	// The static title becomes "📜 Scribe a chronicle" via the font-size:0 +
+	// ::before glyph trick (the h3 doubles as the dialog's aria-labelledby name,
+	// so the honest "Export conversation" text stays in the a11y tree).
+	must(`content: "📜 Scribe a chronicle"`, "the title reads Scribe a chronicle in wizard mode")
+
+	// The submit button becomes a "📜 Scribe it!" lever (Summon's twin) — the
+	// ::before glyph + the modal-scoped submit re-skin, with an in-flight
+	// "📜 Scribing…" copy that keeps the busy state in the arcane voice.
+	must(`content: "📜 Scribe it!"`, "the submit button reads Scribe it in wizard mode")
+	must(`content: "📜 Scribing…"`, "the busy submit button reads Scribing in wizard mode")
+	must("body.wizard #export-agent-modal #export-agent-submit", "the submit re-skin is scoped to the export modal")
+}
+
+// TestDashboardCSS_WizardExportModalScoped guards that the wizard export re-skin
+// stays scoped to #export-agent-modal — the export dialog is a .cron-create-modal
+// like the spawn dialog and its siblings, so an unscoped
+// `body.wizard .cron-create-modal { … }` would repaint every one of them. This
+// duplicates the spawn / profile-editor scoping guards, but keeping a dedicated
+// guard here documents that the export re-skin depends on the same invariant.
+func TestDashboardCSS_WizardExportModalScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard export re-skin is unscoped — will repaint spawn/clone/reincarnate/cron/profile modals too")
+	}
+}
+
 // TestDashboardHTML_WizardProfilesManage pins the wizard re-skin of the "Spawn
 // profiles" management overlay — the picker you choose a profile to edit from,
 // the sibling of the arcane editor it launches. Purely front-end like the rest

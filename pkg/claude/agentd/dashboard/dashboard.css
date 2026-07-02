@@ -4197,6 +4197,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
 /* --- per-agent export ("📋 summary…") modal (JOH-265) --- */
+.export-intro { margin: 4px 0; font-size: 12px; color: #7d8590; }
 #export-agent-status { margin: 8px 0; }
 .export-status-row {
   display: flex; align-items: center; gap: 10px;
@@ -5424,6 +5425,134 @@ body.wizard #profile-editor-modal #profile-editor-submit:disabled {
   opacity: 0.7;
 }
 body.wizard #profile-editor-modal #profile-editor-submit:disabled::before { content: none; }
+
+/* ─── Wizard export modal — "📜 Scribe a chronicle" ─────────────────
+   The 🧙 re-skin of the per-agent export dialog (Groups tab → agent cog →
+   📋 summary…). An export is the familiar committing the tale of its work to
+   a shareable scroll, so the theme casts the whole dialog as scribing a
+   chronicle — the same arcane chrome as the Summon / Inscribe dialogs.
+
+   It's a .cron-create-modal like the spawn / clone / reincarnate / cron /
+   profile-editor modals, so every rule is scoped to #export-agent-modal — an
+   unscoped body.wizard rule on that class would repaint them all (guarded by
+   TestDashboardCSS_WizardExportModalScoped). */
+body.wizard #export-agent-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+/* Title: hide the static "Export conversation" text (font-size:0, keeping it
+   in the a11y tree as the dialog's aria-labelledby name) and paint the arcane
+   copy via ::before, which inherits the serif/gold/glow set on the h3. */
+body.wizard #export-agent-modal #export-agent-title {
+  font-size: 0;
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / Summon title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #export-agent-modal #export-agent-title::before {
+  content: "📜 Scribe a chronicle";
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+body.wizard #export-agent-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #export-agent-modal .export-intro { color: #b39ddb; }
+body.wizard #export-agent-modal .cron-create-label { color: #b39ddb; }
+body.wizard #export-agent-modal .cron-create-row input[type=text],
+body.wizard #export-agent-modal .cron-create-row select,
+body.wizard #export-agent-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #export-agent-modal .cron-create-row input[type=text]:focus,
+body.wizard #export-agent-modal .cron-create-row select:focus,
+body.wizard #export-agent-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Open <select> options render on the OS layer — keep them dark-on-parchment
+   so the format picker stays readable (mirrors the Summon dialog). */
+body.wizard #export-agent-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* "Clone into the same group" toggle + its hint. */
+body.wizard #export-agent-modal .export-same-group { color: #e7d9f5; }
+body.wizard #export-agent-modal .export-same-group-hint { color: #b39ddb; }
+/* The working phase: spinner caption + note go parchment/violet, and the
+   spinner itself spins tarnished-gold on a violet track (from arcane blue). */
+body.wizard #export-agent-modal .export-status-row { color: #e7d9f5; }
+body.wizard #export-agent-modal .export-status-note { color: #b39ddb; }
+body.wizard #export-agent-modal .export-spinner {
+  border-color: rgba(122, 93, 176, 0.4);
+  border-top-color: #d9b45a;
+}
+/* The "Previous exports" history panel — parchment separators, violet text,
+   violet-tinted cards. The per-status chips keep their semantic ready/failed/
+   running colours (they read fine on the darker violet card). */
+body.wizard #export-agent-modal .export-history { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #export-agent-modal .export-history-title { color: #b39ddb; }
+body.wizard #export-agent-modal .export-history-item {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #export-agent-modal .export-history-item .ehi-title { color: #f3e6c0; }
+body.wizard #export-agent-modal .export-history-item .ehi-sub { color: #b39ddb; }
+/* Every non-primary button (Cancel/Close, Clear all, and the per-item
+   ⤓ download / 🗑 delete icons) gets the tarnished-gold secondary treatment.
+   Excluded via :not(.primary) so the two levers below (Scribe / Download) keep
+   their gilded fill — they are the modal's only .primary buttons. */
+body.wizard #export-agent-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #export-agent-modal button:not(.primary):hover { background: #3a2a63; }
+body.wizard #export-agent-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* The two primary levers share the gilded conjuring look (Summon's twin). The
+   Download button keeps its honest JS-set text ("Download" / "Download again")
+   visible — like the shared #confirm-ok. The Scribe (submit) button hides its
+   JS-set "Export" / "Requesting…" text (font-size:0) and paints "📜 Scribe it!"
+   via ::before, with "📜 Scribing…" while the request is in flight, keeping the
+   copy in the arcane voice. Both ids out-specify the base .primary rule; the
+   click already sprays cast sparks via wizard-fx's global cast-FX handler. */
+body.wizard #export-agent-modal #export-agent-submit,
+body.wizard #export-agent-modal #export-agent-download {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #export-agent-modal #export-agent-submit:hover,
+body.wizard #export-agent-modal #export-agent-download:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #export-agent-modal #export-agent-submit:active,
+body.wizard #export-agent-modal #export-agent-download:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+/* Scribe (submit) glyph swap: hide the raw text, paint the arcane label. */
+body.wizard #export-agent-modal #export-agent-submit { font-size: 0; }
+body.wizard #export-agent-modal #export-agent-submit::before {
+  content: "📜 Scribe it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #export-agent-modal #export-agent-submit:disabled { opacity: 0.7; }
+body.wizard #export-agent-modal #export-agent-submit:disabled::before { content: "📜 Scribing…"; }
 
 /* ─── Wizard edit-agent modal — "Enchant this familiar" ─────────────
    The third of the arcane dialog re-skins (Summon a familiar / Banish a
