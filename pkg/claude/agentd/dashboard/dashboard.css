@@ -1653,7 +1653,14 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
 @media (hover: hover) {
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
     display: inline-block;
-    vertical-align: bottom;
+    /* text-bottom, NOT bottom: bottom tracks the LINE BOX bottom, which the
+       30px sprite bots (.actbot-sprite, vertical-align: middle) drag ~10px
+       below the text baseline — the revealed label then rendered on its own
+       visual line under the chip icons. text-bottom anchors to the parent
+       font's descent instead, invariant to tall siblings in the line. (Plain
+       baseline is no good either: overflow:hidden moves an inline-block's
+       baseline to its bottom margin edge, raising the text by its descent.) */
+    vertical-align: text-bottom;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
