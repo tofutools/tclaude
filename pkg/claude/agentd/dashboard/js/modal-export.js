@@ -284,7 +284,10 @@ async function loadExportHistory(conv) {
 }
 
 function renderHistoryItem(j) {
-  const title = j.title ? esc(j.title) : '<span class="ehi-sub">(untitled)</span>';
+  // Same name fallback as the Jobs tab: the optional dialog Title, else the
+  // delivered artifact's filename, else the preset for an in-flight blank.
+  const name = j.title || j.artifact_name;
+  const title = name ? esc(name) : `<span class="ehi-sub">(${esc(j.preset || 'untitled')})</span>`;
   const when = j.created_at ? esc(relTime(j.created_at)) : '';
   const size = j.artifact_size ? ` · ${fmtBytes(j.artifact_size)}` : '';
   const status = esc(j.status || '');

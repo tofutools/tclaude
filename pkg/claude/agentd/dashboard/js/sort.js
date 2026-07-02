@@ -152,7 +152,9 @@ const JOBS_COLS = [
 const JOBS_ACCESSORS = {
   kind: r => r.kind,
   id:   r => (r.cron ? r.cron.id : r.export?.id),
-  name: r => (r.cron ? r.cron.name : (r.export?.title || '')),
+  // export names sort on the same fallback the cell displays (title, else
+  // the delivered artifact's filename); still-blank rows sort last.
+  name: r => (r.cron ? r.cron.name : (r.export?.title || r.export?.artifact_name || '')),
   agent: r => r.cron
     ? (r.cron.group_name || r.cron.target_label || r.cron.target_agent || r.cron.target_conv)
     : (r.export?.conv_label || r.export?.conv_id),

@@ -221,6 +221,17 @@ function cronJobRowCells(j) {
     <td><div class="row-actions">${runBtn}${editBtn}${enableBtn}${delBtn}</div></td>`;
 }
 
+// exportJobNameCell renders an export row's name: the optional dialog Title,
+// falling back to the delivered artifact's filename (promoted from the muted
+// subline it occupies when a title exists), and for an in-flight, title-less
+// job the preset — "(summary)" reads better than a bare "(untitled)".
+function exportJobNameCell(j) {
+  const name = j.title || j.artifact_name;
+  if (!name) return `<span class="muted">(${esc(j.preset || 'untitled')})</span>`;
+  const sub = j.title && j.artifact_name ? `<div class="muted">${esc(j.artifact_name)}</div>` : '';
+  return `<div class="rowname">${esc(name)}</div>${sub}`;
+}
+
 // exportJobRowCells renders the same row shape for an export job.
 function exportJobRowCells(j) {
   const settled = j.status === 'ready' || j.status === 'failed';
@@ -245,7 +256,7 @@ function exportJobRowCells(j) {
     <td>${dot}</td>
     <td><span class="tag">📋 export</span></td>
     <td class="id">${j.id}</td>
-    <td>${j.title ? `<div class="rowname">${esc(j.title)}</div>` : '<span class="muted">(untitled)</span>'}${j.artifact_name ? `<div class="muted">${esc(j.artifact_name)}</div>` : ''}</td>
+    <td>${exportJobNameCell(j)}</td>
     <td><span class="rowname" title="${esc(j.conv_id || '')}">${esc(j.conv_label || '(unknown)')}</span></td>
     <td>${progress}</td>
     <td><span class="last-hook">${esc(relTime(j.created_at) || '—')}</span></td>
