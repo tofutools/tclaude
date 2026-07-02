@@ -864,8 +864,21 @@ type CostDelta struct {
 // deltas — the ONE walk both cost surfaces build on (the Costs tab via
 // agentd's costDeltasFromRows, the top bar via SumCostSinceDay), so the
 // headline figure and the tab's breakdown can never drift. Rows must be
-// ordered (conv-key, day, session_id) — the order AllCostDailyRows
-// returns.
+// ordered (conv-key, day, updated_at, session_id) — the order
+// AllCostDailyRows returns.
+//
+// The tie-break WITHIN a (conv, day) is chronological (updated_at, the
+// last-spend time), NOT lexical session_id, and this matters: the
+// session-boundary reset below assumes a carry-forward resume is monotonic
+// — a statement about TIME, so the walk must see a conv's sessions in the
+// order they actually spent. A reinstated agent resumes under a session
+// whose id equals the conv id, which sorts BEFORE the original spwn- session
+// lexically but AFTER it in time; ordering by session_id would process the
+// resume (higher cumulative) first, then read the earlier original as a
+// below-peak drop and reset — double-counting the whole overlap (the
+// reinstate double-count: a conv opened at $43 showing $85). Ordering by
+// updated_at puts the original first, so the carry-forward telescopes to its
+// rise as intended.
 //
 // The high-water baseline is carried per CONVERSATION, not per session:
 // Claude Code's total_cost_usd is cumulative within a session and, on a
@@ -960,15 +973,21 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 }
 
 // AllCostDailyRows returns every session_cost_daily row ordered by
-// (conv-key, day, session_id) — the order the cost aggregation walks to
-// turn cumulative snapshots into per-day deltas. The conv-key groups all
-// of a conversation's sessions together (falling back to session_id for
-// the rare row with no denormalised conv_id) so the per-day delta walk
-// can carry one high-water baseline across a resume; day then session
-// orders within a conversation. The table stays small (sessions × active
-// days — pay-per-token sessions via cost_usd, subscription sessions via
-// virtual_cost_usd), so callers read it whole and aggregate in Go rather
-// than encoding the windowed delta logic in SQL.
+// (conv-key, day, updated_at, session_id) — the order the cost aggregation
+// walks to turn cumulative snapshots into per-day deltas. The conv-key groups
+// all of a conversation's sessions together (falling back to session_id for
+// the rare row with no denormalised conv_id) so the per-day delta walk can
+// carry one high-water baseline across a resume; day then updated_at orders
+// within a conversation CHRONOLOGICALLY by last-spend time. That chronological
+// tie-break — not lexical session_id — is what CostDeltas's carry-forward /
+// session-reset logic depends on: a reinstated agent's resumed session (id ==
+// conv id) sorts before the original spwn- session lexically but must be
+// walked after it, or its carry-forward looks like a below-peak drop and gets
+// double-counted (see CostDeltas). session_id remains the final tiebreaker for
+// a deterministic order when two rows share a timestamp. The table stays small
+// (sessions × active days — pay-per-token sessions via cost_usd, subscription
+// sessions via virtual_cost_usd), so callers read it whole and aggregate in Go
+// rather than encoding the windowed delta logic in SQL.
 func AllCostDailyRows() ([]CostDailyRow, error) {
 	db, err := Open()
 	if err != nil {
@@ -976,7 +995,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	}
 	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model
 		FROM session_cost_daily
-		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, session_id`)
+		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
 	if err != nil {
 		return nil, err
 	}

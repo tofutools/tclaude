@@ -33,8 +33,8 @@ func TestCostDeltasFromRows(t *testing.T) {
 	rows := []db.CostDailyRow{
 		// conv-1: plain growth under session a1, then resumed the NEXT day
 		// under a NEW session whose cumulative carries forward (includes the
-		// 2.50). Rows arrive ordered (conv-key, day, session) per
-		// AllCostDailyRows.
+		// 2.50). Rows arrive ordered (conv-key, day, updated_at, session) per
+		// AllCostDailyRows — chronological within a conv+day.
 		{SessionID: "sess-a1", Day: "2026-06-01", ConvID: "conv-1", CostUSD: 1.00},
 		{SessionID: "sess-a1", Day: "2026-06-02", ConvID: "conv-1", CostUSD: 1.00}, // ticked, spent nothing
 		{SessionID: "sess-a1", Day: "2026-06-03", ConvID: "conv-1", CostUSD: 2.50},
@@ -139,14 +139,24 @@ func TestCostDeltasFromRows_SessionResetAcrossExit(t *testing.T) {
 
 // TestCostDeltasFromRows_CarryForwardNotReset is the counterpart guard: a
 // resume whose new session CARRIES the prior cost forward (its cumulative
-// is at or above the peak, e.g. the same-process spwn→conv-id migration)
+// is at or above the peak, e.g. the reinstate spwn→conv-id migration)
 // must still telescope to the rise, never double-count. Only a DROP below
 // the peak triggers the reset, so the double-count protection the per-conv
 // baseline exists for is intact.
+//
+// The rows are in the CHRONOLOGICAL order AllCostDailyRows now delivers —
+// original (spwn-y) first, reinstated (conv-c) second — even though the
+// reinstated session's conv-id-named id ("conv-c") sorts BEFORE "spwn-y"
+// lexically. Feeding them in that lexical order instead (the pre-fix SQL
+// ordering) walks the higher cumulative first and double-counts the overlap;
+// see TestSumCostSinceDay_ReinstateSameDayNoDoubleCount for that path end to
+// end through the SQL.
 func TestCostDeltasFromRows_CarryForwardNotReset(t *testing.T) {
 	rows := []db.CostDailyRow{
-		{SessionID: "spwn-y", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 7.86},
-		{SessionID: "conv-c", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 12.26}, // carry-forward, higher
+		{SessionID: "spwn-y", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 7.86,
+			UpdatedAt: "2026-06-23T10:46:27+02:00"}, // original, earlier
+		{SessionID: "conv-c", Day: "2026-06-23", ConvID: "conv-c", CostUSD: 12.26,
+			UpdatedAt: "2026-06-23T11:17:02+02:00"}, // carry-forward, higher, later
 	}
 	deltas := costDeltasFromRows(rows, false)
 	assert.InDelta(t, 12.26, sumCostDeltas(deltas, "", ""), 1e-9,
