@@ -395,6 +395,67 @@ func TestCleanup_Agents_DeleteWorktreesOptIn(t *testing.T) {
 	assert.NotContains(t, resp.Outcomes[0].Detail, "worktree")
 }
 
+// Scenario: the retire tier honours delete_worktrees too (the command
+// palette's "Retire ungrouped agents…" sweep ticks it on by default).
+// An offline agent is demoted AND its linked worktree removed inline —
+// reusing the single-agent retire machinery, not the delete path.
+func TestCleanup_Agents_RetireRemovesLinkedWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwtr-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-retire"
+	f.HaveConvWithTitle(conv, "loose-worker")
+	f.HaveEnrolledAgent(conv) // retire acts only on an active agent
+	f.HaveAliveSession(conv, "spwn-rwtr", "tmux-rwtr", cwd)
+	f.MarkOffline("tmux-rwtr")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"retire","delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Retired, "the offline agent is demoted")
+	assert.Equal(t, 0, resp.Failed)
+	require.Len(t, resp.Outcomes, 1)
+	assert.Equal(t, "retired", resp.Outcomes[0].Result)
+	assert.True(t, fw.wasRemoved(cwd), "the retired agent's linked worktree is removed")
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree + branch feat removed",
+		"the worktree plan note is folded into the outcome detail")
+	// The demotion actually took: the conv is a retired conversation now.
+	state, err := db.AgentState(conv)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state)
+}
+
+// Scenario: retire without delete_worktrees leaves the worktree alone —
+// the box is coupled to shutdown and defaults on, but an unticked box
+// (or an older client) must never nuke a worktree by accident.
+func TestCleanup_Agents_RetireKeepsWorktreeWithoutFlag(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwtk-1111-2222-3333-4444"
+	const cwd = "/tmp/wt-retire-keep"
+	f.HaveConvWithTitle(conv, "loose-worker")
+	f.HaveEnrolledAgent(conv)
+	f.HaveAliveSession(conv, "spwn-rwtk", "tmux-rwtk", cwd)
+	f.MarkOffline("tmux-rwtk")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"mode":"retire"}`)
+
+	assert.Equal(t, 1, resp.Retired)
+	assert.False(t, fw.wasRemoved(cwd), "worktree untouched when delete_worktrees is absent")
+	assert.NotContains(t, resp.Outcomes[0].Detail, "worktree")
+}
+
 // Scenario: the per-row delete button's path — GET .../worktree
 // classifies the agent's worktree (what the modal checkbox reads),
 // and DELETE ?delete_worktree=1 removes it alongside the agent.
