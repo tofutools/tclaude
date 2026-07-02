@@ -313,6 +313,20 @@ func ListExportJobs(limit int) ([]*ExportJob, error) {
 	return out, rows.Err()
 }
 
+// CountActiveExportJobs returns how many export jobs are still in flight
+// (neither ready nor failed) — the dashboard's Jobs-tab badge count, cheap
+// enough to ride every 2s snapshot poll.
+func CountActiveExportJobs() (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM export_jobs WHERE status NOT IN (?, ?)`,
+		ExportStatusReady, ExportStatusFailed).Scan(&n)
+	return n, err
+}
+
 // DeleteExportJobsForConv hard-deletes every export job for a conversation and
 // returns their ids so the caller can remove the on-disk artifact dirs. The
 // "clear all" control behind the history panel.

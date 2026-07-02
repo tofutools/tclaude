@@ -137,6 +137,32 @@ func TestListExportJobs(t *testing.T) {
 	assert.Equal(t, id2, limited[0].ID)
 }
 
+func TestCountActiveExportJobs(t *testing.T) {
+	setupTestDB(t)
+	n, err := CountActiveExportJobs()
+	require.NoError(t, err)
+	assert.Zero(t, n)
+
+	id1, err := InsertExportJob(&ExportJob{ConvID: "c1", Status: ExportStatusCloning})
+	require.NoError(t, err)
+	id2, err := InsertExportJob(&ExportJob{ConvID: "c2", Status: ExportStatusRunning})
+	require.NoError(t, err)
+
+	n, err = CountActiveExportJobs()
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	// Settling a job (either terminal state) removes it from the count.
+	_, err = SetExportJobReady(id1, "/tmp/a", "a.md", 1, "text/markdown")
+	require.NoError(t, err)
+	_, err = FailExportJob(id2, "boom")
+	require.NoError(t, err)
+
+	n, err = CountActiveExportJobs()
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
 func TestDeleteExportJobsForConv(t *testing.T) {
 	setupTestDB(t)
 	a, err := InsertExportJob(&ExportJob{ConvID: "c1"})

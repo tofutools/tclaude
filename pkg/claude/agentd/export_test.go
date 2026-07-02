@@ -28,14 +28,15 @@ func TestDashboardJS_ExportModalWired(t *testing.T) {
 		`id="export-agent-checklist"`,      // checklist mount (dashboard.html)
 		"function renderExportChecklist(",  // modal checklist renderer (export-progress.js)
 		"function updateChecklist(",        // status-change repaint (modal-export.js)
-		// The Jobs tab's "Agent exports" section.
-		`data-tab="jobs"`,                  // the extended Cron→Jobs nav tab (dashboard.html)
-		`id="export-jobs-list"`,            // exports section mount (dashboard.html)
-		"function renderExportJobsTab(",    // section + badge renderer (tabs.js)
-		"renderExportJobsTab();",           // 2s snapshot poll repaints it (refresh.js)
-		"function renderExportStepper(",    // in-flight row stepper (export-progress.js)
-		`data-act="export-job-download"`,   // row download control (tabs.js)
-		"case 'export-job-dismiss'",        // row dismiss dispatch (row-actions.js)
+		// The Jobs tab's unified job table (exports + cron).
+		`data-tab="jobs"`,                // the extended Cron→Jobs nav tab (dashboard.html)
+		`id="jobs-list"`,                 // unified table mount (dashboard.html)
+		"function renderJobsTab(",        // table + badge renderer (tabs.js)
+		"renderJobsTab();",               // 2s poll repaints it (refresh.js)
+		"'/api/jobs?'",                   // the windowed unified fetch (refresh.js)
+		"function renderExportStepper(",  // in-flight row stepper (export-progress.js)
+		`data-act="export-job-download"`, // row download control (tabs.js)
+		"case 'export-job-dismiss'",      // row dismiss dispatch (row-actions.js)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q — export modal wiring broken", needle)

@@ -131,27 +131,43 @@ const MEMBER_ACCESSORS = {
   descr:  m => m.descr,
 };
 
-const CRON_COLS = [
+// The Jobs tab's unified job table (tabs.js renderJobsTab) — rows are
+// {kind, export?, cron?} from /api/jobs, so every accessor branches on the
+// kind. Pagination + the text filter are server-side; this sort orders the
+// SERVED WINDOW only, like the retired/conversations/replaced sub-tables.
+// The default server order (newest activity first) is what the third header
+// click falls back to. The leading state-dot and trailing action columns
+// stay non-sortable.
+const JOBS_COLS = [
   { label: '' },
+  { label: 'Kind', col: 'kind' },
   { label: 'ID', col: 'id' },
   { label: 'Name', col: 'name' },
-  { label: 'Owner', col: 'owner' },
-  { label: 'Target', col: 'target' },
-  { label: 'Every', col: 'every' },
-  { label: 'Last run', col: 'last' },
+  { label: 'Agent', col: 'agent' },
   { label: 'Status', col: 'status' },
-  { label: 'Body', col: 'body' },
+  { label: 'When', col: 'when' },
+  { label: 'Info', col: 'info' },
   { label: '' },
 ];
-const CRON_ACCESSORS = {
-  id:     j => j.id,
-  name:   j => j.name,
-  owner:  j => j.owner_label || j.owner_agent || j.owner_conv,
-  target: j => j.group_name || j.target_label || j.target_agent || j.target_conv,
-  every:  j => j.interval_seconds,
-  last:   j => j.last_run_at,
-  status: j => j.last_run_status,
-  body:   j => j.body,
+const JOBS_ACCESSORS = {
+  kind: r => r.kind,
+  id:   r => (r.cron ? r.cron.id : r.export?.id),
+  name: r => (r.cron ? r.cron.name : (r.export?.title || '')),
+  agent: r => r.cron
+    ? (r.cron.group_name || r.cron.target_label || r.cron.target_agent || r.cron.target_conv)
+    : (r.export?.conv_label || r.export?.conv_id),
+  // status groups by lifecycle word: cron enabled/disabled, export
+  // cloning/requested/running/ready/failed.
+  status: r => (r.cron ? (r.cron.enabled ? 'enabled' : 'disabled') : r.export?.status),
+  // when sorts on the raw ISO stamp (lexical ≈ chronological): cron = last
+  // run, export = started. Export stamps are RFC3339Nano, whose trimmed
+  // trailing zeros can misorder within the same second — fine for a window
+  // display sort (never rely on this ordering server-side).
+  when: r => (r.cron ? r.cron.last_run_at : r.export?.created_at),
+  // info is numeric per kind — cron interval seconds vs export artifact
+  // bytes. Comparing across kinds is meaningless but stable; within a kind
+  // (or with a kind filter) it's the natural magnitude sort.
+  info: r => (r.cron ? r.cron.interval_seconds : r.export?.artifact_size),
 };
 
 const SUDO_COLS = [
@@ -281,7 +297,7 @@ const PENDING_ACCESSORS = {
 
 export {
   cycleSort, sortHead, applySort, loadSortState,
-  MEMBER_COLS, MEMBER_ACCESSORS, CRON_COLS, CRON_ACCESSORS,
+  MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
   REPLACED_COLS, REPLACED_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS,

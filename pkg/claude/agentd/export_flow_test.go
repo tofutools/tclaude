@@ -152,30 +152,47 @@ func TestExportFlow_HappyPath(t *testing.T) {
 	assert.Equal(t, "auth-research.md", view.ArtifactName)
 	assert.Equal(t, int64(len(artifact)), view.ArtifactSize)
 
-	// 5b. The job also rides /api/snapshot (export_jobs) with a resolved conv
-	// label — what the Jobs tab's "Agent exports" section renders. A settled
-	// job stays listed (until dismissed / TTL), so the check is race-free here.
-	snapRec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/snapshot", nil))
-	require.Equal(t, http.StatusOK, snapRec.Code)
-	var snap struct {
-		ExportJobs []struct {
-			ID        int64  `json:"id"`
-			ConvID    string `json:"conv_id"`
-			ConvLabel string `json:"conv_label"`
-			Status    string `json:"status"`
-			Ready     bool   `json:"ready"`
-		} `json:"export_jobs"`
+	// 5b. The job also appears on the Jobs tab's unified /api/jobs listing as
+	// a kind=export row with a resolved conv label. A settled job stays listed
+	// (until dismissed / TTL), so the check is race-free here. And the
+	// snapshot's badge count reads 0 — this job already settled.
+	jobsRec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/jobs", nil))
+	require.Equal(t, http.StatusOK, jobsRec.Code)
+	var jobsPage struct {
+		Rows []struct {
+			Kind   string `json:"kind"`
+			Export *struct {
+				ID        int64  `json:"id"`
+				ConvID    string `json:"conv_id"`
+				ConvLabel string `json:"conv_label"`
+				Status    string `json:"status"`
+				Ready     bool   `json:"ready"`
+			} `json:"export"`
+		} `json:"rows"`
+		Total int `json:"total"`
 	}
-	testharness.DecodeJSON(t, snapRec, &snap)
-	require.Len(t, snap.ExportJobs, 1, "the export job must ride the snapshot for the Jobs tab")
-	assert.Equal(t, jobID, snap.ExportJobs[0].ID)
-	assert.Equal(t, "exp00000-0000-4000-8000-000000000001", snap.ExportJobs[0].ConvID)
+	testharness.DecodeJSON(t, jobsRec, &jobsPage)
+	require.Equal(t, 1, jobsPage.Total, "the export job must appear on the unified Jobs listing")
+	require.Len(t, jobsPage.Rows, 1)
+	require.Equal(t, "export", jobsPage.Rows[0].Kind)
+	exportRow := jobsPage.Rows[0].Export
+	require.NotNil(t, exportRow)
+	assert.Equal(t, jobID, exportRow.ID)
+	assert.Equal(t, "exp00000-0000-4000-8000-000000000001", exportRow.ConvID)
 	// The exact label text depends on title-resolution details outside this
 	// flow (the conv monitor re-indexes the sim's .jsonl mid-test); what the
 	// Jobs tab needs is that SOME display label rides along with the row.
-	assert.NotEmpty(t, snap.ExportJobs[0].ConvLabel, "the row carries the original's display label")
-	assert.Equal(t, "ready", snap.ExportJobs[0].Status)
-	assert.True(t, snap.ExportJobs[0].Ready)
+	assert.NotEmpty(t, exportRow.ConvLabel, "the row carries the original's display label")
+	assert.Equal(t, "ready", exportRow.Status)
+	assert.True(t, exportRow.Ready)
+
+	snapRec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, snapRec.Code)
+	var snap struct {
+		ExportJobsActive int `json:"export_jobs_active"`
+	}
+	testharness.DecodeJSON(t, snapRec, &snap)
+	assert.Zero(t, snap.ExportJobsActive, "a settled export no longer counts toward the Jobs badge")
 
 	// 6. Download returns the bytes with an attachment disposition.
 	dlRec := testharness.Serve(dash, dashReq(t, http.MethodGet,

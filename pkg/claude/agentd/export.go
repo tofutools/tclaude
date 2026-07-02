@@ -144,38 +144,13 @@ func exportJobToView(j *db.ExportJob) exportJobView {
 	return v
 }
 
-// dashboardExportJob is the Jobs-tab snapshot view of one export job: the
-// modal's poll projection plus a resolved display label for the ORIGINAL
-// conversation — the tab lists jobs across all agents, so each row carries its
-// own label instead of the front-end doing a per-row lookup.
+// dashboardExportJob is the Jobs-tab view of one export job: the modal's poll
+// projection plus a resolved display label for the ORIGINAL conversation — the
+// unified /api/jobs listing (dashboard_jobs.go) spans all agents, so each row
+// carries its own label instead of the front-end doing a per-row lookup.
 type dashboardExportJob struct {
 	exportJobView
 	ConvLabel string `json:"conv_label,omitempty"`
-}
-
-// exportJobsSnapshotLimit caps how many export jobs ride each /api/snapshot.
-// Newest first, so in-flight jobs (always among the newest) are never the ones
-// cut off; anything older is reachable through the modal's per-agent history
-// until the TTL sweep reclaims it.
-const exportJobsSnapshotLimit = 200
-
-// collectExportJobsSnapshot builds the Jobs tab's "Agent exports" list.
-// Best-effort: a DB error yields an empty (non-nil) slice so one bad read
-// never takes down the whole snapshot poll.
-func collectExportJobsSnapshot() []dashboardExportJob {
-	out := []dashboardExportJob{}
-	jobs, err := db.ListExportJobs(exportJobsSnapshotLimit)
-	if err != nil {
-		slog.Debug("snapshot: list export jobs failed", "error", err)
-		return out
-	}
-	for _, j := range jobs {
-		out = append(out, dashboardExportJob{
-			exportJobView: exportJobToView(j),
-			ConvLabel:     labelForConv(j.ConvID),
-		})
-	}
-	return out
 }
 
 // --- create (dashboard) ---

@@ -4232,14 +4232,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .export-chip-sep { color: #30363d; }
 .export-stepper .export-spinner { width: 11px; height: 11px; }
 
-/* --- Jobs tab (agent exports section + the cron table below it) --- */
-.jobs-subhead {
-  margin: 14px 0 8px; font-size: 12px; color: #7d8590;
-  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
-}
-#tab-jobs .jobs-subhead:first-child { margin-top: 4px; }
-.jobs-subhead-hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: #6e7681; }
-#export-jobs-list { margin-bottom: 6px; }
+/* --- Jobs tab (the unified export + cron job table) --- */
 .ej-status { font-size: 12px; white-space: nowrap; }
 .ej-status.ready { color: #3fb950; }
 .ej-status.failed { color: #f85149; }
