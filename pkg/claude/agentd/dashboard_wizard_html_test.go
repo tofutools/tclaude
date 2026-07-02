@@ -98,6 +98,56 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("body.wizard-shake", "the Meteor Swarm screen shake is styled")
 }
 
+// TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
+// keeps its plain name normally and shows a wizard "chamber of the Tower" name
+// under body.wizard (⚔ Parties, ⏳ Rituals, 📜 Almanac, …), the sibling of the
+// Vegas→Tavern swap. Both spans always emit; a pure-CSS swap picks the active
+// one. Purely front-end like the rest of the wizard theme, so we string-search
+// the embedded source rather than running the JS.
+func TestDashboardHTML_WizardTabNames(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The CSS swap: the default-hide of the arcane span (shared with Vegas) is
+	// load-bearing — without it BOTH labels would render side by side outside
+	// wizard mode. The new rule hides the PLAIN label under body.wizard; the
+	// reveal rule shows the arcane one. Pin all three so a dropped line fails CI
+	// rather than the browser.
+	must(".tab-label-wizard { display: none; }", "the arcane tab label is hidden outside wizard mode")
+	must("body.wizard .tab-label-regular { display: none; }", "wizard mode hides the plain tab names")
+	must("body.wizard .tab-label-wizard { display: inline; }", "wizard mode shows the arcane tab names")
+
+	// Each tab's plain + arcane span pair. Pinning the full pair (through the
+	// data-tab so it's anchored to the right button) guards both the plain name
+	// staying honest and the arcane name being present.
+	pairs := []struct{ tab, regular, wizard string }{
+		{"groups", "Groups", "⚔ Parties"},
+		{"terminals", "Terminals", "🔮 Scrying"},
+		{"cron", "Cron", "⏳ Rituals"},
+		{"plugins", "Plugins", "🔧 Contraptions"},
+		{"access", "Access", "🛡 Wards"},
+		{"messages", "Messages", "🕊 Missives"},
+		{"costs", "Costs", "💰 Coffers"},
+		{"audit", "Audit", "📖 Chronicle"},
+		{"logs", "Logs", "🕯 Runes"},
+		{"config", "Config", "📜 Almanac"},
+	}
+	for _, p := range pairs {
+		must(`<span class="tab-label-regular">`+p.regular+`</span>`, p.tab+" keeps its plain nav label")
+		must(`<span class="tab-label-wizard">`+p.wizard+`</span>`, p.tab+" gets its arcane nav label")
+	}
+
+	// The command palette's "Go to …/Scry the …" command reads the VISIBLE
+	// label span (not btn.textContent, which would concatenate both spans and
+	// the badge count) so it names the tab per the active theme.
+	must("const wizEl = btn.querySelector('.tab-label-wizard');", "the palette finds the arcane tab label span")
+	must("const regEl = btn.querySelector('.tab-label-regular, .tab-label-vegas');", "the palette finds the plain tab label span")
+}
+
 // TestDashboardHTML_WizardSpawnModal pins the wizard re-skin of the spawn
 // dialog ("Summon a new familiar"): the per-theme title copy swap and the
 // arcane CSS hooks. Purely front-end like the rest of the wizard theme, so we

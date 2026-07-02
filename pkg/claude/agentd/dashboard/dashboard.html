@@ -124,19 +124,25 @@
 </div>
 <nav title="Tip: cycle tabs with [ and ] (or ←/→ while the tab bar is focused)" aria-keyshortcuts="[ ]">
   <div class="bar-inner nav-inner">
-  <button class="active" data-tab="groups">Groups</button>
+  <!-- Every tab label carries a plain/wizard span pair (like the Vegas/Tavern
+       button below and the "+ new group"/"⚔ Form a party" primary): the plain
+       name shows normally, an arcane "chamber of the Tower" name under
+       body.wizard (CSS swap in dashboard.css). Badge spans stay OUTSIDE the
+       label pair so they render in both themes; the palette reads the visible
+       label span (js/palette.js) so "Scry the {name}" gets the arcane name. -->
+  <button class="active" data-tab="groups"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard">⚔ Parties</span></button>
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
-  <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window.">Terminals<span id="terminals-badge" class="tab-badge count" hidden></span></button>
-  <button data-tab="cron">Cron</button>
-  <button data-tab="plugins">Plugins<span id="plugins-badge" class="tab-badge warn" hidden></span></button>
-  <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants">Access</button>
-  <button data-tab="messages">Messages<span id="messages-badge" class="tab-badge" hidden></span></button>
-  <button data-tab="costs">Costs</button>
-  <button data-tab="audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts">Audit</button>
-  <button data-tab="logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail">Logs</button>
-  <button data-tab="config">Config</button>
+  <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></button>
+  <button data-tab="cron"><span class="tab-label-regular">Cron</span><span class="tab-label-wizard">⏳ Rituals</span></button>
+  <button data-tab="plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></button>
+  <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></button>
+  <button data-tab="messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></button>
+  <button data-tab="costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></button>
+  <button data-tab="audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></button>
+  <button data-tab="logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></button>
+  <button data-tab="config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard">📜 Almanac</span></button>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
