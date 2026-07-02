@@ -1705,13 +1705,18 @@ function openRetireUngroupedPreview() {
     // Summarise the worktree cleanup when it was requested. The retire
     // endpoint folds each agent's worktree plan into its outcome detail
     // ("worktree … removed" inline, "… will be removed after the agent
-    // exits" deferred), so tally the outcomes whose detail reports a
-    // removal. The "removed" stem matches both the inline and deferred
-    // notes but NOT "worktree removal failed" (removal ≠ removed) or the
-    // "kept" notes, so a failure never inflates the cleaned-up count.
+    // exits" deferred), so tally the outcomes that report a removal: the
+    // detail mentions a worktree and the word "removed" (present in both
+    // the inline and deferred notes). "kept"/"already gone" notes lack it,
+    // and an explicit "worktree removal failed" is excluded outright so a
+    // git error string that happens to contain "removed" never inflates
+    // the cleaned-up count.
     if (deleteWorktrees) {
       const outcomes = (out && out.outcomes) || [];
-      const swept = outcomes.filter(o => /worktree.*removed/i.test(o.detail || '')).length;
+      const swept = outcomes.filter(o => {
+        const d = o.detail || '';
+        return /worktree/i.test(d) && /\bremoved\b/i.test(d) && !/removal failed/i.test(d);
+      }).length;
       if (swept) msg += ` · ${swept} worktree${swept === 1 ? '' : 's'} cleaned up`;
     }
     const warns = (out && out.warnings) || [];
