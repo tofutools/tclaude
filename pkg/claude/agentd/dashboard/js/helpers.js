@@ -1172,8 +1172,12 @@ function focusHideButtons(m) {
 //
 // Cog and menu are emitted as siblings, inside the same .row-actions /
 // .group-actions container as the buttons kept top-level — NOT floated
-// to document.body — so a menu item's handler that walks up to its
-// <summary> (rename-group) still resolves.
+// to document.body — so a menu item's handler that walks up the DOM to
+// its enclosing group <details> (rename-group, to find .group-name)
+// still resolves. (The .group-actions cluster is no longer inside the
+// <summary> itself — #212 moved it into the .subtable — so a
+// closest('summary') walk from here would miss; closest('details') is
+// the reliable anchor.)
 function actionCog(act, items) {
   // U+FE0E (text variation selector) pins the gear to its monochrome
   // text glyph so the CSS amber colour applies — without it some

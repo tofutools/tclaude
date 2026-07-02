@@ -910,8 +910,15 @@ function bindRowActions() {
           // Esc cancels (revert without touching the daemon).
           // Background poll is suspended while editing so a 2s
           // refresh doesn't blow the input away mid-type.
-          const summary = btn.closest('summary');
-          const nameEl = summary && summary.querySelector('.group-name');
+          //
+          // The rename button lives in the group ⚙ menu, which sits in
+          // the expanded .subtable — a SIBLING of <summary>, not a
+          // descendant (moved there in #212). So we can't walk up to the
+          // <summary>; instead climb to the enclosing group <details>
+          // and query the (single) .group-name it contains. This is the
+          // real group render, whose .group-name lives in its summary.
+          const details = btn.closest('details');
+          const nameEl = details && details.querySelector('.group-name');
           if (!nameEl) {
             toast('rename: could not locate group name element', true);
             return;
