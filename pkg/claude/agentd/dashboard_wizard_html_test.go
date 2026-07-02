@@ -360,8 +360,10 @@ func TestDashboardCSS_WizardProfilesManageScoped(t *testing.T) {
 // mode we Summon Familiars, so the profiles dialog and every spot that names it
 // should say so. The static spots use a shared .profiles-word-regular /
 // .profiles-word-wizard span pair (CSS-swapped, like the spawn/retire titles);
-// the two JS-rendered spots (the editor title, the empty-state) swap via
-// modal-profiles.js's wizWord(). All of it lands in the embedded source, so we
+// the JS-rendered spots (the editor title, the empty-state, the default-profile
+// picker's "+ new" option) swap via the shared wizWord() helper. Covers both the
+// profiles dialog itself and the three profile selectors (spawn dialog / global
+// default / group default). All of it lands in the embedded source, so we
 // string-search rather than run the JS.
 func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	must := func(needle, why string) {
@@ -389,6 +391,13 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	must("New familiar pattern", "the editor title reads 'New familiar pattern' when creating in wizard mode")
 	must("Edit pattern: ${seed.name}", "the editor title reads 'Edit pattern: <name>' when editing in wizard mode")
 	must("No familiar patterns yet", "the empty-state reads 'No familiar patterns yet' in wizard mode")
+
+	// The three profile *selectors* also speak the vocabulary in wizard mode:
+	//   - spawn dialog: the "Profile" row label (static .profiles-word span pair)
+	//   - global + group default: the "＋ new profile…" option in the shared
+	//     openProfilePicker <select> (JS, wizWord).
+	must(`<span class="profiles-word-wizard">Pattern</span>`, "the spawn dialog's Profile selector label reads 'Pattern' in wizard mode")
+	must("＋ new pattern…", "the global/group default picker's new-entry reads '＋ new pattern…' in wizard mode")
 }
 
 // TestDashboardHTML_WizardPermEditor pins the wizard re-skin of the permanent-

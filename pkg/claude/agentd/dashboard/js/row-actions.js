@@ -26,6 +26,7 @@ import {
 // openMailbox brings the Messages tab forward + selects a folder; mail.js
 // doesn't import row-actions.js, so this is a one-way edge (no cycle).
 import { openMailbox } from './mail.js';
+import { wizWord } from './slop.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
 // lastSnapshot is dashboard.js's shared state, written here (rename
 // rollback) via setLastSnapshot. Deliberate benign cycles (see
@@ -200,8 +201,9 @@ async function openProfilePicker(chipEl, current, onCommit) {
   select.className = 'group-default-profile-select';
   // "＋ new profile…" sits at the top — picking it jumps to the editor to
   // create one (and sets it as this default on save), so an empty profile
-  // list isn't a dead end.
-  select.add(new Option('＋ new profile…', PROFILE_PICKER_NEW));
+  // list isn't a dead end. Re-lettered "＋ new pattern…" in 🧙 wizard mode,
+  // matching the editor it opens (New familiar pattern).
+  select.add(new Option(wizWord('＋ new profile…', '＋ new pattern…'), PROFILE_PICKER_NEW));
   select.add(new Option('(none)', ''));
   for (const p of profiles) select.add(new Option(p.name, p.name));
   if (current && !profiles.some(p => p.name === current)) {

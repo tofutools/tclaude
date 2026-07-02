@@ -200,6 +200,14 @@ export function isWizardActive() {
   return document.body.classList.contains('wizard');
 }
 
+// wizWord picks the wizard-mode wording when wizard mode is live, else the
+// regular wording. The shared home for the profile-vocabulary swaps that are
+// JS-rendered (the profile editor title / empty-state in modal-profiles.js, the
+// "+ new pattern…" picker option in row-actions.js) — the static-copy spots use
+// the pure-CSS .profiles-word span pair instead. Re-checks live, like
+// isWizardActive, so a mid-session toggle needs no re-binding.
+export function wizWord(regular, wizard) { return isWizardActive() ? wizard : regular; }
+
 // isVegasActive reports whether the Vegas music features — the Vegas tab,
 // the header volume mixer + sound switch, and the lounge radio — should
 // be live. That's true in slop ("casino") mode OR when the regular-mode
