@@ -729,6 +729,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("'Awaken all familiars'", "global power-on presents as Awaken in wizard mode")
 	must("'Summon a familiar…'", "spawn presents as Summon in wizard mode")
 	must("'Dispel banished familiars…'", "delete-retired presents as Dispel in wizard mode")
+	must("'Banish unbound familiars…'", "retire-ungrouped presents as Banish unbound familiars in wizard mode")
 	must("`Banish familiar: ${label}`", "per-agent retire presents as Banish in wizard mode")
 	must("`Scry the ${name}`", "tab navigation presents as Scry in wizard mode")
 	must("`Furl coven: ${g.name}`", "group collapse presents as Furl in wizard mode")

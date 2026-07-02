@@ -43,7 +43,8 @@ import { $, $$, esc } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import {
   toast, openWindowModal,
-  retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, countGroupMembersByStatus,
+  retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
+  countGroupMembersByStatus, countUngroupedAgents,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
@@ -304,6 +305,30 @@ function buildCommands() {
       keywords: 'delete purge retired cleanup remove wipe agents'
         + ' dispel banished obliterate destroy erase vanquish incinerate familiars',
       run: () => openDeleteRetiredPreview(),
+    });
+  }
+
+  // 1d) Global retire-ungrouped — "Retire ungrouped agents…". The
+  //     cross-group cleanup twin of the per-group retire (section 8):
+  //     ungrouped agents belong to no group, so there is no group retire
+  //     command to reach them. Opens a PREVIEW modal
+  //     (openRetireUngroupedPreview) listing every agent in no group —
+  //     online and offline alike — all ticked, with live title/id filters
+  //     and a per-row opt-out, then POSTs the explicit list to
+  //     /api/cleanup/agents {mode:"retire"}. ♻ marks it a (reinstatable)
+  //     retire, distinct from the 🗑 delete-retired above it. Gated on ≥1
+  //     ungrouped agent so the palette never offers a no-op. In 🧙 mode
+  //     these loose agents are "unbound familiars" and retire → banish.
+  const ungroupedCount = countUngroupedAgents();
+  if (ungroupedCount) {
+    const plural = ungroupedCount === 1 ? '' : 's';
+    cmds.push({
+      icon: wiz('♻', '🪄'), label: wiz('Retire ungrouped agents…', 'Banish unbound familiars…'),
+      hint: wiz(`preview + demote ${ungroupedCount} agent${plural} that are in no group to plain conversations`,
+        `preview + banish ${ungroupedCount} unbound familiar${plural} back to plain scrolls`),
+      keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents'
+        + ' banish exile dismiss unbound loose unattached familiars',
+      run: () => openRetireUngroupedPreview(),
     });
   }
 

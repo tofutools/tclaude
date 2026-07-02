@@ -209,7 +209,7 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 //	  "mode":             "unjoin",           // unjoin | retire | delete | reinstate
 //	  "include_owners":   false,              // (unjoin) strip owner rows?
 //	  "include_online":   false,              // act on still-running sessions too?
-//	  "delete_worktrees": false,              // (delete) also remove git worktrees?
+//	  "delete_worktrees": false,              // (delete/retire) also remove git worktrees?
 //	  "shutdown":         true                // (retire) also soft-stop the session?
 //	}
 //
@@ -243,12 +243,16 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 // reinstate ignores liveness regardless. The legacy boolean `delete`
 // is still honoured when `mode` is absent (delete=true → "delete",
 // else → "unjoin") so an older dashboard build keeps working.
-// delete_worktrees (delete mode only) also removes each purged agent's
-// git worktree — skipping the repo's main worktree and any worktree a
-// surviving agent still works in. shutdown (retire mode only) is a
-// *bool defaulting to true: an omitted field keeps the shutdown-ON
-// default, so an older dashboard build that never sends it still
-// soft-stops retired agents' sessions.
+// delete_worktrees also removes each acted-on agent's git worktree —
+// skipping the repo's main worktree and any worktree a surviving agent
+// still works in. In delete mode the removal is inline (the target is
+// force-stopped first); in retire mode it reuses the single-agent
+// retire machinery (scheduleRetireWorktreeCleanup), which defers the
+// removal until a soft-exited pane dies and keeps the worktree when
+// shutdown was declined. shutdown (retire mode only) is a *bool
+// defaulting to true: an omitted field keeps the shutdown-ON default,
+// so an older dashboard build that never sends it still soft-stops
+// retired agents' sessions.
 func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Agents          []string `json:"agents"`
@@ -376,6 +380,14 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				for _, gid := range ownerGroups {
 					ownerless[gid] = true
 				}
+				// Resolve the worktree BEFORE any shutdown — the deferred
+				// removal waits on the pane exiting, and the shared-worktree
+				// check reads sibling sessions the soft-stop starts tearing
+				// down. Only when the human asked to delete worktrees.
+				var wt agentWorktreeView
+				if body.DeleteWorktrees {
+					wt = resolveRetireWorktree(tg.convID)
+				}
 				// Optionally soft-stop the now-retired agent's session.
 				// stopOneConv is idempotent — an already-dead session
 				// (the common case for an offline target) is a no-op, so
@@ -386,6 +398,17 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 						out.Detail += " · session soft-stopped"
 					case "error":
 						out.Detail += " · session shutdown failed: " + st.Detail
+					}
+				}
+				// Worktree + branch cleanup, honouring the same per-agent
+				// safety rules as the single-agent retire: the main repo and
+				// any worktree a surviving agent still works in are kept, and
+				// the removal is deferred until a soft-exited pane dies (kept
+				// outright when shutdown was declined). The one-line plan note
+				// is folded into Detail so the outcome row says what happened.
+				if body.DeleteWorktrees {
+					if plan := scheduleRetireWorktreeCleanup(tg.convID, wt, retireShutdown); plan.Action != "none" {
+						out.Detail += " · " + plan.Detail
 					}
 				}
 			}

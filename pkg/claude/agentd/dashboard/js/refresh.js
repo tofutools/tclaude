@@ -1485,6 +1485,256 @@ function openRetirePreview(group, status) {
   setTimeout(() => submitBtn.focus(), 0);
 }
 
+// ungroupedRetireCandidates builds the retire cohort for the command
+// palette's "Retire ungrouped agents…" command from the snapshot's
+// ungrouped[] list — every active agent that is a member of NO group
+// (online and offline alike). Each entry is {agent_id, conv_id, title,
+// status} — the same shape openRetirePreview's rows carry — so the
+// preview renders identically. The submit leads with the stable
+// agent_id (the BE resolves it back to the conv-id), falling back to
+// conv_id for a row with no actor id yet.
+function ungroupedRetireCandidates() {
+  const snap = lastSnapshot || {};
+  const seen = new Set();
+  const out = [];
+  for (const a of (snap.ungrouped || [])) {
+    if (!a.conv_id || seen.has(a.conv_id)) continue;
+    seen.add(a.conv_id);
+    out.push({
+      agent_id: a.agent_id || '',
+      conv_id: a.conv_id,
+      title: a.title || '',
+      status: a.online ? ((a.state && a.state.status) || 'online') : 'offline',
+    });
+  }
+  return out;
+}
+
+// countUngroupedAgents is the cardinality of ungroupedRetireCandidates —
+// the palette gates the "Retire ungrouped agents…" command on a non-zero
+// count so it never offers a no-op sweep.
+function countUngroupedAgents() {
+  return ungroupedRetireCandidates().length;
+}
+
+// openRetireUngroupedPreview runs the command palette's "Retire ungrouped
+// agents…" command — the cross-group cleanup twin of the per-group
+// openRetirePreview. Ungrouped agents belong to no group, so there is no
+// group retire route to POST to; instead it drives the same PREVIEW modal
+// (#retire-preview-modal, reused verbatim — the two flows are never open
+// at once) and submits the human-approved list to the group-agnostic
+// bulk cleanup endpoint (/api/cleanup/agents {mode:"retire"}):
+//   1. lists every ungrouped agent (ungroupedRetireCandidates), all ticked
+//      by default, so the human sees exactly who will be retired;
+//   2. lets the human opt individual agents out (per-row checkbox, plus
+//      select-all / select-none and a title/id filter);
+//   3. on submit, POSTs the EXPLICIT agent-id list the human approved with
+//      include_online set — so a busy ungrouped agent the human left ticked
+//      is retired (and soft-exited) rather than silently skipped, and the
+//      BE acts on that exact set, never a cohort it re-derived.
+//
+// Demotion semantics match the per-group retire: each retired agent
+// becomes a plain, reinstatable conversation (leaves its groups — none,
+// here — and its grants are revoked) and, when the shutdown box is ticked
+// (default on), its running pane is soft-exited. A default-ON "delete each
+// agent's git worktree + branch" box (coupled to shutdown, since removal
+// can only run after a pane exits) sends delete_worktrees; the BE cleans
+// up each retired agent's worktree under the same per-agent safety rules
+// as the single retire (main repo / shared worktrees kept). Untick it to
+// keep the worktrees. Cancel / Esc / backdrop is a no-op.
+//
+// Like openRetirePreview, the candidate list is snapshotted at open time
+// and OWNED by the modal: the 2s auto-refresh is suspended while a
+// .modal-overlay is open, so the population can't shift between preview
+// and submit.
+function openRetireUngroupedPreview() {
+  const candidates = ungroupedRetireCandidates().map(c => ({ ...c, checked: true }));
+  if (candidates.length === 0) {
+    toast('retire: no ungrouped agents to retire');
+    return;
+  }
+
+  const overlay = $('#retire-preview-modal');
+  const titleEl = $('#retire-preview-title');
+  const hintEl = $('#retire-preview-hint');
+  const listEl = $('#retire-preview-list');
+  const countEl = $('#retire-preview-count');
+  const errEl = $('#retire-preview-error');
+  const searchEl = $('#retire-preview-search');
+  const shutdownCb = $('#retire-preview-shutdown');
+  const wtRow = $('#retire-preview-wt-row');
+  const wtCb = $('#retire-preview-wt');
+  const submitBtn = $('#retire-preview-submit');
+  const cancelBtn = $('#retire-preview-cancel');
+  const selAllBtn = $('#retire-preview-select-all');
+  const selNoneBtn = $('#retire-preview-select-none');
+
+  // Reset transient state on every open.
+  errEl.textContent = '';
+  searchEl.value = '';
+  shutdownCb.checked = true;
+  wtCb.checked = true; // worktree delete defaults ON (the BE keeps main/shared/no-worktree members)
+  wtCb.disabled = false;
+  wtRow.classList.remove('disabled');
+  for (const c of candidates) c.checked = true;
+  titleEl.textContent = 'Retire ungrouped agents';
+
+  // The worktree box is coupled to shutdown: a worktree is removed only
+  // after its agent's pane exits, so deleting one requires shutting the
+  // sessions down. Unticking shutdown disables + unticks the box (the
+  // per-group retire modal couples the same way).
+  const syncWtCoupling = () => {
+    if (shutdownCb.checked) {
+      wtCb.disabled = false;
+      wtRow.classList.remove('disabled');
+    } else {
+      wtCb.checked = false;
+      wtCb.disabled = true;
+      wtRow.classList.add('disabled');
+    }
+  };
+  syncWtCoupling(); // reflect the (default-on) shutdown state on open
+
+  const checkedCount = () => candidates.filter(c => c.checked).length;
+  const matchesFilter = (c) => {
+    const q = searchEl.value.trim().toLowerCase();
+    if (!q) return true;
+    return c.title.toLowerCase().includes(q) || c.conv_id.toLowerCase().includes(q);
+  };
+
+  function renderHint() {
+    hintEl.textContent = 'These agents are not in any group. Each ticked agent will be demoted to a '
+      + 'plain, reinstatable conversation and its grants revoked. Untick any you want to keep; '
+      + 'only the ticked agents are retired.';
+  }
+  function renderList() {
+    const rows = candidates.filter(matchesFilter);
+    if (rows.length === 0) {
+      listEl.innerHTML = '<div class="cleanup-empty">no agents match the filter</div>';
+      return;
+    }
+    listEl.innerHTML = rows.map(c => {
+      const badges = `<span class="cleanup-badge">${esc(c.status)}</span>`;
+      return `<div class="cleanup-row"><label>`
+        + `<input type="checkbox" data-conv="${esc(c.conv_id)}"${c.checked ? ' checked' : ''} />`
+        + `<span class="title">${esc(c.title || '(untitled)')}</span>`
+        + `<span class="id">${esc(c.conv_id.slice(0, 8))}</span>`
+        + `${badges}</label></div>`;
+    }).join('');
+  }
+  function renderFooter() {
+    const n = checkedCount();
+    countEl.textContent = `${n} of ${candidates.length} selected`;
+    submitBtn.textContent = n === 1 ? 'Retire 1 agent' : `Retire ${n} agents`;
+    submitBtn.disabled = n === 0;
+    submitBtn.removeAttribute('aria-busy');
+  }
+  function render() { renderHint(); renderList(); renderFooter(); }
+
+  const findCandidate = (conv) => candidates.find(c => c.conv_id === conv);
+  const onListChange = (e) => {
+    const cb = e.target.closest('input[type=checkbox]');
+    if (!cb) return;
+    const c = findCandidate(cb.getAttribute('data-conv'));
+    if (c) c.checked = cb.checked;
+    renderFooter();
+  };
+  const onSearch = () => renderList();
+  // select-all / select-none act on the CURRENTLY-VISIBLE rows only, so
+  // under an active filter they never silently touch hidden agents.
+  const onSelectAll = () => { for (const c of candidates.filter(matchesFilter)) c.checked = true; render(); };
+  const onSelectNone = () => { for (const c of candidates.filter(matchesFilter)) c.checked = false; render(); };
+
+  const cleanup = () => {
+    overlay.classList.remove('show');
+    listEl.removeEventListener('change', onListChange);
+    searchEl.removeEventListener('input', onSearch);
+    selAllBtn.removeEventListener('click', onSelectAll);
+    selNoneBtn.removeEventListener('click', onSelectNone);
+    shutdownCb.removeEventListener('change', syncWtCoupling);
+    submitBtn.removeEventListener('click', onSubmit);
+    cancelBtn.removeEventListener('click', cleanup);
+    overlay.removeEventListener('click', onOverlay);
+    document.removeEventListener('keydown', onKey);
+  };
+  const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+
+  async function onSubmit() {
+    // Snapshot the ticked agent-ids at click time — this is the list sent
+    // to the BE verbatim, the same list the human just reviewed. Lead with
+    // the stable agent_id (the BE resolves it back to the conv-id), falling
+    // back to conv_id for a row with no actor id yet.
+    const agents = candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id);
+    if (agents.length === 0) return;
+    // Snapshot the worktree choice too — coupled to shutdown, so a box
+    // disabled by an unticked shutdown never sends delete_worktrees.
+    const deleteWorktrees = wtCb.checked && !wtCb.disabled;
+    submitBtn.disabled = true;
+    submitBtn.setAttribute('aria-busy', 'true');
+    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Retiring…';
+    errEl.textContent = '';
+    let r;
+    try {
+      // include_online: a busy ungrouped agent the human left ticked is
+      // retired + soft-exited rather than skipped by the endpoint's
+      // default skip-online guard.
+      r = await fetch('/api/cleanup/agents', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agents, mode: 'retire', include_online: true, shutdown: shutdownCb.checked, delete_worktrees: deleteWorktrees }),
+      });
+    } catch (e) {
+      errEl.textContent = `retire failed: ${(e && e.message) || e}`;
+      renderFooter();
+      return;
+    }
+    if (!r.ok) {
+      errEl.textContent = await r.text();
+      renderFooter();
+      return;
+    }
+    const out = await r.json().catch(() => null);
+    cleanup();
+    const retired = (out && out.retired) || 0;
+    const failed = (out && out.failed) || 0;
+    const skipped = (out && out.skipped) || 0;
+    let msg = `retired ${retired} ungrouped agent${retired === 1 ? '' : 's'}`;
+    if (skipped) msg += `, ${skipped} skipped`;
+    if (failed) msg += `, ${failed} failed`;
+    // Summarise the worktree cleanup when it was requested. The retire
+    // endpoint folds each agent's worktree plan into its outcome detail
+    // ("worktree … removed" inline, "… will be removed after the agent
+    // exits" deferred), so tally the outcomes whose detail reports a
+    // removal. The "removed" stem matches both the inline and deferred
+    // notes but NOT "worktree removal failed" (removal ≠ removed) or the
+    // "kept" notes, so a failure never inflates the cleaned-up count.
+    if (deleteWorktrees) {
+      const outcomes = (out && out.outcomes) || [];
+      const swept = outcomes.filter(o => /worktree.*removed/i.test(o.detail || '')).length;
+      if (swept) msg += ` · ${swept} worktree${swept === 1 ? '' : 's'} cleaned up`;
+    }
+    const warns = (out && out.warnings) || [];
+    if (warns.length) msg += ` · ${warns.join('; ')}`;
+    toast(msg, failed > 0);
+    refresh();
+  }
+
+  listEl.addEventListener('change', onListChange);
+  searchEl.addEventListener('input', onSearch);
+  selAllBtn.addEventListener('click', onSelectAll);
+  selNoneBtn.addEventListener('click', onSelectNone);
+  shutdownCb.addEventListener('change', syncWtCoupling);
+  submitBtn.addEventListener('click', onSubmit);
+  cancelBtn.addEventListener('click', cleanup);
+  overlay.addEventListener('click', onOverlay);
+  document.addEventListener('keydown', onKey);
+
+  render();
+  overlay.classList.add('show');
+  setTimeout(() => submitBtn.focus(), 0);
+}
+
 // openDeleteRetiredPreview is the human-driven sibling of the timed
 // agent.retired_cleanup auto-sweep (JOH-269): a dashboard tool to
 // PERMANENTLY DELETE retired agents in bulk. Reachable from the command
@@ -3798,8 +4048,8 @@ async function stopAgentReq(conv, label, force) {
 export {
   bindFilter, bindTabs, bindTabHotkeys, bindAccessSubtabs, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover, bindSortHeaders,
   shutdownScope, powerOnScope, openWindowModal, retireConfirm, retireToast, shutdownConfirm,
-  maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, openWorktreeCleanup,
-  groupMembersByStatus, countGroupMembersByStatus,
+  maybeHandleDanglingRetire, retireAgentInteractive, openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,
+  groupMembersByStatus, countGroupMembersByStatus, countUngroupedAgents,
   termDirModal, editMemberModal, addMemberModal, deleteAgentModal,
   resumeAgentReq, stopAgentReq,
 };
