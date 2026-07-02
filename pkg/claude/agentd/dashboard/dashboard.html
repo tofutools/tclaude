@@ -1971,7 +1971,10 @@
       </div>
     </label>
     <label class="cron-create-row" id="agent-spawn-group-row">
-      <span class="cron-create-label">Group</span>
+      <!-- "Group" normally, "Party" in 🧙 wizard mode (you Summon Familiars into
+           a party): a pure-CSS span swap, the same trick as the dialog title's
+           .spawn-title-regular/.spawn-title-wizard and the Profile→Pattern pair. -->
+      <span class="cron-create-label"><span class="spawn-group-word-regular">Group</span><span class="spawn-group-word-wizard">Party</span></span>
       <select id="agent-spawn-group"></select>
     </label>
     <label class="cron-create-row">
