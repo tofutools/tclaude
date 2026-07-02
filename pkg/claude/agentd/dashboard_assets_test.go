@@ -337,6 +337,30 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_FastTooltipWired guards the fast global hover-tooltip
+// layer (tooltip.js): a delegated listener repurposes the hundreds of native
+// `title=` attributes into a single styled #tt element that shows after ~120ms
+// instead of the browser's fixed ~0.5–1.5s. The three pieces — the module's
+// binder, the boot-time call, and the #tt CSS rule — must stay wired together;
+// there's no JS render test, so we assert on the embedded concatenation at
+// `go test ./...`. A rename in any one file silently reverts every tooltip on
+// the dashboard to the slow native path.
+func TestDashboardAssets_FastTooltipWired(t *testing.T) {
+	for _, needle := range []string{
+		"function bindTooltips(", // module binder exists (tooltip.js)
+		"bindTooltips,",          // exported from tooltip.js
+		"bindTooltips()",         // dashboard.js calls it at boot
+		"el.removeAttribute('title')", // suppresses the native (slow) tooltip
+		"'tclaude:snapshot', hide",    // drops an orphaned tooltip on re-render
+		"#tt {",                       // the shared tooltip element's CSS
+		"#tt.show { opacity: 1; }",    // fade-in reveal rule
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — fast tooltip wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

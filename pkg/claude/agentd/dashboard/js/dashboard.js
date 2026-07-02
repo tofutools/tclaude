@@ -64,6 +64,7 @@ import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
 import { bindHScroll } from './hscroll.js';
+import { bindTooltips } from './tooltip.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -115,6 +116,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
 
   bindTabs();
   bindTabHotkeys();
+  // Fast global hover tooltips: replace the browser's ~0.5–1.5s native
+  // `title=` delay with a ~120ms styled tooltip, everywhere, with no change to
+  // the hundreds of existing `title=` call sites. One delegated listener on
+  // document, so it survives the 2s innerHTML re-renders with no re-binding.
+  bindTooltips();
   // Delegated pager footers for the Retired / Conversations / Replaced virtual
   // groups (their lists are paginated server-side now).
   bindListPagers();

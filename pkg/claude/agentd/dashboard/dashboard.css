@@ -1906,9 +1906,28 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
    the user with only a darkened backdrop and no visible dialog. 1000
    keeps it clearly above every normal overlay (modals at 100, cron
    picker at 150, toast at 200, hover tooltip at 300) with plenty of
-   headroom — only the system-tray / approval popup family (9998–10000)
-   sits higher, which is correct since those are out-of-band. */
+   headroom — only the global title tooltip (1100, so a `title=` inside
+   any modal or the confirm dialog reads on top) and the system-tray /
+   approval popup family (9998–10000) sit higher, which is correct since
+   those are out-of-band. */
 #confirm-modal { z-index: 1000; }
+/* Fast global hover tooltip — the #tt element that tooltip.js moves and fills
+   to replace the native `title=` tooltip everywhere (it appears after ~120ms
+   instead of the browser's fixed ~0.5–1.5s). One shared element, positioned by
+   JS via top/left; it never takes pointer events, wraps long text, and honours
+   explicit newlines in the title (pre-line, e.g. the multi-line sudo-grant
+   tooltip). z-index 1100 keeps it above the confirm modal (1000) so a title on
+   any overlay still reads on top. Fades in via opacity so a fast cursor sweep
+   doesn't strobe. Dark theme matches the cost tab's data-tip tooltip. */
+#tt {
+  position: fixed; top: 0; left: 0; z-index: 1100;
+  pointer-events: none; opacity: 0; transition: opacity 90ms ease;
+  max-width: 340px; white-space: pre-line; overflow-wrap: anywhere;
+  background: #1c2128; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 4px 8px; font-size: 12px; line-height: 1.4; color: #d4d4d4;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+#tt.show { opacity: 1; }
 .modal {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   padding: 20px 24px; max-width: 480px; width: calc(100% - 32px);
