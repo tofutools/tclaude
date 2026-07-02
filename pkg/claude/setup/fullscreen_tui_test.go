@@ -58,23 +58,33 @@ func TestConfigureFullscreenTUI_WritesWhenAbsent(t *testing.T) {
 }
 
 // A settings.json that exists but has no "tui" key is still a fresh choice —
-// the prompt fires and the key is added, preserving every other key.
+// the prompt fires and the key is added through the configure entry point,
+// preserving every other key AND the file's (private 0600) permission mode.
 func TestConfigureFullscreenTUI_AddsKeyPreservingOthers(t *testing.T) {
 	tempHome(t)
-	seedSettings(t, `{"model":"sonnet","hooks":{"Stop":[]}}`)
+	// Seed a private-mode file directly so we can also assert mode is kept
+	// across the whole configure→enable path (not just the writer in isolation).
+	path := session.ClaudeSettingsPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`{"model":"sonnet","hooks":{"Stop":[]}}`), 0o600))
 
 	out := captureStdout(t, func() {
 		configureFullscreenTUI(&Params{Yes: true})
 	})
 	assert.Contains(t, out, "✓ Fullscreen TUI enabled")
 
-	data, err := os.ReadFile(session.ClaudeSettingsPath())
+	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var tree map[string]any
 	require.NoError(t, json.Unmarshal(data, &tree))
 	assert.Equal(t, fullscreenTUIValue, tree["tui"])
 	assert.Equal(t, "sonnet", tree["model"], "sibling keys must be preserved")
 	assert.Contains(t, tree, "hooks", "sibling keys must be preserved")
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"configure→enable must preserve the private file mode")
 }
 
 // Already-fullscreen: no prompt, no rewrite — a true no-op.
