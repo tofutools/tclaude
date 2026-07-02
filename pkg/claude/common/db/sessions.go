@@ -535,6 +535,30 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 	return err
 }
 
+// UpdateStatuslineSnapshot stores the verbatim raw JSON of the most recent
+// statusline callback for a session onto sessions.last_statusline_json,
+// keyed by the tclaude session id — overwritten every render (latest-wins,
+// never appended). It captures the FULL harness payload, including fields
+// StatusLineInput doesn't name (Go's decoder drops unknown keys), so a newly
+// shipped usage bucket — e.g. Fable 5's separate limit — is preserved for
+// inspection off the DB even though nothing in code deserialises it yet.
+//
+// A plain UPDATE — a no-op when the session row is absent, mirroring the other
+// statusbar writers (UpdateSessionModel/Cost/…). An empty payload is skipped so
+// a stray render with nothing to store can't blank a good snapshot. The column
+// is write-only by design: it is read by hand off the DB, so there is no getter.
+func UpdateStatuslineSnapshot(sessionID, rawJSON string) error {
+	if rawJSON == "" {
+		return nil
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET last_statusline_json = ? WHERE id = ?`, rawJSON, sessionID)
+	return err
+}
+
 // SetSessionRemoteControl records tclaude's best-known remote-control state
 // for a session, keyed by session id — the same out-of-band discipline as
 // UpdateContextPct: a targeted UPDATE that SaveSession's UPSERT never writes,
