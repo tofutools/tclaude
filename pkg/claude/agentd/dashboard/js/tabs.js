@@ -1,10 +1,11 @@
-// tabs.js — the Groups / Cron / Sudo / Links tab renderers.
+// tabs.js — the Groups / Jobs (exports + cron) / Sudo / Links tab renderers.
 //
-// Builds the listing tables for the Groups, Cron, Sudo and Links
+// Builds the listing tables for the Groups, Jobs, Sudo and Links
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
 import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
+import { renderExportStepper, fmtBytes } from './export-progress.js';
 import {
   sortHead, applySort, CRON_COLS, CRON_ACCESSORS,
   SUDO_COLS, SUDO_ACCESSORS, LINK_COLS, LINK_ACCESSORS,
@@ -248,6 +249,65 @@ function renderCronTab() {
     ? `${filtered.length} / ${total}` : `${total} job${total === 1 ? '' : 's'}`;
 }
 
+// -- Jobs tab: "Agent exports" section ---------------------------------
+// The async per-agent "📋 summary…" export jobs (agentd/export.go), listed
+// across ALL agents, newest first, riding the 2s /api/snapshot poll
+// (lastSnapshot.export_jobs). In-flight rows show the compact phase stepper
+// (export-progress.js); settled rows keep a ready/failed pill and STAY
+// LISTED until dismissed — the dismiss deletes the job + its artifact
+// server-side — so a finished export never vanishes before its file is
+// fetched. Sits above the cron table on the Jobs tab.
+
+function renderExportJobs(jobs) {
+  if (!jobs || !jobs.length) {
+    return '<div class="empty">No agent exports yet. Start one from an agent row\'s ⚙ menu → <strong>📋 summary…</strong></div>';
+  }
+  return `
+    <table>
+      <thead><tr><th>agent</th><th>title</th><th>progress</th><th>started</th><th>size</th><th></th></tr></thead>
+      <tbody>
+        ${jobs.map(j => {
+          const settled = j.status === 'ready' || j.status === 'failed';
+          let progress;
+          if (!settled) {
+            progress = renderExportStepper(j.status);
+          } else if (j.status === 'ready') {
+            progress = '<span class="ej-status ready">✓ ready</span>';
+          } else {
+            progress = '<span class="ej-status failed">✗ failed</span>'
+              + (j.error ? `<div class="ej-error" title="${esc(j.error)}">${esc(j.error)}</div>` : '');
+          }
+          const dlBtn = j.ready
+            ? `<button data-act="export-job-download" data-id="${j.id}" data-label="${esc(j.artifact_name || j.title || ('#' + j.id))}" title="Download this export">⤓ download</button>`
+            : '';
+          const dismissBtn = `<button class="danger" data-act="export-job-dismiss" data-id="${j.id}" data-label="${esc(j.title || j.conv_label || ('#' + j.id))}" title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss</button>`;
+          return `
+            <tr>
+              <td><span class="rowname" title="${esc(j.conv_id || '')}">${esc(j.conv_label || '(unknown)')}</span></td>
+              <td>${j.title ? esc(j.title) : '<span class="muted">(untitled)</span>'}</td>
+              <td>${progress}</td>
+              <td><span class="last-hook">${esc(relTime(j.created_at) || '—')}</span></td>
+              <td>${j.artifact_size ? esc(fmtBytes(j.artifact_size)) : '<span class="muted">—</span>'}</td>
+              <td><div class="row-actions">${dlBtn}${dismissBtn}</div></td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// renderExportJobsTab paints the exports section + the Jobs nav badge. The
+// badge counts IN-FLIGHT jobs only — settled ones stay in the list but stop
+// demanding attention.
+function renderExportJobsTab() {
+  if (!lastSnapshot) return;
+  const jobs = lastSnapshot.export_jobs || [];
+  $('#export-jobs-list').innerHTML = renderExportJobs(jobs);
+  const active = jobs.filter(j => j.status !== 'ready' && j.status !== 'failed').length;
+  const badge = $('#jobs-badge');
+  if (badge) { badge.textContent = String(active); badge.hidden = active === 0; }
+}
+
 // -- Sudo tab ---------------------------------------------------------
 
 function fmtRemaining(secs) {
@@ -363,6 +423,6 @@ function renderLinksTab() {
 }
 
 export {
-  renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
+  renderGroupsTab, renderCronTab, renderExportJobsTab, renderSudoTab, renderLinksTab,
   formatInterval, fmtRemaining,
 };

@@ -17,6 +17,7 @@ import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
+import { triggerExportDownload } from './export-progress.js';
 import { openTermModal } from './modal-term.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
@@ -1369,6 +1370,28 @@ function bindRowActions() {
           });
           ok = r.ok;
           if (!ok) toast(`Revoke failed: ${await r.text()}`, true);
+          break;
+        }
+        case 'export-job-download': {
+          // Browser download of a ready export's artifact — no state change,
+          // nothing to refresh.
+          triggerExportDownload(btn.getAttribute('data-id'));
+          return;
+        }
+        case 'export-job-dismiss': {
+          const id = btn.getAttribute('data-id');
+          const confirmed = await confirmModal({
+            title: 'Dismiss this export?',
+            body: 'Removes the export job from the Jobs list and deletes its file from the server (if one was delivered). A still-running job is discarded when it lands.',
+            meta: label,
+            okLabel: 'Dismiss',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/export-jobs/${encodeURIComponent(id)}`, {
+            method: 'DELETE', credentials: 'same-origin',
+          });
+          ok = r.ok;
+          if (!ok) toast(`dismiss failed: ${await r.text()}`, true);
           break;
         }
         case 'cron-enable':

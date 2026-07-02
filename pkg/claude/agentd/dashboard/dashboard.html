@@ -135,7 +135,7 @@
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
   <button data-tab="terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge" class="tab-badge count" hidden></span></button>
-  <button data-tab="cron"><span class="tab-label-regular">Cron</span><span class="tab-label-wizard">⏳ Rituals</span></button>
+  <button data-tab="jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge" class="tab-badge count" hidden></span></button>
   <button data-tab="plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge" class="tab-badge warn" hidden></span></button>
   <button data-tab="access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></button>
   <button data-tab="messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span id="messages-badge" class="tab-badge" hidden></span></button>
@@ -207,7 +207,14 @@
     <div id="term-tab-tabs" class="mux-tabs" role="tablist" aria-label="Open terminals"></div>
     <div id="term-tab-panes" class="mux-panes"></div>
   </section>
-  <section id="tab-cron">
+  <!-- The Jobs tab: the old Cron tab, extended. Two stacked sections — the
+       per-agent export jobs (async "📋 summary…" work; the nav badge counts
+       the in-flight ones) on top, the recurring cron schedules below. The
+       cron sub-feature keeps its cron-* ids; only the tab identity renamed. -->
+  <section id="tab-jobs">
+    <div class="jobs-subhead">Agent exports <span class="jobs-subhead-hint">— async “📋 summary…” exports; finished ones stay listed until dismissed</span></div>
+    <div id="export-jobs-list"></div>
+    <div class="jobs-subhead">Cron schedules</div>
     <div class="filter-bar">
       <input id="filter-cron" type="text" placeholder="Filter (name + owner/target label + subject + body)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-cron-count"></span>
@@ -2227,7 +2234,10 @@
       </label>
     </div>
     <div id="export-agent-status" role="status" aria-live="polite" aria-atomic="true" hidden>
-      <div class="export-status-row"><span class="export-spinner" id="export-agent-spinner" aria-hidden="true"></span><span id="export-agent-status-text">Waiting for the agent…</span></div>
+      <!-- One line per export phase; export-progress.js checks steps off as
+           the job climbs its status ladder (cloning → requested → running →
+           ready), with the spinner on the step in flight. -->
+      <div id="export-agent-checklist"></div>
       <div class="export-status-note" id="export-agent-status-note"></div>
     </div>
     <div id="export-agent-history" class="export-history" hidden>

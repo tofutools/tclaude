@@ -127,7 +127,7 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 	pairs := []struct{ tab, regular, wizard string }{
 		{"groups", "Groups", "⚔ Parties"},
 		{"terminals", "Terminals", "🔮 Scrying"},
-		{"cron", "Cron", "⏳ Rituals"},
+		{"jobs", "Jobs", "⚒ Labours"},
 		{"plugins", "Plugins", "🔧 Contraptions"},
 		{"access", "Access", "🛡 Wards"},
 		{"messages", "Messages", "🕊 Missives"},

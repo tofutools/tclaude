@@ -4198,22 +4198,55 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 
 /* --- per-agent export ("📋 summary…") modal (JOH-265) --- */
 #export-agent-status { margin: 8px 0; }
-.export-status-row {
+/* The modal's step checklist (export-progress.js): one row per export phase,
+   ✓ once the job's status ladder climbs past it, the spinner on the step in
+   flight, ✗ (red) on the step a failure was caught in. */
+.export-checklist { display: flex; flex-direction: column; gap: 6px; }
+.export-step {
   display: flex; align-items: center; gap: 10px;
   font-size: 13px; color: #c9d1d9;
 }
+.export-step.pending { color: #7d8590; }
+.export-step.done .export-step-icon { color: #3fb950; }
+.export-step.failed, .export-step.failed .export-step-icon { color: #f85149; }
+.export-step-icon { width: 16px; flex: 0 0 auto; text-align: center; font-weight: 600; }
 .export-status-note {
   margin-top: 6px; font-size: 12px; color: #7d8590; min-height: 1em;
 }
 .export-spinner {
+  display: inline-block; box-sizing: border-box;
   width: 16px; height: 16px; flex: 0 0 auto;
   border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%;
   animation: export-spin 0.8s linear infinite;
 }
-.export-status-row.done .export-spinner {
-  border: 2px solid transparent; animation: none;
-}
 @keyframes export-spin { to { transform: rotate(360deg); } }
+/* Compact horizontal stepper for the Jobs tab's in-flight export rows —
+   the same phase ladder as the modal checklist, chip-sized. */
+.export-stepper { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.export-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: #7d8590; white-space: nowrap;
+}
+.export-chip.done { color: #3fb950; }
+.export-chip.active { color: #58a6ff; }
+.export-chip-sep { color: #30363d; }
+.export-stepper .export-spinner { width: 11px; height: 11px; }
+
+/* --- Jobs tab (agent exports section + the cron table below it) --- */
+.jobs-subhead {
+  margin: 14px 0 8px; font-size: 12px; color: #7d8590;
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+#tab-jobs .jobs-subhead:first-child { margin-top: 4px; }
+.jobs-subhead-hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: #6e7681; }
+#export-jobs-list { margin-bottom: 6px; }
+.ej-status { font-size: 12px; white-space: nowrap; }
+.ej-status.ready { color: #3fb950; }
+.ej-status.failed { color: #f85149; }
+.ej-error {
+  font-size: 11px; color: #7d8590; max-width: 380px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* Inline, in-button busy spinner — feedback that a submit click is in
    flight (e.g. the retire-preview "Retire N agents" button while its POST

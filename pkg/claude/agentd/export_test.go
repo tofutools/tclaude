@@ -24,6 +24,18 @@ func TestDashboardJS_ExportModalWired(t *testing.T) {
 		"function loadExportHistory(",    // history loader (modal-export.js)
 		"/exports",                       // list/clear endpoint (modal-export.js)
 		`data-export-act="delete"`,       // per-entry delete control (modal-export.js)
+		// The working-phase step checklist (export-progress.js).
+		`id="export-agent-checklist"`,      // checklist mount (dashboard.html)
+		"function renderExportChecklist(",  // modal checklist renderer (export-progress.js)
+		"function updateChecklist(",        // status-change repaint (modal-export.js)
+		// The Jobs tab's "Agent exports" section.
+		`data-tab="jobs"`,                  // the extended Cron→Jobs nav tab (dashboard.html)
+		`id="export-jobs-list"`,            // exports section mount (dashboard.html)
+		"function renderExportJobsTab(",    // section + badge renderer (tabs.js)
+		"renderExportJobsTab();",           // 2s snapshot poll repaints it (refresh.js)
+		"function renderExportStepper(",    // in-flight row stepper (export-progress.js)
+		`data-act="export-job-download"`,   // row download control (tabs.js)
+		"case 'export-job-dismiss'",        // row dismiss dispatch (row-actions.js)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q — export modal wiring broken", needle)

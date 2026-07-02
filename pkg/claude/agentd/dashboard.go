@@ -521,6 +521,13 @@ type snapshotPayload struct {
 	Permissions snapshotPermissionsView `json:"permissions"`
 	Slugs       []PermSlug              `json:"slugs"`
 	Cron        []dashboardCronJob      `json:"cron"`
+	// ExportJobs is every per-agent export job (newest first, capped at
+	// exportJobsSnapshotLimit) — the Jobs tab's "Agent exports" section.
+	// Terminal jobs stay listed until the human dismisses them (or the TTL
+	// sweep reclaims them), so a finished export never silently vanishes
+	// before its artifact is fetched. Empty slice (not nil) so JS .map() /
+	// .length are safe.
+	ExportJobs []dashboardExportJob `json:"export_jobs"`
 	// Sudo: every active grant across all agents, ordered by conv-id
 	// then soonest expiry. Powers the dedicated "Sudo" tab. Per-agent
 	// active state also surfaces on Agents[*].ActiveSudo so the Groups
@@ -1605,6 +1612,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// above to guard the roster.
 	out.Pending = collectPendingSnapshot(aliveSessions)
 	out.Cron = collectCronSnapshot()
+	out.ExportJobs = collectExportJobsSnapshot()
 	out.Links = collectLinksSnapshot()
 	out.Usage = collectUsageSnapshot()
 	// Costs-tab visibility: show when there is real pay-per-token spend to

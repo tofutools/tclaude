@@ -17,7 +17,7 @@ import {
 } from './render.js';
 import { renderMailTab, onMailSearchChanged } from './mail.js';
 import {
-  renderGroupsTab, renderCronTab, renderSudoTab, renderLinksTab,
+  renderGroupsTab, renderCronTab, renderExportJobsTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
@@ -392,6 +392,7 @@ export async function refresh() {
     renderGlobalActivity();
     renderTemplatesTab();
     renderCronTab();
+    renderExportJobsTab();
     renderSudoTab();
     renderLinksTab();
     renderPluginsTab();

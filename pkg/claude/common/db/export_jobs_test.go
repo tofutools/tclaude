@@ -111,6 +111,32 @@ func TestListExportJobsForConv(t *testing.T) {
 	assert.Equal(t, id2, limited[0].ID)
 }
 
+func TestListExportJobs(t *testing.T) {
+	setupTestDB(t)
+	none, err := ListExportJobs(50)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+
+	id1, err := InsertExportJob(&ExportJob{ConvID: "c1", Title: "first"})
+	require.NoError(t, err)
+	id2, err := InsertExportJob(&ExportJob{ConvID: "c2", Title: "second"})
+	require.NoError(t, err)
+
+	// Spans all conversations, newest first by id.
+	jobs, err := ListExportJobs(50)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, id2, jobs[0].ID, "newest first by id")
+	assert.Equal(t, "c2", jobs[0].ConvID)
+	assert.Equal(t, id1, jobs[1].ID)
+
+	// limit caps the result to the newest.
+	limited, err := ListExportJobs(1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	assert.Equal(t, id2, limited[0].ID)
+}
+
 func TestDeleteExportJobsForConv(t *testing.T) {
 	setupTestDB(t)
 	a, err := InsertExportJob(&ExportJob{ConvID: "c1"})
