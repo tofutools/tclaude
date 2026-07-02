@@ -496,4 +496,4 @@ function bindProfilesUI() {
   bindBackdropDiscard('profile-editor-modal', closeProfileEditor);
 }
 
-export { bindProfilesUI, openProfileEditor };
+export { bindProfilesUI, openProfileEditor, openProfilesManageModal };
