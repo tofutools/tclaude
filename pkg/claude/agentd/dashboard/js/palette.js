@@ -49,6 +49,7 @@ import {
   shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq,
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
+import { openProfilesManageModal } from './modal-profiles.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
@@ -354,6 +355,23 @@ function buildCommands() {
       + ' summon conjure invoke call forth familiar'
       + (lastGroupLive ? ' ' + lastGroup : ''),
     run: () => openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {}),
+  });
+  // 2b) Manage spawn profiles — open the profiles overlay where the saved
+  //     spawn profiles (reusable bundles of the spawn dialog's fields) are
+  //     listed to view / edit / delete / add. Reuses the very overlay the
+  //     Groups cog's "⧉ profiles…" entry opens (openProfilesManageModal); the
+  //     palette just adds a keyboard entry point, owning no state of its own.
+  //     In 🧙 mode the whole profiles vocabulary re-letters to "patterns"
+  //     (a saved spawn recipe is a "familiar pattern"), so it presents as
+  //     "Edit familiar patterns…"; the plain words stay searchable in the
+  //     keywords.
+  cmds.push({
+    icon: wiz('⧉', '📜'), label: wiz('Edit profiles…', 'Edit familiar patterns…'),
+    hint: wiz('open the spawn-profiles manager — view, edit, or add reusable spawn recipes',
+      'open the familiar-pattern grimoire — inscribe, revise, or weave summoning recipes'),
+    keywords: 'profiles profile edit manage spawn recipe recipes bundle preset presets defaults'
+      + ' patterns pattern familiar weave inscribe grimoire loom blueprint',
+    run: () => openProfilesManageModal(),
   });
   // One pinned spawn per group, so the operator can launch straight into a
   // named group without first picking it in the dialog.

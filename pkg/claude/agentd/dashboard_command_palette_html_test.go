@@ -67,6 +67,19 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("openAgentSpawnModal({ groupName: g.name })",
 		"each per-group spawn pins its group")
 
+	// Spawn profiles: the palette can open the profiles-management overlay —
+	// the same list the Groups cog's "⧉ profiles…" entry opens — reusing
+	// openProfilesManageModal (exported from modal-profiles.js just for this).
+	// The command adds only a keyboard entry point, no new behaviour. The
+	// presented label is a wiz(plain, arcane) pair — "Edit profiles…" plainly,
+	// "Edit familiar patterns…" under body.wizard (profiles re-letter to
+	// patterns) — pinned in one needle so dropping either copy fails CI.
+	must("./modal-profiles.js", "the palette imports the profiles manage overlay")
+	must("wiz('Edit profiles…', 'Edit familiar patterns…')",
+		"the palette offers the spawn-profiles manager (plain + arcane label)")
+	must("run: () => openProfilesManageModal(),",
+		"the profiles command reuses the existing manage overlay")
+
 	// The "last interacted group" memory MUST be stamped from the genuine
 	// group-title click/keyboard fold (bindGroupTitleToggle), NOT from the
 	// `toggle` event — the 2s re-render re-fires `toggle` on every open

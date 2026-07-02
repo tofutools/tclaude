@@ -882,6 +882,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("`Scry the ${name}`", "tab navigation presents as Scry in wizard mode")
 	must("`Furl coven: ${g.name}`", "group collapse presents as Furl in wizard mode")
 	must("`Prune stray branches in ${g.name}`", "worktree cleanup presents as Prune in wizard mode")
+	must("'Edit familiar patterns…'", "the profiles manager presents as Edit familiar patterns in wizard mode")
 
 	// The arcane vocabulary rides in the keywords (always, both themes) so a
 	// wizard-minded search finds a plain-labelled command too — spot-check a
@@ -890,6 +891,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("slumber sleep rest lull dormant quell still familiars", "global shutdown carries the arcane slumber keywords")
 	must("banish exile dismiss familiar", "per-agent retire carries the arcane banish keywords")
 	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
+	must("patterns pattern familiar weave inscribe grimoire", "the profiles manager carries the arcane pattern keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
 	// placeholder — the tclaude:wizard listener rebuilds the command list AND
@@ -908,6 +910,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("awaken: ['resume']", "awaken bridges to resume")
 	must("banish: ['retire']", "banish bridges to retire")
 	must("veil: ['hide']", "veil bridges to hide")
+	must("profiles: ['patterns']", "profiles bridges to patterns")
+	must("patterns: ['profiles']", "patterns bridges to profiles")
 	must("reveal: ['focus', 'show']", "reveal bridges to focus/show")
 }
 

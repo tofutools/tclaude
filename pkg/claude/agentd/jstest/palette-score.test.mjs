@@ -114,6 +114,9 @@ test('expandQuery maps synonyms bidirectionally', () => {
   assert.ok(expandQuery('veil').includes('hide'));
   assert.ok(expandQuery('reveal').includes('focus'));
   assert.ok(expandQuery('hide').includes('veil'));
+  // Profile ↔ familiar-pattern noun bridge.
+  assert.ok(expandQuery('patterns').includes('profiles'));
+  assert.ok(expandQuery('profiles').includes('patterns'));
 });
 
 test('SYNONYMS pairs are bidirectional', () => {
@@ -133,6 +136,8 @@ test('SYNONYMS pairs are bidirectional', () => {
   assert.deepEqual(SYNONYMS.awaken, ['resume']);
   assert.deepEqual(SYNONYMS.retire, ['banish']);
   assert.deepEqual(SYNONYMS.banish, ['retire']);
+  assert.deepEqual(SYNONYMS.profiles, ['patterns']);
+  assert.deepEqual(SYNONYMS.patterns, ['profiles']);
 });
 
 // -- Wizard-theme synonyms: the arcane vocabulary must find the plain-labelled
