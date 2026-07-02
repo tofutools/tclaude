@@ -298,6 +298,45 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_DefaultTerminalWired guards the "web terminal as the
+// default" routing (config dashboard.default_terminal="web"), whose pieces span
+// several files that must stay in lockstep — there's no JS render test, so we
+// assert on the embedded concatenation at `go test ./...`. The Go resolver +
+// round-trip is covered separately by config.TestDefaultTerminal. A rename in
+// any one file silently breaks the routing only in the browser:
+//   - dashboard.js exposes webTerminalDefault() off the snapshot flag;
+//   - terminals-tab.js owns the shared openWebWindowPane / openWebTermPane
+//     pane-openers the web buttons AND the routed actions both call;
+//   - row-actions.js routes jump / open-window / term / term-dir / msg-focus;
+//   - palette.js routes the command-palette "focus window";
+//   - config.js + dashboard.html expose the Config-tab checkbox.
+func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.js — the resolver + the snapshot flag it reads.
+		"export function webTerminalDefault()",
+		"lastSnapshot.default_terminal === 'web'",
+		// terminals-tab.js — the shared pane-openers.
+		"export function openWebWindowPane(",
+		"export function openWebTermPane(",
+		// row-actions.js — the routed per-row actions (native → web branches).
+		"if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); toast(",
+		"if (webTerminalDefault()) { openWebTermPane(agent, conv, label, termDirModal({ label })); return; }",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, conv, label); return; }",
+		"if (webTerminalDefault()) { openWebTermPane(agent, conv, label, which); return; }",
+		// palette.js — the command-palette "focus window" branch.
+		"if (webTerminalDefault()) { openWebWindowPane(conv, conv, label); toast(",
+		// config.js — load + gather the Config-tab checkbox.
+		"#cfg-dashboard-default-web-terminal",
+		"dashboard.default_terminal = 'web'",
+		// dashboard.html — the Config-tab control.
+		`id="cfg-dashboard-default-web-terminal"`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — default-terminal routing broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

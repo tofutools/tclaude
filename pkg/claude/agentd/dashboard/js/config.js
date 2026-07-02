@@ -455,6 +455,11 @@ function populateConfigForm(cfg) {
   // dashboard.group_quick_options:"expanded" unchecks it.
   $('#cfg-dashboard-group-quick-fold').checked = !(cfg.dashboard && cfg.dashboard.group_quick_options === 'expanded');
 
+  // Default terminal — route the plain focus / open-window / open-terminal
+  // actions to in-browser web terminals. Default native (unchecked); only an
+  // explicit dashboard.default_terminal:"web" checks it.
+  $('#cfg-dashboard-default-web-terminal').checked = !!(cfg.dashboard && cfg.dashboard.default_terminal === 'web');
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -630,6 +635,10 @@ function assembleConfig() {
   // NON-default "expanded" and drop the key when folding — mirrors the Go
   // omitempty + default-hover resolver.
   if (!$('#cfg-dashboard-group-quick-fold').checked) dashboard.group_quick_options = 'expanded'; else delete dashboard.group_quick_options;
+  // default_terminal: native is the default, so store only the NON-default
+  // "web" and drop the key otherwise — mirrors the Go omitempty + default-
+  // native resolver.
+  if ($('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'web'; else delete dashboard.default_terminal;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field

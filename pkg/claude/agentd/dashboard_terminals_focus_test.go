@@ -51,21 +51,24 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 // tag would silently make focus never jump to that pane. Guards against the
 // field being dropped while the (identically-valued but differently-purposed)
 // `hideConv: agent` stays, which would leave focus broken but detach working.
+// The seeds live in terminals-tab.js's shared openWebWindowPane /
+// openWebTermPane helpers (the "web window" / "web term" buttons AND the
+// default-terminal routing both call them), so assert there.
 func TestPaneSeedsCarryAgent(t *testing.T) {
-	rows := readDashboardJS(t, "row-actions.js")
+	tab := readDashboardJS(t, "terminals-tab.js")
 	for _, c := range []struct{ name, anchor string }{
-		{"web-open-window", "key: `window:${conv}`"},
-		{"web-term", "key: `term:${conv}:${which}`"},
+		{"openWebWindowPane", "key: `window:${conv}`"},
+		{"openWebTermPane", "key: `term:${conv}:${which}`"},
 	} {
-		at := strings.Index(rows, c.anchor)
+		at := strings.Index(tab, c.anchor)
 		if at < 0 {
-			t.Fatalf("row-actions.js %s seed not found (anchor %q)", c.name, c.anchor)
+			t.Fatalf("terminals-tab.js %s seed not found (anchor %q)", c.name, c.anchor)
 		}
-		block := rows[at:min(len(rows), at+400)]
+		block := tab[at:min(len(tab), at+400)]
 		// A bare `agent,` field, distinct from `hideConv: agent,` (present only
 		// on the live-session seed): more `agent,` than `hideConv: agent,`.
 		if strings.Count(block, "agent,") <= strings.Count(block, "hideConv: agent,") {
-			t.Errorf("row-actions.js %s seed must carry a standalone `agent` field so focus can "+
+			t.Errorf("terminals-tab.js %s seed must carry a standalone `agent` field so focus can "+
 				"jump to it (not just `hideConv: agent`)", c.name)
 		}
 	}

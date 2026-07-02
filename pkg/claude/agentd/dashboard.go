@@ -620,6 +620,14 @@ type snapshotPayload struct {
 	// default; "expanded" always shows them). refresh.js toggles
 	// body.group-quick-fold off this each poll. See Config.GroupQuickOptions.
 	GroupQuickOptions string `json:"group_quick_options"`
+	// DefaultTerminal mirrors config dashboard.default_terminal — how the
+	// dashboard's per-agent focus / open-window / open-terminal actions open a
+	// console: "native" (pop a native OS window, the default) or "web" (open an
+	// in-browser terminal pane in the Terminals tab). row-actions.js /
+	// palette.js read this off each poll to route those actions; the dedicated
+	// "web term" / "web window" buttons ignore it (always web). See
+	// Config.DefaultTerminal.
+	DefaultTerminal string `json:"default_terminal"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1318,6 +1326,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		},
 		HScrollFollow:     cfg.HScrollFollow(),
 		GroupQuickOptions: cfg.GroupQuickOptions(),
+		DefaultTerminal:   cfg.DefaultTerminal(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

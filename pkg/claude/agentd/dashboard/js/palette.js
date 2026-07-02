@@ -40,7 +40,7 @@
 // ends), Enter runs it, typing filters.
 
 import { $, $$, esc } from './helpers.js';
-import { lastSnapshot } from './dashboard.js';
+import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import {
   toast, openWindowModal,
   retireAgentInteractive, openRetirePreview, openDeleteRetiredPreview, countGroupMembersByStatus,
@@ -51,7 +51,7 @@ import { openAgentSpawnModal } from './modal-spawn.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
-import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv } from './terminals-tab.js';
+import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
 
@@ -134,6 +134,10 @@ async function jumpAgent(conv, label) {
   // Terminals tab, jump to THAT instead of raising a native OS window — mirrors
   // the per-agent 'jump' row action.
   if (focusTerminalForConv([conv])) { toast(`focused: ${label}`); return; }
+  // With web terminals as the default (config dashboard.default_terminal =
+  // "web"), open the agent's live session as a browser pane rather than raising
+  // a native OS window — same as the per-agent 'jump' row action.
+  if (webTerminalDefault()) { openWebWindowPane(conv, conv, label); toast(`focused: ${label}`); return; }
   try {
     const r = await fetch(`/api/jump/${encodeURIComponent(conv)}`, {
       method: 'POST', credentials: 'same-origin',

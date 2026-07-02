@@ -173,34 +173,56 @@ func TestTermModal_DetachCallsHideAPI(t *testing.T) {
 }
 
 // TestTermModal_OnlyOpenWindowPassesHideConv pins the load-bearing wiring and
-// guards a footgun WITHIN row-actions.js. The live-session attach actions must
-// thread the agent selector through as hideConv so their detach hits /api/hide
-// for the agent's live session. There are exactly TWO such callers:
-//   - `open-window` → openTermModal (the native-window fallback's in-page modal);
-//   - `web-open-window` → openTerminalPane (the in-SPA Terminals-tab pane).
+// guards a footgun. The live-session attach paths must thread the agent selector
+// through as hideConv so their detach hits /api/hide for the agent's live
+// session; the THROWAWAY-shell paths must NOT, because /api/hide resolves to the
+// agent's MAIN session — passing hideConv there would detach the agent's real
+// window when its throwaway terminal closes.
 //
-// Both attach to the agent's MAIN spwn-… session, so both correctly detach it on
-// close. Crucially, the web-term / term-dir callers attach to a THROWAWAY
-// tclaude-term-… session, but /api/hide resolves to the agent's MAIN session — so
-// passing hideConv there would detach the agent's real window when its throwaway
-// terminal closes. The count invariant (exactly 2) fails the build if a future
-// edit copy-pastes hideConv onto one of those throwaway callers.
+// Since the Terminals-tab pane seeds were extracted into terminals-tab.js's
+// shared helpers, the two homes are:
+//   - row-actions.js `open-window` → openTermModal (the native-window fallback's
+//     in-page modal) is the ONLY inline hideConv left in row-actions.js;
+//   - terminals-tab.js openWebWindowPane (live session) passes hideConv, while
+//     openWebTermPane (throwaway shell) must not.
 //
 // hideConv is legitimate from OTHER files too when the view attaches to the
 // agent's main session — the spawn auto-focus fallback in modal-spawn.js is
-// another such caller (see TestTermModal_SpawnAutoFocusDetaches). This count is
-// scoped to row-actions.js precisely so those legitimate callers don't relax it.
+// another such caller (see TestTermModal_SpawnAutoFocusDetaches). These scoped
+// counts fail the build if a future edit copy-pastes hideConv onto a throwaway
+// caller.
 func TestTermModal_OnlyOpenWindowPassesHideConv(t *testing.T) {
+	// row-actions.js: exactly one inline hideConv — the native `open-window`
+	// fallback that hands it to openTermModal.
 	src := readRowActionsSrc(t)
 	if !strings.Contains(src, "hideConv: agent") {
 		t.Error("row-actions.js open-window caller must pass `hideConv: agent` to " +
 			"openTermModal — without it the web window's Detach/Close can't hit /api/hide")
 	}
-	if n := strings.Count(src, "hideConv:"); n != 2 {
-		t.Errorf("exactly two row-actions.js callers may pass hideConv (the live-session "+
-			"`open-window` and `web-open-window` actions); found %d — a web-term/term-dir "+
-			"caller passing hideConv would detach the agent's MAIN session when its throwaway "+
-			"terminal closes", n)
+	if n := strings.Count(src, "hideConv:"); n != 1 {
+		t.Errorf("exactly one row-actions.js caller may inline hideConv (the native "+
+			"`open-window` fallback to openTermModal); found %d — the web-pane seeds now live "+
+			"in terminals-tab.js's helpers", n)
+	}
+
+	// terminals-tab.js: the live-session helper carries hideConv; the throwaway
+	// web-term helper must not (else closing a throwaway shell would detach the
+	// agent's MAIN session).
+	tab := readDashboardJS(t, "terminals-tab.js")
+	wpIdx := strings.Index(tab, "export function openWebWindowPane(")
+	tpIdx := strings.Index(tab, "export function openWebTermPane(")
+	focusIdx := strings.Index(tab, "export function focusTerminalForConv(")
+	if wpIdx < 0 || tpIdx < 0 || focusIdx < 0 || wpIdx >= tpIdx || tpIdx >= focusIdx {
+		t.Fatalf("terminals-tab.js must define openWebWindowPane then openWebTermPane before "+
+			"focusTerminalForConv (got wp=%d tp=%d focus=%d)", wpIdx, tpIdx, focusIdx)
+	}
+	if windowBlock := tab[wpIdx:tpIdx]; !strings.Contains(windowBlock, "hideConv: agent") {
+		t.Error("terminals-tab.js openWebWindowPane must pass `hideConv: agent` — the live-session " +
+			"pane's Detach/Close needs it to hit /api/hide")
+	}
+	if termBlock := tab[tpIdx:focusIdx]; strings.Contains(termBlock, "hideConv: agent") {
+		t.Error("terminals-tab.js openWebTermPane must NOT pass hideConv — a throwaway web-term " +
+			"targets a throwaway session, so /api/hide would wrongly detach the agent's MAIN session")
 	}
 }
 
