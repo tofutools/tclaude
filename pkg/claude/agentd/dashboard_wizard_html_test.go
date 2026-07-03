@@ -1149,9 +1149,21 @@ func TestDashboardHTML_WizardWindowModal(t *testing.T) {
 	must("body.wizard #window-modal .window-role-chip", "the group/role quick-select chips are re-skinned")
 	must("body.wizard #window-modal .cleanup-list", "the candidate list is re-skinned")
 
-	// The submit keeps its JS-set live-count label ("Focus 3 agents") visible —
-	// unlike the static Summon / Banish levers it is only gilded, not glyph-swapped.
+	// Direction picker copy — a per-theme span swap on each radio's label + note:
+	// Focus → "👁 Reveal", Unfocus → "🌫 Veil", the palette's scrying-portal voice.
+	must(`<span class="window-dir-label-regular">Focus</span>`, "the default focus-radio label span")
+	must(`<span class="window-dir-label-wizard">👁 Reveal</span>`, "the wizard focus-radio label reads Reveal")
+	must(`<span class="window-dir-label-regular">Unfocus</span>`, "the default unfocus-radio label span")
+	must(`<span class="window-dir-label-wizard">🌫 Veil</span>`, "the wizard unfocus-radio label reads Veil")
+	must(".window-dir-label-wizard, .window-dir-note-wizard { display: none; }", "the wizard direction copy is hidden outside wizard mode")
+	must("body.wizard #window-modal .window-dir-label-wizard,", "wizard reveals the arcane direction labels")
+
+	// The submit lever's JS-set live-count label swaps verb+noun for the theme —
+	// "Focus 3 agents" → "Reveal 3 familiars" (focus) / "Veil 3 familiars" (unfocus).
+	// The chrome is gilded in CSS; the copy swap lives in openWindowModal's JS.
 	must("body.wizard #window-modal #window-submit {", "the submit button gets the gilded lever chrome")
+	must("direction() === 'focus' ? (wiz ? 'Reveal' : 'Focus') : (wiz ? 'Veil' : 'Unfocus')", "the submit verb swaps to Reveal/Veil in wizard mode")
+	must("const noun = wiz ? 'familiar' : 'agent';", "the submit count noun swaps to familiar in wizard mode")
 	// Cancel gets the tarnished-gold secondary treatment (scoped away from the submit).
 	must("body.wizard #window-modal .modal-buttons button:not(#window-submit)", "Cancel gets the secondary arcane skin")
 }
