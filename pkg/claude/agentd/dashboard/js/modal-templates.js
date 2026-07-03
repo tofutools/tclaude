@@ -28,10 +28,12 @@ import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDis
 //
 // templateEditorEditing holds the original name while editing an
 // existing template (the PATCH target); null while creating.
-// templateEditorAgents mirrors the editor's agent rows so add/remove
-// can re-render the container without losing typed values.
+// templateEditorAgents / templateEditorPattern mirror the editor's
+// agent and work-pattern rows so add/remove/reorder can re-render the
+// containers without losing typed values.
 let templateEditorEditing = null;
 let templateEditorAgents = [];
+let templateEditorPattern = [];
 
 function filterTemplates(list, q) {
   if (!q) return list;
@@ -94,6 +96,7 @@ function templateCardHTML(t) {
       <span class="tc-name">${esc(t.name)}</span>
       ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
       <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
+      ${(t.work_pattern || []).length ? `<span class="tc-count" title="${wizWord('work pattern — ordered briefing messages delivered after the team spawns', 'rite of command — ordered whispers delivered once the party stands')}">⇶ ${(t.work_pattern || []).length}-step ${wizWord('pattern', 'rite')}</span>` : ''}
       <span class="tc-actions">
         <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
@@ -135,7 +138,11 @@ function openTemplateEditor(tmpl) {
         permissions: (a.permissions || []).slice(),
       }))
     : [blankTemplateAgent()];
+  templateEditorPattern = tmpl
+    ? (tmpl.work_pattern || []).map(e => ({ send_to: e.send_to || 'all', value: e.value || '' }))
+    : [];
   renderEditorAgents();
+  renderEditorPattern();
   $('#template-editor-modal').classList.add('show');
   setTimeout(() => $('#template-editor-name').focus(), 0);
 }
@@ -174,6 +181,57 @@ function editorAgentRowHTML(a, idx, slugs) {
   </div>`;
 }
 
+// ---- Work-pattern rows (JOH-336) --------------------------------------
+//
+// The template's default work pattern: an ORDERED list of routed
+// briefing messages delivered after the whole roster has spawned — each
+// step to one roster agent by name, or to every member ("all"). {{task}}
+// in a step's text is replaced with the per-instantiation task. The rows
+// reuse the agent-row panel chrome (.template-agent-row) so the wizard
+// re-skin covers them for free.
+
+function renderEditorPattern() {
+  const names = templateEditorAgents.map(a => (a.name || '').trim()).filter(Boolean);
+  $('#template-editor-pattern').innerHTML =
+    templateEditorPattern.map((e, i) => patternRowHTML(e, i, names)).join('');
+}
+
+function patternRowHTML(e, idx, agentNames) {
+  const known = ['all', ...agentNames];
+  // A stale target (its agent was renamed/removed) stays selectable —
+  // flagged — so the typed text isn't silently rerouted; the server
+  // rejects it with a clear error if submitted as-is.
+  const stale = e.send_to && !known.includes(e.send_to);
+  const options =
+    (stale ? `<option value="${esc(e.send_to)}" selected>⚠ ${esc(e.send_to)} (no such agent)</option>` : '')
+    + known.map(n => {
+      const label = n === 'all' ? wizWord('all members', 'the whole party') : n;
+      return `<option value="${esc(n)}"${n === e.send_to ? ' selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+  return `<div class="template-agent-row template-pattern-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Step', 'Verse')} ${idx + 1}</span>
+      <label class="template-pattern-sendto">${wizWord('send to', 'whisper to')}
+        <select class="tw-sendto">${options}</select>
+      </label>
+      <button type="button" class="tool tw-up" title="Move this step up">↑</button>
+      <button type="button" class="tool tw-down" title="Move this step down">↓</button>
+      <button type="button" class="tool tw-remove" title="Remove this step">✕</button>
+    </div>
+    <textarea class="tw-value" rows="2" placeholder="briefing message delivered after the whole team is up — {{task}} is replaced with the dispatch task (newlines OK)">${esc(e.value)}</textarea>
+  </div>`;
+}
+
+// scrapeEditorPattern reads the pattern rows back into
+// templateEditorPattern — same never-lose-typed-values contract as
+// scrapeEditorAgents.
+function scrapeEditorPattern() {
+  templateEditorPattern = $$('#template-editor-pattern .template-pattern-row').map(row => ({
+    send_to: $('.tw-sendto', row).value,
+    value: $('.tw-value', row).value,
+  }));
+}
+
 // scrapeEditorAgents reads the agent rows back into templateEditorAgents
 // — called before any add/remove (which re-renders the container) and
 // before submit, so typed-but-uncommitted values are never lost.
@@ -190,6 +248,7 @@ function scrapeEditorAgents() {
 
 async function submitTemplateEditor() {
   scrapeEditorAgents();
+  scrapeEditorPattern();
   const name = $('#template-editor-name').value.trim();
   const errEl = $('#template-editor-error');
   errEl.textContent = '';
@@ -199,6 +258,7 @@ async function submitTemplateEditor() {
     descr: $('#template-editor-descr').value.trim(),
     default_context: $('#template-editor-context').value,
     agents: templateEditorAgents,
+    work_pattern: templateEditorPattern,
   };
   const editing = templateEditorEditing;
   const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
@@ -461,8 +521,11 @@ function bindTemplatesUI() {
   $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
   $('#template-editor-add-agent').addEventListener('click', () => {
     scrapeEditorAgents();
+    scrapeEditorPattern();
     templateEditorAgents.push(blankTemplateAgent());
     renderEditorAgents();
+    // The roster changed — refresh the pattern rows' send-to options.
+    renderEditorPattern();
   });
   // Delegated handlers on the (re-rendered) agent container.
   $('#template-editor-agents').addEventListener('click', e => {
@@ -470,18 +533,46 @@ function bindTemplatesUI() {
     if (!rm) return;
     const row = rm.closest('.template-agent-row');
     scrapeEditorAgents();
+    scrapeEditorPattern();
     templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
     renderEditorAgents();
+    renderEditorPattern();
   });
   // Keep each agent row's permission count in sync as boxes toggle.
   // Owner is a plain per-agent checkbox — a group can have several
   // owners, so there is no single-select enforcement.
+  // A committed agent-name edit (change fires on blur) also refreshes
+  // the work-pattern rows' send-to options to the new roster names.
   $('#template-editor-agents').addEventListener('change', e => {
     if (e.target.classList.contains('ta-perm')) {
       const row = e.target.closest('.template-agent-row');
       $('.ta-perms-count', row).textContent =
         $$('.ta-perm', row).filter(c => c.checked).length;
+    } else if (e.target.classList.contains('ta-name')) {
+      scrapeEditorAgents();
+      scrapeEditorPattern();
+      renderEditorPattern();
     }
+  });
+  // Work-pattern rows: add / remove / reorder (delegated — the container
+  // re-renders on every mutation).
+  $('#template-editor-add-pattern').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    templateEditorPattern.push({ send_to: 'all', value: '' });
+    renderEditorPattern();
+  });
+  $('#template-editor-pattern').addEventListener('click', e => {
+    const btn = e.target.closest('.tw-remove, .tw-up, .tw-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-pattern-row').dataset.idx, 10);
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    const arr = templateEditorPattern;
+    if (btn.classList.contains('tw-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('tw-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('tw-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorPattern();
   });
   bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
 

@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV85toV86_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v86 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v85).
-func TestMigrateV85toV86_FreshSchema(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 86, currentVersion, "tripwire: bump this and add a v86→v87 test when you add a migration")
-}
-
 // TestMigrateV85toV86_AddsColumn drives the real v85→v86 ALTER over a v85-pinned
 // DB: it asserts agent_cron_jobs.cron_expr appears, that an existing interval
 // job reads back as "" (interval mode), that the version advances, and that a

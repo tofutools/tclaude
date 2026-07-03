@@ -2898,6 +2898,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   cursor: pointer; flex: 0 0 calc(50% - 6px);
 }
 .ta-perms-list label input { margin: 0; }
+/* Work-pattern rows (JOH-336) share the agent-row panel chrome; the
+   send-to select matches the row's text inputs. */
+.template-pattern-sendto {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #7d8590;
+}
+.template-pattern-row select.tw-sendto {
+  background: #161b22; color: #c9d1d9; font-family: inherit; font-size: 12px;
+  border: 1px solid #2a3340; border-radius: 4px; padding: 3px 6px;
+}
+.template-pattern-row select.tw-sendto:focus { outline: none; border-color: #58a6ff; }
 .template-preview {
   flex: 1; font-size: 12px; background: #0d1117; border: 1px solid #2a3340;
   border-radius: 4px; padding: 7px 10px; display: flex;
@@ -6245,6 +6256,14 @@ body.wizard #template-editor-modal .template-agent-owner,
 body.wizard #template-editor-modal .ta-perms-list label { color: #e7d9f5; }
 body.wizard #template-editor-modal .ta-perms-details summary { color: #b39ddb; }
 body.wizard #template-editor-modal .ta-perms-details summary:hover { color: #f3e6c0; }
+/* Work-pattern rows ride the .template-agent-row re-skin above; only
+   their send-to select needs its own arcane coat. */
+body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
+body.wizard #template-editor-modal select.tw-sendto {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #template-editor-modal select.tw-sendto:focus { border-color: #a97bd6; }
+body.wizard #template-editor-modal select.tw-sendto option { color: #1a1330; background: #e7d9f5; }
 /* Secondary + inline buttons (+ add familiar / ✕ remove / Cancel): the
    tarnished-gold treatment; :not(#template-editor-submit) keeps the Seal
    lever below out of this rule's reach. */

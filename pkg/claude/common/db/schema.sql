@@ -233,7 +233,7 @@ CREATE TABLE group_templates (
 			default_context TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		);
+		, work_pattern TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE group_template_agents (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
