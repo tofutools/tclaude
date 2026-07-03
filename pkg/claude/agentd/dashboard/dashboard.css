@@ -3639,9 +3639,24 @@ body:has(#tab-terminals.active) > nav {
 /* The card holds the welcome intro (its header) above the dynamic player
    content (song/station/audio, injected into #vegas-player by vegas.js). */
 .vegas-card {
-  max-width: 720px;
+  /* Size to the intro's natural one-line width, clamped so the usable text
+     width lands in [676px, 756px]. The shorter Vegas copy floors there
+     (unchanged); the longer wizard/Tavern copy auto-expands so its trailing
+     decorative emoji still fits on the same line instead of wrapping. The
+     min() clamps fold to 100% of the container on a narrow viewport so the
+     card never overflows; past the ceiling the intro wraps and text-wrap:
+     balance (on .vegas-intro) keeps that graceful.
+
+     The 30px side padding is the breathing room between the text and the gold
+     edge (fit-content otherwise hugs the text). The min/max-width bounds are
+     the old 720/800 grown by 2×(30−22) so that added padding widens the card,
+     not the text column — the usable width, and thus the one-line behaviour,
+     is unchanged. */
+  width: fit-content;
+  min-width: min(736px, 100%);
+  max-width: min(816px, 100%);
   margin: 0 auto;
-  padding: 22px;
+  padding: 22px 30px;
   background: linear-gradient(180deg, #1a0606 0%, #2a0808 100%);
   border: 1px solid #ffd700;
   border-radius: 10px;
