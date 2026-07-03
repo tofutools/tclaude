@@ -13,6 +13,13 @@ import (
 // JSON in sessions.subagents_json and is the source of truth behind
 // sessions.subagent_count / the dashboard's "🤖+N" badge.
 //
+// NAME-COLLISION WARNING: this agent_id is Claude Code's SUB-AGENT
+// instance id from the hook payload (HookCallbackInput.AgentID) and has
+// NOTHING to do with tclaude's own agent identity — the `agt_`-prefixed
+// actor ids in the `agents` table and the sessions.agent_id column
+// (which is resolved from the conv-id in SQL, see agentForConvExpr).
+// The two namespaces must never be compared or joined.
+//
 // Why a ledger and not a bare counter: the hook stream is LOSSY. Claude
 // Code fires no hooks at all on a user interrupt (anthropics/
 // claude-code#11189), SubagentStop has no documented guarantee for
