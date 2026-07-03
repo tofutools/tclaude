@@ -32,7 +32,7 @@ import { closeTerminalsForWindowOp } from './terminals-tab.js';
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
-import { setVegasRegularMode } from './slop.js';
+import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
 
 // refreshSuspended() is the single source of truth for whether the
@@ -2435,10 +2435,22 @@ function openWindowModal(scope, groupName) {
   };
 
   function renderHint() {
-    hintEl.textContent = direction() === 'focus'
-      ? `Open or raise a terminal window for each selected running agent in ${where}.`
-      : `Detach the terminal windows of the selected running agents in ${where} so the `
-        + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+    // In 🧙 wizard mode the copy re-flavours to the palette's scrying-portal
+    // voice (focus → Reveal, unfocus → Veil); the CSS-swapped direction labels
+    // and this JS-set hint move together. Read live so a mid-modal wizard toggle
+    // (the tclaude:wizard re-render below) picks the right voice.
+    const wiz = isWizardActive();
+    if (direction() === 'focus') {
+      hintEl.textContent = wiz
+        ? `Conjure a scrying portal for each chosen channeling familiar in ${where}.`
+        : `Open or raise a terminal window for each selected running agent in ${where}.`;
+    } else {
+      hintEl.textContent = wiz
+        ? `Draw the veil over the chosen familiars' scrying portals in ${where} so the `
+          + `desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`
+        : `Detach the terminal windows of the selected running agents in ${where} so the `
+          + `desktop is decluttered. The agents keep running — only the windows are dismissed.`;
+    }
   }
   function renderGroups() {
     // The group filter is always shown when there's at least one agent
@@ -2488,8 +2500,13 @@ function openWindowModal(scope, groupName) {
   function renderFooter() {
     const n = checkedCount();
     countEl.textContent = `${n} of ${candidates.length} selected`;
-    const verb = direction() === 'focus' ? 'Focus' : 'Unfocus';
-    submitBtn.textContent = n === 1 ? `${verb} 1 agent` : `${verb} ${n} agents`;
+    // The submit lever's live-count label swaps verb + noun for the theme:
+    // "Focus 3 agents" → "Reveal 3 familiars" (focus) / "Veil 3 familiars"
+    // (unfocus). Both nouns just take a trailing "s" in the plural.
+    const wiz = isWizardActive();
+    const verb = direction() === 'focus' ? (wiz ? 'Reveal' : 'Focus') : (wiz ? 'Veil' : 'Unfocus');
+    const noun = wiz ? 'familiar' : 'agent';
+    submitBtn.textContent = n === 1 ? `${verb} 1 ${noun}` : `${verb} ${n} ${noun}s`;
     submitBtn.disabled = n === 0;
   }
   function render() { renderHint(); renderGroups(); renderRoles(); renderList(); renderFooter(); }
@@ -2529,6 +2546,9 @@ function openWindowModal(scope, groupName) {
   const onSearch = () => renderList();
   const onSelectAll = () => { for (const c of candidates) c.checked = true; render(); };
   const onSelectNone = () => { for (const c of candidates) c.checked = false; render(); };
+  // A +W / palette wizard toggle while the modal is open re-skins the CSS-swapped
+  // direction labels instantly; re-render so the JS-set hint + submit verb follow.
+  const onWizard = () => render();
 
   const cleanup = () => {
     overlay.classList.remove('show');
@@ -2543,6 +2563,7 @@ function openWindowModal(scope, groupName) {
     cancelBtn.removeEventListener('click', cleanup);
     overlay.removeEventListener('click', onOverlay);
     document.removeEventListener('keydown', onKey);
+    document.removeEventListener('tclaude:wizard', onWizard);
   };
   const onOverlay = (e) => { if (e.target === overlay) cleanup(); };
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
@@ -2605,6 +2626,7 @@ function openWindowModal(scope, groupName) {
   cancelBtn.addEventListener('click', cleanup);
   overlay.addEventListener('click', onOverlay);
   document.addEventListener('keydown', onKey);
+  document.addEventListener('tclaude:wizard', onWizard);
 
   render();
   overlay.classList.add('show');

@@ -5462,6 +5462,17 @@ body.wizard #window-modal .window-direction {
 body.wizard #window-modal .window-direction label { color: #f3e6c0; }
 body.wizard #window-modal .window-direction .opt-note { color: #b39ddb; }
 
+/* Direction copy swap — each radio's label + its note ship both a regular and a
+   wizard twin; CSS reveals the active one. Focus → "👁 Reveal", Unfocus →
+   "🌫 Veil", the palette's scrying-portal voice. The default (non-wizard) rule
+   is unscoped like the sibling .win-label / .window-title swaps (the spans only
+   ever live inside #window-modal), the wizard rule scoped to #window-modal. */
+.window-dir-label-wizard, .window-dir-note-wizard { display: none; }
+body.wizard #window-modal .window-dir-label-regular,
+body.wizard #window-modal .window-dir-note-regular { display: none; }
+body.wizard #window-modal .window-dir-label-wizard,
+body.wizard #window-modal .window-dir-note-wizard { display: inline; }
+
 /* Toolbar: select-all / none buttons take the tarnished-gold secondary skin,
    the filter field goes dark-violet, the count line reads parchment. */
 body.wizard #window-modal .cleanup-toolbar { color: #b39ddb; }
@@ -5501,9 +5512,10 @@ body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the
    focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
-   count ("Focus 3 agents"), so — unlike the static Summon / Banish levers — we
-   keep the real text visible and only gild the chrome. The .cleanup-error line
-   is deliberately left its base red (a status signal, not chrome). */
+   count, and openWindowModal swaps the verb+noun for the theme ("Focus 3 agents"
+   → "Reveal 3 familiars"), so — unlike the static Summon / Banish levers — the
+   CSS only gilds the chrome; the copy swap lives in the JS. The .cleanup-error
+   line is deliberately left its base red (a status signal, not chrome). */
 body.wizard #window-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #window-modal .modal-buttons button:not(#window-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
