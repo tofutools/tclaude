@@ -32,6 +32,8 @@ import (
 //	DELETE /v1/templates/{name}                → delete a template
 //	POST   /v1/templates/{name}/instantiate    → create a group + spawn its team
 //	POST   /v1/templates/from-group            → snapshot a live group into a template (update: re-snapshot in place)
+//	GET    /v1/templates/{name}/export         → a portable, versioned envelope (JOH-341)
+//	POST   /v1/templates/import                → import a portable envelope (as=/update= query knobs)
 //
 // Reads are open (introspection, like /v1/permissions); mutations are
 // gated on templates.manage; instantiate is gated on
@@ -611,6 +613,247 @@ func handleTemplateByName(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET, PATCH or DELETE")
 	}
+}
+
+// Portable export/import (JOH-341). A template's wire JSON already
+// round-trips (show --json → create/edit --file), but that is an
+// internal wire shape. Export/import promote it to a deliberate,
+// portable interchange format: the same inner template JSON wrapped in a
+// small versioned envelope so a task force can be shared with a friend, a
+// coworker, or your own other machine as one file.
+//
+//	GET  /v1/templates/{name}/export   → the envelope (open, read-only)
+//	POST /v1/templates/import          → import an envelope (templates.manage)
+//
+// Because the envelope wraps the SAME inner template JSON that every
+// other path uses, new template fields (work_pattern JOH-336, per-role
+// launch profiles JOH-239, future process/choreography specs) ride along
+// automatically — the envelope is serialization, not schema, so there is
+// no migration here.
+const (
+	// templateExportFormat tags the envelope so an import can reject an
+	// unrelated JSON file with a clear error instead of a confusing
+	// field-by-field validation failure.
+	templateExportFormat = "tclaude-task-force"
+	// templateExportVersion is the highest envelope format version this
+	// build writes and can import. Bump it only on a breaking change to
+	// the envelope (not the inner template — that grows fields freely).
+	// Import accepts any version <= this and rejects anything newer with
+	// an "upgrade tclaude" message.
+	templateExportVersion = 1
+)
+
+// templateExportEnvelope is the portable file shape: a small versioned
+// wrapper around the existing inner template JSON. ExportedAt is
+// informational provenance only — import ignores it. The inner Template
+// carries no machine-local identity (templateToJSON emits no DB id, and
+// export blanks the local created_at/updated_at timestamps), so the file
+// is a pure blueprint for another machine.
+type templateExportEnvelope struct {
+	Format        string       `json:"format"`
+	FormatVersion int          `json:"format_version"`
+	ExportedAt    string       `json:"exported_at,omitempty"`
+	Template      templateJSON `json:"template"`
+}
+
+// handleTemplateExport serves GET /v1/templates/{name}/export: the named
+// template wrapped in a portable envelope. Open + read-only, like GET
+// /v1/templates/{name} — an export reveals nothing a fetch doesn't.
+func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "missing template name")
+		return
+	}
+	t, err := db.GetGroupTemplate(name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if t == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such template")
+		return
+	}
+	inner := templateToJSON(t)
+	// The local DB timestamps describe THIS machine's row, not the
+	// blueprint — strip them so the file is portable provenance-free (the
+	// envelope's exported_at carries the only meaningful timestamp).
+	inner.CreatedAt = ""
+	inner.UpdatedAt = ""
+	writeJSON(w, http.StatusOK, templateExportEnvelope{
+		Format:        templateExportFormat,
+		FormatVersion: templateExportVersion,
+		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
+		Template:      inner,
+	})
+}
+
+// templateImportResult is the import response: the final stored name,
+// whether an existing template was overwritten, and any degradation
+// warnings (stripped profile refs / unknown permission slugs). warnings
+// is always non-nil so a CLI/JS consumer can range over it safely.
+type templateImportResult struct {
+	Imported string   `json:"imported"`
+	Updated  bool     `json:"updated"`
+	Warnings []string `json:"warnings"`
+}
+
+// sanitizeImportedTemplate makes a foreign template instantiable on THIS
+// machine without hard-failing on references that may not exist locally
+// (JOH-341). It strips — and reports a warning for — each machine-local
+// reference the target can't honour:
+//
+//   - a spawn-profile reference (JOH-239) naming a profile that doesn't
+//     exist here: the ref is cleared, leaving the agent's inline launch
+//     overrides intact, so the agent degrades to the group/harness
+//     default instead of failing the whole import;
+//   - a permission slug the local slug registry doesn't know: dropped
+//     from that agent so buildTemplateFromJSON's strict slug check (which
+//     is correct for create/edit) doesn't reject the import.
+//
+// Everything else (harness/model/effort/sandbox/approval) is validated
+// against the same machine-independent harness catalog by
+// buildTemplateFromJSON afterwards, so it stays strict. Returns the
+// cleaned copy plus the ordered warning list.
+func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
+	warnings := []string{}
+	agents := make([]templateAgentJSON, len(body.Agents))
+	for i, a := range body.Agents {
+		label := strings.TrimSpace(a.Name)
+		if label == "" {
+			label = fmt.Sprintf("#%d", i+1)
+		}
+		if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
+			p, err := db.GetSpawnProfile(ref)
+			if err == nil && p == nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"agent %q: spawn profile %q does not exist here — dropped the reference; the agent will use the group/harness default",
+					label, ref))
+				a.SpawnProfile = ""
+			}
+			// A GetSpawnProfile error is left for buildTemplateFromJSON to
+			// surface as a 500 — an import shouldn't silently swallow a DB fault.
+		}
+		if len(a.Permissions) > 0 {
+			kept := make([]string, 0, len(a.Permissions))
+			for _, slug := range a.Permissions {
+				s := strings.TrimSpace(slug)
+				if s == "" {
+					continue
+				}
+				if !IsKnownPermSlug(s) {
+					warnings = append(warnings, fmt.Sprintf(
+						"agent %q: unknown permission slug %q — dropped", label, s))
+					continue
+				}
+				kept = append(kept, s)
+			}
+			a.Permissions = kept
+		}
+		agents[i] = a
+	}
+	body.Agents = agents
+	return body, warnings
+}
+
+// handleTemplateImport serves POST /v1/templates/import: read a portable
+// envelope and store its template locally. Gated on templates.manage
+// (it writes a template, exactly like create/edit).
+//
+// Query knobs:
+//   - as=<name>   store under a different name (rename on import)
+//   - update=true overwrite an existing template of that name in place
+//     (reuses the wholesale-replace machinery PATCH uses); without it, a
+//     name collision is a 409 so an import never clobbers silently.
+//
+// Portability handling: the envelope's format/version are checked first
+// (a newer format_version is rejected with an upgrade message), then
+// machine-local references that may be absent here are stripped + warned
+// (sanitizeImportedTemplate) so the stored template stays instantiable.
+func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
+		return
+	}
+	var env templateExportEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid task-force JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(env.Format) != templateExportFormat {
+		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat))
+		return
+	}
+	if env.FormatVersion < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_format",
+			"missing or invalid format_version — not a valid task-force export")
+		return
+	}
+	if env.FormatVersion > templateExportVersion {
+		writeError(w, http.StatusBadRequest, "version_too_new", fmt.Sprintf(
+			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
+			env.FormatVersion, templateExportVersion))
+		return
+	}
+
+	body := env.Template
+	if as := strings.TrimSpace(r.URL.Query().Get("as")); as != "" {
+		body.Name = as
+	}
+	update := r.URL.Query().Get("update") == "true"
+
+	cleaned, warnings := sanitizeImportedTemplate(body)
+	t, fail := buildTemplateFromJSON(cleaned)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	existing, err := db.GetGroupTemplate(t.Name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if existing != nil {
+		if !update {
+			writeError(w, http.StatusConflict, "exists", fmt.Sprintf(
+				"a template named %q already exists — re-import with update to overwrite it, or as=<new-name> to import under a different name",
+				t.Name))
+			return
+		}
+		// Overwrite in place: the envelope carries the full desired state,
+		// so this is a wholesale replace (the PATCH contract), reusing the
+		// existing row's id.
+		t.ID = existing.ID
+		if err := db.UpdateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
+			writeError(w, http.StatusConflict, "exists", err.Error())
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, templateImportResult{Imported: t.Name, Updated: true, Warnings: warnings})
+		return
+	}
+
+	if _, err := db.CreateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
+		// Lost a create race with a concurrent writer — surface as a plain
+		// 409 (the human can retry with update).
+		writeError(w, http.StatusConflict, "exists", err.Error())
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, templateImportResult{Imported: t.Name, Updated: false, Warnings: warnings})
 }
 
 // composeInstantiationContext folds the per-instantiation task/project

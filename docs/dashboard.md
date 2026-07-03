@@ -228,6 +228,55 @@ that does not exist yet.
 existing group's structure into a new template. Instantiating a template
 creates a fresh group and spawns its entire agent team in one action.
 
+**⇪ export** (per template) downloads it as a portable `<name>.task-force.json`
+file, and **⤒ import** reads one back — see
+[Sharing task forces](#sharing-task-forces-as-a-file) below.
+
+#### Sharing task forces as a file
+
+A template can be exported to a single self-contained JSON file and imported on
+another machine — the supported way to share a task force with a friend, a
+coworker, or your own other computer. The file is a small versioned envelope
+around the template:
+
+```json
+{
+  "format": "tclaude-task-force",
+  "format_version": 1,
+  "exported_at": "2026-07-03T21:00:00Z",
+  "template": { "name": "feature-team", "agents": [ ... ], "work_pattern": [ ... ] }
+}
+```
+
+The `template` object is exactly the shape the editor and
+`tclaude agent templates show --json` use, so every template field — agents,
+per-role launch profiles, permission slugs, the work pattern — travels
+automatically. The file carries **no machine-local identity**: no database ids
+and no conversation links, just the blueprint.
+
+On import, references that may not exist on the target machine **degrade with a
+warning** rather than failing the whole import:
+
+- a **spawn-profile reference** naming a profile that isn't defined here is
+  dropped (the agent falls back to the group/harness default); any inline launch
+  overrides on that agent are kept;
+- an **unknown permission slug** is dropped from that agent.
+
+A **name collision** is refused unless you opt in: tick **Overwrite if it already
+exists** (CLI `--update`) to replace the existing template in place, or set
+**Import as** (CLI `--as <name>`) to store it under a different name. An export
+written by a **newer tclaude** (higher `format_version`) is rejected with an
+“upgrade tclaude” message.
+
+From the CLI:
+
+```bash
+tclaude agent templates export feature-team --file feature-team.task-force.json
+tclaude agent templates import --file feature-team.task-force.json          # errors on a name clash
+tclaude agent templates import --file feature-team.task-force.json --as ft2  # import under a new name
+tclaude agent templates import --file feature-team.task-force.json --update  # overwrite in place
+```
+
 ### Cron
 
 The scheduled-job table — name, owner, target, interval, last run, status pill,

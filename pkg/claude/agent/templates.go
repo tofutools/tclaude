@@ -46,6 +46,8 @@ func templatesCmd() *cobra.Command {
 			templatesRmCmd(),
 			templatesInstantiateCmd(),
 			templatesFromGroupCmd(),
+			templatesExportCmd(),
+			templatesImportCmd(),
 		},
 	}.ToCobra()
 }
@@ -89,6 +91,16 @@ type templateJSON struct {
 	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
 	CreatedAt      string                 `json:"created_at,omitempty"`
 	UpdatedAt      string                 `json:"updated_at,omitempty"`
+}
+
+// templateExportEnvelope mirrors the daemon's portable export shape
+// (see agentd/templates.go): a small versioned wrapper around the inner
+// template JSON. `export` writes it; `import` sends it back.
+type templateExportEnvelope struct {
+	Format        string       `json:"format"`
+	FormatVersion int          `json:"format_version"`
+	ExportedAt    string       `json:"exported_at,omitempty"`
+	Template      templateJSON `json:"template"`
 }
 
 // ownerNames returns the names of the template's owner agents.
@@ -586,6 +598,141 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",
 		t.Name, group, len(t.Agents), plural(len(t.Agents)))
 	fmt.Fprintln(stdout, "  Per-agent task briefs are blank — fill them in with `tclaude agent templates edit "+t.Name+" --file …`")
+	return rcOK
+}
+
+// ---- export / import (JOH-341) ----
+
+type templatesExportParams struct {
+	Name string `pos:"true" help:"Template to export (from 'tclaude agent templates ls')."`
+	File string `long:"file" short:"f" optional:"true" help:"Write the export to this file instead of stdout. By convention '<name>.task-force.json'."`
+}
+
+func templatesExportCmd() *cobra.Command {
+	return boa.CmdT[templatesExportParams]{
+		Use:   "export <name>",
+		Short: "Export a template as a portable task-force JSON file",
+		Long: "Emits the named template wrapped in a small versioned envelope — a portable blueprint you can share " +
+			"with a friend, a coworker, or your own other machine and re-import with 'templates import'. Writes to " +
+			"stdout by default, or to --file. The file carries no machine-local identity (no DB ids, no conv links); " +
+			"spawn-profile references and permission slugs travel by name and are validated on import.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *templatesExportParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
+			return nil
+		},
+		RunFunc: func(p *templatesExportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesExport(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesExport(p *templatesExportParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a template name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var env templateExportEnvelope
+	if err := DaemonRequest(http.MethodGet, "/v1/templates/"+url.PathEscape(name)+"/export", nil, &env, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	buf, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: encoding export JSON: %v\n", err)
+		return rcIOFailure
+	}
+	buf = append(buf, '\n')
+	if file := strings.TrimSpace(p.File); file != "" {
+		if err := os.WriteFile(file, buf, 0o644); err != nil {
+			fmt.Fprintf(stderr, "Error: writing %s: %v\n", file, err)
+			return rcIOFailure
+		}
+		fmt.Fprintf(stderr, "Exported template %q → %s (%d agent%s)\n",
+			name, file, len(env.Template.Agents), plural(len(env.Template.Agents)))
+		return rcOK
+	}
+	if _, err := stdout.Write(buf); err != nil {
+		fmt.Fprintf(stderr, "Error: writing export: %v\n", err)
+		return rcIOFailure
+	}
+	return rcOK
+}
+
+type templatesImportParams struct {
+	File   string `long:"file" short:"f" help:"Path to a task-force JSON file ('-' reads stdin) produced by 'templates export'."`
+	As     string `long:"as" optional:"true" help:"Import under this name instead of the name in the file (sidesteps a collision, or just renames)."`
+	Update bool   `long:"update" optional:"true" help:"Overwrite an existing template of the target name in place. Without it, a name collision is an error."`
+}
+
+func templatesImportCmd() *cobra.Command {
+	return boa.CmdT[templatesImportParams]{
+		Use:   "import --file <path>",
+		Short: "Import a template from a portable task-force JSON file",
+		Long: "Reads a task-force export (from 'templates export') via --file (or --file - for stdin) and stores it as " +
+			"a local template. A name collision is an error unless you pass --update (overwrite in place) or --as " +
+			"<new-name> (import under a different name). References that don't exist on this machine degrade rather " +
+			"than fail: an unknown spawn-profile reference is dropped (the agent falls back to the group/harness " +
+			"default) and unknown permission slugs are dropped — each reported as a warning. An export from a NEWER " +
+			"tclaude is rejected with an upgrade message.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesImportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesImport(p *templatesImportParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.File) == "" {
+		fmt.Fprintln(stderr, "Error: --file is required (path to a task-force JSON file, or - to read stdin)")
+		return rcInvalidArg
+	}
+	raw, rc := resolveBodyInput("", p.File, "--file", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	// Send the file's bytes verbatim so the daemon — the authority on the
+	// envelope format and version — does the parsing and version-gating. A
+	// local light syntax check gives a friendlier error than a raw 400.
+	if !json.Valid([]byte(raw)) {
+		fmt.Fprintln(stderr, "Error: --file is not valid JSON")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/templates/import"
+	q := url.Values{}
+	if as := strings.TrimSpace(p.As); as != "" {
+		q.Set("as", as)
+	}
+	if p.Update {
+		q.Set("update", "true")
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var res struct {
+		Imported string   `json:"imported"`
+		Updated  bool     `json:"updated"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := DaemonPostRaw(path, "application/json", []byte(raw), &res); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	verb := "Imported"
+	if res.Updated {
+		verb = "Updated (overwrote)"
+	}
+	fmt.Fprintf(stdout, "%s template %q\n", verb, res.Imported)
+	for _, wmsg := range res.Warnings {
+		fmt.Fprintf(stdout, "  ⚠ %s\n", wmsg)
+	}
 	return rcOK
 }
 

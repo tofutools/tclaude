@@ -529,7 +529,9 @@ func buildMux() http.Handler {
 	// picks them over the {name} wildcard without ambiguity.
 	mux.HandleFunc("/v1/templates", handleTemplates)
 	mux.HandleFunc("POST /v1/templates/from-group", handleTemplateFromGroup)
+	mux.HandleFunc("POST /v1/templates/import", handleTemplateImport)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
+	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
