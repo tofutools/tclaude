@@ -8,7 +8,7 @@
 // activation and span change, plus a slow re-poll while the tab is
 // visible — cost history doesn't move on the 2s snapshot cadence.
 
-import { $, $$, esc, shortId } from './helpers.js';
+import { $, $$, esc, shortAgentId, idTooltip } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 // lastSnapshot lives in dashboard.js — imported back for its cost_tab_whatif
 // flag (whether the tab is in WHAT-IF mode). Same deliberate, benign cycle
@@ -464,9 +464,16 @@ function costHeaderHTML() {
 // can be non-contiguous in any sort, so hovering any one of them
 // highlights the whole set (see bindCostsChainHover).
 //
+// The Agent cell leads with the row's stable agent_id (shortAgentId — the
+// rotation-immune `agt_` handle the roster/audit/mail surfaces also lead
+// with), falling back to the conv-id prefix when the spend belongs to a
+// plain conversation with no agent_id. The full `<agent_id> / <conv-id>`
+// pair is on the id span's hover title (idTooltip), so either identifier
+// can be read/copied off the tooltip — the same idiom as those tabs.
+//
 // Columns are click-sortable (costHeaderHTML / costSort+costDir) and the
 // rows are narrowed by the table's text filter (#filter-costs — matches
-// title / conv id / model) so a specific agent can be isolated; the
+// title / agent id / conv id / model) so a specific agent can be isolated; the
 // footer then totals just the visible rows, and the count chip reads
 // matched/all. Sort and filter are display-only over the data already
 // fetched — neither refetches; the chart and summary stay on the full set.
@@ -490,6 +497,7 @@ function renderTable(data) {
   const q = ($('#filter-costs')?.value || '').trim().toLowerCase();
   const matches = a => !q
     || (a.title || '').toLowerCase().includes(q)
+    || (a.agent_id || '').toLowerCase().includes(q)
     || (a.conv_id || '').toLowerCase().includes(q)
     || (a.model || '').toLowerCase().includes(q);
   const visible = sortCostAgents(agents, costSort, costDir).filter(matches);
@@ -523,7 +531,7 @@ function renderTable(data) {
               : '';
           return `
           <tr${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
-            <td title="${esc((a.title || '(unknown)') + ' · ' + shortId(a.conv_id))}">${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id">${esc(shortId(a.conv_id))}</span></td>
+            <td title="${esc(a.title || '(unknown)')}">${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>

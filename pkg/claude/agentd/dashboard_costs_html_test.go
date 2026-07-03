@@ -144,6 +144,16 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function bindCostsChainHover", "chain hover-highlight wired")
 	must(".cost-chain-hl", "hovered chain highlight styled")
 	must("#costs-table tr.cost-chain td:first-child", "chain rows carry the left accent")
+
+	// Agent identity: the breakdown's first column leads with the row's
+	// stable agent_id (shortAgentId — the rotation-immune `agt_` handle the
+	// roster/audit/mail surfaces also lead with), falling back to the conv-id
+	// prefix, and carries the full "<agent_id> / <conv-id>" pair on the id
+	// span's hover title (idTooltip). The text filter matches the agent id
+	// too, now that it leads the cell.
+	must("shortAgentId(a.agent_id, a.conv_id)", "breakdown Agent cell leads with the stable agent id")
+	must("idTooltip(a.agent_id, a.conv_id)", "full agent/conv id pair on the id cell tooltip")
+	must("(a.agent_id || '').toLowerCase().includes(q)", "text filter matches the agent id")
 }
 
 // TestDashboardHTML_CostsFillEmptyWeekdaysWired guards the Costs tab's
