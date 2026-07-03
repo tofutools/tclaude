@@ -2456,6 +2456,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
 #clone-agent-modal .cron-create-modal {
   resize: both; overflow: auto;
 }
+/* Theme the scroll container's scrollbar to the dark dialog chrome. Without
+   this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
+   to the browser's default light, classic scrollbar — the same white-default
+   trap that bites unstyled buttons, and especially loud against the near-black
+   wizard re-skin (overridden arcane below). Chromium reads ::-webkit-scrollbar-*;
+   Firefox reads scrollbar-width/-color. scrollbar-corner keeps the resize-grip
+   corner (both bars present) from flashing white. The 10px width matches the
+   Messages tab's themed bars. */
+.cron-create-modal { scrollbar-width: thin; scrollbar-color: #3a4553 #161b22; }
+.cron-create-modal::-webkit-scrollbar { width: 10px; height: 10px; }
+.cron-create-modal::-webkit-scrollbar-track { background: #161b22; }
+.cron-create-modal::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
+.cron-create-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
+.cron-create-modal::-webkit-scrollbar-corner { background: #161b22; }
+/* The multiline fields (Initial msg / Follow-up) scroll on their own darker
+   #0d1117 surface, so their track matches that rather than the dialog body. */
+.cron-create-row textarea { scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117; }
+.cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+.cron-create-row textarea::-webkit-scrollbar-track { background: #0d1117; }
+.cron-create-row textarea::-webkit-scrollbar-thumb { background: #3a4553; border-radius: 6px; }
+.cron-create-row textarea::-webkit-scrollbar-thumb:hover { background: #4d5866; }
 .cron-create-modal h3 { margin: 0; font-size: 14px; color: #d4d4d4; }
 .cron-create-modal .modal-meta {
   font-size: 11px; color: #7d8590;
@@ -4796,6 +4817,9 @@ body.wizard #agent-spawn-modal button:not(#agent-spawn-submit) {
 }
 body.wizard #agent-spawn-modal button:not(#agent-spawn-submit):hover { background: #3a2a63; }
 body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
+/* The Summon dialog's own scrollbar goes arcane too — see the shared wizard
+   scrollbar block after the export-agent re-skin, which themes every
+   wizard-reskinned .cron-create-modal dialog (Summon included) in one place. */
 
 /* Spawn = 🔮 Summon! — the submit button re-skinned into a gilded conjuring
    button, the wizard twin of slop's 🎰 PULL! lever. Same mechanism: the
@@ -5609,6 +5633,43 @@ body.wizard #export-agent-modal #export-agent-submit::before {
 }
 body.wizard #export-agent-modal #export-agent-submit:disabled { opacity: 0.7; }
 body.wizard #export-agent-modal #export-agent-submit:disabled::before { content: "📜 Scribing…"; }
+
+/* ─── Wizard dialog scrollbars — the "scroll"-bars go arcane ─────────
+   Every wizard-reskinned .cron-create-modal dialog (Summon a familiar /
+   Bind a cron / Form a party / edit a pattern / Scribe a chronicle) scrolls
+   on a violet-void surface, so its scrollbar goes arcane too — a violet thumb
+   with a gilded edge on a #140f28 track, the same "scroll"-bar pun the Messages
+   tab uses. This OVERRIDES the base dark .cron-create-modal scrollbar (defined
+   near the modal's base rule) and covers both the whole-dialog scroll and the
+   dialogs' multiline textareas.
+
+   The :is() list names exactly the five re-skinned dialogs by #id — NOT an
+   unscoped `.cron-create-modal`, which would repaint the clone / reincarnate /
+   message dialogs that share the class but keep their dark chrome in wizard
+   mode (they get the base dark bar). This is the same positive-per-#id scoping
+   the surface re-skins above follow (guarded against the unscoped form by
+   TestDashboardCSS_WizardGroupCreateModalScoped), collapsed with :is() so the
+   five ids don't have to be spelled out on every pseudo-element rule. All five
+   share the #140f28 arcane field palette. Treatment mirrors the mail panes. */
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea {
+  scrollbar-color: #7a5db0 #140f28;
+}
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-corner,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-thumb,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #7a5db0, #3a2a63);
+  border: 1px solid #d9b45a; border-radius: 6px;
+}
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #8f6fca, #4a367d);
+}
 
 /* ─── Wizard edit-agent modal — "Enchant this familiar" ─────────────
    The third of the arcane dialog re-skins (Summon a familiar / Banish a
