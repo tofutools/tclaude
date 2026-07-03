@@ -879,8 +879,12 @@ type dashboardGroup struct {
 	// as a deployed force only when SourceTemplate is set.
 	Mission        string            `json:"mission,omitempty"`
 	SourceTemplate string            `json:"source_template,omitempty"`
-	Members        []dashboardMember `json:"members"`
-	Online         int               `json:"online"`
+	// Process is the group's advisory process state (JOH-242): the current
+	// phase, the ordered phase map, and the transition log. nil for a group
+	// with no process (the phase chip + advance control render only when set).
+	Process *processStateJSON `json:"process,omitempty"`
+	Members []dashboardMember  `json:"members"`
+	Online  int                `json:"online"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -1393,6 +1397,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
 		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Members: []dashboardMember{}}
+		// Advisory process state (JOH-242): attach the current phase + phase map
+		// + transition log so the group view can render a phase chip + advance
+		// control. nil for a group with no process.
+		if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
+			pv := processStateToJSON(st, trs)
+			dg.Process = &pv
+		}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.

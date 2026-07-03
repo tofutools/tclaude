@@ -212,6 +212,11 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief, a default launch shape and a default permission set that a template roster agent references and inherits from (JOH-240). Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
 	},
 	{
+		Slug:         PermProcessAdvance,
+		OwnerImplied: true,
+		Description:  "Advance a group's advisory process to the next (or a named) phase — records the transition and nudges the entering roles (JOH-242). The process is advisory (nothing is enforced). Group owners can advance their own group's process without this slug; other agents need it. Reads (the current phase) are open.",
+	},
+	{
 		Slug:         PermHumanNotify,
 		OwnerImplied: true,
 		Description:  "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",

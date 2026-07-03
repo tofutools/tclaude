@@ -1444,3 +1444,24 @@ func TestDashboardHTML_TemplateWorkPatternEditor(t *testing.T) {
 	must("{{task}}", "the task placeholder is documented in the row placeholder")
 	must("body.wizard #template-editor-modal select.tw-sendto", "the send-to select gets the arcane skin")
 }
+
+// TestDashboardHTML_TemplateProcessEditor pins the template editor's process
+// section (JOH-242): the ordered phase rows container, the add-phase button's
+// two voices, the section heading in both voices, the renderer, and the submit
+// wiring that sends the process spec.
+func TestDashboardHTML_TemplateProcessEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-editor-process"`, "the phase rows container ships")
+	must(`id="template-editor-add-phase"`, "the add-phase button ships")
+	must(`<span class="tpl-word-regular">Process</span><span class="tpl-word-wizard">Quest plan</span>`, "the section heading ships both voices")
+	must("function renderEditorProcess()", "the process renderer exists")
+	must("process: templateEditorProcess", "submit sends the process spec")
+	must(`data-act="advance-phase"`, "the group summary ships the advance control")
+	must(".group-process-advance", "the advance button has the dark-theme skin")
+}

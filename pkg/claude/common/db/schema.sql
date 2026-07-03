@@ -233,7 +233,7 @@ CREATE TABLE group_templates (
 			default_context TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		, work_pattern TEXT NOT NULL DEFAULT '');
+		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE group_template_agents (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -484,4 +484,23 @@ CREATE TABLE roles (
 			created_at    TEXT NOT NULL,
 			updated_at    TEXT NOT NULL
 		);
+
+CREATE TABLE group_process_state (
+			group_id         INTEGER PRIMARY KEY,
+			process          TEXT NOT NULL DEFAULT '[]',
+			current_phase    TEXT NOT NULL DEFAULT '',
+			phase_started_at TEXT NOT NULL
+		);
+
+CREATE TABLE group_process_transitions (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id   INTEGER NOT NULL,
+			from_phase TEXT NOT NULL DEFAULT '',
+			to_phase   TEXT NOT NULL,
+			at         TEXT NOT NULL,
+			actor      TEXT NOT NULL DEFAULT ''
+		);
+
+CREATE INDEX idx_group_process_transitions_group
+			ON group_process_transitions(group_id);
 

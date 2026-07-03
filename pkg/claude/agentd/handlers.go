@@ -46,6 +46,11 @@ type whoamiResp struct {
 	ConvID  string   `json:"conv_id,omitempty"`  // live generation behind it (rotates)
 	Title   string   `json:"title,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
+	// Phases lists the advisory process phase (JOH-242) of each group the
+	// caller is in that HAS a process — one "<group>: phase <n>/<m>: <name>"
+	// line per such group. Omitted when no group the caller is in has a
+	// process (absence = feature off, degrade everywhere).
+	Phases []string `json:"phases,omitempty"`
 }
 
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -86,11 +91,17 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, _ := db.ListGroupsForConv(p.ConvID)
 	gs := make([]string, 0, len(groups))
+	var phases []string
 	for _, g := range groups {
 		gs = append(gs, g.Name)
+		// Advisory process (JOH-242): surface the group's current phase when it
+		// has a process. Best-effort — a lookup error just omits the line.
+		if st, err := db.GetGroupProcessState(g.ID); err == nil && st != nil {
+			phases = append(phases, g.Name+": "+phaseLabel(st))
+		}
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
-	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs})
+	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, Phases: phases})
 }
 
 // --- /v1/lookup ---
@@ -1071,8 +1082,10 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			continue
 		}
 		// Role filter: skip members whose role does not match. Roles are
-		// free-form human-set strings, so the match is case-insensitive.
-		if roleFilter != "" && !strings.EqualFold(strings.TrimSpace(m.Role), roleFilter) {
+		// free-form human-set strings, so the match is case-insensitive
+		// (roleLabelMatches — the shared rule the process phase-role matcher
+		// reuses).
+		if roleFilter != "" && !roleLabelMatches(m.Role, roleFilter) {
 			continue
 		}
 		// Defensive: membership migrations on reincarnate are atomic
@@ -2790,6 +2803,11 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("GET /v1/groups/{name}/context", v1GroupRoute(handleGroupContext))
+
+	// Advisory process runtime (JOH-242): read the current phase (open),
+	// advance to the next / a named phase (gated on process.advance, owner-pass).
+	mux.HandleFunc("GET /v1/groups/{name}/process", v1GroupRoute(handleGroupProcessGet))
+	mux.HandleFunc("POST /v1/groups/{name}/process/advance", v1GroupRoute(handleGroupProcessAdvance))
 
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
