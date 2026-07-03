@@ -993,14 +993,14 @@ func runReviewAgent(ctx context.Context, reviewSkill, diff, cwd string, timeout 
 }
 
 func sendTmuxMessage(tmuxSession, message string) {
-	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, message, "Enter")
+	cmd := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession), message, "Enter")
 	if err := cmd.Run(); err != nil {
 		slog.Warn("failed to send tmux message", "session", tmuxSession, "error", err, "module", "task")
 	}
 }
 
 func sendTmuxEnter(tmuxSession string) {
-	cmd := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter")
+	cmd := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession), "Enter")
 	if err := cmd.Run(); err != nil {
 		slog.Warn("failed to send tmux enter", "session", tmuxSession, "error", err, "module", "task")
 	}

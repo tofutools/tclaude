@@ -227,6 +227,22 @@ tmux -L tclaude attach -t abc123
 Ctrl+B D
 ```
 
+### Tmux session names
+
+By default a session's tmux name is the first 8 characters of its id — or your `--label`, verbatim. If you switch between sessions with plain tmux (`tmux -L tclaude choose-tree`, status-line tabs), descriptive names help. Opt in via `~/.tclaude/config.json`:
+
+```json
+{
+  "session": {
+    "tmux_name_style": "dir"
+  }
+}
+```
+
+With `"dir"`, an unlabelled session is named after its working directory's basename — sanitized to a tmux-safe charset (`.`/`:` and anything outside `[A-Za-z0-9_-]` become `-`), capped at 32 chars, and disambiguated with a `-2`, `-3`, … suffix when the name is already taken by a live session.
+
+The tmux name is only the human-facing handle: lookups, resume, attach and hooks all key on the full session identity stored in tclaude's DB, so you can switch styles (or back — the default is `"id"`) at any time; the change only affects newly launched sessions. Agent spawns pass an explicit label (the agent name) and are unaffected.
+
 ### Recommended Tmux Configuration
 
 There are two approaches for scroll support - **choose one, not both**:

@@ -83,6 +83,52 @@ type Config struct {
 	// don't belong to the slop / cost / notification blocks — see
 	// DashboardConfig. Absent → all defaults.
 	Dashboard *DashboardConfig `json:"dashboard,omitempty"`
+
+	// Session holds session-launch tuning — currently the tmux-session
+	// naming style. Absent → all defaults (short id-prefix tmux names).
+	Session *SessionConfig `json:"session,omitempty"`
+}
+
+// Tmux-session naming styles — config session.tmux_name_style. The style
+// picks the BASE for a spawned session's tmux name when no explicit
+// --label is given; session.UniqueTmuxSessionName still disambiguates a
+// taken base with a -N suffix, and the DB row keeps the full identity
+// either way — the tmux name is only the human-facing handle (JOH-248),
+// so the style can be switched (or switched back) at any time and only
+// affects newly launched sessions.
+//
+//	"id"  — first 8 chars of the session id (the historical default)
+//	"dir" — sanitized basename of the session's working directory, for
+//	        recognisable names when switching sessions inside tmux
+//
+// An empty / unknown value falls back to "id", so a typo can never change
+// launch behavior.
+const (
+	TmuxNameStyleID  = "id"
+	TmuxNameStyleDir = "dir"
+)
+
+// SessionConfig holds session-launch tuning.
+type SessionConfig struct {
+	// TmuxNameStyle picks the tmux-session naming style — one of the
+	// TmuxNameStyle* constants above. Applies to `session new` without
+	// --label and to conversation resumes; agentd-spawned agents always
+	// pass their agent name as the label and are unaffected.
+	TmuxNameStyle string `json:"tmux_name_style,omitempty"`
+}
+
+// ResolvedTmuxNameStyle returns the effective tmux-session naming style,
+// normalized to one of the TmuxNameStyle* constants. Nil-safe; empty and
+// unknown values resolve to TmuxNameStyleID (the historical id-prefix
+// names).
+func (c *Config) ResolvedTmuxNameStyle() string {
+	if c == nil || c.Session == nil {
+		return TmuxNameStyleID
+	}
+	if c.Session.TmuxNameStyle == TmuxNameStyleDir {
+		return TmuxNameStyleDir
+	}
+	return TmuxNameStyleID
 }
 
 // Activity-bot style values — the per-mode choices in ActivityBotsConfig.

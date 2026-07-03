@@ -1669,7 +1669,7 @@ func (m *watchModel) deleteConversation(conv *SessionEntry) error {
 
 func (m *watchModel) stopSession(state *session.SessionState) error {
 	if session.IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := clcommon.TmuxCommand("kill-session", "-t", state.TmuxSession)
+		cmd := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(state.TmuxSession))
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to kill tmux session: %w", err)
 		}
@@ -2228,7 +2228,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	defer release()
 
-	tmuxSession := session.UniqueTmuxSessionName(session.ShortTmuxBase(sessionID, ""))
+	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
 
 	// Resume through the conv's recorded harness, not a hardcoded
 	// `claude --resume`: a Codex conv selected in the watch view must be

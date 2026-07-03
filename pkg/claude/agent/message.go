@@ -23,7 +23,7 @@ type nudgeFn func(tmuxSession, msg string) error
 // defaultNudge mirrors task/run.go's send pattern: a textual line followed
 // by Enter. It targets pane :0.0 — the same pane CC's input box lives in.
 func defaultNudge(tmuxSession, msg string) error {
-	target := tmuxSession + ":0.0"
+	target := clcommon.ExactTarget(tmuxSession) + ":0.0"
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, msg, "Enter").Run(); err != nil {
 		return err
 	}

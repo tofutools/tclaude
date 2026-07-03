@@ -172,7 +172,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	}
 	defer release()
 
-	tmuxSession := session.UniqueTmuxSessionName(session.ShortTmuxBase(sessionID, ""))
+	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", rc.ProjectPath))
 
 	// Build the in-tmux launch command via the conv's own harness, mirroring
 	// the watch-mode resume (createSessionForConv): a Codex conv relaunches

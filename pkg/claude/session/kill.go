@@ -130,7 +130,7 @@ func killMultiple(params *KillParams) error {
 func killSession(state *SessionState) error {
 	// Kill tmux session if alive
 	if IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := clcommon.TmuxCommand("kill-session", "-t", state.TmuxSession)
+		cmd := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(state.TmuxSession))
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to kill tmux session: %w", err)
 		}

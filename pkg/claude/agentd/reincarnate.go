@@ -620,7 +620,7 @@ func runReincarnatePostSpawn(newConv, newTitle string) {
 // CC, the pane closes and any attached client is detached, defeating
 // the carry-over.
 func switchTmuxClients(oldTmux, newTmux string) int {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", oldTmux, "-F", "#{client_tty}").Output()
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(oldTmux), "-F", "#{client_tty}").Output()
 	if err != nil {
 		slog.Warn("reincarnate: list-clients failed; skipping client switch", "tmux", oldTmux, "error", err)
 		return 0
@@ -630,7 +630,7 @@ func switchTmuxClients(oldTmux, newTmux string) int {
 		if tty == "" {
 			continue
 		}
-		if err := clcommon.TmuxCommand("switch-client", "-c", tty, "-t", newTmux).Run(); err != nil {
+		if err := clcommon.TmuxCommand("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
 			slog.Warn("reincarnate: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
 			continue
 		}

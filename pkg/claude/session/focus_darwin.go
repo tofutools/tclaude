@@ -111,7 +111,7 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 
 // getTmuxClientTTY gets the tty of a client attached to a tmux session.
 func getTmuxClientTTY(tmuxSession string) string {
-	cmd := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
