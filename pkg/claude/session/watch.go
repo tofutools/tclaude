@@ -446,7 +446,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				m.newSessionMode = false
 				m.dirInput.Blur()
-				m.newSessionDir = strings.TrimSpace(m.dirInput.Value())
+				m.newSessionDir = expandHomePrefix(strings.TrimSpace(m.dirInput.Value()))
 				m.createNew = true
 				return m, tea.Quit
 			case "tab":
