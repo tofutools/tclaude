@@ -1549,12 +1549,12 @@ func handleContextNudge(input HookCallbackInput, sessionID string) {
 	// cron scheduler uses for solo targets. Best-effort: a failed
 	// send leaves nudged_pct unchanged so we'll retry on the next
 	// Stop hook.
-	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession), msg).Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", msg).Run(); err != nil {
 		slog.Warn("context-nudge: send-keys failed",
 			"error", err, "module", "hooks")
 		return
 	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession), "Enter").Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", "Enter").Run(); err != nil {
 		slog.Warn("context-nudge: submit failed",
 			"error", err, "module", "hooks")
 		return

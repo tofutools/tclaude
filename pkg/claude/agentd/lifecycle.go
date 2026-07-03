@@ -241,7 +241,7 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 // signal the soft-exit retry needs to avoid re-injecting into a resumed
 // pane that reused the tmux name.
 func livePanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession), "#{pane_pid}").Output()
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_pid}").Output()
 	if err != nil {
 		return 0
 	}

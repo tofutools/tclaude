@@ -87,9 +87,23 @@ func TmuxArgs(args ...string) []string {
 // can silently land on a live session sharing that prefix — "myrepo"
 // (dead) resolving to "myrepo-2" (alive) would misroute an attach, a
 // kill, or injected keystrokes. The leading '=' pins resolution to
-// exact-only. Use it for every -t that targets a session by name; a
-// window/pane suffix may be appended (ExactTarget(name) + ":0.0") — the
-// '=' binds to the session part.
+// exact-only.
+//
+// CRUCIAL: tmux parses the '=' marker off the SESSION (and window) parts
+// of a target only (cmd-find.c "Set exact match flags"). A bare
+// ExactTarget(name) is therefore valid ONLY for commands whose -t is a
+// target-session (has-session, kill-session, attach-session,
+// switch-client, list-clients, detach-client -s). For a target-pane /
+// target-window command (send-keys, display-message, capture-pane,
+// set-option, list-panes, paste-buffer) a colon-less target lands whole
+// in the pane/window slot where the '=' is NEVER stripped — the lookup
+// then hunts for a pane literally named "=name" and fails (or, with
+// CANFAIL commands, silently acts on the "current" state). For those,
+// qualify the target: ExactTarget(name) + ":" pins the session exactly
+// and keeps tmux's "current window / active pane" resolution (an empty
+// window/pane part is the same as none — cmd-find.c "Empty is the same
+// as NULL"), and ExactTarget(name) + ":0.0" addresses window 0 pane 0
+// explicitly.
 func ExactTarget(sessionName string) string {
 	return "=" + sessionName
 }
