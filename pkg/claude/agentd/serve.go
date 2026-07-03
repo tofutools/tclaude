@@ -537,6 +537,9 @@ func buildMux() http.Handler {
 	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
+	// Role library (JOH-240). Reads open, writes gated on roles.manage.
+	mux.HandleFunc("/v1/roles", handleRoles)
+	mux.HandleFunc("/v1/roles/{name}", handleRoleByName)
 	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)

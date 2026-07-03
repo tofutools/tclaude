@@ -63,6 +63,10 @@ type templateAgentJSON struct {
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions"`
 
+	// RoleRef references a role in the role library (JOH-240): the agent
+	// inherits that role's defaults beneath its own overrides. Empty = none.
+	RoleRef string `json:"role_ref,omitempty"`
+
 	// Per-role launch profile (JOH-239): a spawn-profile reference by name plus
 	// inline launch overrides (harness/model/effort/sandbox/approval) that win
 	// over it. All optional — absent = inherit the group default at instantiate.
@@ -101,6 +105,9 @@ type templateExportEnvelope struct {
 	FormatVersion int          `json:"format_version"`
 	ExportedAt    string       `json:"exported_at,omitempty"`
 	Template      templateJSON `json:"template"`
+	// Roles embeds the referenced role definitions (JOH-240) so the export
+	// round-trips through the CLI; import re-creates any missing on the target.
+	Roles []roleJSON `json:"roles,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents.
@@ -214,6 +221,9 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		}
 		if a.Role != "" {
 			tags = append(tags, "role="+a.Role)
+		}
+		if a.RoleRef != "" {
+			tags = append(tags, "role_ref="+a.RoleRef)
 		}
 		if len(a.Permissions) > 0 {
 			tags = append(tags, "perms="+strings.Join(a.Permissions, ","))
