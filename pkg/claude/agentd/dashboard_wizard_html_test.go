@@ -1082,3 +1082,90 @@ func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
 		t.Error("wizard config footer must be scoped to #tab-config, not bare .cfg-footer")
 	}
 }
+
+// TestDashboardHTML_WizardWindowButton pins the wizard re-skin of the top-bar
+// 🪟 windows… launcher (#window-all-btn) — the sibling of the 📖 Spellbook
+// launcher beside it. Its own ID rule out-specifies the flat
+// `body.wizard header button` skin, so a dedicated rule re-states the arcane
+// chrome; a per-theme label span swap re-letters it "👁 familiars…" (matching
+// how the neighbouring Power On / Shutdown chips swap labels). Purely front-end
+// like the rest of the wizard theme, so we string-search the embedded source.
+func TestDashboardHTML_WizardWindowButton(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Label copy: a pure-CSS span swap, "🪟 windows…" → "👁 familiars…". Both
+	// spans must exist in the HTML and the swap rules in CSS. The default-hide
+	// of the wizard span is load-bearing — without it BOTH labels would render
+	// side by side outside wizard mode.
+	must(`<span class="win-label-regular">🪟 windows…</span>`, "the default windows-button label span")
+	must(`<span class="win-label-wizard">👁 familiars…</span>`, "the wizard windows-button label span")
+	must(".win-label-wizard { display: none; }", "the wizard label is hidden outside wizard mode")
+	must("body.wizard .win-label-regular { display: none; }", "wizard hides the default windows label")
+	must("body.wizard .win-label-wizard { display: inline; }", "wizard shows the familiars label")
+
+	// The button chrome is re-skinned arcane, scoped to its id so it out-specifies
+	// the flat header-button wizard skin (the same reason the palette button needs
+	// its own rule).
+	must("body.wizard #window-all-btn {", "the windows button gets the arcane chrome re-skin")
+	must("body.wizard #window-all-btn:hover", "the windows button has a wizard hover re-skin")
+
+	// WCAG 2.5.3 Label-in-Name: the visible label swaps per theme, so the
+	// aria-label must carry BOTH voices — the arcane "familiars" AND the plain
+	// "windows" — so a speech-input user saying either matches.
+	must(`aria-label="Reveal or veil familiars — focus or unfocus agent terminal windows"`,
+		"the windows button aria-label carries both the arcane 'familiars' and plain 'windows' voices")
+}
+
+// TestDashboardHTML_WizardWindowModal pins the wizard re-skin of the bulk
+// focus/unfocus dialog (#window-modal) the button opens. The dialog reuses the
+// shared .cleanup-modal shell, so like the retire / edit-member re-skins every
+// rule is scoped to #window-modal — the title span-swap, the arcane surface, and
+// the gilded submit lever. Purely front-end like the rest of the wizard theme,
+// so we string-search the embedded source.
+func TestDashboardHTML_WizardWindowModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Agent windows" → "Familiars' windows".
+	must(`<span class="window-title-regular">Agent windows</span>`, "the default window-modal title span")
+	must(`<span class="window-title-wizard">Familiars' windows</span>`, "the wizard window-modal title span")
+	must(".window-title-wizard { display: none; }", "the wizard title is hidden outside wizard mode")
+	must("body.wizard #window-title .window-title-regular { display: none; }", "wizard hides the default title")
+	must("body.wizard #window-title .window-title-wizard { display: inline; }", "wizard shows the familiars title")
+
+	// The whole dialog surface is re-skinned arcane, scoped to #window-modal.
+	must("body.wizard #window-modal .cleanup-modal {", "the window dialog surface is re-skinned")
+	must("body.wizard #window-modal .cleanup-modal h3", "the dialog title is re-skinned")
+	must("body.wizard #window-modal .window-direction", "the focus/unfocus direction picker is re-skinned")
+	must("body.wizard #window-modal .window-role-chip", "the group/role quick-select chips are re-skinned")
+	must("body.wizard #window-modal .cleanup-list", "the candidate list is re-skinned")
+
+	// The submit keeps its JS-set live-count label ("Focus 3 agents") visible —
+	// unlike the static Summon / Banish levers it is only gilded, not glyph-swapped.
+	must("body.wizard #window-modal #window-submit {", "the submit button gets the gilded lever chrome")
+	// Cancel gets the tarnished-gold secondary treatment (scoped away from the submit).
+	must("body.wizard #window-modal .modal-buttons button:not(#window-submit)", "Cancel gets the secondary arcane skin")
+}
+
+// TestDashboardCSS_WizardWindowModalScoped guards that the wizard window-dialog
+// re-skin stays scoped to #window-modal. The dialog is a .cleanup-modal shared
+// with the worktree-cleanup / retire-preview / delete-agent dialogs, so an
+// unscoped `body.wizard .cleanup-modal { … }` would repaint all of them —
+// exactly the leak the sibling spawn/retire/edit-member scope guards catch.
+func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #window-modal .cleanup-modal") {
+		t.Error("wizard window re-skin missing its #window-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
+		t.Error("wizard window re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-agent dialogs too")
+	}
+}
