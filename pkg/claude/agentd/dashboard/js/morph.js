@@ -287,8 +287,9 @@ function morphChildren(fromParent, toParent) {
 //
 // The fresh HTML is parsed inside a clone of the container's OWN tag, so
 // context-sensitive fragments parse correctly — a bare <tr>/<td>/<tbody> only
-// parses as such inside a table-family element, and the six live containers are
-// plain <div>s that legitimately hold <table>…/<details>… fragments.
+// parses as such inside a table-family element, and the live containers are
+// plain flow-content elements (<div>, and the Messages sidebar's <aside>) that
+// legitimately hold <table>…/<details>…/row fragments.
 export function morphInto(container, html) {
   // First paint (empty container): nothing to preserve, so the plain innerHTML
   // assignment is both simpler and cheaper than reconciling against nothing.
