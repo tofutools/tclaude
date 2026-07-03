@@ -39,6 +39,7 @@ import { loadRoles, cachedRoles } from './roles.js';
 let templateEditorEditing = null;
 let templateEditorAgents = [];
 let templateEditorPattern = [];
+let templateEditorProcess = [];
 
 function filterTemplates(list, q) {
   if (!q) return list;
@@ -118,6 +119,7 @@ function templateCardHTML(t) {
       ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
       <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
       ${(t.work_pattern || []).length ? `<span class="tc-count" title="${wizWord('work pattern — ordered briefing messages delivered after the team spawns', 'rite of command — ordered whispers delivered once the party stands')}">⇶ ${(t.work_pattern || []).length}-step ${wizWord('pattern', 'rite')}</span>` : ''}
+      ${(t.process || []).length ? `<span class="tc-count" title="${wizWord('process — an ordered, advisory phase plan tracked at runtime', 'quest plan — an ordered, advisory chapter plan tracked as the party works')}">◆ ${(t.process || []).length}-${wizWord('phase', 'chapter')} ${wizWord('process', 'quest')}</span>` : ''}
       <span class="tc-actions">
         <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
         <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
@@ -186,8 +188,12 @@ function openTemplateEditor(tmpl) {
   templateEditorPattern = tmpl
     ? (tmpl.work_pattern || []).map(e => ({ send_to: e.send_to || 'all', value: e.value || '' }))
     : [];
+  templateEditorProcess = tmpl
+    ? (tmpl.process || []).map(ph => ({ name: ph.name || '', roles: (ph.roles || []).slice(), criteria: ph.criteria || '' }))
+    : [];
   renderEditorAgents();
   renderEditorPattern();
+  renderEditorProcess();
   // Fill the role-library cache so the per-agent role dropdown has options, then
   // re-render the rows (the first render used whatever was already cached). A
   // load failure just leaves the dropdowns with the "(none)" option.
@@ -316,6 +322,48 @@ function scrapeEditorPattern() {
   }));
 }
 
+// ---- Process phase rows (JOH-242) -------------------------------------
+//
+// The template's advisory process: an ORDERED list of phases (the party's
+// quest plan / chapters), each a {name, roles, criteria}. It is rendered
+// into every agent's briefing and tracked at runtime, but NOT enforced. The
+// rows reuse the agent-row panel chrome (.template-agent-row) so the wizard
+// re-skin covers them for free. Roles are a comma-separated free-text field
+// (matched case-insensitively against a member's role; "all" = everyone).
+
+function renderEditorProcess() {
+  $('#template-editor-process').innerHTML =
+    templateEditorProcess.map((ph, i) => processRowHTML(ph, i)).join('');
+}
+
+function processRowHTML(ph, idx) {
+  const roles = (ph.roles || []).join(', ');
+  return `<div class="template-agent-row template-process-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Phase', 'Chapter')} ${idx + 1}</span>
+      <button type="button" class="tool tpp-up" title="Move this phase up">↑</button>
+      <button type="button" class="tool tpp-down" title="Move this phase down">↓</button>
+      <button type="button" class="tool tpp-remove" title="Remove this phase">✕</button>
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="tpp-name" placeholder="phase name (e.g. design, build, review)" value="${esc(ph.name || '')}" />
+      <input type="text" class="tpp-roles" placeholder="active roles, comma-separated (e.g. dev, reviewer; 'all' = everyone)" value="${esc(roles)}" />
+    </div>
+    <textarea class="tpp-criteria" rows="2" placeholder="criteria — entry / exit / handoff in plain words (advisory, not enforced)">${esc(ph.criteria || '')}</textarea>
+  </div>`;
+}
+
+// scrapeEditorProcess reads the process rows back into templateEditorProcess
+// — same never-lose-typed-values contract as scrapeEditorPattern. Roles are
+// split on commas and trimmed; blank entries drop.
+function scrapeEditorProcess() {
+  templateEditorProcess = $$('#template-editor-process .template-process-row').map(row => ({
+    name: $('.tpp-name', row).value.trim(),
+    roles: $('.tpp-roles', row).value.split(',').map(s => s.trim()).filter(Boolean),
+    criteria: $('.tpp-criteria', row).value,
+  }));
+}
+
 // scrapeEditorAgents reads the agent rows back into templateEditorAgents
 // — called before any add/remove (which re-renders the container) and
 // before submit, so typed-but-uncommitted values are never lost.
@@ -340,6 +388,7 @@ function scrapeEditorAgents() {
 async function submitTemplateEditor() {
   scrapeEditorAgents();
   scrapeEditorPattern();
+  scrapeEditorProcess();
   const name = $('#template-editor-name').value.trim();
   const errEl = $('#template-editor-error');
   errEl.textContent = '';
@@ -350,6 +399,7 @@ async function submitTemplateEditor() {
     default_context: $('#template-editor-context').value,
     agents: templateEditorAgents,
     work_pattern: templateEditorPattern,
+    process: templateEditorProcess,
   };
   const editing = templateEditorEditing;
   const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
@@ -954,6 +1004,26 @@ function bindTemplatesUI() {
     else if (btn.classList.contains('tw-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
     else if (btn.classList.contains('tw-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
     renderEditorPattern();
+  });
+  // Process phase rows: add / remove / reorder (JOH-242, delegated — the
+  // container re-renders on every mutation).
+  $('#template-editor-add-phase').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    scrapeEditorProcess();
+    templateEditorProcess.push({ name: '', roles: [], criteria: '' });
+    renderEditorProcess();
+  });
+  $('#template-editor-process').addEventListener('click', e => {
+    const btn = e.target.closest('.tpp-remove, .tpp-up, .tpp-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-process-row').dataset.idx, 10);
+    scrapeEditorProcess();
+    const arr = templateEditorProcess;
+    if (btn.classList.contains('tpp-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('tpp-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('tpp-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorProcess();
   });
   bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
 

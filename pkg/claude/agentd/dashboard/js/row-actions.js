@@ -349,6 +349,30 @@ function bindRowActions() {
           renderGroupsTab();
           return;
         }
+        case 'advance-phase': {
+          // Advance the group's advisory process to the NEXT phase (JOH-242).
+          // A deliberate act that records a transition and nudges the entering
+          // roles, so confirm first. Server-gated (process.advance / owner-pass)
+          // — a non-permitted click surfaces as a 403 toast.
+          const confirmed = await confirmModal({
+            title: 'Advance the process?',
+            body: 'Moves this group to the next phase and nudges the roles active in it. Advisory — you can correct it later with `process advance --to <phase>`.',
+            meta: group,
+            okLabel: 'Advance',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/process/advance`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!r.ok) { toast(`Advance failed: ${await r.text()}`, true); return; }
+          const res = await r.json().catch(() => null);
+          if (res && res.to) toast(`${group}: → ${res.to} (${res.notified || 0} nudged)`);
+          else toast(`${group}: process advanced`);
+          refresh();
+          return;
+        }
         case 'remove-member': {
           const confirmed = await confirmModal({
             title: 'Remove member from group?',

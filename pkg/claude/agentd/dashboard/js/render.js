@@ -493,6 +493,36 @@ function groupActivityChip(members) {
   return groupActivityHTML(members, st.regular, st.slop, st.wizard);
 }
 
+// groupProcessChip renders a group's advisory process state (JOH-242) as a
+// compact "◆ phase 2/5: review" chip plus an advance control, both in the
+// group summary. The chip's title tooltip carries the ordered phase map (the
+// current phase marked, with its roles) and the transition log. Returns '' for
+// a group with no process. The advance button is gated server-side
+// (process.advance / owner-pass); a non-permitted click just gets a 403 toast.
+function groupProcessChip(g) {
+  const p = g.process;
+  if (!p || !p.phases || !p.phases.length) return '';
+  const idx = typeof p.phase_index === 'number' ? p.phase_index : -1;
+  const chipText = idx >= 0
+    ? `◆ phase ${idx + 1}/${p.phase_count}: ${p.current_phase}`
+    : `◆ ${p.current_phase}`;
+  const mapLines = p.phases.map((ph, i) => {
+    const mark = ph.current ? '▸ ' : '  ';
+    const roles = (ph.roles && ph.roles.length) ? ph.roles.join(', ') : 'any';
+    return `${mark}${i + 1}. ${ph.name} [${roles}]`;
+  });
+  const trLines = (p.transitions || []).map(t => `${t.from || '(start)'} → ${t.to}`);
+  const titleParts = ['Advisory process — tracked, not enforced', '', ...mapLines];
+  if (trLines.length) titleParts.push('', 'transitions:', ...trLines);
+  const title = titleParts.join('\n');
+  const next = idx >= 0 && idx + 1 < p.phase_count ? p.phases[idx + 1].name : '';
+  const advanceTip = next
+    ? `Advance to the next phase (${next})`
+    : 'Advance this group’s process';
+  return `<span class="group-process-chip" title="${esc(title)}">${esc(chipText)}</span>`
+    + `<button class="group-process-advance" data-act="advance-phase" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(advanceTip)}">▸ advance</button>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     // The button label the hint names swaps per theme too (the same
@@ -559,6 +589,7 @@ function renderGroups(groups) {
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
         ${groupActivityChip(members)}
+        ${groupProcessChip(g)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
