@@ -993,8 +993,8 @@
     <div class="vegas-card">
       <!-- Two intros, one shown per theme (CSS): the casino welcome for
            slop / regular-opt-in, the tavern welcome for wizard mode. -->
-      <p class="vegas-intro vegas-intro-vegas">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
-      <p class="vegas-intro vegas-intro-wizard">🍺 Welcome to the Tavern, traveller. Rest by the fire, mind your coin purse, and let the bard play on. 🔮</p>
+      <p class="vegas-intro vegas-intro-vegas">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack.&nbsp;🎰</p>
+      <p class="vegas-intro vegas-intro-wizard">🍺 Welcome to the Tavern, traveller. Rest by the fire, mind your coin purse, and let the bard play on.&nbsp;🔮</p>
       <div id="vegas-player"></div>
     </div>
     <!-- Hints, one shown per mode (CSS). slop: music tied to the 🎰 theme.
@@ -1003,6 +1003,14 @@
     <p class="vegas-hint vegas-hint-slop">Music plays as long as slop mode is on — leave the mode (click the 🎰 in the header) to stop it.</p>
     <p class="vegas-hint vegas-hint-wizard">The Tavern radio plays as long as wizard mode is on — leave the mode (click the 🧙 in the header) to stop it.</p>
     <p class="vegas-hint vegas-hint-regular">Music plays whenever the dashboard is open. Use the 🔊 and 🎚️ controls in the header to mute or set the volume; turn this off again under <strong>Vegas music</strong> on the Config tab.</p>
+    <!-- Persistent SomaFM attribution: the radio streams SomaFM's
+         commercial-free, listener-supported channels (both the 🎰 Vegas
+         lounge and the 🧙 Tavern), so credit + link back to them. A follow-up
+         line below the mode hints (not inside the card / injected by vegas.js),
+         so the music's origin always shows — even when sound is muted and
+         #vegas-player never builds. One line for every mode; the wizard block
+         repaints it. -->
+    <p class="vegas-credit">🎵 Brought to you by <a href="https://somafm.com/" target="_blank" rel="noopener">SomaFM&nbsp;↗</a> — commercial-free, listener-supported radio.</p>
     <!-- High-rollers leaderboard — slop-credits.js renders agent jackpot
          rankings (this session) in here, with a 🔥 on any agent on a
          hot streak. Empty placeholder until the first jackpot lands. -->

@@ -3671,9 +3671,24 @@ body:has(#tab-terminals.active) > nav {
 /* The card holds the welcome intro (its header) above the dynamic player
    content (song/station/audio, injected into #vegas-player by vegas.js). */
 .vegas-card {
-  max-width: 720px;
+  /* Size to the intro's natural one-line width, clamped so the usable text
+     width lands in [676px, 756px]. The shorter Vegas copy floors there
+     (unchanged); the longer wizard/Tavern copy auto-expands so its trailing
+     decorative emoji still fits on the same line instead of wrapping. The
+     min() clamps fold to 100% of the container on a narrow viewport so the
+     card never overflows; past the ceiling the intro wraps and text-wrap:
+     balance (on .vegas-intro) keeps that graceful.
+
+     The 30px side padding is the breathing room between the text and the gold
+     edge (fit-content otherwise hugs the text). The min/max-width bounds are
+     the old 720/800 grown by 2×(30−22) so that added padding widens the card,
+     not the text column — the usable width, and thus the one-line behaviour,
+     is unchanged. */
+  width: fit-content;
+  min-width: min(736px, 100%);
+  max-width: min(816px, 100%);
   margin: 0 auto;
-  padding: 22px;
+  padding: 22px 30px;
   background: linear-gradient(180deg, #1a0606 0%, #2a0808 100%);
   border: 1px solid #ffd700;
   border-radius: 10px;
@@ -3685,6 +3700,11 @@ body:has(#tab-terminals.active) > nav {
   font-size: 15px;
   margin: 0;
   text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+  /* Balance the wrap so the longer wizard/Tavern line doesn't orphan its
+     trailing decorative emoji onto a line of its own — see the &nbsp; glue in
+     dashboard.html, which keeps that emoji attached to the last word as a
+     fallback where text-wrap: balance is unsupported. */
+  text-wrap: balance;
 }
 .vegas-hint {
   text-align: center;
@@ -3707,6 +3727,22 @@ body.vegas:not(.slop):not(.wizard) .vegas-hint-regular { display: block; }
    with no dead space. :empty matches because stopMusic/replaceChildren
    leaves it with zero children. */
 #vegas-player:not(:empty) { margin-top: 16px; }
+/* "Brought to you by SomaFM" credit — a follow-up line below the mode hints
+   that always names the music's source (see the static markup in
+   dashboard.html). Mirrors the .vegas-hint look (centered muted gold on the
+   page, below the card); the wizard block repaints it purple. */
+.vegas-credit {
+  text-align: center;
+  margin-top: 12px;
+  color: #c9a86b;
+  font-size: 12px;
+}
+.vegas-credit a {
+  color: #ffe88c;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.5);
+  text-decoration: none;
+}
+.vegas-credit a:hover { color: #fff; border-bottom-color: #fff; }
 .vegas-nowplaying {
   margin-bottom: 14px;
   letter-spacing: 0.4px;
@@ -4740,6 +4776,9 @@ body.wizard .vegas-channel option,
 body.wizard .vegas-group option { color: #1a1330; background: #e7d9f5; }
 body.wizard .vegas-elapsed-line,
 body.wizard .vegas-hint { color: #b39ddb; }
+body.wizard .vegas-credit { color: #b39ddb; }
+body.wizard .vegas-credit a { color: #e7d9f5; border-bottom-color: rgba(231, 217, 245, 0.5); }
+body.wizard .vegas-credit a:hover { color: #fff; border-bottom-color: #fff; }
 
 /* Header HUD (sound switch + volume) shows in wizard mode; the 🪙 credits
    tally, 🔔 FX slider and high-rollers leaderboard are casino-FX-only (there
@@ -6959,6 +6998,87 @@ body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
   75% { transform: translate(-4px, 3px); }
 }
 
+/* ─── Wizard filter bars — arcane scrying inputs (body.wizard) ────────
+   Every tab's `.filter-bar` (Parties, Labours, Plugins, the Wards' Sudo
+   list, the Chronicle/Audit search, the Runes/Logs search, the Treasury's
+   agent-table filter …) shares one chrome, so one general re-skin themes
+   them all: a violet-void scrying field with gilt runes, a dim-violet
+   count, arcane toggles + selects, and gilded primary/secondary levers.
+   These stay GENERAL (class-only) so the more-specific id-scoped filter
+   bars — the Config tab and the profile/perm-edit modals — keep their own
+   rules by specificity; this block is the fallback for every other bar.
+   The Treasury's span selector (#costs-spans) is a bespoke segmented
+   control the Costs re-skin gilds itself, so its `.tool` buttons opt out
+   below. Palette matches the rest of the wizard chrome: void #140f28,
+   violet frame rgba(122,93,176,.5), gilt text #f3e6c0, arcane focus. */
+body.wizard .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard .filter-bar input::placeholder { color: #8f7bbf; font-style: italic; }
+body.wizard .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard .filter-bar .filter-count { color: #b39ddb; }
+body.wizard .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+/* Muted trailing notes (retention line, log status). */
+body.wizard .filter-bar .muted { color: #9a86c4; }
+/* Inline toggle labels (outcome/source, level/since, rotated/stream, the
+   view-menu items) + their little dropdowns. */
+body.wizard .filter-bar label.filter-toggle { color: #b39ddb; }
+body.wizard .filter-bar label.filter-toggle:hover { color: #f3e6c0; }
+body.wizard .filter-bar label.filter-toggle select {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+/* View popover — the "▾ view" trigger, its badge and drop panel. */
+body.wizard .filter-bar .view-btn { color: #b39ddb; }
+body.wizard .filter-bar .view-btn:hover,
+body.wizard .filter-bar .view-btn[aria-expanded="true"] { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .filter-bar .view-badge { background: #d9b45a; color: #1e1640; }
+body.wizard .view-menu {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard .view-menu label.filter-toggle:hover { background: #241b3d; }
+/* Secondary "⟳" tool levers (Plugins' check-all, the Runes refresh).
+   #costs-spans opts out — the Treasury gilds its own span control. */
+body.wizard .filter-bar:not(#costs-spans) button.tool {
+  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard .filter-bar:not(#costs-spans) button.tool:hover {
+  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+}
+/* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
+   wizard rule (Parties + Labours already carry gilded overrides above). */
+body.wizard .filter-bar button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard .filter-bar button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* ─── Wizard Wards sub-nav — the three chambers of access control ─────
+   The Access tab's inset segmented control (Permissions / Slug registry /
+   Sudo) still wore the app-default grey in wizard mode. Re-skin the frame
+   to arcane violet-void, dim-violet idle tabs, and a gilt-lit active
+   chamber, plus a light violet tint on the intro copy so the whole tab
+   reads as themed. */
+body.wizard .access-subnav {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard .access-subtab { color: #b39ddb; }
+body.wizard .access-subtab:hover { color: #f3e6c0; }
+body.wizard .access-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+body.wizard .access-intro,
+body.wizard .access-sub-intro { color: #b39ddb; }
+body.wizard .access-intro strong { color: #f3e6c0; }
+
 /* ─── Wizard cogwheels — enchanted clockwork (body.wizard) ───────────
    Every ⚙ "more actions" cog — the filter-bar "more group actions" cog,
    the per-agent-row cog and the per-group-header cog — turns into a
@@ -7675,10 +7795,12 @@ body.wizard #costs-summary .muted { color: #8f7bbf; }
 body.wizard #costs-summary .cost-sep { color: #4a3a6b; }
 
 /* ─── Span buttons + month stepper: gild the active/blue states ────────
-   The generic filter-bar chrome stays app-default in wizard mode (as on
-   every tab), but the costs-specific BLUE active-span border would clash
-   with the violet/gold palette, so it gilds; the stepper divider warms to
-   match. */
+   The generic filter-bar chrome is themed by the shared `body.wizard
+   .filter-bar …` block, but that block deliberately excludes #costs-spans'
+   `.tool` buttons (`:not(#costs-spans)`) so this bespoke segmented control
+   keeps its own treatment: the costs-specific BLUE active-span border would
+   clash with the violet/gold palette, so it gilds; the stepper divider
+   warms to match. */
 body.wizard #costs-spans button.tool.active {
   border-color: #d9b45a; color: #f3e6c0; background: #2c2150;
   box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);

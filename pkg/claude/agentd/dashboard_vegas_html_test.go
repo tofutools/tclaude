@@ -54,6 +54,15 @@ func TestDashboardHTML_VegasTab(t *testing.T) {
 	must(`id="tab-vegas"`, "the Vegas tab section ships")
 	must(`id="vegas-player"`, "the iframe host vegas.js targets ships")
 
+	// Persistent "brought to you by SomaFM" credit — a static card-footer
+	// link so the user always knows where the music comes from, even when
+	// muted (the player chrome only links SomaFM on a stream error). Pin the
+	// class, the somafm.com link, and the CSS hook so a refactor that drops
+	// the attribution fails here.
+	must(`class="vegas-credit"`, "the SomaFM credit line ships")
+	must(`href="https://somafm.com/"`, "the credit links to SomaFM's site")
+	must(".vegas-credit {", "the credit CSS ships")
+
 	// CSS: the nav button is hidden by default — the tab must not leak into
 	// a plain dashboard — and revealed in slop mode OR the regular-mode
 	// opt-in (body.vegas), so both reveal selectors must ship.
