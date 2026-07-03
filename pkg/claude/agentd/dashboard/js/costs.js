@@ -563,6 +563,44 @@ function bindCostsChainHover() {
   tbl.addEventListener('mouseleave', () => { if (current) setHL(null); });
 }
 
+// bindCostsChartTip wires the cursor-following day tooltip for the chart.
+// The chart's innerHTML is rebuilt on every re-poll, so we delegate on the
+// stable #costs-chart container (which persists) and float a single tooltip
+// element on document.body — position:fixed keyed off clientX/clientY, so it
+// survives the re-render and needs no offset-parent math. Only columns
+// carrying data-tip react (empty days have none); the tip is placed just
+// off the cursor and flips to the other side near a viewport edge so it
+// never spills off-screen.
+function bindCostsChartTip() {
+  const chart = $('#costs-chart');
+  if (!chart) return;
+  let tipEl = null;
+  const hide = () => { if (tipEl) tipEl.style.display = 'none'; };
+  const show = (e, text) => {
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.className = 'cost-tip';
+      document.body.appendChild(tipEl);
+    }
+    tipEl.textContent = text;
+    tipEl.style.display = 'block';
+    const pad = 14;
+    const r = tipEl.getBoundingClientRect();
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    if (x + r.width > window.innerWidth - 4) x = e.clientX - pad - r.width;
+    if (y + r.height > window.innerHeight - 4) y = e.clientY - pad - r.height;
+    tipEl.style.left = Math.max(4, x) + 'px';
+    tipEl.style.top = Math.max(4, y) + 'px';
+  };
+  chart.addEventListener('mousemove', e => {
+    const col = e.target.closest('.cost-col[data-tip]');
+    if (!col) { hide(); return; }
+    show(e, col.getAttribute('data-tip'));
+  });
+  chart.addEventListener('mouseleave', hide);
+}
+
 // reRenderCostTable re-draws just the breakdown from the data already in
 // hand — the shared path for a sort-header click or a filter keystroke,
 // neither of which needs a refetch (the chart/summary are unaffected).
@@ -863,6 +901,7 @@ function goMonth(delta) {
 function bindCostsTab() {
   $('nav button[data-tab="costs"]').addEventListener('click', () => { loadCosts(); loadCostFactor(); });
   bindCostsChainHover();
+  bindCostsChartTip();
   bindCostsSort();
   bindCostsFilter();
   // Cost display multiplier: debounce typing so a few keystrokes settle
