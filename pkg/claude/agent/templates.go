@@ -62,13 +62,23 @@ type templateAgentJSON struct {
 	Permissions    []string `json:"permissions"`
 }
 
+// workPatternEntryJSON mirrors the daemon's wire shape for one
+// work-pattern step: an ordered, routed briefing message delivered
+// after the whole roster has spawned. send_to is a template-agent name
+// or "all"; value may carry {{task}}.
+type workPatternEntryJSON struct {
+	SendTo string `json:"send_to"`
+	Value  string `json:"value"`
+}
+
 type templateJSON struct {
-	Name           string              `json:"name"`
-	Descr          string              `json:"descr,omitempty"`
-	DefaultContext string              `json:"default_context,omitempty"`
-	Agents         []templateAgentJSON `json:"agents"`
-	CreatedAt      string              `json:"created_at,omitempty"`
-	UpdatedAt      string              `json:"updated_at,omitempty"`
+	Name           string                 `json:"name"`
+	Descr          string                 `json:"descr,omitempty"`
+	DefaultContext string                 `json:"default_context,omitempty"`
+	Agents         []templateAgentJSON    `json:"agents"`
+	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
+	CreatedAt      string                 `json:"created_at,omitempty"`
+	UpdatedAt      string                 `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents.
@@ -196,6 +206,16 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		}
 		if brief := strings.TrimSpace(a.InitialMessage); brief != "" {
 			for _, line := range strings.Split(a.InitialMessage, "\n") {
+				fmt.Fprintf(stdout, "       │ %s\n", line)
+			}
+		}
+	}
+	if len(t.WorkPattern) > 0 {
+		fmt.Fprintf(stdout, "  work pattern (%d step%s, delivered in order after the roster spawns):\n",
+			len(t.WorkPattern), plural(len(t.WorkPattern)))
+		for i, e := range t.WorkPattern {
+			fmt.Fprintf(stdout, "    %d. → %s\n", i+1, e.SendTo)
+			for _, line := range strings.Split(e.Value, "\n") {
 				fmt.Fprintf(stdout, "       │ %s\n", line)
 			}
 		}
@@ -393,11 +413,13 @@ type instantiateAgentResult struct {
 }
 
 type instantiateResponse struct {
-	Group    string                   `json:"group"`
-	Template string                   `json:"template"`
-	Agents   []instantiateAgentResult `json:"agents"`
-	Spawned  int                      `json:"spawned"`
-	Failed   int                      `json:"failed"`
+	Group            string                   `json:"group"`
+	Template         string                   `json:"template"`
+	Agents           []instantiateAgentResult `json:"agents"`
+	Spawned          int                      `json:"spawned"`
+	Failed           int                      `json:"failed"`
+	PatternDelivered int                      `json:"pattern_delivered"`
+	PatternErrors    []string                 `json:"pattern_errors"`
 }
 
 func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -450,6 +472,13 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 			tags = append(tags, "granted: "+strings.Join(a.Granted, ","))
 		}
 		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
+	}
+	if resp.PatternDelivered > 0 {
+		fmt.Fprintf(stdout, "  work pattern: %d message%s delivered\n",
+			resp.PatternDelivered, plural(resp.PatternDelivered))
+	}
+	for _, e := range resp.PatternErrors {
+		fmt.Fprintf(stdout, "  ⚠ work pattern: %s\n", e)
 	}
 	// A partial (or total) spawn failure is a non-zero exit so scripts
 	// notice — the group + any spawned agents still exist for the human

@@ -1404,3 +1404,24 @@ func TestDashboardHTML_FromGroupUpdateMode(t *testing.T) {
 	must(`content: "🕯 Re-trace it!"`, "the wizard lever reads Re-trace in update mode")
 	must(`content: "🕯 Re-tracing…"`, "the busy wizard lever reads Re-tracing in update mode")
 }
+
+// TestDashboardHTML_TemplateWorkPatternEditor pins the template editor's
+// work-pattern section (JOH-336): the ordered routed-briefing rows, the
+// add-step button's two voices, the submit wiring, and the wizard skin
+// for the rows' send-to select.
+func TestDashboardHTML_TemplateWorkPatternEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-editor-pattern"`, "the pattern rows container ships")
+	must(`id="template-editor-add-pattern"`, "the add-step button ships")
+	must(`<span class="tpl-word-regular">Work pattern</span><span class="tpl-word-wizard">Rite of command</span>`, "the section heading ships both voices")
+	must("function renderEditorPattern()", "the pattern renderer exists")
+	must("work_pattern: templateEditorPattern", "submit sends the pattern")
+	must("{{task}}", "the task placeholder is documented in the row placeholder")
+	must("body.wizard #template-editor-modal select.tw-sendto", "the send-to select gets the arcane skin")
+}

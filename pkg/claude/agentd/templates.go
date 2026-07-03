@@ -47,15 +47,25 @@ type templateAgentJSON struct {
 	Permissions    []string `json:"permissions"`
 }
 
+// workPatternEntryJSON is the wire shape for one work-pattern step —
+// a routed briefing message: send_to is a roster agent's template-name
+// or "all"; value may carry {{task}}, replaced with the
+// per-instantiation task at delivery.
+type workPatternEntryJSON struct {
+	SendTo string `json:"send_to"`
+	Value  string `json:"value"`
+}
+
 // templateJSON is the wire shape for a whole template. CreatedAt /
 // UpdatedAt are response-only (ignored on input).
 type templateJSON struct {
-	Name           string              `json:"name"`
-	Descr          string              `json:"descr,omitempty"`
-	DefaultContext string              `json:"default_context,omitempty"`
-	Agents         []templateAgentJSON `json:"agents"`
-	CreatedAt      string              `json:"created_at,omitempty"`
-	UpdatedAt      string              `json:"updated_at,omitempty"`
+	Name           string                 `json:"name"`
+	Descr          string                 `json:"descr,omitempty"`
+	DefaultContext string                 `json:"default_context,omitempty"`
+	Agents         []templateAgentJSON    `json:"agents"`
+	WorkPattern    []workPatternEntryJSON `json:"work_pattern"`
+	CreatedAt      string                 `json:"created_at,omitempty"`
+	UpdatedAt      string                 `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -66,6 +76,10 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		Descr:          t.Descr,
 		DefaultContext: t.DefaultContext,
 		Agents:         []templateAgentJSON{},
+		WorkPattern:    []workPatternEntryJSON{},
+	}
+	for _, e := range t.WorkPattern {
+		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
 	}
 	if !t.CreatedAt.IsZero() {
 		out.CreatedAt = t.CreatedAt.Format(time.RFC3339)
@@ -120,6 +134,8 @@ func collectTemplatesSnapshot() []templateJSON {
 //     and unique within the template
 //   - each agent's initial_message clears the inbox charset/length rule
 //   - each permission slug is registered (catches typos early)
+//   - each work-pattern step names a roster agent (or "all") and its
+//     value clears the same inbox charset/length rule
 //
 // Multiple agents may be marked owner — a group can have several
 // owners, and a from-group snapshot of a multi-owner group must
@@ -156,6 +172,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 					fmt.Sprintf("agent %q: name must not contain control characters", an)}
 			}
 		}
+		if an == "all" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				`agent name "all" is reserved — it is the work_pattern broadcast target`}
+		}
 		if seenNames[an] {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 				fmt.Sprintf("duplicate agent name %q — each agent in a template needs a distinct name", an)}
@@ -191,6 +211,34 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
 		})
+	}
+
+	// Work pattern (JOH-336): every step must route somewhere real and
+	// clear the inbox rule its delivery will be held to. Validated AFTER
+	// the roster so send_to can check the full name set. The step cap is
+	// a sanity bound, far above any real choreography.
+	const maxWorkPatternSteps = 32
+	if len(body.WorkPattern) > maxWorkPatternSteps {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("work_pattern: at most %d steps", maxWorkPatternSteps)}
+	}
+	for i, e := range body.WorkPattern {
+		sendTo := strings.TrimSpace(e.SendTo)
+		if sendTo != "all" && !seenNames[sendTo] {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("work_pattern step #%d: send_to %q is neither \"all\" nor a template agent name", i+1, sendTo)}
+		}
+		val := strings.TrimSpace(e.Value)
+		if val == "" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("work_pattern step #%d: value is required", i+1)}
+		}
+		if !isValidInitialMessage(val) {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("work_pattern step #%d: value must be at most %d characters; newlines and tabs "+
+					"are allowed but other control characters are not", i+1, agent.MaxInitialMessageBytes)}
+		}
+		t.WorkPattern = append(t.WorkPattern, db.WorkPatternEntry{SendTo: sendTo, Value: val})
 	}
 	return t, nil
 }
@@ -438,6 +486,10 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 
 	results := []instantiateAgentResult{}
 	spawned, failed := 0, 0
+	// Successful spawns by template-agent name (and in spawn order) —
+	// the routing table for the work-pattern deliveries below.
+	spawnedConvs := map[string]string{}
+	spawnedOrder := []string{}
 	for _, a := range tmpl.Agents {
 		finalName := body.GroupName + "-" + a.Name
 		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
@@ -459,6 +511,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		}
 		res.ConvID = outcome.ConvID
 		spawned++
+		spawnedConvs[a.Name] = outcome.ConvID
+		spawnedOrder = append(spawnedOrder, outcome.ConvID)
 
 		// Ownership + permission grants — best-effort. The agent is
 		// already spawned and group-joined; a failed grant is logged and
@@ -484,12 +538,106 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		results = append(results, res)
 	}
 
+	// Work pattern (JOH-336): with the whole roster up, deliver the
+	// template's routed briefing messages IN ORDER — each step to one
+	// roster agent by name, or to every spawned member ("all"). {{task}}
+	// interpolates the per-instantiation task. Distinct from the per-agent
+	// initial_message (that rode each agent's own spawn welcome): the
+	// pattern is the cross-cutting kick-off choreography — "brief the Lead
+	// with the leadership frame, then everyone with the house rules".
+	// Best-effort like the ownership/permission grants: a step whose
+	// target failed to spawn (or whose interpolated body breaks the inbox
+	// rule) is reported in pattern_errors, never aborts the rest.
+	patternDelivered := 0
+	patternErrors := []string{}
+	// The task is interpolated into inbox bodies, so it gets the same
+	// CRLF→LF fold the group context got via normalizeGroupContext — a
+	// CRLF-authored --task file must not flunk every {{task}} step's
+	// charset re-gate below (isValidInitialMessage rejects '\r').
+	task := strings.TrimSpace(body.Task)
+	task = strings.ReplaceAll(task, "\r\n", "\n")
+	task = strings.ReplaceAll(task, "\r", "\n")
+	rosterNames := map[string]bool{}
+	for _, a := range tmpl.Agents {
+		rosterNames[a.Name] = true
+	}
+	for i, e := range tmpl.WorkPattern {
+		msg := strings.ReplaceAll(e.Value, "{{task}}", task)
+		if msg == "" {
+			// A bare "{{task}}" step with no task: save-time validation
+			// can't catch it, so report it instead of delivering an
+			// empty-bodied briefing.
+			patternErrors = append(patternErrors,
+				fmt.Sprintf("step %d/%d (to %s): interpolated to an empty message — not sent",
+					i+1, len(tmpl.WorkPattern), e.SendTo))
+			continue
+		}
+		if !isValidInitialMessage(msg) {
+			patternErrors = append(patternErrors,
+				fmt.Sprintf("step %d/%d (to %s): interpolated message breaks the inbox charset/length rule — not sent",
+					i+1, len(tmpl.WorkPattern), e.SendTo))
+			continue
+		}
+		var targets []string
+		switch e.SendTo {
+		case "all":
+			targets = spawnedOrder
+			if len(targets) == 0 {
+				patternErrors = append(patternErrors,
+					fmt.Sprintf("step %d/%d: no members spawned — not sent", i+1, len(tmpl.WorkPattern)))
+				continue
+			}
+		default:
+			conv, ok := spawnedConvs[e.SendTo]
+			if !ok {
+				// Distinguish a roster agent that failed to spawn from a
+				// target the roster no longer carries at all (a from-group
+				// re-snapshot keeps the curated pattern verbatim, so a step
+				// can go stale when its agent's name wasn't recovered).
+				if rosterNames[e.SendTo] {
+					patternErrors = append(patternErrors,
+						fmt.Sprintf("step %d/%d: target %q did not spawn — not sent", i+1, len(tmpl.WorkPattern), e.SendTo))
+				} else {
+					patternErrors = append(patternErrors,
+						fmt.Sprintf("step %d/%d: target %q is not in the roster (stale work-pattern step?) — not sent",
+							i+1, len(tmpl.WorkPattern), e.SendTo))
+				}
+				continue
+			}
+			targets = []string{conv}
+		}
+		subject := fmt.Sprintf("[work-pattern %d/%d] %s", i+1, len(tmpl.WorkPattern), tmpl.Name)
+		for _, conv := range targets {
+			if _, err := db.InsertAgentMessage(&db.AgentMessage{
+				GroupID:  gid,
+				FromConv: caller,
+				ToConv:   conv,
+				Subject:  subject,
+				Body:     msg,
+				// The full audience on every row — like handleMultiRecipient —
+				// so `inbox read` renders an "all" step as one broadcast, not
+				// as N private notes.
+				ToRecipients: targets,
+			}); err != nil {
+				slog.Warn("instantiate: work-pattern insert failed",
+					"group", body.GroupName, "step", i+1, "conv", conv, "error", err)
+				patternErrors = append(patternErrors,
+					fmt.Sprintf("step %d/%d (to %s): %v", i+1, len(tmpl.WorkPattern), e.SendTo, err))
+				continue
+			}
+			patternDelivered++
+			enqueueDeliveryForConv(conv)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"group":    body.GroupName,
-		"template": tmpl.Name,
-		"agents":   results,
-		"spawned":  spawned,
-		"failed":   failed,
+		"group":             body.GroupName,
+		"template":          tmpl.Name,
+		"agents":            results,
+		"spawned":           spawned,
+		"failed":            failed,
+		"pattern_delivered": patternDelivered,
+		"pattern_errors":    patternErrors,
 	})
 }
 
@@ -635,6 +783,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		if t.DefaultContext == "" {
 			t.DefaultContext = existing.DefaultContext
 		}
+		// A live group has no work pattern to trace — the pattern is
+		// blueprint choreography (JOH-336), curated in the editor like the
+		// briefs, so an update re-snapshot always keeps the existing one.
+		t.WorkPattern = existing.WorkPattern
 		t.ID = existing.ID
 		if err := db.UpdateGroupTemplate(t); err != nil {
 			if errors.Is(err, sql.ErrNoRows) && attempt == 0 {
@@ -675,7 +827,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		}
 	}
 	memberSet := map[string]bool{}
-	usedNames := map[string]bool{}
+	// "all" is the work_pattern broadcast target (and rejected as an
+	// agent name at create/PATCH) — pre-claiming it makes the derive
+	// fallback disambiguate a member literally titled "all" instead of
+	// snapshotting an unroutable roster name.
+	usedNames := map[string]bool{"all": true}
 	addAgent := func(convID, role, descr string, owner bool) {
 		name := ""
 		if existing != nil {

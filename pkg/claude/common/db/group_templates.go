@@ -33,6 +33,53 @@ type GroupTemplate struct {
 	// Agents is the ordered list of agents the template spawns, sorted
 	// by Ordinal ascending.
 	Agents []GroupTemplateAgent
+	// WorkPattern is the template's default work pattern (JOH-336): an
+	// ORDERED list of routed briefing messages delivered — in order —
+	// after the whole roster has spawned. Each entry goes to one roster
+	// agent by name, or to every member ("all"). Distinct from a per-agent
+	// InitialMessage (that is the agent's own role brief, delivered at its
+	// spawn): the pattern is the cross-cutting choreography layer —
+	// "brief the Lead with the leadership frame, then everyone with the
+	// house rules". Empty = no pattern (today's behaviour).
+	WorkPattern []WorkPatternEntry
+}
+
+// WorkPatternEntry is one routed briefing message in a template's work
+// pattern. SendTo is a roster agent's template-name or the literal
+// "all". Value supports the {{task}} placeholder, replaced with the
+// per-instantiation task text at delivery.
+type WorkPatternEntry struct {
+	SendTo string `json:"send_to"`
+	Value  string `json:"value"`
+}
+
+// workPatternToJSON marshals a work pattern for the
+// group_templates.work_pattern TEXT column. An empty pattern stores as
+// "[]" (the permsToJSON convention) so a reader can json.Unmarshal it
+// unconditionally; legacy rows hold '' and read back as empty.
+func workPatternToJSON(entries []WorkPatternEntry) string {
+	if len(entries) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(entries)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// workPatternFromJSON parses the work_pattern TEXT column back into a
+// slice. A blank ('' — pre-v87 rows) or malformed value yields an empty
+// (non-nil) slice.
+func workPatternFromJSON(s string) []WorkPatternEntry {
+	out := []WorkPatternEntry{}
+	if s == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return []WorkPatternEntry{}
+	}
+	return out
 }
 
 // GroupTemplateAgent is a row in group_template_agents — one agent a
@@ -106,9 +153,9 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
-		`INSERT INTO group_templates (name, descr, default_context, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		t.Name, t.Descr, t.DefaultContext, now, now)
+		`INSERT INTO group_templates (name, descr, default_context, work_pattern, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrGroupTemplateNameTaken
@@ -145,9 +192,10 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
-		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, updated_at = ?
+		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, updated_at = ?
 		 WHERE id = ?`,
-		t.Name, t.Descr, t.DefaultContext, time.Now().Format(time.RFC3339Nano), t.ID)
+		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern),
+		time.Now().Format(time.RFC3339Nano), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupTemplateNameTaken
@@ -199,7 +247,7 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -221,7 +269,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, name, descr, default_context, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, created_at, updated_at
 		 FROM group_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -302,13 +350,14 @@ func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, erro
 
 func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
-	var createdAt, updatedAt string
-	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, workPattern string
+	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	t.CreatedAt = parseTimeOrZero(createdAt)
 	t.UpdatedAt = parseTimeOrZero(updatedAt)
 	t.Agents = []GroupTemplateAgent{}
+	t.WorkPattern = workPatternFromJSON(workPattern)
 	return &t, nil
 }
 

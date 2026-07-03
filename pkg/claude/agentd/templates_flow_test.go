@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -233,6 +234,9 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 			{Name: "lead", Role: "lead", InitialMessage: "Lead the crew.", IsOwner: true},
 			{Name: "dev1", Role: "dev", InitialMessage: "Build features."},
 		},
+		"work_pattern": []map[string]string{
+			{"send_to": "lead", "value": "Lead the charge: {{task}}"},
+		},
 	}
 	require.Equal(t, http.StatusCreated,
 		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
@@ -241,9 +245,13 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/instantiate",
 		map[string]any{"group_name": "voyage"})
 	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	// Instantiate queues async brief/pattern deliveries; drain them so the
+	// spawn below doesn't race the flush worker's DB writes (SQLITE_BUSY).
+	agentd.WaitForBackgroundForTest()
 
 	// The group evolves: an extra member joins after instantiation.
 	f.AsHuman().Spawn("voyage", "navigator")
+	agentd.WaitForBackgroundForTest()
 
 	// Without update, the taken name stays a hard conflict.
 	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
@@ -294,6 +302,12 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	// into the blueprint's own description on a re-snapshot.
 	assert.Equal(t, "curated descr", tmpl.Descr, "instance descr never clobbers curated template descr")
 
+	// The work pattern is blueprint choreography — a live group has none
+	// to trace, so the update re-snapshot must keep the curated one.
+	require.Len(t, tmpl.WorkPattern, 1, "work pattern survives the update re-snapshot")
+	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
+	assert.Equal(t, "Lead the charge: {{task}}", tmpl.WorkPattern[0].Value)
+
 	// Round two: dev1's member leaves the group, then another update
 	// re-snapshot. The departed agent is reported removed, lead's brief
 	// still survives, and the joiner — whose conv title is exactly
@@ -341,6 +355,8 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 			assert.Equal(t, "Lead the crew.", a.InitialMessage, "lead's curated brief survives round two")
 		}
 	}
+	require.Len(t, tmpl.WorkPattern, 1, "work pattern survives repeated re-snapshots")
+	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
 }
 
 // Scenario (JOH-337): update:true against a name with NO existing
@@ -359,4 +375,100 @@ func TestGroupTemplate_FromGroupUpdateCreatesWhenMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tmpl, "template created")
 	assert.Len(t, tmpl.Agents, 1)
+}
+
+// Scenario (JOH-336): a template with a work pattern — an ordered list
+// of routed briefing messages — delivers it after the whole roster has
+// spawned: step 1 to the lead only (with {{task}} interpolated), step 2
+// to every member. Assertions run at the real inbox surface
+// (db.ListAgentMessagesForConv), the same rows `inbox read` renders.
+func TestGroupTemplate_WorkPatternDelivery(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name": "led-crew",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", InitialMessage: "You lead.", IsOwner: true},
+			{Name: "dev1", Role: "dev"},
+		},
+		"work_pattern": []map[string]string{
+			{"send_to": "lead", "value": "You run this force. Distribute: {{task}}"},
+			{"send_to": "all", "value": "House rules: open PRs, report at milestones."},
+		},
+	}
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates", createBody)
+	require.Equal(t, http.StatusCreated, rec.Code, "create template: %s", rec.Body.String())
+
+	const task = "Ship the OAuth login epic."
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/led-crew/instantiate",
+		map[string]any{"group_name": "sortie", "task": task})
+	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	var res struct {
+		Agents []struct {
+			Name   string `json:"name"`
+			ConvID string `json:"conv_id"`
+		} `json:"agents"`
+		PatternDelivered int      `json:"pattern_delivered"`
+		PatternErrors    []string `json:"pattern_errors"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	// 1 (lead) + 2 (all) deliveries, no errors.
+	assert.Equal(t, 3, res.PatternDelivered, "lead step + all-step×2 delivered")
+	assert.Empty(t, res.PatternErrors)
+
+	convs := map[string]string{}
+	for _, a := range res.Agents {
+		convs[a.Name] = a.ConvID
+	}
+	require.Contains(t, convs, "lead")
+	require.Contains(t, convs, "dev1")
+
+	bodiesFor := func(conv string) []string {
+		msgs, err := db.ListAgentMessagesForConv(conv, 100)
+		require.NoError(t, err)
+		out := []string{}
+		for _, m := range msgs {
+			out = append(out, m.Body)
+		}
+		return out
+	}
+	joined := func(conv string) string { return strings.Join(bodiesFor(conv), "\n---\n") }
+
+	// The lead got the leader step WITH the task interpolated, plus the
+	// all-members step.
+	leadInbox := joined(convs["lead"])
+	assert.Contains(t, leadInbox, "You run this force. Distribute: "+task,
+		"lead briefing carries the interpolated task")
+	assert.Contains(t, leadInbox, "House rules", "lead also gets the all-members step")
+
+	// dev1 got the all-members step but NOT the leader step.
+	devInbox := joined(convs["dev1"])
+	assert.Contains(t, devInbox, "House rules", "dev1 gets the all-members step")
+	assert.NotContains(t, devInbox, "You run this force",
+		"the leader-routed step goes to the lead only")
+
+	// The stored template round-trips the pattern through the wire shape.
+	tmpl, err := db.GetGroupTemplate("led-crew")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	require.Len(t, tmpl.WorkPattern, 2)
+	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
+	assert.Equal(t, "all", tmpl.WorkPattern[1].SendTo)
+}
+
+// Scenario (JOH-336): work-pattern validation — a step routed to a
+// non-roster name is rejected at template save with a clear error.
+func TestGroupTemplate_WorkPatternValidation(t *testing.T) {
+	f := newFlow(t)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "bad-pattern",
+		"agents": []templateAgentSpec{{Name: "dev1"}},
+		"work_pattern": []map[string]string{
+			{"send_to": "nobody", "value": "hello"},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "unknown send_to must 400: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "nobody", "the error names the bad target")
 }
