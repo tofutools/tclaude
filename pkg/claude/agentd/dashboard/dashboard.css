@@ -6335,6 +6335,87 @@ body.wizard-shake { animation: wizard-shake 0.6s ease-in-out; }
   75% { transform: translate(-4px, 3px); }
 }
 
+/* ─── Wizard filter bars — arcane scrying inputs (body.wizard) ────────
+   Every tab's `.filter-bar` (Parties, Labours, Plugins, the Wards' Sudo
+   list, the Chronicle/Audit search, the Runes/Logs search, the Treasury's
+   agent-table filter …) shares one chrome, so one general re-skin themes
+   them all: a violet-void scrying field with gilt runes, a dim-violet
+   count, arcane toggles + selects, and gilded primary/secondary levers.
+   These stay GENERAL (class-only) so the more-specific id-scoped filter
+   bars — the Config tab and the profile/perm-edit modals — keep their own
+   rules by specificity; this block is the fallback for every other bar.
+   The Treasury's span selector (#costs-spans) is a bespoke segmented
+   control the Costs re-skin gilds itself, so its `.tool` buttons opt out
+   below. Palette matches the rest of the wizard chrome: void #140f28,
+   violet frame rgba(122,93,176,.5), gilt text #f3e6c0, arcane focus. */
+body.wizard .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard .filter-bar input::placeholder { color: #8f7bbf; font-style: italic; }
+body.wizard .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard .filter-bar .filter-count { color: #b39ddb; }
+body.wizard .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+/* Muted trailing notes (retention line, log status). */
+body.wizard .filter-bar .muted { color: #9a86c4; }
+/* Inline toggle labels (outcome/source, level/since, rotated/stream, the
+   view-menu items) + their little dropdowns. */
+body.wizard .filter-bar label.filter-toggle { color: #b39ddb; }
+body.wizard .filter-bar label.filter-toggle:hover { color: #f3e6c0; }
+body.wizard .filter-bar label.filter-toggle select {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+/* View popover — the "▾ view" trigger, its badge and drop panel. */
+body.wizard .filter-bar .view-btn { color: #b39ddb; }
+body.wizard .filter-bar .view-btn:hover,
+body.wizard .filter-bar .view-btn[aria-expanded="true"] { color: #f3e6c0; border-color: #a97bd6; }
+body.wizard .filter-bar .view-badge { background: #d9b45a; color: #1e1640; }
+body.wizard .view-menu {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard .view-menu label.filter-toggle:hover { background: #241b3d; }
+/* Secondary "⟳" tool levers (Plugins' check-all, the Runes refresh).
+   #costs-spans opts out — the Treasury gilds its own span control. */
+body.wizard .filter-bar:not(#costs-spans) button.tool {
+  background: #241b3d; border-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard .filter-bar:not(#costs-spans) button.tool:hover {
+  background: #3a2a63; border-color: #f3e6c0; color: #f3e6c0;
+}
+/* Primary "+ new …" / "+ Grant sudo" levers that lack their own id-scoped
+   wizard rule (Parties + Labours already carry gilded overrides above). */
+body.wizard .filter-bar button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard .filter-bar button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* ─── Wizard Wards sub-nav — the three chambers of access control ─────
+   The Access tab's inset segmented control (Permissions / Slug registry /
+   Sudo) still wore the app-default grey in wizard mode. Re-skin the frame
+   to arcane violet-void, dim-violet idle tabs, and a gilt-lit active
+   chamber, plus a light violet tint on the intro copy so the whole tab
+   reads as themed. */
+body.wizard .access-subnav {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard .access-subtab { color: #b39ddb; }
+body.wizard .access-subtab:hover { color: #f3e6c0; }
+body.wizard .access-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+body.wizard .access-intro,
+body.wizard .access-sub-intro { color: #b39ddb; }
+body.wizard .access-intro strong { color: #f3e6c0; }
+
 /* ─── Wizard cogwheels — enchanted clockwork (body.wizard) ───────────
    Every ⚙ "more actions" cog — the filter-bar "more group actions" cog,
    the per-agent-row cog and the per-group-header cog — turns into a

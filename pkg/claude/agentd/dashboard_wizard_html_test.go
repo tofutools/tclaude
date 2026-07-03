@@ -96,6 +96,23 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("body.wizard #slop-marquee", "the marquee shows in wizard mode")
 	must(".wizard-spark", "the wizard cast/trail spark FX are styled")
 	must("body.wizard-shake", "the Meteor Swarm screen shake is styled")
+
+	// Every tab's shared .filter-bar chrome gets a general (class-only) wizard
+	// re-skin so the Parties/Labours/Plugins/Sudo/Audit/Logs filter inputs stop
+	// wearing the app-default grey. Pin the field + a couple of the satellite
+	// controls; the general rules are the fallback beneath the id-scoped Config
+	// and profile-modal bars, so a dropped line silently un-themes ~6 tabs.
+	must("body.wizard .filter-bar input {", "the general filter-bar field is themed in wizard mode")
+	must("body.wizard .filter-bar label.filter-toggle select {", "filter-bar dropdowns (audit/logs) are themed")
+	must("body.wizard .filter-bar button.primary {", "unscoped filter-bar primary levers are gilded")
+	// The Treasury's bespoke span selector opts out of the generic tool re-skin
+	// so the Costs re-skin can gild it itself — pin the exclusion.
+	must("body.wizard .filter-bar:not(#costs-spans) button.tool {", "the costs span control opts out of the generic tool re-skin")
+
+	// The Wards (Access) tab's inset sub-nav (Permissions / Slug registry /
+	// Sudo) is themed too — frame + active chamber.
+	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
+	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
 }
 
 // TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
@@ -1103,19 +1120,21 @@ func TestDashboardHTML_WizardConfigTab(t *testing.T) {
 	must("body.wizard #config-diff-modal .modal-buttons button.primary", "the diff-confirm Save lever is re-skinned")
 }
 
-// TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin
-// stays scoped. The re-skin recolours .filter-bar / .primary chrome that other
-// tabs also use, so an unscoped `body.wizard .filter-bar input { … }` or
-// `body.wizard .cfg-footer button.primary { … }`-shaped leak would repaint the
-// Groups / Costs filter bars (or beyond). Every config rule must carry the
-// #tab-config (or #config-diff-modal) scope.
+// TestDashboardCSS_WizardConfigTabScoped guards that the config-tab re-skin's
+// CONFIG-SPECIFIC chrome stays scoped to #tab-config (or #config-diff-modal), so
+// a config-only treatment can't leak onto sibling tabs.
+//
+// Note: the shared `.filter-bar` field itself now DOES carry a general
+// `body.wizard .filter-bar input { … }` rule on purpose — the "some wizard
+// elements lack styling" pass themes every tab's filter bar (Parties, Labours,
+// Plugins, Sudo, Audit, Logs). That general rule is the intended fallback; the
+// config tab's own #tab-config-scoped filter rule still wins by specificity
+// where it needs to. So this test no longer forbids the general filter rule
+// (TestDashboardHTML_WizardTheme asserts it positively) — it only guards the
+// config chrome that is NOT a shared filter bar.
 func TestDashboardCSS_WizardConfigTabScoped(t *testing.T) {
-	// The live filter input is the highest-leak selector — .filter-bar is shared
-	// by every tab. An unscoped wizard rule for it would bleed everywhere.
-	if strings.Contains(dashboardAssets, "body.wizard .filter-bar input {") {
-		t.Error("wizard config filter re-skin is unscoped — will repaint every tab's filter bar")
-	}
-	// The confirm button's re-skin must not leak to sibling .primary buttons.
+	// The confirm button's re-skin must not leak to sibling .primary buttons —
+	// .cfg-footer is config-only chrome, so its wizard rule stays #tab-config-scoped.
 	if strings.Contains(dashboardAssets, "body.wizard .cfg-footer button.primary {") {
 		t.Error("wizard config footer must be scoped to #tab-config, not bare .cfg-footer")
 	}
