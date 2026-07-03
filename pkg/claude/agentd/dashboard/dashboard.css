@@ -2877,6 +2877,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-agent-owner input { margin: 0; }
 .template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
 .template-agent-grid { display: flex; gap: 6px; }
+/* Per-role launch profile (JOH-239): a 2-column grid of optional launch
+   overrides, tucked under a <details> like the permissions list. */
+.ta-launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
 .template-agent-row input[type=text],
 .template-agent-row textarea {
   flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;

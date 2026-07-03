@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -196,6 +197,46 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, nil
 	}
 	return s, err
+}
+
+// SessionLaunchProfile is the observable launch shape of a conv's
+// most-recent session — what a from-group template snapshot re-traces per
+// member (JOH-239) so a round-trip preserves each role's launch fields.
+//
+// ModelID is the resume-safe full model ID (sessions.model_id, e.g.
+// "claude-fable-5"), NOT the display alias (sessions.model, "Opus 4.8") —
+// only the ID passes ValidateModel and is what reincarnate/clone forward.
+// Harness / SandboxMode are spawn-recorded; Effort is statusline-reported.
+// Any field can be "" ("not observed" — e.g. a session that hasn't ticked
+// the statusline has no model/effort yet, or a harness with no sandbox flag).
+type SessionLaunchProfile struct {
+	Harness     string
+	ModelID     string
+	Effort      string
+	SandboxMode string
+}
+
+// SessionLaunchProfileForConv reads the launch fields of a conv's most-recent
+// session row. Returns a zero-value profile (no error) when the conv has no
+// session row, so a snapshot of a member whose row was pruned degrades to "no
+// overrides" rather than failing.
+func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
+	d, err := Open()
+	if err != nil {
+		return SessionLaunchProfile{}, err
+	}
+	var p SessionLaunchProfile
+	err = d.QueryRow(
+		`SELECT harness, model_id, effort_level, sandbox_mode FROM sessions
+		 WHERE conv_id = ? ORDER BY updated_at DESC LIMIT 1`, convID).
+		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.SandboxMode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionLaunchProfile{}, nil
+	}
+	if err != nil {
+		return SessionLaunchProfile{}, err
+	}
+	return p, nil
 }
 
 // FindSessionsByConvID returns every row for the given conv_id, most

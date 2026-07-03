@@ -121,7 +121,10 @@ function templatesByName() {
 }
 
 function blankTemplateAgent() {
-  return { name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [] };
+  return {
+    name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
+    spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
+  };
 }
 
 // ---- Template editor modal --------------------------------------------
@@ -140,6 +143,8 @@ function openTemplateEditor(tmpl) {
         name: a.name || '', role: a.role || '', descr: a.descr || '',
         initial_message: a.initial_message || '', is_owner: !!a.is_owner,
         permissions: (a.permissions || []).slice(),
+        spawn_profile: a.spawn_profile || '', harness: a.harness || '',
+        model: a.model || '', effort: a.effort || '', sandbox: a.sandbox || '', approval: a.approval || '',
       }))
     : [blankTemplateAgent()];
   templateEditorPattern = tmpl
@@ -181,6 +186,17 @@ function editorAgentRowHTML(a, idx, slugs) {
     <details class="ta-perms-details">
       <summary>Permissions (<span class="ta-perms-count">${perms.size}</span>)</summary>
       <div class="ta-perms-list">${checks}</div>
+    </details>
+    <details class="ta-launch-details">
+      <summary title="Per-role launch profile — overrides win over the referenced profile; blank inherits the group default at instantiate">Launch profile</summary>
+      <div class="ta-launch-grid">
+        <input type="text" class="ta-profile" placeholder="spawn profile name (optional)" value="${esc(a.spawn_profile || '')}" />
+        <input type="text" class="ta-harness" placeholder="harness (claude | codex)" value="${esc(a.harness || '')}" />
+        <input type="text" class="ta-model" placeholder="model (e.g. opus, sonnet)" value="${esc(a.model || '')}" />
+        <input type="text" class="ta-effort" placeholder="effort (low | medium | high | …)" value="${esc(a.effort || '')}" />
+        <input type="text" class="ta-sandbox" placeholder="sandbox (codex only)" value="${esc(a.sandbox || '')}" />
+        <input type="text" class="ta-approval" placeholder="approval (codex only)" value="${esc(a.approval || '')}" />
+      </div>
     </details>
   </div>`;
 }
@@ -247,6 +263,12 @@ function scrapeEditorAgents() {
     initial_message: $('.ta-initmsg', row).value,
     is_owner: $('.ta-owner', row).checked,
     permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
+    spawn_profile: $('.ta-profile', row).value.trim(),
+    harness: $('.ta-harness', row).value.trim(),
+    model: $('.ta-model', row).value.trim(),
+    effort: $('.ta-effort', row).value.trim(),
+    sandbox: $('.ta-sandbox', row).value.trim(),
+    approval: $('.ta-approval', row).value.trim(),
   }));
 }
 
@@ -345,7 +367,12 @@ function renderInstantiatePreview() {
   host.innerHTML = agents.map(a => {
     const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
     const np = (a.permissions || []).length;
-    const meta = [a.role ? esc(a.role) : '', np ? `+${np}🔑` : '', owner]
+    // Per-role launch hint (JOH-239): show the profile ref or the most telling
+    // inline override so the human sees each role's launch shape before spawning.
+    const launch = a.spawn_profile
+      ? `⚙ ${esc(a.spawn_profile)}`
+      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
       .filter(Boolean).join(' · ');
     return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
       + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
