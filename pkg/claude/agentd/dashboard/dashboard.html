@@ -1702,6 +1702,9 @@
       <input id="template-from-group-name" type="text" placeholder="kebab-or-snake-case label for the new template" autocomplete="off" spellcheck="false" />
     </label>
     <div class="modal-meta">Captures the group's roles, owner, per-agent permission grants and shared context. Per-agent task briefs come through blank — fill them in the editor that opens next.</div>
+    <!-- Update-in-place note — shown by refreshFromGroupUpdateState when
+         the typed name already belongs to a template (JOH-337). -->
+    <div class="modal-meta" id="template-from-group-update-note" style="display:none"></div>
     <div class="cron-create-error" id="template-from-group-error"></div>
     <div class="modal-buttons">
       <button id="template-from-group-cancel" type="button">Cancel</button>

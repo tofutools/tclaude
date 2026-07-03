@@ -215,3 +215,148 @@ func TestGroupTemplate_CRUDRoundTrip(t *testing.T) {
 		humanReq(t, f, http.MethodPost, "/v1/templates",
 			map[string]any{"name": "dup"}).Code, "duplicate create 409s")
 }
+
+// Scenario (JOH-337): re-snapshotting an evolved group INTO its own
+// template. A template is instantiated as a group; the group then gains
+// a member; from-group without update still 409s, and with update it
+// re-snapshots the template in place — recovering the original
+// template-agent names from the "<group>-<name>" member titles, keeping
+// their curated task briefs, and reporting the roster diff.
+func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name":            "crew",
+		"descr":           "curated descr",
+		"default_context": "CREW-CONTEXT",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", InitialMessage: "Lead the crew.", IsOwner: true},
+			{Name: "dev1", Role: "dev", InitialMessage: "Build features."},
+		},
+	}
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
+		"create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/instantiate",
+		map[string]any{"group_name": "voyage"})
+	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	// The group evolves: an extra member joins after instantiation.
+	f.AsHuman().Spawn("voyage", "navigator")
+
+	// Without update, the taken name stays a hard conflict.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
+		map[string]any{"group": "voyage", "template_name": "crew"})
+	require.Equal(t, http.StatusConflict, rec.Code, "plain from-group must 409: %s", rec.Body.String())
+
+	// With update, the template is re-snapshotted in place.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
+		map[string]any{"group": "voyage", "template_name": "crew", "update": true})
+	require.Equal(t, http.StatusOK, rec.Code, "update from-group: %s", rec.Body.String())
+
+	var res struct {
+		Name       string   `json:"name"`
+		Updated    bool     `json:"updated"`
+		BriefsKept []string `json:"briefs_kept"`
+		Added      []string `json:"added"`
+		Removed    []string `json:"removed"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, "crew", res.Name)
+	assert.True(t, res.Updated, "response reports an in-place update")
+	assert.ElementsMatch(t, []string{"lead", "dev1"}, res.BriefsKept,
+		"curated briefs survive for round-tripped agents")
+	require.Len(t, res.Added, 1, "the post-instantiate joiner is reported as added")
+	assert.Empty(t, res.Removed, "nobody left the group")
+
+	// Real surface: the stored template after the update.
+	tmpl, err := db.GetGroupTemplate("crew")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	assert.Equal(t, "CREW-CONTEXT", tmpl.DefaultContext,
+		"context re-traced from the group (which inherited it at instantiate)")
+	require.Len(t, tmpl.Agents, 3, "two round-tripped agents + the joiner")
+
+	byName := map[string]db.GroupTemplateAgent{}
+	for _, a := range tmpl.Agents {
+		byName[a.Name] = a
+	}
+	require.Contains(t, byName, "lead", "lead's template name round-trips")
+	require.Contains(t, byName, "dev1", "dev1's template name round-trips")
+	assert.Equal(t, "Lead the crew.", byName["lead"].InitialMessage, "lead's curated brief survives")
+	assert.Equal(t, "Build features.", byName["dev1"].InitialMessage, "dev1's curated brief survives")
+	assert.True(t, byName["lead"].IsOwner, "owner flag re-traced from the live group")
+	assert.Equal(t, "", byName[res.Added[0]].InitialMessage, "the joiner comes in with a blank brief")
+
+	// The curated template descr survives — instantiate stamps the group
+	// with "Instantiated from template crew", which must NOT leak back
+	// into the blueprint's own description on a re-snapshot.
+	assert.Equal(t, "curated descr", tmpl.Descr, "instance descr never clobbers curated template descr")
+
+	// Round two: dev1's member leaves the group, then another update
+	// re-snapshot. The departed agent is reported removed, lead's brief
+	// still survives, and the joiner — whose conv title is exactly
+	// "navigator" with no "voyage-" prefix (it was named at spawn, not
+	// by instantiate) — round-trips through the EXACT-title recover
+	// candidate, keeping its template name stable even though its
+	// roster position shifted.
+	joinerName := res.Added[0]
+	var membersList []struct {
+		ConvID string `json:"conv_id"`
+		Title  string `json:"title"`
+	}
+	rec = humanReq(t, f, http.MethodGet, "/v1/groups/voyage/members", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "list members: %s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &membersList)
+	dev1Conv := ""
+	for _, m := range membersList {
+		if m.Title == "voyage-dev1" {
+			dev1Conv = m.ConvID
+		}
+	}
+	require.NotEmpty(t, dev1Conv, "voyage-dev1 member resolvable by title")
+	rec = humanReq(t, f, http.MethodDelete, "/v1/groups/voyage/members/"+dev1Conv, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, "remove dev1's member: %s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
+		map[string]any{"group": "voyage", "template_name": "crew", "update": true})
+	require.Equal(t, http.StatusOK, rec.Code, "second update from-group: %s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &res)
+	assert.ElementsMatch(t, []string{"lead"}, res.BriefsKept, "lead's brief survives round two")
+	assert.Empty(t, res.Added, "the joiner round-trips by exact title, not as a new agent")
+	assert.Equal(t, []string{"dev1"}, res.Removed, "the departed member is reported removed")
+
+	tmpl, err = db.GetGroupTemplate("crew")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	names := []string{}
+	for _, a := range tmpl.Agents {
+		names = append(names, a.Name)
+	}
+	assert.ElementsMatch(t, []string{"lead", joinerName}, names,
+		"dev1 dropped from the blueprint; the joiner kept its exact-title name")
+	for _, a := range tmpl.Agents {
+		if a.Name == "lead" {
+			assert.Equal(t, "Lead the crew.", a.InitialMessage, "lead's curated brief survives round two")
+		}
+	}
+}
+
+// Scenario (JOH-337): update:true against a name with NO existing
+// template simply creates it — the flag is create-or-update, so a CLI
+// `--update` habit or a dashboard race never errors on first use.
+func TestGroupTemplate_FromGroupUpdateCreatesWhenMissing(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("solo")
+	f.AsHuman().Spawn("solo", "worker")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
+		map[string]any{"group": "solo", "template_name": "solo-tmpl", "update": true})
+	require.Equal(t, http.StatusCreated, rec.Code, "update-on-missing creates: %s", rec.Body.String())
+
+	tmpl, err := db.GetGroupTemplate("solo-tmpl")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl, "template created")
+	assert.Len(t, tmpl.Agents, 1)
+}

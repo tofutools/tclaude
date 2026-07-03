@@ -6434,6 +6434,12 @@ body.wizard #template-from-group-modal #template-from-group-submit:active {
 }
 body.wizard #template-from-group-modal #template-from-group-submit:disabled { opacity: 0.7; }
 body.wizard #template-from-group-modal #template-from-group-submit:disabled::before { content: "🕯 Tracing…"; }
+/* Update-in-place mode (.tfg-updating — the JS mode flag set while the
+   typed name already belongs to a circle, like the cron dialog's
+   .cron-editing): the lever reads Re-trace. The extra class out-specifies
+   the base ::before rules above, so no ordering dependence. */
+body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit::before { content: "🕯 Re-trace it!"; }
+body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:disabled::before { content: "🕯 Re-tracing…"; }
 
 /* ─── Wizard unseal dialog — "⤒ Unseal a party archive" ──────────────
    Group import. Scoped to #group-import-modal. Unlike the sibling levers

@@ -105,7 +105,10 @@ function templateCardHTML(t) {
 }
 
 function templatesByName() {
-  const m = {};
+  // Null prototype: template names are human-typed, and a plain {} would
+  // false-positive existence checks on Object.prototype keys — a template
+  // named "constructor" or "toString" must only exist if actually saved.
+  const m = Object.create(null);
   for (const t of (lastSnapshot && lastSnapshot.templates) || []) m[t.name] = t;
   return m;
 }
@@ -350,6 +353,7 @@ function openFromGroupModal(presetGroup) {
   if (preset) sel.value = presetGroup;
   $('#template-from-group-name').value = preset ? presetGroup : '';
   $('#template-from-group-error').textContent = '';
+  refreshFromGroupUpdateState();
   $('#template-from-group-modal').classList.add('show');
   setTimeout(() => {
     const inp = $('#template-from-group-name');
@@ -360,6 +364,29 @@ function openFromGroupModal(presetGroup) {
 
 function closeFromGroupModal() { $('#template-from-group-modal').classList.remove('show'); }
 
+// refreshFromGroupUpdateState flips the from-group dialog between its
+// create and update modes as the human types: when the typed template
+// name already exists, submitting re-snapshots that template IN PLACE
+// (roster/owners/permissions/context re-traced from the group; curated
+// per-agent briefs kept on name match), so the note and the submit
+// label say so before anything is overwritten. .tfg-updating is a MODE
+// flag on the modal (like the cron dialog's .cron-editing) — the wizard
+// lever's Re-trace copy keys on it in pure CSS.
+function refreshFromGroupUpdateState() {
+  const name = $('#template-from-group-name').value.trim();
+  const updating = !!templatesByName()[name];
+  $('#template-from-group-modal').classList.toggle('tfg-updating', updating);
+  const note = $('#template-from-group-update-note');
+  note.style.display = updating ? '' : 'none';
+  note.textContent = updating
+    ? wizWord(
+      `⚠ A template “${name}” already exists — saving re-snapshots it in place: roles, owners, permissions and context are re-traced from the group; curated per-agent task briefs are kept for matching agents.`,
+      `⚠ A circle “${name}” is already chalked — tracing redraws it in place: roles, owners, powers and lore are re-traced from the party; curated familiar briefs are kept for matching names.`)
+    : '';
+  $('#template-from-group-submit').textContent =
+    updating ? 'Update template' : 'Save as template';
+}
+
 async function submitFromGroup() {
   const group = $('#template-from-group-group').value;
   const name = $('#template-from-group-name').value.trim();
@@ -367,23 +394,36 @@ async function submitFromGroup() {
   errEl.textContent = '';
   if (!group) { errEl.textContent = 'pick a group'; return; }
   if (!name) { errEl.textContent = 'template name is required'; return; }
+  // The mode the dialog showed the human — kept in lockstep with the
+  // typed name by refreshFromGroupUpdateState, so update is only ever
+  // sent after the "will update in place" note was visible. The server
+  // fails closed either way (409 without update on a taken name).
+  const updating = $('#template-from-group-modal').classList.contains('tfg-updating');
   const btn = $('#template-from-group-submit');
   btn.disabled = true;
   try {
     const r = await fetch('/api/templates/from-group', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group, template_name: name }),
+      body: JSON.stringify({ group, template_name: name, update: updating }),
     });
     const txt = await r.text();
     if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
     let tmpl = null;
     try { tmpl = JSON.parse(txt); } catch (_) {}
     closeFromGroupModal();
-    toast(`template created from ${group}: ${name}`);
+    if (tmpl && tmpl.updated) {
+      const kept = (tmpl.briefs_kept || []).length;
+      const added = (tmpl.added || []).length;
+      const removed = (tmpl.removed || []).length;
+      toast(`template updated from ${group}: ${name}`
+        + ` (briefs kept: ${kept}, added: ${added}, removed: ${removed})`);
+    } else {
+      toast(`template created from ${group}: ${name}`);
+    }
     refresh();
     // Open the editor on the fresh template so the human can fill in
-    // per-agent task briefs (from-group leaves those blank).
+    // per-agent task briefs (from-group leaves new agents' blank).
     if (tmpl) openTemplateEditor(tmpl);
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
@@ -452,9 +492,11 @@ function bindTemplatesUI() {
   $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
   bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
 
-  // From-group modal.
+  // From-group modal. Typing the name live-flips the dialog between its
+  // create and update-in-place modes.
   $('#template-from-group-cancel').addEventListener('click', closeFromGroupModal);
   $('#template-from-group-submit').addEventListener('click', submitFromGroup);
+  $('#template-from-group-name').addEventListener('input', refreshFromGroupUpdateState);
   bindBackdropDiscard('template-from-group-modal', closeFromGroupModal);
 
 }

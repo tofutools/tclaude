@@ -467,15 +467,19 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 type templatesFromGroupParams struct {
 	Group        string `pos:"true" help:"Existing group to snapshot."`
 	TemplateName string `pos:"true" help:"Name for the new template."`
+	Update       bool   `help:"Re-snapshot into an existing template of this name, in place: roster, owner flags, permissions and context are re-traced from the group; curated per-agent task briefs are kept for matching agent names. Creates the template if it doesn't exist."`
 }
 
 func templatesFromGroupCmd() *cobra.Command {
 	return boa.CmdT[templatesFromGroupParams]{
 		Use:   "from-group <group> <template-name>",
-		Short: "Snapshot an existing group into a new template",
+		Short: "Snapshot an existing group into a new (or existing, --update) template",
 		Long: "Captures a live group's structure — its context plus one agent per member (role, descr, owner flag, " +
 			"per-agent permission grants) — into a new template. Per-agent task briefs come through blank: a live " +
-			"group has no stored brief per member, so fill them in afterwards with 'templates edit'.",
+			"group has no stored brief per member, so fill them in afterwards with 'templates edit'.\n\n" +
+			"With --update, a template that already exists under this name is re-snapshotted IN PLACE from the " +
+			"group's current state; agents that round-trip by name (members titled \"<group>-<agent>\", as " +
+			"instantiate names them) keep their curated task briefs.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesFromGroupParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -497,16 +501,41 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	body := map[string]any{"group": group, "template_name": tmplName}
-	var t templateJSON
+	body := map[string]any{"group": group, "template_name": tmplName, "update": p.Update}
+	// The update-mode response embeds the template flat and adds a
+	// roster-diff report; the create response is the bare template, so
+	// the extra fields simply stay zero.
+	var t struct {
+		templateJSON
+		Updated    bool     `json:"updated"`
+		BriefsKept []string `json:"briefs_kept"`
+		Added      []string `json:"added"`
+		Removed    []string `json:"removed"`
+	}
 	if err := DaemonRequest(http.MethodPost, "/v1/templates/from-group", body, &t, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if t.Updated {
+		fmt.Fprintf(stdout, "Updated template %q from group %q — %d agent%s\n",
+			t.Name, group, len(t.Agents), plural(len(t.Agents)))
+		fmt.Fprintf(stdout, "  briefs kept: %s; added: %s; removed: %s\n",
+			orNone(t.BriefsKept), orNone(t.Added), orNone(t.Removed))
+		return rcOK
 	}
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",
 		t.Name, group, len(t.Agents), plural(len(t.Agents)))
 	fmt.Fprintln(stdout, "  Per-agent task briefs are blank — fill them in with `tclaude agent templates edit "+t.Name+" --file …`")
 	return rcOK
+}
+
+// orNone renders a name list for the from-group change report — "none"
+// when empty.
+func orNone(names []string) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
 }
 
 // plural returns "s" unless n == 1 — for "1 agent" / "3 agents".

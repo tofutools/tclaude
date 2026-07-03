@@ -1383,3 +1383,24 @@ func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
 	must("openFromGroupModal(group)", "the action opens the from-group modal with the group preselected")
 	must("function openFromGroupModal(presetGroup)", "the modal accepts a preset group")
 }
+
+// TestDashboardHTML_FromGroupUpdateMode pins the from-group dialog's
+// update-in-place mode (JOH-337): typing a name that already belongs to
+// a template flips the dialog into update mode — a visible note, an
+// honest "Update template" submit label, the update flag on the wire,
+// and the wizard lever's Re-trace copy.
+func TestDashboardHTML_FromGroupUpdateMode(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-from-group-update-note"`, "the update-mode note div ships")
+	must("function refreshFromGroupUpdateState()", "the mode-flip helper exists")
+	must("classList.toggle('tfg-updating', updating)", "the mode class tracks the typed name")
+	must("template_name: name, update: updating", "submit sends the update flag the UI showed")
+	must(`content: "🕯 Re-trace it!"`, "the wizard lever reads Re-trace in update mode")
+	must(`content: "🕯 Re-tracing…"`, "the busy wizard lever reads Re-tracing in update mode")
+}
