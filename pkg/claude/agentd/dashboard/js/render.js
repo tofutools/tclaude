@@ -515,12 +515,15 @@ function groupProcessChip(g) {
   const titleParts = ['Advisory process — tracked, not enforced', '', ...mapLines];
   if (trLines.length) titleParts.push('', 'transitions:', ...trLines);
   const title = titleParts.join('\n');
+  // Only offer the advance button when there IS a next phase — at the last
+  // phase (or a drifted current phase) "advance to next" is a server 409, which
+  // would just surface as a confusing red toast. Correcting to a named phase is
+  // the CLI's `process advance --to <phase>` job.
   const next = idx >= 0 && idx + 1 < p.phase_count ? p.phases[idx + 1].name : '';
-  const advanceTip = next
-    ? `Advance to the next phase (${next})`
-    : 'Advance this group’s process';
-  return `<span class="group-process-chip" title="${esc(title)}">${esc(chipText)}</span>`
-    + `<button class="group-process-advance" data-act="advance-phase" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(advanceTip)}">▸ advance</button>`;
+  const advanceBtn = next
+    ? `<button class="group-process-advance" data-act="advance-phase" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(`Advance to the next phase (${next})`)}">▸ advance</button>`
+    : '';
+  return `<span class="group-process-chip" title="${esc(title)}">${esc(chipText)}</span>` + advanceBtn;
 }
 
 function renderGroups(groups) {

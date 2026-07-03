@@ -76,8 +76,11 @@ func TestGroupProcessState_Lifecycle(t *testing.T) {
 	assert.Equal(t, "design", trs[0].ToPhase)
 	assert.Equal(t, "human", trs[0].Actor)
 
-	// Advance to the next phase records a second transition.
-	require.NoError(t, AdvanceGroupProcess(gid, "build", "agt_lead"))
+	// Advance to the next phase records a second transition and returns the
+	// phase moved from.
+	from, err := AdvanceGroupProcess(gid, "build", "agt_lead")
+	require.NoError(t, err)
+	assert.Equal(t, "design", from, "advance returns the phase moved from")
 	st, err = GetGroupProcessState(gid)
 	require.NoError(t, err)
 	assert.Equal(t, "build", st.CurrentPhase)

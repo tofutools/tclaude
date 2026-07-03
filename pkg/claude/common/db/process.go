@@ -121,6 +121,14 @@ func InitGroupProcess(groupID int64, phases []ProcessPhase, actor string) error 
 		groupID, processToJSON(phases), first, nowStr); err != nil {
 		return err
 	}
+	// Re-init safe: clear any prior transition log for this group before
+	// seeding the initial "" → first-phase entry, so a re-init (matching the
+	// INSERT OR REPLACE on the state row above) never leaves two initial
+	// transitions behind. In production this is a fresh group so there is
+	// nothing to clear.
+	if _, err := tx.Exec(`DELETE FROM group_process_transitions WHERE group_id = ?`, groupID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(
 		`INSERT INTO group_process_transitions (group_id, from_phase, to_phase, at, actor)
 		 VALUES (?, '', ?, ?, ?)`,
@@ -157,40 +165,46 @@ func GetGroupProcessState(groupID int64) (*GroupProcessState, error) {
 // AdvanceGroupProcess moves a group's process to toPhase and appends a
 // transition (from the prior current phase → toPhase) with the acting
 // identity. The caller validates toPhase is a real phase in the snapshot; this
-// records the move verbatim (still advisory). Returns sql.ErrNoRows when the
-// group has no process state.
-func AdvanceGroupProcess(groupID int64, toPhase, actor string) error {
+// records the move verbatim (still advisory). It returns the phase actually
+// moved FROM — read inside the same transaction, so the caller reports the true
+// recorded transition even if another advance interleaved between its own
+// pre-read and this write. Returns sql.ErrNoRows when the group has no process
+// state.
+func AdvanceGroupProcess(groupID int64, toPhase, actor string) (string, error) {
 	d, err := Open()
 	if err != nil {
-		return err
+		return "", err
 	}
 	tx, err := d.Begin()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var from string
 	err = tx.QueryRow(`SELECT current_phase FROM group_process_state WHERE group_id = ?`, groupID).Scan(&from)
 	if errors.Is(err, sql.ErrNoRows) {
-		return sql.ErrNoRows
+		return "", sql.ErrNoRows
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	now := time.Now().Format(time.RFC3339Nano)
 	if _, err := tx.Exec(
 		`UPDATE group_process_state SET current_phase = ?, phase_started_at = ? WHERE group_id = ?`,
 		toPhase, now, groupID); err != nil {
-		return err
+		return "", err
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO group_process_transitions (group_id, from_phase, to_phase, at, actor)
 		 VALUES (?, ?, ?, ?, ?)`,
 		groupID, from, toPhase, now, actor); err != nil {
-		return err
+		return "", err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return from, nil
 }
 
 // ListGroupProcessTransitions returns a group's phase-change log oldest-first

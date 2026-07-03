@@ -284,7 +284,12 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 	}
 
 	actor := granterLabel(caller)
-	if err := db.AdvanceGroupProcess(g.ID, target.Name, actor); err != nil {
+	// AdvanceGroupProcess returns the phase actually moved FROM, read inside its
+	// own transaction — so the response reports the true recorded transition
+	// even if a concurrent advance interleaved after resolveAdvanceTarget's
+	// pre-read.
+	fromPhase, err := db.AdvanceGroupProcess(g.ID, target.Name, actor)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "no_process", "this group has no process to advance")
 			return
@@ -297,7 +302,7 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 	// "entering" roles), reusing the existing agent_messages pipeline — no
 	// direct send-keys, no new delivery mechanism. Best-effort: a delivery
 	// failure is logged, never fails the advance (the transition is recorded).
-	notified := notifyEnteringRoles(g, st.CurrentPhase, target, caller)
+	notified := notifyEnteringRoles(g, fromPhase, target, caller)
 
 	freshState, trs, err := loadGroupProcess(g.ID)
 	if err != nil {
@@ -306,7 +311,7 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 	}
 	resp := map[string]any{
 		"group":    g.Name,
-		"from":     st.CurrentPhase,
+		"from":     fromPhase,
 		"to":       target.Name,
 		"notified": notified,
 	}
