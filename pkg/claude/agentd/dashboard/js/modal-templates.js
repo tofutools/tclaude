@@ -7,6 +7,12 @@
 import { $, $$, esc } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
+// wizWord swaps the template vocabulary for 🧙 wizard mode: a template is a
+// SUMMONING CIRCLE — chalk a new one, trace a party into one, cast one to
+// summon the whole party. Static HTML spots swap via the .tpl-word-regular /
+// .tpl-word-wizard span pair in dashboard.html; the JS-rendered spots (cards,
+// empty states, the editor title) swap here, like modal-profiles.js does.
+import { wizWord } from './slop.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
@@ -48,8 +54,10 @@ function renderTemplatesTab() {
   const host = $('#templates-list');
   if (!list.length) {
     host.innerHTML = `<div class="template-empty">${all.length
-      ? 'No templates match the filter.'
-      : 'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.'}</div>`;
+      ? wizWord('No templates match the filter.', 'No circles match the filter.')
+      : wizWord(
+        'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.',
+        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, or <b>⤓ trace a party</b> to copy an existing party’s shape.')}</div>`;
     return;
   }
   host.innerHTML = list.map(templateCardHTML).join('');
@@ -85,9 +93,9 @@ function templateCardHTML(t) {
     <div class="tc-head">
       <span class="tc-name">${esc(t.name)}</span>
       ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
-      <span class="tc-count">${n} agent${n === 1 ? '' : 's'}</span>
+      <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
       <span class="tc-actions">
-        <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="Create a group from this template">⎘ instantiate</button>
+        <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
         <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
       </span>
@@ -110,8 +118,9 @@ function blankTemplateAgent() {
 
 function openTemplateEditor(tmpl) {
   templateEditorEditing = tmpl ? tmpl.name : null;
-  $('#template-editor-title').textContent =
-    tmpl ? `Edit template: ${tmpl.name}` : 'New group template';
+  $('#template-editor-title').textContent = tmpl
+    ? wizWord(`Edit template: ${tmpl.name}`, `Redraw the circle: ${tmpl.name}`)
+    : wizWord('New group template', 'Chalk a new summoning circle');
   $('#template-editor-name').value = tmpl ? tmpl.name : '';
   $('#template-editor-descr').value = tmpl ? (tmpl.descr || '') : '';
   $('#template-editor-context').value = tmpl ? (tmpl.default_context || '') : '';
@@ -143,7 +152,7 @@ function editorAgentRowHTML(a, idx, slugs) {
   ).join('');
   return `<div class="template-agent-row" data-idx="${idx}">
     <div class="template-agent-row-head">
-      <span class="template-agent-num">Agent ${idx + 1}</span>
+      <span class="template-agent-num">${wizWord('Agent', 'Familiar')} ${idx + 1}</span>
       <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners">
         <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
       </label>
@@ -234,7 +243,9 @@ async function deleteTemplate(name) {
 function openInstantiateModal(presetName) {
   const templates = (lastSnapshot && lastSnapshot.templates) || [];
   if (!templates.length) {
-    toast('no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first', true);
+    toast(wizWord(
+      'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
+      'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
     return;
   }
   const sel = $('#template-instantiate-template');
@@ -260,10 +271,10 @@ function renderInstantiatePreview() {
   const host = $('#template-instantiate-preview');
   const agents = (t && t.agents) || [];
   if (!agents.length) {
-    host.innerHTML = '<span class="tp-empty">this template has no agents</span>';
+    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
     return;
   }
-  const shown = prefix || '‹group›';
+  const shown = prefix || wizWord('‹group›', '‹party›');
   host.innerHTML = agents.map(a => {
     const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
     const np = (a.permissions || []).length;
@@ -326,15 +337,25 @@ async function submitInstantiate() {
 
 // ---- Save-group-as-template modal -------------------------------------
 
-function openFromGroupModal() {
+// openFromGroupModal opens the snapshot dialog. With a presetGroup (the
+// per-group ⚙ "save as template…" action) that group is preselected and
+// the template name is prefilled with the group's own name — selected so
+// one keystroke replaces it; the API 409s if the name is already taken.
+function openFromGroupModal(presetGroup) {
   const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
   if (!groups.length) { toast('no groups to snapshot', true); return; }
   const sel = $('#template-from-group-group');
   sel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  $('#template-from-group-name').value = '';
+  const preset = presetGroup && groups.includes(presetGroup);
+  if (preset) sel.value = presetGroup;
+  $('#template-from-group-name').value = preset ? presetGroup : '';
   $('#template-from-group-error').textContent = '';
   $('#template-from-group-modal').classList.add('show');
-  setTimeout(() => $('#template-from-group-name').focus(), 0);
+  setTimeout(() => {
+    const inp = $('#template-from-group-name');
+    inp.focus();
+    if (preset) inp.select();
+  }, 0);
 }
 
 function closeFromGroupModal() { $('#template-from-group-modal').classList.remove('show'); }
@@ -379,7 +400,7 @@ function bindTemplatesUI() {
   $('#templates-manage-close').addEventListener('click', closeTemplatesManageModal);
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
   $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
-  $('#template-from-group-open').addEventListener('click', openFromGroupModal);
+  $('#template-from-group-open').addEventListener('click', () => openFromGroupModal(null));
   $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
 
   // Template-card actions (delegated — the list re-renders every poll).
@@ -937,5 +958,5 @@ function bindGroupCloneModal() {
 export {
   renderTemplatesTab, bindTemplatesUI, bindGroupImportModal,
   openGroupContextModal, bindGroupContextModal, groupDefaultContext,
-  openGroupCloneModal, bindGroupCloneModal,
+  openGroupCloneModal, bindGroupCloneModal, openFromGroupModal,
 };

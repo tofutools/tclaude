@@ -2484,6 +2484,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 4px 8px; background: #0d1117;
   border-left: 2px solid #2a3340; margin-top: -4px;
 }
+/* Shared hint paragraph inside dialogs — the styles the group-context /
+   group-clone hints used to carry inline; a class so theme re-skins can
+   recolor them (an inline style would always win). */
+.modal-hint { margin: 4px 0; font-size: 12px; color: #7d8590; }
+.modal-hint-small { margin: 4px 0 0 0; font-size: 11px; }
 /* Clone-group modal: a compact preview of the source settings the clone
    will carry (directory, descr, context, profile, cap, notify, owners,
    member agents). Populated by openGroupCloneModal in modal-templates.js;
@@ -5889,23 +5894,23 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    TestDashboardCSS_WizardGroupCreateModalScoped), collapsed with :is() so the
    five ids don't have to be spelled out on every pseudo-element rule. All five
    share the #140f28 arcane field palette. Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea {
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-corner,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #7a5db0, #3a2a63);
   border: 1px solid #d9b45a; border-radius: 6px;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 
@@ -6102,6 +6107,539 @@ body.wizard #profiles-manage-modal .modal-buttons button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #profiles-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+
+/* ─── Wizard template vocabulary — "summoning circles" ───────────────
+   In 🧙 mode a group template is a SUMMONING CIRCLE: you chalk a new one,
+   trace a live party into one, and cast one to summon the whole party in
+   a single rite. Every static spot that names templates carries a
+   .tpl-word-regular / .tpl-word-wizard span pair (the same shared-pair
+   idiom as .profiles-word-*); the JS-rendered spots (the circle cards,
+   empty states, the editor title) swap via wizWord() in
+   modal-templates.js. */
+.tpl-word-wizard { display: none; }
+body.wizard .tpl-word-regular { display: none; }
+body.wizard .tpl-word-wizard { display: inline; }
+
+/* ─── Wizard templates overlay — the shelf of summoning circles ──────
+   The "Group templates" management overlay (Groups cog ⚙ → ⧉ circles…),
+   re-skinned arcane exactly like its sibling profiles overlay above.
+   Scoped to #templates-manage-modal — it's a .manage-modal shared with
+   the Profiles… / Links… overlays, so an unscoped rule would repaint
+   those too (guarded by TestDashboardCSS_WizardTemplatesManageScoped). */
+body.wizard #templates-manage-modal .manage-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #templates-manage-modal .manage-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / sibling dialogs use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #templates-manage-modal .manage-intro { color: #b39ddb; }
+body.wizard #templates-manage-modal .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #templates-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #templates-manage-modal .filter-bar .filter-count { color: #b39ddb; }
+body.wizard #templates-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard #templates-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+
+/* "⤓ trace a party": tarnished-gold secondary. "+ chalk a new circle":
+   the gilded-arcane primary — the profiles overlay's "+ new pattern" twin. */
+body.wizard #templates-manage-modal #template-from-group-open {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #templates-manage-modal #template-from-group-open:hover { background: #3a2a63; }
+body.wizard #templates-manage-modal #template-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #templates-manage-modal #template-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+
+/* Circle cards: violet-framed void, gilt name, violet meta; the roster
+   chips go violet with a gold owner-star. The 🕯 cast action wears a
+   small gilded fill so the "go" action pops out of the tarnished
+   edit/delete pair. */
+body.wizard #templates-manage-modal .template-card {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #templates-manage-modal .template-card .tc-name { color: #f3e6c0; }
+body.wizard #templates-manage-modal .template-card .tc-descr,
+body.wizard #templates-manage-modal .template-card .tc-count { color: #b39ddb; }
+body.wizard #templates-manage-modal .template-card .tc-agent {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #templates-manage-modal .template-card .tc-agent .tc-role { color: #b39ddb; }
+body.wizard #templates-manage-modal .template-card .tc-agent .tc-owner { color: #d9b45a; }
+body.wizard #templates-manage-modal .template-card .tc-actions button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #templates-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #templates-manage-modal .template-card .tc-actions button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.45);
+}
+body.wizard #templates-manage-modal .template-card .tc-actions button.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+}
+body.wizard #templates-manage-modal .template-empty { color: #b39ddb; }
+
+/* Close (and any other non-primary footer button): tarnished-gold secondary. */
+body.wizard #templates-manage-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #templates-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+
+/* ─── Wizard template editor — chalking the summoning circle ─────────
+   The create/edit dialog for a circle. Its title is JS-set via wizWord
+   ("Chalk a new summoning circle" / "Redraw the circle: <name>"), so the
+   CSS only recolors chrome. A .cron-create-modal like the spawn dialog
+   and its siblings, so every rule is scoped to #template-editor-modal
+   (shared-needle guard: TestDashboardCSS_WizardTemplateDialogsScoped).
+   NOTE: the profile editor's inner div also carries the
+   .template-editor-modal CLASS — ids only in these selectors. */
+body.wizard #template-editor-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-editor-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-editor-modal .cron-create-label,
+body.wizard #template-editor-modal .template-agents-head { color: #b39ddb; }
+/* Every text input / textarea — the top rows AND the per-familiar rows —
+   goes violet-void. The id out-specifies the .template-agent-row rules. */
+body.wizard #template-editor-modal input[type=text],
+body.wizard #template-editor-modal textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-editor-modal input[type=text]:focus,
+body.wizard #template-editor-modal textarea:focus { border-color: #a97bd6; }
+/* Familiar rows: violet-framed panels; the row number goes arcane purple,
+   the owner / permission labels parchment. */
+body.wizard #template-editor-modal .template-agent-row {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
+body.wizard #template-editor-modal .template-agent-owner,
+body.wizard #template-editor-modal .ta-perms-list label { color: #e7d9f5; }
+body.wizard #template-editor-modal .ta-perms-details summary { color: #b39ddb; }
+body.wizard #template-editor-modal .ta-perms-details summary:hover { color: #f3e6c0; }
+/* Secondary + inline buttons (+ add familiar / ✕ remove / Cancel): the
+   tarnished-gold treatment; :not(#template-editor-submit) keeps the Seal
+   lever below out of this rule's reach. */
+body.wizard #template-editor-modal button:not(#template-editor-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-editor-modal button:not(#template-editor-submit):hover { background: #3a2a63; }
+body.wizard #template-editor-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Save = 🕯 Seal the circle! — the gilded lever, Summon's sibling. The
+   button's "Save template" text hides (font-size: 0) behind the ::before
+   glyph; the brief in-flight disabled state paints "🕯 Sealing…" so the
+   busy copy stays in the arcane voice. */
+body.wizard #template-editor-modal #template-editor-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-editor-modal #template-editor-submit::before {
+  content: "🕯 Seal the circle!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-editor-modal #template-editor-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-editor-modal #template-editor-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-editor-modal #template-editor-submit:disabled { opacity: 0.7; }
+body.wizard #template-editor-modal #template-editor-submit:disabled::before { content: "🕯 Sealing…"; }
+
+/* ─── Wizard cast dialog — "🕯 Cast a summoning circle" ──────────────
+   Instantiate-from-template: pick a circle, name the party, state the
+   mission — the preview shows the familiars the rite will call forth.
+   Scoped to #template-instantiate-modal (same shared-class caveat as the
+   editor above). */
+body.wizard #template-instantiate-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-instantiate-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-instantiate-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-instantiate-modal .cron-create-row input[type=text],
+body.wizard #template-instantiate-modal .cron-create-row select,
+body.wizard #template-instantiate-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-instantiate-modal .cron-create-row input[type=text]:focus,
+body.wizard #template-instantiate-modal .cron-create-row select:focus,
+body.wizard #template-instantiate-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+/* Open <select> options render on the OS layer — dark-on-parchment. */
+body.wizard #template-instantiate-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* The final-names preview: violet void, gilt names, gold owner-star. */
+body.wizard #template-instantiate-modal .template-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #template-instantiate-modal .template-preview .tp-name { color: #f3e6c0; }
+body.wizard #template-instantiate-modal .template-preview .tp-meta { color: #b39ddb; }
+body.wizard #template-instantiate-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #template-instantiate-modal .template-preview .tp-empty { color: #b39ddb; }
+body.wizard #template-instantiate-modal button:not(#template-instantiate-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-instantiate-modal button:not(#template-instantiate-submit):hover { background: #3a2a63; }
+body.wizard #template-instantiate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Create & spawn = 🕯 Cast it! — the gilded lever. The in-flight state
+   (JS swaps the text to "Spawning…" and disables) stays hidden behind
+   font-size: 0 and reads "🕯 Casting…" instead, staying in voice. */
+body.wizard #template-instantiate-modal #template-instantiate-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-instantiate-modal #template-instantiate-submit::before {
+  content: "🕯 Cast it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-instantiate-modal #template-instantiate-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-instantiate-modal #template-instantiate-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-instantiate-modal #template-instantiate-submit:disabled { opacity: 0.7; }
+body.wizard #template-instantiate-modal #template-instantiate-submit:disabled::before { content: "🕯 Casting…"; }
+
+/* ─── Wizard trace dialog — "🕯 Trace the party's circle" ────────────
+   Save-a-group-as-a-template: copy a live party's shape into a fresh
+   circle. Scoped to #template-from-group-modal. */
+body.wizard #template-from-group-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-from-group-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-from-group-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-from-group-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #template-from-group-modal .cron-create-row input[type=text],
+body.wizard #template-from-group-modal .cron-create-row select {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-from-group-modal .cron-create-row input[type=text]:focus,
+body.wizard #template-from-group-modal .cron-create-row select:focus {
+  border-color: #a97bd6;
+}
+body.wizard #template-from-group-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+body.wizard #template-from-group-modal button:not(#template-from-group-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-from-group-modal button:not(#template-from-group-submit):hover { background: #3a2a63; }
+body.wizard #template-from-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Save as template = 🕯 Trace it! — gilded lever; the brief disabled
+   in-flight beat reads "🕯 Tracing…". */
+body.wizard #template-from-group-modal #template-from-group-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-from-group-modal #template-from-group-submit::before {
+  content: "🕯 Trace it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-from-group-modal #template-from-group-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-from-group-modal #template-from-group-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-from-group-modal #template-from-group-submit:disabled { opacity: 0.7; }
+body.wizard #template-from-group-modal #template-from-group-submit:disabled::before { content: "🕯 Tracing…"; }
+
+/* ─── Wizard unseal dialog — "⤒ Unseal a party archive" ──────────────
+   Group import. Scoped to #group-import-modal. Unlike the sibling levers
+   the Import button keeps its honest JS-set text ("Import" /
+   "Importing…"): it sits disabled until the dry-run preview is clean, so
+   a themed "…ing" ::before would misread idle-disabled as in-flight
+   (same reasoning as the reply dialog's Send). */
+body.wizard #group-import-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #group-import-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #group-import-modal .cron-create-label { color: #b39ddb; }
+body.wizard #group-import-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+/* All three inputs — the file picker included. */
+body.wizard #group-import-modal .cron-create-row input {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-import-modal .cron-create-row input:focus { border-color: #a97bd6; }
+/* The file picker's Choose-file chip is a pseudo-element with its own
+   chrome — re-skin it too or it keeps the plain dark-GitHub look inside
+   the violet field. */
+body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
+/* The dry-run preview: violet void; the semantic ✓/⚠/✗ verdict colours
+   (.gi-ok / .gi-warn / .gi-bad) are the safety signal and stay untouched. */
+body.wizard #group-import-modal .group-import-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #group-import-modal .group-import-preview .gi-head { color: #f3e6c0; }
+body.wizard #group-import-modal .group-import-preview .gi-row .gi-k { color: #b39ddb; }
+body.wizard #group-import-modal .group-import-preview .gi-row .gi-v { color: #e7d9f5; }
+body.wizard #group-import-modal .group-import-preview .gi-sep { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #group-import-modal button:not(#group-import-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-import-modal button:not(#group-import-submit):hover { background: #3a2a63; }
+body.wizard #group-import-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* The gilded lever chrome, honest label kept; dim while the preview
+   hasn't cleared it (or mid-import). */
+body.wizard #group-import-modal #group-import-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+body.wizard #group-import-modal #group-import-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
+
+/* ─── Wizard standing-orders dialog — "📜 The party's standing orders" ──
+   The group startup-context editor: the shared guidance every familiar
+   summoned into the party receives. Scoped to #group-context-modal. */
+body.wizard #group-context-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #group-context-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #group-context-modal .cron-create-label,
+body.wizard #group-context-modal .modal-hint { color: #b39ddb; }
+body.wizard #group-context-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #group-context-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-context-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+body.wizard #group-context-modal button:not(#group-context-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-context-modal button:not(#group-context-submit):hover { background: #3a2a63; }
+body.wizard #group-context-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Save = 📜 Decree it! — gilded lever; the brief disabled in-flight beat
+   reads "📜 Inscribing…". */
+body.wizard #group-context-modal #group-context-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #group-context-modal #group-context-submit::before {
+  content: "📜 Decree it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #group-context-modal #group-context-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-context-modal #group-context-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #group-context-modal #group-context-submit:disabled { opacity: 0.7; }
+body.wizard #group-context-modal #group-context-submit:disabled::before { content: "📜 Inscribing…"; }
+
+/* ─── Wizard mirror dialog — "⧉ Mirror the party" ────────────────────
+   Group clone: conjure a mirror-image of a party (optionally with its
+   familiars). Scoped to #group-clone-modal. */
+body.wizard #group-clone-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #group-clone-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #group-clone-modal .cron-create-label,
+body.wizard #group-clone-modal .modal-hint { color: #b39ddb; }
+body.wizard #group-clone-modal .cron-create-enabled { color: #e7d9f5; }
+body.wizard #group-clone-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #group-clone-modal .cron-create-row input[type=text] {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-clone-modal .cron-create-row input[type=text]:focus { border-color: #a97bd6; }
+/* The "clone will carry" preview: violet void, gilt title, violet keys. */
+body.wizard #group-clone-modal .group-clone-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #group-clone-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
+body.wizard #group-clone-modal .group-clone-preview .gcp-key { color: #b39ddb; }
+body.wizard #group-clone-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
+body.wizard #group-clone-modal .group-clone-preview .gcp-val.muted { color: #8a7fa8; }
+body.wizard #group-clone-modal button:not(#group-clone-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-clone-modal button:not(#group-clone-submit):hover { background: #3a2a63; }
+body.wizard #group-clone-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Clone group = ⧉ Mirror it! — gilded lever; in-flight "⧉ Mirroring…". */
+body.wizard #group-clone-modal #group-clone-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #group-clone-modal #group-clone-submit::before {
+  content: "⧉ Mirror it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #group-clone-modal #group-clone-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-clone-modal #group-clone-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #group-clone-modal #group-clone-submit:disabled { opacity: 0.7; }
+body.wizard #group-clone-modal #group-clone-submit:disabled::before { content: "⧉ Mirroring…"; }
 
 /* ─── Wizard permissions editor — binding a familiar's powers ────────
    The 🧙 re-skin of the permanent-permissions tri-state editor

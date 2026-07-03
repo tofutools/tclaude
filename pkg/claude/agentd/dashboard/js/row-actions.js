@@ -15,7 +15,7 @@ import {
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
-import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
+import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -1347,6 +1347,13 @@ function bindRowActions() {
           // Open the clone-group modal (new name + with/without agents).
           // The modal owns its POST + toast + refresh.
           openGroupCloneModal(group);
+          return;
+        }
+        case 'template-from-group': {
+          // Open the save-group-as-template modal with this group
+          // preselected — the quick "turn this working group into a
+          // reusable blueprint" path. The modal owns submit + refresh.
+          openFromGroupModal(group);
           return;
         }
         case 'delete-group': {
