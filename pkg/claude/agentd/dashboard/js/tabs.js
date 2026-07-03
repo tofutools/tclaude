@@ -126,15 +126,17 @@ function renderGroupsTab() {
   // copy-paste fix). The stable #groups-list container is never replaced, so
   // its delegated listeners (bindGroupQuickHover, bindDnd, …) stay bound.
   morphInto($('#groups-list'), renderGroups(filtered));
-  // Re-phase the activity-bot animations to wall-clock. Morphing no longer
-  // restarts the CSS animations on an UNCHANGED bot (its node is reused), so
-  // this is now only load-bearing for bots that were freshly inserted this
-  // tick (a new/changed group); it stays because it's idempotent and cheap.
-  // (Removable once #global-activity — still an innerHTML swap — is morphed
-  // too; see the PR.)
+  // Phase newly-inserted activity bots to wall-clock. Under morph the existing
+  // bots PERSIST (their one-time stamp preserved by morphAttributes), so these
+  // stamp-once helpers now only touch bots that appeared this tick — a new agent
+  // joins the others in phase. Re-stamping a persistent, running node would
+  // shift its phase and jump it every tick, so syncBot/WizardOrbit are now
+  // stamp-on-missing (see helpers.js). NOT the old removable band-aid: under
+  // morph they are REQUIRED, in reworked form, for the animations to stay
+  // continuous.
   syncBotAnimations();
-  // Same for the wizard "Channeling" pill's orbiting mote — otherwise the
-  // light teleports back to its start on every poll. See syncWizardOrbit.
+  // Same one-time wall-clock phasing for the wizard "Channeling" pill's orbiting
+  // mote. See syncWizardOrbit.
   syncWizardOrbit();
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.

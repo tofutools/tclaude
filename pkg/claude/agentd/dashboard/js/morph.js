@@ -46,6 +46,13 @@
 //     those controls are rendered from JS state the change handler updates
 //     before the repaint. isEqualNode ignores these live properties, so a form
 //     control never takes the fast-path skip.
+//   - Post-pass-owned inline style (the wall-clock animation-delay stamp and the
+//     wizard `--wizard-orbit-delay`, written by helpers.syncBot/WizardOrbit) is
+//     PRESERVED on the live node (see morphAttributes) — the fresh render never
+//     emits it, so a persistent animated node keeps its one-time stamp instead
+//     of being re-jolted every tick. So there are three ownership directions:
+//     user-owned → live wins; state-backed → fresh wins; post-pass-owned → live
+//     wins.
 
 // nodeKey returns the reconcile key for a node, or '' when it is unkeyed.
 // Element keys, in priority order: a stable `id`, then `data-group-key` (the
@@ -103,6 +110,20 @@ function morphAttributes(from, to) {
   // the live node's own value. See the module header for why this can't drift.
   const preserveOpen = from.nodeName === 'DETAILS';
 
+  // Post-pass-owned, render-absent inline style: the wall-clock animation-delay
+  // stamp (helpers.syncBotAnimations) and the wizard orbit delay
+  // (helpers.syncWizardOrbit) are written on the LIVE node out of band, and the
+  // fresh render NEVER emits them. Capture them before the sync below so the
+  // generic style-attribute sync (which would strip a `style` the fresh side
+  // lacks) can't jolt a running animation every tick; re-applied after. This is
+  // the THIRD ownership direction (see the module header):
+  //   user-owned      → live wins  (<details open>)
+  //   state-backed    → fresh wins (syncFormProps: checkbox/select)
+  //   post-pass-owned → live wins  (here: the animation stamps)
+  const st = from.style;
+  const liveDelay = st ? st.animationDelay : '';
+  const liveOrbit = st ? st.getPropertyValue('--wizard-orbit-delay') : '';
+
   const toAttrs = to.attributes;
   for (let i = 0; i < toAttrs.length; i++) {
     const { name, value } = toAttrs[i];
@@ -115,6 +136,18 @@ function morphAttributes(from, to) {
     const name = fromAttrs[i].name;
     if (preserveOpen && name === 'open') continue;
     if (!to.hasAttribute(name)) from.removeAttribute(name);
+  }
+
+  // Re-apply the post-pass-owned style props the fresh render didn't declare,
+  // so a persistent animated node keeps its one-time wall-clock stamp instead of
+  // having it stripped (and re-jolted) on every tick. A fresh node that DOES
+  // declare one wins (the `!to.style.…` guard), which never happens for these
+  // JS-only props today but keeps the rule honest.
+  if (st && to.style) {
+    if (liveDelay && !to.style.animationDelay) st.animationDelay = liveDelay;
+    if (liveOrbit && !to.style.getPropertyValue('--wizard-orbit-delay')) {
+      st.setProperty('--wizard-orbit-delay', liveOrbit);
+    }
   }
 }
 

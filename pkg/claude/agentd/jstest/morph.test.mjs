@@ -67,11 +67,37 @@ class MockText extends MockNode {
   isEqualNode(o) { return o.nodeType === this.nodeType && o.nodeValue === this.nodeValue; }
 }
 
+// MockCSSStyle: just enough CSSOM for morphAttributes' style preserve — the
+// `animation-delay` property and custom (--*) properties, kept in sync with the
+// element's `style` attribute in both directions.
+class MockCSSStyle {
+  constructor(owner) { this.owner = owner; this._m = new Map(); }
+  _loadFromAttr(str) { // element's setAttribute('style', …) feeds this
+    this._m.clear();
+    for (const decl of (str || '').split(';')) {
+      const i = decl.indexOf(':');
+      if (i > 0) this._m.set(decl.slice(0, i).trim(), decl.slice(i + 1).trim());
+    }
+  }
+  _flush() { // property writes update the attribute store directly (no re-parse)
+    const s = [...this._m].map(([k, v]) => `${k}: ${v}`).join('; ');
+    if (s) this.owner._attrs.set('style', s); else this.owner._attrs.delete('style');
+  }
+  get animationDelay() { return this._m.get('animation-delay') || ''; }
+  set animationDelay(v) { this.setProperty('animation-delay', v); }
+  getPropertyValue(k) { return this._m.get(k) || ''; }
+  setProperty(k, v) {
+    if (v === '' || v == null) this._m.delete(k); else this._m.set(k, String(v));
+    this._flush();
+  }
+}
+
 class MockElement extends MockNode {
   constructor(tag) {
     super(1);
     this.tagName = tag.toUpperCase();
     this._attrs = new Map();
+    this.style = new MockCSSStyle(this);
   }
   get nodeName() { return this.tagName; }
   get id() { return this._attrs.get('id') || ''; }
@@ -79,12 +105,20 @@ class MockElement extends MockNode {
     return [...this._attrs.entries()].map(([name, value]) => ({ name, value }));
   }
   getAttribute(n) { return this._attrs.has(n) ? this._attrs.get(n) : null; }
-  setAttribute(n, v) { this._attrs.set(n, String(v)); return this; }
+  setAttribute(n, v) {
+    this._attrs.set(n, String(v));
+    if (n === 'style') this.style._loadFromAttr(String(v));
+    return this;
+  }
   hasAttribute(n) { return this._attrs.has(n); }
-  removeAttribute(n) { this._attrs.delete(n); }
+  removeAttribute(n) {
+    this._attrs.delete(n);
+    if (n === 'style') this.style._loadFromAttr('');
+  }
   cloneNode(deep) {
     const c = new MockElement(this.tagName);
     for (const [k, v] of this._attrs) c._attrs.set(k, v);
+    if (c._attrs.has('style')) c.style._loadFromAttr(c._attrs.get('style'));
     if (deep) for (const ch of this.childNodes) c.appendChild(ch.cloneNode(true));
     return c;
   }
@@ -373,4 +407,44 @@ test('morphing a list row re-syncs its checkbox when the selection changed', () 
   const cb = from.childNodes[0].childNodes[0];
   assert.equal(cb.checked, false, 'checkbox property synced through the row morph');
   assert.equal(cb.hasAttribute('checked'), false, 'checked attribute also removed');
+});
+
+// ---- post-pass-owned inline style (animation stamps) — LIVE wins -----------
+// syncBotAnimations / syncWizardOrbit stamp a wall-clock animation-delay ONCE on
+// a live node; the fresh render never emits it. The morph must preserve that
+// stamp (else a running animation is stripped and re-jolted every tick), the
+// third ownership direction: post-pass-owned = live wins.
+
+test('morphAttributes preserves a live animation-delay the fresh node lacks', () => {
+  const from = el('span', { class: 'actbot-face' });
+  from.style.animationDelay = '-1234ms'; // stamped by syncBotAnimations
+  const to = el('span', { class: 'actbot-face' }); // fresh render — no inline style
+  morphAttributes(from, to);
+  assert.equal(from.style.animationDelay, '-1234ms', 'the one-time stamp survives the morph');
+});
+
+test('morphAttributes preserves the wizard --wizard-orbit-delay the fresh node lacks', () => {
+  const from = el('span', { class: 'wizard-pill', 'data-status': 'working' });
+  from.style.setProperty('--wizard-orbit-delay', '-500ms');
+  const to = el('span', { class: 'wizard-pill', 'data-status': 'working' });
+  morphAttributes(from, to);
+  assert.equal(from.style.getPropertyValue('--wizard-orbit-delay'), '-500ms', 'orbit stamp survives');
+});
+
+test('morphAttributes still lets the fresh render win for non-owned style', () => {
+  const from = el('span', { style: 'color: red' });
+  from.style.animationDelay = '-10ms';
+  const to = el('span', { style: 'color: blue' }); // fresh changes color, no delay
+  morphAttributes(from, to);
+  assert.equal(from.style.getPropertyValue('color'), 'blue', 'fresh color wins');
+  assert.equal(from.style.animationDelay, '-10ms', 'but the post-pass-owned delay is preserved');
+});
+
+test('a fresh-declared animation-delay wins over the live one', () => {
+  // Defensive: never happens for these JS-only props today, but the rule stays
+  // honest — if the fresh render ever declares the prop, it is authoritative.
+  const from = el('span', {}); from.style.animationDelay = '-1ms';
+  const to = el('span', { style: 'animation-delay: -99ms' });
+  morphAttributes(from, to);
+  assert.equal(from.style.animationDelay, '-99ms', 'fresh-declared value wins');
 });

@@ -1515,21 +1515,30 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
   return { canceled: true }; // empty result — treat as a no-op cancel
 }
 
-// syncBotAnimations re-phases the activity-bot CSS animations to a shared
-// wall-clock, so the dashboard's wholesale re-renders (the 2s snapshot
-// poll, plus filter/sort/drag) — which replace the groups subtree and
-// thereby restart every CSS animation from 0% — don't make the bots
-// visibly jump. Setting `animation-delay = -(now % period)` on a freshly
-// created element makes its displayed phase a function of wall-clock ALONE
-// (the element's own start time cancels out: with start C and delay
-// -(C % P), phase at time t is ((t - C) + (C % P)) % P = t % P), so the new
-// element resumes exactly where the replaced one was — continuous, and
-// incidentally in lock-step across all bots. The period is read from
-// computed style (so it tracks the CSS durations with no duplication);
+// syncBotAnimations phases a NEWLY created activity-bot's CSS animation to a
+// shared wall-clock so bots that appear at different times still animate in
+// lock-step. Setting `animation-delay = -(now % period)` ONCE at creation makes
+// the element's displayed phase a function of wall-clock ALONE (its own start
+// time cancels out: with start C and delay -(C % P), phase at time t is
+// ((t - C) + (C % P)) % P = t % P), so every bot — whenever it was created —
+// sits at phase `t % P`, together.
+//
+// STAMP ONCE, NEVER RE-STAMP. Re-stamping a node that is already running with a
+// fresh `now` does NOT restart it (its start time is unchanged), so the new
+// delay just shifts the phase by ~(elapsed since the last stamp) — a visible
+// jump every tick. Under DOM morphing the bot nodes PERSIST across the 2s poll
+// (and morphAttributes preserves their stamp), so we must leave an
+// already-stamped node alone and only stamp ones that don't have a delay yet:
+//   - a morphed tab (#groups-list): existing bots keep their stamp, only a
+//     newly-inserted agent's bot is stamped;
+//   - a still-wholesale-rendered region (#global-activity): every bot is brand
+//     new each tick, so every one is stamped — identical to the old behaviour.
+// The period is read from computed style (tracks the CSS with no duplication);
 // `alternate` doubles it. Called right after each bot-bearing re-render.
 function syncBotAnimations() {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
   for (const el of $$('.actbot-face, .actbot-tag, .actbot-spr')) {
+    if (el.style.animationDelay) continue; // already stamped once — leave it running
     const cs = getComputedStyle(el);
     const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when none
     if (!dur) continue;
@@ -1538,23 +1547,27 @@ function syncBotAnimations() {
   }
 }
 
-// syncWizardOrbit re-phases the wizard "Channeling" pill's orbiting mote to the
-// same shared wall-clock as syncBotAnimations, for the same reason: the 2s
-// snapshot poll rebuilds the group rows' HTML wholesale, which restarts every
-// CSS animation from 0%. Left alone, the orbiting light would teleport back to
-// its start every tick. The mote animates on the pill's ::before, and a
-// pseudo-element takes no inline style — but it inherits custom properties from
-// its originating element, so we set animation-delay = -(now % period) on the
-// PILL via --wizard-orbit-delay and the ::before's `animation-delay: var(...)`
-// picks it up. Phase then depends on wall-clock alone (see syncBotAnimations
-// for the algebra), so a freshly-rendered mote resumes exactly where the
-// replaced one was, in lock-step across every channeling pill. Period is read
-// from the pseudo's computed animationDuration so it tracks the CSS with no
-// duplicated constant; a non-wizard theme (pills hidden, ::before rule unmatched)
-// reports 0 and is skipped. Called right after each group-row re-render.
+// syncWizardOrbit phases the wizard "Channeling" pill's orbiting mote to the
+// same shared wall-clock as syncBotAnimations, once per pill. The mote animates
+// on the pill's ::before, and a pseudo-element takes no inline style — but it
+// inherits custom properties from its originating element, so we set
+// -(now % period) on the PILL via --wizard-orbit-delay and the ::before's
+// `animation-delay: var(...)` picks it up. Phase then depends on wall-clock
+// alone (see syncBotAnimations for the algebra + the STAMP-ONCE rule), so every
+// channeling pill orbits in lock-step. Period is read from the pseudo's
+// computed animationDuration (tracks the CSS with no duplicated constant); a
+// non-wizard theme (pills hidden, ::before rule unmatched) reports 0 and is
+// skipped. Called right after each group-row re-render.
+//
+// Like the bots, stamp ONCE and never re-stamp: under morph the pill persists
+// (morphAttributes preserves --wizard-orbit-delay), so re-stamping a live pill
+// would teleport its mote every tick. A genuine status change that swaps the
+// pill for a fresh node (or clears the property) lands here unstamped and is
+// re-phased — the correct moment to restart.
 function syncWizardOrbit() {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
   for (const pill of $$('.wizard-pill[data-status="working"], .wizard-pill[data-status="main_agent_idle"]')) {
+    if (pill.style.getPropertyValue('--wizard-orbit-delay')) continue; // stamped once already
     const cs = getComputedStyle(pill, '::before');
     const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when the ::before has no animation
     if (!dur) continue;

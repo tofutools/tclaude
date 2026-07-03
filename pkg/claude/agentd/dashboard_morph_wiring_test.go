@@ -106,3 +106,28 @@ func TestDashboardMorph_MailWired(t *testing.T) {
 		t.Error("mail.js still carries the retired `el.innerHTML = filtered.map(...)` list swap — Messages copy-paste regressed")
 	}
 }
+
+// TestDashboardMorph_AnimationStampsPreserved guards the fix for the eval
+// finding that activity-bot + wizard-orbit animations reset every tick under
+// morph. Under wholesale innerHTML the re-phasers (syncBotAnimations /
+// syncWizardOrbit) stamped a wall-clock animation-delay on every freshly-created
+// node each tick; under morph the nodes PERSIST, so (a) re-stamping a running
+// node shifts its phase (a visible jump) and (b) morphAttributes would strip the
+// stamp the fresh render never emits. The fix: morphAttributes PRESERVES the
+// post-pass-owned inline style (animation-delay + --wizard-orbit-delay), and the
+// re-phasers became stamp-once (skip an already-stamped node). Both halves must
+// stay in lockstep — a drop in either reopens the per-tick reset.
+func TestDashboardMorph_AnimationStampsPreserved(t *testing.T) {
+	for _, needle := range []string{
+		// morph.js — morphAttributes re-applies the live stamps the fresh side lacks.
+		"if (liveDelay && !to.style.animationDelay) st.animationDelay = liveDelay;",
+		"st.setProperty('--wizard-orbit-delay', liveOrbit);",
+		// helpers.js — the re-phasers now stamp once (skip an already-stamped node).
+		"if (el.style.animationDelay) continue; // already stamped once",
+		"if (pill.style.getPropertyValue('--wizard-orbit-delay')) continue;",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — animation-stamp preserve / stamp-once regressed", needle)
+		}
+	}
+}
