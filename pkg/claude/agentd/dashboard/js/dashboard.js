@@ -48,6 +48,7 @@ import {
   bindGroupCloneModal,
 } from './modal-templates.js';
 import { bindProfilesUI } from './modal-profiles.js';
+import { bindRolesUI } from './modal-roles.js';
 import { bindLinkModal } from './modal-link-wt.js';
 import { bindExportModal } from './modal-export.js';
 import {
@@ -157,6 +158,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();
+  bindRolesUI();
   bindGroupImportModal();
   bindGroupContextModal();
   bindGroupCloneModal();
