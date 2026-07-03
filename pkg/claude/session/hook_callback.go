@@ -610,20 +610,30 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	//     status transitions around sub-agent lifecycle;
 	//   - PermissionRequest / Notification — a sub-agent's permission
 	//     prompt surfaces on the parent (Claude Code parks the prompt in
-	//     the parent's UI), so awaiting_permission must still be set;
-	//   - anything while the parent shows awaiting_* — the sub-agent
-	//     acting again is exactly the evidence that the prompt was
-	//     answered, and the pre-gate behaviour (flip back to working via
-	//     the tool arms) is what clears it.
+	//     the parent's UI), so awaiting_permission must still be set.
 	if input.AgentID != "" {
 		switch input.HookEventName {
 		case "SubagentStart", "SubagentStop", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
 			// fall through to the status switch below
 		default:
-			if state.Status != StatusAwaitingPermission && state.Status != StatusAwaitingInput {
-				state.SubagentCount = len(state.Subagents)
-				return SaveSessionState(state)
+			// A sub-agent acting again while the parent shows awaiting_*
+			// is exactly the evidence that the prompt (parked on the
+			// parent) was answered — but the resolved state must be
+			// main_agent_idle, NOT "working" via the tool arms: only
+			// main_agent_idle is a state the SubagentStop settle below
+			// can take back to idle, so painting "working" here wedged
+			// the parent at "working: <tool>" forever once the sub-agent
+			// finished (found by cold review — the gate's original
+			// awaiting fall-through re-created the very wedge the gate
+			// exists to fix). If the parent's own turn is genuinely in
+			// flight (a foreground Task), its next main-thread hook
+			// repaints "working"; both states style as busy either way.
+			if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
+				state.Status = StatusMainAgentIdle
+				state.StatusDetail = fmt.Sprintf("%d subagents running", len(state.Subagents))
 			}
+			state.SubagentCount = len(state.Subagents)
+			return SaveSessionState(state)
 		}
 	}
 
@@ -857,7 +867,14 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 		default:
-			// Unknown notification type - log but don't update status
+			// Unknown notification type - log but don't update status.
+			// One from inside a sub-agent still Sighted the ledger above,
+			// so persist the full state for it; a last_hook-only write
+			// would silently drop that mutation.
+			if input.AgentID != "" {
+				state.SubagentCount = len(state.Subagents)
+				return SaveSessionState(state)
+			}
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
 				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
 			}

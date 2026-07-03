@@ -446,6 +446,17 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
+// MarkStateExited flips an in-memory state to exited and clears the
+// sub-agent ledger — sub-agents run inside the (now dead) harness
+// process, so none can survive it. Mirrors what the hook callback's
+// SessionEnd arm and the reaper's MarkSessionExitedIfUnchanged do; the
+// caller persists via SaveSessionState when needed.
+func MarkStateExited(state *SessionState) {
+	state.Status = StatusExited
+	state.Subagents = nil
+	state.SubagentCount = 0
+}
+
 // RefreshSessionStatus updates the session status based on actual state
 func RefreshSessionStatus(state *SessionState) {
 	// For tmux-backed sessions, check if tmux session is alive
@@ -462,14 +473,14 @@ func RefreshSessionStatus(state *SessionState) {
 	// sessions where tmux died but the process is still running)
 	if state.PID > 0 {
 		if !IsProcessAlive(state.PID) {
-			state.Status = StatusExited
+			MarkStateExited(state)
 		}
 		// If PID is alive, keep the current status (updated by hooks)
 		return
 	}
 
 	// No tmux session and no PID - mark as exited
-	state.Status = StatusExited
+	MarkStateExited(state)
 }
 
 // ShortID returns the first 8 characters of an ID for display

@@ -144,10 +144,14 @@ func (set SubagentSet) Sight(id, agentType string, now time.Time) SubagentSet {
 	if set == nil {
 		set = SubagentSet{}
 	}
-	if _, known := set[id]; !known {
+	if prev, known := set[id]; !known {
 		if anon := set.oldest(true); anon != "" {
 			delete(set, anon)
 		}
+	} else if agentType == "" {
+		// Tool hooks carry agent_id but usually no agent_type — keep the
+		// type recorded at SubagentStart instead of blanking it.
+		agentType = prev.Type
 	}
 	set[id] = SubagentSeen{Type: agentType, Seen: now}
 	return set

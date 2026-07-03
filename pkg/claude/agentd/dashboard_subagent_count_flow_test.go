@@ -2,10 +2,12 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -154,4 +156,42 @@ func TestDashboardSnapshot_OfflineAgentReportsZeroSubagents(t *testing.T) {
 	require.NotNil(t, member, "agent %s missing after going offline", conv)
 	assert.Equal(t, 0, member.State.SubagentCount,
 		"a dead process has no sub-agents — the stale row count must not surface")
+}
+
+// Scenario: the SubagentStop was lost and NO further hook ever fires —
+// the ledger entry expires via the TTL, which the badge respects
+// (LiveCount) but no write path re-settles the stored status. The
+// snapshot must not self-contradict (badge 0 next to a busy
+// "N subagents running"): the read side settles the DISPLAY to idle.
+func TestDashboardSnapshot_ExpiredLedgerSettlesStatusToIdle(t *testing.T) {
+	const conv = "subd-1111-2222-3333-4444"
+	const label = "spwn-subd"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSession(conv, label, "tmux-subd", "/tmp/subd")
+	f.HaveMember("squad", conv)
+
+	// Stage the wedged row directly: main_agent_idle with a ledger whose
+	// only entry expired > TTL ago (a hook can't produce this state in a
+	// test without waiting out the TTL — expiry-without-hooks is the
+	// point of the scenario).
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	row.Status = session.StatusMainAgentIdle
+	row.StatusDetail = "1 subagents running"
+	row.SubagentCount = 1
+	row.SubagentsJSON = db.SubagentSet{
+		"ag-expired": {Type: "Explore", Seen: time.Now().Add(-db.SubagentTTL - time.Minute)},
+	}.Encode()
+	require.NoError(t, db.SaveSession(row))
+
+	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
+	require.NotNil(t, member, "agent %s missing from group squad members", conv)
+	assert.Equal(t, 0, member.State.SubagentCount, "expired ledger entry must not count")
+	assert.Equal(t, session.StatusIdle, member.State.Status,
+		"status display settles to idle when the TTL-filtered count is zero")
+	assert.Empty(t, member.State.StatusDetail, "no 'N subagents running' next to a zero badge")
 }

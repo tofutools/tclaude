@@ -1203,6 +1203,17 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
+		// Keep the status consistent with the TTL-filtered count: a row
+		// can be stuck at main_agent_idle / "N subagents running" when
+		// the ledger emptied without a SubagentStop (TTL expiry with no
+		// later hook to re-settle it). The badge already reads 0 then —
+		// showing a busy "N subagents running" next to it would be
+		// self-contradicting, so settle the DISPLAY to idle; the stored
+		// row converges on the session's next hook.
+		if out.SubagentCount == 0 && out.Status == session.StatusMainAgentIdle {
+			out.Status = session.StatusIdle
+			out.StatusDetail = ""
+		}
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)

@@ -118,19 +118,36 @@ func TestSubagentLedger_BackgroundSubagentDoesNotWedgeWorking(t *testing.T) {
 
 // The awaiting_* exception to the status gate: a sub-agent acting again
 // is the evidence that its permission prompt (surfaced on the parent)
-// was answered, so the pre-gate behaviour — flip back to working — is
-// preserved for exactly that state.
-func TestSubagentLedger_SubagentActivityClearsAwaitingPermission(t *testing.T) {
+// was answered. The resolved state must be main_agent_idle — NOT
+// "working" via the tool arms — because only main_agent_idle is a state
+// the SubagentStop settle can take back to idle. The full sequence here
+// is the cold-review repro of the wedge: with the old fall-through the
+// parent ended this scenario stuck at "working: Bash" forever.
+func TestSubagentLedger_SubagentPermissionResolutionDoesNotWedge(t *testing.T) {
 	apply := ledgerWorld(t, "perm-sess", "conv-perm", nil)
 
+	// Background sub-agent running, parent's own turn over.
 	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-p"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	assert.Equal(t, StatusMainAgentIdle, loadState(t, "perm-sess").Status)
+
 	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash", AgentID: "ag-p"})
 	assert.Equal(t, StatusAwaitingPermission, loadState(t, "perm-sess").Status,
 		"a sub-agent's permission prompt surfaces on the parent")
 
+	// The user grants; the sub-agent runs its tool.
 	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Bash", AgentID: "ag-p"})
-	assert.Equal(t, StatusWorking, loadState(t, "perm-sess").Status,
-		"the sub-agent running its tool proves the prompt was answered")
+	got := loadState(t, "perm-sess")
+	assert.Equal(t, StatusMainAgentIdle, got.Status,
+		"prompt answered: back to main_agent_idle, never 'working' (the wedge state)")
+	assert.Equal(t, 1, got.SubagentCount)
+
+	// The sub-agent finishes: the settle must reach plain idle.
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-p"})
+	got = loadState(t, "perm-sess")
+	assert.Equal(t, StatusIdle, got.Status,
+		"post-permission lifecycle settles to idle — the parent must not wedge busy")
+	assert.Equal(t, 0, got.SubagentCount)
 }
 
 // An entry that stops being seen ages out after db.SubagentTTL — the

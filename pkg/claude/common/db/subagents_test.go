@@ -64,10 +64,13 @@ func TestSubagentSet_AddSightRemove(t *testing.T) {
 	assert.Len(t, set, 3, "sighted id replaces an anon entry, not added on top")
 	assert.Contains(t, set, "ag-2")
 
-	// Sight of a KNOWN id refreshes Seen and consumes nothing.
-	set = set.Sight("ag-1", "Explore", now.Add(2*time.Second))
+	// Sight of a KNOWN id refreshes Seen and consumes nothing — and a
+	// type-less sighting (tool hooks carry agent_id but no agent_type)
+	// must not blank the type recorded at SubagentStart.
+	set = set.Sight("ag-1", "", now.Add(2*time.Second))
 	assert.Len(t, set, 3)
 	assert.True(t, set["ag-1"].Seen.After(now), "sight refreshes last-seen")
+	assert.Equal(t, "Explore", set["ag-1"].Type, "type-less sight keeps the recorded type")
 
 	// Sight with no id is a no-op (nothing to key on).
 	set = set.Sight("", "Explore", now)
