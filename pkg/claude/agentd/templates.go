@@ -28,7 +28,7 @@ import (
 //	PATCH  /v1/templates/{name}                → replace a template (full state)
 //	DELETE /v1/templates/{name}                → delete a template
 //	POST   /v1/templates/{name}/instantiate    → create a group + spawn its team
-//	POST   /v1/templates/from-group            → snapshot a live group into a template
+//	POST   /v1/templates/from-group            → snapshot a live group into a template (update: re-snapshot in place)
 //
 // Reads are open (introspection, like /v1/permissions); mutations are
 // gated on templates.manage; instantiate is gated on
@@ -492,9 +492,9 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleTemplateFromGroup snapshots a live group's structure into a new
+// handleTemplateFromGroup snapshots a live group's structure into a
 // template — the reverse direction of instantiate. Gated on
-// templates.manage. Body: { group, template_name }.
+// templates.manage. Body: { group, template_name, update }.
 //
 // It carries over the group's descr + default_context and one template
 // agent per group member (role, descr, owner flag, the member's
@@ -502,6 +502,16 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 // a live group has no stored "initial message" per member, so
 // initial_message comes through blank for the human to fill in the
 // editor afterwards.
+//
+// A taken template name is a hard 409 unless `update` is set, which
+// re-snapshots the (possibly evolved) group into the existing template
+// IN PLACE (JOH-337): the roster, owner flags, permissions and context
+// are re-traced from the group, while curated per-agent briefs survive
+// for roster agents that match an existing template agent by name —
+// members titled "<group>-<name>" (instantiate's own naming) round-trip
+// back to their template-agent <name>. With `update` set and no such
+// template, it is simply created. The update response reports the
+// roster diff (briefs_kept / added / removed).
 func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermTemplatesManage); !ok {
 		return
@@ -509,6 +519,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Group        string `json:"group"`
 		TemplateName string `json:"template_name"`
+		Update       bool   `json:"update"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -529,8 +540,14 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such group "+body.Group)
 		return
 	}
-	if existing, _ := db.GetGroupTemplate(body.TemplateName); existing != nil {
-		writeError(w, http.StatusConflict, "exists", "a template named "+body.TemplateName+" already exists")
+	existing, err := db.GetGroupTemplate(body.TemplateName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if existing != nil && !body.Update {
+		writeError(w, http.StatusConflict, "exists",
+			"a template named "+body.TemplateName+" already exists (set update to re-snapshot it in place)")
 		return
 	}
 
@@ -552,10 +569,27 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		DefaultContext: g.DefaultContext,
 		Agents:         []db.GroupTemplateAgent{},
 	}
+	// In update mode, members recognisably spawned from this template —
+	// instantiate names them "<group>-<template-agent>" — recover their
+	// original template-agent name via recoverTemplateAgentName, so the
+	// re-snapshot round-trips and the curated-brief carry-over below can
+	// match them up.
+	existingNames := map[string]bool{}
+	if existing != nil {
+		for _, a := range existing.Agents {
+			existingNames[a.Name] = true
+		}
+	}
 	memberSet := map[string]bool{}
 	usedNames := map[string]bool{}
 	addAgent := func(convID, role, descr string, owner bool) {
-		name := deriveTemplateAgentName(convID, role, len(t.Agents)+1, usedNames)
+		name := ""
+		if existing != nil {
+			name = recoverTemplateAgentName(convID, g.Name, usedNames, existingNames)
+		}
+		if name == "" {
+			name = deriveTemplateAgentName(convID, role, len(t.Agents)+1, usedNames)
+		}
 		perms, _ := db.ListAgentPermissionsForConv(convID)
 		if perms == nil {
 			perms = []string{}
@@ -588,17 +622,112 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		addAgent(ownerConv, "owner", "", true)
 	}
 
-	id, err := db.CreateGroupTemplate(t)
-	if errors.Is(err, db.ErrGroupTemplateNameTaken) {
-		writeError(w, http.StatusConflict, "exists", err.Error())
+	if existing == nil {
+		id, err := db.CreateGroupTemplate(t)
+		if errors.Is(err, db.ErrGroupTemplateNameTaken) {
+			writeError(w, http.StatusConflict, "exists", err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		t.ID = id
+		writeJSON(w, http.StatusCreated, templateToJSON(t))
 		return
 	}
-	if err != nil {
+
+	// Update in place. Curated per-agent briefs survive where the fresh
+	// roster matches an existing template agent by name (a from-group
+	// snapshot itself never sets briefs), and a curated descr/context is
+	// never clobbered by a blank one from the group.
+	prevByName := map[string]db.GroupTemplateAgent{}
+	prevOrder := []string{}
+	for _, a := range existing.Agents {
+		prevByName[a.Name] = a
+		prevOrder = append(prevOrder, a.Name)
+	}
+	briefsKept, added := []string{}, []string{}
+	newNames := map[string]bool{}
+	for i := range t.Agents {
+		newNames[t.Agents[i].Name] = true
+		prev, ok := prevByName[t.Agents[i].Name]
+		if !ok {
+			added = append(added, t.Agents[i].Name)
+			continue
+		}
+		if prev.InitialMessage != "" {
+			t.Agents[i].InitialMessage = prev.InitialMessage
+			briefsKept = append(briefsKept, t.Agents[i].Name)
+		}
+	}
+	removed := []string{}
+	for _, n := range prevOrder {
+		if !newNames[n] {
+			removed = append(removed, n)
+		}
+	}
+	// Descr describes the BLUEPRINT, not the instance — and instantiate
+	// stamps groups with "Instantiated from template <name>", so pulling
+	// the group's descr would clobber curated copy on every round-trip.
+	// The existing template's descr wins unless it's blank. Context is
+	// the opposite: it genuinely evolves in the live group (that's a key
+	// thing a re-snapshot recaptures), so the group's wins unless blank.
+	if existing.Descr != "" {
+		t.Descr = existing.Descr
+	}
+	if t.DefaultContext == "" {
+		t.DefaultContext = existing.DefaultContext
+	}
+	t.ID = existing.ID
+	if err := db.UpdateGroupTemplate(t); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	t.ID = id
-	writeJSON(w, http.StatusCreated, templateToJSON(t))
+	writeJSON(w, http.StatusOK, fromGroupUpdateJSON{
+		templateJSON: templateToJSON(t),
+		Updated:      true,
+		BriefsKept:   briefsKept,
+		Added:        added,
+		Removed:      removed,
+	})
+}
+
+// fromGroupUpdateJSON is the update-mode from-group response: the fresh
+// template plus a roster-diff report. templateJSON embeds flat, so
+// callers that only know the create shape (the dashboard's editor-open
+// path, older CLIs) keep working unchanged.
+type fromGroupUpdateJSON struct {
+	templateJSON
+	Updated    bool     `json:"updated"`
+	BriefsKept []string `json:"briefs_kept"`
+	Added      []string `json:"added"`
+	Removed    []string `json:"removed"`
+}
+
+// recoverTemplateAgentName maps a live member back to an agent of the
+// existing template during an update re-snapshot: a member titled
+// "<group>-<name>" (what instantiate names its spawns) — or exactly
+// "<name>" — for a template agent <name> keeps that name. Returns ""
+// when the member matches no existing template agent (or the name was
+// already claimed), letting the caller fall back to deriveTemplateAgentName.
+func recoverTemplateAgentName(convID, groupName string, used, existingNames map[string]bool) string {
+	title := sanitizeAgentName(agent.FreshTitle(convID))
+	if title == "" {
+		return ""
+	}
+	candidates := []string{}
+	if stripped, ok := strings.CutPrefix(title, groupName+"-"); ok {
+		candidates = append(candidates, stripped)
+	}
+	candidates = append(candidates, title)
+	for _, c := range candidates {
+		if c != "" && existingNames[c] && !used[c] {
+			used[c] = true
+			return c
+		}
+	}
+	return ""
 }
 
 // deriveTemplateAgentName picks a template-agent name when snapshotting
