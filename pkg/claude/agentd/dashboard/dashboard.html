@@ -188,6 +188,7 @@
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot"><span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span></button>
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
+          <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
@@ -1670,6 +1671,101 @@
       <button id="profile-editor-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="profile-editor-submit" class="primary" type="button">Save profile</button>
+    </div>
+  </div>
+</div>
+<!-- Role library (JOH-240): the manage overlay + editor. A role is a named
+     bundle of defaults a template roster agent references — a canonical brief,
+     a default launch shape and a default permission set. -->
+<div class="manage-overlay" id="roles-manage-modal">
+  <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="roles-manage-title">
+    <h3 id="roles-manage-title"><span class="roles-word-regular">Role library</span><span class="roles-word-wizard">Class library</span></h3>
+    <p class="manage-intro"><span class="roles-word-regular">Named, reusable agent-role defaults. A role bundles a canonical role-brief (folded into a referencing agent's startup context as a “## Role” block), a default launch shape (harness, model, effort, sandbox, approval or a spawn profile) and a default permission set. A template roster agent references a role and inherits its defaults; the agent's own fields override, the role fills the blanks.</span><span class="roles-word-wizard">Named, reusable classes for your familiars. A class bundles a canonical calling (folded into a familiar's opening context as a “## Role” block), a default launch shape and a default set of blessings. A summoning-circle familiar takes a class and inherits its defaults; the familiar's own fields override, the class fills the blanks.</span></p>
+    <div class="filter-bar">
+      <input id="filter-roles" type="text" placeholder="Filter (name / descr / harness / model)" autocomplete="off" spellcheck="false" />
+      <span class="filter-count" id="filter-roles-count"></span>
+      <button class="clear-filter" id="filter-roles-clear" title="Clear filter">×</button>
+      <span class="spacer"></span>
+      <button id="role-create-open" class="primary" title="Define a new role"><span class="roles-word-regular">+ new role</span><span class="roles-word-wizard">+ new class</span></button>
+    </div>
+    <div id="roles-list"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="roles-manage-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="role-editor-modal">
+  <div class="cron-create-modal template-editor-modal" role="dialog" aria-modal="true" aria-labelledby="role-editor-title">
+    <h3 id="role-editor-title">New role</h3>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Name</span>
+      <input id="role-editor-name" type="text" placeholder="role name — kebab-or-snake-case label (e.g. reviewer)" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="One-line description shown in the role list.">
+      <span class="cron-create-label">Descr</span>
+      <input id="role-editor-descr" type="text" placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="The canonical role-brief — guidance rendered into a “## Role” block in the startup context of any agent that references this role. Blank = no block.">
+      <span class="cron-create-label">Brief</span>
+      <textarea id="role-editor-brief" class="modal-context-textarea" rows="5" placeholder="canonical role-brief — prepended to a referencing agent's startup context (newlines OK)" spellcheck="false"></textarea>
+    </label>
+    <label class="cron-create-row" id="role-editor-harness-row" title="Coding harness the role's default launch targets. The Model / Effort / Sandbox options below validate against this harness.">
+      <span class="cron-create-label">Harness</span>
+      <select id="role-editor-harness"></select>
+    </label>
+    <label class="cron-create-row" id="role-editor-model-claude-row" title="Claude model. Blank leaves it unset — a referencing agent inherits the group / harness default at launch.">
+      <span class="cron-create-label">Model</span>
+      <!-- Curated Claude aliases — mirrors the spawn/profile Model select.
+           Keep in sync with ValidModels in pkg/claude/common/model.go. -->
+      <select id="role-editor-model">
+        <option value="">Default (unset)</option>
+        <option value="fable">fable</option>
+        <option value="fable[1m]">fable[1m]</option>
+        <option value="opus">opus</option>
+        <option value="opus[1m]">opus[1m]</option>
+        <option value="sonnet">sonnet</option>
+        <option value="sonnet[1m]">sonnet[1m]</option>
+        <option value="haiku">haiku</option>
+        <option value="opusplan">opusplan</option>
+      </select>
+    </label>
+    <label class="cron-create-row" id="role-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
+      <span class="cron-create-label">Model</span>
+      <input id="role-editor-model-codex" type="text" placeholder="blank = unset; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" title="Reasoning effort. Default leaves it unset (the harness's own setting).">
+      <span class="cron-create-label">Effort</span>
+      <select id="role-editor-effort">
+        <option value="">Default (harness's own)</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
+    </label>
+    <label class="cron-create-row" id="role-editor-sandbox-row" style="display:none" title="Launch sandbox the role defaults to. Modes are per-harness. Pre-selected to the harness's recommended default.">
+      <span class="cron-create-label">Sandbox</span>
+      <select id="role-editor-sandbox"></select>
+    </label>
+    <label class="cron-create-row" id="role-editor-approval-row" style="display:none" title="Permission mode the role defaults to (Claude Code).">
+      <span class="cron-create-label">Permission mode</span>
+      <select id="role-editor-approval"></select>
+    </label>
+    <label class="cron-create-row" title="A spawn profile the role defaults its launch shape from. The inline Model / Effort / Sandbox above override it; blank = none.">
+      <span class="cron-create-label">Spawn profile</span>
+      <select id="role-editor-profile"></select>
+    </label>
+    <div class="cron-create-row" title="The role's default permission set — granted to a referencing agent at instantiate, unioned beneath the agent's own permissions.">
+      <span class="cron-create-label">Permissions (<span id="role-editor-perms-count">0</span>)</span>
+      <div class="ta-perms-list" id="role-editor-perms-list"></div>
+    </div>
+    <div class="cron-create-error" id="role-editor-error"></div>
+    <div class="modal-buttons">
+      <button id="role-editor-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="role-editor-submit" class="primary" type="button">Save role</button>
     </div>
   </div>
 </div>

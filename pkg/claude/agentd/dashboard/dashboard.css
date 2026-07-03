@@ -1899,6 +1899,10 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
    would paint behind it; pin it to 150 so it's always the topmost editor.
    Below the toast (200) and the shared confirm (1000). */
 #profile-editor-modal { z-index: 150; }
+/* The role editor (JOH-240) opens on top of the roles-manage overlay, the same
+   pattern as the profile editor above — pin it above plain z-index:100 overlays
+   so it's always the topmost editor. */
+#role-editor-modal { z-index: 150; }
 /* #confirm-modal is opened FROM inside other modals — by the backdrop-
    discard guard (bindBackdropDiscard) on every data-entry modal, and
    ahead-of-time by destructive-action confirms invoked from list rows.
@@ -2877,6 +2881,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-agent-owner input { margin: 0; }
 .template-agent-row-head .ta-remove { margin-left: auto; padding: 1px 7px; }
 .template-agent-grid { display: flex; gap: 6px; }
+/* Role-library reference row (JOH-240): a labelled dropdown that lets a roster
+   agent inherit a role's defaults. Laid out as label + select on one line. */
+.template-agent-roleref {
+  display: flex; align-items: center; gap: 8px; font-size: 11px; color: #7d8590;
+}
+.template-agent-roleref select {
+  flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
+  font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 5px 8px; box-sizing: border-box; min-width: 0;
+}
+.template-agent-roleref select:focus { outline: none; border-color: #58a6ff; }
 /* Per-role launch profile (JOH-239): a 2-column grid of optional launch
    overrides, tucked under a <details> like the permissions list. */
 .ta-launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
@@ -6103,6 +6118,16 @@ body.wizard #edit-member-modal #edit-member-save:disabled::before { content: non
 .profiles-word-wizard { display: none; }
 body.wizard .profiles-word-regular { display: none; }
 body.wizard .profiles-word-wizard { display: inline; }
+
+/* Role library (JOH-240): the same pure-CSS vocabulary swap as the profiles
+   words above. In wizard mode roles are the party's "classes" — the Groups-cog
+   ⧉ entry, the manage overlay's title + intro + "+ new" action carry a
+   .roles-word-regular / .roles-word-wizard span pair; these rules do the
+   per-theme reveal. The editor title is JS-set (it carries the edited role's
+   name), so that string is swapped in modal-roles.js, not here. */
+.roles-word-wizard { display: none; }
+body.wizard .roles-word-regular { display: none; }
+body.wizard .roles-word-wizard { display: inline; }
 
 /* ─── Wizard profiles manage overlay — the familiars' recipe book ────
    The 🧙 re-skin of the "Spawn profiles" management overlay (Groups cog →

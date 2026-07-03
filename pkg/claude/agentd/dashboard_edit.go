@@ -88,6 +88,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardLists(mux)
 	registerDashboardTemplateRoutes(mux)
 	registerDashboardSpawnProfileRoutes(mux)
+	registerDashboardRoleRoutes(mux)
 	registerDashboardSpawnAttachmentRoutes(mux)
 	registerDashboardPluginRoutes(mux)
 	registerRemoteAccessAdminRoutes(mux)

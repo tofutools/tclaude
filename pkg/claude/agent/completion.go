@@ -77,6 +77,22 @@ func completeTemplateNames(_ *cobra.Command, _ []string, toComplete string) []st
 	return out
 }
 
+// completeRoleNames returns every role-library name, prefix-filtered —
+// for the role-name argument of `roles show / edit / rm`.
+func completeRoleNames(_ *cobra.Command, _ []string, toComplete string) []string {
+	roles, err := db.ListRoles()
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, rl := range roles {
+		if strings.HasPrefix(rl.Name, toComplete) {
+			out = append(out, rl.Name)
+		}
+	}
+	return out
+}
+
 // completeArchivedGroupNames returns ONLY archived group names —
 // useful for `groups unarchive` where active groups are no-ops and
 // shouldn't be tab-suggested.

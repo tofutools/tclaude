@@ -18,6 +18,10 @@ import { wizWord } from './slop.js';
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+// Roles (JOH-240): the per-agent role dropdown reads the role library through
+// the roles.js data layer. loadRoles fills the cache on editor open; cachedRoles
+// feeds the synchronous row render.
+import { loadRoles, cachedRoles } from './roles.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -154,7 +158,7 @@ function templatesByName() {
 function blankTemplateAgent() {
   return {
     name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
-    spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
+    role_ref: '', spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
   };
 }
 
@@ -174,6 +178,7 @@ function openTemplateEditor(tmpl) {
         name: a.name || '', role: a.role || '', descr: a.descr || '',
         initial_message: a.initial_message || '', is_owner: !!a.is_owner,
         permissions: (a.permissions || []).slice(),
+        role_ref: a.role_ref || '',
         spawn_profile: a.spawn_profile || '', harness: a.harness || '',
         model: a.model || '', effort: a.effort || '', sandbox: a.sandbox || '', approval: a.approval || '',
       }))
@@ -183,6 +188,14 @@ function openTemplateEditor(tmpl) {
     : [];
   renderEditorAgents();
   renderEditorPattern();
+  // Fill the role-library cache so the per-agent role dropdown has options, then
+  // re-render the rows (the first render used whatever was already cached). A
+  // load failure just leaves the dropdowns with the "(none)" option.
+  loadRoles().then(() => {
+    if (!$('#template-editor-modal').classList.contains('show')) return;
+    scrapeEditorAgents(); // preserve anything typed while the fetch was in flight
+    renderEditorAgents();
+  }).catch(() => {});
   $('#template-editor-modal').classList.add('show');
   setTimeout(() => $('#template-editor-name').focus(), 0);
 }
@@ -193,6 +206,22 @@ function renderEditorAgents() {
   const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
   $('#template-editor-agents').innerHTML =
     templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i, slugs)).join('');
+}
+
+// roleRefOptionsHTML builds the <option> list for a roster agent's role-library
+// dropdown from the cached roles (blank = "(none)"). A referenced role that is
+// no longer in the library stays selectable — flagged "⚠ missing" — so a
+// dangling reference isn't silently cleared on the human.
+function roleRefOptionsHTML(current) {
+  const names = cachedRoles().map(r => r.name);
+  const opts = [`<option value=""${current ? '' : ' selected'}>(none)</option>`];
+  for (const n of names) {
+    opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
+  }
+  if (current && !names.includes(current)) {
+    opts.push(`<option value="${esc(current)}" selected>⚠ ${esc(current)} (missing)</option>`);
+  }
+  return opts.join('');
 }
 
 function editorAgentRowHTML(a, idx, slugs) {
@@ -210,8 +239,12 @@ function editorAgentRowHTML(a, idx, slugs) {
     </div>
     <div class="template-agent-grid">
       <input type="text" class="ta-name" placeholder="name (e.g. PO, dev1)" value="${esc(a.name)}" />
-      <input type="text" class="ta-role" placeholder="role (e.g. product-owner)" value="${esc(a.role)}" />
+      <input type="text" class="ta-role" placeholder="role label (e.g. product-owner)" value="${esc(a.role)}" />
     </div>
+    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath its own fields below, which override. Blank = no role.">
+      <span>Role library</span>
+      <select class="ta-role-ref">${roleRefOptionsHTML(a.role_ref)}</select>
+    </label>
     <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
     <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
     <details class="ta-perms-details">
@@ -294,6 +327,7 @@ function scrapeEditorAgents() {
     initial_message: $('.ta-initmsg', row).value,
     is_owner: $('.ta-owner', row).checked,
     permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
+    role_ref: $('.ta-role-ref', row).value.trim(),
     spawn_profile: $('.ta-profile', row).value.trim(),
     harness: $('.ta-harness', row).value.trim(),
     model: $('.ta-model', row).value.trim(),

@@ -50,6 +50,13 @@ type templateAgentJSON struct {
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions"`
 
+	// Role is a by-name reference to a role in the role library (JOH-240): the
+	// agent inherits that role's defaults (canonical role-brief, launch shape,
+	// permission set) BENEATH its own overrides. Empty = no role. Named
+	// "role_ref" on the wire to stay distinct from the free-text Role display
+	// label above.
+	RoleRef string `json:"role_ref,omitempty"`
+
 	// Per-role launch profile (JOH-239). SpawnProfile references a spawn
 	// profile by name (validated to exist at save); the five inline fields are
 	// per-agent launch overrides that win over the referenced profile. All
@@ -117,6 +124,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			InitialMessage: a.InitialMessage,
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
+			RoleRef:        a.RoleRef,
 			SpawnProfile:   a.SpawnProfile,
 			Harness:        a.Harness,
 			Model:          a.Model,
@@ -239,6 +247,22 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		if fail != nil {
 			return nil, fail
 		}
+
+		// Role reference (JOH-240): validate the referenced role exists at save,
+		// exactly as the spawn-profile reference is validated — so a template
+		// can't persist a dangling role_ref. Blank = no role.
+		roleRef := strings.TrimSpace(a.RoleRef)
+		if roleRef != "" {
+			rl, err := db.GetRole(roleRef)
+			if err != nil {
+				return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+			}
+			if rl == nil {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_role",
+					fmt.Sprintf("agent %q: no role named %q in the role library", an, roleRef)}
+			}
+		}
+
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
 			Ordinal:        i,
 			Name:           an,
@@ -247,6 +271,7 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			InitialMessage: im,
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
+			RoleRef:        roleRef,
 			SpawnProfile:   launch.SpawnProfile,
 			Harness:        launch.Harness,
 			Model:          launch.Model,
@@ -366,34 +391,75 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templat
 	}, nil
 }
 
+// launchAccum accumulates the effective launch fields as tiers overlay onto
+// it, highest priority first. A blank field is still open to a lower tier.
+type launchAccum struct {
+	harness  string
+	model    string
+	effort   string
+	sandbox  string
+	approval string
+}
+
+// overlay fills this accumulator's still-blank fields from a lower-priority
+// launch source, gated on harness compatibility (the same rule the
+// group-default-profile overlay uses): a source is only inherited when the
+// resolving harness is still unset (then it adopts the source's harness) or
+// already matches the source's harness — so a source tuned for one harness
+// never bleeds its model/effort into a spawn on another.
+func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcApproval string) {
+	srcHarness = strings.TrimSpace(srcHarness)
+	if l.harness != "" && harnessOrDefault(l.harness) != harnessOrDefault(srcHarness) {
+		return
+	}
+	if l.harness == "" {
+		l.harness = srcHarness
+	}
+	if l.model == "" {
+		l.model = strings.TrimSpace(srcModel)
+	}
+	if l.effort == "" {
+		l.effort = strings.TrimSpace(srcEffort)
+	}
+	if l.sandbox == "" {
+		l.sandbox = strings.TrimSpace(srcSandbox)
+	}
+	if l.approval == "" {
+		l.approval = strings.TrimSpace(srcApproval)
+	}
+}
+
 // resolveTemplateAgentLaunch computes the effective launch fields for one
-// instantiated template agent (JOH-239). Resolution order:
+// instantiated template agent (JOH-239 + JOH-240). Resolution order, highest
+// priority first:
 //
-//	per-agent inline override → referenced spawn profile → harness secure default
+//	per-agent inline override → per-agent spawn profile →
+//	  role inline defaults → role's spawn profile → harness secure default
 //
 // (The group-default-profile tier of the general model is empty here — a
-// freshly-instantiated group carries no default profile — so the order
-// collapses to those three.) It mirrors handleGroupSpawn's overlay +
-// secure-default resolution: the referenced profile is inherited only when the
-// spawn will run on the profile's harness (a mismatched harness skips it,
-// exactly as the group-default-profile overlay does), then the chosen harness's
-// secure launch defaults fill whatever is still blank and the whole shape is
-// validated.
+// freshly-instantiated group carries no default profile.) Each profile-like
+// tier is inherited only when the spawn will run on that tier's harness (a
+// mismatched harness skips it), then the chosen harness's secure launch
+// defaults fill whatever is still blank and the whole shape is validated. role
+// is the resolved role the agent references (nil = none).
 //
 // cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
 // guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
 //
 // Returns a typed failure (recorded per-agent by the instantiator, never fatal
-// to the rest of the roster) if the referenced profile vanished or a resolved
+// to the rest of the roster) if a referenced profile vanished or a resolved
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
-func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, cwd string) (templateAgentLaunch, *spawnFailure) {
-	harnessName := strings.TrimSpace(a.Harness)
-	model := strings.TrimSpace(a.Model)
-	effort := strings.TrimSpace(a.Effort)
-	sandbox := strings.TrimSpace(a.Sandbox)
-	approval := strings.TrimSpace(a.Approval)
+func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd string) (templateAgentLaunch, *spawnFailure) {
+	acc := launchAccum{
+		harness:  strings.TrimSpace(a.Harness),
+		model:    strings.TrimSpace(a.Model),
+		effort:   strings.TrimSpace(a.Effort),
+		sandbox:  strings.TrimSpace(a.Sandbox),
+		approval: strings.TrimSpace(a.Approval),
+	}
 
+	// Tier 2: the agent's own referenced spawn profile.
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
 		prof, err := db.GetSpawnProfile(ref)
 		if err != nil {
@@ -403,24 +469,33 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, cwd string) (templateAg
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		if harnessName == "" || harnessOrDefault(harnessName) == harnessOrDefault(prof.Harness) {
-			if harnessName == "" {
-				harnessName = prof.Harness
+		acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval)
+	}
+
+	// Tier 3 + 4: the referenced role's inline defaults, then the role's own
+	// spawn profile. A role tunes the launch shape only where the agent left it
+	// blank (agent overrides win); the role's spawn profile fills what the
+	// role's inline fields left open.
+	if role != nil {
+		acc.overlay(role.Harness, role.Model, role.Effort, role.Sandbox, role.Approval)
+		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
+			prof, err := db.GetSpawnProfile(ref)
+			if err != nil {
+				return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 			}
-			if model == "" {
-				model = prof.Model
+			if prof == nil {
+				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
 			}
-			if effort == "" {
-				effort = prof.Effort
-			}
-			if sandbox == "" {
-				sandbox = prof.Sandbox
-			}
-			if approval == "" {
-				approval = prof.Approval
-			}
+			acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval)
 		}
 	}
+
+	harnessName := acc.harness
+	model := acc.model
+	effort := acc.effort
+	sandbox := acc.sandbox
+	approval := acc.approval
 
 	h, err := resolveSpawnHarness(harnessName)
 	if err != nil {
@@ -654,6 +729,43 @@ type templateExportEnvelope struct {
 	FormatVersion int          `json:"format_version"`
 	ExportedAt    string       `json:"exported_at,omitempty"`
 	Template      templateJSON `json:"template"`
+	// Roles embeds the full definitions of every role the template's agents
+	// reference (JOH-240), so the export stays portable — an import re-creates
+	// any that are MISSING on the target machine (never overwriting an existing
+	// role of the same name; the same sacred-edits rule the seed follows). A
+	// reference whose definition isn't embedded and doesn't exist locally is
+	// dropped on import, exactly like an unknown spawn-profile reference.
+	Roles []roleJSON `json:"roles,omitempty"`
+}
+
+// collectReferencedRoles gathers the full definitions of every role the
+// template's agents reference, for embedding in a portable export. Missing
+// roles (a ref whose row was deleted since the template was authored) are
+// silently skipped — import degrades such a dangling ref anyway. Order is
+// stable (first-referenced) and each role is embedded once.
+func collectReferencedRoles(t *db.GroupTemplate) ([]roleJSON, error) {
+	seen := map[string]bool{}
+	out := []roleJSON{}
+	for _, a := range t.Agents {
+		ref := strings.TrimSpace(a.RoleRef)
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		rl, err := db.GetRole(ref)
+		if err != nil {
+			return nil, err
+		}
+		if rl == nil {
+			continue
+		}
+		j := roleToJSON(rl)
+		// Portable: strip the machine-local timestamps (like the template's).
+		j.CreatedAt = ""
+		j.UpdatedAt = ""
+		out = append(out, j)
+	}
+	return out, nil
 }
 
 // handleTemplateExport serves GET /v1/templates/{name}/export: the named
@@ -684,11 +796,19 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
 	// envelope's exported_at carries the only meaningful timestamp).
 	inner.CreatedAt = ""
 	inner.UpdatedAt = ""
+	// Embed the referenced role definitions so the export stays portable
+	// (JOH-240) — import re-creates any that are missing on the target.
+	roles, err := collectReferencedRoles(t)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, templateExportEnvelope{
 		Format:        templateExportFormat,
 		FormatVersion: templateExportVersion,
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
 		Template:      inner,
+		Roles:         roles,
 	})
 }
 
@@ -738,6 +858,23 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			// A GetSpawnProfile error is left for buildTemplateFromJSON to
 			// surface as a 500 — an import shouldn't silently swallow a DB fault.
 		}
+		// A role reference that doesn't resolve locally — its definition wasn't
+		// embedded in the export and no local role of that name exists (or the
+		// embedded one collided with an existing role and wasn't re-created) —
+		// is dropped so the agent falls through to its own overrides / the
+		// harness default (JOH-240). Re-creatable roles were already restored
+		// before this sanitize pass, so a surviving dangling ref is genuinely
+		// unresolvable.
+		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
+			rl, err := db.GetRole(ref)
+			if err == nil && rl == nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"agent %q: role %q does not exist here — dropped the reference; the agent will use its own launch overrides",
+					label, ref))
+				a.RoleRef = ""
+			}
+			// A GetRole error is left for buildTemplateFromJSON to surface.
+		}
 		if len(a.Permissions) > 0 {
 			kept := make([]string, 0, len(a.Permissions))
 			for _, slug := range a.Permissions {
@@ -758,6 +895,67 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 	}
 	body.Agents = agents
 	return body, warnings
+}
+
+// recreateMissingRoles restores each embedded role definition that is MISSING
+// on this machine (JOH-240), so a template imported from another machine can
+// resolve its role references. An existing role of the same name is LEFT
+// UNTOUCHED — never overwritten — because a user's local edits to a role are
+// sacred (the same rule the seed follows); the import reports that it kept the
+// local version. A definition that fails validation is reported as a warning
+// and skipped (the agent's role_ref then degrades in sanitizeImportedTemplate).
+// A DB fault (not a validation problem) is returned as a hard failure — an
+// import shouldn't silently swallow it.
+//
+// Two deliberate properties, both consistent with the rest of the import/
+// instantiate path (which is intentionally non-atomic — a partial spawn is
+// surfaced, not rolled back):
+//   - No separate roles.manage gate. Import is a templates.manage operation;
+//     re-creating a template's own EMBEDDED roles is part of making the imported
+//     template usable, and it can only ADD missing roles (never overwrite). A
+//     caller with templates.manage + instantiate can already grant arbitrary
+//     slugs via a template's per-agent permissions, so this adds no privilege.
+//     Requiring roles.manage too would just break portable import.
+//   - Roles are created before buildTemplateFromJSON validates the template
+//     (the ordering the sanitize pass needs — role refs must resolve first). A
+//     template that fails later validation leaves the added roles behind; that
+//     is benign (roles stand alone, and a re-import is idempotent — "kept
+//     local").
+func recreateMissingRoles(roles []roleJSON) ([]string, *spawnFailure) {
+	warnings := []string{}
+	for _, rj := range roles {
+		name := strings.TrimSpace(rj.Name)
+		if name == "" {
+			continue
+		}
+		existing, err := db.GetRole(name)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if existing != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"role %q already exists here — kept the local version (import never overwrites a role)", name))
+			continue
+		}
+		rl, fail := buildRoleFromJSON(rj)
+		if fail != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"embedded role %q is invalid here (%s) — skipped; agents referencing it will use their own overrides",
+				name, fail.Msg))
+			continue
+		}
+		if _, err := db.CreateRole(rl); errors.Is(err, db.ErrRoleNameTaken) {
+			// Lost a create race with a concurrent writer — the name now exists,
+			// which is the outcome we wanted, so treat it as "kept".
+			warnings = append(warnings, fmt.Sprintf(
+				"role %q already exists here — kept the local version (import never overwrites a role)", name))
+		} else if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		} else {
+			warnings = append(warnings, fmt.Sprintf("imported role %q", name))
+		}
+	}
+	return warnings, nil
 }
 
 // handleTemplateImport serves POST /v1/templates/import: read a portable
@@ -810,7 +1008,17 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	}
 	update := r.URL.Query().Get("update") == "true"
 
+	// Re-create any embedded role that is MISSING locally, BEFORE the sanitize
+	// pass checks role references — an existing role of the same name is never
+	// overwritten (sacred edits). Warnings report what was created / skipped.
+	roleWarnings, rfail := recreateMissingRoles(env.Roles)
+	if rfail != nil {
+		writeError(w, rfail.Status, rfail.Kind, rfail.Msg)
+		return
+	}
+
 	cleaned, warnings := sanitizeImportedTemplate(body)
+	warnings = append(roleWarnings, warnings...)
 	t, fail := buildTemplateFromJSON(cleaned)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -875,6 +1083,46 @@ func composeInstantiationContext(templateContext, assignment, header string) str
 	default:
 		return templateContext + "\n\n" + section
 	}
+}
+
+// appendRoleBlock folds a role's canonical brief into an agent's startup
+// context as a trailing "## Role" section (JOH-240). A blank brief is a no-op
+// (returns the context unchanged), so the block only appears when the
+// referenced role actually carries guidance.
+func appendRoleBlock(groupContext, brief string) string {
+	brief = strings.TrimSpace(brief)
+	if brief == "" {
+		return groupContext
+	}
+	section := "## Role\n\n" + brief
+	if strings.TrimSpace(groupContext) == "" {
+		return section
+	}
+	return groupContext + "\n\n" + section
+}
+
+// effectivePermissions is the grant set for one instantiated agent: the
+// referenced role's default slugs UNION the agent's own (JOH-240). The role's
+// slugs come first (defaults), the agent's list extends them, and the result
+// is deduped preserving first-seen order. A nil role contributes nothing.
+func effectivePermissions(role *db.Role, agentPerms []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	add := func(slugs []string) {
+		for _, s := range slugs {
+			s = strings.TrimSpace(s)
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	if role != nil {
+		add(role.Permissions)
+	}
+	add(agentPerms)
+	return out
 }
 
 // instantiateAgentResult is the per-agent outcome of an instantiation.
@@ -1048,18 +1296,38 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	for _, a := range tmpl.Agents {
 		finalName := spec.groupName + "-" + a.Name
 		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
-		// Resolve this role's launch profile (JOH-239): per-agent inline
-		// override → referenced spawn profile → harness secure default. A
-		// resolution failure (a referenced profile deleted since save, an invalid
-		// value, a Codex sandbox/cwd conflict) is recorded per-agent and skips
-		// just this spawn — same best-effort contract as an owner/permission
-		// grant failure below.
-		launch, lfail := resolveTemplateAgentLaunch(a, spec.cwd)
+		// Resolve the role this agent references (JOH-240), if any. A role that
+		// vanished since save degrades gracefully — role stays nil and the agent
+		// falls through to its own overrides / harness defaults, same as a
+		// deleted spawn-profile reference is tolerated at the wire boundary.
+		var role *db.Role
+		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
+			if rl, rerr := db.GetRole(ref); rerr != nil {
+				slog.Warn("instantiate: role lookup failed", "role", ref, "error", rerr)
+			} else {
+				role = rl
+			}
+		}
+		// Resolve this agent's launch profile (JOH-239 + JOH-240): per-agent
+		// inline override → per-agent spawn profile → role defaults → harness
+		// secure default. A resolution failure (a referenced profile deleted
+		// since save, an invalid value, a Codex sandbox/cwd conflict) is recorded
+		// per-agent and skips just this spawn — same best-effort contract as an
+		// owner/permission grant failure below.
+		launch, lfail := resolveTemplateAgentLaunch(a, role, spec.cwd)
 		if lfail != nil {
 			res.Error = lfail.Msg
 			failed++
 			results = append(results, res)
 			continue
+		}
+		// Fold the role's canonical brief into THIS agent's startup context as a
+		// "## Role" block (JOH-240) — rendered only when the referenced role
+		// carries a nonempty brief. The shared group context is unchanged; the
+		// block is appended for this agent alone.
+		agentContext := groupContext
+		if role != nil {
+			agentContext = appendRoleBlock(groupContext, role.Brief)
 		}
 		outcome, fail := executeSpawn(g, spawnParams{
 			Name:           finalName,
@@ -1072,7 +1340,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			Effort:         launch.Effort,
 			SandboxMode:    launch.Sandbox,
 			ApprovalPolicy: launch.Approval,
-			GroupContext:   groupContext,
+			GroupContext:   agentContext,
 			ReplyToConv:    spec.caller,
 			SpawnedByConv:  spec.caller,
 		})
@@ -1100,7 +1368,11 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				res.Owner = true
 			}
 		}
-		for _, slug := range a.Permissions {
+		// The effective grant set is the role's default permissions UNION the
+		// agent's own (JOH-240): the role's slugs sit beneath the agent's, the
+		// agent's list extends them, and the union is deduped. A role that
+		// vanished contributes nothing.
+		for _, slug := range effectivePermissions(role, a.Permissions) {
 			if err := db.GrantAgentPermission(outcome.ConvID, slug, granter); err != nil {
 				slog.Warn("instantiate: grant permission failed",
 					"conv", outcome.ConvID, "slug", slug, "error", err)
@@ -1534,6 +1806,13 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			// observable, are left as re-traced (the live group wins).
 			if prev.SpawnProfile != "" {
 				t.Agents[i].SpawnProfile = prev.SpawnProfile
+			}
+			// The role REFERENCE is likewise blueprint curation, not an
+			// observable property of a live member — a re-snapshot preserves a
+			// curated role_ref on name-match, exactly like the spawn-profile
+			// ref and the brief (JOH-240).
+			if prev.RoleRef != "" {
+				t.Agents[i].RoleRef = prev.RoleRef
 			}
 		}
 		removed := []string{}

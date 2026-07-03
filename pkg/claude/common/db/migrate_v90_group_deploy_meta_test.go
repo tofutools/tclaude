@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV89toV90_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v90 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v89).
-func TestMigrateV89toV90_FreshSchema(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 90, currentVersion, "tripwire: bump this and add a v90→v91 test when you add a migration")
-}
-
 // TestMigrateV89toV90_AddsColumns drives the real v89→v90 ALTER over a
 // v89-pinned DB: it asserts the two deployment-provenance columns appear, that
 // a pre-existing group reads them back as '' (no provenance), that the version
