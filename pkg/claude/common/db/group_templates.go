@@ -108,6 +108,12 @@ type GroupTemplateAgent struct {
 	// (per-conv grant overrides) right after it spawns.
 	Permissions []string
 
+	// RoleRef is a by-name reference to a roles row (JOH-240): the agent
+	// inherits that role's defaults (canonical role-brief, launch shape,
+	// permission set) BENEATH its own overrides. No DB-level FK — existence is
+	// validated at the wire boundary, following SpawnProfile. "" = no role.
+	RoleRef string
+
 	// Per-role launch profile (JOH-239). SpawnProfile is a by-name reference
 	// to a spawn_profiles row (no DB-level FK — existence is validated at the
 	// wire boundary, following resolveGroupDefaultProfileName). The five inline
@@ -245,11 +251,11 @@ func insertTemplateAgents(tx *sql.Tx, templateID int64, agents []GroupTemplateAg
 		if _, err := tx.Exec(
 			`INSERT INTO group_template_agents
 			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-			    spawn_profile, harness, model, effort, sandbox, approval)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    role_ref, spawn_profile, harness, model, effort, sandbox, approval)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			templateID, a.Ordinal, a.Name, a.Role, a.Descr, a.InitialMessage,
 			owner, permsToJSON(a.Permissions),
-			a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval); err != nil {
+			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval); err != nil {
 			return err
 		}
 	}
@@ -310,7 +316,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 	// an N+1 query when the editor list is rendered.
 	agentRows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        spawn_profile, harness, model, effort, sandbox, approval
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval
 		 FROM group_template_agents ORDER BY template_id, ordinal, id`)
 	if err != nil {
 		return nil, err
@@ -350,7 +356,7 @@ func DeleteGroupTemplate(name string) (int64, error) {
 func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, error) {
 	rows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        spawn_profile, harness, model, effort, sandbox, approval
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval
 		 FROM group_template_agents WHERE template_id = ? ORDER BY ordinal, id`, templateID)
 	if err != nil {
 		return nil, err
@@ -386,7 +392,7 @@ func scanGroupTemplateAgent(s rowScanner) (*GroupTemplateAgent, error) {
 	var perms string
 	if err := s.Scan(&a.ID, &a.TemplateID, &a.Ordinal, &a.Name, &a.Role,
 		&a.Descr, &a.InitialMessage, &owner, &perms,
-		&a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval); err != nil {
+		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval); err != nil {
 		return nil, err
 	}
 	a.IsOwner = owner != 0
