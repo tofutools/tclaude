@@ -138,11 +138,12 @@ function morphAttributes(from, to) {
     if (!to.hasAttribute(name)) from.removeAttribute(name);
   }
 
-  // Re-apply the post-pass-owned style props the fresh render didn't declare,
-  // so a persistent animated node keeps its one-time wall-clock stamp instead of
-  // having it stripped (and re-jolted) on every tick. A fresh node that DOES
-  // declare one wins (the `!to.style.…` guard), which never happens for these
-  // JS-only props today but keeps the rule honest.
+  // Re-apply the post-pass-owned style props the fresh render didn't declare, so
+  // a persistent animated node keeps its wall-clock stamp between (re)starts
+  // instead of having it stripped — and re-jolted — on every tick. (The phasers
+  // in helpers.js re-stamp only when the animation itself restarts.) A fresh node
+  // that DOES declare one wins (the `!to.style.…` guard), which never happens for
+  // these JS-only props today but keeps the rule honest.
   if (st && to.style) {
     if (liveDelay && !to.style.animationDelay) st.animationDelay = liveDelay;
     if (liveOrbit && !to.style.getPropertyValue('--wizard-orbit-delay')) {

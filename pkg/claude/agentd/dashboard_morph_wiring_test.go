@@ -122,9 +122,14 @@ func TestDashboardMorph_AnimationStampsPreserved(t *testing.T) {
 		// morph.js — morphAttributes re-applies the live stamps the fresh side lacks.
 		"if (liveDelay && !to.style.animationDelay) st.animationDelay = liveDelay;",
 		"st.setProperty('--wizard-orbit-delay', liveOrbit);",
-		// helpers.js — the re-phasers now stamp once (skip an already-stamped node).
-		"if (el.style.animationDelay) continue; // already stamped once",
-		"if (pill.style.getPropertyValue('--wizard-orbit-delay')) continue;",
+		// helpers.js — the re-phasers re-stamp only when the animation IDENTITY
+		// changed (a (re)start), keyed on a per-node signature, so a stable node
+		// keeps its stamp but a status change (different keyframes/period) re-locks.
+		"const sig = cs.animationName + ' ' + period;",
+		"if (botStampSig.get(el) === sig && el.style.animationDelay) continue;",
+		// helpers.js — the wizard orbit clears its stamp when the pill leaves a
+		// channeling status, so a later return re-phases from that restart.
+		"orbitStampSig.delete(pill);",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — animation-stamp preserve / stamp-once regressed", needle)

@@ -1515,63 +1515,84 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
   return { canceled: true }; // empty result — treat as a no-op cancel
 }
 
-// syncBotAnimations phases a NEWLY created activity-bot's CSS animation to a
-// shared wall-clock so bots that appear at different times still animate in
-// lock-step. Setting `animation-delay = -(now % period)` ONCE at creation makes
-// the element's displayed phase a function of wall-clock ALONE (its own start
-// time cancels out: with start C and delay -(C % P), phase at time t is
-// ((t - C) + (C % P)) % P = t % P), so every bot — whenever it was created —
-// sits at phase `t % P`, together.
+// botStampSig / orbitStampSig record the animation identity ("name period") a
+// node was last wall-clock-stamped for, so the phasers below re-stamp EXACTLY
+// when the animation (re)started and never otherwise. WeakMaps keyed on the live
+// element, so a recreated/detached node drops out on its own (GC).
+const botStampSig = new WeakMap();
+const orbitStampSig = new WeakMap();
+
+// syncBotAnimations phases an activity-bot's CSS animation to a shared wall-clock
+// so bots that started at different times still animate in lock-step. Setting
+// `animation-delay = -(now % period)` at the animation's start makes the
+// element's displayed phase a function of wall-clock ALONE (its own start time
+// cancels out: with start C and delay -(C % P), phase at time t is
+// ((t - C) + (C % P)) % P = t % P), so every bot sits at phase `t % P`, together.
 //
-// STAMP ONCE, NEVER RE-STAMP. Re-stamping a node that is already running with a
-// fresh `now` does NOT restart it (its start time is unchanged), so the new
-// delay just shifts the phase by ~(elapsed since the last stamp) — a visible
-// jump every tick. Under DOM morphing the bot nodes PERSIST across the 2s poll
-// (and morphAttributes preserves their stamp), so we must leave an
-// already-stamped node alone and only stamp ones that don't have a delay yet:
-//   - a morphed tab (#groups-list): existing bots keep their stamp, only a
-//     newly-inserted agent's bot is stamped;
-//   - a still-wholesale-rendered region (#global-activity): every bot is brand
-//     new each tick, so every one is stamped — identical to the old behaviour.
-// The period is read from computed style (tracks the CSS with no duplication);
+// STAMP ON (RE)START, NOT EVERY TICK. Re-stamping a node that is already running
+// the same animation with a fresh `now` does NOT restart it (its start time is
+// unchanged), so the new delay just shifts the phase ~(elapsed) — a visible jump
+// every tick. Under DOM morphing the bot nodes PERSIST across the 2s poll (and
+// morphAttributes preserves their stamp), so we re-stamp only when the animation
+// itself changed identity — a brand-new/recreated node, or a status change that
+// swaps the keyframes/period (e.g. working `actbot-dance 0.45s` → idle
+// `actbot-breathe 1.7s`, which restarts the animation at a DIFFERENT period so
+// the old stamp is stale). A node still running the same animation keeps its
+// one-time stamp. This serves both call sites: a morphed tab (#groups-list) —
+// existing bots keep their stamp, a transitioned or newly-inserted bot re-locks;
+// and a still-wholesale region (#global-activity) — every bot is a fresh object
+// each tick, absent from the WeakMap, so every one is stamped, as before. The
+// period is read from computed style (tracks the CSS with no duplication);
 // `alternate` doubles it. Called right after each bot-bearing re-render.
 function syncBotAnimations() {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
   for (const el of $$('.actbot-face, .actbot-tag, .actbot-spr')) {
-    if (el.style.animationDelay) continue; // already stamped once — leave it running
     const cs = getComputedStyle(el);
     const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when none
     if (!dur) continue;
     const period = dur * 1000 * (cs.animationDirection.startsWith('alternate') ? 2 : 1);
+    const sig = cs.animationName + ' ' + period;
+    // Same animation still running + still stamped → leave it (no re-jolt).
+    if (botStampSig.get(el) === sig && el.style.animationDelay) continue;
+    botStampSig.set(el, sig);
     el.style.animationDelay = (-(now % period)) + 'ms';
   }
 }
 
 // syncWizardOrbit phases the wizard "Channeling" pill's orbiting mote to the
-// same shared wall-clock as syncBotAnimations, once per pill. The mote animates
-// on the pill's ::before, and a pseudo-element takes no inline style — but it
-// inherits custom properties from its originating element, so we set
-// -(now % period) on the PILL via --wizard-orbit-delay and the ::before's
+// same shared wall-clock as syncBotAnimations, on the same (re)start rule. The
+// mote animates on the pill's ::before, and a pseudo-element takes no inline
+// style — but it inherits custom properties from its originating element, so we
+// set -(now % period) on the PILL via --wizard-orbit-delay and the ::before's
 // `animation-delay: var(...)` picks it up. Phase then depends on wall-clock
-// alone (see syncBotAnimations for the algebra + the STAMP-ONCE rule), so every
-// channeling pill orbits in lock-step. Period is read from the pseudo's
-// computed animationDuration (tracks the CSS with no duplicated constant); a
-// non-wizard theme (pills hidden, ::before rule unmatched) reports 0 and is
-// skipped. Called right after each group-row re-render.
+// alone (see syncBotAnimations for the algebra), so every channeling pill orbits
+// in lock-step. Period is read from the pseudo's computed animationDuration.
 //
-// Like the bots, stamp ONCE and never re-stamp: under morph the pill persists
-// (morphAttributes preserves --wizard-orbit-delay), so re-stamping a live pill
-// would teleport its mote every tick. A genuine status change that swaps the
-// pill for a fresh node (or clears the property) lands here unstamped and is
-// re-phased — the correct moment to restart.
+// We iterate EVERY pill, not just the channeling ones, so a pill that has left a
+// channeling status has its stamp cleared: the orbit ::before stops matching in
+// non-channeling statuses (asking / offline / non-wizard theme) → duration 0.
+// Clearing then means a later RETURN to channeling (working / main_agent_idle)
+// finds no stamp and re-phases from that restart, instead of resuming the mote
+// at a stale orbital angle (the pill node persists across the poll — it lives in
+// a keyed row — and morphAttributes preserves the property, so without this the
+// mote would freeze at the wrong angle after asking→working). A channeling pill
+// still running the same orbit keeps its stamp (no per-tick re-jolt). Called
+// right after each group-row re-render.
 function syncWizardOrbit() {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
-  for (const pill of $$('.wizard-pill[data-status="working"], .wizard-pill[data-status="main_agent_idle"]')) {
-    if (pill.style.getPropertyValue('--wizard-orbit-delay')) continue; // stamped once already
+  for (const pill of $$('.wizard-pill')) {
     const cs = getComputedStyle(pill, '::before');
-    const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when the ::before has no animation
-    if (!dur) continue;
+    const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when the ::before has no orbit
+    if (!dur) {
+      // Not channeling now — drop any stamp so a later return re-phases fresh.
+      if (pill.style.getPropertyValue('--wizard-orbit-delay')) pill.style.removeProperty('--wizard-orbit-delay');
+      orbitStampSig.delete(pill);
+      continue;
+    }
     const period = dur * 1000; // linear, non-alternating orbit
+    const sig = cs.animationName + ' ' + period;
+    if (orbitStampSig.get(pill) === sig && pill.style.getPropertyValue('--wizard-orbit-delay')) continue;
+    orbitStampSig.set(pill, sig);
     pill.style.setProperty('--wizard-orbit-delay', (-(now % period)) + 'ms');
   }
 }
