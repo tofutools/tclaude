@@ -906,6 +906,21 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 // and skipped (the agent's role_ref then degrades in sanitizeImportedTemplate).
 // A DB fault (not a validation problem) is returned as a hard failure — an
 // import shouldn't silently swallow it.
+//
+// Two deliberate properties, both consistent with the rest of the import/
+// instantiate path (which is intentionally non-atomic — a partial spawn is
+// surfaced, not rolled back):
+//   - No separate roles.manage gate. Import is a templates.manage operation;
+//     re-creating a template's own EMBEDDED roles is part of making the imported
+//     template usable, and it can only ADD missing roles (never overwrite). A
+//     caller with templates.manage + instantiate can already grant arbitrary
+//     slugs via a template's per-agent permissions, so this adds no privilege.
+//     Requiring roles.manage too would just break portable import.
+//   - Roles are created before buildTemplateFromJSON validates the template
+//     (the ordering the sanitize pass needs — role refs must resolve first). A
+//     template that fails later validation leaves the added roles behind; that
+//     is benign (roles stand alone, and a re-import is idempotent — "kept
+//     local").
 func recreateMissingRoles(roles []roleJSON) ([]string, *spawnFailure) {
 	warnings := []string{}
 	for _, rj := range roles {
