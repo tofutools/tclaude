@@ -633,6 +633,15 @@ func DeleteAgentGroup(name string) error {
 	if _, err := tx.Exec(`UPDATE agent_messages SET group_id = 0 WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Advisory process state (JOH-242) is keyed to the group by group_id in
+	// sibling tables (unlike deploy meta, which lives on the agent_groups row
+	// and dies with it), so sweep it explicitly in the same transaction.
+	if _, err := tx.Exec(`DELETE FROM group_process_state WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM group_process_transitions WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}

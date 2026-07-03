@@ -42,6 +42,13 @@ type GroupTemplate struct {
 	// "brief the Lead with the leadership frame, then everyone with the
 	// house rules". Empty = no pattern (today's behaviour).
 	WorkPattern []WorkPatternEntry
+	// Process is the template's declarative process spec (JOH-242): an
+	// ORDERED list of phases, each a {name, roles, criteria} chapter of the
+	// group's work. It is ADVISORY — rendered into briefings and tracked at
+	// runtime, but never enforced (no gates, no phase-scoped permissions). A
+	// group instantiated from the template snapshots this into its runtime
+	// process state. Empty = no process (the feature is off for the group).
+	Process []ProcessPhase
 }
 
 // WorkPatternEntry is one routed briefing message in a template's work
@@ -174,9 +181,9 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
-		`INSERT INTO group_templates (name, descr, default_context, work_pattern, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), now, now)
+		`INSERT INTO group_templates (name, descr, default_context, work_pattern, process, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrGroupTemplateNameTaken
@@ -213,9 +220,9 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
-		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, updated_at = ?
+		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, process = ?, updated_at = ?
 		 WHERE id = ?`,
-		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern),
+		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
 		time.Now().Format(time.RFC3339Nano), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -270,7 +277,7 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, work_pattern, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, process, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -292,7 +299,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, name, descr, default_context, work_pattern, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, process, created_at, updated_at
 		 FROM group_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -375,14 +382,15 @@ func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, erro
 
 func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
-	var createdAt, updatedAt, workPattern string
-	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, workPattern, process string
+	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &process, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	t.CreatedAt = parseTimeOrZero(createdAt)
 	t.UpdatedAt = parseTimeOrZero(updatedAt)
 	t.Agents = []GroupTemplateAgent{}
 	t.WorkPattern = workPatternFromJSON(workPattern)
+	t.Process = processFromJSON(process)
 	return &t, nil
 }
 
