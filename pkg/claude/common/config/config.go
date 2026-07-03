@@ -46,8 +46,8 @@ type Config struct {
 	Focus *FocusConfig `json:"focus,omitempty"`
 
 	// Slop holds the dashboard's slop-mode ("The Slop Machine") audio
-	// volumes. Absent block / absent keys mean full volume — see
-	// ResolvedSlopVolumes.
+	// volumes. An absent block / absent keys default the music to half
+	// volume and the effects to full — see ResolvedSlopVolumes.
 	Slop *SlopConfig `json:"slop,omitempty"`
 
 	// ConvWatch holds persisted UI preferences for the interactive
@@ -534,9 +534,10 @@ type ConvWatchConfig struct {
 // SlopConfig holds the slop-mode audio knobs. Both volumes are percent
 // (0–100) of the mode's built-in full level: MusicVolume scales the
 // Vegas lounge radio, EffectsVolume scales the synthesized casino FX.
-// Pointers so "absent" (default 100) is distinguishable from an
-// explicit 0 (silent but not muted — the master 🔇/🔊 switch is a
-// separate localStorage-persisted preference in the browser).
+// Pointers so "absent" (music defaults to 50, effects to 100) is
+// distinguishable from an explicit 0 (silent but not muted — the master
+// 🔇/🔊 switch is a separate localStorage-persisted preference in the
+// browser).
 //
 // Channel is the SomaFM channel id the Vegas radio tunes to (one of
 // SlopChannels; absent → DefaultSlopChannel). A pointer + omitempty so an
@@ -649,18 +650,28 @@ func (c *Config) ResolvedSlopChannel() string {
 	return DefaultSlopChannel
 }
 
-// defaultSlopVolume is the effective volume for an absent slop volume
-// key: 100% — entering slop mode is opting in to the full casino.
-const defaultSlopVolume = 100
+// DefaultMusicVolume is the effective music volume (the Vegas/wizard lounge
+// radio) for an absent slop.music_volume key: 50% — full-volume slop and
+// wizard mode startled users on first entry, so the soundtrack defaults to
+// half. `tclaude setup` also writes this value explicitly so it's visible in
+// the config / Config tab (see setup.installDefaultMusicVolume); readers fall
+// back to it here for any config that predates that write or was hand-cleared.
+const DefaultMusicVolume = 50
+
+// defaultEffectsVolume is the effective volume for an absent
+// slop.effects_volume key: 100%. The synthesized casino FX only fire on
+// interaction (not a continuous stream like the radio), so full volume there
+// isn't the part that startled anyone — only the music default was lowered.
+const defaultEffectsVolume = 100
 
 // ResolvedSlopVolumes returns the effective (music, effects) volumes in
-// percent, defaulting each absent value to 100. A hand-edited
-// out-of-range value is clamped to 0–100 — Validate reports it to the
-// Config tab, but readers must still get a usable volume rather than
-// handing 500% to the browser. Nil-safe on the receiver so callers
-// need no guard.
+// percent: an absent music volume defaults to DefaultMusicVolume (50) and an
+// absent effects volume to 100. A hand-edited out-of-range value is clamped
+// to 0–100 — Validate reports it to the Config tab, but readers must still
+// get a usable volume rather than handing 500% to the browser. Nil-safe on
+// the receiver so callers need no guard.
 func (c *Config) ResolvedSlopVolumes() (music, effects int) {
-	music, effects = defaultSlopVolume, defaultSlopVolume
+	music, effects = DefaultMusicVolume, defaultEffectsVolume
 	if c == nil || c.Slop == nil {
 		return music, effects
 	}

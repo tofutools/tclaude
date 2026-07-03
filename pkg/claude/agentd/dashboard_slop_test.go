@@ -47,8 +47,8 @@ func TestDashboardSlopVolumes_GetDefaults(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	require.NotNil(t, resp.MusicVolume)
 	require.NotNil(t, resp.EffectsVolume)
-	assert.Equal(t, 100, *resp.MusicVolume, "absent config defaults to full volume")
-	assert.Equal(t, 100, *resp.EffectsVolume, "absent config defaults to full volume")
+	assert.Equal(t, 50, *resp.MusicVolume, "absent config defaults the music to half volume")
+	assert.Equal(t, 100, *resp.EffectsVolume, "absent config defaults the effects to full volume")
 }
 
 func TestDashboardSlopVolumes_PostPersistsAndMerges(t *testing.T) {
