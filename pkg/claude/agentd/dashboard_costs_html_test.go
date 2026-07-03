@@ -100,10 +100,14 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("cost-ytick", "Y-axis tick labels rendered")
 	must(".cost-gridline", "gridlines styled")
 
-	// Hover tooltip: instant CSS tooltip off data-tip (not the
-	// delayed native title), and only on columns with spend.
+	// Hover tooltip: cursor-following tooltip off data-tip (not the
+	// delayed native title), and only on columns with spend. The tip body
+	// is a body-level .cost-tip element positioned by bindCostsChartTip;
+	// the bar-highlight stays a pure CSS :hover rule.
 	must("data-tip", "tooltip attribute rendered on nonzero columns")
-	must(".cost-col[data-tip]:hover::after", "instant CSS tooltip rule present")
+	must(".cost-col[data-tip]:hover .cost-bar", "hover bar-highlight rule present")
+	must(".cost-tip", "cursor-following tooltip element styled")
+	must("function bindCostsChartTip", "cursor-following tooltip wired")
 
 	// Breakdown table: the per-agent model column, now rendered through
 	// the sortable-header builder rather than a static <th>.

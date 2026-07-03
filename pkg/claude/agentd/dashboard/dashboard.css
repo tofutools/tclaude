@@ -1289,16 +1289,17 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   opacity: 0.6;
 }
 /* Instant hover tooltip — only columns with recorded/projected spend
-   carry data-tip, so empty days don't react. CSS-rendered (no native
-   title) so it appears with no hover delay. */
+   carry data-tip, so empty days don't react. The bar-highlight stays
+   pure CSS :hover; the tooltip body itself follows the cursor and so is
+   a single body-level element positioned by JS (bindCostsChartTip in
+   costs.js), floated on document.body so it survives the chart's re-poll
+   re-render and needs no offset-parent math. */
 .cost-col[data-tip]:hover .cost-bar { background: #8fbf9e; }
 .cost-col.projected[data-tip]:hover .cost-bar { background: transparent; border-color: #8fbf9e; opacity: 1; }
-.cost-col[data-tip]:hover::after {
-  content: attr(data-tip);
-  position: absolute; top: -6px; left: 50%; transform: translate(-50%, -100%);
+.cost-tip {
+  display: none; position: fixed; z-index: 200; pointer-events: none;
   background: #1c2128; border: 1px solid #2a3340; border-radius: 4px;
   padding: 3px 8px; font-size: 11px; color: #d4d4d4; white-space: nowrap;
-  z-index: 10; pointer-events: none;
 }
 .cost-day {
   flex: 0 0 auto; height: 14px; overflow: hidden;
