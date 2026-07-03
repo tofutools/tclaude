@@ -28,10 +28,18 @@ type SessionState struct {
 	PID           int       `json:"pid"`
 	Cwd           string    `json:"cwd"`
 	ConvID        string    `json:"convId,omitempty"`
-	Status        string    `json:"status"`
-	StatusDetail  string    `json:"statusDetail,omitempty"`
-	SubagentCount int       `json:"subagentCount"`
-	Created       time.Time `json:"created"`
+	Status       string `json:"status"`
+	StatusDetail string `json:"statusDetail,omitempty"`
+	// SubagentCount is a derived cache of Subagents (recomputed by the
+	// hook callback on every state-changing hook). Kept for read surfaces
+	// that only need the raw figure; TTL-aware readers should use
+	// Subagents.LiveCount instead.
+	SubagentCount int `json:"subagentCount"`
+	// Subagents is the ledger of sub-agents believed to be running under
+	// this session, keyed by agent_id — see db.SubagentSet for the full
+	// self-healing story (why not a bare counter).
+	Subagents db.SubagentSet `json:"subagents,omitempty"`
+	Created   time.Time      `json:"created"`
 	Updated       time.Time `json:"updated"`
 	LastHook      time.Time `json:"lastHook"`
 	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
@@ -147,6 +155,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		Status:        s.Status,
 		StatusDetail:  s.StatusDetail,
 		SubagentCount: s.SubagentCount,
+		SubagentsJSON: s.Subagents.Encode(),
 		CreatedAt:     s.Created,
 		UpdatedAt:     s.Updated,
 		LastHook:      s.LastHook,
@@ -166,6 +175,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Status:        r.Status,
 		StatusDetail:  r.StatusDetail,
 		SubagentCount: r.SubagentCount,
+		Subagents:     db.ParseSubagentSet(r.SubagentsJSON),
 		Created:       r.CreatedAt,
 		Updated:       r.UpdatedAt,
 		LastHook:      r.LastHook,
@@ -426,6 +436,17 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
+// MarkStateExited flips an in-memory state to exited and clears the
+// sub-agent ledger — sub-agents run inside the (now dead) harness
+// process, so none can survive it. Mirrors what the hook callback's
+// SessionEnd arm and the reaper's MarkSessionExitedIfUnchanged do; the
+// caller persists via SaveSessionState when needed.
+func MarkStateExited(state *SessionState) {
+	state.Status = StatusExited
+	state.Subagents = nil
+	state.SubagentCount = 0
+}
+
 // RefreshSessionStatus updates the session status based on actual state
 func RefreshSessionStatus(state *SessionState) {
 	// For tmux-backed sessions, check if tmux session is alive
@@ -442,14 +463,14 @@ func RefreshSessionStatus(state *SessionState) {
 	// sessions where tmux died but the process is still running)
 	if state.PID > 0 {
 		if !IsProcessAlive(state.PID) {
-			state.Status = StatusExited
+			MarkStateExited(state)
 		}
 		// If PID is alive, keep the current status (updated by hooks)
 		return
 	}
 
 	// No tmux session and no PID - mark as exited
-	state.Status = StatusExited
+	MarkStateExited(state)
 }
 
 // ShortID returns the first 8 characters of an ID for display

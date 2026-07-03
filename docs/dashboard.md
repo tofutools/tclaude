@@ -141,11 +141,15 @@ only for a live agent — an offline agent's sub-agents died with its process.
 > *launches* but none when it *exits*, so any count tclaude tried to keep
 > could only ever grow — it would display long-finished "ghost" shells for
 > the whole idle window, which is precisely when the badge would be read.
-> Sub-agents are safe because `SubagentStart` and `SubagentStop` are both
-> real hooks, so `🤖+N` decrements correctly. (A future process-tree
-> liveness reconcile in `agentd` — counting an agent's live shell
-> descendants instead of relying on hooks — could make a trustworthy
-> background-shell badge feasible.)
+> Sub-agents have both `SubagentStart` and `SubagentStop` hooks, but even
+> that pair is lossy — Claude Code fires no hooks at all on a user
+> interrupt, for one — so `🤖+N` is not a raw event tally: tclaude keeps a
+> self-healing per-`agent_id` ledger (any hook fired from inside a
+> sub-agent re-adds/refreshes it, a staleness TTL ages out entries whose
+> Stop was lost, and process (re)starts, interrupts, and exits reset it to
+> zero). (A future process-tree liveness reconcile in `agentd` — counting
+> an agent's live shell descendants instead of relying on hooks — could
+> make a trustworthy background-shell badge feasible.)
 
 The **working-directory** cell is clickable — clicking a path opens a terminal
 window there (the same out-of-sandbox spawn the **term** button does, minus the

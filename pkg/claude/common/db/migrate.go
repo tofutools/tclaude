@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 86
+const currentVersion = 87
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -547,6 +547,63 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if ver < 87 {
+		if err := migrateV86toV87(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV86toV87 adds sessions.subagents_json — the per-session ledger of
+// currently-running sub-agents ({agent_id: {type, seen}}, see SubagentSet in
+// subagents.go). It replaces trusting the bare subagent_count +1/-1 stream:
+// Claude Code fires no hooks on a user interrupt and SubagentStop has no
+// termination guarantee, so a lost event used to drift the count (and the
+// dashboard's "🤖+N" badge) permanently. The ledger self-heals — Sight()
+// re-adds a sub-agent whose Start was lost, the TTL ages out one whose Stop
+// was lost — and subagent_count becomes a derived cache of it.
+//
+// TEXT NOT NULL DEFAULT '' — a pre-existing row reads as "no ledger yet",
+// which the read side falls back from (see stateForConvIn). One transaction;
+// the ADD COLUMN is guarded by a sqlite_master table-existence probe AND a
+// pragma_table_info column probe (the migrateV65toV66 / migrateV56toV57
+// conventions), so a half-applied run converges on re-run instead of wedging
+// on "duplicate column".
+func migrateV86toV87(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate v86→v87 (add subagents_json): begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v86→v87 (add subagents_json): probe table: %w", err)
+	}
+	if haveTable > 0 {
+		var haveCol int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'subagents_json'`,
+		).Scan(&haveCol); err != nil {
+			return fmt.Errorf("migrate v86→v87 (add subagents_json): probe column: %w", err)
+		}
+		if haveCol == 0 {
+			if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN subagents_json TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("migrate v86→v87 (add subagents_json): add column: %w", err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 87`); err != nil {
+		return fmt.Errorf("migrate v86→v87 (add subagents_json): %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate v86→v87 (add subagents_json): commit: %w", err)
+	}
 	return nil
 }
 

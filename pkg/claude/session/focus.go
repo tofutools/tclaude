@@ -51,7 +51,7 @@ func runFocus(params *FocusParams) error {
 
 	// Check if session is alive
 	if !IsTmuxSessionAlive(state.TmuxSession) {
-		state.Status = StatusExited
+		MarkStateExited(state)
 		_ = SaveSessionState(state)
 		return fmt.Errorf("session %s has exited", sessionHandle(state))
 	}

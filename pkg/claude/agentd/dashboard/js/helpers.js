@@ -887,9 +887,14 @@ function contextMeter(state) {
 // PreToolUse when it launches), so a hook-based count could never
 // decrement — it would show "ghost" shells (already finished) for the
 // whole idle window, which is exactly when the badge is read. Sub-agents
-// are safe because SubagentStart/SubagentStop are both real hooks, so +N
-// decrements correctly. (A process-tree liveness reconcile in agentd could
-// revive a trustworthy +M later — see the Groups section of docs/dashboard.md.)
+// have BOTH SubagentStart and SubagentStop hooks, but even that pair is
+// lossy (no hooks fire on a user interrupt, for one), so the +N here is
+// not the raw event tally: the backend keeps a self-healing per-agent_id
+// ledger with a staleness TTL and known-zero resets, and subagent_count
+// is its TTL-filtered live view (see db.SubagentSet in
+// pkg/claude/common/db/subagents.go). (A process-tree liveness reconcile
+// in agentd could revive a trustworthy +M later — see the Groups section
+// of docs/dashboard.md.)
 function activityBadges(state) {
   const subagents = Number((state && state.subagent_count) || 0);
   if (subagents <= 0) return '';

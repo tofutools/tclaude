@@ -13,9 +13,18 @@ type SessionRow struct {
 	PID            int
 	Cwd            string
 	ConvID         string
-	Status         string
-	StatusDetail   string
-	SubagentCount  int
+	Status       string
+	StatusDetail string
+	// SubagentCount is the number of sub-agents believed to be running
+	// under this session right now. It is a derived cache of SubagentsJSON
+	// (recomputed on every hook write); read surfaces that can tolerate a
+	// TTL-filtered view should prefer ParseSubagentSet(SubagentsJSON).
+	// LiveCount over this raw figure — see SubagentSet in subagents.go.
+	SubagentCount int
+	// SubagentsJSON is the persisted sub-agent ledger (SubagentSet JSON,
+	// "" = empty/never written). Owned by the hook callback; cleared at
+	// known-zero boundaries (session exit, the .jsonl interrupt marker).
+	SubagentsJSON  string
 	AutoRegistered bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -85,8 +94,8 @@ func SaveSession(s *SessionRow) error {
 	// value is non-empty, so a later status-update upsert (whose conv may not
 	// resolve) never wipes an agent already known for this session.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -95,6 +104,7 @@ func SaveSession(s *SessionRow) error {
 			status = excluded.status,
 			status_detail = excluded.status_detail,
 			subagent_count = excluded.subagent_count,
+			subagents_json = excluded.subagents_json,
 			auto_registered = excluded.auto_registered,
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
@@ -103,7 +113,7 @@ func SaveSession(s *SessionRow) error {
 			sandbox_mode = excluded.sandbox_mode,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
-		s.Status, s.StatusDetail, s.SubagentCount, boolToInt(s.AutoRegistered),
+		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
 		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.ConvID)
 	return err
 }
@@ -114,7 +124,7 @@ func LoadSession(id string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
@@ -135,7 +145,7 @@ func ListSessions() ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions`)
 	if err != nil {
 		return nil, err
@@ -153,7 +163,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
@@ -178,7 +188,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
@@ -196,7 +206,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count,
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
@@ -252,7 +262,7 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 	var autoReg, remoteCtl int
 	var createdStr, updatedStr, lastHookStr string
 	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
+		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +284,7 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 		var autoReg, remoteCtl int
 		var createdStr, updatedStr, lastHookStr string
 		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &s.SubagentCount, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
+			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
@@ -325,6 +335,7 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	}
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'exited', status_detail = '', updated_at = ?,
+			subagent_count = 0, subagents_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
 		time.Now().Format(time.RFC3339Nano),
@@ -370,8 +381,15 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// The interrupt also aborted any in-flight foreground Task calls, and
+	// Claude Code fires no SubagentStop for them either — so the sub-agent
+	// ledger is cleared here too, or every Esc mid-Task would leave a
+	// phantom "🤖+N" badge until the TTL sweeps it. A background sub-agent
+	// that genuinely survives the interrupt re-adds itself via Sight() on
+	// its next hook (see SubagentSet in subagents.go).
 	res, err := d.Exec(`UPDATE sessions
-		SET status = 'idle', status_detail = '', updated_at = ?
+		SET status = 'idle', status_detail = '', updated_at = ?,
+			subagent_count = 0, subagents_json = ''
 		WHERE conv_id = ? AND status = 'working'`,
 		time.Now().Format(time.RFC3339Nano), convID)
 	if err != nil {
