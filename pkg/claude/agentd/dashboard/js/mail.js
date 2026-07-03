@@ -69,6 +69,7 @@
 import { $, $$, esc, linkify, relTime, shortId, shortAgentId, idTooltip, withPreservedFocus } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
+import { morphInto } from './morph.js';
 // lastSnapshot lives in dashboard.js; confirmModal/toast live in
 // refresh.js. Both are benign, TDZ-safe import cycles (see tabs.js):
 // nothing here reads them at module top level — only inside handlers —
@@ -835,7 +836,12 @@ function paintSidebar() {
       html += agents.map(mb => mailboxRowHTML(mb, false, prevGens.has(mb.id))).join('');
     }
   }
-  el.innerHTML = html;
+  // Morph rather than swap so a selection / focus in the sidebar survives the
+  // 2s repaint. Sidebar rows are intentionally UNKEYED: the same agent folder
+  // can appear twice as a sibling (nested under an expanded group AND in the
+  // flat "All agent mailboxes" list), so an id-based data-key would collide —
+  // positional reconcile is correct here and still skips unchanged rows.
+  morphInto(el, html);
 }
 
 // paintWipeBar shows the "wipe selected mailboxes" bar when one or more
@@ -851,10 +857,10 @@ function paintWipeBar() {
   const n = mail.selectedBoxes.size;
   bar.hidden = n === 0;
   if (n === 0) { bar.innerHTML = ''; return; }
-  bar.innerHTML = `
+  morphInto(bar, `
     <span class="grow">${n} mailbox${n === 1 ? '' : 'es'} selected</span>
     <button data-act="mail-clear-box-sel" title="Clear selection">clear</button>
-    <button class="danger" data-act="mail-wipe-selected" title="Delete every message in the selected mailboxes">🗑 wipe</button>`;
+    <button class="danger" data-act="mail-wipe-selected" title="Delete every message in the selected mailboxes">🗑 wipe</button>`);
 }
 
 // counterparty returns the name to show in a non-aggregate message-list
@@ -982,7 +988,10 @@ function paintList() {
   // single "self" to be relative to, so they render from→to rather than a
   // received/sent arrow.
   const isAggregate = mail.selected === ALL_ID || isGroupFolder();
-  el.innerHTML = filtered.map(m => {
+  // Morph rather than swap so a selection in a message row survives the 2s
+  // repaint, and keyed on the (unique-per-list) message id so a new message
+  // arriving moves rows intact instead of morphing neighbour into neighbour.
+  morphInto(el, filtered.map(m => {
     const active = m.id === mail.selectedMsgId;
     const unread = !m.read;
     const checked = mail.selectedMsgs.has(m.id) ? ' checked' : '';
@@ -1022,7 +1031,7 @@ function paintList() {
     const grp = m.group ? `<span class="mail-row-group">${esc(m.group)}</span>` : '';
     // data-kind drives the wizard-theme per-scroll styling (msgKind); it is
     // emitted in every theme and only body.wizard CSS reads it.
-    return `<div class="mail-row-wrap" data-kind="${msgKind(m)}">
+    return `<div class="mail-row-wrap" data-key="${m.id}" data-kind="${msgKind(m)}">
       <input type="checkbox" class="mail-msg-check" data-id="${m.id}"${checked} title="Select message" />
       <button class="mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}"
         data-act="mail-open" data-id="${m.id}">
@@ -1036,7 +1045,7 @@ function paintList() {
       </button>
       <button class="mail-row-del" data-act="mail-msg-delete" data-id="${m.id}" title="Delete this message">🗑</button>
     </div>`;
-  }).join('');
+  }).join(''));
 }
 
 // paintListBulkBar drives the select-all checkbox + "delete selected"
@@ -1065,13 +1074,13 @@ function paintListBulkBar() {
     ? `<button data-act="mail-mark-read-selected" title="Mark the selected messages read"${n ? '' : ' disabled'}>✓ read</button>
        <button data-act="mail-mark-unread-selected" title="Mark the selected messages unread"${n ? '' : ' disabled'}>○ unread</button>`
     : '';
-  bar.innerHTML = `
+  morphInto(bar, `
     <label title="Select / deselect every message on this page">
       <input type="checkbox" class="mail-select-all"${allChecked ? ' checked' : ''} /> all
     </label>
     <span class="grow">${n ? `${n} selected` : ''}</span>
     ${readBtns}
-    <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`;
+    <button class="danger" data-act="mail-del-selected" title="Delete the selected messages"${n ? '' : ' disabled'}>🗑 delete selected</button>`);
 }
 
 // paintPager renders the footer under the message list: a page-size
@@ -1101,7 +1110,7 @@ function paintPager() {
       <button data-act="mail-page-next" title="Next page"${atEnd ? ' disabled' : ''}>›</button>
       <button data-act="mail-page-last" title="Last page"${atEnd ? ' disabled' : ''}>»</button>`;
   }
-  bar.innerHTML = `${nav}<span class="grow"></span>${sizeSel}`;
+  morphInto(bar, `${nav}<span class="grow"></span>${sizeSel}`);
 }
 
 // recipientNames renders a decorated recipients array
@@ -1222,7 +1231,11 @@ function paintReader() {
     actions = `<div class="mail-reader-actions">${readBtn}${delBtn}</div>`;
   }
 
-  el.innerHTML = `
+  // Morph rather than swap: this is the primary copy surface (the message body),
+  // so preserving a live selection across the 2s repaint is the whole point.
+  // When the open message is unchanged the reader is isEqualNode-equal and the
+  // morph skips the entire subtree, leaving any selection completely untouched.
+  morphInto(el, `
     <div class="mail-reader-head">
       <div class="mail-subject">${esc(m.subject || '(no subject)')} <span class="mail-id">#${m.id}</span></div>
       <div class="mail-headers">
@@ -1235,7 +1248,7 @@ function paintReader() {
       </div>
     </div>
     <div class="mail-reader-body">${linkify(m.body || '')}</div>
-    ${actions}`;
+    ${actions}`);
 }
 
 // paintBulkActions shows the message-filter row's bulk read actions. The

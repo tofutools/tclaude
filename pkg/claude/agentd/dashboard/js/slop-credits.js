@@ -21,6 +21,7 @@
 // Companion to slop-fx.js (emitter), slop-audio.js, and slop-spectacle.js.
 
 import { esc } from './helpers.js';
+import { morphInto } from './morph.js';
 import { lastSnapshot } from './dashboard.js';
 import { isSlopActive } from './slop.js';
 
@@ -83,25 +84,29 @@ function renderLeaderboard() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, LEADERBOARD_MAX);
   if (!entries.length) {
-    host.innerHTML =
+    morphInto(host,
       '<h3 class="vegas-leaderboard-title">🏆 High rollers</h3>' +
       '<div class="vegas-leaderboard-empty">No jackpots yet — put the agents to work, ' +
-      'or pull a few levers to prime the pump.</div>';
+      'or pull a few levers to prime the pump.</div>');
     return;
   }
   const rows = entries.map(([conv, wins], i) => {
     const hot = isHot(conv);
     const who = (hot ? '🔥 ' : '') + esc(titleFor(conv));
-    return `<li class="${hot ? 'hot' : ''}">` +
+    // Keyed by conv id (unique per entry) so a rank shuffle moves the row
+    // intact rather than rewriting a neighbour's name under a selection.
+    return `<li class="${hot ? 'hot' : ''}" data-key="${esc(conv)}">` +
       `<span class="rank">${i + 1}</span>` +
       `<span class="who">${who}</span>` +
       `<span class="wins">${wins} 🎰</span>` +
       `</li>`;
   }).join('');
-  host.innerHTML =
+  // Morph rather than swap: the board rebuilds every 2s while slop+Vegas are
+  // active, so a plain innerHTML swap would wipe a selection each tick.
+  morphInto(host,
     '<h3 class="vegas-leaderboard-title">🏆 High rollers ' +
     '<span class="vegas-leaderboard-sub">this session</span></h3>' +
-    `<ol class="vegas-leaderboard-list">${rows}</ol>`;
+    `<ol class="vegas-leaderboard-list">${rows}</ol>`);
 }
 
 function recordWin(fx, conv) {

@@ -12,6 +12,7 @@
 // visible; never on the 2s snapshot tick.
 
 import { $, esc, relTime, shortAgentId, idTooltip } from './helpers.js';
+import { morphInto } from './morph.js';
 
 // View state. page/pageSize/sort/dir are sent to the server; total +
 // totalUnfiltered come back with each fetch and drive the pager + count.
@@ -142,19 +143,24 @@ function renderAudit() {
     : `${audit.total} event${audit.total === 1 ? '' : 's'}`;
 
   if (!rows.length) {
-    $('#audit-list').innerHTML = audit.totalUnfiltered
+    morphInto($('#audit-list'), audit.totalUnfiltered
       ? '<div class="empty">No events match the filter.</div>'
-      : '<div class="empty">No commands recorded yet. Audit rows are written as agents and the operator run tclaude commands (spawn, message, lifecycle, permissions…).</div>';
+      : '<div class="empty">No commands recorded yet. Audit rows are written as agents and the operator run tclaude commands (spawn, message, lifecycle, permissions…).</div>');
     renderPager();
     return;
   }
 
-  $('#audit-list').innerHTML = `
+  // Morph rather than swap so a selection in this command-trail table survives
+  // the ~30s re-poll tick. Rows carry a stable data-key (the append-only audit
+  // row id, unique per entry), so when a fresh command lands at the top the
+  // surviving rows are MOVED intact rather than having neighbour content
+  // rewritten under an in-progress selection.
+  morphInto($('#audit-list'), `
     <table class="audit-table">
       <thead>${headerHTML()}</thead>
       <tbody>
         ${rows.map(e => `
-          <tr>
+          <tr data-key="audit-${esc(String(e.id))}">
             <td class="audit-nowrap">${whenCellHTML(e)}</td>
             <td class="audit-trunc" title="${esc(actorTitle(e))}">${actorCell(e)}</td>
             <td class="audit-trunc" title="${esc(e.verb || '')}"><span class="${verbClass(e.verb)}">${esc(e.verb)}</span>${e.source === 'dashboard' ? ' <span class="id" title="run from the dashboard">⊞</span>' : ''}</td>
@@ -163,7 +169,7 @@ function renderAudit() {
             <td class="audit-nowrap">${statusPill(e.status)}</td>
           </tr>`).join('')}
       </tbody>
-    </table>`;
+    </table>`);
   renderPager();
 }
 
@@ -241,8 +247,8 @@ async function loadAudit() {
     $('#filter-audit-count').textContent = '';
     $('#audit-retention').textContent = '';
     $('#audit-pager').hidden = true;
-    $('#audit-list').innerHTML =
-      `<div class="empty">Failed to load audit log: ${esc(e.message || e)}</div>`;
+    morphInto($('#audit-list'),
+      `<div class="empty">Failed to load audit log: ${esc(e.message || e)}</div>`);
   }
 }
 

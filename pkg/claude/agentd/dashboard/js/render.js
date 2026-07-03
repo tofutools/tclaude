@@ -20,6 +20,7 @@ import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
 import { getDashDefaultProfile } from './profiles.js';
+import { morphInto } from './morph.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
 // refresh.js (refresh() rebuilds it on every poll). Imported back here —
@@ -69,7 +70,7 @@ function memberRowHTML(m, ctx) {
   const canRemote = harnessCanRemoteControl(lastSnapshot, state.harness);
   const actions = ctx.ungrouped ? ungroupedMemberActions(m, canRemote) : memberActions(ctx.group, m, canRemote);
   return `
-              <tr class="dnd-draggable" draggable="true" ${dndSource}
+              <tr class="dnd-draggable" draggable="true" data-key="${esc(m.conv_id)}" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
                   data-dnd-agent="${esc(m.agent_id || m.conv_id)}"
                   data-dnd-label="${esc(m.title || m.conv_id)}">
@@ -162,7 +163,7 @@ function renderVirtualConversationsGroup(g) {
           ${sortHead('conversations', CONVERSATIONS_COLS)}
           <tbody>
             ${applySort('conversations', members, CONVERSATIONS_ACCESSORS).map(c => `
-              <tr class="dnd-draggable" draggable="true" data-dnd-source-conversation="1"
+              <tr class="dnd-draggable" draggable="true" data-key="${esc(c.conv_id)}" data-dnd-source-conversation="1"
                   data-dnd-conv="${esc(c.conv_id)}"
                   data-dnd-agent="${esc(c.agent_id || c.conv_id)}"
                   data-dnd-label="${esc(c.title || c.conv_id)}">
@@ -215,7 +216,7 @@ function renderVirtualRetiredGroup(g) {
           ${sortHead('retired', RETIRED_COLS)}
           <tbody>
             ${applySort('retired', members, RETIRED_ACCESSORS).map(a => `
-              <tr class="dnd-draggable" draggable="true" data-dnd-source-retired="1"
+              <tr class="dnd-draggable" draggable="true" data-key="${esc(a.conv_id)}" data-dnd-source-retired="1"
                   data-dnd-conv="${esc(a.conv_id)}"
                   data-dnd-agent="${esc(a.agent_id || a.conv_id)}"
                   data-dnd-label="${esc(a.title || a.conv_id)}">
@@ -275,7 +276,7 @@ function renderVirtualReplacedGroup(g) {
               const replacedVia = a.reason || 'replaced';
               const replacedAge = a.replaced_at ? ' · ' + relTime(a.replaced_at) : '';
               return `
-              <tr>
+              <tr data-key="${esc(a.conv_id)}">
                 <td>${onlineDot(a.online)}</td>
                 <td class="id">${esc(shortId(a.conv_id))}</td>
                 <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
@@ -329,7 +330,7 @@ function renderVirtualPendingGroup(g) {
                 ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
                 : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
               return `
-              <tr>
+              <tr data-key="${esc(p.label)}">
                 <td>${onlineDot(p.online)}</td>
                 <td class="id">${esc(p.label)}</td>
                 <td><span class="rowname">${esc(p.name || p.role || '(unnamed)')}</span></td>
@@ -691,7 +692,7 @@ function renderPermissions(perm, agents) {
           <thead><tr><th>ID</th><th>Title</th><th>Granted</th><th>Denied</th></tr></thead>
           <tbody>
             ${rows.map(r => `
-              <tr>
+              <tr data-key="${esc(r.k)}">
                 <td class="id" title="${esc(idTooltip(agentIdByConv[r.k], r.k))}">${esc(shortAgentId(agentIdByConv[r.k], r.k))}</td>
                 <td class="rowname">${esc(titleByConv[r.k] || '(unknown)')}</td>
                 <td>${r.granted.map(s => `<span class="tag slug">${esc(s)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>
@@ -713,7 +714,7 @@ function renderSlugs(slugs) {
       <thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead>
       <tbody>
         ${slugs.map(s => `
-          <tr>
+          <tr data-key="${esc(s.slug)}">
             <td><span class="slug">${esc(s.slug)}</span></td>
             <td>${s.owner_implied ? '<span class="owner-badge" title="Conferred by group ownership">👑</span>' : '<span class="muted">—</span>'}</td>
             <td>${esc(s.description || '')}</td>
@@ -900,7 +901,7 @@ function renderUsage(u) {
     lines.push(usageLineHTML('Codex:', codexWins));
     if (costHTML) lines.push(usageLineHTML('', [costHTML]));
     el.classList.remove('na');
-    el.innerHTML = lines.join('');
+    morphInto(el, lines.join('')); // morph so the copyable cost/percent figures survive the tick
     el.title = titles.join(' · ');
     return;
   }
@@ -911,7 +912,7 @@ function renderUsage(u) {
   if (costHTML) wins.push(costHTML);
   if (wins.length) {
     el.classList.remove('na');
-    el.innerHTML = wins.join('');
+    morphInto(el, wins.join('')); // morph so the copyable cost/percent figures survive the tick
     el.title = titles.join(' · ');
   } else {
     el.classList.add('na');
