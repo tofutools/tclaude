@@ -3069,6 +3069,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-size: 12px; color: #c9d1d9;
 }
 .window-direction input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+/* Keep each radio's label (icon + word) intact on one line. The label is a
+   flex item beside the note; the wizard twins "👁 Reveal" / "🌫 Veil" carry a
+   space — a wrap point the single-word regular "Focus" / "Unfocus" lack — so
+   without flex:0 0 auto + nowrap the long unfocus note shrinks the label until
+   it breaks between the glyph and the word. The note keeps the remaining width
+   and wraps internally as before. */
+.window-dir-label-regular, .window-dir-label-wizard { flex: 0 0 auto; white-space: nowrap; }
 .window-direction .opt-note { font-size: 11px; color: #7d8590; }
 /* Reincarnate modal — the self-vs-force mode picker. Same vertical
    radio-list-with-notes shape as .window-direction above. */
