@@ -20,6 +20,7 @@ import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { listPagerHTML } from './list-paging.js';
 import { getDashDefaultProfile } from './profiles.js';
+import { morphInto } from './morph.js';
 
 // lastSnapshot and sudoBadge live in dashboard.js; sudoByConv lives in
 // refresh.js (refresh() rebuilds it on every poll). Imported back here —
@@ -900,7 +901,7 @@ function renderUsage(u) {
     lines.push(usageLineHTML('Codex:', codexWins));
     if (costHTML) lines.push(usageLineHTML('', [costHTML]));
     el.classList.remove('na');
-    el.innerHTML = lines.join('');
+    morphInto(el, lines.join('')); // morph so the copyable cost/percent figures survive the tick
     el.title = titles.join(' · ');
     return;
   }
@@ -911,7 +912,7 @@ function renderUsage(u) {
   if (costHTML) wins.push(costHTML);
   if (wins.length) {
     el.classList.remove('na');
-    el.innerHTML = wins.join('');
+    morphInto(el, wins.join('')); // morph so the copyable cost/percent figures survive the tick
     el.title = titles.join(' · ');
   } else {
     el.classList.add('na');

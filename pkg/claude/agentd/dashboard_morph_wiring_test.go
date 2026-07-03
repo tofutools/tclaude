@@ -48,6 +48,12 @@ func TestDashboardMorph_Wired(t *testing.T) {
 	present("morphInto($('#links-list'), renderLinks(", "Links tab morphs instead of innerHTML swap")
 	present("morphInto($('#permissions-body'), renderPermissions(", "Permissions panel morphs instead of innerHTML swap")
 	present("morphInto($('#slugs-body'), renderSlugs(", "Slugs panel morphs instead of innerHTML swap")
+	// The top-bar #usage widget (render.js) — first item of the coverage sweep
+	// (JOH-339): both the Codex two-line and the Claude single-row branches morph
+	// so the copyable cost/percent figures survive the tick. The `usage: n/a`
+	// textContent branch stays a plain write (nothing to preserve).
+	present("morphInto(el, lines.join(''))", "#usage Codex layout morphs instead of innerHTML swap")
+	present("morphInto(el, wins.join(''))", "#usage Claude layout morphs instead of innerHTML swap")
 
 	// The reconcile is keyed: repeated rows carry data-key so a reorder moves
 	// nodes rather than rewriting content between them. Pin the key on a couple
