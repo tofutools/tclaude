@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -79,6 +81,10 @@ type model struct {
 	searchInput    textinput.Model // search query input
 	searchFocused  bool            // whether search box is focused
 	lastUpdatedAt  time.Time       // tracks DB changes for polling
+	newSessionMode bool            // showing the "new session" directory prompt
+	newSessionDir  string          // chosen directory for the new session (set on confirm)
+	dirInput       textinput.Model // directory input for the new session prompt
+	dirSuggestions []string        // ambiguous tab-completion candidates for dirInput
 }
 
 func newSessionSearchInput() textinput.Model {
@@ -91,6 +97,104 @@ func newSessionSearchInput() textinput.Model {
 	return ti
 }
 
+// newDirInput builds the text input used by the "new session" directory
+// prompt, prefilled with the current working directory so enter-to-accept
+// reproduces the old (no-prompt) behavior.
+func newDirInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = "  Directory: "
+	if wd, err := os.Getwd(); err == nil {
+		ti.SetValue(wd)
+	}
+	ti.SetWidth(80)
+	return ti
+}
+
+// expandHomePrefix expands a leading "~" or "~/" in p to the user's home
+// directory, for filesystem lookups during directory tab-completion. The
+// returned path is only used to stat/list the filesystem; the text the user
+// sees and edits keeps whatever they typed (e.g. "~/Doc" stays "~/Doc").
+func expandHomePrefix(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+// completeDirPath performs bash-like Tab completion of a directory path: it
+// matches the final path segment against sibling directory names and
+// extends input to their longest common prefix. When exactly one directory
+// matches, the result is completed all the way through a trailing "/" (so
+// pressing Tab repeatedly walks down the tree); when several match, input is
+// extended as far as unambiguous and the candidate names are returned for
+// display, mirroring bash's "partial-complete, then list" behavior.
+func completeDirPath(input string) (completed string, candidates []string) {
+	if input == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home + "/", nil
+		}
+		return input, nil
+	}
+
+	dir, prefix := filepath.Split(expandHomePrefix(input))
+	if dir == "" {
+		dir = "."
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return input, nil
+	}
+
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), prefix) {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) == 0 {
+		return input, nil
+	}
+	sort.Strings(names)
+
+	common := names[0]
+	for _, n := range names[1:] {
+		common = commonStringPrefix(common, n)
+	}
+
+	// input's final path segment is always `prefix` verbatim (home
+	// expansion only ever rewrites the directory portion before it), so
+	// trimming that many characters off the end of input recovers the
+	// unexpanded lead-in (e.g. "~/" stays "~/" rather than becoming the
+	// resolved home directory).
+	head := input[:len(input)-len(prefix)]
+	completed = head + common
+	if len(names) == 1 {
+		return completed + "/", nil
+	}
+	if completed != input {
+		return completed, names
+	}
+	return input, names
+}
+
+// commonStringPrefix returns the longest common prefix of a and b.
+func commonStringPrefix(a, b string) string {
+	n := min(len(a), len(b))
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return a[:i]
+}
+
 func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 	return model{
 		sessions:     []*SessionState{},
@@ -100,6 +204,7 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 		statusFilter: statusFilter,
 		hideFilter:   hideFilter,
 		searchInput:  newSessionSearchInput(),
+		dirInput:     newDirInput(),
 	}
 }
 
@@ -332,6 +437,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Handle new-session directory prompt
+		if m.newSessionMode {
+			switch msg.String() {
+			case "esc", "ctrl+c":
+				m.newSessionMode = false
+				m.dirInput.Blur()
+			case "enter":
+				m.newSessionMode = false
+				m.dirInput.Blur()
+				m.newSessionDir = strings.TrimSpace(m.dirInput.Value())
+				m.createNew = true
+				return m, tea.Quit
+			case "tab":
+				completed, candidates := completeDirPath(m.dirInput.Value())
+				m.dirInput.SetValue(completed)
+				m.dirInput.CursorEnd()
+				m.dirSuggestions = candidates
+			default:
+				m.dirSuggestions = nil
+				var cmd tea.Cmd
+				m.dirInput, cmd = m.dirInput.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+
 		// Handle filter menu
 		if m.filterMenu {
 			switch msg.String() {
@@ -456,9 +587,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Force refresh
 			m = m.refreshSessions()
 		case "n", "N":
-			// Create a new session in current directory
-			m.createNew = true
-			return m, tea.Quit
+			// Prompt for the directory to start the new session in
+			m.dirInput = newDirInput()
+			m.dirInput.Focus()
+			m.dirSuggestions = nil
+			m.newSessionMode = true
 		default:
 			if m.sort.HandleSortKey(m.columns(), msg.String()) {
 				m = m.refreshSessions()
@@ -511,6 +644,11 @@ func (m model) View() tea.View {
 	// Filter menu overlay
 	if m.filterMenu {
 		return tea.View{Content: m.renderFilterMenu(), AltScreen: true}
+	}
+
+	// New-session directory prompt overlay
+	if m.newSessionMode {
+		return tea.View{Content: m.renderNewSessionPrompt(), AltScreen: true}
 	}
 
 	var b strings.Builder
@@ -671,6 +809,22 @@ func (m model) renderFilterMenu() string {
 	return b.String()
 }
 
+func (m model) renderNewSessionPrompt() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(menuStyle.Render("  New session"))
+	b.WriteString("\n\n")
+	b.WriteString(m.dirInput.View())
+	b.WriteString("\n\n")
+	if len(m.dirSuggestions) > 0 {
+		b.WriteString("  " + strings.Join(m.dirSuggestions, "  "))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(helpStyle.Render("  enter start • tab complete • esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (m model) renderHelpView() string {
 	var b strings.Builder
 	b.WriteString("\n")
@@ -694,7 +848,7 @@ func (m model) renderHelpView() string {
 
 	b.WriteString(headerStyle.Render("  Actions"))
 	b.WriteString("\n")
-	b.WriteString("    n         New session (in current directory)\n")
+	b.WriteString("    n         New session (prompts for directory, default: current)\n")
 	b.WriteString("    del/x     Kill selected session (with confirmation)\n")
 	b.WriteString("    r         Refresh session list\n")
 	b.WriteString("\n")
@@ -752,11 +906,12 @@ type WatchState struct {
 
 // AttachResult holds the result of selecting a session to attach
 type AttachResult struct {
-	TmuxSession string
-	SessionID   string // session ID for inbox watcher
-	ForceAttach bool   // true if we should detach other clients
-	CreateNew   bool   // true if user wants to create a new session
-	FocusOnly   bool   // true if we should just focus (session already attached)
+	TmuxSession   string
+	SessionID     string // session ID for inbox watcher
+	ForceAttach   bool   // true if we should detach other clients
+	CreateNew     bool   // true if user wants to create a new session
+	NewSessionDir string // directory to start the new session in (with CreateNew)
+	FocusOnly     bool   // true if we should just focus (session already attached)
 }
 
 // RunInteractive starts the interactive session viewer
@@ -781,11 +936,12 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 
 	fm := finalModel.(model)
 	result := AttachResult{
-		TmuxSession: fm.shouldAttach,
-		SessionID:   fm.shouldAttachID,
-		ForceAttach: fm.forceAttach,
-		CreateNew:   fm.createNew,
-		FocusOnly:   fm.focusOnly,
+		TmuxSession:   fm.shouldAttach,
+		SessionID:     fm.shouldAttachID,
+		ForceAttach:   fm.forceAttach,
+		CreateNew:     fm.createNew,
+		NewSessionDir: fm.newSessionDir,
+		FocusOnly:     fm.focusOnly,
 	}
 	newState := WatchState{
 		Sort:         fm.sort,
@@ -815,7 +971,7 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 		// Handle creating a new session
 		if result.CreateNew {
 			// Create session detached, then attach as subprocess so we return here
-			params := &NewParams{Detached: true}
+			params := &NewParams{Detached: true, Dir: result.NewSessionDir}
 			if err := runNew(params); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
 				continue
