@@ -856,21 +856,24 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, templateImportResult{Imported: t.Name, Updated: false, Warnings: warnings})
 }
 
-// composeInstantiationContext folds the per-instantiation task/project
+// composeInstantiationContext folds the per-instantiation assignment
 // text into the template's reusable boilerplate. The template context
-// is rarely-changed group-wide guidance; the task is the specific
-// assignment for THIS group, so it lands under a "## Task" header that
-// every spawned agent sees in its startup briefing.
-func composeInstantiationContext(templateContext, task string) string {
+// is rarely-changed group-wide guidance; the assignment is the specific
+// job for THIS group, so it lands under a "## <header>" section that
+// every spawned agent sees in its startup briefing. header is "Task" for
+// a plain instantiate and "Mission" for a deploy (JOH-245) — the section
+// name is the only difference between the two paths' composed context.
+func composeInstantiationContext(templateContext, assignment, header string) string {
 	templateContext = strings.TrimSpace(templateContext)
-	task = strings.TrimSpace(task)
+	assignment = strings.TrimSpace(assignment)
+	section := "## " + header + "\n\n" + assignment
 	switch {
-	case task == "":
+	case assignment == "":
 		return templateContext
 	case templateContext == "":
-		return "## Task\n\n" + task
+		return section
 	default:
-		return templateContext + "\n\n## Task\n\n" + task
+		return templateContext + "\n\n" + section
 	}
 }
 
@@ -944,17 +947,65 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 		return
 	}
-	groupContext, err := normalizeGroupContext(composeInstantiationContext(tmpl.DefaultContext, body.Task))
+	descr := strings.TrimSpace(body.Descr)
+	if descr == "" {
+		descr = "Instantiated from template " + tmpl.Name
+	}
+	// A plain instantiate records the source template (so the dashboard can
+	// still frame it as "from template X") but no mission — that is the
+	// deploy verb's addition.
+	runInstantiation(w, instantiateSpec{
+		tmpl:           tmpl,
+		caller:         caller,
+		groupName:      body.GroupName,
+		assignment:     body.Task,
+		contextHeader:  "Task",
+		cwd:            cwd,
+		descr:          descr,
+		sourceTemplate: tmpl.Name,
+	})
+}
+
+// instantiateSpec carries the fully-validated inputs of one
+// instantiate-or-deploy run into the shared runInstantiation core: the
+// resolved cwd, the caller, the group name, the per-run assignment text
+// (a task or a mission) and the section header it renders under, plus the
+// deployment provenance (mission / source_template) stamped on the group
+// row. The two entry handlers (handleTemplateInstantiate,
+// handleTemplateDeploy) each do their own body parse + name/cwd
+// resolution, then hand off here so the group-create → spawn-team →
+// work-pattern → response pipeline lives in exactly one place.
+type instantiateSpec struct {
+	tmpl           *db.GroupTemplate
+	caller         string
+	groupName      string // already validated + collision-checked
+	assignment     string // the task / mission free text
+	contextHeader  string // "Task" | "Mission"
+	cwd            string // already resolved
+	descr          string // already defaulted
+	mission        string // stored on the group row; "" for a plain instantiate
+	sourceTemplate string // stored on the group row
+	deployed       bool   // frames the response (adds mission + deployed)
+}
+
+// runInstantiation is the shared core behind both `templates instantiate`
+// and `task-force deploy` (JOH-245): it composes the group context (the
+// assignment folded under spec.contextHeader), creates the group, records
+// its deployment provenance, spawns one agent per template spec, applies
+// ownership + permission grants, runs the work pattern, and writes the
+// per-agent result. Deploy is just instantiate with a mission rendered as
+// "## Mission" instead of "## Task", so the whole body is identical — only
+// the section header, the stored provenance, and the response framing
+// differ, all carried on spec.
+func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
+	tmpl := spec.tmpl
+	groupContext, err := normalizeGroupContext(composeInstantiationContext(tmpl.DefaultContext, spec.assignment, spec.contextHeader))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
 
-	descr := strings.TrimSpace(body.Descr)
-	if descr == "" {
-		descr = "Instantiated from template " + tmpl.Name
-	}
-	gid, err := db.CreateAgentGroup(body.GroupName, descr)
+	gid, err := db.CreateAgentGroup(spec.groupName, spec.descr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
 		return
@@ -962,19 +1013,31 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// Best-effort post-create config — a failure here is logged, not
 	// fatal: the group exists and the human can adjust it on the
 	// dashboard. Mirrors the /v1/groups create path.
-	if cwd != "" {
-		if _, err := db.SetAgentGroupDefaultCwd(body.GroupName, cwd); err != nil {
-			slog.Warn("instantiate: set default cwd failed", "group", body.GroupName, "error", err)
+	if spec.cwd != "" {
+		if _, err := db.SetAgentGroupDefaultCwd(spec.groupName, spec.cwd); err != nil {
+			slog.Warn("instantiate: set default cwd failed", "group", spec.groupName, "error", err)
 		}
 	}
 	if groupContext != "" {
-		if _, err := db.SetAgentGroupDefaultContext(body.GroupName, groupContext); err != nil {
-			slog.Warn("instantiate: set default context failed", "group", body.GroupName, "error", err)
+		if _, err := db.SetAgentGroupDefaultContext(spec.groupName, groupContext); err != nil {
+			slog.Warn("instantiate: set default context failed", "group", spec.groupName, "error", err)
+		}
+	}
+	// Deployment provenance (JOH-245): what this force was deployed against
+	// and from. Best-effort like the cwd/context above; a blank mission +
+	// blank source_template is the "not a deployed force" default, so a
+	// no-op write is harmless.
+	if spec.mission != "" || spec.sourceTemplate != "" {
+		if _, err := db.SetAgentGroupDeployMeta(spec.groupName, spec.mission, spec.sourceTemplate); err != nil {
+			slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
 		}
 	}
 
-	g := &db.AgentGroup{ID: gid, Name: body.GroupName, Descr: descr, DefaultCwd: cwd, DefaultContext: groupContext}
-	granter := granterLabel(caller)
+	g := &db.AgentGroup{
+		ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
+		Mission: spec.mission, SourceTemplate: spec.sourceTemplate,
+	}
+	granter := granterLabel(spec.caller)
 
 	results := []instantiateAgentResult{}
 	spawned, failed := 0, 0
@@ -983,7 +1046,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	spawnedConvs := map[string]string{}
 	spawnedOrder := []string{}
 	for _, a := range tmpl.Agents {
-		finalName := body.GroupName + "-" + a.Name
+		finalName := spec.groupName + "-" + a.Name
 		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
 		// Resolve this role's launch profile (JOH-239): per-agent inline
 		// override → referenced spawn profile → harness secure default. A
@@ -991,7 +1054,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// value, a Codex sandbox/cwd conflict) is recorded per-agent and skips
 		// just this spawn — same best-effort contract as an owner/permission
 		// grant failure below.
-		launch, lfail := resolveTemplateAgentLaunch(a, cwd)
+		launch, lfail := resolveTemplateAgentLaunch(a, spec.cwd)
 		if lfail != nil {
 			res.Error = lfail.Msg
 			failed++
@@ -1003,15 +1066,15 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 			Role:           a.Role,
 			Descr:          a.Descr,
 			InitialMessage: a.InitialMessage,
-			Cwd:            cwd,
+			Cwd:            spec.cwd,
 			Harness:        launch.Harness,
 			Model:          launch.Model,
 			Effort:         launch.Effort,
 			SandboxMode:    launch.Sandbox,
 			ApprovalPolicy: launch.Approval,
 			GroupContext:   groupContext,
-			ReplyToConv:    caller,
-			SpawnedByConv:  caller,
+			ReplyToConv:    spec.caller,
+			SpawnedByConv:  spec.caller,
 		})
 		if fail != nil {
 			res.Error = fail.Msg
@@ -1031,7 +1094,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		if a.IsOwner {
 			if err := db.AddAgentGroupOwner(gid, outcome.ConvID, granter); err != nil {
 				slog.Warn("instantiate: grant owner failed",
-					"group", body.GroupName, "conv", outcome.ConvID, "error", err)
+					"group", spec.groupName, "conv", outcome.ConvID, "error", err)
 				res.Error = "spawned, but grant-owner failed: " + err.Error()
 			} else {
 				res.Owner = true
@@ -1051,30 +1114,35 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// Work pattern (JOH-336): with the whole roster up, deliver the
 	// template's routed briefing messages IN ORDER — each step to one
 	// roster agent by name, or to every spawned member ("all"). {{task}}
-	// interpolates the per-instantiation task. Distinct from the per-agent
-	// initial_message (that rode each agent's own spawn welcome): the
-	// pattern is the cross-cutting kick-off choreography — "brief the Lead
-	// with the leadership frame, then everyone with the house rules".
-	// Best-effort like the ownership/permission grants: a step whose
-	// target failed to spawn (or whose interpolated body breaks the inbox
-	// rule) is reported in pattern_errors, never aborts the rest.
+	// (and its {{mission}} alias) interpolate the per-run assignment.
+	// Distinct from the per-agent initial_message (that rode each agent's
+	// own spawn welcome): the pattern is the cross-cutting kick-off
+	// choreography — "brief the Lead with the leadership frame, then
+	// everyone with the house rules". Best-effort like the
+	// ownership/permission grants: a step whose target failed to spawn (or
+	// whose interpolated body breaks the inbox rule) is reported in
+	// pattern_errors, never aborts the rest.
 	patternDelivered := 0
 	patternErrors := []string{}
-	// The task is interpolated into inbox bodies, so it gets the same
+	// The assignment is interpolated into inbox bodies, so it gets the same
 	// CRLF→LF fold the group context got via normalizeGroupContext — a
-	// CRLF-authored --task file must not flunk every {{task}} step's
+	// CRLF-authored --task/--mission file must not flunk every step's
 	// charset re-gate below (isValidInitialMessage rejects '\r').
-	task := strings.TrimSpace(body.Task)
-	task = strings.ReplaceAll(task, "\r\n", "\n")
-	task = strings.ReplaceAll(task, "\r", "\n")
+	assignment := strings.TrimSpace(spec.assignment)
+	assignment = strings.ReplaceAll(assignment, "\r\n", "\n")
+	assignment = strings.ReplaceAll(assignment, "\r", "\n")
 	rosterNames := map[string]bool{}
 	for _, a := range tmpl.Agents {
 		rosterNames[a.Name] = true
 	}
 	for i, e := range tmpl.WorkPattern {
-		msg := strings.ReplaceAll(e.Value, "{{task}}", task)
+		// {{task}} is the canonical token; {{mission}} is an alias so a
+		// deploy-oriented template reads naturally. Both fill with the same
+		// per-run assignment.
+		msg := strings.ReplaceAll(e.Value, "{{task}}", assignment)
+		msg = strings.ReplaceAll(msg, "{{mission}}", assignment)
 		if msg == "" {
-			// A bare "{{task}}" step with no task: save-time validation
+			// A bare "{{task}}" step with no assignment: save-time validation
 			// can't catch it, so report it instead of delivering an
 			// empty-bodied briefing.
 			patternErrors = append(patternErrors,
@@ -1120,7 +1188,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		for _, conv := range targets {
 			if _, err := db.InsertAgentMessage(&db.AgentMessage{
 				GroupID:  gid,
-				FromConv: caller,
+				FromConv: spec.caller,
 				ToConv:   conv,
 				Subject:  subject,
 				Body:     msg,
@@ -1130,7 +1198,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 				ToRecipients: targets,
 			}); err != nil {
 				slog.Warn("instantiate: work-pattern insert failed",
-					"group", body.GroupName, "step", i+1, "conv", conv, "error", err)
+					"group", spec.groupName, "step", i+1, "conv", conv, "error", err)
 				patternErrors = append(patternErrors,
 					fmt.Sprintf("step %d/%d (to %s): %v", i+1, len(tmpl.WorkPattern), e.SendTo, err))
 				continue
@@ -1140,15 +1208,199 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"group":             body.GroupName,
+	resp := map[string]any{
+		"group":             spec.groupName,
 		"template":          tmpl.Name,
 		"agents":            results,
 		"spawned":           spawned,
 		"failed":            failed,
 		"pattern_delivered": patternDelivered,
 		"pattern_errors":    patternErrors,
+	}
+	// Deploy framing (JOH-245): the mission the force was deployed against,
+	// so the CLI/dashboard can say "task force X deployed against <mission>".
+	if spec.deployed {
+		resp["deployed"] = true
+		resp["mission"] = spec.mission
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// handleTemplateDeploy is the first-class "deploy a task force against a
+// mission" verb (JOH-245): a thin wrapper over the shared runInstantiation
+// core. Gated on templates.instantiate (deploy IS instantiate). Body:
+// { mission, group_name?, cwd?, descr? }.
+//
+// mission is the team's assignment — free text or a Linear epic/issue link
+// — and renders into the composed context under "## Mission" (instantiate's
+// "## Task" analogue). When group_name is omitted it is DERIVED from the
+// mission text (slugged + collision-uniquified); an explicit group_name is
+// validated and 409s on a taken name, exactly like instantiate. The chosen
+// mission + source template are recorded on the group row so the dashboard
+// can show the group as a deployed force.
+//
+// Scope-out (stated in the PR): tclaude carries no Linear credentials, so a
+// Linear-link mission is stored/rendered verbatim — no title pull. The
+// group name then falls back to the template name (a bare URL has no
+// readable words to slug).
+func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermTemplatesUse)
+	if !ok {
+		return
+	}
+	tmplName := r.PathValue("name")
+	tmpl, err := db.GetGroupTemplate(tmplName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if tmpl == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such template")
+		return
+	}
+
+	var body struct {
+		Mission   string `json:"mission"`
+		GroupName string `json:"group_name,omitempty"`
+		Cwd       string `json:"cwd,omitempty"`
+		Descr     string `json:"descr,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	mission := strings.TrimSpace(body.Mission)
+	if mission == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "mission is required (the topic / problem / epic to deploy against)")
+		return
+	}
+
+	groupName := strings.TrimSpace(body.GroupName)
+	if groupName == "" {
+		// Derive a sensible group name from the mission, uniquified against
+		// existing groups. deriveGroupNameFromMission returns an already-valid,
+		// already-free name.
+		groupName = deriveGroupNameFromMission(mission, tmpl.Name)
+	} else {
+		if err := validateGroupName(groupName); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "group_name: "+err.Error())
+			return
+		}
+		if existing, _ := db.GetAgentGroupByName(groupName); existing != nil {
+			writeError(w, http.StatusConflict, "exists", "a group named "+groupName+" already exists")
+			return
+		}
+	}
+	// A derived name should always validate, but guard anyway — a slug of an
+	// exotic mission that somehow produced an invalid name must not reach
+	// CreateAgentGroup.
+	if err := validateGroupName(groupName); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "derived group name is invalid: "+err.Error())
+		return
+	}
+
+	cwd, err := resolveSpawnCwd(body.Cwd)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+		return
+	}
+
+	descr := strings.TrimSpace(body.Descr)
+	if descr == "" {
+		descr = "Task force deployed from template " + tmpl.Name
+	}
+	runInstantiation(w, instantiateSpec{
+		tmpl:           tmpl,
+		caller:         caller,
+		groupName:      groupName,
+		assignment:     mission,
+		contextHeader:  "Mission",
+		cwd:            cwd,
+		descr:          descr,
+		mission:        mission,
+		sourceTemplate: tmpl.Name,
+		deployed:       true,
 	})
+}
+
+// deriveGroupNameFromMission picks a group name for a deploy when the human
+// gives none (JOH-245): slug the mission text into a lowercase-dashed
+// handle, fall back to the template name when the mission is a bare URL (no
+// readable words — e.g. a Linear link), and uniquify against existing
+// groups with a -2 / -3 suffix. The returned name is guaranteed to pass
+// validateGroupName and to be free at call time.
+func deriveGroupNameFromMission(mission, templateName string) string {
+	base := slugForMission(mission)
+	if base == "" {
+		// Bare URL (or all-punctuation mission): the mission carries no words
+		// to name the force after, so name it after the template.
+		base = slugify(templateName, 40)
+	}
+	if base == "" {
+		base = "task-force"
+	}
+	name := base
+	for i := 2; ; i++ {
+		if existing, _ := db.GetAgentGroupByName(name); existing == nil {
+			return name
+		}
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
+}
+
+// slugForMission slugs a mission into a group-name base, unless the mission
+// is a BARE URL — a single whitespace-free token that looks like a link
+// (an http(s):// URL or a scheme-less linear.app/… reference). A bare URL
+// has no readable words, so it yields "" and the caller falls back to the
+// template name. A mission that merely CONTAINS a URL amid text still slugs
+// the text (the URL collapses to dashes and trims away).
+func slugForMission(mission string) string {
+	m := strings.TrimSpace(mission)
+	if isBareURL(m) {
+		return ""
+	}
+	return slugify(m, 40)
+}
+
+// isBareURL reports whether s is a single token that reads as a URL — an
+// http(s):// link or a bare host/path beginning with a known link host.
+// Used only to decide whether a mission has slug-worthy words.
+func isBareURL(s string) bool {
+	if s == "" || strings.ContainsAny(s, " \t\n") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return true
+	}
+	// Scheme-less single-token links (e.g. "linear.app/team/issue/JOH-245").
+	return strings.HasPrefix(lower, "linear.app/") || strings.HasPrefix(lower, "www.")
+}
+
+// slugify reduces arbitrary text to a lowercase, dash-separated handle:
+// runs of non-[a-z0-9] characters collapse to a single dash, the result is
+// lowercased and trimmed of leading/trailing dashes, and capped to max
+// bytes (with any dash left dangling by the cut trimmed off). Suitable for
+// a group name — validateGroupName only forbids slashes, control chars and
+// edge whitespace, all of which this strips.
+func slugify(s string, max int) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastDash = false
+		case !lastDash:
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if max > 0 && len(out) > max {
+		out = strings.TrimRight(out[:max], "-")
+	}
+	return out
 }
 
 // handleTemplateFromGroup snapshots a live group's structure into a

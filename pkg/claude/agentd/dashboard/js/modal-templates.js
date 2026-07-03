@@ -95,6 +95,19 @@ function templateCardHTML(t) {
     return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
   }).join('');
   const n = (t.agents || []).length;
+  // Deployed forces (JOH-245): groups deployed/instantiated from THIS template
+  // (source_template match). Rendered as a compact "task forces" strip under
+  // the card so the Templates tab doubles as a light Task Forces view — each
+  // shows its group name and (if deployed) the mission it was sent against.
+  const forces = deployedForcesFor(t.name);
+  const forcesHTML = forces.length
+    ? `<div class="tc-forces" title="${wizWord('task forces deployed from this template', 'hero parties summoned from this circle')}">`
+      + `<span class="tc-forces-label">${wizWord('🚀 forces', '⚔ parties')}:</span> `
+      + forces.map(g =>
+        `<span class="tc-force" data-force-group="${esc(g.name)}" title="${g.mission ? esc(g.mission) : ''}">`
+        + `${esc(g.name)}${g.mission ? ` <span class="tc-force-mission">— ${esc(oneLineMission(g.mission))}</span>` : ''}</span>`).join('')
+      + `</div>`
+    : '';
   return `<div class="template-card" data-key="${esc(t.name)}" data-template="${esc(t.name)}">
     <div class="tc-head">
       <span class="tc-name">${esc(t.name)}</span>
@@ -102,14 +115,31 @@ function templateCardHTML(t) {
       <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
       ${(t.work_pattern || []).length ? `<span class="tc-count" title="${wizWord('work pattern — ordered briefing messages delivered after the team spawns', 'rite of command — ordered whispers delivered once the party stands')}">⇶ ${(t.work_pattern || []).length}-step ${wizWord('pattern', 'rite')}</span>` : ''}
       <span class="tc-actions">
-        <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
+        <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
+        <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
         <button class="tool" data-tact="export" data-template="${esc(t.name)}" title="${wizWord('Download this template as a portable .task-force.json file to share or re-import', 'Inscribe this circle onto a scroll — a portable .task-force.json to carry or copy')}">${wizWord('⇪ export', '📜 inscribe')}</button>
         <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
       </span>
     </div>
     ${agents ? `<div class="tc-agents">${agents}</div>` : ''}
+    ${forcesHTML}
   </div>`;
+}
+
+// deployedForcesFor returns the groups deployed/instantiated from the named
+// template — its source_template matches — newest-ish (snapshot order), so a
+// template card can show the forces it has fielded. Never null.
+function deployedForcesFor(templateName) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  return groups.filter(g => g.source_template === templateName);
+}
+
+// oneLineMission collapses a mission to a single short line for the card's
+// force strip — a long or multi-line mission would blow out the row.
+function oneLineMission(m) {
+  const first = String(m || '').split('\n')[0].trim();
+  return first.length > 60 ? first.slice(0, 57) + '…' : first;
 }
 
 function templatesByName() {
@@ -438,6 +468,185 @@ async function submitInstantiate() {
   }
 }
 
+// ---- Deploy-a-task-force modal (JOH-245) ------------------------------
+//
+// Deploy is instantiate's mission-framed twin: pick a template, state the
+// mission (free text or a Linear link), optionally name the group / pick a
+// cwd / land the force in a worktree. The group name is prefilled with a
+// slug of the mission (matching the server's derivation) until the human
+// edits it. Worktree resolution reuses POST /api/worktrees (the spawn
+// modal's endpoint), turning a branch + cwd into a worktree path that
+// becomes the deploy cwd.
+
+// deployGroupEdited tracks whether the human has typed in the group field —
+// once they have, the mission→group-name auto-prefill stops overwriting it.
+let deployGroupEdited = false;
+
+function openDeployModal(presetName) {
+  const templates = (lastSnapshot && lastSnapshot.templates) || [];
+  if (!templates.length) {
+    toast(wizWord(
+      'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
+      'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
+    return;
+  }
+  const sel = $('#template-deploy-template');
+  sel.innerHTML = templates.map(t =>
+    `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+  if (presetName && templates.some(t => t.name === presetName)) sel.value = presetName;
+  $('#template-deploy-mission').value = '';
+  $('#template-deploy-group').value = '';
+  $('#template-deploy-cwd').value = '';
+  $('#template-deploy-worktree').value = '';
+  $('#template-deploy-error').textContent = '';
+  deployGroupEdited = false;
+  renderDeployPreview();
+  $('#template-deploy-modal').classList.add('show');
+  setTimeout(() => $('#template-deploy-mission').focus(), 0);
+}
+
+function closeDeployModal() { $('#template-deploy-modal').classList.remove('show'); }
+
+// deploySlug mirrors the server's slugify: lowercase, runs of non-[a-z0-9]
+// collapse to a single dash, trimmed, capped to 40. Used only to PREFILL
+// the group-name field — the server re-derives (and uniquifies) authoritatively.
+function deploySlug(s) {
+  const out = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return out.length > 40 ? out.slice(0, 40).replace(/-+$/g, '') : out;
+}
+
+// deployIsBareURL mirrors the server's isBareURL: a single whitespace-free
+// token that reads as a link has no words to slug, so the group name should
+// fall back to the template name.
+function deployIsBareURL(s) {
+  const m = String(s || '').trim();
+  if (!m || /\s/.test(m)) return false;
+  const low = m.toLowerCase();
+  return low.startsWith('http://') || low.startsWith('https://')
+    || low.startsWith('linear.app/') || low.startsWith('www.');
+}
+
+// syncDeployGroupPrefill fills the group-name field with the mission slug (or
+// the template name for a bare-URL mission) until the human takes it over.
+function syncDeployGroupPrefill() {
+  if (deployGroupEdited) return;
+  const mission = $('#template-deploy-mission').value;
+  const tmplName = $('#template-deploy-template').value;
+  let base = deployIsBareURL(mission) ? '' : deploySlug(mission);
+  if (!base) base = deploySlug(tmplName);
+  $('#template-deploy-group').value = base;
+  renderDeployPreview();
+}
+
+// renderDeployPreview paints the final agent names for the deploy, exactly
+// like the instantiate preview — agent "PO" shows as "<group>-PO".
+function renderDeployPreview() {
+  const t = templatesByName()[$('#template-deploy-template').value];
+  const prefix = $('#template-deploy-group').value.trim();
+  const host = $('#template-deploy-preview');
+  const agents = (t && t.agents) || [];
+  if (!agents.length) {
+    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
+    return;
+  }
+  const shown = prefix || wizWord('‹group›', '‹party›');
+  host.innerHTML = agents.map(a => {
+    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+    const np = (a.permissions || []).length;
+    const launch = a.spawn_profile
+      ? `⚙ ${esc(a.spawn_profile)}`
+      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
+      .filter(Boolean).join(' · ');
+    return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
+      + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
+  }).join('');
+}
+
+// resolveDeployWorktree turns a branch + repo (the cwd) into a worktree path
+// via POST /api/worktrees, the same endpoint the spawn modal uses. Returns
+// the created/checked-out path, or throws with a human message. A worktree
+// needs a repo, so a blank cwd is a clear error rather than a confusing
+// server-side one.
+async function resolveDeployWorktree(branch, cwd) {
+  if (!cwd) throw new Error('worktree needs a cwd inside a git repo');
+  const r = await fetch('/api/worktrees', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo: cwd, branch }),
+  });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
+  let resp = {};
+  try { resp = JSON.parse(txt); } catch (_) {}
+  if (!resp.path) throw new Error('worktree created but no path returned');
+  return resp.path;
+}
+
+async function submitDeploy() {
+  const tmplName = $('#template-deploy-template').value;
+  const mission = $('#template-deploy-mission').value.trim();
+  const groupName = $('#template-deploy-group').value.trim();
+  const branch = $('#template-deploy-worktree').value.trim();
+  let cwd = $('#template-deploy-cwd').value.trim();
+  const errEl = $('#template-deploy-error');
+  errEl.textContent = '';
+  if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+  if (!mission) { errEl.textContent = 'a mission is required'; return; }
+  const btn = $('#template-deploy-submit');
+  btn.disabled = true;
+  btn.textContent = 'Deploying…';
+  try {
+    // Land the whole force in a worktree when a branch is given — resolve it
+    // to a path first, then use that path as the deploy cwd.
+    if (branch) {
+      cwd = await resolveDeployWorktree(branch, cwd);
+    }
+    const payload = { mission };
+    if (groupName) payload.group_name = groupName;
+    if (cwd) payload.cwd = cwd;
+    const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/deploy`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const txt = await r.text();
+    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+    let resp = {};
+    try { resp = JSON.parse(txt); } catch (_) {}
+    const finalGroup = resp.group || groupName;
+    closeDeployModal();
+    closeTemplatesManageModal();
+    const failed = resp.failed || 0;
+    // Plain mode: "task force … deployed against <mission>"; wizard mode: the
+    // hero party is summoned against its quest.
+    toast(failed
+      ? wizWord(
+        `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`,
+        `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`)
+      : wizWord(
+        `task force ${finalGroup} deployed against “${oneLineMission(mission)}” — ${resp.spawned || 0} spawned`,
+        `🧙 hero party ${finalGroup} summoned against its quest — ${resp.spawned || 0} familiars answer the call`),
+      failed > 0);
+    const perrs = resp.pattern_errors || [];
+    if (perrs.length) {
+      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+    } else if (resp.pattern_delivered) {
+      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+    }
+    try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
+    recordGroupInteraction(finalGroup);
+    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    if (gbtn) gbtn.click();
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Deploy task force';
+  }
+}
+
 // ---- Save-group-as-template modal -------------------------------------
 
 // openFromGroupModal opens the snapshot dialog. With a presetGroup (the
@@ -639,7 +848,8 @@ function bindTemplatesUI() {
     const btn = e.target.closest('[data-tact]');
     if (!btn) return;
     const name = btn.dataset.template;
-    if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
+    if (btn.dataset.tact === 'deploy') openDeployModal(name);
+    else if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
     else if (btn.dataset.tact === 'edit') {
       const t = templatesByName()[name];
       if (t) openTemplateEditor(t);
@@ -719,6 +929,16 @@ function bindTemplatesUI() {
   $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
   $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
   bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
+
+  // Deploy modal (JOH-245). The mission drives the group-name prefill until
+  // the human edits the group field; the template select refreshes both the
+  // prefill and the preview.
+  $('#template-deploy-cancel').addEventListener('click', closeDeployModal);
+  $('#template-deploy-submit').addEventListener('click', submitDeploy);
+  $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
+  $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
+  $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
+  bindBackdropDiscard('template-deploy-modal', closeDeployModal);
 
   // From-group modal. Typing the name live-flips the dialog between its
   // create and update-in-place modes.

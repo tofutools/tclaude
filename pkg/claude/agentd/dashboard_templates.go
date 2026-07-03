@@ -23,17 +23,19 @@ import "net/http"
 //	PATCH  /api/templates/{name}                → replace a template
 //	DELETE /api/templates/{name}                → delete a template
 //	POST   /api/templates/{name}/instantiate    → create a group + spawn its team
+//	POST   /api/templates/{name}/deploy         → deploy a task force against a mission
 //	POST   /api/templates/from-group            → snapshot a live group into a template
 //	GET    /api/templates/{name}/export         → download a portable template envelope
 //	POST   /api/templates/import                → import a portable template envelope
 //
-// The literal `from-group` / `instantiate` segments are more specific
-// than the {name} wildcard, so the mux picks them unambiguously.
+// The literal `from-group` / `instantiate` / `deploy` segments are more
+// specific than the {name} wildcard, so the mux picks them unambiguously.
 func registerDashboardTemplateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/templates", dashboardTemplatesRoute(handleTemplates))
 	mux.HandleFunc("POST /api/templates/from-group", dashboardTemplatesRoute(handleTemplateFromGroup))
 	mux.HandleFunc("POST /api/templates/import", dashboardTemplatesRoute(handleTemplateImport))
 	mux.HandleFunc("POST /api/templates/{name}/instantiate", dashboardTemplatesRoute(handleTemplateInstantiate))
+	mux.HandleFunc("POST /api/templates/{name}/deploy", dashboardTemplatesRoute(handleTemplateDeploy))
 	mux.HandleFunc("GET /api/templates/{name}/export", dashboardTemplatesRoute(handleTemplateExport))
 	mux.HandleFunc("/api/templates/{name}", dashboardTemplatesRoute(handleTemplateByName))
 }
