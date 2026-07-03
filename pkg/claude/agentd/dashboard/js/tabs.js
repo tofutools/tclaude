@@ -19,6 +19,7 @@ import {
   virtualReplacedGroup, replacedVisible,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
+import { restampGroupQuickHover } from './refresh.js';
 import { sortGroupsByPref } from './group-reorder.js';
 
 // lastSnapshot still lives in dashboard.js — the snapshot-refresh
@@ -129,6 +130,11 @@ function renderGroupsTab() {
   if (setHTMLIfChanged($('#groups-list'), renderGroups(filtered))) {
     syncBotAnimations();
     syncWizardOrbit();
+    // Re-stamp the hover-reveal class onto the fresh nodes. .quick-hover is no
+    // longer baked into the rendered string (so hover movement doesn't churn
+    // the compare and wipe selections); this keeps the #652 guarantee that the
+    // reveal survives a repaint under a stationary cursor.
+    restampGroupQuickHover();
   }
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.

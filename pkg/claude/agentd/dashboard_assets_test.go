@@ -318,8 +318,12 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		"function bindGroupQuickHover(",
 		// dashboard.js — wires the hover tracker in at init.
 		"bindGroupQuickHover()",
-		// render.js — re-stamps .quick-hover from the tracked key each render.
-		"g.name === hoveredGroupKey",
+		// refresh.js — .quick-hover is a LIVE-DOM post-pass now, not baked into
+		// the rendered string (baking it in made hover movement churn the
+		// skip-if-unchanged compare and wipe text selections). restampGroupQuickHover
+		// re-applies it after a real repaint (tabs.js calls it in the repaint branch).
+		"export function restampGroupQuickHover(",
+		"restampGroupQuickHover();",
 		// row-actions.js — the pin toggle handler.
 		"case 'toggle-quick-pin':",
 		// config.js — load + gather the Config-tab checkbox.
@@ -338,6 +342,21 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — group quick-fold wiring broken", needle)
+		}
+	}
+	// The copy-paste fix (skip-if-unchanged innerHTML) depends on .quick-hover
+	// NOT being part of any rendered HTML string: hoveredGroupKey changes on
+	// every pointer move across group headers, so baking the class into the
+	// markup would churn the compare and wipe a text selection the moment the
+	// user moved the mouse. Guard both shapes it was (or could be re-)emitted in.
+	for _, forbidden := range []string{
+		`push('quick-hover')`,   // the old detailsClasses.push in renderGroups
+		"g.name === hoveredGroupKey", // the old per-render string condition
+	} {
+		if strings.Contains(dashboardAssets, forbidden) {
+			t.Errorf("dashboard assets contain %q — .quick-hover must be a live-DOM "+
+				"post-pass (restampGroupQuickHover), never baked into a rendered string, "+
+				"or hover movement churns the skip-if-unchanged copy-paste fix", forbidden)
 		}
 	}
 }

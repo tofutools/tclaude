@@ -28,7 +28,7 @@ import { getDashDefaultProfile } from './profiles.js';
 // every module finishes evaluating (sudoBadge is a hoisted function;
 // lastSnapshot / sudoByConv are read-only live bindings here).
 import { lastSnapshot, sudoBadge } from './dashboard.js';
-import { sudoByConv, hoveredGroupKey } from './refresh.js';
+import { sudoByConv } from './refresh.js';
 
 // renameNameCell renders the agent's name — the click-to-edit rename
 // affordance when the agent's harness supports a rename (the common case:
@@ -526,12 +526,18 @@ function renderGroups(groups) {
     // group ⚙ menu (toggle-quick-pin). No effect in "expanded" mode — nothing
     // folds there to opt out of.
     const quickPinned = dashPrefs.getItem('tclaude.dash.quickpin.' + g.name) === '1';
-    // Compose the <details> class list: .quick-pinned opts out of folding,
-    // .quick-hover re-stamps the JS-tracked hover so the reveal survives the
-    // 2s re-render (see bindGroupQuickHover / hoveredGroupKey in refresh.js).
+    // Compose the <details> class list. Only .quick-pinned (dashPrefs-driven,
+    // stable) is baked into the string. .quick-hover is deliberately NOT
+    // emitted here: it tracks pointer position (hoveredGroupKey), which changes
+    // on every mouse movement across group headers — baking it in would churn
+    // the skip-if-unchanged compare and wipe a selection the moment the user
+    // moved the mouse (e.g. toward the copy menu). Instead it lives purely on
+    // the live DOM: bindGroupQuickHover stamps it on hover, and
+    // restampGroupQuickHover re-applies it after a real repaint (both in
+    // refresh.js), so the #652 "reveal survives a repaint under a stationary
+    // cursor" guarantee holds without the hover ever touching the string.
     const detailsClasses = [];
     if (quickPinned) detailsClasses.push('quick-pinned');
-    if (!quickPinned && g.name === hoveredGroupKey) detailsClasses.push('quick-hover');
     const detailsClassAttr = detailsClasses.length ? ` class="${detailsClasses.join(' ')}"` : '';
     // 👥 chip: <online>/<total>/<cap> — but collapse the online
     // slot to <total>/<cap> when everyone is online (the common

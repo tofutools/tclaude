@@ -759,11 +759,31 @@ export function showAccessTab(subtab) {
 // freshly-inserted node sitting under a STATIONARY cursor is not re-matched by
 // :hover in Blink/WebKit until the next mouse move, so the rebuilt header would
 // compute to the folded state and the chips would snap shut on every poll while
-// the user holds still to read them. renderGroups re-stamps .quick-hover from
-// this key each render, and bindGroupQuickHover keeps it live between renders,
-// so the reveal is deterministic regardless of the browser's :hover bookkeeping.
+// the user holds still to read them. restampGroupQuickHover re-applies the
+// class after a real repaint, and bindGroupQuickHover keeps it live between
+// renders, so the reveal is deterministic regardless of the browser's :hover
+// bookkeeping. The class is NOT baked into the rendered string (that made mere
+// hover movement churn the skip-if-unchanged compare and wipe selections — the
+// whole point of the copy-paste fix); it lives purely on the live DOM.
 // (The CSS keeps :hover too, for the instant smooth reveal during live movement.)
 export let hoveredGroupKey = null;
+
+// restampGroupQuickHover applies the tracked hoveredGroupKey to the live
+// #groups-list DOM: the hovered group's <details> gets .quick-hover, every
+// other has it cleared. It is the single source of truth for the class now
+// that renderGroups no longer emits it — called (a) by bindGroupQuickHover on
+// each mouseover/mouseleave so live movement is instant, and (b) right after a
+// real #groups-list repaint (tabs.js, inside the setHTMLIfChanged branch) so
+// the reveal survives the wholesale innerHTML swap under a stationary cursor
+// (#652). Re-queries the container each call so it's self-contained and safe
+// to invoke from another module.
+export function restampGroupQuickHover() {
+  const root = $('#groups-list');
+  if (!root) return;
+  root.querySelectorAll('details[data-group-key]').forEach(d => {
+    d.classList.toggle('quick-hover', d.getAttribute('data-group-key') === hoveredGroupKey);
+  });
+}
 
 // bindGroupQuickHover tracks the hovered group header on the stable
 // #groups-list container — bound once at init, delegated, because the
@@ -771,19 +791,17 @@ export let hoveredGroupKey = null;
 // not. mouseover sets the key to the group whose <summary> the pointer is over
 // (null over the expanded member body, matching the header-only reveal), and
 // mouseleave clears it when the pointer exits the list entirely. It also
-// toggles .quick-hover on the live <details> immediately so live interaction is
-// smooth without waiting for the next render.
+// re-stamps .quick-hover on the live <details> immediately so live interaction
+// is smooth without waiting for the next render.
 function bindGroupQuickHover() {
   const root = $('#groups-list');
   if (!root) return;
   const setHover = key => {
     if (key === hoveredGroupKey) return;
     hoveredGroupKey = key;
-    // Re-sync the live DOM now; the next renderGroups also re-stamps from the
-    // key, so a poll landing between events can't lose it.
-    root.querySelectorAll('details[data-group-key]').forEach(d => {
-      d.classList.toggle('quick-hover', d.getAttribute('data-group-key') === key);
-    });
+    // Re-sync the live DOM now; a real repaint also re-stamps from the key
+    // (restampGroupQuickHover), so a poll landing between events can't lose it.
+    restampGroupQuickHover();
   };
   root.addEventListener('mouseover', e => {
     // closest() with a child combinator matches a <summary> that is a direct
