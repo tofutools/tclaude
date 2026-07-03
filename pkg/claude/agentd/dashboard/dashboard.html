@@ -1471,6 +1471,7 @@
       <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
       <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"><span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span></button>
+      <button id="template-import-open" class="tool" title="Import a template from a portable .task-force.json file (from ⇪ export) — share task forces between machines or with friends"><span class="tpl-word-regular">⤒ import</span><span class="tpl-word-wizard">📜 read a scroll</span></button>
       <button id="template-create-open" class="primary" title="Define a new group template"><span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span></button>
     </div>
     <div id="templates-list"></div>
@@ -1740,6 +1741,34 @@
       <button id="group-import-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="group-import-submit" class="primary" type="button" disabled>Import</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-import-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-import-title">
+    <h3 id="template-import-title"><span class="tpl-word-regular">Import a task-force template</span><span class="tpl-word-wizard">📜 Read a scroll into a circle</span></h3>
+    <div class="modal-meta"><span class="tpl-word-regular">Import a portable <code>.task-force.json</code> file produced by ⇪ export — pick a file or paste its JSON. References that don't exist here (spawn profiles, unknown permission slugs) degrade with a warning rather than failing.</span><span class="tpl-word-wizard">Read a scroll inscribed by ⇪ export back into a summoning circle — pick a scroll or transcribe its runes. Bindings unknown to this sanctum fade with a warning rather than breaking the rite.</span></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">File</span>
+      <input id="template-import-file" type="file" accept=".json,application/json" />
+    </label>
+    <label class="cron-create-row" style="align-items:flex-start">
+      <span class="cron-create-label">or paste</span>
+      <textarea id="template-import-paste" rows="6" placeholder="… or paste the task-force JSON here" autocomplete="off" spellcheck="false" style="flex:1;font-family:monospace;font-size:12px"></textarea>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Import as</span>
+      <input id="template-import-as" type="text" placeholder="optional — import under a different name (required when the name is already taken, unless overwriting)" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" style="justify-content:flex-start;gap:6px">
+      <input id="template-import-update" type="checkbox" style="width:auto" />
+      <span class="cron-create-label" style="flex:0 0 auto">Overwrite if it already exists</span>
+    </label>
+    <div class="cron-create-error" id="template-import-error"></div>
+    <div class="modal-buttons">
+      <button id="template-import-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-import-submit" class="primary" type="button">Import</button>
     </div>
   </div>
 </div>

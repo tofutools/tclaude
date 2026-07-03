@@ -104,6 +104,7 @@ function templateCardHTML(t) {
       <span class="tc-actions">
         <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
+        <button class="tool" data-tact="export" data-template="${esc(t.name)}" title="${wizWord('Download this template as a portable .task-force.json file to share or re-import', 'Inscribe this circle onto a scroll — a portable .task-force.json to carry or copy')}">${wizWord('⇪ export', '📜 inscribe')}</button>
         <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
       </span>
     </div>
@@ -531,6 +532,96 @@ async function submitFromGroup() {
   }
 }
 
+// ---- Export / import (JOH-341) ----------------------------------------
+//
+// Export downloads a template as a portable `<name>.task-force.json`
+// envelope (same shape `tclaude agent templates export` writes and
+// `import` reads). Import takes a picked file OR pasted JSON, POSTs it to
+// the daemon's import endpoint, and surfaces the returned degradation
+// warnings (stripped profile refs / unknown permission slugs).
+
+// exportTemplate starts a browser download of the portable envelope. The
+// endpoint is same-origin, so the anchor's download attribute forces a
+// save with our `<name>.task-force.json` filename regardless of the
+// JSON content-type.
+function exportTemplate(name) {
+  const a = document.createElement('a');
+  a.href = `/api/templates/${encodeURIComponent(name)}/export`;
+  a.download = `${name}.task-force.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function openTemplateImportModal() {
+  $('#template-import-file').value = '';
+  $('#template-import-paste').value = '';
+  $('#template-import-as').value = '';
+  $('#template-import-update').checked = false;
+  $('#template-import-error').textContent = '';
+  $('#template-import-modal').classList.add('show');
+  setTimeout(() => $('#template-import-paste').focus(), 0);
+}
+
+function closeTemplateImportModal() { $('#template-import-modal').classList.remove('show'); }
+
+// readImportSource returns the JSON text to import: the picked file's
+// contents if one is chosen, else the pasted text. A picked file wins so
+// a stale paste can't shadow a freshly-picked file.
+async function readImportSource() {
+  const fileInput = $('#template-import-file');
+  const file = fileInput.files && fileInput.files[0];
+  if (file) return (await file.text()).trim();
+  return $('#template-import-paste').value.trim();
+}
+
+async function submitTemplateImport() {
+  const errEl = $('#template-import-error');
+  errEl.textContent = '';
+  const btn = $('#template-import-submit');
+  btn.disabled = true;
+  try {
+    const raw = await readImportSource();
+    if (!raw) { errEl.textContent = 'pick a file or paste the task-force JSON'; return; }
+    // Validate JSON locally for a friendlier error than a raw 400; the
+    // daemon is still the authority on the envelope format + version.
+    try { JSON.parse(raw); } catch (e) {
+      errEl.textContent = 'not valid JSON: ' + ((e && e.message) || String(e));
+      return;
+    }
+    const q = new URLSearchParams();
+    const as = $('#template-import-as').value.trim();
+    if (as) q.set('as', as);
+    if ($('#template-import-update').checked) q.set('update', 'true');
+    const qs = q.toString();
+    const r = await fetch('/api/templates/import' + (qs ? '?' + qs : ''), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: raw,
+    });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      return;
+    }
+    let res = null;
+    try { res = JSON.parse(txt); } catch (_) {}
+    closeTemplateImportModal();
+    const name = (res && res.imported) || as || 'template';
+    const warnings = (res && res.warnings) || [];
+    let msg = res && res.updated ? `template overwritten: ${name}` : `template imported: ${name}`;
+    if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
+    toast(msg);
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindTemplatesUI() {
   // Entry points: the Groups cog's "⧉ templates…" management overlay, its
   // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
@@ -552,8 +643,15 @@ function bindTemplatesUI() {
     else if (btn.dataset.tact === 'edit') {
       const t = templatesByName()[name];
       if (t) openTemplateEditor(t);
-    } else if (btn.dataset.tact === 'delete') deleteTemplate(name);
+    } else if (btn.dataset.tact === 'export') exportTemplate(name);
+    else if (btn.dataset.tact === 'delete') deleteTemplate(name);
   });
+
+  // Import modal (⤒ import in the toolbar).
+  $('#template-import-open').addEventListener('click', openTemplateImportModal);
+  $('#template-import-cancel').addEventListener('click', closeTemplateImportModal);
+  $('#template-import-submit').addEventListener('click', submitTemplateImport);
+  bindBackdropDiscard('template-import-modal', closeTemplateImportModal);
 
   // Editor modal.
   $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
