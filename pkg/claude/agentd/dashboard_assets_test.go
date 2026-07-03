@@ -70,9 +70,9 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 	// JS: helper is defined, exported, and wired into the row render.
 	for _, needle := range []string{
 		"function slopMachine(",
-		"slopMachine,",                              // exported from helpers.js
-		"slopMachine(state, m.online, m.conv_id)",   // called from render.js
-		"const SLOP_SYMBOLS",                        // reel glyph set
+		"slopMachine,",                            // exported from helpers.js
+		"slopMachine(state, m.online, m.conv_id)", // called from render.js
+		"const SLOP_SYMBOLS",                      // reel glyph set
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — slot machine wiring broken", needle)
@@ -159,13 +159,57 @@ func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
 	}
 	css := string(cssBytes)
 	for _, needle := range []string{
-		"min-width: 0;",                                   // form controls may shrink below content width
+		"min-width: 0;", // form controls may shrink below content width
 		".cron-create-row select { text-overflow: ellipsis; }", // selected label clips with an ellipsis
-		"resize: both;",                                   // modal is a resizable escape hatch (both axes)
+		"resize: both;", // modal is a resizable escape hatch (both axes)
 	} {
 		if !strings.Contains(css, needle) {
 			t.Errorf("dashboard.css missing %q — spawn modal field-width clamp regressed", needle)
 		}
+	}
+}
+
+// TestDashboardCSS_ModalScrollbarsThemed guards the themed scrollbars on the
+// spawn/clone/cron/group/profile modal family. The tall dialogs (and their
+// multiline textareas) scroll, and an unstyled scroll container falls back to
+// the browser's default light, classic scrollbar — loud against the dark
+// dialog, and especially against the near-black wizard re-skin. Two layers:
+//  1. a base dark scrollbar on the shared .cron-create-modal class (all modes);
+//  2. a wizard arcane override on the five wizard-reskinned dialogs, scoped by
+//     #id via :is() so the dark-chrome clone/reincarnate/message dialogs (same
+//     class, NOT reskinned) keep the base dark bar — the same positive-scoping
+//     the surface re-skins follow. A refactor dropping either, or widening the
+//     wizard rule to an unscoped .cron-create-modal, regresses the look.
+func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, needle := range []string{
+		".cron-create-modal::-webkit-scrollbar-thumb { background: #3a4553;",        // base dark thumb
+		".cron-create-row textarea::-webkit-scrollbar-thumb { background: #3a4553;", // base dark textarea thumb
+		"scrollbar-color: #3a4553 #161b22;",                                         // base Firefox (dialog body)
+		"scrollbar-color: #7a5db0 #140f28;",                                         // wizard Firefox (arcane)
+		"linear-gradient(180deg, #7a5db0, #3a2a63)",                                 // wizard arcane thumb
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — modal scrollbar theming regressed", needle)
+		}
+	}
+	// The wizard override MUST name the five reskinned dialogs by #id (via :is)
+	// and MUST NOT widen to an unscoped `.cron-create-modal` scrollbar, which
+	// would arcane-paint the dark clone/reincarnate/message dialogs' bars too.
+	for _, id := range []string{
+		"#agent-spawn-modal", "#cron-create-modal", "#group-create-modal",
+		"#profile-editor-modal", "#export-agent-modal",
+	} {
+		if !strings.Contains(css, id) {
+			t.Errorf("dashboard.css wizard scrollbar :is() list missing %q", id)
+		}
+	}
+	if strings.Contains(css, "body.wizard .cron-create-modal::-webkit-scrollbar") {
+		t.Error("wizard scrollbar override is unscoped — would repaint clone/reincarnate/message dialogs")
 	}
 }
 
@@ -177,9 +221,9 @@ func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
 // modal-level binding — must stay wired together.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"function syncSelectTitle(",          // helper exists (helpers.js)
-		"function bindSelectTitles(",         // modal-level binder exists (helpers.js)
-		"syncSelectTitle(select)",            // worktree picker syncs after repopulate (modal-link-wt.js)
+		"function syncSelectTitle(",                 // helper exists (helpers.js)
+		"function bindSelectTitles(",                // modal-level binder exists (helpers.js)
+		"syncSelectTitle(select)",                   // worktree picker syncs after repopulate (modal-link-wt.js)
 		"bindSelectTitles($('#agent-spawn-modal'))", // spawn modal wires it (modal-spawn.js)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -194,10 +238,10 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                                                   // helper exists (helpers.js)
-		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')",                  // spawn modal wires it
-		"makeModalResizable($('#clone-agent-modal .cron-create-modal')",                  // clone modal wires it
-		"tclaude.dash.modalSize.agent-spawn",                                             // per-modal pref key
+		"function makeModalResizable(",                                  // helper exists (helpers.js)
+		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
+		"makeModalResizable($('#clone-agent-modal .cron-create-modal')", // clone modal wires it
+		"tclaude.dash.modalSize.agent-spawn",                            // per-modal pref key
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
@@ -232,12 +276,12 @@ func TestDashboardJS_ModalMinSizePinned(t *testing.T) {
 // pieces silently breaks resize or its persistence.
 func TestDashboardJS_MailColsResizable(t *testing.T) {
 	for _, needle := range []string{
-		"function initMailResize(",                 // resizer module exists (mail-resize.js)
-		"initMailResize()",                         // mail.js calls it from initMail
-		"tclaude.dash.mail.cols",                   // per-layout pref key
-		`data-boundary="sidebar-list"`,             // left gutter (HTML)
-		`data-boundary="list-reader"`,              // right gutter (HTML)
-		".mail-gutter {",                           // gutter styling (CSS)
+		"function initMailResize(",     // resizer module exists (mail-resize.js)
+		"initMailResize()",             // mail.js calls it from initMail
+		"tclaude.dash.mail.cols",       // per-layout pref key
+		`data-boundary="sidebar-list"`, // left gutter (HTML)
+		`data-boundary="list-reader"`,  // right gutter (HTML)
+		".mail-gutter {",               // gutter styling (CSS)
 		"grid-template-columns: 240px 10px minmax(260px, 1fr) 10px minmax(320px, 1.4fr);", // five-track default
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
