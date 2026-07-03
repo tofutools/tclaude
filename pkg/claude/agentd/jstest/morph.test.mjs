@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nodeKey, morphNode, morphChildren, morphAttributes } from '../dashboard/js/morph.js';
+import { nodeKey, morphNode, morphChildren, morphAttributes, syncFormProps } from '../dashboard/js/morph.js';
 
 // ---- Minimal mock DOM ----------------------------------------------------
 // Node types match the real constants (1 element, 3 text, 8 comment).
@@ -320,4 +320,57 @@ test('morphNode leaves an isEqualNode subtree completely untouched', () => {
   const innerSpan = from.childNodes[0];
   morphNode(from, to);
   assert.equal(from.childNodes[0], innerSpan, 'no child was recreated');
+});
+
+// ---- form-control property sync (fresh wins, opposite of <details open>) ---
+// The Messages tab's bulk-select checkboxes are rendered from mail.selectedMsgs
+// (JS state the change handler updates before repaint), so the FRESH render is
+// the source of truth for `checked` — the live property must follow it. A
+// checkbox is a checkbox; set its `.checked`/`.value` property directly.
+const checkbox = (checked) => { const c = el('input', { type: 'checkbox' }); c.checked = checked; return c; };
+
+test('syncFormProps: fresh render wins — live checked flips to unchecked', () => {
+  const live = checkbox(true);   // user-checked box
+  const fresh = checkbox(false); // selection was cleared elsewhere (select-all off / clear)
+  syncFormProps(live, fresh);
+  assert.equal(live.checked, false, 'live property follows the fresh render');
+});
+
+test('syncFormProps: fresh render wins — live unchecked flips to checked', () => {
+  const live = checkbox(false);
+  const fresh = checkbox(true);
+  syncFormProps(live, fresh);
+  assert.equal(live.checked, true);
+});
+
+test('morphNode syncs a checkbox property even when attributes are isEqualNode-equal', () => {
+  // A user click dirties the `checked` PROPERTY without touching the attribute,
+  // so the two boxes are isEqualNode-equal (attributes match) yet disagree.
+  // A form control must therefore bypass the fast path, or the box goes stale.
+  const live = checkbox(true);
+  const fresh = checkbox(false);
+  assert.equal(live.isEqualNode(fresh), true, 'attributes equal — the fast path WOULD skip');
+  morphNode(live, fresh);
+  assert.equal(live.checked, false, 'form control bypassed the fast path; property synced');
+});
+
+test('a <select> value property follows the fresh render', () => {
+  const live = el('select'); live.value = '25';
+  const fresh = el('select'); fresh.value = '50';
+  morphNode(live, fresh);
+  assert.equal(live.value, '50');
+});
+
+test('morphing a list row re-syncs its checkbox when the selection changed', () => {
+  // Row was selected (checkbox has the `checked` attribute + property); the
+  // fresh render drops both (deselected). The row differs, so the morph
+  // recurses to the checkbox and syncs the property down.
+  const liveCb = el('input', { type: 'checkbox', checked: '' }); liveCb.checked = true;
+  const from = parent([el('div', { 'data-key': '5' }, [liveCb, el('span', {}, [text('subject')])])]);
+  const freshCb = el('input', { type: 'checkbox' }); freshCb.checked = false;
+  const to = parent([el('div', { 'data-key': '5' }, [freshCb, el('span', {}, [text('subject')])])]);
+  morphChildren(from, to);
+  const cb = from.childNodes[0].childNodes[0];
+  assert.equal(cb.checked, false, 'checkbox property synced through the row morph');
+  assert.equal(cb.hasAttribute('checked'), false, 'checked attribute also removed');
 });

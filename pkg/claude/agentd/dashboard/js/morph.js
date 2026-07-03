@@ -41,6 +41,11 @@
 //     open state is user-driven and persisted to dashPrefs synchronously on
 //     toggle (bindDetailsPersistence), and the fresh HTML re-derives `open`
 //     from that same dashPref — so live and fresh already agree every tick.
+//   - Live form-control state (a checkbox's `checked`, a <select>'s `value`)
+//     goes the OTHER way: the fresh render wins (see syncFormProps), because
+//     those controls are rendered from JS state the change handler updates
+//     before the repaint. isEqualNode ignores these live properties, so a form
+//     control never takes the fast-path skip.
 
 // nodeKey returns the reconcile key for a node, or '' when it is unkeyed.
 // Element keys, in priority order: a stable `id`, then `data-group-key` (the
@@ -127,16 +132,62 @@ function morphNode(from, to) {
   }
   if (type !== 1 /* ELEMENT_NODE */) return;
 
+  // A form control carries LIVE PROPERTY state (a checkbox's `checked`, a
+  // <select>'s `value`) that isEqualNode does NOT compare — it only looks at
+  // attributes, and a user click dirties the property without touching the
+  // attribute. So a form control never takes the fast path below; it always
+  // falls through to syncFormProps, which re-derives the live property from the
+  // fresh render. (See syncFormProps for why the fresh side wins here.)
+  const isFormControl = from.nodeName === 'INPUT'
+    || from.nodeName === 'SELECT' || from.nodeName === 'TEXTAREA';
+
   // Fast path: an identical subtree needs no work at all. isEqualNode compares
   // tag + attributes + descendants deeply, so a genuinely unchanged group /
   // row / empty-state is skipped entirely — nothing under it is touched, which
   // is what lets a selection inside a static region ride across the tick. Safe
-  // because these containers hold no live-only property state during a poll
-  // (the poll is suspended while any input/drag/modal is live).
-  if (from.isEqualNode(to)) return;
+  // for non-form elements: the dashboard renders every state-driven bit as an
+  // ATTRIBUTE (e.g. a selected row's checkbox gets a `checked` attribute off
+  // mail.selectedMsgs), so attribute-deep equality means the rendered state is
+  // unchanged, and any form control it contains has its live property already
+  // in agreement (its change handler updates the backing state — hence the
+  // attribute — on every toggle). The narrow residual: a control toggled by the
+  // user while the pane is frozen mid-bulk-op (mail.busy, its change ignored)
+  // can read stale until the next state change / reload — negligible and
+  // self-correcting.
+  if (!isFormControl && from.isEqualNode(to)) return;
 
   morphAttributes(from, to);
   morphChildren(from, to);
+  if (isFormControl) syncFormProps(from, to);
+}
+
+// syncFormProps re-derives a form control's LIVE PROPERTY state from the fresh
+// render. The fresh side wins here — the OPPOSITE of the <details open> case in
+// morphAttributes, and deliberately so:
+//   - <details open> is USER-owned: the human toggles it directly and nothing
+//     re-derives it, so the live node is the truth and we preserve it.
+//   - a checkbox / <select> here is STATE-owned: it's rendered from JS state
+//     (mail.selectedMsgs / mail.pageSize / …) that the control's change handler
+//     updates BEFORE the repaint, so the fresh render is the truth and the live
+//     property must follow it (e.g. a "clear selection" or "select all" flips
+//     the backing state without touching this box, so only the fresh render
+//     knows the box should change).
+// `checked` on a user-clicked box, and `value` on a <select>, don't reflect
+// their attributes once dirtied, so setAttribute alone can't fix them — we set
+// the property directly. Guarded by an inequality check so we never disturb a
+// control that already agrees. Text `value` is only synced when the control is
+// NOT focused, so a hypothetical editable field being typed into is never
+// clobbered (today no editable text input lives inside a morphed pane).
+function syncFormProps(from, to) {
+  const tag = from.nodeName;
+  // `document` is absent under the Node unit test; treat "nothing focused".
+  const focused = typeof document !== 'undefined' && document.activeElement === from;
+  if (tag === 'INPUT') {
+    if (from.checked !== to.checked) from.checked = to.checked;
+    if (from.value !== to.value && !focused) from.value = to.value;
+  } else if (tag === 'SELECT' || tag === 'TEXTAREA') {
+    if (from.value !== to.value && !focused) from.value = to.value;
+  }
 }
 
 // morphChildren reconciles the child lists of `fromParent` and `toParent` in a
@@ -254,4 +305,4 @@ export function morphInto(container, html) {
 // which drives them against a mock DOM to avoid needing a browser. The app
 // imports morphInto alone. (Same "export the internals for the suite" pattern
 // as group-activity.js.)
-export { nodeKey, morphNode, morphChildren, morphAttributes };
+export { nodeKey, morphNode, morphChildren, morphAttributes, syncFormProps };
