@@ -25,11 +25,11 @@ import (
 )
 
 var (
-	wSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")) // Dark gray background, preserves row foreground color
-	wHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
+	wSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255"))
+	wHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
 	wHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	wSearchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	wConfirmStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+	wSearchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
+	wConfirmStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160"))
 	wSemanticStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // cyan
 )
 

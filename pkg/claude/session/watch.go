@@ -18,13 +18,13 @@ import (
 
 var (
 	selectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")) // Dark gray background, preserves row foreground color
-	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))            // Yellow
-	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))             // Green
-	needsInput    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))            // Bright red
+	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("178"))            // Gold - readable on both light and dark backgrounds
+	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))             // Green
+	needsInput    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))            // Red
 	exitedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))            // Gray
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
+	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
 	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	searchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	searchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
 )
 
 type tickMsg time.Time
@@ -617,9 +617,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	confirmStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
-	menuStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	filterBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	confirmStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160"))
+	menuStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("166"))
+	filterBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
 )
 
 // columns returns the column definitions for the session table.

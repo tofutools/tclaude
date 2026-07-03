@@ -30,8 +30,8 @@ type inboxWatchParams struct {
 
 func inboxWatchCmd() *cobra.Command {
 	return boa.CmdT[inboxWatchParams]{
-		Use:         "watch",
-		Short:       "Interactive auto-refreshing inbox table (alias: -w)",
+		Use:   "watch",
+		Short: "Interactive auto-refreshing inbox table (alias: -w)",
 		Long: "Renders the inbox in a bubbletea TUI. Up/down to navigate, Enter to " +
 			"read a message (marks it read), Esc/q to return to the list or quit.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -555,11 +555,11 @@ func removeEntryByID(entries []inboxEntry, id int64) []inboxEntry {
 // --- View ---
 
 var (
-	inboxHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("250"))
+	inboxHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
 	inboxHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	inboxReadingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	inboxSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238"))
-	inboxErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	inboxSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255"))
+	inboxErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))
 )
 
 func (m *inboxWatchModel) View() tea.View {
