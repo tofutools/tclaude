@@ -385,6 +385,44 @@ func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardHumanReplyModal pins the wizard re-skin of the
+// reply-to-a-human-notification dialog ("✒ Answer the familiar"): the
+// Messages tab Human folder's `reply` button opens it, and answering a
+// familiar's raven earns the same arcane chrome as the Summon / Form-a-party
+// dialogs. Purely front-end like the rest of the wizard theme, so we
+// string-search the embedded source rather than running the JS.
+func TestDashboardHTML_WizardHumanReplyModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The whole dialog surface is re-skinned arcane, scoped to the modal.
+	must("body.wizard #human-reply-modal .cron-create-modal", "the reply dialog surface is re-skinned")
+	// The static title swaps via the pure-CSS span pair (the same idiom as
+	// the Form-a-party title), so both the honest and the arcane copy ship.
+	must(`<span class="human-reply-title-regular">Reply to agent</span>`, "the regular title ships")
+	must(`<span class="human-reply-title-wizard">✒ Answer the familiar</span>`, "the wizard title ships")
+	must("body.wizard #human-reply-title .human-reply-title-wizard { display: inline; }", "the title span swaps in wizard mode")
+	// The Send lever keeps its honest text with a 🕊 glyph prefix (NOT the
+	// font-size:0 + ::before-swap trick — the button is disabled for two
+	// reasons, so a "…ing" swap would misread when it means "offline").
+	must(`body.wizard #human-reply-modal #human-reply-submit::before { content: "🕊 "; }`, "the Send lever gets a raven glyph in wizard mode")
+}
+
+// TestDashboardCSS_WizardHumanReplyModalScoped guards that the wizard reply
+// re-skin stays scoped to #human-reply-modal — the dialog is a
+// .cron-create-modal like the spawn dialog and its siblings, so an unscoped
+// `body.wizard .cron-create-modal { … }` would repaint every one of them.
+// Same shared-needle guard as the spawn / group / export re-skins.
+func TestDashboardCSS_WizardHumanReplyModalScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard reply re-skin is unscoped — will repaint spawn/clone/reincarnate/cron/message modals too")
+	}
+}
+
 // TestDashboardHTML_WizardExportModal pins the wizard re-skin of the per-agent
 // export dialog ("📜 Scribe a chronicle"): the Groups-tab agent cog → 📋 summary…
 // modal. An export is the familiar committing the tale of its work to a

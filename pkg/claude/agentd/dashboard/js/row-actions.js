@@ -14,6 +14,7 @@ import {
   openSudoGrantModal, openCronCreateModal, openCronEditModal,
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
+import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
@@ -1572,6 +1573,19 @@ function bindRowActions() {
           // msg-mark-read); the jump already happened, so still refresh.
           if (!rr.ok) toast(`Mark read failed: ${await rr.text()}`, true);
           refresh();
+          return;
+        }
+        case 'msg-reply': {
+          // Open the reply dialog for this notification. The dialog owns
+          // the online gate + Send; here we just hand it the id + sender
+          // attributes the reader button carried.
+          openHumanReplyModal({
+            id: btn.getAttribute('data-id'),
+            agent: btn.getAttribute('data-agent') || '',
+            conv: btn.getAttribute('data-conv') || '',
+            label: btn.getAttribute('data-label') || conv,
+            subject: btn.getAttribute('data-subject') || '',
+          });
           return;
         }
         case 'msg-mark-read': {

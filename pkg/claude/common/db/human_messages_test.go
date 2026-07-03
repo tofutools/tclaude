@@ -80,6 +80,33 @@ func TestHumanMessages_WholeSecondBoundaryOrdering(t *testing.T) {
 	assert.Equal(t, olderID, msgs[1].ID, "older (whole-second) message must come second")
 }
 
+func TestHumanMessages_Get(t *testing.T) {
+	setupTestDB(t)
+
+	// A miss is (nil, nil) — the caller distinguishes not-found from error.
+	got, err := GetHumanMessage(12345)
+	require.NoError(t, err)
+	assert.Nil(t, got, "no row → nil, nil")
+
+	id, err := InsertHumanMessage(&HumanMessage{
+		FromConv: "conv-a", FromTitle: "tclaude-worker", GroupName: "dev",
+		Subject: "need a decision", Body: "which option?",
+		CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
+	got, err = GetHumanMessage(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, id, got.ID)
+	assert.Equal(t, "conv-a", got.FromConv)
+	assert.Equal(t, "tclaude-worker", got.FromTitle)
+	assert.Equal(t, "dev", got.GroupName)
+	assert.Equal(t, "need a decision", got.Subject)
+	assert.Equal(t, "which option?", got.Body)
+	assert.False(t, got.IsRead(), "a fresh message is unread")
+}
+
 func TestHumanMessages_MarkRead(t *testing.T) {
 	setupTestDB(t)
 	id, err := InsertHumanMessage(&HumanMessage{FromConv: "c", Body: "x"})

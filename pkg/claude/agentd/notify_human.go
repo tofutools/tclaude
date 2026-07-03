@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // humanMsgNotify is the OS-notification seam for notify-human: a desktop
@@ -365,4 +366,150 @@ func handleDashboardHumanMessagesDelete(w http.ResponseWriter, r *http.Request) 
 		n = 1
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// replySubjectFor derives the subject of an operator reply from the
+// subject of the notification being answered. A notify-human ping often
+// carries no subject, so we fall back to a fixed line that still tells
+// the agent WHO is speaking; when there is one we prefix "Re: " (bounded
+// so a long original can't blow past the inbox subject cap).
+func replySubjectFor(orig string) string {
+	orig = strings.TrimSpace(orig)
+	if orig == "" {
+		return "Reply from the human operator"
+	}
+	const maxRe = 200
+	if len(orig) > maxRe {
+		orig = orig[:maxRe] + "…"
+	}
+	return "Re: " + orig
+}
+
+// handleDashboardHumanMessagesReply serves POST /api/human-messages/reply
+// — the operator's answer to a `notify-human` ping, sent back to the
+// agent that raised it. Body: {"id": N, "body": "..."} where id is the
+// human_messages row being replied to.
+//
+// The reply target is resolved AUTHORITATIVELY from the stored row (the
+// browser passes only the message id + text), so a reply can only route
+// to the notification's real sender. It is delivered as a sender-less
+// operator message — the same universal-inbox transport the dashboard's
+// self-reincarnate request and the spawn brief use (FromConv ""): a live
+// target is nudged immediately; the mail UI renders a sender-less row as
+// the human/operator, which is exactly what this is.
+//
+// The operator asked that a reply be BLOCKED when the agent is offline —
+// an offline agent has no live session, and answering a question into the
+// void reads as delivered when it isn't. So this gates on a live tmux
+// session and rejects (409) when the target is offline; the dashboard
+// disables Send and shows the same reason, but the gate is enforced here
+// too so a stale snapshot (agent went offline between poll and click)
+// still can't slip a reply through. Cookie-authed (dashboard-only).
+func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	// The reply body is capped exactly like a notify-human message — same
+	// inbox, same reason to bound it. Cap the wire bytes before decode.
+	r.Body = http.MaxBytesReader(w, r.Body, maxNotifyHumanRequestBytes)
+	var body struct {
+		ID   int64  `json:"id"`
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	body.Body = strings.TrimSpace(body.Body)
+	if body.ID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required")
+		return
+	}
+	if body.Body == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "body is required (the reply text)")
+		return
+	}
+	if len(body.Body) > maxNotifyHumanBodyLen {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("body too long: %d bytes, max %d", len(body.Body), maxNotifyHumanBodyLen))
+		return
+	}
+	orig, err := db.GetHumanMessage(body.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "load message: "+err.Error())
+		return
+	}
+	if orig == nil {
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("no human message #%d to reply to", body.ID))
+		return
+	}
+	// Resolve who to reply to. Lead with the stable agent_id (rotation-immune
+	// across reincarnation), falling back to the raw from_conv for old rows /
+	// a sender that never became an actor. ResolveSelector then walks any
+	// succession chain forward, so the reply reaches the live generation.
+	selector := orig.FromAgent
+	if selector == "" {
+		selector = orig.FromConv
+	}
+	if selector == "" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "this notification has no sender to reply to",
+			"code":  "no_sender",
+		})
+		return
+	}
+	res, _, err := agent.ResolveSelector(selector)
+	if err != nil || res == nil || res.ConvID == "" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "cannot resolve the sending agent — it may have been deleted",
+			"code":  "unresolved",
+		})
+		return
+	}
+	target := res.ConvID
+	// Online gate — the reply is blocked when the target has no live tmux
+	// session (see the doc comment). One tmux ls; a map lookup against it.
+	aliveSessions, _ := session.LiveTmuxSessions()
+	if !isConvOnlineIn(target, aliveSessions) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "the agent is offline — it has no live session to receive a reply",
+			"code":  "offline",
+		})
+		return
+	}
+	// Deliver as a sender-less operator message on the universal inbox
+	// (FromConv "", group_id 0 = a direct message), then nudge if the pane
+	// is ready. nudgeIfAlive may HOLD delivery when the agent is mid-prompt
+	// (awaiting human input) — the row still lands in its inbox and flushes
+	// when it resumes; we surface that as "held" so the toast can say so.
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:      0,
+		FromConv:     "",
+		ToConv:       target,
+		Subject:      replySubjectFor(orig.Subject),
+		Body:         body.Body,
+		ToRecipients: []string{target},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())
+		return
+	}
+	outcome := nudgeIfAlive(id, target)
+	// Replying means the operator has handled this notification — mark the
+	// original read (idempotent; opening it in the reader usually already
+	// did). Best-effort: a failure here must not fail the delivered reply.
+	if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
+		slog.Warn("reply: mark original human message read failed", "id", body.ID, "error", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message_id": id,
+		"conv_id":    target,
+		"delivered":  outcome.delivered(),
+		"held":       outcome.held(),
+	})
 }

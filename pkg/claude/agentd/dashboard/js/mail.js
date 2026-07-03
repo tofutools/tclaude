@@ -233,6 +233,21 @@ function onlineAgents() {
   return set;
 }
 
+// senderOnline reports whether the party that sent a human-folder message
+// has a live tmux window right now, keyed the SAME way humanFocusButton
+// picks its focus target: lead with the rotation-immune agent_id (valid
+// across reincarnation) and fall back to the from_conv snapshot when the
+// sender never became an actor. Exported so the reply dialog gates on the
+// identical liveness signal the focus/reply buttons render from — one
+// source of truth for "can this agent receive a reply". Recomputed from
+// the live snapshot on each call, so a dialog left open tracks the agent
+// going offline between the 2s ticks.
+function senderOnline(fromAgent, fromConv) {
+  return fromAgent
+    ? onlineAgents().has(fromAgent)
+    : onlineConvs().has(fromConv);
+}
+
 // prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
 // generations of a still-existing actor — a reincarnate / Claude Code
 // /clear advanced the actor's live pointer and left these behind (JOH-26).
@@ -1117,11 +1132,27 @@ function humanFocusButton(m) {
   // is only populated on human-folder messages once their companion lands
   // (JOH-316 F2); until then both the enablement and the target degrade to
   // from_conv, the same fallback the reader's From line uses (shortAgentId).
-  const focusable = m.from_agent
-    ? onlineAgents().has(m.from_agent)
-    : onlineConvs().has(m.from_conv);
+  const focusable = senderOnline(m.from_agent, m.from_conv);
   const label = m.from_title || m.from_conv;
   return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_agent || m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
+}
+
+// humanReplyButton renders the "reply" action for a human-folder message:
+// it opens a dialog to send the operator's answer back to the agent that
+// raised the notification. Unlike the focus button it stays ENABLED even
+// when the sender is offline — the dialog itself is the online-status
+// surface (it shows live / offline and blocks Send when offline), so the
+// button must be reachable to show it. Omitted only when there is no
+// originating conv to reply to (an old / sender-less row), mirroring the
+// focus button's own `!m.from_conv` guard. The data-* attributes carry
+// what the dialog needs; row-actions.js's msg-reply handler opens it.
+function humanReplyButton(m) {
+  if (!m.from_conv) return '';
+  const label = m.from_title || m.from_conv;
+  return `<button data-act="msg-reply" data-id="${m.id}"`
+    + ` data-agent="${esc(m.from_agent || '')}" data-conv="${esc(m.from_conv)}"`
+    + ` data-label="${esc(label)}" data-subject="${esc(m.subject || '')}"`
+    + ` title="Reply to this agent — opens a dialog to send your answer back">reply</button>`;
 }
 
 function paintReader() {
@@ -1175,7 +1206,7 @@ function paintReader() {
       ? `<button data-act="msg-mark-unread" data-id="${m.id}" title="Mark this message unread">mark unread</button>`
       : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
     const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    actions = `<div class="mail-reader-actions">${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
+    actions = `<div class="mail-reader-actions">${humanReplyButton(m)}${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
   } else {
     // Agent + "all" folders: an explicit operator toggle of the row's
     // read-state (set on the recipient's behalf — repairing a stuck agent's
@@ -1691,4 +1722,4 @@ function initMail() {
   });
 }
 
-export { renderMailTab, initMail, onMailSearchChanged, openMailbox };
+export { renderMailTab, initMail, onMailSearchChanged, openMailbox, senderOnline };
