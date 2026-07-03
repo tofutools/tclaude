@@ -1388,6 +1388,37 @@
     </div>
   </div>
 </div>
+<!-- Reply-to-a-human-notification dialog. Opened from the Messages tab's
+     Human folder reader (the `reply` button → row-actions.js msg-reply →
+     modal-human-reply.js). Sends the operator's answer back to the agent
+     that raised the notification. The title swaps to the arcane
+     "✒ Answer the familiar" in wizard mode via the pure-CSS span pair,
+     the same idiom as the group-create / Summon dialog titles. -->
+<div class="modal-overlay" id="human-reply-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="human-reply-title">
+    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
+    <p id="human-reply-desc" style="margin:4px 0; font-size:12px; color:#7d8590">Sends your answer to this agent's inbox and nudges its terminal. Delivered as a message from you, the operator.</p>
+    <label class="cron-create-row">
+      <span class="cron-create-label">To</span>
+      <div class="cron-create-target">
+        <div id="human-reply-to"></div>
+        <!-- Live sender online/offline state — modal-human-reply.js paints
+             it (and gates Send on it) on open and every snapshot tick. -->
+        <div id="human-reply-status" class="human-reply-status"></div>
+      </div>
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Reply</span>
+      <textarea id="human-reply-body" rows="4" placeholder="your reply (required) — ⌘/Ctrl+Enter to send" spellcheck="false"></textarea>
+    </label>
+    <div class="cron-create-error" id="human-reply-error"></div>
+    <div class="modal-buttons">
+      <button id="human-reply-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="human-reply-submit" class="primary" type="button">Send reply</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="group-create-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
     <!-- Title copy swaps per theme (pure-CSS span swap, like the spawn dialog's

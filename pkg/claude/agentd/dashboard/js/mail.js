@@ -209,11 +209,14 @@ function mailTabActive() {
 }
 
 // onlineConvs is the set of conv-ids with a live tmux window — focus is
-// only meaningful for those. Cross-referenced from the snapshot already
-// in memory, so no extra round-trip.
-function onlineConvs() {
+// only meaningful for those. Reads the passed snapshot, defaulting to the
+// one already in memory (lastSnapshot), so callers that hold a FRESHER
+// snapshot than lastSnapshot — e.g. the reply dialog, which polls while a
+// modal suspends the main refresh — can pass it in and get current
+// liveness without a global write.
+function onlineConvs(snap) {
   const set = new Set();
-  const snap = lastSnapshot || {};
+  snap = snap || lastSnapshot || {};
   (snap.agents || []).concat(snap.ungrouped || [])
     .forEach(a => { if (a && a.online) set.add(a.conv_id); });
   return set;
@@ -225,12 +228,28 @@ function onlineConvs() {
 // conv_id (the snapshot in from_conv) points at a now-dead generation, so
 // liveness must be checked against the actor, not the stale conv. Rows
 // without an agent_id (e.g. ungrouped raw convs) simply don't contribute.
-function onlineAgents() {
+function onlineAgents(snap) {
   const set = new Set();
-  const snap = lastSnapshot || {};
+  snap = snap || lastSnapshot || {};
   (snap.agents || []).concat(snap.ungrouped || [])
     .forEach(a => { if (a && a.online && a.agent_id) set.add(a.agent_id); });
   return set;
+}
+
+// senderOnline reports whether the party that sent a human-folder message
+// has a live tmux window, keyed the SAME way humanFocusButton picks its
+// focus target: lead with the rotation-immune agent_id (valid across
+// reincarnation) and fall back to the from_conv snapshot when the sender
+// never became an actor. Exported so the reply dialog gates on the
+// identical liveness signal the focus/reply buttons render from — one
+// source of truth for "can this agent receive a reply". `snap` defaults to
+// lastSnapshot; the reply dialog passes its own freshly-polled snapshot so
+// its indicator stays live even while the open modal suspends the main
+// refresh (which would otherwise freeze lastSnapshot at open time).
+function senderOnline(fromAgent, fromConv, snap) {
+  return fromAgent
+    ? onlineAgents(snap).has(fromAgent)
+    : onlineConvs(snap).has(fromConv);
 }
 
 // prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
@@ -1117,11 +1136,27 @@ function humanFocusButton(m) {
   // is only populated on human-folder messages once their companion lands
   // (JOH-316 F2); until then both the enablement and the target degrade to
   // from_conv, the same fallback the reader's From line uses (shortAgentId).
-  const focusable = m.from_agent
-    ? onlineAgents().has(m.from_agent)
-    : onlineConvs().has(m.from_conv);
+  const focusable = senderOnline(m.from_agent, m.from_conv);
   const label = m.from_title || m.from_conv;
   return `<button data-act="msg-focus" data-id="${m.id}" data-conv="${esc(m.from_agent || m.from_conv)}" data-label="${esc(label)}"${focusable ? '' : ' disabled'} title="${focusable ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}">focus</button>`;
+}
+
+// humanReplyButton renders the "reply" action for a human-folder message:
+// it opens a dialog to send the operator's answer back to the agent that
+// raised the notification. Unlike the focus button it stays ENABLED even
+// when the sender is offline — the dialog itself is the online-status
+// surface (it shows live / offline and blocks Send when offline), so the
+// button must be reachable to show it. Omitted only when there is no
+// originating conv to reply to (an old / sender-less row), mirroring the
+// focus button's own `!m.from_conv` guard. The data-* attributes carry
+// what the dialog needs; row-actions.js's msg-reply handler opens it.
+function humanReplyButton(m) {
+  if (!m.from_conv) return '';
+  const label = m.from_title || m.from_conv;
+  return `<button data-act="msg-reply" data-id="${m.id}"`
+    + ` data-agent="${esc(m.from_agent || '')}" data-conv="${esc(m.from_conv)}"`
+    + ` data-label="${esc(label)}" data-subject="${esc(m.subject || '')}"`
+    + ` title="Reply to this agent — opens a dialog to send your answer back">reply</button>`;
 }
 
 function paintReader() {
@@ -1175,7 +1210,7 @@ function paintReader() {
       ? `<button data-act="msg-mark-unread" data-id="${m.id}" title="Mark this message unread">mark unread</button>`
       : `<button data-act="msg-mark-read" data-id="${m.id}" title="Mark this message read">mark read</button>`;
     const delBtn = `<button class="danger" data-act="msg-delete" data-id="${m.id}" title="Permanently delete this message">delete</button>`;
-    actions = `<div class="mail-reader-actions">${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
+    actions = `<div class="mail-reader-actions">${humanReplyButton(m)}${humanFocusButton(m)}${readBtn}${delBtn}</div>`;
   } else {
     // Agent + "all" folders: an explicit operator toggle of the row's
     // read-state (set on the recipient's behalf — repairing a stuck agent's
@@ -1691,4 +1726,4 @@ function initMail() {
   });
 }
 
-export { renderMailTab, initMail, onMailSearchChanged, openMailbox };
+export { renderMailTab, initMail, onMailSearchChanged, openMailbox, senderOnline };

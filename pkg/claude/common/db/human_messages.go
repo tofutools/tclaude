@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -126,6 +128,46 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		out = append(out, &m)
 	}
 	return out, rows.Err()
+}
+
+// GetHumanMessage loads one human message by id, or (nil, nil) when no
+// row matches — the caller distinguishes "not found" from an error. Used
+// by the dashboard reply path to resolve, authoritatively, WHICH agent a
+// notification came from (rather than trusting a target the browser
+// passes), so a reply can only ever route back to the real sender.
+func GetHumanMessage(id int64) (*HumanMessage, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(`
+		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at
+		FROM human_messages
+		WHERE id = ?`, id)
+	var m HumanMessage
+	var created, readAt string
+	switch err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
+		&m.Subject, &m.Body, &created, &readAt); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
+		m.CreatedAt = t
+	} else {
+		slog.Warn("human_messages: unparseable created_at, leaving zero",
+			"id", m.ID, "value", created, "error", err)
+	}
+	if readAt != "" {
+		if t, err := time.Parse(time.RFC3339Nano, readAt); err == nil {
+			m.ReadAt = t
+		} else {
+			slog.Warn("human_messages: unparseable read_at, leaving zero",
+				"id", m.ID, "value", readAt, "error", err)
+		}
+	}
+	return &m, nil
 }
 
 // CountUnreadHumanMessages returns how many human messages are unread —

@@ -2778,6 +2778,27 @@ details.group-virtual .group-name { color: #8aa0b8; }
   background: transparent; border-color: #2a3340; color: #7d8590;
 }
 .cron-create-modal .modal-buttons .secondary:hover { color: #c9d1d9; }
+
+/* ─── Reply-to-notification dialog (#human-reply-modal) ──────────────
+   The Human folder reader's `reply` button opens this. It reuses the
+   .cron-create-modal shell; these rules style the read-only "To" block
+   (agent name + which ping is being answered) and the live online/offline
+   status line the JS paints + gates Send on. The wizard re-skin lives in
+   its own scoped block near the group-create re-skin (kept out of here so
+   the base chrome stays theme-neutral). */
+#human-reply-modal .human-reply-to-name { color: #c9d1d9; font-weight: 600; }
+#human-reply-modal .human-reply-to-subject {
+  color: #7d8590; font-size: 12px; margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.human-reply-status {
+  margin-top: 6px; font-size: 12px; line-height: 1.4;
+}
+.human-reply-status.online { color: #3fb950; }
+.human-reply-status.offline { color: #d29922; }
+/* The wizard title span is hidden by default; the #human-reply-modal
+   wizard block swaps the pair (regular hidden, wizard shown). */
+.human-reply-title-wizard { display: none; }
 /* The spawn + clone dialogs are resizable and float at a min-height pinned
    to their natural size (refreshModalMinSize), so the dialog box is often
    taller than its content — a dragged-larger size, or fewer rows than were
@@ -5337,6 +5358,86 @@ body.wizard #group-create-modal #group-create-submit:active {
 }
 body.wizard #group-create-modal #group-create-submit:disabled { opacity: 0.7; }
 body.wizard #group-create-modal #group-create-submit:disabled::before { content: "⚔ Gathering the party…"; }
+
+/* ─── Wizard reply dialog — "✒ Answer the familiar" ─────────────────
+   The Human folder's reply dialog re-skinned arcane: answering a familiar's
+   raven is the mail-tab twin of the Summon / Bind / Form-a-party dialogs, so
+   it gets the same midnight-violet void + mystic-purple frame + parchment
+   accents. Like all its .cron-create-modal siblings, EVERY rule is scoped to
+   #human-reply-modal — an unscoped wizard rule on the bare .cron-create-modal
+   class would repaint spawn / clone / reincarnate / cron / message-create too
+   (guarded by TestDashboardCSS_WizardHumanReplyModalScoped, the same shared-
+   needle guard as the spawn / group re-skins).
+
+   The static title swaps via the pure-CSS span pair (.human-reply-title-
+   regular / -wizard), the same idiom as the Form-a-party title. The submit
+   button KEEPS its honest "Send reply" text (a 🕊 ::before prefix is the only
+   flourish) rather than the font-size:0 + ::before-glyph trick the Summon /
+   Bind levers use: this button is disabled for TWO reasons (mid-send AND the
+   agent being offline), so a "…ing" disabled-content swap would misread as
+   "sending" when it actually means "offline". The status line already spells
+   the offline reason out, so the button just dims. */
+body.wizard #human-reply-title .human-reply-title-regular { display: none; }
+body.wizard #human-reply-title .human-reply-title-wizard { display: inline; }
+
+body.wizard #human-reply-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #human-reply-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / Summon title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #human-reply-modal .cron-create-label { color: #b39ddb; }
+/* Copy stays legible on the violet surface — parchment for the name/desc,
+   a dimmer lilac for the secondary "re: …" line. The online/offline status
+   keeps its own green/amber (recolor chrome, not the honest signal). */
+body.wizard #human-reply-modal #human-reply-desc,
+body.wizard #human-reply-modal .human-reply-to-name { color: #e7d9f5; }
+body.wizard #human-reply-modal .human-reply-to-subject { color: #b39ddb; }
+body.wizard #human-reply-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #human-reply-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+/* Cancel (the only non-primary button) — tarnished-gold on violet. */
+body.wizard #human-reply-modal button:not(.primary) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #human-reply-modal button:not(.primary):hover { background: #3a2a63; }
+body.wizard #human-reply-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Send = a gilded raven-dispatch lever. Unlike the Summon / Bind levers it
+   keeps its real text (see the block comment) with a 🕊 glyph prefix. The
+   #human-reply-modal id out-specifies the base .modal-buttons button.primary
+   rule and the :not(.primary) secondary skin above. */
+body.wizard #human-reply-modal #human-reply-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #human-reply-modal #human-reply-submit::before { content: "🕊 "; }
+body.wizard #human-reply-modal #human-reply-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #human-reply-modal #human-reply-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #human-reply-modal #human-reply-submit:disabled { opacity: 0.6; }
 
 /* ─── Wizard command palette — "📖 The Spellbook" ────────────────────
    The Ctrl/⌘-K launcher (palette.js) re-skinned arcane, the sibling of the

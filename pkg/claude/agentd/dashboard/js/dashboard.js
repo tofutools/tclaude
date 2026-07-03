@@ -42,6 +42,7 @@ import { initTerminalsTab } from './terminals-tab.js';
 import {
   bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal,
 } from './modal-message.js';
+import { bindHumanReplyModal } from './modal-human-reply.js';
 import {
   bindTemplatesUI, bindGroupImportModal, bindGroupContextModal,
   bindGroupCloneModal,
@@ -152,6 +153,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // (it reveals itself once "web term" / "web window" opens the first pane).
   initTerminalsTab();
   bindMessageModal();
+  bindHumanReplyModal();
   bindGroupCreateModal();
   bindTemplatesUI();
   bindProfilesUI();
