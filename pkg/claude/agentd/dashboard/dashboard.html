@@ -182,11 +182,11 @@
       <div class="filter-bar-cog">
         <button class="cog-btn" type="button" data-act="filter-bar-menu" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, from template" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
         <div class="action-menu" role="menu">
-          <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written.">⤒ import</button>
+          <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written."><span class="tpl-word-regular">⤒ import</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
-          <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot">⎘ from template</button>
-          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)">⧉ templates…</button>
+          <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot"><span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span></button>
+          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
@@ -1463,15 +1463,15 @@
      like the old tab did. -->
 <div class="manage-overlay" id="templates-manage-modal">
   <div class="manage-modal" role="dialog" aria-modal="true" aria-labelledby="templates-manage-title">
-    <h3 id="templates-manage-title">Group templates</h3>
-    <p class="manage-intro">Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot.</p>
+    <h3 id="templates-manage-title"><span class="tpl-word-regular">Group templates</span><span class="tpl-word-wizard">🕯 Summoning circles</span></h3>
+    <p class="manage-intro"><span class="tpl-word-regular">Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot.</span><span class="tpl-word-wizard">Reusable summoning circles for a whole party — a name, shared lore and an ordered roster of familiars. Cast one to summon the entire party in a single rite.</span></p>
     <div class="filter-bar">
       <input id="filter-templates" type="text" placeholder="Filter (template name / descr / agent name / role)" autocomplete="off" spellcheck="false" />
       <span class="filter-count" id="filter-templates-count"></span>
       <button class="clear-filter" id="filter-templates-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
-      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template">⤓ from a group</button>
-      <button id="template-create-open" class="primary" title="Define a new group template">+ new template</button>
+      <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"><span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span></button>
+      <button id="template-create-open" class="primary" title="Define a new group template"><span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span></button>
     </div>
     <div id="templates-list"></div>
     <div class="modal-buttons">
@@ -1496,8 +1496,8 @@
       <textarea id="template-editor-context" class="modal-context-textarea" rows="4" placeholder="optional — reusable group-wide boilerplate; the per-instantiation task is appended to this and delivered to every spawned agent's inbox" spellcheck="false"></textarea>
     </label>
     <div class="template-agents-head">
-      <span>Agents</span>
-      <button type="button" id="template-editor-add-agent" class="tool">+ add agent</button>
+      <span><span class="tpl-word-regular">Agents</span><span class="tpl-word-wizard">Familiars</span></span>
+      <button type="button" id="template-editor-add-agent" class="tool"><span class="tpl-word-regular">+ add agent</span><span class="tpl-word-wizard">+ add familiar</span></button>
     </div>
     <div id="template-editor-agents"></div>
     <div class="cron-create-error" id="template-editor-error"></div>
@@ -1661,13 +1661,13 @@
 </div>
 <div class="modal-overlay" id="template-instantiate-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-instantiate-title">
-    <h3 id="template-instantiate-title">New group from template</h3>
+    <h3 id="template-instantiate-title"><span class="tpl-word-regular">New group from template</span><span class="tpl-word-wizard">🕯 Cast a summoning circle</span></h3>
     <label class="cron-create-row">
-      <span class="cron-create-label">Template</span>
+      <span class="cron-create-label"><span class="tpl-word-regular">Template</span><span class="tpl-word-wizard">Circle</span></span>
       <select id="template-instantiate-template"></select>
     </label>
     <label class="cron-create-row">
-      <span class="cron-create-label">Group name</span>
+      <span class="cron-create-label"><span class="tpl-word-regular">Group name</span><span class="tpl-word-wizard">Party name</span></span>
       <input id="template-instantiate-group" type="text" placeholder="kebab-or-snake-case — also the name prefix for every spawned agent" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
@@ -1692,9 +1692,9 @@
 </div>
 <div class="modal-overlay" id="template-from-group-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-from-group-title">
-    <h3 id="template-from-group-title">Save a group as a template</h3>
+    <h3 id="template-from-group-title"><span class="tpl-word-regular">Save a group as a template</span><span class="tpl-word-wizard">🕯 Trace the party's circle</span></h3>
     <label class="cron-create-row">
-      <span class="cron-create-label">Group</span>
+      <span class="cron-create-label"><span class="tpl-word-regular">Group</span><span class="tpl-word-wizard">Party</span></span>
       <select id="template-from-group-group"></select>
     </label>
     <label class="cron-create-row">
@@ -1712,7 +1712,7 @@
 </div>
 <div class="modal-overlay" id="group-import-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-import-title">
-    <h3 id="group-import-title">Import a group from a .zip archive</h3>
+    <h3 id="group-import-title"><span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span></h3>
     <div class="modal-meta">Recreates a group exported with ⤓ export — its members, roles, owners, permissions, cron jobs, message history and every conversation. Imported agents land offline. The import is transactional: if anything fails, nothing at all is written.</div>
     <label class="cron-create-row">
       <span class="cron-create-label">Archive</span>
@@ -1892,7 +1892,7 @@
 </div>
 <div class="modal-overlay" id="group-context-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-context-title">
-    <h3 id="group-context-title">Group startup context</h3>
+    <h3 id="group-context-title"><span class="tpl-word-regular">Group startup context</span><span class="tpl-word-wizard">📜 The party's standing orders</span></h3>
     <div class="modal-meta" id="group-context-meta" style="display:none"></div>
     <p style="margin:4px 0; font-size:12px; color:#7d8590">Shared guidance auto-injected into every agent spawned into this group, right after the spawn welcome. Multi-line is fine. Leave empty to clear it.</p>
     <label class="cron-create-row">
@@ -1909,7 +1909,7 @@
 </div>
 <div class="modal-overlay" id="group-clone-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-clone-title">
-    <h3 id="group-clone-title">Clone group</h3>
+    <h3 id="group-clone-title"><span class="tpl-word-regular">Clone group</span><span class="tpl-word-wizard">⧉ Mirror the party</span></h3>
     <div class="modal-meta" id="group-clone-meta" style="display:none"></div>
     <p style="margin:4px 0; font-size:12px; color:#7d8590">Creates a new group from the source. The source group is left untouched. Review what it carries below, set a name and choose whether the member agents come along.</p>
     <label class="cron-create-row">
