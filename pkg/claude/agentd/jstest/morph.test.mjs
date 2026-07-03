@@ -213,6 +213,67 @@ test('a removed keyed row is dropped; the rest keep identity', () => {
   assert.equal(from.childNodes[1], rowC);
 });
 
+// The real renderers .join('') template literals, so keyed rows are ALWAYS
+// separated (and lead/trail-padded) by whitespace text nodes inside <tbody>.
+// A removal must not strand a ghost row: the unkeyed positional path steps over
+// keyed nodes, so a surplus keyed row the cursor stepped past must have been
+// dropped by the pre-pass, not left behind (regression guard — a naive
+// tail-only cleanup leaves it as e.g. [b, a, c]).
+
+// rows(...keys) builds a <tbody>-shaped parent with whitespace between and
+// around the keyed <tr> rows, mirroring the join('')+indentation shape.
+const rows = (...ks) => {
+  const kids = [text('\n  ')];
+  for (const k of ks) { kids.push(el('tr', { 'data-key': k }, [text(k)])); kids.push(text('\n  ')); }
+  return parent(kids);
+};
+const rowKeys = (p) => p.childNodes.filter((c) => c.nodeType === 1).map(nodeKey);
+
+test('removing a middle keyed row amid whitespace leaves no ghost (members-style)', () => {
+  const from = rows('a', 'b', 'c');
+  morphChildren(from, rows('a', 'c'));
+  assert.deepEqual(rowKeys(from), ['a', 'c'], 'b removed, order preserved — no stranded ghost');
+});
+
+test('removing the FIRST keyed row amid whitespace leaves no ghost', () => {
+  const from = rows('a', 'b', 'c');
+  morphChildren(from, rows('b', 'c'));
+  assert.deepEqual(rowKeys(from), ['b', 'c']);
+});
+
+test('removing the LAST keyed row amid whitespace leaves no ghost', () => {
+  const from = rows('a', 'b', 'c');
+  morphChildren(from, rows('a', 'b'));
+  assert.deepEqual(rowKeys(from), ['a', 'b']);
+});
+
+test('removing several keyed rows amid whitespace leaves no ghosts', () => {
+  const from = rows('a', 'b', 'c', 'd');
+  morphChildren(from, rows('b'));
+  assert.deepEqual(rowKeys(from), ['b']);
+});
+
+test('remove + reorder combined amid whitespace is correct', () => {
+  const from = rows('a', 'b', 'c');
+  const rowA = from.childNodes[1];
+  morphChildren(from, rows('c', 'a')); // b removed, a/c swapped
+  assert.deepEqual(rowKeys(from), ['c', 'a']);
+  assert.equal(from.childNodes.filter((c) => nodeKey(c) === 'a')[0], rowA,
+    'kept row A retains node identity through the remove+reorder');
+});
+
+test('jobs-style tbody (no between-row whitespace, only lead/trail) drops removed rows', () => {
+  // renderJobs emits `<tr…>…</tr>` joined with '' → [leadWS, tr, tr, …, trailWS].
+  const jobsBody = (...ks) => parent([
+    text('\n  '),
+    ...ks.map((k) => el('tr', { 'data-key': k }, [text(k)])),
+    text('\n  '),
+  ]);
+  const from = jobsBody('a', 'b', 'c');
+  morphChildren(from, jobsBody('a', 'b')); // drop the last row
+  assert.deepEqual(rowKeys(from), ['a', 'b'], 'trailing removed row is dropped, not stranded');
+});
+
 // ---- unkeyed positional path --------------------------------------------
 
 test('unkeyed children morph positionally and update in place', () => {

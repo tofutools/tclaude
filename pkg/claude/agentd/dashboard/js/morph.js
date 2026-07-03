@@ -70,6 +70,16 @@ function indexKeyed(parent) {
   return map;
 }
 
+// collectKeys returns the set of reconcile keys among a parent's children.
+function collectKeys(parent) {
+  const set = new Set();
+  for (let c = parent.firstChild; c; c = c.nextSibling) {
+    const k = nodeKey(c);
+    if (k) set.add(k);
+  }
+  return set;
+}
+
 // compatible reports whether `from` can be morphed in place into `to` (same
 // node type, and for elements the same tag). Incompatible pairs are replaced
 // wholesale instead. Only reached on the UNKEYED positional path, where both
@@ -133,6 +143,23 @@ function morphNode(from, to) {
 // single left-to-right pass, matching keyed children by key (moving them when
 // reordered) and unkeyed children positionally.
 function morphChildren(fromParent, toParent) {
+  // Pre-pass: drop every live keyed child whose key is GONE from the fresh
+  // render (a retired agent, a completed job, a filtered-out group, …). This
+  // is load-bearing, not an optimisation: the main loop's unkeyed positional
+  // path steps OVER keyed live nodes (they are claimed by key, not position),
+  // and the end-of-loop cleanup only reaches the trailing run after the final
+  // cursor. A surplus keyed node the cursor stepped past would otherwise be
+  // stranded forever (rows are separated by whitespace text nodes, so this
+  // fires on essentially every removal). Removing them up front restores the
+  // invariant the rest of the loop relies on: every keyed live node that
+  // remains WILL be claimed by a target, so nothing keyed can be left behind.
+  const freshKeys = collectKeys(toParent);
+  for (let c = fromParent.firstChild; c; ) {
+    const next = c.nextSibling;
+    if (nodeKey(c) && !freshKeys.has(nodeKey(c))) fromParent.removeChild(c);
+    c = next;
+  }
+
   let fromKeyed = null; // built lazily on the first keyed target
 
   let fromChild = fromParent.firstChild;
@@ -171,8 +198,8 @@ function morphChildren(fromParent, toParent) {
     }
 
     // Unkeyed target — match positionally, but step over any KEYED live node:
-    // it belongs to some key that will claim it (or is surplus and removed at
-    // the end), and must not be consumed by an unkeyed slot.
+    // after the pre-pass every remaining keyed node is claimed by some target,
+    // so it must not be consumed by an unkeyed slot.
     while (fromChild && nodeKey(fromChild)) fromChild = fromChild.nextSibling;
 
     if (fromChild) {
@@ -192,9 +219,10 @@ function morphChildren(fromParent, toParent) {
     toChild = toNext;
   }
 
-  // Anything left over on the live side was never claimed by a target (its key
-  // is gone, or it is surplus tail) — remove it. Moved-and-kept keyed nodes
-  // were relocated BEFORE the cursor above, so they are never in this tail.
+  // Anything left over on the live side is surplus UNKEYED tail (e.g. trailing
+  // whitespace) — remove it. Surplus keyed nodes were already dropped by the
+  // pre-pass, and moved-and-kept keyed nodes were relocated BEFORE the cursor,
+  // so neither can be in this tail.
   while (fromChild) {
     const next = fromChild.nextSibling;
     fromParent.removeChild(fromChild);
