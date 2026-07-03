@@ -1272,6 +1272,68 @@ function relTime(iso) {
   return Math.floor(sec / 86400) + 'd ago';
 }
 
+// relTimeHTML returns a STABLE <span class="rel-time"> that carries the raw
+// ISO timestamp in data-ts but leaves its visible "Ns ago" text EMPTY — the
+// coarse string is filled (and thereafter advanced) by the refreshRelTimes()
+// post-pass, NOT baked into the returned markup. Keeping the volatile time out
+// of the HTML string is what lets setHTMLIfChanged treat a section as
+// "unchanged" from one poll to the next even as wall-clock keeps moving, so an
+// idle section is never re-rendered out from under a text selection. Empty /
+// falsy iso → an empty span with no data-ts (matches relTime('') === ''), so a
+// missing timestamp renders blank exactly as before.
+//
+//   cls   — extra class(es) appended after "rel-time" (e.g. 'last-hook' /
+//           'muted'), so the cell keeps its original styling.
+//   title — optional static tooltip (e.g. the raw ISO the created-at cell
+//           showed on hover before).
+function relTimeHTML(iso, cls, title) {
+  const c = 'rel-time' + (cls ? ' ' + cls : '');
+  const t = title ? ` title="${esc(title)}"` : '';
+  if (!iso) return `<span class="${c}"${t}></span>`;
+  return `<span class="${c}" data-ts="${esc(iso)}"${t}></span>`;
+}
+
+// refreshRelTimes walks every rel-time span under `root` (default: the whole
+// document) and writes the current coarse relTime() string into it — but only
+// when it actually changed, so an unchanged cell's text node is left untouched
+// and any selection anchored elsewhere on the page survives. This is the
+// post-pass half of the relTimeHTML() scheme: it runs once every poll tick (so
+// the "Ns ago" strings keep advancing even on ticks where setHTMLIfChanged
+// skipped the section's re-render) AND right after any innerHTML assignment
+// (so freshly inserted, initially-empty spans are filled before the browser
+// paints — no blank flash).
+function refreshRelTimes(root) {
+  const scope = root || document;
+  for (const el of scope.querySelectorAll('.rel-time[data-ts]')) {
+    const s = relTime(el.getAttribute('data-ts'));
+    if (el.textContent !== s) el.textContent = s;
+  }
+}
+
+// setHTMLIfChanged is the heart of the copy-paste fix: it assigns `html` to
+// el.innerHTML ONLY when it differs from the last string this helper assigned
+// to that element. On the common 2s poll tick nothing visible changed, so the
+// section's HTML is byte-identical and we touch no DOM at all — leaving any
+// text selection (and hover / focus / CSS-animation state) intact. Returns
+// true when it actually re-rendered, false when it skipped, so callers can gate
+// their post-render fix-ups (syncBotAnimations et al.) on a real re-render.
+//
+// The cache is keyed on the STRING WE GENERATED, not an el.innerHTML readback:
+// the browser normalises parsed markup, so a readback would never compare equal
+// and we'd re-render every tick. The WeakMap keys off the (stable) container
+// element and can't leak if one is ever removed. rel-time spans in the fresh
+// markup are filled immediately (refreshRelTimes) so newly inserted time cells
+// aren't briefly blank.
+const _lastHTML = new WeakMap();
+function setHTMLIfChanged(el, html) {
+  if (!el) return false;
+  if (_lastHTML.get(el) === html) return false;
+  _lastHTML.set(el, html);
+  el.innerHTML = html;
+  refreshRelTimes(el);
+  return true;
+}
+
 // shortCwd renders an absolute path compactly for table cells.
 // Replaces the home prefix with `~` and, if the result still exceeds
 // ~40 chars, truncates from the LEFT — `…/git/tclaude` is far more
@@ -1573,7 +1635,10 @@ export {
   syncWizardOrbit,
   $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
-  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
+  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, relTimeHTML, shortCwd,
+  // Copy-paste fix: skip-if-unchanged innerHTML + the rel-time post-pass that
+  // keeps "Ns ago" cells advancing without churning the compared HTML string.
+  setHTMLIfChanged, refreshRelTimes,
   cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
   // Focus preservation across innerHTML re-renders — refresh.js wraps its

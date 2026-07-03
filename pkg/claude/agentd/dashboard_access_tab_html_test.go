@@ -51,8 +51,8 @@ func TestDashboardHTML_AccessTabMerged(t *testing.T) {
 
 	// The renderers stay wired to the new per-panel mount divs, and the
 	// sudo filter bar + grant button moved intact into the Access tab.
-	present(`$('#permissions-body').innerHTML = renderPermissions(`, "permissions renderer repointed at #permissions-body")
-	present(`$('#slugs-body').innerHTML = renderSlugs(`, "slugs renderer repointed at #slugs-body")
+	present(`setHTMLIfChanged($('#permissions-body'), renderPermissions(`, "permissions renderer repointed at #permissions-body")
+	present(`setHTMLIfChanged($('#slugs-body'), renderSlugs(`, "slugs renderer repointed at #slugs-body")
 	present(`id="sudo-list"`, "the sudo list mount moved into the Access tab")
 	present(`id="sudo-grant-open"`, "the + Grant sudo button moved into the Access tab")
 	present(`id="filter-sudo"`, "the sudo filter input moved into the Access tab")

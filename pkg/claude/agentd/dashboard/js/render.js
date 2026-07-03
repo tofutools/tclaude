@@ -7,7 +7,7 @@
 import {
   $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
-  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
+  roleCell, memberActions, ungroupedMemberActions, actionCog, relTimeHTML, shortCwd,
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
 import {
@@ -85,8 +85,8 @@ function memberRowHTML(m, ctx) {
                   ${wizardPill(state, m.online, m.conv_id)}
                   ${m.online ? activityBadges(state) : ''}
                 </td>
-                <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                <td><span class="last-hook" title="${esc(m.created_at || '')}">${esc(relTime(m.created_at))}</span></td>
+                <td>${relTimeHTML(state.last_hook, 'last-hook')}</td>
+                <td>${relTimeHTML(m.created_at, 'last-hook', m.created_at || '')}</td>
                 <td>${cwdCell(m)}</td>
                 <td>${branchCell(m)}</td>
                 <td>${roleCell(m, ctx.group)}</td>
@@ -169,7 +169,7 @@ function renderVirtualConversationsGroup(g) {
                 <td>${onlineDot(c.online)}</td>
                 <td class="id">${esc(shortId(c.conv_id))}</td>
                 <td><span class="rowname">${esc(c.title || '(untitled)')}</span></td>
-                <td><span class="last-hook">${esc(c.modified ? relTime(c.modified) : '')}</span></td>
+                <td>${relTimeHTML(c.modified, 'last-hook')}</td>
                 <td><div class="row-actions"><button class="primary" data-act="promote-agent" data-conv="${esc(c.conv_id)}" data-label="${esc(c.title || c.conv_id)}" title="Promote this conversation into an agent">promote</button></div></td>
               </tr>`).join('')}
           </tbody>
@@ -222,7 +222,7 @@ function renderVirtualRetiredGroup(g) {
                 <td>${onlineDot(a.online)}</td>
                 <td class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</td>
                 <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
-                <td><span class="last-hook">${esc(a.retired_at ? relTime(a.retired_at) : '')}</span></td>
+                <td>${relTimeHTML(a.retired_at, 'last-hook')}</td>
                 <td${a.retired_by ? ` title="${esc(a.retired_by)}"` : ''}>${esc(a.retired_by_display || a.retired_by || '')}</td>
                 <td class="muted">${esc(a.retire_reason || '')}</td>
                 <td><div class="row-actions"><button class="primary" data-act="reinstate-agent" data-conv="${esc(a.conv_id)}" data-agent="${esc(a.agent_id || a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Reinstate this agent back to active status">reinstate</button></div></td>
@@ -273,14 +273,17 @@ function renderVirtualReplacedGroup(g) {
             ${applySort('replaced', members, REPLACED_ACCESSORS).map(a => {
               const actorName = a.actor_title || shortId(a.actor_conv_id);
               const replacedVia = a.reason || 'replaced';
-              const replacedAge = a.replaced_at ? ' · ' + relTime(a.replaced_at) : '';
+              // The age is a rel-time span (post-pass filled), so the "replaced ·
+              // Ns ago" cell stays byte-stable across ticks; replacedAge is HTML
+              // now, so it is interpolated raw (not esc'd) below.
+              const replacedAge = a.replaced_at ? ' · ' + relTimeHTML(a.replaced_at) : '';
               return `
               <tr>
                 <td>${onlineDot(a.online)}</td>
                 <td class="id">${esc(shortId(a.conv_id))}</td>
                 <td><span class="rowname">${esc(a.title || '(untitled)')}</span></td>
                 <td><span class="muted" title="${esc((a.actor_title || a.actor_conv_id) + (a.actor_retired ? ' (retired actor)' : ''))}">${esc(actorName)}${a.actor_retired ? ' 🪦' : ''}</span></td>
-                <td><span class="last-hook" title="${esc(a.replaced_at || '')}">${esc(replacedVia)}${esc(replacedAge)}</span></td>
+                <td><span class="last-hook" title="${esc(a.replaced_at || '')}">${esc(replacedVia)}${replacedAge}</span></td>
                 <td><div class="row-actions">
                   <button data-act="copy-generation-id" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" title="Copy this generation's full conv-id — inspect it out-of-band with 'claude --resume <id>' from its dir, or 'tclaude agent seance --target <id>'">copy id</button>
                   <button class="danger" data-act="delete-generation" data-conv="${esc(a.conv_id)}" data-label="${esc(a.title || a.conv_id)}" data-actor="${esc(actorName)}" title="Permanently delete just this past generation (its .jsonl + DB rows). The live agent and its other generations are untouched.">delete generation</button>
@@ -335,7 +338,7 @@ function renderVirtualPendingGroup(g) {
                 <td><span class="rowname">${esc(p.name || p.role || '(unnamed)')}</span></td>
                 <td>${esc(p.group || '(none)')}</td>
                 <td><span class="muted" title="${esc(p.cwd || '')}">${esc(p.cwd ? shortCwd(p.cwd) : '')}</span></td>
-                <td><span class="last-hook">${esc(p.created_at ? relTime(p.created_at) : '')}</span></td>
+                <td>${relTimeHTML(p.created_at, 'last-hook')}</td>
                 <td><div class="row-actions">${focusBtn}</div></td>
               </tr>`;
             }).join('')}

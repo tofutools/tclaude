@@ -4,7 +4,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. refresh() is
 // the 2-second snapshot poll that re-renders every tab.
 
-import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
+import { $, $$, esc, shortId, relTime, setHTMLIfChanged, refreshRelTimes, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
 import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull, resetListOffsets } from './list-paging.js';
@@ -425,8 +425,8 @@ export async function refresh() {
     applyPluginsTabVisibility(data);
     // Permissions + Slug registry now live as sub-panels of the merged
     // "Access" tab; the renderers write into the per-panel mount divs.
-    $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
-    $('#slugs-body').innerHTML = renderSlugs(data.slugs);
+    setHTMLIfChanged($('#permissions-body'), renderPermissions(data.permissions, data.agents));
+    setHTMLIfChanged($('#slugs-body'), renderSlugs(data.slugs));
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
@@ -462,6 +462,14 @@ export async function refresh() {
     // Re-focus whatever the keyboard user had selected before the
     // re-render detached it. No-op when focus was never stolen.
     restoreFocus(focusToken);
+    // Advance every rel-time span ("Ns ago") on the page to the current
+    // wall-clock — once per tick, whether or not any section re-rendered.
+    // This is the other half of the skip-if-unchanged scheme: the coarse time
+    // is deliberately kept OUT of the compared HTML string (see relTimeHTML),
+    // so a section whose data didn't change is skipped and its time cells must
+    // be ticked here instead. Only mutates a text node when its string changed,
+    // so it never disturbs a selection anchored elsewhere.
+    refreshRelTimes(document);
   } catch (e) {
     showStatus('snapshot failed: ' + (e.message || e), true);
   }

@@ -4,7 +4,7 @@
 // tabs from snapshot data, each with its text-filter helper.
 // Extracted from dashboard.js as part of the Stage 2 module split.
 
-import { $, esc, shortAgentId, idTooltip, relTime, syncBotAnimations, syncWizardOrbit } from './helpers.js';
+import { $, esc, shortAgentId, idTooltip, relTimeHTML, setHTMLIfChanged, syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { renderExportStepper, fmtBytes } from './export-progress.js';
 import {
   sortHead, applySort, JOBS_COLS, JOBS_ACCESSORS,
@@ -119,14 +119,17 @@ function renderGroupsTab() {
     list.push(virtualReplacedGroup(lastSnapshot.replaced || [], lastSnapshot.paging?.replaced));
   }
   const filtered = filterGroups(list, q);
-  $('#groups-list').innerHTML = renderGroups(filtered);
-  // Re-phase the activity-bot animations to wall-clock so this wholesale
-  // innerHTML swap (every 2s poll, plus filter/sort/drag) doesn't restart
-  // them with a visible jump. See helpers.syncBotAnimations.
-  syncBotAnimations();
-  // Same for the wizard "Channeling" pill's orbiting mote — otherwise the
-  // light teleports back to its start on every poll. See syncWizardOrbit.
-  syncWizardOrbit();
+  // Skip the innerHTML swap when the rendered HTML is byte-identical to the
+  // last one — the common poll tick — so a text selection (and hover / focus)
+  // in the Groups tab survives. Only re-phase the CSS animations when we
+  // ACTUALLY re-rendered: on a skipped tick the bots kept animating
+  // continuously, so re-phasing their animation-delay would *introduce* a jump
+  // rather than prevent one (the fresh-node restart the band-aids exist for
+  // never happened). See helpers.setHTMLIfChanged / syncBotAnimations.
+  if (setHTMLIfChanged($('#groups-list'), renderGroups(filtered))) {
+    syncBotAnimations();
+    syncWizardOrbit();
+  }
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.
   const total = realGroups.length;
@@ -227,7 +230,7 @@ function cronJobRowCells(j) {
     <td title="${esc(bodySummary)}"><div class="rowname">${esc(j.name)}</div>${j.subject ? `<div class="muted">${esc(j.subject)}</div>` : ''}</td>
     <td>${cronTargetCell(j)}<div class="muted" title="${esc(idTooltip(j.owner_agent, j.owner_conv))}">by ${esc(j.owner_label || shortAgentId(j.owner_agent, j.owner_conv))}</div></td>
     <td>${cronStatusPill(j.last_run_status)}</td>
-    <td><span class="last-hook">${esc(relTime(j.last_run_at) || '—')}</span></td>
+    <td>${j.last_run_at ? relTimeHTML(j.last_run_at, 'last-hook') : '<span class="last-hook">—</span>'}</td>
     <td>${cronScheduleCell(j)}</td>
     <td><div class="row-actions">${runBtn}${editBtn}${enableBtn}${delBtn}</div></td>`;
 }
@@ -270,7 +273,7 @@ function exportJobRowCells(j) {
     <td>${exportJobNameCell(j)}</td>
     <td><span class="rowname" title="${esc(j.conv_id || '')}">${esc(j.conv_label || '(unknown)')}</span></td>
     <td>${progress}</td>
-    <td><span class="last-hook">${esc(relTime(j.created_at) || '—')}</span></td>
+    <td>${j.created_at ? relTimeHTML(j.created_at, 'last-hook') : '<span class="last-hook">—</span>'}</td>
     <td>${j.artifact_size ? esc(fmtBytes(j.artifact_size)) : '<span class="muted">—</span>'}</td>
     <td><div class="row-actions">${dlBtn}${dismissBtn}</div></td>`;
 }
@@ -303,7 +306,7 @@ function renderJobsTab() {
   if (!lastSnapshot) return;
   const rows = lastSnapshot.jobs || [];
   const paging = (lastSnapshot.paging || {}).jobs;
-  $('#jobs-list').innerHTML = renderJobs(rows, paging);
+  setHTMLIfChanged($('#jobs-list'), renderJobs(rows, paging));
   const q = $('#filter-jobs').value;
   const total = paging ? (paging.total || 0) : rows.length;
   const totalAll = paging ? (paging.total_unfiltered || 0) : rows.length;
@@ -355,7 +358,7 @@ function renderSudo(rows) {
               <span class="id" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>
             </td>
             <td><span class="tag slug">${esc(r.slug)}</span></td>
-            <td><span class="last-hook">${esc(relTime(r.granted_at))}</span></td>
+            <td>${relTimeHTML(r.granted_at, 'last-hook')}</td>
             <td><span class="last-hook">${esc(fmtRemaining(r.remaining_seconds))}</span></td>
             <td>${esc(r.reason || '')}</td>
             <td><span class="muted" title="${esc(r.granted_by || '')}">${esc(r.granted_by || '')}</span></td>
@@ -371,7 +374,7 @@ function renderSudoTab() {
   const q = $('#filter-sudo').value;
   const rows = lastSnapshot.sudo || [];
   const filtered = filterSudo(rows, q);
-  $('#sudo-list').innerHTML = renderSudo(filtered);
+  setHTMLIfChanged($('#sudo-list'), renderSudo(filtered));
   $('#filter-sudo-count').textContent = q
     ? `${filtered.length} / ${rows.length}`
     : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
@@ -397,7 +400,7 @@ function renderLinks(rows) {
             <td class="muted">→</td>
             <td><span class="rowname">${esc(l.to || '(deleted)')}</span></td>
             <td><span class="id">${esc(l.mode)}</span></td>
-            <td><span class="muted">${esc(relTime(l.created_at) || '')}</span></td>
+            <td>${relTimeHTML(l.created_at, 'muted')}</td>
             <td><div class="row-actions">
               <button data-act="link-edit" data-id="${l.id}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" data-mode="${esc(l.mode)}" title="Change this link's mode">edit</button>
               <button class="danger" data-act="link-delete" data-id="${l.id}" data-group="${esc(l.from)}" data-from="${esc(l.from)}" data-to="${esc(l.to)}" title="Remove this link">delete</button>
@@ -422,7 +425,7 @@ function renderLinksTab() {
   const q = $('#filter-links').value;
   const rows = lastSnapshot.links || [];
   const filtered = filterLinks(rows, q);
-  $('#links-list').innerHTML = renderLinks(filtered);
+  setHTMLIfChanged($('#links-list'), renderLinks(filtered));
   $('#filter-links-count').textContent = q
     ? `${filtered.length} / ${rows.length}`
     : `${rows.length} link${rows.length === 1 ? '' : 's'}`;
