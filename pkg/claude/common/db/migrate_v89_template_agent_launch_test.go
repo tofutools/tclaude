@@ -8,8 +8,8 @@ import (
 )
 
 // TestMigrateV88toV89_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v89 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v88).
+// chain and asserts it reaches at least v89. The literal currentVersion
+// tripwire moved forward to the v90 head test (migrate_v90_group_deploy_meta_test.go).
 func TestMigrateV88toV89_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -17,8 +17,7 @@ func TestMigrateV88toV89_FreshSchema(t *testing.T) {
 
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 89, currentVersion, "tripwire: bump this and add a v89→v90 test when you add a migration")
+	require.GreaterOrEqual(t, ver, 89, "fresh DB migrates through v89")
 }
 
 // TestMigrateV88toV89_AddsColumns drives the real v88→v89 ALTER over a

@@ -76,7 +76,7 @@ CREATE TABLE agent_groups (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL
-		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER);
+		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);

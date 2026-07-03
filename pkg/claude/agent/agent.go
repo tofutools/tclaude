@@ -45,6 +45,7 @@ func Cmd() *cobra.Command {
 			sudoCmd(),
 			cronCmd(),
 			templatesCmd(),
+			taskForceCmd(),
 			dashboardCmd(),
 		},
 	}.ToCobra()

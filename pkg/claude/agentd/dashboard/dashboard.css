@@ -2940,6 +2940,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .template-card .tc-agent .tc-owner { color: #d29922; }
 .template-card .tc-agent .tc-role { color: #7d8590; }
+/* Deployed-forces strip (JOH-245): the task forces fielded from a template,
+   shown under its card. Muted so it reads as provenance, not a primary row. */
+.template-card .tc-forces {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed #21262d;
+  font-size: 11px;
+}
+.template-card .tc-forces-label { color: #6e7681; }
+.template-card .tc-force {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 2px 8px; color: #c9d1d9;
+}
+.template-card .tc-force .tc-force-mission { color: #7d8590; }
 .template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
 /* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
    cron-create-modal outer shape and the add-member list look for the
@@ -6198,6 +6211,13 @@ body.wizard #templates-manage-modal .template-card .tc-agent {
 }
 body.wizard #templates-manage-modal .template-card .tc-agent .tc-role { color: #b39ddb; }
 body.wizard #templates-manage-modal .template-card .tc-agent .tc-owner { color: #d9b45a; }
+/* Deployed-forces strip in wizard voice (JOH-245): summoned hero parties. */
+body.wizard #templates-manage-modal .template-card .tc-forces { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #templates-manage-modal .template-card .tc-forces-label { color: #b39ddb; }
+body.wizard #templates-manage-modal .template-card .tc-force {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #templates-manage-modal .template-card .tc-force .tc-force-mission { color: #b39ddb; }
 body.wizard #templates-manage-modal .template-card .tc-actions button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
@@ -6386,6 +6406,83 @@ body.wizard #template-instantiate-modal #template-instantiate-submit:active {
 }
 body.wizard #template-instantiate-modal #template-instantiate-submit:disabled { opacity: 0.7; }
 body.wizard #template-instantiate-modal #template-instantiate-submit:disabled::before { content: "🕯 Casting…"; }
+
+/* ─── Wizard summon dialog — "🧙 Summon a hero party" ────────────────
+   Deploy-a-task-force (JOH-245): pick a circle, speak the quest, and the
+   preview shows the familiars the summoning will call forth. Deploy is
+   instantiate's mission-framed sibling, so it borrows the cast dialog's
+   violet-and-gilt skin. Scoped to #template-deploy-modal. */
+body.wizard #template-deploy-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-deploy-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-deploy-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-deploy-modal .cron-create-row input[type=text],
+body.wizard #template-deploy-modal .cron-create-row select,
+body.wizard #template-deploy-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-deploy-modal .cron-create-row input[type=text]:focus,
+body.wizard #template-deploy-modal .cron-create-row select:focus,
+body.wizard #template-deploy-modal .cron-create-row textarea:focus {
+  border-color: #a97bd6;
+}
+body.wizard #template-deploy-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+body.wizard #template-deploy-modal .template-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #template-deploy-modal .template-preview .tp-name { color: #f3e6c0; }
+body.wizard #template-deploy-modal .template-preview .tp-meta { color: #b39ddb; }
+body.wizard #template-deploy-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #template-deploy-modal .template-preview .tp-empty { color: #b39ddb; }
+body.wizard #template-deploy-modal button:not(#template-deploy-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-deploy-modal button:not(#template-deploy-submit):hover { background: #3a2a63; }
+body.wizard #template-deploy-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Deploy = 🧙 Summon the hero party! — the gilded lever. The in-flight
+   state (JS swaps the text to "Deploying…" and disables) stays hidden
+   behind font-size: 0 and reads "🧙 Summoning…" instead. */
+body.wizard #template-deploy-modal #template-deploy-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-deploy-modal #template-deploy-submit::before {
+  content: "🧙 Summon the hero party!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-deploy-modal #template-deploy-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-deploy-modal #template-deploy-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-deploy-modal #template-deploy-submit:disabled { opacity: 0.7; }
+body.wizard #template-deploy-modal #template-deploy-submit:disabled::before { content: "🧙 Summoning…"; }
 
 /* ─── Wizard trace dialog — "🕯 Trace the party's circle" ────────────
    Save-a-group-as-a-template: copy a live party's shape into a fresh
