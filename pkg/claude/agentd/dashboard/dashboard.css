@@ -3653,6 +3653,11 @@ body:has(#tab-terminals.active) > nav {
   font-size: 15px;
   margin: 0;
   text-shadow: 0 0 6px rgba(255, 215, 0, 0.45);
+  /* Balance the wrap so the longer wizard/Tavern line doesn't orphan its
+     trailing decorative emoji onto a line of its own — see the &nbsp; glue in
+     dashboard.html, which keeps that emoji attached to the last word as a
+     fallback where text-wrap: balance is unsupported. */
+  text-wrap: balance;
 }
 .vegas-hint {
   text-align: center;
