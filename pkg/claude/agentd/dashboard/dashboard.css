@@ -7132,10 +7132,12 @@ body.wizard #costs-summary .muted { color: #8f7bbf; }
 body.wizard #costs-summary .cost-sep { color: #4a3a6b; }
 
 /* ─── Span buttons + month stepper: gild the active/blue states ────────
-   The generic filter-bar chrome stays app-default in wizard mode (as on
-   every tab), but the costs-specific BLUE active-span border would clash
-   with the violet/gold palette, so it gilds; the stepper divider warms to
-   match. */
+   The generic filter-bar chrome is themed by the shared `body.wizard
+   .filter-bar …` block, but that block deliberately excludes #costs-spans'
+   `.tool` buttons (`:not(#costs-spans)`) so this bespoke segmented control
+   keeps its own treatment: the costs-specific BLUE active-span border would
+   clash with the violet/gold palette, so it gilds; the stepper divider
+   warms to match. */
 body.wizard #costs-spans button.tool.active {
   border-color: #d9b45a; color: #f3e6c0; background: #2c2150;
   box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
