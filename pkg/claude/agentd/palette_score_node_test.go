@@ -48,6 +48,10 @@ func TestPaletteScore_JS(t *testing.T) {
 	}
 	out, err := exec.Command(node, append([]string{"--test"}, files...)...).CombinedOutput()
 	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("node not runnable in CI — JS unit tests did not run "+
+				"(the Test job is expected to run actions/setup-node)", err)
+		}
 		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			t.Fatalf("palette-score JS unit tests failed: %v\n%s", err, out)
 		}
