@@ -21,6 +21,7 @@ import {
 } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
+import { morphInto } from './morph.js';
 // renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
 // their feature modules; refreshSuspended() only reads them. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
@@ -425,8 +426,11 @@ export async function refresh() {
     applyPluginsTabVisibility(data);
     // Permissions + Slug registry now live as sub-panels of the merged
     // "Access" tab; the renderers write into the per-panel mount divs.
-    $('#permissions-body').innerHTML = renderPermissions(data.permissions, data.agents);
-    $('#slugs-body').innerHTML = renderSlugs(data.slugs);
+    // morphInto reconciles rather than swapping innerHTML, so a selection in
+    // the roster survives the 2s poll (the copy-paste fix); the mount divs
+    // themselves are never replaced.
+    morphInto($('#permissions-body'), renderPermissions(data.permissions, data.agents));
+    morphInto($('#slugs-body'), renderSlugs(data.slugs));
     renderMailTab();
     renderMessagesBadge(data.messages_unread || 0);
     renderUsage(data.usage);
