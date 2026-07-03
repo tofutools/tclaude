@@ -2484,6 +2484,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 4px 8px; background: #0d1117;
   border-left: 2px solid #2a3340; margin-top: -4px;
 }
+/* Shared hint paragraph inside dialogs — the styles the group-context /
+   group-clone hints used to carry inline; a class so theme re-skins can
+   recolor them (an inline style would always win). */
+.modal-hint { margin: 4px 0; font-size: 12px; color: #7d8590; }
+.modal-hint-small { margin: 4px 0 0 0; font-size: 11px; }
 /* Clone-group modal: a compact preview of the source settings the clone
    will carry (directory, descr, context, profile, cap, notify, owners,
    member agents). Populated by openGroupCloneModal in modal-templates.js;
@@ -6461,6 +6466,13 @@ body.wizard #group-import-modal .cron-create-row input {
   color: #f3e6c0;
 }
 body.wizard #group-import-modal .cron-create-row input:focus { border-color: #a97bd6; }
+/* The file picker's Choose-file chip is a pseudo-element with its own
+   chrome — re-skin it too or it keeps the plain dark-GitHub look inside
+   the violet field. */
+body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #group-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
 /* The dry-run preview: violet void; the semantic ✓/⚠/✗ verdict colours
    (.gi-ok / .gi-warn / .gi-bad) are the safety signal and stay untouched. */
 body.wizard #group-import-modal .group-import-preview {
@@ -6508,7 +6520,8 @@ body.wizard #group-context-modal .cron-create-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #group-context-modal .cron-create-label { color: #b39ddb; }
+body.wizard #group-context-modal .cron-create-label,
+body.wizard #group-context-modal .modal-hint { color: #b39ddb; }
 body.wizard #group-context-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -6571,7 +6584,8 @@ body.wizard #group-clone-modal .cron-create-modal h3 {
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #group-clone-modal .cron-create-label { color: #b39ddb; }
+body.wizard #group-clone-modal .cron-create-label,
+body.wizard #group-clone-modal .modal-hint { color: #b39ddb; }
 body.wizard #group-clone-modal .cron-create-enabled { color: #e7d9f5; }
 body.wizard #group-clone-modal .modal-meta {
   background: #140f28;
