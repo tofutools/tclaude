@@ -37,8 +37,9 @@ func withRecordingTmux(t *testing.T) *recordingTmux {
 }
 
 // TestConfigureTmuxScrollback_Codex pins that a Codex spawn enables tmux
-// mouse mode for THAT session only — `set-option -t <session> mouse on`,
-// never a global (-g) toggle (JOH-213).
+// mouse mode for THAT session only — `set-option -t =<session> mouse on`
+// (exact-match target, see clcommon.ExactTarget), never a global (-g)
+// toggle (JOH-213).
 func TestConfigureTmuxScrollback_Codex(t *testing.T) {
 	rec := withRecordingTmux(t)
 
@@ -48,7 +49,7 @@ func TestConfigureTmuxScrollback_Codex(t *testing.T) {
 	}
 	ConfigureTmuxScrollback("sess-codex", codex)
 
-	want := [][]string{{"set-option", "-t", "sess-codex", "mouse", "on"}}
+	want := [][]string{{"set-option", "-t", "=sess-codex", "mouse", "on"}}
 	if !reflect.DeepEqual(rec.calls, want) {
 		t.Fatalf("codex scrollback config = %v, want %v", rec.calls, want)
 	}
