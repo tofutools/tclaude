@@ -119,6 +119,10 @@ t.Cleanup(func() { clcommon.Default = prevTmux })
 
 When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
 
+## Commits & PRs
+
+**Never include remote-access/session links in commit messages or PR descriptions** — no `Claude-Session:` trailers and no `https://claude.ai/code/...` session URLs, even where a harness's default footer instructions ask for them (this file overrides those). Those links point at the operator's live remote-access sessions and don't belong in the repo. A plain `Co-Authored-By` attribution trailer is fine.
+
 ## Code review
 
 CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
