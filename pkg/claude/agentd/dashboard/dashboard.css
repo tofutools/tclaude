@@ -5383,6 +5383,123 @@ body.wizard #command-palette-btn::before {
 }
 body.wizard #command-palette-btn:hover { background: #3a2a63; border-color: #d9b45a; }
 
+/* ─── Wizard windows button + modal — "Reveal / veil familiars" ─────
+   The top-bar 🪟 windows… launcher and the bulk focus/unfocus dialog it
+   opens. Like the 📖 Spellbook launcher beside it, the button's own ID
+   (#window-all-btn) out-specifies the flat `body.wizard header button`
+   skin, so we re-state the arcane chrome here; a per-theme label span swap
+   re-letters it "👁 familiars…" — the palette's reveal/veil-of-familiars
+   voice. The dialog reuses the shared .cleanup-modal shell, so every rule is
+   scoped to #window-modal: the sibling worktree-cleanup / retire-preview /
+   delete-agent dialogs share that shell and must keep the default chrome (the
+   same discipline the retire / edit-member re-skins follow). */
+
+/* Button label swap — both spans always ship; CSS picks the active one. */
+.win-label-wizard { display: none; }
+body.wizard .win-label-regular { display: none; }
+body.wizard .win-label-wizard { display: inline; }
+
+body.wizard #window-all-btn {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #window-all-btn:hover { background: #3a2a63; border-color: #d9b45a; }
+
+/* Dialog title copy — a pure-CSS span swap, "Agent windows" → "Familiars'
+   windows". The h3 is the dialog's aria-labelledby, and display:none drops the
+   hidden twin from the a11y tree, so only the active title is announced. */
+.window-title-wizard { display: none; }
+body.wizard #window-title .window-title-regular { display: none; }
+body.wizard #window-title .window-title-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the Summon / Banish dialogs. Chrome is
+   recolored; the data stays legible. */
+body.wizard #window-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #window-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #window-modal .cleanup-hint { color: #b39ddb; }
+
+/* The focus/unfocus direction picker — a violet-tinted panel, parchment
+   labels + muted violet notes. The native radios stay legible either way. */
+body.wizard #window-modal .window-direction {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #window-modal .window-direction label { color: #f3e6c0; }
+body.wizard #window-modal .window-direction .opt-note { color: #b39ddb; }
+
+/* Toolbar: select-all / none buttons take the tarnished-gold secondary skin,
+   the filter field goes dark-violet, the count line reads parchment. */
+body.wizard #window-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #window-modal .cleanup-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #window-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #window-modal .cleanup-toolbar input[type=search] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #window-modal .cleanup-count { color: #e7d9f5; }
+
+/* Group + role quick-select chip rows: arcane chips, gilded when ticked. */
+body.wizard #window-modal .window-groups,
+body.wizard #window-modal .window-roles { color: #b39ddb; }
+body.wizard #window-modal .window-role-chip {
+  background: #241b3d; border: 1px solid #3a2a63; color: #e7d9f5;
+}
+body.wizard #window-modal .window-role-chip:hover { border-color: #d9b45a; }
+body.wizard #window-modal .window-role-chip.on {
+  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+}
+body.wizard #window-modal .window-role-chip.partial {
+  border-color: #d9b45a; color: #f3e6c0;
+}
+
+/* The candidate list: a deeper violet-void well with a mystic-purple frame;
+   rows divide on a faint violet line, titles parchment, ids + badges violet. */
+body.wizard #window-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #window-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #window-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #window-modal .cleanup-row .id { color: #b39ddb; }
+body.wizard #window-modal .cleanup-badge { border-color: #3a2a63; color: #b39ddb; }
+body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
+
+/* Footer: Cancel gets the tarnished-gold secondary treatment; the
+   focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
+   count ("Focus 3 agents"), so — unlike the static Summon / Banish levers — we
+   keep the real text visible and only gild the chrome. The .cleanup-error line
+   is deliberately left its base red (a status signal, not chrome). */
+body.wizard #window-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #window-modal .modal-buttons button:not(#window-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #window-modal .modal-buttons button:not(#window-submit):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #window-modal #window-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+body.wizard #window-modal #window-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
+
 /* ─── Wizard profile editor — "Inscribe a summoning recipe" ─────────
    The 🧙 re-skin of the spawn-profile editor (Groups cog → ⧉ profiles… →
    edit / + new profile, and the spawn dialog's "Save as profile"). A spawn

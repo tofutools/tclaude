@@ -106,7 +106,13 @@
     </span>
   </span>
   <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
-  <button id="window-all-btn" data-act="window-modal-all" aria-label="Focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way.">🪟 windows…</button>
+  <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
+       .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
+       see the wizard windows button/modal rules in dashboard.css), matching
+       how the sibling Power On / Shutdown chips swap to "✨ Awaken all" /
+       "🌙 Slumber all". The aria-label names both voices so speech input
+       matches either theme's visible label (WCAG Label-in-Name). -->
+  <button id="window-all-btn" data-act="window-modal-all" aria-label="Reveal or veil familiars — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 familiars…</span></button>
   <!-- Power on / shutdown re-flavour to "✨ Awaken all" / "🌙 Slumber all" in
        🧙 mode via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks
        which shows — see the wizard power-controls rules in dashboard.css). The
@@ -1723,7 +1729,7 @@
 </div>
 <div class="modal-overlay" id="window-modal">
   <div class="cleanup-modal" role="dialog" aria-modal="true" aria-labelledby="window-title">
-    <h3 id="window-title">Agent windows</h3>
+    <h3 id="window-title"><span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Familiars' windows</span></h3>
     <p class="cleanup-hint" id="window-hint"></p>
     <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
       <label><input type="radio" name="window-direction" value="focus" checked />
