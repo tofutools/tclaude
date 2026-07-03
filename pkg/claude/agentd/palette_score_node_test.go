@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,10 @@ func TestPaletteScore_JS(t *testing.T) {
 	}
 	out, err := exec.Command(node, append([]string{"--test"}, files...)...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("palette-score JS unit tests failed: %v\n%s", err, out)
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
+			t.Fatalf("palette-score JS unit tests failed: %v\n%s", err, out)
+		}
+		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}
 	t.Logf("node --test %v:\n%s", files, out)
 }
