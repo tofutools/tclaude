@@ -629,6 +629,16 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/groups/{name}/owners/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardRemoveOwner(w, g, r.PathValue("conv"))
 	}))
+	// Advisory process runtime (JOH-242): read the current phase, advance to
+	// the next / a named phase. asDashboardHumanPeer so the shared,
+	// permission-checked handler sees the cookie-authed dashboard caller as the
+	// human (advance is process.advance-gated on the /v1 path).
+	mux.HandleFunc("GET /api/groups/{name}/process", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupProcessGet(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/process/advance", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupProcessAdvance(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("POST /api/groups/{name}/links", groupRoute(dashboardAddLink))
 	mux.HandleFunc("PATCH /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardUpdateLink(w, r, g, r.PathValue("id"))

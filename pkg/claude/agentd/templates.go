@@ -81,6 +81,18 @@ type workPatternEntryJSON struct {
 	Value  string `json:"value"`
 }
 
+// processPhaseJSON is the wire shape for one process phase (JOH-242): an
+// ordered chapter of the group's work. name is the phase handle (unique
+// case-insensitively); roles are the role labels active in the phase (matched
+// case-insensitively against a member's role, the same rule work-pattern
+// --role routing uses; the literal "all" means every member); criteria is free
+// prose (entry / exit / handoff in words — no DSL).
+type processPhaseJSON struct {
+	Name     string   `json:"name"`
+	Roles    []string `json:"roles"`
+	Criteria string   `json:"criteria,omitempty"`
+}
+
 // templateJSON is the wire shape for a whole template. CreatedAt /
 // UpdatedAt are response-only (ignored on input).
 type templateJSON struct {
@@ -89,8 +101,11 @@ type templateJSON struct {
 	DefaultContext string                 `json:"default_context,omitempty"`
 	Agents         []templateAgentJSON    `json:"agents"`
 	WorkPattern    []workPatternEntryJSON `json:"work_pattern"`
-	CreatedAt      string                 `json:"created_at,omitempty"`
-	UpdatedAt      string                 `json:"updated_at,omitempty"`
+	// Process is the template's declarative process spec (JOH-242): an ordered
+	// list of phases. Empty/absent = no process (the feature is off).
+	Process   []processPhaseJSON `json:"process"`
+	CreatedAt string             `json:"created_at,omitempty"`
+	UpdatedAt string             `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -102,9 +117,17 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		DefaultContext: t.DefaultContext,
 		Agents:         []templateAgentJSON{},
 		WorkPattern:    []workPatternEntryJSON{},
+		Process:        []processPhaseJSON{},
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
+	}
+	for _, ph := range t.Process {
+		roles := ph.Roles
+		if roles == nil {
+			roles = []string{}
+		}
+		out.Process = append(out.Process, processPhaseJSON{Name: ph.Name, Roles: roles, Criteria: ph.Criteria})
 	}
 	if !t.CreatedAt.IsZero() {
 		out.CreatedAt = t.CreatedAt.Format(time.RFC3339)
@@ -308,7 +331,61 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		}
 		t.WorkPattern = append(t.WorkPattern, db.WorkPatternEntry{SendTo: sendTo, Value: val})
 	}
+
+	// Process spec (JOH-242): an ordered list of phases. Empty/absent = no
+	// process (the feature is simply off — validated only when phases exist).
+	// Phase names must be nonempty and unique case-insensitively (the current
+	// phase is tracked by name, and the ## Process block reads by name); each
+	// declared role entry must be nonempty. Criteria is free prose, uncapped
+	// beyond the section length the composed context already tolerates. The
+	// phase cap is a sanity bound, far above any real quest plan.
+	const maxProcessPhases = 64
+	if len(body.Process) > maxProcessPhases {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("process: at most %d phases", maxProcessPhases)}
+	}
+	phases, fail := buildProcessFromJSON(body.Process)
+	if fail != nil {
+		return nil, fail
+	}
+	t.Process = phases
 	return t, nil
+}
+
+// buildProcessFromJSON validates a wire-shape process spec and converts it to
+// the db shape (JOH-242). Empty/absent yields an empty slice (no process). It
+// enforces: phase names nonempty + unique case-insensitively; each role entry
+// nonempty (trimmed). Role labels keep their original case (display) but match
+// case-insensitively at runtime. Whitespace is trimmed off names/roles;
+// criteria is preserved verbatim (prose).
+func buildProcessFromJSON(in []processPhaseJSON) ([]db.ProcessPhase, *spawnFailure) {
+	out := []db.ProcessPhase{}
+	seen := map[string]bool{}
+	for i, ph := range in {
+		name := strings.TrimSpace(ph.Name)
+		if name == "" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("process phase #%d: name is required", i+1)}
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("duplicate process phase name %q — phase names must be unique (case-insensitive)", name)}
+		}
+		seen[key] = true
+
+		roles := []string{}
+		for _, r := range ph.Roles {
+			r = strings.TrimSpace(r)
+			if r == "" {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("process phase %q: a role entry is empty — remove it or name a role", name)}
+			}
+			roles = append(roles, r)
+		}
+		out = append(out, db.ProcessPhase{Name: name, Roles: roles, Criteria: strings.TrimSpace(ph.Criteria)})
+	}
+	return out, nil
 }
 
 // templateAgentLaunch is the per-role launch profile of one template agent
@@ -1287,6 +1364,17 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	}
 	granter := granterLabel(spec.caller)
 
+	// Advisory process runtime (JOH-242): if the template carries a process,
+	// snapshot it into the group's runtime state at the first phase (recording
+	// an initial "" → first-phase transition). Best-effort like the meta writes
+	// above; a group with no process simply has no state. The snapshotted phases
+	// are ALSO rendered into every agent's ## Process block below.
+	if len(tmpl.Process) > 0 {
+		if err := db.InitGroupProcess(gid, tmpl.Process, granter); err != nil {
+			slog.Warn("instantiate: init process state failed", "group", spec.groupName, "error", err)
+		}
+	}
+
 	results := []instantiateAgentResult{}
 	spawned, failed := 0, 0
 	// Successful spawns by template-agent name (and in spawn order) —
@@ -1329,6 +1417,10 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		if role != nil {
 			agentContext = appendRoleBlock(groupContext, role.Brief)
 		}
+		// Fold the template's process spec into THIS agent's context as a
+		// "## Process" block (JOH-242), calling out which phases the agent's
+		// role is active in. A no-op when the template has no process.
+		agentContext = appendProcessBlock(agentContext, tmpl.Process, a.Role)
 		outcome, fail := executeSpawn(g, spawnParams{
 			Name:           finalName,
 			Role:           a.Role,
