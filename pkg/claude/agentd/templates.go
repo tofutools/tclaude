@@ -555,7 +555,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 					i+1, len(tmpl.WorkPattern), e.SendTo))
 			continue
 		}
-		targets := []string{}
+		var targets []string
 		if e.SendTo == "all" {
 			targets = spawnedOrder
 		} else if conv, ok := spawnedConvs[e.SendTo]; ok {
