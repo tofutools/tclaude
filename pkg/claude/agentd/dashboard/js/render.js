@@ -1016,7 +1016,13 @@ function renderGlobalActivity() {
   const ung = activitySummary(snap.ungrouped || []);
   if (ung.present.length && ung.level !== 'offline') lines.push(`Ungrouped: ${themedSummaryText(ung, theme)}`);
   el.innerHTML = reg + slop + wiz;
-  syncBotAnimations(); // re-phase to wall-clock so the 2s poll doesn't restart-jump
+  // Re-phase ONLY this bar's freshly-rebuilt bots to wall-clock. Scoped to `el`
+  // on purpose: a document-wide call would also re-phase the group-header bots
+  // inside #groups-list, which skip-if-unchanged leaves in place on an idle
+  // tick — re-phasing those continuously-running nodes would INTRODUCE the very
+  // 2s jump renderGroupsTab's gated call avoids (they're re-phased there only
+  // when actually re-rendered).
+  syncBotAnimations(el);
   el.title = `Activity across all groups — ${themedSummaryText(s, theme)}`
     + (lines.length ? '\n' + lines.join('\n') : '');
 }

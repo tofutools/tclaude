@@ -65,6 +65,30 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_BotRephaseScoped guards the skip-if-unchanged copy-paste
+// fix against a subtle animation regression: with the 2s poll now skipping an
+// unchanged section's innerHTML swap, the group-header/global-bar activity bots
+// keep animating continuously across ticks. Re-phasing a bot whose node was NOT
+// just recreated shifts its still-correct phase and INTRODUCES a 2s jump — the
+// exact artifact the re-phase exists to prevent. So every syncBotAnimations /
+// syncWizardOrbit call MUST be scoped to the element it just rebuilt
+// (renderGlobalActivity → #global-activity, renderGroupsTab → #groups-list),
+// never document-wide. Pinning the scoped call strings catches a revert to the
+// bare document-wide form directly: swapping syncBotAnimations(el) back to
+// syncBotAnimations() drops the pinned needle and fails this test.
+func TestDashboardAssets_BotRephaseScoped(t *testing.T) {
+	for _, needle := range []string{
+		"syncBotAnimations(el)",       // render.js renderGlobalActivity, scoped to #global-activity
+		"syncBotAnimations(groupsEl)", // tabs.js renderGroupsTab, scoped to #groups-list
+		"syncWizardOrbit(groupsEl)",   // tabs.js renderGroupsTab, scoped to #groups-list
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — bot re-phase must be scoped to the "+
+				"rebuilt subtree, or skip-if-unchanged ticks jump the group bots", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_SpriteFramesEmbedded guards that every pixellab
 // frame the sprite-bot CSS references is actually embedded under
 // dashboard/sprites — a missing PNG would otherwise 404 only in the

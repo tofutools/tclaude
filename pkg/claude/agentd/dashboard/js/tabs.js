@@ -127,9 +127,15 @@ function renderGroupsTab() {
   // continuously, so re-phasing their animation-delay would *introduce* a jump
   // rather than prevent one (the fresh-node restart the band-aids exist for
   // never happened). See helpers.setHTMLIfChanged / syncBotAnimations.
-  if (setHTMLIfChanged($('#groups-list'), renderGroups(filtered))) {
-    syncBotAnimations();
-    syncWizardOrbit();
+  const groupsEl = $('#groups-list');
+  if (setHTMLIfChanged(groupsEl, renderGroups(filtered))) {
+    // Scope the re-phase to the subtree we just rebuilt — passing the element
+    // keeps it off #global-activity's bots (renderGlobalActivity re-phases those
+    // itself) and, more importantly, makes each re-phaser touch only nodes it
+    // actually recreated, so a skipped section's continuous animations are
+    // never jumped.
+    syncBotAnimations(groupsEl);
+    syncWizardOrbit(groupsEl);
     // Re-stamp the hover-reveal class onto the fresh nodes. .quick-hover is no
     // longer baked into the rendered string (so hover movement doesn't churn
     // the compare and wipe selections); this keeps the #652 guarantee that the

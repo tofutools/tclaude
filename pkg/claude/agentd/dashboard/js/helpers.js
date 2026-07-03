@@ -1589,9 +1589,17 @@ async function pickDirectory({ startDir = '', title = 'Select a directory' } = {
 // incidentally in lock-step across all bots. The period is read from
 // computed style (so it tracks the CSS durations with no duplication);
 // `alternate` doubles it. Called right after each bot-bearing re-render.
-function syncBotAnimations() {
+//
+// `root` scopes the re-phase to the subtree that was just rebuilt (default:
+// the whole document). This MATTERS with skip-if-unchanged rendering: re-
+// phasing a bot whose node was NOT just recreated (it's been animating
+// continuously) shifts its still-correct phase and *introduces* a jump. So
+// each re-render passes the element it rebuilt — #groups-list from
+// renderGroupsTab, #global-activity from renderGlobalActivity — and a skipped
+// section's bots are left untouched.
+function syncBotAnimations(root) {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
-  for (const el of $$('.actbot-face, .actbot-tag, .actbot-spr')) {
+  for (const el of $$('.actbot-face, .actbot-tag, .actbot-spr', root)) {
     const cs = getComputedStyle(el);
     const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when none
     if (!dur) continue;
@@ -1614,9 +1622,12 @@ function syncBotAnimations() {
 // from the pseudo's computed animationDuration so it tracks the CSS with no
 // duplicated constant; a non-wizard theme (pills hidden, ::before rule unmatched)
 // reports 0 and is skipped. Called right after each group-row re-render.
-function syncWizardOrbit() {
+// `root` scopes the re-phase to the just-rebuilt subtree (default: document),
+// for the same reason as syncBotAnimations — re-phasing a pill that wasn't
+// recreated would jump its continuous orbit under skip-if-unchanged rendering.
+function syncWizardOrbit(root) {
   const now = (typeof performance !== 'undefined' ? performance.now() : 0);
-  for (const pill of $$('.wizard-pill[data-status="working"], .wizard-pill[data-status="main_agent_idle"]')) {
+  for (const pill of $$('.wizard-pill[data-status="working"], .wizard-pill[data-status="main_agent_idle"]', root)) {
     const cs = getComputedStyle(pill, '::before');
     const dur = parseFloat(cs.animationDuration) || 0; // seconds; 0 when the ::before has no animation
     if (!dur) continue;
