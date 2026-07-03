@@ -3675,11 +3675,13 @@ body.vegas:not(.slop):not(.wizard) .vegas-hint-regular { display: block; }
    with no dead space. :empty matches because stopMusic/replaceChildren
    leaves it with zero children. */
 #vegas-player:not(:empty) { margin-top: 16px; }
-/* "Brought to you by SomaFM" credit — the card footer that always names the
-   music's source (see the static markup in dashboard.html). Muted gold to sit
-   quietly under the player; the wizard block repaints it purple. */
+/* "Brought to you by SomaFM" credit — a follow-up line below the mode hints
+   that always names the music's source (see the static markup in
+   dashboard.html). Mirrors the .vegas-hint look (centered muted gold on the
+   page, below the card); the wizard block repaints it purple. */
 .vegas-credit {
-  margin-top: 16px;
+  text-align: center;
+  margin-top: 12px;
   color: #c9a86b;
   font-size: 12px;
 }
