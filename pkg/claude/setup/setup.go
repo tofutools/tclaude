@@ -319,6 +319,14 @@ func runSetup(params *Params) error {
 	fmt.Println("\n=== Notifications ===")
 	configureNotifications(params)
 
+	// 4a. Default the Vegas/slop + wizard-mode music to half volume on a
+	// fresh install — full volume startled users on first entry. Skip-if-set,
+	// so an operator who already chose a music volume keeps it.
+	fmt.Println("\n=== Music Volume ===")
+	if err := installDefaultMusicVolume(); err != nil {
+		return err
+	}
+
 	// 5. Optional extras layered on top of the baseline.
 	if err := installExtras(params); err != nil {
 		return err
@@ -406,6 +414,45 @@ func installResumeThresholdOverride() error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	fmt.Printf("✓ Set claude_resume.threshold_minutes=%d (suppresses Claude Code's resume-from-summary prompt)\n", v)
+	return nil
+}
+
+// installDefaultMusicVolume writes slop.music_volume=50 to
+// ~/.tclaude/config.json so a fresh install starts the Vegas/slop and
+// wizard-mode soundtrack at half volume — full volume startled users on first
+// entry. The value matches config.DefaultMusicVolume, the same default readers
+// fall back to when the key is absent (see ResolvedSlopVolumes); writing it
+// here just makes the default explicit and visible in the config / Config tab.
+//
+// Skip-if-set, never overwrite: if the operator already chose a music volume
+// (by hand, the dashboard's 🎚️ mixer, or a previous run) it is left exactly
+// as-is. This runs in the always-on baseline, but only ever writes on the
+// first run where no music volume exists yet.
+func installDefaultMusicVolume() error {
+	cfg, err := config.Load()
+	if err != nil {
+		// The config file exists but is corrupt/unreadable, so Load fell back to
+		// defaults. Saving now would overwrite the file with those defaults,
+		// silently discarding whatever the operator's unparseable config held —
+		// so skip with a warning rather than clobber it. (A simply-absent file is
+		// not an error: Load returns the default config with a nil error, and we
+		// proceed to write it.)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		return nil
+	}
+	if cfg.Slop != nil && cfg.Slop.MusicVolume != nil {
+		fmt.Printf("✓ slop.music_volume already set (%d%%) — leaving it unchanged\n", *cfg.Slop.MusicVolume)
+		return nil
+	}
+	if cfg.Slop == nil {
+		cfg.Slop = &config.SlopConfig{}
+	}
+	v := config.DefaultMusicVolume
+	cfg.Slop.MusicVolume = &v
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	fmt.Printf("✓ Set slop.music_volume=%d%% (Vegas/slop + wizard-mode soundtrack starts at half volume)\n", v)
 	return nil
 }
 
@@ -809,6 +856,20 @@ func checkStatus(harnessName string) error {
 	} else {
 		fmt.Println("✗ Notifications disabled")
 		fmt.Printf("  Run 'tclaude setup' to enable\n")
+	}
+
+	// Music volume — report the effective Vegas/slop + wizard-mode music level
+	// and whether it's an explicit choice or the resolved default (50%).
+	fmt.Println("\n=== Music Volume ===")
+	if err != nil {
+		fmt.Printf("⚠ Could not load config: %v\n", err)
+	} else {
+		music, _ := cfg.ResolvedSlopVolumes()
+		if cfg.Slop != nil && cfg.Slop.MusicVolume != nil {
+			fmt.Printf("✓ slop.music_volume set to %d%%\n", music)
+		} else {
+			fmt.Printf("✓ slop.music_volume defaults to %d%% (run 'tclaude setup' to write it explicitly)\n", music)
+		}
 	}
 
 	fmt.Println(sandboxAdvisory())

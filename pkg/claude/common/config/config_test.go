@@ -777,6 +777,40 @@ func TestHidePullLever(t *testing.T) {
 	assert.Equal(t, 70, music, "the music volume coexists with the new flag")
 }
 
+// TestResolvedSlopVolumes covers the effective (music, effects) resolution: an
+// absent music volume defaults to DefaultMusicVolume (50, lowered so full-blast
+// Vegas/wizard mode no longer startles a fresh listener) while an absent
+// effects volume stays at full (100). Explicit values are honored and
+// out-of-range hand edits clamp to 0–100. Nil-safe on the receiver.
+func TestResolvedSlopVolumes(t *testing.T) {
+	assertME := func(c *Config, wantMusic, wantEffects int, msg string) {
+		t.Helper()
+		music, effects := c.ResolvedSlopVolumes()
+		assert.Equal(t, wantMusic, music, msg+" (music)")
+		assert.Equal(t, wantEffects, effects, msg+" (effects)")
+	}
+
+	// Absent → music half, effects full.
+	assertME(nil, DefaultMusicVolume, defaultEffectsVolume, "nil config → defaults")
+	assertME(&Config{}, DefaultMusicVolume, defaultEffectsVolume, "no slop block → defaults")
+	assertME(&Config{Slop: &SlopConfig{}}, DefaultMusicVolume, defaultEffectsVolume, "absent keys → defaults")
+	assert.Equal(t, 50, DefaultMusicVolume, "the music default is half volume")
+
+	// Explicit values win over the defaults, independently.
+	music, effects := 25, 60
+	assertME(&Config{Slop: &SlopConfig{MusicVolume: &music}}, 25, defaultEffectsVolume, "explicit music, default effects")
+	assertME(&Config{Slop: &SlopConfig{EffectsVolume: &effects}}, DefaultMusicVolume, 60, "default music, explicit effects")
+	assertME(&Config{Slop: &SlopConfig{MusicVolume: &music, EffectsVolume: &effects}}, 25, 60, "both explicit")
+
+	// An explicit 0 is a valid (silent) volume, not "absent".
+	zero := 0
+	assertME(&Config{Slop: &SlopConfig{MusicVolume: &zero}}, 0, defaultEffectsVolume, "explicit 0 music is silent, not default")
+
+	// Hand-edited out-of-range values clamp to 0–100.
+	hi, lo := 500, -3
+	assertME(&Config{Slop: &SlopConfig{MusicVolume: &hi, EffectsVolume: &lo}}, 100, 0, "out-of-range clamps to 0–100")
+}
+
 // TestActivityBotsStyles covers the per-mode style resolvers behind the
 // dashboard's activity-bot indicator: regular + wizard default to "emoji",
 // slop to "sprites"; nil config / absent block / absent key / an unknown

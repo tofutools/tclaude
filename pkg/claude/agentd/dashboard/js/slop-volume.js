@@ -28,7 +28,7 @@ import { toast } from './refresh.js';
 
 const PERSIST_DEBOUNCE_MS = 500;
 
-let music = 100;   // percent, 0–100
+let music = 50;    // percent, 0–100 — matches the server default (config.DefaultMusicVolume)
 let effects = 100; // percent, 0–100
 let lastPersisted = null; // "music/effects" key of the last server write
 let persistTimer = null;
@@ -98,7 +98,7 @@ async function loadVolumes() {
     lastPersisted = music + '/' + effects;
     apply();
   } catch {
-    // Defaults (100/100) already applied — the mixer still works for
+    // Defaults (50/100) already applied — the mixer still works for
     // this session, it just won't have loaded a saved calibration.
   }
 }

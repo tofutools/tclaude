@@ -208,8 +208,11 @@ function persistChannel(id) {
 
 // musicVolume is the persisted radio volume in percent (0–100), owned
 // by slop-volume.js (loaded from /api/slop/volumes). Applied to the
-// <audio> element when it is built and on every setter call.
-let musicVolume = 100;
+// <audio> element when it is built and on every setter call. The initial
+// value matches the server default (config.DefaultMusicVolume, 50%) so the
+// radio never plays at full blast if it is built before slop-volume.js's
+// first apply() lands — the startle bug this default guards against.
+let musicVolume = 50;
 
 // setMusicVolume applies the persisted music volume (percent) to a live
 // player and remembers it for the next startMusic. Called by
