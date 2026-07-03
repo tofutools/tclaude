@@ -85,7 +85,42 @@ function refreshSuspended() {
   if (document.querySelector('.slop-machine[data-status="pull-spinning"], .slop-machine[data-status="pull-stopped"]')) {
     return true;
   }
+  // A non-collapsed text selection is standing somewhere on the page.
+  // The 2s wholesale innerHTML re-render tears down the selected nodes,
+  // which wipes the selection (and with it the browser's copy affordance)
+  // every tick — so copy-pasting text out of the dashboard is effectively
+  // impossible unless we hold the poll while a selection stands.
+  //
+  // Like every other check here this is entirely selection-derived, so it
+  // can't leak and wedge the refresh forever: a selection collapses the
+  // instant the user clicks anywhere or starts a new one, which self-lifts
+  // the suspension on the very next tick — there's no flag to forget to
+  // reset. Data goes stale while a selection stands, exactly like an open
+  // modal; the meta timestamp resumes ticking the moment it's dropped.
+  if (hasTextSelection()) return true;
   return false;
+}
+
+// hasTextSelection reports whether the user has a non-empty text
+// selection standing anywhere in the document. Used by refreshSuspended()
+// (hold the poll so a re-render doesn't wipe a mid-copy selection) and by
+// refresh() (surface the paused state in the status pill).
+//
+// Scope is deliberately the simplest correct cut — ANY non-collapsed
+// selection in the body suspends, not just one anchored in re-rendered
+// content. A selection in static chrome is rare and, if it happens, only
+// briefly holds the poll (it self-lifts on the next click), so scoping it
+// tighter isn't worth the extra code for the "cheap idiomatic fix".
+//
+// Selections inside <input>/<textarea> (e.g. the filter boxes) do NOT
+// reach window.getSelection() in Blink/Gecko — the element exposes its own
+// selectionStart/selectionEnd and getSelection() reports collapsed — so
+// selecting or typing in a filter box never suspends the poll. Even in a
+// hypothetical browser that surfaced it, clicking out collapses it and
+// lifts the suspension, so it still can't permanently wedge refresh.
+function hasTextSelection() {
+  const sel = document.getSelection();
+  return !!sel && !sel.isCollapsed && sel.toString().trim() !== '';
 }
 // sudoGrantBlocklist: slugs the sudo-grant modal refuses to offer.
 // Read by modal-cron's openSudoGrantModal; re-seeded on each refresh.
@@ -316,11 +351,18 @@ function groupsTabActive() {
 // the non-render snapshot bookkeeping; a single-call wrapper wouldn't fit.
 export async function refresh() {
   if (refreshSuspended()) {
-    // An inline-edit input, a modal, or a drag is in progress;
-    // re-rendering now would blow the input away mid-keystroke,
-    // disrupt the modal, or detach the dragged row. Skip this tick —
-    // the commit / cancel / dragend handlers each re-trigger
-    // refresh() once the user is done.
+    // An inline-edit input, a modal, a drag, or a standing text
+    // selection is in progress; re-rendering now would blow the input
+    // away mid-keystroke, disrupt the modal, detach the dragged row, or
+    // wipe the selection mid-copy. Skip this tick — the commit / cancel /
+    // dragend handlers each re-trigger refresh() once the user is done,
+    // and a selection self-lifts the moment it collapses.
+    //
+    // When the suspension is specifically a text selection, say so in the
+    // status pill so the paused/stale state is explained rather than
+    // silently freezing. Cheap: only runs on an already-suspended tick,
+    // and a getSelection() read is trivial at this 2s cadence.
+    if (hasTextSelection()) showStatus('paused — text selected', false);
     return;
   }
   try {

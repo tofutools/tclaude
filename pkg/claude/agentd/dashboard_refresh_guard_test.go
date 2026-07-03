@@ -65,3 +65,28 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 		t.Errorf("dragend must clear dndDragActive before any DOM cleanup that could throw")
 	}
 }
+
+// TestDashboardHTML_SelectionSuspendsRefresh guards the copy-paste fix:
+// a standing (non-collapsed) text selection must suspend the 2s poll, so
+// the wholesale innerHTML re-render doesn't wipe the selection every tick
+// and make copy-pasting from the dashboard impossible. Like the other
+// refreshSuspended() checks it must be selection-derived (getSelection),
+// so it self-lifts when the selection collapses and can never wedge the
+// refresh forever. This is UI-only JS with no server path a flow test can
+// reach, so pin the shape against a future refactor silently undoing it.
+func TestDashboardHTML_SelectionSuspendsRefresh(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q (%s)", needle, why)
+		}
+	}
+	// The selection helper reads the live selection (self-lifting, not a
+	// leakable flag) and is wired into the single suspension predicate.
+	must("function hasTextSelection()", "the selection helper exists")
+	must("document.getSelection()", "the guard is derived from the live selection, so it self-lifts")
+	must("if (hasTextSelection()) return true;", "a standing text selection suspends the poll")
+	// The suspended tick surfaces the paused state instead of silently
+	// going stale mid-copy.
+	must("paused — text selected", "the status pill explains the selection-paused state")
+}
