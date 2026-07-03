@@ -238,9 +238,12 @@ func MaxUpdatedAt() (time.Time, error) {
 	return db.MaxUpdatedAt()
 }
 
-// IsTmuxSessionAlive checks if a tmux session exists
+// IsTmuxSessionAlive checks if a tmux session exists. The probe is
+// exact-name (see clcommon.ExactTarget): a bare -t would prefix-match a
+// live "-N" namesake and report a dead name as alive, which upstream turns
+// into wrong-session attaches and kills.
 func IsTmuxSessionAlive(sessionName string) bool {
-	cmd := clcommon.TmuxCommand("has-session", "-t", sessionName)
+	cmd := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
 	return cmd.Run() == nil
 }
 
@@ -258,7 +261,7 @@ func LiveTmuxSessions() (map[string]struct{}, error) {
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {
-	cmd := clcommon.TmuxCommand("display-message", "-t", sessionName, "-p", "#{session_attached}")
+	cmd := clcommon.TmuxCommand("display-message", "-t", clcommon.ExactTarget(sessionName), "-p", "#{session_attached}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -279,7 +282,7 @@ func IsTmuxSessionAttached(sessionName string) bool {
 // session had no window open: a clean no-op.
 func DetachSessionClients(sessionName string) (int, error) {
 	// Get list of clients attached to this session
-	cmd := clcommon.TmuxCommand("list-clients", "-t", sessionName, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(sessionName), "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, err
@@ -321,27 +324,14 @@ func GenerateSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// ShortTmuxBase returns the short, human-facing base for a session's tmux
-// name: an explicit label verbatim, else the first 8 chars of the (full)
-// session id. The tmux name is where the id is deliberately rendered short;
-// the stored PK keeps the full identity (JOH-248). Exported so the conv-resume
-// paths share one definition with `session new`.
-func ShortTmuxBase(sessionID, label string) string {
-	if label != "" {
-		return label
-	}
-	if len(sessionID) > 8 {
-		return sessionID[:8]
-	}
-	return sessionID
-}
-
 // UniqueTmuxSessionName keeps the short tmux name unique among live tmux
-// sessions. tmux requires unique session names and two resumed conversations
-// can share an 8-char prefix, so a taken base falls back to a -N suffix.
-// "Short if possible": the bare base is used whenever it is free. (Best-effort:
-// a racing creator between this check and `tmux new-session` just makes that
-// spawn fail with a duplicate-name error — no corruption.)
+// sessions. tmux requires unique session names; two resumed conversations
+// can share an 8-char prefix, and dir-style names (see TmuxNameBase) share
+// a base whenever two sessions launch from the same directory — a taken
+// base falls back to a -N suffix. "Short if possible": the bare base is
+// used whenever it is free. (Best-effort: a racing creator between this
+// check and `tmux new-session` just makes that spawn fail with a
+// duplicate-name error — no corruption.)
 func UniqueTmuxSessionName(base string) string {
 	if base == "" || !IsTmuxSessionAlive(base) {
 		return base
@@ -488,7 +478,7 @@ func ShortenPath(path string, maxLen int) string {
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session
 func ParsePIDFromTmux(sessionName string) int {
-	cmd := clcommon.TmuxCommand("list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	cmd := clcommon.TmuxCommand("list-panes", "-t", clcommon.ExactTarget(sessionName), "-F", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

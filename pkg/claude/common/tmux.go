@@ -80,3 +80,16 @@ func TmuxCommand(args ...string) *exec.Cmd {
 func TmuxArgs(args ...string) []string {
 	return append([]string{"-L", TmuxSocketName}, args...)
 }
+
+// ExactTarget returns a tmux -t target that resolves the session name
+// EXACTLY. A bare `-t name` falls back to prefix (then fnmatch) matching
+// when no exact match exists, so a command aimed at a dead session's name
+// can silently land on a live session sharing that prefix — "myrepo"
+// (dead) resolving to "myrepo-2" (alive) would misroute an attach, a
+// kill, or injected keystrokes. The leading '=' pins resolution to
+// exact-only. Use it for every -t that targets a session by name; a
+// window/pane suffix may be appended (ExactTarget(name) + ":0.0") — the
+// '=' binds to the session part.
+func ExactTarget(sessionName string) string {
+	return "=" + sessionName
+}

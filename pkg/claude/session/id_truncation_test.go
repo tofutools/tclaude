@@ -2,6 +2,7 @@ package session
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,13 +33,6 @@ func TestGenerateSessionID_FullEntropyNotTruncated(t *testing.T) {
 		require.False(t, seen[v], "GenerateSessionID returned a duplicate")
 		seen[v] = true
 	}
-}
-
-func TestShortTmuxBase(t *testing.T) {
-	full := "d0e9fa14-1234-4abc-9def-0123456789ab"
-	assert.Equal(t, "d0e9fa14", ShortTmuxBase(full, ""), "a long id renders as its 8-char prefix")
-	assert.Equal(t, "spwn-ab12cd", ShortTmuxBase(full, "spwn-ab12cd"), "an explicit label wins verbatim, never truncated")
-	assert.Equal(t, "abc", ShortTmuxBase("abc", ""), "an already-short id is left as-is")
 }
 
 func TestSessionHandle(t *testing.T) {
@@ -139,8 +133,9 @@ func TestUniqueTmuxSessionName_FreeBaseUnchanged(t *testing.T) {
 type fakeTmux struct{ alive map[string]bool }
 
 func (f fakeTmux) Command(args ...string) *exec.Cmd {
-	// IsTmuxSessionAlive issues: has-session -t <name>; exit 0 == alive.
-	if len(args) == 3 && args[0] == "has-session" && f.alive[args[2]] {
+	// IsTmuxSessionAlive issues: has-session -t =<name> (exact-match form,
+	// see clcommon.ExactTarget); exit 0 == alive.
+	if len(args) == 3 && args[0] == "has-session" && f.alive[strings.TrimPrefix(args[2], "=")] {
 		return exec.Command("true")
 	}
 	return exec.Command("false")

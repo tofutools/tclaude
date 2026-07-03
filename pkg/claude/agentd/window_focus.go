@@ -195,7 +195,7 @@ var (
 // attached client — i.e. its terminal window exists. Goes through the
 // clcommon tmux seam like every other tmux call.
 func tmuxSessionHasClient(tmuxSession string) bool {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}").Output()
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
