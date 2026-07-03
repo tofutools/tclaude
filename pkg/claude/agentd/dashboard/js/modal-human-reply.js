@@ -151,7 +151,11 @@ function closeHumanReplyModal() {
 // status line + Send button are forced to the offline verdict rather than
 // re-derived from the possibly-stale snapshot.
 async function submitReply() {
-  if (!replyCtx) return;
+  // Re-entry guard: the ⌘/Ctrl+Enter shortcut calls this directly, bypassing
+  // the Send button's disabled state, so key-repeat or a fast double-press
+  // could fire concurrent POSTs — each a non-idempotent enqueue + nudge.
+  // `sending` is the same flag that disables the button; check it here too.
+  if (!replyCtx || sending) return;
   const errEl = $('#human-reply-error');
   errEl.textContent = '';
   const bodyText = $('#human-reply-body').value.trim();

@@ -461,29 +461,26 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		selector = orig.FromConv
 	}
 	if selector == "" {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "this notification has no sender to reply to",
-			"code":  "no_sender",
-		})
+		writeError(w, http.StatusConflict, "no_sender", "this notification has no sender to reply to")
 		return
 	}
 	res, _, err := agent.ResolveSelector(selector)
 	if err != nil || res == nil || res.ConvID == "" {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "cannot resolve the sending agent — it may have been deleted",
-			"code":  "unresolved",
-		})
+		writeError(w, http.StatusConflict, "unresolved", "cannot resolve the sending agent — it may have been deleted")
 		return
 	}
 	target := res.ConvID
 	// Online gate — the reply is blocked when the target has no live tmux
-	// session (see the doc comment). One tmux ls; a map lookup against it.
-	aliveSessions, _ := session.LiveTmuxSessions()
+	// session (see the doc comment). One tmux ls; a map lookup against it. A
+	// failed enumeration fails closed (treated as offline) — but log it, so an
+	// actual tmux/exec failure is diagnosable rather than masquerading as a
+	// plain "agent offline" 409 the operator can't tell apart.
+	aliveSessions, err := session.LiveTmuxSessions()
+	if err != nil {
+		slog.Warn("reply: enumerate live tmux sessions failed; treating target as offline", "error", err)
+	}
 	if !isConvOnlineIn(target, aliveSessions) {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "the agent is offline — it has no live session to receive a reply",
-			"code":  "offline",
-		})
+		writeError(w, http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
 		return
 	}
 	// Deliver as a sender-less operator message on the universal inbox
