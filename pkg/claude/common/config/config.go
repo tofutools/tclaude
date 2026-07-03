@@ -835,9 +835,23 @@ func (c *Config) DefaultTerminal() string {
 // window "focus" op (the 🪟 windows… modal, the command palette, or a
 // group's focus button) — see TileConfig. Absent / disabled (the
 // default) leaves each terminal wherever the OS placed it.
+//
+// WindowTitle gates whether tclaude stamps the `tclaude:<id>` window/tab
+// title on each pane (the tmux set-titles pair in session.runNew + the OSC
+// escape in AttachToSession). That title is how the WSL and native-Linux/X11
+// focus + tiling paths locate an agent's existing window to raise it; it's
+// also what some users find "ugly" on a plain desktop terminal. A *bool so
+// absent is distinguishable from an explicit false: nil / true → stamp the
+// title (the default, keeps focus-by-title working); explicit false → skip
+// both emit sites entirely, so the terminal keeps its own title. Turning it
+// off degrades "focus/raise the existing window" to "open a new window"
+// wherever focus is title-based (WSL, native-Linux/X11) and disables
+// auto-tiling; the explicit dashboard "open window" action is unaffected.
+// See WindowTitleEnabled.
 type FocusConfig struct {
-	RaiseOnly bool        `json:"raise_only,omitempty"`
-	Tile      *TileConfig `json:"tile,omitempty"`
+	RaiseOnly   bool        `json:"raise_only,omitempty"`
+	Tile        *TileConfig `json:"tile,omitempty"`
+	WindowTitle *bool       `json:"window_title,omitempty"`
 }
 
 // Tile layout modes — config focus.tile.layout. "grid" packs windows
@@ -903,6 +917,20 @@ func (c *Config) RaiseOnlyFocus() bool {
 		return false
 	}
 	return c.Focus.RaiseOnly
+}
+
+// WindowTitleEnabled reports whether tclaude should stamp the `tclaude:<id>`
+// window/tab title on its panes — config focus.window_title. Default true
+// (absent block / key, or an explicit true): the title is on, so the WSL and
+// native-Linux/X11 focus-by-title + tiling paths can find an agent's window.
+// An explicit false skips the title so a plain desktop terminal keeps its own
+// tab title (at the cost of title-based focus/tiling). Nil-safe so callers
+// need no guard.
+func (c *Config) WindowTitleEnabled() bool {
+	if c == nil || c.Focus == nil || c.Focus.WindowTitle == nil {
+		return true
+	}
+	return *c.Focus.WindowTitle
 }
 
 // TileOnFocus reports whether a bulk window "focus" op should follow up

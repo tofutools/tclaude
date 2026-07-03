@@ -618,9 +618,14 @@ func runNew(params *NewParams) error {
 	}
 
 	// Configure tmux to set window title with our session ID
-	// This ensures the title persists and is visible for window focus
-	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
-	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+	// This ensures the title persists and is visible for window focus.
+	// Gated on config focus.window_title (default on): an explicit false
+	// leaves the terminal's own title alone, at the cost of title-based
+	// window focus/tiling on WSL + native-Linux/X11.
+	if windowTitleEnabledFn() {
+		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+	}
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness
 	// relies on tmux for history (Codex CLI). Scoped to this session only so

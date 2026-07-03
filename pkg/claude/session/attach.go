@@ -86,8 +86,13 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// Set TCLAUDE_SESSION_ID so focus functions can find our session
 	_ = os.Setenv("TCLAUDE_SESSION_ID", sessionID)
 
-	// Set terminal title to include session ID (helps with window focus on WSL/Windows)
-	setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
+	// Set terminal title to include session ID (helps with window focus on
+	// WSL/Windows). Gated on config focus.window_title (default on): an
+	// explicit false leaves the terminal's own title alone. TCLAUDE_SESSION_ID
+	// is still exported above so anything that does key off it keeps working.
+	if windowTitleEnabledFn() {
+		setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
+	}
 
 	// Attach to tmux session (replaces current process)
 	return attachToSessionWithFlags(tmuxSession, forceAttach)

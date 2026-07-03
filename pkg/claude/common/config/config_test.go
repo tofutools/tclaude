@@ -460,6 +460,38 @@ func TestFocusConfig_RoundTrips(t *testing.T) {
 	assert.NotContains(t, string(none), "focus")
 }
 
+// WindowTitleEnabled must be nil-safe and default to TRUE (stamp the
+// tclaude:<id> title): a nil Config, an absent focus block, an absent key,
+// and an explicit true all keep the title on; only focus.window_title:false
+// turns it off.
+func TestWindowTitleEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.True(t, nilCfg.WindowTitleEnabled(), "nil config → true")
+	assert.True(t, (&Config{}).WindowTitleEnabled(), "no focus block → true")
+	assert.True(t, (&Config{Focus: &FocusConfig{}}).WindowTitleEnabled(), "focus block, window_title unset → true")
+	assert.True(t, (&Config{Focus: &FocusConfig{WindowTitle: new(true)}}).WindowTitleEnabled(), "explicit true → true")
+	assert.False(t, (&Config{Focus: &FocusConfig{WindowTitle: new(false)}}).WindowTitleEnabled(), "explicit false → false")
+}
+
+// focus.window_title round-trips: an explicit false persists and reloads,
+// while the default (title on) marshals without the key so it never shows as
+// a spurious diff.
+func TestWindowTitle_RoundTrips(t *testing.T) {
+	in := &Config{Focus: &FocusConfig{WindowTitle: new(false)}}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"window_title":false`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.False(t, out.WindowTitleEnabled())
+
+	// The default (no focus block) marshals without a window_title key.
+	none, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), "window_title")
+}
+
 // TileOnFocus is nil-safe and off by default: only focus.tile.enabled
 // flips it on.
 func TestTileOnFocus(t *testing.T) {

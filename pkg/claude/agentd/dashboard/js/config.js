@@ -408,6 +408,9 @@ function populateConfigForm(cfg) {
 
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
+  // window_title: on is the default, so it's checked unless an explicit
+  // focus.window_title:false (skip the title) unchecks it.
+  $('#cfg-focus-window-title').checked = !(cfg.focus && cfg.focus.window_title === false);
 
   // focus.tile — auto-tiling after a bulk focus. Layout blank/absent
   // shows as "grid" (its resolved default); gap/margin blank when unset
@@ -665,6 +668,9 @@ function assembleConfig() {
   // had no focus key.
   const fc = (cfg.focus && typeof cfg.focus === 'object') ? cfg.focus : {};
   if ($('#cfg-focus-raiseonly').checked) fc.raise_only = true; else delete fc.raise_only;
+  // window_title: on is the default, so store only the NON-default (unchecked
+  // → focus.window_title:false); checked leaves the key absent.
+  if (!$('#cfg-focus-window-title').checked) fc.window_title = false; else delete fc.window_title;
 
   // focus.tile sub-block. Reuse the existing block object (a reference, so
   // a future sub-field with no widget round-trips untouched — same pattern
