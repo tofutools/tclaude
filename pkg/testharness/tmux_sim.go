@@ -148,8 +148,39 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.displayMessage(args)
 	case len(args) >= 1 && args[0] == "capture-pane":
 		return t.capturePane(args)
+	case len(args) >= 3 && args[0] == "set-option" && args[1] == "-t":
+		// Pane-typed like the real command, so the production set-option
+		// sites' ExactTarget(name)+":" form is exercised through the same
+		// target-resolution rules as send-keys (a colon-less '=' pin
+		// would silently no-op or misroute in real tmux — see
+		// resolveTarget). The option itself isn't modelled; only whether
+		// the target resolves.
+		if name := t.resolveTarget(args[2], true); name != "" && t.IsAlive(name) {
+			return exec.Command(trueBin)
+		}
+		return exec.Command(falseBin)
+	case len(args) >= 3 && args[0] == "list-panes" && args[1] == "-t":
+		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+// listPanes models `tmux list-panes -t <target> -F '#{pane_pid}'` for the
+// sim's one-pane sessions: it echoes the resolved session's pane pid (the
+// only field production asks for, via ParsePIDFromTmux) and exits non-zero
+// on a missing/dead target like real tmux. Resolution uses the pane-typed
+// rules — deliberately stricter than real list-panes (window-typed, whose
+// colon-less '=name' would still prefix-fall-back onto the session table
+// un-pinned), so only a session-exact target form passes.
+func (t *TmuxSim) listPanes(target string) *exec.Cmd {
+	name := t.resolveTarget(target, true)
+	t.mu.Lock()
+	s, ok := t.sessions[name]
+	t.mu.Unlock()
+	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
+		return exec.Command(falseBin)
+	}
+	return exec.Command(echoBin, strconv.Itoa(s.panePID))
 }
 
 // paneRenderer is the optional capability a PaneSim implements to answer

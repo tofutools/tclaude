@@ -74,6 +74,7 @@ type model struct {
 	statusFilter   []string        // which statuses to show (empty = all)
 	hideFilter     []string        // which statuses to hide
 	confirmMode    confirmMode     // current confirmation dialog
+	confirmTarget  *SessionState   // the session a selection dialog was opened FOR — pinned at open time, because the 500ms tick re-sorts rows under the cursor while the dialog is up (acting on m.sessions[m.cursor] could kill/detach whatever drifted onto that row)
 	filterMenu     bool            // showing filter menu
 	filterCursor   int             // cursor position in filter menu
 	filterChecked  map[string]bool // checked items in filter menu
@@ -275,6 +276,29 @@ func (m model) applySearchFilter() model {
 		m.cursor = 0
 	}
 
+	// Drop a selection-bound confirm dialog whose target vanished from the
+	// visible list (exited row pruned, filtered out, killed elsewhere): its
+	// prompt would otherwise render blank while the dialog kept swallowing
+	// keys. Presence is checked by ID — a refresh rebuilds the row structs,
+	// and the target still being listed (on whatever row) keeps the dialog
+	// valid since actions key on confirmTarget, not the cursor. confirmQuit
+	// is selection-independent and survives refreshes.
+	if m.confirmMode != confirmNone && m.confirmMode != confirmQuit {
+		found := false
+		if m.confirmTarget != nil {
+			for _, s := range m.sessions {
+				if s.ID == m.confirmTarget.ID {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			m.confirmMode = confirmNone
+			m.confirmTarget = nil
+		}
+	}
+
 	return m
 }
 
@@ -350,6 +374,7 @@ func (m *model) ensureCursorVisible() {
 func (m model) triggerKill() model {
 	if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
 		m.confirmMode = confirmKill
+		m.confirmTarget = m.sessions[m.cursor]
 	}
 	return m
 }
@@ -368,30 +393,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			// confirmNoTmux is informational — dismiss on any key, as its
+			// "[press any key]" prompt promises.
+			if m.confirmMode == confirmNoTmux {
+				m.confirmMode = confirmNone
+				m.confirmTarget = nil
+				return m, nil
+			}
+			// Selection dialogs act on the session they were opened for
+			// (confirmTarget), NOT m.sessions[m.cursor]: the 500ms tick
+			// re-sorts rows under an open dialog, so the cursor row can be
+			// a different session by the time "y" lands.
 			switch msg.String() {
 			case "y", "Y":
-				if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
+				if m.confirmTarget != nil {
 					switch m.confirmMode {
 					case confirmKill:
-						state := m.sessions[m.cursor]
-						_ = killSession(state)
+						_ = killSession(m.confirmTarget)
 						m.confirmMode = confirmNone
+						m.confirmTarget = nil
 						m = m.refreshSessions()
 					case confirmAttachForce:
-						m.shouldAttach = m.sessions[m.cursor].TmuxSession
-						m.shouldAttachID = m.sessions[m.cursor].ID
+						m.shouldAttach = m.confirmTarget.TmuxSession
+						m.shouldAttachID = m.confirmTarget.ID
 						m.forceAttach = true
 						m.confirmMode = confirmNone
+						m.confirmTarget = nil
 						return m, tea.Quit
 					case confirmDetach:
-						state := m.sessions[m.cursor]
-						_, _ = DetachSessionClients(state.TmuxSession)
+						_, _ = DetachSessionClients(m.confirmTarget.TmuxSession)
 						m.confirmMode = confirmNone
+						m.confirmTarget = nil
 						m = m.refreshSessions()
 					}
 				}
 			case "n", "N", "esc", "q", "enter", " ":
 				m.confirmMode = confirmNone
+				m.confirmTarget = nil
 			}
 			return m, nil
 		}
@@ -549,6 +587,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !tmuxAlive {
 					// Non-tmux or dead tmux session, cannot attach
 					m.confirmMode = confirmNoTmux
+					m.confirmTarget = state
 				} else if state.Attached > 0 {
 					// Session already has clients attached - just focus the window
 					m.shouldAttach = state.TmuxSession
@@ -570,6 +609,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				state := m.sessions[m.cursor]
 				if state.Attached > 0 && state.TmuxSession != "" {
 					m.confirmMode = confirmDetach
+					m.confirmTarget = state
 				}
 			}
 		case "f":
@@ -757,20 +797,20 @@ func (m model) View() tea.View {
 	case confirmQuit:
 		b.WriteString(confirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
 	case confirmKill:
-		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", sessionHandle(m.sessions[m.cursor]))))
+		if m.confirmTarget != nil {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", sessionHandle(m.confirmTarget))))
 		}
 	case confirmAttachForce:
-		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", sessionHandle(m.sessions[m.cursor]))))
+		if m.confirmTarget != nil {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", sessionHandle(m.confirmTarget))))
 		}
 	case confirmDetach:
-		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", sessionHandle(m.sessions[m.cursor]))))
+		if m.confirmTarget != nil {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", sessionHandle(m.confirmTarget))))
 		}
 	case confirmNoTmux:
-		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", sessionHandle(m.sessions[m.cursor]))))
+		if m.confirmTarget != nil {
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", sessionHandle(m.confirmTarget))))
 		}
 	default:
 		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • esc/q quit"))

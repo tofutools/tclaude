@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,6 +101,17 @@ func TestTmuxSim_PaneTypedTargets_RejectColonLessExactPin(t *testing.T) {
 	// has-session is session-typed: the same colon-less '=' form is the
 	// correct exact pin there.
 	assert.NoError(t, sim.Command("has-session", "-t", "=myrepo-2").Run())
+
+	// set-option and list-panes route through the same pane-typed rules, so
+	// the production ExactTarget(name)+":" sites (window titles, scrollback
+	// mouse mode, ParsePIDFromTmux) are exercised rather than falling
+	// through to an unconditional success.
+	assert.Error(t, sim.Command("set-option", "-t", "=myrepo-2", "mouse", "on").Run())
+	assert.NoError(t, sim.Command("set-option", "-t", "=myrepo-2:", "mouse", "on").Run())
+	assert.Error(t, sim.Command("list-panes", "-t", "=myrepo-2", "-F", "#{pane_pid}").Run())
+	out, err := sim.Command("list-panes", "-t", "=myrepo-2:", "-F", "#{pane_pid}").Output()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, strings.TrimSpace(string(out)), "list-panes echoes the pane pid on a resolved target")
 }
 
 // The production probes go through '='-pinned targets: a dead name whose
