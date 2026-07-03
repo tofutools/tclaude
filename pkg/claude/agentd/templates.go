@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Group templates — reusable blueprints for instantiating a working
@@ -45,6 +47,20 @@ type templateAgentJSON struct {
 	InitialMessage string   `json:"initial_message,omitempty"`
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions"`
+
+	// Per-role launch profile (JOH-239). SpawnProfile references a spawn
+	// profile by name (validated to exist at save); the five inline fields are
+	// per-agent launch overrides that win over the referenced profile. All
+	// omitempty — an absent value = unset, and the resolver at instantiate
+	// falls through: per-agent inline → referenced profile → group default →
+	// harness default. "agentType" from the issue is intentionally OUT OF SCOPE
+	// (the spawn substrate has no agent-type concept).
+	SpawnProfile string `json:"spawn_profile,omitempty"`
+	Harness      string `json:"harness,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	Sandbox      string `json:"sandbox,omitempty"`
+	Approval     string `json:"approval,omitempty"`
 }
 
 // workPatternEntryJSON is the wire shape for one work-pattern step —
@@ -99,6 +115,12 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			InitialMessage: a.InitialMessage,
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
+			SpawnProfile:   a.SpawnProfile,
+			Harness:        a.Harness,
+			Model:          a.Model,
+			Effort:         a.Effort,
+			Sandbox:        a.Sandbox,
+			Approval:       a.Approval,
 		})
 	}
 	return out
@@ -202,6 +224,19 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			}
 			perms = append(perms, slug)
 		}
+
+		// Per-role launch profile (JOH-239). Validate the referenced spawn
+		// profile exists and the inline overrides against the harness they will
+		// launch on. The validation harness mirrors the instantiate-time
+		// resolution — the agent's inline harness wins, else the referenced
+		// profile's harness, else the default (Claude Code) — so a value accepted
+		// here is checked against the same catalog the spawn will use. Blank
+		// fields stay blank (Validate*, not Resolve*): the launch boundary applies
+		// its own defaults at instantiate.
+		launch, fail := validateTemplateAgentLaunch(an, a)
+		if fail != nil {
+			return nil, fail
+		}
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
 			Ordinal:        i,
 			Name:           an,
@@ -210,6 +245,12 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			InitialMessage: im,
 			IsOwner:        a.IsOwner,
 			Permissions:    perms,
+			SpawnProfile:   launch.SpawnProfile,
+			Harness:        launch.Harness,
+			Model:          launch.Model,
+			Effort:         launch.Effort,
+			Sandbox:        launch.Sandbox,
+			Approval:       launch.Approval,
 		})
 	}
 
@@ -241,6 +282,214 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		t.WorkPattern = append(t.WorkPattern, db.WorkPatternEntry{SendTo: sendTo, Value: val})
 	}
 	return t, nil
+}
+
+// templateAgentLaunch is the per-role launch profile of one template agent
+// (JOH-239): a by-name spawn-profile reference plus inline launch overrides.
+// It is the shape validateTemplateAgentLaunch returns (blanks preserved, for
+// storage) and — after resolveTemplateAgentLaunch fills the referenced profile
+// + harness secure defaults — the resolved shape the instantiator threads into
+// spawnParams.
+type templateAgentLaunch struct {
+	SpawnProfile string
+	Harness      string
+	Model        string
+	Effort       string
+	Sandbox      string
+	Approval     string
+}
+
+// validateTemplateAgentLaunch validates one template agent's per-role launch
+// profile at SAVE time and returns the normalized fields to store (JOH-239).
+// It checks the referenced spawn profile exists and validates the inline
+// overrides against the harness they will launch on — the agent's inline
+// harness wins, else the referenced profile's harness, else the default (Claude
+// Code) — so a value accepted here is checked against the same catalog the
+// spawn will use. Blank fields stay blank (Validate*, not Resolve*): the launch
+// boundary applies its own secure defaults at instantiate. Mirrors
+// buildProfileFromJSON's harness-scoped validation.
+func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templateAgentLaunch, *spawnFailure) {
+	profRef := strings.TrimSpace(a.SpawnProfile)
+	var refProfile *db.SpawnProfile
+	if profRef != "" {
+		p, err := db.GetSpawnProfile(profRef)
+		if err != nil {
+			return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if p == nil {
+			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+				fmt.Sprintf("agent %q: no spawn profile named %q", agentName, profRef)}
+		}
+		refProfile = p
+	}
+	inlineHarness := strings.TrimSpace(a.Harness)
+	valHarness := inlineHarness
+	if valHarness == "" && refProfile != nil {
+		valHarness = refProfile.Harness
+	}
+	h, err := harness.ResolveSpawnable(valHarness)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_harness",
+			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
+	}
+	model, err := h.Models.ValidateModel(strings.TrimSpace(a.Model))
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_model",
+			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
+	}
+	effort, err := h.Models.ValidateEffort(strings.TrimSpace(a.Effort))
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_effort",
+			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
+	}
+	sandbox, err := harness.ValidateSandboxMode(h, a.Sandbox)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox",
+			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
+	}
+	approval, err := harness.ValidateApprovalPolicy(h, a.Approval)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval",
+			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
+	}
+	// Store the inline harness as typed (blank stays blank so it falls through to
+	// the profile at instantiate), NOT the resolved validation harness.
+	return templateAgentLaunch{
+		SpawnProfile: profRef,
+		Harness:      inlineHarness,
+		Model:        model,
+		Effort:       effort,
+		Sandbox:      sandbox,
+		Approval:     approval,
+	}, nil
+}
+
+// resolveTemplateAgentLaunch computes the effective launch fields for one
+// instantiated template agent (JOH-239). Resolution order:
+//
+//	per-agent inline override → referenced spawn profile → harness secure default
+//
+// (The group-default-profile tier of the general model is empty here — a
+// freshly-instantiated group carries no default profile — so the order
+// collapses to those three.) It mirrors handleGroupSpawn's overlay +
+// secure-default resolution: the referenced profile is inherited only when the
+// spawn will run on the profile's harness (a mismatched harness skips it,
+// exactly as the group-default-profile overlay does), then the chosen harness's
+// secure launch defaults fill whatever is still blank and the whole shape is
+// validated.
+//
+// cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
+// guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
+//
+// Returns a typed failure (recorded per-agent by the instantiator, never fatal
+// to the rest of the roster) if the referenced profile vanished or a resolved
+// value is invalid for the harness. The returned Harness is the resolved
+// canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
+func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, cwd string) (templateAgentLaunch, *spawnFailure) {
+	harnessName := strings.TrimSpace(a.Harness)
+	model := strings.TrimSpace(a.Model)
+	effort := strings.TrimSpace(a.Effort)
+	sandbox := strings.TrimSpace(a.Sandbox)
+	approval := strings.TrimSpace(a.Approval)
+
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
+		prof, err := db.GetSpawnProfile(ref)
+		if err != nil {
+			return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if prof == nil {
+			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
+		}
+		if harnessName == "" || harnessOrDefault(harnessName) == harnessOrDefault(prof.Harness) {
+			if harnessName == "" {
+				harnessName = prof.Harness
+			}
+			if model == "" {
+				model = prof.Model
+			}
+			if effort == "" {
+				effort = prof.Effort
+			}
+			if sandbox == "" {
+				sandbox = prof.Sandbox
+			}
+			if approval == "" {
+				approval = prof.Approval
+			}
+		}
+	}
+
+	h, err := resolveSpawnHarness(harnessName)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
+	}
+	if model, err = h.Models.ValidateModel(model); err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_model", err.Error()}
+	}
+	if effort, err = h.Models.ValidateEffort(effort); err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_effort", err.Error()}
+	}
+	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+	}
+	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
+	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
+	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
+	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandbox, cwd, home) {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
+			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
+				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes", h.Name, cwd, sandbox)}
+	}
+
+	return templateAgentLaunch{
+		Harness:  h.Name,
+		Model:    model,
+		Effort:   effort,
+		Sandbox:  sandbox,
+		Approval: approval,
+	}, nil
+}
+
+// traceMemberLaunch re-traces a live group member's OBSERVABLE launch fields
+// from its most-recent session row for a from-group template snapshot (JOH-239)
+// — harness, model, effort, sandbox. approval is not recorded on the session
+// row (Codex-only, re-applied as the secure default at re-instantiate), so it
+// is not traced. Each field is normalized through the traced harness's catalog
+// and dropped to "" if it doesn't validate (e.g. the session's model DISPLAY
+// alias rather than the resume-safe model_id), so a snapshot never stores a
+// value that would fail at the next instantiate. A member with no session row
+// (pruned) or no observable value yields all-blank — "inherit the group
+// default", the pre-JOH-239 behaviour.
+func traceMemberLaunch(convID string) templateAgentLaunch {
+	prof, err := db.SessionLaunchProfileForConv(convID)
+	if err != nil || prof == (db.SessionLaunchProfile{}) {
+		return templateAgentLaunch{}
+	}
+	h, err := harness.ResolveSpawnable(prof.Harness)
+	if err != nil {
+		return templateAgentLaunch{}
+	}
+	out := templateAgentLaunch{}
+	// Store the harness only when it differs from the default, so a plain Claude
+	// member round-trips to a blank (inherit) harness rather than a noisy
+	// explicit "claude" on every agent.
+	if harnessOrDefault(prof.Harness) != harness.DefaultName {
+		out.Harness = h.Name
+	}
+	if m, err := h.Models.ValidateModel(prof.ModelID); err == nil {
+		out.Model = m
+	}
+	if e, err := h.Models.ValidateEffort(prof.Effort); err == nil {
+		out.Effort = e
+	}
+	if s, err := harness.ValidateSandboxMode(h, prof.SandboxMode); err == nil {
+		out.Sandbox = s
+	}
+	return out
 }
 
 // handleTemplates dispatches the collection endpoint /v1/templates:
@@ -493,12 +742,30 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	for _, a := range tmpl.Agents {
 		finalName := body.GroupName + "-" + a.Name
 		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
+		// Resolve this role's launch profile (JOH-239): per-agent inline
+		// override → referenced spawn profile → harness secure default. A
+		// resolution failure (a referenced profile deleted since save, an invalid
+		// value, a Codex sandbox/cwd conflict) is recorded per-agent and skips
+		// just this spawn — same best-effort contract as an owner/permission
+		// grant failure below.
+		launch, lfail := resolveTemplateAgentLaunch(a, cwd)
+		if lfail != nil {
+			res.Error = lfail.Msg
+			failed++
+			results = append(results, res)
+			continue
+		}
 		outcome, fail := executeSpawn(g, spawnParams{
 			Name:           finalName,
 			Role:           a.Role,
 			Descr:          a.Descr,
 			InitialMessage: a.InitialMessage,
 			Cwd:            cwd,
+			Harness:        launch.Harness,
+			Model:          launch.Model,
+			Effort:         launch.Effort,
+			SandboxMode:    launch.Sandbox,
+			ApprovalPolicy: launch.Approval,
 			GroupContext:   groupContext,
 			ReplyToConv:    caller,
 			SpawnedByConv:  caller,
@@ -764,6 +1031,15 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 				t.Agents[i].InitialMessage = prev.InitialMessage
 				briefsKept = append(briefsKept, t.Agents[i].Name)
 			}
+			// The spawn-profile REFERENCE is blueprint curation, not an observable
+			// launch field — a live member records its resolved model/effort/harness
+			// (re-traced above) but not "which profile it was launched from". So an
+			// update re-snapshot preserves a curated profile ref on name-match,
+			// exactly like the brief (JOH-239). The inline overrides, being
+			// observable, are left as re-traced (the live group wins).
+			if prev.SpawnProfile != "" {
+				t.Agents[i].SpawnProfile = prev.SpawnProfile
+			}
 		}
 		removed := []string{}
 		for _, n := range prevOrder {
@@ -844,6 +1120,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		if perms == nil {
 			perms = []string{}
 		}
+		// Re-trace the member's OBSERVABLE launch fields (JOH-239) so a round-trip
+		// preserves each role's launch shape. The spawn-profile REFERENCE is
+		// blueprint curation, not observable — it is preserved by name-match in the
+		// update path (handleTemplateFromGroup), like the per-agent brief.
+		launch := traceMemberLaunch(convID)
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
 			Ordinal:     len(t.Agents),
 			Name:        name,
@@ -851,6 +1132,10 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			Descr:       descr,
 			IsOwner:     owner,
 			Permissions: perms,
+			Harness:     launch.Harness,
+			Model:       launch.Model,
+			Effort:      launch.Effort,
+			Sandbox:     launch.Sandbox,
 		})
 	}
 	for _, m := range members {

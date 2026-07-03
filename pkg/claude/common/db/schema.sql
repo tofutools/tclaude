@@ -246,7 +246,7 @@ CREATE TABLE group_template_agents (
 			initial_message TEXT NOT NULL DEFAULT '',
 			is_owner        INTEGER NOT NULL DEFAULT 0,
 			permissions     TEXT NOT NULL DEFAULT '[]'
-		);
+		, spawn_profile TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', sandbox TEXT NOT NULL DEFAULT '', approval TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_group_template_agents_template
 			ON group_template_agents(template_id);

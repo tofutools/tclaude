@@ -107,6 +107,21 @@ type GroupTemplateAgent struct {
 	// Permissions is the list of permission slugs granted to the agent
 	// (per-conv grant overrides) right after it spawns.
 	Permissions []string
+
+	// Per-role launch profile (JOH-239). SpawnProfile is a by-name reference
+	// to a spawn_profiles row (no DB-level FK — existence is validated at the
+	// wire boundary, following resolveGroupDefaultProfileName). The five inline
+	// fields are per-agent launch overrides that win over the referenced
+	// profile. All "" = unset: the resolver falls through to the referenced
+	// profile, then the group default profile, then the harness default. At
+	// instantiate the effective launch shape is
+	//   per-agent inline override → referenced profile → group default → harness default.
+	SpawnProfile string
+	Harness      string
+	Model        string
+	Effort       string
+	Sandbox      string
+	Approval     string
 }
 
 // permsToJSON marshals a permission-slug list for the
@@ -229,10 +244,12 @@ func insertTemplateAgents(tx *sql.Tx, templateID int64, agents []GroupTemplateAg
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO group_template_agents
-			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
+			    spawn_profile, harness, model, effort, sandbox, approval)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			templateID, a.Ordinal, a.Name, a.Role, a.Descr, a.InitialMessage,
-			owner, permsToJSON(a.Permissions)); err != nil {
+			owner, permsToJSON(a.Permissions),
+			a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval); err != nil {
 			return err
 		}
 	}
@@ -292,7 +309,8 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 	// One pass over every agent row, bucketed onto its template — avoids
 	// an N+1 query when the editor list is rendered.
 	agentRows, err := d.Query(
-		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions
+		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
+		        spawn_profile, harness, model, effort, sandbox, approval
 		 FROM group_template_agents ORDER BY template_id, ordinal, id`)
 	if err != nil {
 		return nil, err
@@ -331,7 +349,8 @@ func DeleteGroupTemplate(name string) (int64, error) {
 // listTemplateAgents loads one template's agent rows, ordered.
 func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, error) {
 	rows, err := d.Query(
-		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions
+		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
+		        spawn_profile, harness, model, effort, sandbox, approval
 		 FROM group_template_agents WHERE template_id = ? ORDER BY ordinal, id`, templateID)
 	if err != nil {
 		return nil, err
@@ -366,7 +385,8 @@ func scanGroupTemplateAgent(s rowScanner) (*GroupTemplateAgent, error) {
 	var owner int
 	var perms string
 	if err := s.Scan(&a.ID, &a.TemplateID, &a.Ordinal, &a.Name, &a.Role,
-		&a.Descr, &a.InitialMessage, &owner, &perms); err != nil {
+		&a.Descr, &a.InitialMessage, &owner, &perms,
+		&a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval); err != nil {
 		return nil, err
 	}
 	a.IsOwner = owner != 0

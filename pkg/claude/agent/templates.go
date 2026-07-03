@@ -60,6 +60,16 @@ type templateAgentJSON struct {
 	InitialMessage string   `json:"initial_message,omitempty"`
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions"`
+
+	// Per-role launch profile (JOH-239): a spawn-profile reference by name plus
+	// inline launch overrides (harness/model/effort/sandbox/approval) that win
+	// over it. All optional — absent = inherit the group default at instantiate.
+	SpawnProfile string `json:"spawn_profile,omitempty"`
+	Harness      string `json:"harness,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	Sandbox      string `json:"sandbox,omitempty"`
+	Approval     string `json:"approval,omitempty"`
 }
 
 // workPatternEntryJSON mirrors the daemon's wire shape for one
@@ -196,6 +206,26 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		if len(a.Permissions) > 0 {
 			tags = append(tags, "perms="+strings.Join(a.Permissions, ","))
 		}
+		// Per-role launch profile (JOH-239): show the profile reference and any
+		// inline overrides so an edit loop sees what each role launches with.
+		if a.SpawnProfile != "" {
+			tags = append(tags, "profile="+a.SpawnProfile)
+		}
+		if a.Harness != "" {
+			tags = append(tags, "harness="+a.Harness)
+		}
+		if a.Model != "" {
+			tags = append(tags, "model="+a.Model)
+		}
+		if a.Effort != "" {
+			tags = append(tags, "effort="+a.Effort)
+		}
+		if a.Sandbox != "" {
+			tags = append(tags, "sandbox="+a.Sandbox)
+		}
+		if a.Approval != "" {
+			tags = append(tags, "approval="+a.Approval)
+		}
 		suffix := ""
 		if len(tags) > 0 {
 			suffix = "  [" + strings.Join(tags, " · ") + "]"
@@ -235,7 +265,8 @@ func templatesCreateCmd() *cobra.Command {
 		Short: "Create a group template from a JSON file",
 		Long: "Reads a template definition as JSON from --file (or --file - for stdin) and creates it. The JSON " +
 			"shape is what 'templates show <name> --json' emits: {name, descr, default_context, agents:[{name, " +
-			"role, descr, initial_message, is_owner, permissions}]}. A template is structured (nested agents with " +
+			"role, descr, initial_message, is_owner, permissions, spawn_profile, harness, model, effort, sandbox, " +
+			"approval}]}. A template is structured (nested agents with " +
 			"multi-line briefs), so it is supplied as a file rather than via flags. Bootstrap one with " +
 			"'templates from-group' or by editing another template's --json output.",
 		ParamEnrich: common.DefaultParamEnricher(),
