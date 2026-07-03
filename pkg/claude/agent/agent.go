@@ -47,6 +47,7 @@ func Cmd() *cobra.Command {
 			templatesCmd(),
 			rolesCmd(),
 			taskForceCmd(),
+			processCmd(),
 			dashboardCmd(),
 		},
 	}.ToCobra()

@@ -87,14 +87,27 @@ type workPatternEntryJSON struct {
 	Value  string `json:"value"`
 }
 
+// processPhaseJSON mirrors the daemon's wire shape for one process phase
+// (JOH-242): an ordered chapter of the group's work. roles are matched
+// case-insensitively against a member's role ("all" = everyone); criteria is
+// free prose.
+type processPhaseJSON struct {
+	Name     string   `json:"name"`
+	Roles    []string `json:"roles"`
+	Criteria string   `json:"criteria,omitempty"`
+}
+
 type templateJSON struct {
 	Name           string                 `json:"name"`
 	Descr          string                 `json:"descr,omitempty"`
 	DefaultContext string                 `json:"default_context,omitempty"`
 	Agents         []templateAgentJSON    `json:"agents"`
 	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
-	CreatedAt      string                 `json:"created_at,omitempty"`
-	UpdatedAt      string                 `json:"updated_at,omitempty"`
+	// Process is the template's declarative process spec (JOH-242): an ordered
+	// list of phases. Empty/absent = no process.
+	Process   []processPhaseJSON `json:"process,omitempty"`
+	CreatedAt string             `json:"created_at,omitempty"`
+	UpdatedAt string             `json:"updated_at,omitempty"`
 }
 
 // templateExportEnvelope mirrors the daemon's portable export shape
@@ -269,6 +282,22 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "    %d. → %s\n", i+1, e.SendTo)
 			for _, line := range strings.Split(e.Value, "\n") {
 				fmt.Fprintf(stdout, "       │ %s\n", line)
+			}
+		}
+	}
+	if len(t.Process) > 0 {
+		fmt.Fprintf(stdout, "  process (%d phase%s, advisory — tracked, not enforced):\n",
+			len(t.Process), plural(len(t.Process)))
+		for i, ph := range t.Process {
+			roles := "(any)"
+			if len(ph.Roles) > 0 {
+				roles = strings.Join(ph.Roles, ", ")
+			}
+			fmt.Fprintf(stdout, "    %d. %s  [roles: %s]\n", i+1, ph.Name, roles)
+			if crit := strings.TrimSpace(ph.Criteria); crit != "" {
+				for _, line := range strings.Split(ph.Criteria, "\n") {
+					fmt.Fprintf(stdout, "       │ %s\n", line)
+				}
 			}
 		}
 	}
