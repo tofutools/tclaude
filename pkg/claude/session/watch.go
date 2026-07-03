@@ -278,9 +278,12 @@ func (m model) applySearchFilter() model {
 	return m
 }
 
-// sessionMatchesSearch checks if a session matches the search query
+// sessionMatchesSearch checks if a session matches the search query. The
+// tmux name is matched alongside the PK because it is what the ID column
+// renders (sessionHandle) — typing the name you see must filter to it.
 func sessionMatchesSearch(s *SessionState, query string) bool {
 	return strings.Contains(strings.ToLower(s.ID), query) ||
+		strings.Contains(strings.ToLower(s.TmuxSession), query) ||
 		strings.Contains(strings.ToLower(s.Cwd), query) ||
 		strings.Contains(strings.ToLower(s.Status), query) ||
 		strings.Contains(strings.ToLower(s.StatusDetail), query) ||
@@ -626,8 +629,12 @@ var (
 // Used by both Update (for sort key handling) and View (for rendering).
 func (m model) columns() []table.Column {
 	return []table.Column{
-		{Header: "", Width: 2},                   // Attached indicator
-		{Header: "ID", Width: 10, SortKey: "id"}, // ID
+		{Header: "", Width: 2}, // Attached indicator
+		// The ID column renders sessionHandle (the tmux name when set) — the
+		// same handle `session ls` prints and attach/kill accept. Flexible
+		// width because handles are no longer uniformly 8-10 chars: labels
+		// and dir-style names (session.tmux_name_style="dir") run up to 32.
+		{Header: "ID", MinWidth: 10, MaxWidth: 32, Weight: 0.12, Truncate: true, SortKey: "id"},
 		{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
 		{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},                                                    // Title/prompt (not sortable)
 		{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},                                      // Status
@@ -732,7 +739,7 @@ func (m model) View() tea.View {
 		updated := FormatDuration(time.Since(state.Updated))
 
 		tbl.AddRow(table.Row{
-			Cells: []string{attachedMark, state.ID, project, title, status, updated},
+			Cells: []string{attachedMark, sessionHandle(state), project, title, status, updated},
 			Style: getRowStyle(state.Status),
 		})
 	}
@@ -751,19 +758,19 @@ func (m model) View() tea.View {
 		b.WriteString(confirmStyle.Render("  Exit? [enter/y=yes / any key=cancel]"))
 	case confirmKill:
 		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", m.sessions[m.cursor].ID)))
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Kill session %s? [y/n]", sessionHandle(m.sessions[m.cursor]))))
 		}
 	case confirmAttachForce:
 		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", m.sessions[m.cursor].ID)))
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s already attached. Detach other clients? [y/n]", sessionHandle(m.sessions[m.cursor]))))
 		}
 	case confirmDetach:
 		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", m.sessions[m.cursor].ID)))
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Detach all clients from session %s? [y/n]", sessionHandle(m.sessions[m.cursor]))))
 		}
 	case confirmNoTmux:
 		if m.cursor < len(m.sessions) {
-			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", m.sessions[m.cursor].ID)))
+			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", sessionHandle(m.sessions[m.cursor]))))
 		}
 	default:
 		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • esc/q quit"))
