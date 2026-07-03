@@ -3675,6 +3675,20 @@ body.vegas:not(.slop):not(.wizard) .vegas-hint-regular { display: block; }
    with no dead space. :empty matches because stopMusic/replaceChildren
    leaves it with zero children. */
 #vegas-player:not(:empty) { margin-top: 16px; }
+/* "Brought to you by SomaFM" credit — the card footer that always names the
+   music's source (see the static markup in dashboard.html). Muted gold to sit
+   quietly under the player; the wizard block repaints it purple. */
+.vegas-credit {
+  margin-top: 16px;
+  color: #c9a86b;
+  font-size: 12px;
+}
+.vegas-credit a {
+  color: #ffe88c;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.5);
+  text-decoration: none;
+}
+.vegas-credit a:hover { color: #fff; border-bottom-color: #fff; }
 .vegas-nowplaying {
   margin-bottom: 14px;
   letter-spacing: 0.4px;
@@ -4708,6 +4722,9 @@ body.wizard .vegas-channel option,
 body.wizard .vegas-group option { color: #1a1330; background: #e7d9f5; }
 body.wizard .vegas-elapsed-line,
 body.wizard .vegas-hint { color: #b39ddb; }
+body.wizard .vegas-credit { color: #b39ddb; }
+body.wizard .vegas-credit a { color: #e7d9f5; border-bottom-color: rgba(231, 217, 245, 0.5); }
+body.wizard .vegas-credit a:hover { color: #fff; border-bottom-color: #fff; }
 
 /* Header HUD (sound switch + volume) shows in wizard mode; the 🪙 credits
    tally, 🔔 FX slider and high-rollers leaderboard are casino-FX-only (there

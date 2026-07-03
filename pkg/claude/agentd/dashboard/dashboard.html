@@ -996,6 +996,14 @@
       <p class="vegas-intro vegas-intro-vegas">🎰 Welcome to Vegas, baby. The house always wins — sit back and enjoy the soundtrack. 🎰</p>
       <p class="vegas-intro vegas-intro-wizard">🍺 Welcome to the Tavern, traveller. Rest by the fire, mind your coin purse, and let the bard play on. 🔮</p>
       <div id="vegas-player"></div>
+      <!-- Persistent SomaFM attribution: the radio streams SomaFM's
+           commercial-free, listener-supported channels (both the 🎰 Vegas
+           lounge and the 🧙 Tavern), so credit + link back to them. Static
+           markup rather than injected by vegas.js, so the music's origin
+           shows even when sound is muted and #vegas-player is empty — the
+           player chrome itself only surfaces a SomaFM link on a stream
+           error. Shared by both themes; the wizard block repaints it. -->
+      <p class="vegas-credit">🎵 Brought to you by <a href="https://somafm.com/" target="_blank" rel="noopener">SomaFM&nbsp;↗</a> — commercial-free, listener-supported radio.</p>
     </div>
     <!-- Hints, one shown per mode (CSS). slop: music tied to the 🎰 theme.
          wizard: music tied to the 🧙 theme. regular opt-in: a config setting
