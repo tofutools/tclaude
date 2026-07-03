@@ -113,6 +113,75 @@ func TestDashboardMorph_MailWired(t *testing.T) {
 	}
 }
 
+// TestDashboardMorph_SweepWired guards the coverage sweep (JOH-339 items 2–9):
+// the remaining recurring innerHTML sites that a re-poll (2s snapshot, or the
+// slower logs-stream / audit-repoll / costs-repoll ticks) rebuilt wholesale,
+// each now reconciled via morphInto so a selection survives its tick. Like the
+// guards above these pin the wiring by string-searching the embedded assets, so
+// a de-wiring (a morphInto reverted to an innerHTML swap, or a data-key dropped)
+// surfaces in `go test` instead of only in the browser.
+func TestDashboardMorph_SweepWired(t *testing.T) {
+	present := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — %s", needle, why)
+		}
+	}
+	gone := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets still carry the retired swap %q — %s", needle, why)
+		}
+	}
+
+	// Item 2 — Plugins tab list (plugins.js), keyed by plugin name (installed
+	// and catalog cards keep disjoint keyspaces).
+	present("morphInto($('#plugins-list'),", "Plugins tab morphs instead of innerHTML swap")
+	present(`data-key="plugin-${esc(p.name)}"`, "installed plugin cards carry a stable data-key")
+	present(`data-key="catalog-${esc(c.name)}"`, "catalog plugin cards carry a stable data-key")
+	gone("$('#plugins-list').innerHTML = html", "Plugins list innerHTML swap regressed")
+
+	// Item 3 — Templates management overlay list (modal-templates.js). The
+	// overlay is a .manage-overlay, deliberately not refresh-suspended, so it
+	// repaints while read; keyed by template name.
+	present("morphInto(host, list.map(templateCardHTML).join(''))", "Templates list morphs instead of innerHTML swap")
+	present(`data-key="${esc(t.name)}" data-template=`, "template cards carry a stable data-key")
+	gone("host.innerHTML = list.map(templateCardHTML).join('')", "Templates list innerHTML swap regressed")
+
+	// Item 4 — Logs tab table (logs.js). No stable per-line id (a burst can emit
+	// byte-identical lines), so rows are matched POSITIONALLY — a paged table,
+	// acceptable per the ticket. All three #logs-list writes route through morph.
+	present("morphInto($('#logs-list'),", "Logs list morphs instead of innerHTML swap")
+	gone("$('#logs-list').innerHTML", "Logs list innerHTML swap regressed")
+
+	// Item 5 — Audit tab table (audit.js), keyed by the append-only audit row id
+	// (unique per entry) so a fresh command at the top moves survivors intact.
+	present("morphInto($('#audit-list'),", "Audit list morphs instead of innerHTML swap")
+	present(`data-key="audit-${esc(String(e.id))}"`, "audit rows carry the row-id data-key")
+	gone("$('#audit-list').innerHTML", "Audit list innerHTML swap regressed")
+
+	// Item 6 — Costs breakdown table (costs.js). conv_id alone is NOT row-unique
+	// (a multi-day chain splits a conversation into one row per day), so the row
+	// key combines conv_id with the row's own day.
+	present("morphInto($('#costs-table'),", "Costs table morphs instead of innerHTML swap")
+	present(`data-key="cost-${esc(a.conv_id)}-${esc(a.day)}"`, "cost rows carry a (conv_id, day) data-key")
+
+	// Item 7 — Costs summary line (costs.js).
+	present("morphInto($('#costs-summary'),", "Costs summary morphs instead of innerHTML swap")
+	gone("$('#costs-summary').innerHTML", "Costs summary innerHTML swap regressed")
+
+	// Item 8 — Vegas high-rollers leaderboard (slop-credits.js), keyed by conv id
+	// so a rank shuffle moves the row intact.
+	present(`data-key="${esc(conv)}"`, "leaderboard rows carry the conv data-key (proves the morphed board)")
+
+	// Item 9 — #meta top-bar line (refresh.js): split into a stable URL span and
+	// a per-tick timestamp span so selecting the URL survives the poll.
+	present("morphInto($('#meta'),", "#meta morphs instead of a wholesale textContent write")
+	present(`<span class="meta-base">`, "#meta base URL lives in its own stable span")
+	present(`<span class="meta-time">`, "#meta timestamp lives in its own per-tick span")
+	gone("$('#meta').textContent = data.popup_base", "#meta wholesale textContent write regressed")
+}
+
 // TestDashboardMorph_AnimationStampsPreserved guards the fix for the eval
 // finding that activity-bot + wizard-orbit animations reset every tick under
 // morph. Under wholesale innerHTML the re-phasers (syncBotAnimations /

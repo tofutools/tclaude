@@ -402,7 +402,14 @@ export async function refresh() {
     // fresh DOM is in place.
     const focusToken = captureFocus();
     setLastSnapshot(data);
-    $('#meta').textContent = data.popup_base + ' · refreshed ' + new Date(data.generated_at).toLocaleTimeString();
+    // Split into a stable URL span (written once / only when the base changes)
+    // and a per-tick timestamp span, morphed in place. A single textContent
+    // write recreated the whole text node every 2s, so selecting the URL to
+    // copy it died on the next tick; now the URL span is isEqualNode-identical
+    // across ticks and skipped, so a selection anchored in it survives.
+    morphInto($('#meta'),
+      `<span class="meta-base">${esc(data.popup_base)}</span>`
+      + ` · refreshed <span class="meta-time">${esc(new Date(data.generated_at).toLocaleTimeString())}</span>`);
     // Refresh the proactive-grant blocklist hint from the snapshot
     // when present; falls back to the v1 hardcoded pair otherwise.
     // (Snapshot doesn't carry the resolved blocklist directly; the

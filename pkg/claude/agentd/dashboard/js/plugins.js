@@ -17,6 +17,7 @@
 // DISABLED plugin still has a stoppable step running.
 
 import { $, esc, relTime } from './helpers.js';
+import { morphInto } from './morph.js';
 // lastSnapshot lives in dashboard.js; refresh()/toast/confirmModal in
 // refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
@@ -150,7 +151,7 @@ function renderPluginCard(p) {
       </tr>`;
   }).join('');
   return `
-    <div class="plugin-card">
+    <div class="plugin-card" data-key="plugin-${esc(p.name)}">
       <div class="plugin-head">
         ${pluginLamp(p)}
         ${pluginStatusPill(p)}
@@ -177,7 +178,7 @@ function renderCatalog(catalog, installedNames) {
   const avail = (catalog || []).filter(c => !installedNames.has(c.name));
   if (!avail.length) return '';
   const cards = avail.map(c => `
-    <div class="plugin-card plugin-catalog-card">
+    <div class="plugin-card plugin-catalog-card" data-key="catalog-${esc(c.name)}">
       <div class="plugin-head">
         <span class="tag">catalog</span>
         <span class="rowname">${esc(c.name)}</span>
@@ -207,8 +208,8 @@ export function renderPluginsTab() {
   // A broken plugins.json arrives as plugins_error with an empty list —
   // show the real failure instead of pretending nothing is installed.
   if (lastSnapshot.plugins_error) {
-    $('#plugins-list').innerHTML =
-      `<div class="empty">⚠ plugin registry unreadable: <code>${esc(lastSnapshot.plugins_error)}</code> — fix or delete ~/.tclaude/plugins.json</div>`;
+    morphInto($('#plugins-list'),
+      `<div class="empty">⚠ plugin registry unreadable: <code>${esc(lastSnapshot.plugins_error)}</code> — fix or delete ~/.tclaude/plugins.json</div>`);
     $('#filter-plugins-count').textContent = '';
     return;
   }
@@ -226,7 +227,9 @@ export function renderPluginsTab() {
   }
   const shownCatalog = q ? catalog.filter(c => pluginMatches(c, q)) : catalog;
   html += renderCatalog(shownCatalog, installedNames);
-  $('#plugins-list').innerHTML = html;
+  // Morph rather than swap so a selection in a plugin-cmd / last-output cell
+  // survives the 2s tick (cards are keyed by name — see renderPluginCard).
+  morphInto($('#plugins-list'), html);
   $('#filter-plugins-count').textContent = q
     ? `${installed.length} / ${all.length}`
     : `${all.length} plugin${all.length === 1 ? '' : 's'}`;

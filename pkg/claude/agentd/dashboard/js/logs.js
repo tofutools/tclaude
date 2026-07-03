@@ -11,6 +11,7 @@
 // tick.
 
 import { $, esc, relTime } from './helpers.js';
+import { morphInto } from './morph.js';
 
 // View state. page/pageSize + the filters are sent to the server; total +
 // totalUnfiltered come back with each fetch and drive the pager + count.
@@ -89,14 +90,21 @@ function renderLogs() {
     : `${logs.total} line${logs.total === 1 ? '' : 's'}`;
 
   if (!rows.length) {
-    $('#logs-list').innerHTML = logs.totalUnfiltered
+    morphInto($('#logs-list'), logs.totalUnfiltered
       ? '<div class="empty">No log lines match the filter.</div>'
-      : '<div class="empty">No log lines yet. tclaude writes its daemon + CLI log to <code>~/.tclaude/output.log</code>.</div>';
+      : '<div class="empty">No log lines yet. tclaude writes its daemon + CLI log to <code>~/.tclaude/output.log</code>.</div>');
     renderPager();
     return;
   }
 
-  $('#logs-list').innerHTML = `
+  // Morph rather than swap so a selection in the copy-heavy log table survives
+  // a stream tail-follow tick. Rows are matched POSITIONALLY (no data-key): a
+  // log record carries no stable per-line id, and a content hash (time+msg) is
+  // unsafe — a burst can emit byte-identical lines at the same millisecond, and
+  // duplicate keys corrupt the reconciler. This is a paged table, so positional
+  // matching is acceptable (JOH-339); an idle tick with no new line still hits
+  // the isEqualNode fast path and preserves the selection intact.
+  morphInto($('#logs-list'), `
     <table class="logs-table">
       <thead><tr><th>When</th><th>Level</th><th>Message</th></tr></thead>
       <tbody>
@@ -113,7 +121,7 @@ function renderLogs() {
           </tr>`;
         }).join('')}
       </tbody>
-    </table>`;
+    </table>`);
   renderPager();
 }
 
@@ -191,8 +199,8 @@ async function loadLogs() {
     $('#filter-logs-count').textContent = '';
     $('#logs-status').textContent = '';
     $('#logs-pager').hidden = true;
-    $('#logs-list').innerHTML =
-      `<div class="empty">Failed to load logs: ${esc(e.message || e)}</div>`;
+    morphInto($('#logs-list'),
+      `<div class="empty">Failed to load logs: ${esc(e.message || e)}</div>`);
   }
 }
 
