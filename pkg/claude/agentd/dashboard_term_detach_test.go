@@ -24,7 +24,9 @@ func (d *detachRecTmux) ListSessions() (map[string]struct{}, error) {
 
 // TestDetachTmuxSession_IssuesDetachClient pins the reliable detach path: on
 // teardown the modal asks the tmux server to detach the session's clients by
-// name (`detach-client -s <session>`). This is what actually drops the web
+// name (`detach-client -s =<session>`, '='-pinned so a dead name can't
+// prefix-resolve onto a live namesake and detach the wrong session's
+// clients — see clcommon.ExactTarget). This is what actually drops the web
 // window's tmux client when the modal closes.
 func TestDetachTmuxSession_IssuesDetachClient(t *testing.T) {
 	rec := &detachRecTmux{}
@@ -37,7 +39,7 @@ func TestDetachTmuxSession_IssuesDetachClient(t *testing.T) {
 	if len(rec.calls) != 1 {
 		t.Fatalf("want exactly 1 tmux call, got %d: %v", len(rec.calls), rec.calls)
 	}
-	want := []string{"detach-client", "-s", "spwn-32d8e2"}
+	want := []string{"detach-client", "-s", "=spwn-32d8e2"}
 	if !slices.Equal(rec.calls[0], want) {
 		t.Errorf("detach argv = %v, want %v", rec.calls[0], want)
 	}

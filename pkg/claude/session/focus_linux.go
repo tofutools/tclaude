@@ -822,7 +822,7 @@ func focusLinuxTmuxSession(tmuxSession string) focusLinuxResult {
 	}
 
 	// Get the client TTY for this tmux session
-	cmd := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		slog.Debug(fmt.Sprintf("Failed to get tmux client tty: %v", err), "module", "focus")

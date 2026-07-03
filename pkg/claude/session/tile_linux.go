@@ -134,7 +134,7 @@ func tileNativeLinuxWindows(specs []TileSpec, opts TileOptions) {
 // session, or "" when none is attached. Same query focusLinuxTmuxSession
 // makes.
 func linuxTmuxClientTTY(tmuxSession string) string {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", tmuxSession, "-F", "#{client_tty}").Output()
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
 	if err != nil {
 		return ""
 	}

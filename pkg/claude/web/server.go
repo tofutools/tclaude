@@ -132,10 +132,10 @@ func handleWS(tmuxSession string) func(http.ResponseWriter, *http.Request) {
 
 		// Set window-size to latest so the most recently active client
 		// dictates the size - avoids dots filling the phone screen
-		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "window-size", "latest").Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "window-size", "latest").Run()
 
 		// Spawn tmux attach in a PTY
-		cmd := clcommon.TmuxCommand("attach-session", "-t", tmuxSession)
+		cmd := clcommon.TmuxCommand("attach-session", "-t", clcommon.ExactTarget(tmuxSession))
 		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 		ptmx, err := pty.Start(cmd)

@@ -19,9 +19,9 @@ func attachToSession(tmuxSession string) error {
 // If force is true, uses -d to detach other clients.
 // Runs tmux as a subprocess so we return when the user detaches.
 func attachToSessionWithFlags(tmuxSession string, force bool) error {
-	args := []string{"attach-session", "-t", tmuxSession}
+	args := []string{"attach-session", "-t", clcommon.ExactTarget(tmuxSession)}
 	if force {
-		args = []string{"attach-session", "-d", "-t", tmuxSession}
+		args = []string{"attach-session", "-d", "-t", clcommon.ExactTarget(tmuxSession)}
 	}
 
 	cmd := clcommon.TmuxCommand(args...)

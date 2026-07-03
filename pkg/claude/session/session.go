@@ -28,10 +28,18 @@ type SessionState struct {
 	PID           int       `json:"pid"`
 	Cwd           string    `json:"cwd"`
 	ConvID        string    `json:"convId,omitempty"`
-	Status        string    `json:"status"`
-	StatusDetail  string    `json:"statusDetail,omitempty"`
-	SubagentCount int       `json:"subagentCount"`
-	Created       time.Time `json:"created"`
+	Status       string `json:"status"`
+	StatusDetail string `json:"statusDetail,omitempty"`
+	// SubagentCount is a derived cache of Subagents (recomputed by the
+	// hook callback on every state-changing hook). Kept for read surfaces
+	// that only need the raw figure; TTL-aware readers should use
+	// Subagents.LiveCount instead.
+	SubagentCount int `json:"subagentCount"`
+	// Subagents is the ledger of sub-agents believed to be running under
+	// this session, keyed by agent_id — see db.SubagentSet for the full
+	// self-healing story (why not a bare counter).
+	Subagents db.SubagentSet `json:"subagents,omitempty"`
+	Created   time.Time      `json:"created"`
 	Updated       time.Time `json:"updated"`
 	LastHook      time.Time `json:"lastHook"`
 	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
@@ -147,6 +155,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		Status:        s.Status,
 		StatusDetail:  s.StatusDetail,
 		SubagentCount: s.SubagentCount,
+		SubagentsJSON: s.Subagents.Encode(),
 		CreatedAt:     s.Created,
 		UpdatedAt:     s.Updated,
 		LastHook:      s.LastHook,
@@ -166,6 +175,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Status:        r.Status,
 		StatusDetail:  r.StatusDetail,
 		SubagentCount: r.SubagentCount,
+		Subagents:     db.ParseSubagentSet(r.SubagentsJSON),
 		Created:       r.CreatedAt,
 		Updated:       r.UpdatedAt,
 		LastHook:      r.LastHook,
@@ -238,9 +248,12 @@ func MaxUpdatedAt() (time.Time, error) {
 	return db.MaxUpdatedAt()
 }
 
-// IsTmuxSessionAlive checks if a tmux session exists
+// IsTmuxSessionAlive checks if a tmux session exists. The probe is
+// exact-name (see clcommon.ExactTarget): a bare -t would prefix-match a
+// live "-N" namesake and report a dead name as alive, which upstream turns
+// into wrong-session attaches and kills.
 func IsTmuxSessionAlive(sessionName string) bool {
-	cmd := clcommon.TmuxCommand("has-session", "-t", sessionName)
+	cmd := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
 	return cmd.Run() == nil
 }
 
@@ -258,7 +271,7 @@ func LiveTmuxSessions() (map[string]struct{}, error) {
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {
-	cmd := clcommon.TmuxCommand("display-message", "-t", sessionName, "-p", "#{session_attached}")
+	cmd := clcommon.TmuxCommand("display-message", "-t", clcommon.ExactTarget(sessionName)+":", "-p", "#{session_attached}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -279,7 +292,7 @@ func IsTmuxSessionAttached(sessionName string) bool {
 // session had no window open: a clean no-op.
 func DetachSessionClients(sessionName string) (int, error) {
 	// Get list of clients attached to this session
-	cmd := clcommon.TmuxCommand("list-clients", "-t", sessionName, "-F", "#{client_tty}")
+	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(sessionName), "-F", "#{client_tty}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, err
@@ -321,27 +334,14 @@ func GenerateSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// ShortTmuxBase returns the short, human-facing base for a session's tmux
-// name: an explicit label verbatim, else the first 8 chars of the (full)
-// session id. The tmux name is where the id is deliberately rendered short;
-// the stored PK keeps the full identity (JOH-248). Exported so the conv-resume
-// paths share one definition with `session new`.
-func ShortTmuxBase(sessionID, label string) string {
-	if label != "" {
-		return label
-	}
-	if len(sessionID) > 8 {
-		return sessionID[:8]
-	}
-	return sessionID
-}
-
 // UniqueTmuxSessionName keeps the short tmux name unique among live tmux
-// sessions. tmux requires unique session names and two resumed conversations
-// can share an 8-char prefix, so a taken base falls back to a -N suffix.
-// "Short if possible": the bare base is used whenever it is free. (Best-effort:
-// a racing creator between this check and `tmux new-session` just makes that
-// spawn fail with a duplicate-name error — no corruption.)
+// sessions. tmux requires unique session names; two resumed conversations
+// can share an 8-char prefix, and dir-style names (see TmuxNameBase) share
+// a base whenever two sessions launch from the same directory — a taken
+// base falls back to a -N suffix. "Short if possible": the bare base is
+// used whenever it is free. (Best-effort: a racing creator between this
+// check and `tmux new-session` just makes that spawn fail with a
+// duplicate-name error — no corruption.)
 func UniqueTmuxSessionName(base string) string {
 	if base == "" || !IsTmuxSessionAlive(base) {
 		return base
@@ -436,6 +436,17 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
+// MarkStateExited flips an in-memory state to exited and clears the
+// sub-agent ledger — sub-agents run inside the (now dead) harness
+// process, so none can survive it. Mirrors what the hook callback's
+// SessionEnd arm and the reaper's MarkSessionExitedIfUnchanged do; the
+// caller persists via SaveSessionState when needed.
+func MarkStateExited(state *SessionState) {
+	state.Status = StatusExited
+	state.Subagents = nil
+	state.SubagentCount = 0
+}
+
 // RefreshSessionStatus updates the session status based on actual state
 func RefreshSessionStatus(state *SessionState) {
 	// For tmux-backed sessions, check if tmux session is alive
@@ -452,14 +463,14 @@ func RefreshSessionStatus(state *SessionState) {
 	// sessions where tmux died but the process is still running)
 	if state.PID > 0 {
 		if !IsProcessAlive(state.PID) {
-			state.Status = StatusExited
+			MarkStateExited(state)
 		}
 		// If PID is alive, keep the current status (updated by hooks)
 		return
 	}
 
 	// No tmux session and no PID - mark as exited
-	state.Status = StatusExited
+	MarkStateExited(state)
 }
 
 // ShortID returns the first 8 characters of an ID for display
@@ -488,7 +499,7 @@ func ShortenPath(path string, maxLen int) string {
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session
 func ParsePIDFromTmux(sessionName string) int {
-	cmd := clcommon.TmuxCommand("list-panes", "-t", sessionName, "-F", "#{pane_pid}")
+	cmd := clcommon.TmuxCommand("list-panes", "-t", clcommon.ExactTarget(sessionName)+":", "-F", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

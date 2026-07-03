@@ -25,5 +25,5 @@ func ConfigureTmuxScrollback(tmuxSession string, h *harness.Harness) {
 	if !h.WantsTmuxScrollback() {
 		return
 	}
-	_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "mouse", "on").Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "mouse", "on").Run()
 }

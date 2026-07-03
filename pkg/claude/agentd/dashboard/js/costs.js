@@ -9,6 +9,7 @@
 // visible — cost history doesn't move on the 2s snapshot cadence.
 
 import { $, $$, esc, shortAgentId, idTooltip } from './helpers.js';
+import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 // lastSnapshot lives in dashboard.js — imported back for its cost_tab_whatif
 // flag (whether the tab is in WHAT-IF mode). Same deliberate, benign cycle
@@ -399,7 +400,9 @@ function renderSummary(data, proj, span) {
       + `${label}: <strong>~${esc(fmtUSD(proj.total))}</strong>`
       + ` <span class="muted">(${esc(fmtUSD(proj.perDay))}/${unit})</span></span>`);
   }
-  $('#costs-summary').innerHTML = bits.join('<span class="cost-sep">·</span>');
+  // Morph rather than swap so the copyable total / projection figures survive
+  // the ~60s re-poll tick.
+  morphInto($('#costs-summary'), bits.join('<span class="cost-sep">·</span>'));
 }
 
 // recencyKey mirrors the server's costRowRecencyKey: the precise
@@ -506,7 +509,7 @@ function renderTable(data) {
   if (countEl) countEl.textContent = filtered ? `${shownConvs} / ${nAgents}` : '';
 
   if (!visible.length) {
-    $('#costs-table').innerHTML = '<div class="empty">No agents match the filter.</div>';
+    morphInto($('#costs-table'), '<div class="empty">No agents match the filter.</div>');
     return;
   }
 
@@ -515,7 +518,13 @@ function renderTable(data) {
   // unfiltered it uses the response total so it agrees with the chart to
   // the cent rather than drifting on floating-point summation.
   const footTotal = filtered ? visible.reduce((s, a) => s + (a.cost_usd || 0), 0) : data.total_usd;
-  $('#costs-table').innerHTML = `
+  // Morph rather than swap so the copyable cost figures / agent ids survive the
+  // ~60s re-poll (and a header-click re-sort). Each row is keyed by (conv_id,
+  // day): conv_id ALONE is not row-unique — a multi-day chain splits one
+  // conversation into one row per day (see the header comment) — so the row's
+  // own `day` is combined in to make the key unique. The total footer row stays
+  // unkeyed (positional, always last).
+  morphInto($('#costs-table'), `
     <table>
       <thead>${costHeaderHTML()}</thead>
       <tbody>
@@ -530,7 +539,7 @@ function renderTable(data) {
               ? `<span class="cost-head" title="Latest day of an agent active across ${sliceCount[a.conv_id]} days — hover to highlight all of them">↳</span> `
               : '';
           return `
-          <tr${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
+          <tr data-key="cost-${esc(a.conv_id)}-${esc(a.day)}"${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
             <td title="${esc(a.title || '(unknown)')}">${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
@@ -544,7 +553,7 @@ function renderTable(data) {
           <td></td>
         </tr>
       </tbody>
-    </table>`;
+    </table>`);
 }
 
 // bindCostsChainHover ties together the rows of a multi-day chain:

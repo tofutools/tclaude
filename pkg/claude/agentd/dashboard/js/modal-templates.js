@@ -5,6 +5,7 @@
 // modal. Extracted from dashboard.js in the Stage 2 module split.
 
 import { $, $$, esc } from './helpers.js';
+import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
 // wizWord swaps the template vocabulary for 🧙 wizard mode: a template is a
@@ -54,15 +55,18 @@ function renderTemplatesTab() {
   const countEl = $('#filter-templates-count');
   if (countEl) countEl.textContent = q ? `${list.length} / ${all.length}` : `${all.length}`;
   const host = $('#templates-list');
+  // Morph rather than swap: the overlay repaints every 2s while the user reads
+  // it (a .manage-overlay is deliberately not refresh-suspended), so a plain
+  // innerHTML swap would wipe a selection each tick. Cards are keyed by name.
   if (!list.length) {
-    host.innerHTML = `<div class="template-empty">${all.length
+    morphInto(host, `<div class="template-empty">${all.length
       ? wizWord('No templates match the filter.', 'No circles match the filter.')
       : wizWord(
         'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.',
-        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, or <b>⤓ trace a party</b> to copy an existing party’s shape.')}</div>`;
+        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, or <b>⤓ trace a party</b> to copy an existing party’s shape.')}</div>`);
     return;
   }
-  host.innerHTML = list.map(templateCardHTML).join('');
+  morphInto(host, list.map(templateCardHTML).join(''));
 }
 
 // ---- Templates… management overlay ------------------------------------
@@ -91,7 +95,7 @@ function templateCardHTML(t) {
     return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
   }).join('');
   const n = (t.agents || []).length;
-  return `<div class="template-card" data-template="${esc(t.name)}">
+  return `<div class="template-card" data-key="${esc(t.name)}" data-template="${esc(t.name)}">
     <div class="tc-head">
       <span class="tc-name">${esc(t.name)}</span>
       ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}

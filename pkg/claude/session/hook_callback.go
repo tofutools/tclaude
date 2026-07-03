@@ -338,7 +338,7 @@ func restoreClearedTitle(tmuxSession, title string) {
 			"tmux", tmuxSession, "module", "hooks")
 		return
 	}
-	target := tmuxSession + ":0.0"
+	target := clcommon.ExactTarget(tmuxSession) + ":0.0"
 	if err := clcommon.TmuxCommand("send-keys", "-t", target, "/rename "+title).Run(); err != nil {
 		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
 			"error", err, "module", "hooks")
@@ -575,6 +575,68 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	state.LastHook = time.Now()
 
+	// ---- Sub-agent ledger (db.SubagentSet) ----
+	// The hook stream is LOSSY: Claude Code fires no hooks at all on a
+	// user interrupt (anthropics/claude-code#11189) and SubagentStop has
+	// no documented guarantee for aborts/errors/process death — so the
+	// ledger, not the event stream, is what the "🤖+N" badge trusts.
+	// Sweep expired entries first (self-healing for a lost SubagentStop),
+	// then apply this event's evidence: Start/Stop maintain the set, and
+	// any OTHER hook carrying agent_id proves that sub-agent is alive —
+	// Sight() re-adds one whose SubagentStart was lost.
+	state.Subagents.Sweep(state.LastHook)
+	switch {
+	case input.HookEventName == "SubagentStart":
+		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
+	case input.HookEventName == "SubagentStop":
+		state.Subagents.Remove(input.AgentID)
+	case input.AgentID != "" && input.HookEventName == "SessionEnd":
+		// A sub-agent's own conversation ending is as good as a
+		// SubagentStop for the ledger (the main-thread status handling
+		// of this event stays in the big switch below).
+		state.Subagents.Remove(input.AgentID)
+	case input.AgentID != "":
+		state.Subagents = state.Subagents.Sight(input.AgentID, input.AgentType, state.LastHook)
+	}
+
+	// Hooks fired from INSIDE a sub-agent (agent_id set) must not drive
+	// the main thread's status machine: before this gate, a background
+	// sub-agent's PreToolUse flipped an idle parent to "working" — and
+	// the SubagentStop idle-fallback below only fires from
+	// main_agent_idle, so the parent stayed wedged at "working" after
+	// the sub-agent finished. Exceptions that DO fall through to the
+	// status switch:
+	//   - SubagentStart/SubagentStop — their arms below handle the main
+	//     status transitions around sub-agent lifecycle;
+	//   - PermissionRequest / Notification — a sub-agent's permission
+	//     prompt surfaces on the parent (Claude Code parks the prompt in
+	//     the parent's UI), so awaiting_permission must still be set.
+	if input.AgentID != "" {
+		switch input.HookEventName {
+		case "SubagentStart", "SubagentStop", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
+			// fall through to the status switch below
+		default:
+			// A sub-agent acting again while the parent shows awaiting_*
+			// is exactly the evidence that the prompt (parked on the
+			// parent) was answered — but the resolved state must be
+			// main_agent_idle, NOT "working" via the tool arms: only
+			// main_agent_idle is a state the SubagentStop settle below
+			// can take back to idle, so painting "working" here wedged
+			// the parent at "working: <tool>" forever once the sub-agent
+			// finished (found by cold review — the gate's original
+			// awaiting fall-through re-created the very wedge the gate
+			// exists to fix). If the parent's own turn is genuinely in
+			// flight (a foreground Task), its next main-thread hook
+			// repaints "working"; both states style as busy either way.
+			if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
+				state.Status = StatusMainAgentIdle
+				state.StatusDetail = fmt.Sprintf("%d subagents running", len(state.Subagents))
+			}
+			state.SubagentCount = len(state.Subagents)
+			return SaveSessionState(state)
+		}
+	}
+
 	// Update state based on hook event. This switch is tclaude's
 	// cross-harness event→status map. Claude Code and Codex deliver the
 	// same snake_case payload field names through the same
@@ -630,26 +692,23 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 
 	case "SubagentStart":
-		state.SubagentCount += 1
+		// Ledger already updated above; no main-status transition.
 
 	case "SubagentStop":
-		if state.SubagentCount > 0 {
-			state.SubagentCount -= 1
-		}
-		if state.SubagentCount == 0 && state.Status == StatusMainAgentIdle {
+		if len(state.Subagents) == 0 && state.Status == StatusMainAgentIdle {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 			stopped = true
 		}
 
 	case "Stop":
-		if state.SubagentCount < 1 {
+		if len(state.Subagents) == 0 {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 			stopped = true
 		} else {
 			state.Status = StatusMainAgentIdle
-			state.StatusDetail = fmt.Sprintf("%d subagents running", state.SubagentCount)
+			state.StatusDetail = fmt.Sprintf("%d subagents running", len(state.Subagents))
 		}
 
 	case "StopFailure":
@@ -690,14 +749,22 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// documented discriminator). It is not the main conversation
 		// (re)starting — flipping a working session to idle here, or
 		// clearing a recorded exit reason, would misreport the main
-		// thread's state.
+		// thread's state. It IS live evidence of the sub-agent though
+		// (the ledger block Sighted it above), so persist the full state,
+		// not just last_hook.
 		if input.AgentID != "" {
-			if err := db.UpdateSessionLastHook(state.ID, time.Now()); err != nil {
-				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-			}
-			return nil
+			state.SubagentCount = len(state.Subagents)
+			return SaveSessionState(state)
 		}
-		// Session started or resumed - update ConvID and set to idle
+		// Session started or resumed - update ConvID and set to idle.
+		// A (re)starting main thread definitionally has NO sub-agents
+		// running yet — this is a known-zero boundary for the ledger, and
+		// the reset is what clears phantoms left by lost SubagentStops
+		// (e.g. sub-agents that died with a previous process). A /clear
+		// or /resume transition lands here too; a background sub-agent
+		// that somehow survives one re-adds itself via Sight() on its
+		// next hook.
+		state.Subagents = nil
 		state.Status = StatusIdle
 		state.StatusDetail = ""
 		// The conversation is alive again — drop any exit_reason a
@@ -725,12 +792,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// subagent (the docs call agent_id THE discriminator for
 		// "subagent hook call vs main-thread call") — whatever ended
 		// there, it was not the main process, so it must not flip this
-		// session to exited or fire an "Exited" notification.
+		// session to exited or fire an "Exited" notification. It does
+		// mean that sub-agent is gone (the ledger block Removed it
+		// above), so persist the full state, not just last_hook.
 		if input.AgentID != "" {
-			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
-				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-			}
-			return nil
+			state.SubagentCount = len(state.Subagents)
+			return SaveSessionState(state)
 		}
 		if !sessionEndIsExit(input.Reason) {
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
@@ -738,6 +805,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			}
 			return nil
 		}
+		// The process is going away — sub-agents run inside it, so none
+		// can survive. Known-zero boundary, same as the reaper's
+		// MarkSessionExitedIfUnchanged.
+		state.Subagents = nil
 		state.Status = StatusExited
 		state.StatusDetail = ""
 		// Record the graceful-exit reason (logout / prompt_input_exit /
@@ -796,7 +867,14 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 		default:
-			// Unknown notification type - log but don't update status
+			// Unknown notification type - log but don't update status.
+			// One from inside a sub-agent still Sighted the ledger above,
+			// so persist the full state for it; a last_hook-only write
+			// would silently drop that mutation.
+			if input.AgentID != "" {
+				state.SubagentCount = len(state.Subagents)
+				return SaveSessionState(state)
+			}
 			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
 				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
 			}
@@ -810,6 +888,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 		return nil
 	}
+
+	// subagent_count is a derived cache of the ledger — recompute after
+	// every arm so no code path can drift the two apart.
+	state.SubagentCount = len(state.Subagents)
 
 	if stopped && harnessUsesSlashContextControls(state.Harness) {
 		// The context nudge injects a hint that names `/reincarnate` into
@@ -1549,12 +1631,12 @@ func handleContextNudge(input HookCallbackInput, sessionID string) {
 	// cron scheduler uses for solo targets. Best-effort: a failed
 	// send leaves nudged_pct unchanged so we'll retry on the next
 	// Stop hook.
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, msg).Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", msg).Run(); err != nil {
 		slog.Warn("context-nudge: send-keys failed",
 			"error", err, "module", "hooks")
 		return
 	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxSession, "Enter").Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", "Enter").Run(); err != nil {
 		slog.Warn("context-nudge: submit failed",
 			"error", err, "module", "hooks")
 		return

@@ -1355,15 +1355,21 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	mu := paneInjectLock(tmuxTarget)
 	mu.Lock()
 	defer mu.Unlock()
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, text).Run(); err != nil {
+	// Exact-match the session part of the target (clcommon.ExactTarget):
+	// callers pass raw "name" / "name:0.0" targets, and a bare -t would
+	// prefix-match a live namesake pane if the target dies between the
+	// caller's liveness check and this send — landing the keystrokes in the
+	// wrong agent's prompt. Lock keys stay on the raw target.
+	target := clcommon.ExactTarget(tmuxTarget)
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, text).Run(); err != nil {
 		return fmt.Errorf("send-keys text: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		return fmt.Errorf("send-keys submit: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	_ = clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run()
+	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 	return nil
 }
 
@@ -1395,11 +1401,13 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 	mu := paneInjectLock(tmuxTarget)
 	mu.Lock()
 	defer mu.Unlock()
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, toggle).Run(); err != nil {
+	// Exact-match the session part — same reasoning as injectTextAndSubmit.
+	target := clcommon.ExactTarget(tmuxTarget)
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, toggle).Run(); err != nil {
 		return fmt.Errorf("send-keys toggle: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
-	if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, "Enter").Run(); err != nil {
+	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
 		return fmt.Errorf("send-keys submit: %w", err)
 	}
 	// Let the confirm menu render before moving its highlight.
@@ -1408,7 +1416,7 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 		if i > 0 {
 			time.Sleep(stepDelay)
 		}
-		if err := clcommon.TmuxCommand("send-keys", "-t", tmuxTarget, key).Run(); err != nil {
+		if err := clcommon.TmuxCommand("send-keys", "-t", target, key).Run(); err != nil {
 			return fmt.Errorf("send-keys menu key %q: %w", key, err)
 		}
 	}

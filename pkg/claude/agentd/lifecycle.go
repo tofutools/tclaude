@@ -102,7 +102,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	}
 	res.TmuxSes = sess.TmuxSession
 	if force {
-		if err := clcommon.TmuxCommand("kill-session", "-t", sess.TmuxSession).Run(); err != nil {
+		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
 			res.Action = "error"
 			res.Detail = "kill-session: " + err.Error()
 		} else {
@@ -136,7 +136,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	}
 	// No soft-exit command for this harness → hard kill so the pane never
 	// lingers because we couldn't type a graceful exit.
-	if err := clcommon.TmuxCommand("kill-session", "-t", sess.TmuxSession).Run(); err != nil {
+	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
 		res.Action = "error"
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
 	} else {
@@ -241,7 +241,7 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 // signal the soft-exit retry needs to avoid re-injecting into a resumed
 // pane that reused the tmux name.
 func livePanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", tmuxSession, "#{pane_pid}").Output()
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_pid}").Output()
 	if err != nil {
 		return 0
 	}

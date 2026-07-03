@@ -20,6 +20,7 @@ import {
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
 import { sortGroupsByPref } from './group-reorder.js';
+import { morphInto } from './morph.js';
 
 // lastSnapshot still lives in dashboard.js — the snapshot-refresh
 // cluster is not extracted yet. Importing it back forms a deliberate,
@@ -119,13 +120,22 @@ function renderGroupsTab() {
     list.push(virtualReplacedGroup(lastSnapshot.replaced || [], lastSnapshot.paging?.replaced));
   }
   const filtered = filterGroups(list, q);
-  $('#groups-list').innerHTML = renderGroups(filtered);
-  // Re-phase the activity-bot animations to wall-clock so this wholesale
-  // innerHTML swap (every 2s poll, plus filter/sort/drag) doesn't restart
-  // them with a visible jump. See helpers.syncBotAnimations.
+  // morphInto reconciles the fresh HTML against the live DOM instead of
+  // replacing it wholesale, so a text selection / hover / open <details> /
+  // scroll position under #groups-list survives the 2s poll (that's the
+  // copy-paste fix). The stable #groups-list container is never replaced, so
+  // its delegated listeners (bindGroupQuickHover, bindDnd, …) stay bound.
+  morphInto($('#groups-list'), renderGroups(filtered));
+  // Phase activity-bot animations to wall-clock. Under morph the bot nodes
+  // PERSIST (their stamp preserved by morphAttributes), so these helpers re-stamp
+  // only on a genuine (re)start — a newly-inserted agent, or a status change that
+  // swaps the animation to a different period — and leave a stable, still-running
+  // bot alone (re-stamping it would shift its phase and jump it every tick). See
+  // helpers.js. NOT the old removable band-aid: under morph they are REQUIRED, in
+  // reworked form, to keep the animations continuous and in lock-step.
   syncBotAnimations();
-  // Same for the wizard "Channeling" pill's orbiting mote — otherwise the
-  // light teleports back to its start on every poll. See syncWizardOrbit.
+  // Same wall-clock phasing for the wizard "Channeling" pill's orbiting mote.
+  // See syncWizardOrbit.
   syncWizardOrbit();
   // The count reflects real groups only — the virtual group is a
   // derived bucket, not a group the human created.
@@ -287,7 +297,7 @@ function renderJobs(rows, paging) {
       ${sortHead('jobs', JOBS_COLS)}
       <tbody>
         ${applySort('jobs', rows, JOBS_ACCESSORS).map(r =>
-          `<tr>${r.kind === 'cron' ? cronJobRowCells(r.cron || {}) : exportJobRowCells(r.export || {})}</tr>`
+          `<tr data-key="${esc(r.kind + '-' + ((r.cron || r.export || {}).id ?? ''))}">${r.kind === 'cron' ? cronJobRowCells(r.cron || {}) : exportJobRowCells(r.export || {})}</tr>`
         ).join('')}
       </tbody>
     </table>
@@ -303,7 +313,7 @@ function renderJobsTab() {
   if (!lastSnapshot) return;
   const rows = lastSnapshot.jobs || [];
   const paging = (lastSnapshot.paging || {}).jobs;
-  $('#jobs-list').innerHTML = renderJobs(rows, paging);
+  morphInto($('#jobs-list'), renderJobs(rows, paging));
   const q = $('#filter-jobs').value;
   const total = paging ? (paging.total || 0) : rows.length;
   const totalAll = paging ? (paging.total_unfiltered || 0) : rows.length;
@@ -349,7 +359,7 @@ function renderSudo(rows) {
       ${sortHead('sudo', SUDO_COLS)}
       <tbody>
         ${applySort('sudo', rows, SUDO_ACCESSORS).map(r => `
-          <tr>
+          <tr data-key="sudo-${esc(String(r.id))}">
             <td>
               <span class="rowname">${esc(r.conv_title || '(unknown)')}</span>
               <span class="id" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>
@@ -371,7 +381,7 @@ function renderSudoTab() {
   const q = $('#filter-sudo').value;
   const rows = lastSnapshot.sudo || [];
   const filtered = filterSudo(rows, q);
-  $('#sudo-list').innerHTML = renderSudo(filtered);
+  morphInto($('#sudo-list'), renderSudo(filtered));
   $('#filter-sudo-count').textContent = q
     ? `${filtered.length} / ${rows.length}`
     : `${rows.length} active grant${rows.length === 1 ? '' : 's'}`;
@@ -391,7 +401,7 @@ function renderLinks(rows) {
       ${sortHead('links', LINK_COLS)}
       <tbody>
         ${applySort('links', rows, LINK_ACCESSORS).map(l => `
-          <tr>
+          <tr data-key="link-${esc(String(l.id))}">
             <td class="id">${l.id}</td>
             <td><span class="rowname">${esc(l.from || '(deleted)')}</span></td>
             <td class="muted">→</td>
@@ -422,7 +432,7 @@ function renderLinksTab() {
   const q = $('#filter-links').value;
   const rows = lastSnapshot.links || [];
   const filtered = filterLinks(rows, q);
-  $('#links-list').innerHTML = renderLinks(filtered);
+  morphInto($('#links-list'), renderLinks(filtered));
   $('#filter-links-count').textContent = q
     ? `${filtered.length} / ${rows.length}`
     : `${rows.length} link${rows.length === 1 ? '' : 's'}`;

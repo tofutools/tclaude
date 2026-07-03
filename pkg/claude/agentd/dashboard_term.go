@@ -240,7 +240,7 @@ func detachTmuxSession(tmuxSession string) {
 	if tmuxSession == "" {
 		return
 	}
-	_ = clcommon.TmuxCommand("detach-client", "-s", tmuxSession).Run()
+	_ = clcommon.TmuxCommand("detach-client", "-s", clcommon.ExactTarget(tmuxSession)).Run()
 }
 
 // hangupProcessGroup sends SIGHUP to the whole process group led by proc, not

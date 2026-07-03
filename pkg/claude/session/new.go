@@ -505,7 +505,7 @@ func runNew(params *NewParams) error {
 	// The tmux session name is the short, human-facing handle (tmux status
 	// line, `session ls`, attach target). Render it short here while the PK
 	// stays full, and keep it unique among live tmux sessions.
-	tmuxSession := UniqueTmuxSessionName(ShortTmuxBase(sessionID, params.Label))
+	tmuxSession := UniqueTmuxSessionName(TmuxNameBase(sessionID, params.Label, cwd))
 
 	if params.WaitForRateLimit {
 		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {
@@ -623,8 +623,8 @@ func runNew(params *NewParams) error {
 	// leaves the terminal's own title alone, at the cost of title-based
 	// window focus/tiling on WSL + native-Linux/X11.
 	if windowTitleEnabledFn() {
-		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles", "on").Run()
-		_ = clcommon.TmuxCommand("set-option", "-t", tmuxSession, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 	}
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness
