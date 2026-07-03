@@ -36,9 +36,13 @@ func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	// modal-human-reply.js: the dialog module, its online gate, and the POST.
 	must("export { openHumanReplyModal, bindHumanReplyModal }", "the reply modal module exports its entrypoints")
 	must("function syncReplyOnline(", "the dialog re-derives the sender's live/offline state")
-	must("senderOnline(replyCtx.agent, replyCtx.conv)", "the dialog gates Send on the sender being online")
+	must("senderOnline(replyCtx.agent, replyCtx.conv, replyCtx.snap)", "the dialog gates Send on the sender being online, from its own fresh snapshot")
 	must("'/api/human-messages/reply'", "the dialog POSTs to the reply endpoint")
-	must("tclaude:snapshot", "the dialog re-syncs online state on each snapshot tick")
+	// The dialog polls the snapshot itself while open (the main refresh is
+	// suspended by the open modal), so the online indicator stays live.
+	must("function pollReplyOnline(", "the dialog polls liveness while open")
+	must("'/api/snapshot'", "the dialog polls the snapshot endpoint for fresh liveness")
+	must(`code === 'offline'`, "the dialog trusts the server's offline verdict on a 409")
 
 	// dashboard.js: the module is bound at init.
 	must("bindHumanReplyModal();", "the reply modal is bound at dashboard init")

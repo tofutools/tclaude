@@ -209,11 +209,14 @@ function mailTabActive() {
 }
 
 // onlineConvs is the set of conv-ids with a live tmux window — focus is
-// only meaningful for those. Cross-referenced from the snapshot already
-// in memory, so no extra round-trip.
-function onlineConvs() {
+// only meaningful for those. Reads the passed snapshot, defaulting to the
+// one already in memory (lastSnapshot), so callers that hold a FRESHER
+// snapshot than lastSnapshot — e.g. the reply dialog, which polls while a
+// modal suspends the main refresh — can pass it in and get current
+// liveness without a global write.
+function onlineConvs(snap) {
   const set = new Set();
-  const snap = lastSnapshot || {};
+  snap = snap || lastSnapshot || {};
   (snap.agents || []).concat(snap.ungrouped || [])
     .forEach(a => { if (a && a.online) set.add(a.conv_id); });
   return set;
@@ -225,27 +228,28 @@ function onlineConvs() {
 // conv_id (the snapshot in from_conv) points at a now-dead generation, so
 // liveness must be checked against the actor, not the stale conv. Rows
 // without an agent_id (e.g. ungrouped raw convs) simply don't contribute.
-function onlineAgents() {
+function onlineAgents(snap) {
   const set = new Set();
-  const snap = lastSnapshot || {};
+  snap = snap || lastSnapshot || {};
   (snap.agents || []).concat(snap.ungrouped || [])
     .forEach(a => { if (a && a.online && a.agent_id) set.add(a.agent_id); });
   return set;
 }
 
 // senderOnline reports whether the party that sent a human-folder message
-// has a live tmux window right now, keyed the SAME way humanFocusButton
-// picks its focus target: lead with the rotation-immune agent_id (valid
-// across reincarnation) and fall back to the from_conv snapshot when the
-// sender never became an actor. Exported so the reply dialog gates on the
+// has a live tmux window, keyed the SAME way humanFocusButton picks its
+// focus target: lead with the rotation-immune agent_id (valid across
+// reincarnation) and fall back to the from_conv snapshot when the sender
+// never became an actor. Exported so the reply dialog gates on the
 // identical liveness signal the focus/reply buttons render from — one
-// source of truth for "can this agent receive a reply". Recomputed from
-// the live snapshot on each call, so a dialog left open tracks the agent
-// going offline between the 2s ticks.
-function senderOnline(fromAgent, fromConv) {
+// source of truth for "can this agent receive a reply". `snap` defaults to
+// lastSnapshot; the reply dialog passes its own freshly-polled snapshot so
+// its indicator stays live even while the open modal suspends the main
+// refresh (which would otherwise freeze lastSnapshot at open time).
+function senderOnline(fromAgent, fromConv, snap) {
   return fromAgent
-    ? onlineAgents().has(fromAgent)
-    : onlineConvs().has(fromConv);
+    ? onlineAgents(snap).has(fromAgent)
+    : onlineConvs(snap).has(fromConv);
 }
 
 // prevGenConvSet is the set of conv-ids that are PREDECESSOR (replaced)
