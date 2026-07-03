@@ -378,9 +378,13 @@ func replySubjectFor(orig string) string {
 	if orig == "" {
 		return "Reply from the human operator"
 	}
+	// Bound the echoed subject. Truncate on a RUNE boundary — a byte slice
+	// could split a multi-byte character and leave invalid UTF-8 in the
+	// subject (the original is capped in bytes, so a long unicode subject
+	// can reach here).
 	const maxRe = 200
-	if len(orig) > maxRe {
-		orig = orig[:maxRe] + "…"
+	if r := []rune(orig); len(r) > maxRe {
+		orig = string(r[:maxRe]) + "…"
 	}
 	return "Re: " + orig
 }
