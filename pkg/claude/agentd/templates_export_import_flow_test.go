@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -258,6 +259,43 @@ func TestTemplateImport_VersionTooNewRejected(t *testing.T) {
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", env)
 	require.Equalf(t, http.StatusBadRequest, rec.Code, "version-too-new must be rejected: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "upgrade tclaude", "error tells the user to upgrade")
+}
+
+// TestTemplateImport_MissingVersionRejected: an envelope with no (or a
+// zero/negative) format_version is rejected — a plain JSON blob that
+// isn't a real export must not slip through the version gate.
+func TestTemplateImport_MissingVersionRejected(t *testing.T) {
+	f := newFlow(t)
+
+	// No format_version field at all → decodes to 0 → rejected.
+	env := map[string]any{"format": "tclaude-task-force", "template": fullTemplateBody("nover")}
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", env)
+	require.Equalf(t, http.StatusBadRequest, rec.Code, "missing format_version must be rejected: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "format_version", "error names the missing field")
+}
+
+// TestTemplateExportImport_PermissionGating: export is open (a plain
+// agent peer with no slug can read it), but import is gated on
+// templates.manage (the same peer is refused).
+func TestTemplateExportImport_PermissionGating(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", fullTemplateBody("gated")).Code, "create template")
+
+	const peer = "gate-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(peer, "peer")
+
+	// Export is open — a bare agent peer can read it.
+	rec := testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/templates/gated/export", nil), peer))
+	assert.Equalf(t, http.StatusOK, rec.Code, "export is open to a plain peer: %s", rec.Body.String())
+
+	// Import is gated on templates.manage — the same peer is refused.
+	env := map[string]any{"format": "tclaude-task-force", "format_version": 1, "template": fullTemplateBody("gated2")}
+	rec = testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/templates/import", env), peer))
+	assert.Equalf(t, http.StatusForbidden, rec.Code, "import requires templates.manage: %s", rec.Body.String())
 }
 
 // TestTemplateImport_WrongFormatRejected: a JSON file that isn't a
