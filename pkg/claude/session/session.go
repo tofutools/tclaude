@@ -28,10 +28,18 @@ type SessionState struct {
 	PID           int       `json:"pid"`
 	Cwd           string    `json:"cwd"`
 	ConvID        string    `json:"convId,omitempty"`
-	Status        string    `json:"status"`
-	StatusDetail  string    `json:"statusDetail,omitempty"`
-	SubagentCount int       `json:"subagentCount"`
-	Created       time.Time `json:"created"`
+	Status       string `json:"status"`
+	StatusDetail string `json:"statusDetail,omitempty"`
+	// SubagentCount is a derived cache of Subagents (recomputed by the
+	// hook callback on every state-changing hook). Kept for read surfaces
+	// that only need the raw figure; TTL-aware readers should use
+	// Subagents.LiveCount instead.
+	SubagentCount int `json:"subagentCount"`
+	// Subagents is the ledger of sub-agents believed to be running under
+	// this session, keyed by agent_id — see db.SubagentSet for the full
+	// self-healing story (why not a bare counter).
+	Subagents db.SubagentSet `json:"subagents,omitempty"`
+	Created   time.Time      `json:"created"`
 	Updated       time.Time `json:"updated"`
 	LastHook      time.Time `json:"lastHook"`
 	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
@@ -147,6 +155,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		Status:        s.Status,
 		StatusDetail:  s.StatusDetail,
 		SubagentCount: s.SubagentCount,
+		SubagentsJSON: s.Subagents.Encode(),
 		CreatedAt:     s.Created,
 		UpdatedAt:     s.Updated,
 		LastHook:      s.LastHook,
@@ -166,6 +175,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Status:        r.Status,
 		StatusDetail:  r.StatusDetail,
 		SubagentCount: r.SubagentCount,
+		Subagents:     db.ParseSubagentSet(r.SubagentsJSON),
 		Created:       r.CreatedAt,
 		Updated:       r.UpdatedAt,
 		LastHook:      r.LastHook,

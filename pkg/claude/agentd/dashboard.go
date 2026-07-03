@@ -1175,10 +1175,9 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		}
 	}
 	out := agentState{
-		Status:        pick.Status,
-		StatusDetail:  pick.StatusDetail,
-		SubagentCount: pick.SubagentCount,
-		Cwd:           pick.Cwd,
+		Status:       pick.Status,
+		StatusDetail: pick.StatusDetail,
+		Cwd:          pick.Cwd,
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
@@ -1189,6 +1188,21 @@ func stateForConvIn(convID string, aliveSet map[string]struct{}) agentState {
 		// launch/row properties — the dashboard reflects the recorded intent
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
+	}
+	// Sub-agents run INSIDE the harness process, so a dead session has
+	// none by definition — a stale count on an exited row must not render
+	// a "🤖+N" badge. For a live row, prefer the TTL-filtered ledger over
+	// the raw cached count so a phantom entry (a sub-agent whose
+	// SubagentStop was lost) stops being displayed as soon as it expires,
+	// even if no hook has fired since to sweep it from storage. An empty
+	// ledger with a non-zero count is a row last written by a pre-ledger
+	// hook binary — surface its raw count rather than hiding real work.
+	if alive {
+		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
+			out.SubagentCount = set.LiveCount(time.Now())
+		} else {
+			out.SubagentCount = pick.SubagentCount
+		}
 	}
 	if !pick.LastHook.IsZero() {
 		out.LastHook = pick.LastHook.Format(time.RFC3339)
