@@ -234,6 +234,9 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 			{Name: "lead", Role: "lead", InitialMessage: "Lead the crew.", IsOwner: true},
 			{Name: "dev1", Role: "dev", InitialMessage: "Build features."},
 		},
+		"work_pattern": []map[string]string{
+			{"send_to": "lead", "value": "Lead the charge: {{task}}"},
+		},
 	}
 	require.Equal(t, http.StatusCreated,
 		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
@@ -242,9 +245,13 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/instantiate",
 		map[string]any{"group_name": "voyage"})
 	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	// Instantiate queues async brief/pattern deliveries; drain them so the
+	// spawn below doesn't race the flush worker's DB writes (SQLITE_BUSY).
+	agentd.WaitForBackgroundForTest()
 
 	// The group evolves: an extra member joins after instantiation.
 	f.AsHuman().Spawn("voyage", "navigator")
+	agentd.WaitForBackgroundForTest()
 
 	// Without update, the taken name stays a hard conflict.
 	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
@@ -295,6 +302,12 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	// into the blueprint's own description on a re-snapshot.
 	assert.Equal(t, "curated descr", tmpl.Descr, "instance descr never clobbers curated template descr")
 
+	// The work pattern is blueprint choreography — a live group has none
+	// to trace, so the update re-snapshot must keep the curated one.
+	require.Len(t, tmpl.WorkPattern, 1, "work pattern survives the update re-snapshot")
+	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
+	assert.Equal(t, "Lead the charge: {{task}}", tmpl.WorkPattern[0].Value)
+
 	// Round two: dev1's member leaves the group, then another update
 	// re-snapshot. The departed agent is reported removed, lead's brief
 	// still survives, and the joiner — whose conv title is exactly
@@ -342,6 +355,8 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 			assert.Equal(t, "Lead the crew.", a.InitialMessage, "lead's curated brief survives round two")
 		}
 	}
+	require.Len(t, tmpl.WorkPattern, 1, "work pattern survives repeated re-snapshots")
+	assert.Equal(t, "lead", tmpl.WorkPattern[0].SendTo)
 }
 
 // Scenario (JOH-337): update:true against a name with NO existing

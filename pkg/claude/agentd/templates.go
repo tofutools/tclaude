@@ -172,6 +172,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 					fmt.Sprintf("agent %q: name must not contain control characters", an)}
 			}
 		}
+		if an == "all" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				`agent name "all" is reserved — it is the work_pattern broadcast target`}
+		}
 		if seenNames[an] {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
 				fmt.Sprintf("duplicate agent name %q — each agent in a template needs a distinct name", an)}
@@ -546,9 +550,28 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// rule) is reported in pattern_errors, never aborts the rest.
 	patternDelivered := 0
 	patternErrors := []string{}
+	// The task is interpolated into inbox bodies, so it gets the same
+	// CRLF→LF fold the group context got via normalizeGroupContext — a
+	// CRLF-authored --task file must not flunk every {{task}} step's
+	// charset re-gate below (isValidInitialMessage rejects '\r').
 	task := strings.TrimSpace(body.Task)
+	task = strings.ReplaceAll(task, "\r\n", "\n")
+	task = strings.ReplaceAll(task, "\r", "\n")
+	rosterNames := map[string]bool{}
+	for _, a := range tmpl.Agents {
+		rosterNames[a.Name] = true
+	}
 	for i, e := range tmpl.WorkPattern {
 		msg := strings.ReplaceAll(e.Value, "{{task}}", task)
+		if msg == "" {
+			// A bare "{{task}}" step with no task: save-time validation
+			// can't catch it, so report it instead of delivering an
+			// empty-bodied briefing.
+			patternErrors = append(patternErrors,
+				fmt.Sprintf("step %d/%d (to %s): interpolated to an empty message — not sent",
+					i+1, len(tmpl.WorkPattern), e.SendTo))
+			continue
+		}
 		if !isValidInitialMessage(msg) {
 			patternErrors = append(patternErrors,
 				fmt.Sprintf("step %d/%d (to %s): interpolated message breaks the inbox charset/length rule — not sent",
@@ -556,24 +579,45 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var targets []string
-		if e.SendTo == "all" {
+		switch e.SendTo {
+		case "all":
 			targets = spawnedOrder
-		} else if conv, ok := spawnedConvs[e.SendTo]; ok {
+			if len(targets) == 0 {
+				patternErrors = append(patternErrors,
+					fmt.Sprintf("step %d/%d: no members spawned — not sent", i+1, len(tmpl.WorkPattern)))
+				continue
+			}
+		default:
+			conv, ok := spawnedConvs[e.SendTo]
+			if !ok {
+				// Distinguish a roster agent that failed to spawn from a
+				// target the roster no longer carries at all (a from-group
+				// re-snapshot keeps the curated pattern verbatim, so a step
+				// can go stale when its agent's name wasn't recovered).
+				if rosterNames[e.SendTo] {
+					patternErrors = append(patternErrors,
+						fmt.Sprintf("step %d/%d: target %q did not spawn — not sent", i+1, len(tmpl.WorkPattern), e.SendTo))
+				} else {
+					patternErrors = append(patternErrors,
+						fmt.Sprintf("step %d/%d: target %q is not in the roster (stale work-pattern step?) — not sent",
+							i+1, len(tmpl.WorkPattern), e.SendTo))
+				}
+				continue
+			}
 			targets = []string{conv}
-		} else {
-			patternErrors = append(patternErrors,
-				fmt.Sprintf("step %d/%d: target %q did not spawn — not sent", i+1, len(tmpl.WorkPattern), e.SendTo))
-			continue
 		}
 		subject := fmt.Sprintf("[work-pattern %d/%d] %s", i+1, len(tmpl.WorkPattern), tmpl.Name)
 		for _, conv := range targets {
 			if _, err := db.InsertAgentMessage(&db.AgentMessage{
-				GroupID:      gid,
-				FromConv:     caller,
-				ToConv:       conv,
-				Subject:      subject,
-				Body:         msg,
-				ToRecipients: []string{conv},
+				GroupID:  gid,
+				FromConv: caller,
+				ToConv:   conv,
+				Subject:  subject,
+				Body:     msg,
+				// The full audience on every row — like handleMultiRecipient —
+				// so `inbox read` renders an "all" step as one broadcast, not
+				// as N private notes.
+				ToRecipients: targets,
 			}); err != nil {
 				slog.Warn("instantiate: work-pattern insert failed",
 					"group", body.GroupName, "step", i+1, "conv", conv, "error", err)
@@ -783,7 +827,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		}
 	}
 	memberSet := map[string]bool{}
-	usedNames := map[string]bool{}
+	// "all" is the work_pattern broadcast target (and rejected as an
+	// agent name at create/PATCH) — pre-claiming it makes the derive
+	// fallback disambiguate a member literally titled "all" instead of
+	// snapshotting an unroutable roster name.
+	usedNames := map[string]bool{"all": true}
 	addAgent := func(convID, role, descr string, owner bool) {
 		name := ""
 		if existing != nil {

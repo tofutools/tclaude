@@ -384,6 +384,14 @@ async function submitInstantiate() {
       ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
       : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
       failed > 0);
+    // Work-pattern outcome gets its own toast — a silently-skipped
+    // kick-off briefing must not hide behind a happy spawn count.
+    const perrs = resp.pattern_errors || [];
+    if (perrs.length) {
+      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+    } else if (resp.pattern_delivered) {
+      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+    }
     try { dashPrefs.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
     recordGroupInteraction(groupName);
     // Jump to the Groups tab so the freshly-spawned group is visible.
