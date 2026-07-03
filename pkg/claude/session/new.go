@@ -623,8 +623,8 @@ func runNew(params *NewParams) error {
 	// leaves the terminal's own title alone, at the cost of title-based
 	// window focus/tiling on WSL + native-Linux/X11.
 	if windowTitleEnabledFn() {
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession), "set-titles", "on").Run()
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession), "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
+		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
 	}
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness

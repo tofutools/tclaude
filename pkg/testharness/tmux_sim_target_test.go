@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,47 @@ func TestTmuxSim_SendKeys_NormalizedLogAndExactRouting(t *testing.T) {
 	assert.Len(t, sent, 1)
 	assert.Equal(t, "myrepo-2:0.0", sent[0].Target, "the '=' resolution marker is stripped from the log")
 	assert.Equal(t, "hello", sent[0].Text)
+}
+
+// Pane-typed commands (send-keys, display-message, capture-pane) parse a
+// COLON-LESS target into the pane slot, where real tmux never strips the
+// '=' — "=name" hunts a pane literally named "=name" and matches nothing.
+// The sim models that so a production ExactTarget(name) used without a
+// ":"/":0.0" qualifier on a pane-typed verb fails tests instead of dying
+// (or acting on the wrong pane) in the field. Session-typed verbs parse
+// the same colon-less form as an exact session name.
+func TestTmuxSim_PaneTypedTargets_RejectColonLessExactPin(t *testing.T) {
+	sim := newTmuxSim()
+	sim.MarkAlive("myrepo-2")
+
+	// display-message is pane-typed: colon-less '=' never resolves; the
+	// ":"-qualified form pins the session and uses its active pane.
+	assert.Error(t, sim.Command("display-message", "-p", "-t", "=myrepo-2", "#{pane_pid}").Run(),
+		"colon-less '=' on a pane-typed verb must model tmux's literal-pane lookup failure")
+	assert.NoError(t, sim.Command("display-message", "-p", "-t", "=myrepo-2:", "#{pane_pid}").Run(),
+		"the ExactTarget(name)+\":\" form resolves the session exactly")
+
+	// send-keys likewise: colon-less '=' is dropped, qualified forms route.
+	sim.Command("send-keys", "-t", "=myrepo-2", "lost")
+	sim.Command("send-keys", "-t", "=myrepo-2:", "kept")
+	sent := sim.Sent()
+	assert.Len(t, sent, 2, "both sends are logged")
+	assert.Equal(t, "myrepo-2:", sent[1].Target)
+
+	// has-session is session-typed: the same colon-less '=' form is the
+	// correct exact pin there.
+	assert.NoError(t, sim.Command("has-session", "-t", "=myrepo-2").Run())
+
+	// set-option and list-panes route through the same pane-typed rules, so
+	// the production ExactTarget(name)+":" sites (window titles, scrollback
+	// mouse mode, ParsePIDFromTmux) are exercised rather than falling
+	// through to an unconditional success.
+	assert.Error(t, sim.Command("set-option", "-t", "=myrepo-2", "mouse", "on").Run())
+	assert.NoError(t, sim.Command("set-option", "-t", "=myrepo-2:", "mouse", "on").Run())
+	assert.Error(t, sim.Command("list-panes", "-t", "=myrepo-2", "-F", "#{pane_pid}").Run())
+	out, err := sim.Command("list-panes", "-t", "=myrepo-2:", "-F", "#{pane_pid}").Output()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, strings.TrimSpace(string(out)), "list-panes echoes the pane pid on a resolved target")
 }
 
 // The production probes go through '='-pinned targets: a dead name whose

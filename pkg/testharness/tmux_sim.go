@@ -132,7 +132,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	}
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
-		if name := t.resolveTarget(args[2]); name != "" && t.IsAlive(name) {
+		if name := t.resolveTarget(args[2], false); name != "" && t.IsAlive(name) {
 			return exec.Command(trueBin)
 		}
 		return exec.Command(falseBin)
@@ -148,8 +148,39 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.displayMessage(args)
 	case len(args) >= 1 && args[0] == "capture-pane":
 		return t.capturePane(args)
+	case len(args) >= 3 && args[0] == "set-option" && args[1] == "-t":
+		// Pane-typed like the real command, so the production set-option
+		// sites' ExactTarget(name)+":" form is exercised through the same
+		// target-resolution rules as send-keys (a colon-less '=' pin
+		// would silently no-op or misroute in real tmux — see
+		// resolveTarget). The option itself isn't modelled; only whether
+		// the target resolves.
+		if name := t.resolveTarget(args[2], true); name != "" && t.IsAlive(name) {
+			return exec.Command(trueBin)
+		}
+		return exec.Command(falseBin)
+	case len(args) >= 3 && args[0] == "list-panes" && args[1] == "-t":
+		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+// listPanes models `tmux list-panes -t <target> -F '#{pane_pid}'` for the
+// sim's one-pane sessions: it echoes the resolved session's pane pid (the
+// only field production asks for, via ParsePIDFromTmux) and exits non-zero
+// on a missing/dead target like real tmux. Resolution uses the pane-typed
+// rules — deliberately stricter than real list-panes (window-typed, whose
+// colon-less '=name' would still prefix-fall-back onto the session table
+// un-pinned), so only a session-exact target form passes.
+func (t *TmuxSim) listPanes(target string) *exec.Cmd {
+	name := t.resolveTarget(target, true)
+	t.mu.Lock()
+	s, ok := t.sessions[name]
+	t.mu.Unlock()
+	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
+		return exec.Command(falseBin)
+	}
+	return exec.Command(echoBin, strconv.Itoa(s.panePID))
 }
 
 // paneRenderer is the optional capability a PaneSim implements to answer
@@ -176,7 +207,7 @@ func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
 			target = args[i+1]
 		}
 	}
-	name := t.resolveTarget(target)
+	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	t.mu.Unlock()
@@ -203,7 +234,7 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 			target = args[i+1]
 		}
 	}
-	name := t.resolveTarget(target)
+	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	t.mu.Unlock()
@@ -266,18 +297,31 @@ func (t *TmuxSim) pasteBuffer(args []string) {
 	t.routeSendKeys(target, text)
 }
 
-// resolveTarget models tmux's target-session resolution for a -t argument
+// resolveTarget models tmux's target resolution for a -t argument
 // (cmd-find): strip any ":window.pane" suffix, then an optional leading
 // '=' pins EXACT name matching; a bare name resolves exact-first with a
-// unique-prefix fallback. The prefix fallback is deliberately modelled —
-// it is the production footgun clcommon.ExactTarget exists to avoid (a
-// dead name silently resolving to a live "-N" namesake), so a dropped '='
-// shows up here as a flow-test failure instead of a wrong-pane delivery
-// in production. Returns the resolved session-table key, or "" when
-// nothing matches (an ambiguous prefix errors in real tmux; the sim
-// treats it as no match).
-func (t *TmuxSim) resolveTarget(target string) string {
-	name := strings.SplitN(target, ":", 2)[0]
+// unique-prefix fallback. Two real-tmux behaviors are deliberately
+// modelled because they are the production footguns clcommon.ExactTarget
+// and its doc comment exist to avoid — each shows up here as a flow-test
+// failure instead of a wrong-pane delivery in production:
+//
+//  1. The prefix fallback: a dead bare name silently resolving to a live
+//     "-N" namesake (a dropped '=').
+//  2. Pane-typed parsing: for a pane-typed command (paneTyped=true —
+//     send-keys, display-message, capture-pane, paste-buffer), a
+//     COLON-LESS target lands whole in the pane slot where tmux never
+//     strips the '=', so "=name" hunts a pane literally named "=name"
+//     and matches nothing (a '=' in the wrong position). Session-typed
+//     commands (has-session, kill-session) parse the same target as a
+//     session name and DO strip the '='.
+//
+// Returns the resolved session-table key, or "" when nothing matches (an
+// ambiguous prefix errors in real tmux; the sim treats it as no match).
+func (t *TmuxSim) resolveTarget(target string, paneTyped bool) string {
+	name, _, hadColon := strings.Cut(target, ":")
+	if paneTyped && !hadColon && strings.HasPrefix(name, "=") {
+		return ""
+	}
 	exact := strings.HasPrefix(name, "=")
 	name = strings.TrimPrefix(name, "=")
 	t.mu.Lock()
@@ -310,9 +354,10 @@ func normalizeTarget(target string) string {
 
 // routeSendKeys logs the call and forwards text to the attached pane
 // sim. Target is "<sessionName>:0.0" or bare "<sessionName>", optionally
-// '='-pinned; resolution goes through resolveTarget.
+// '='-pinned; resolution goes through resolveTarget (pane-typed, like
+// real send-keys).
 func (t *TmuxSim) routeSendKeys(target, text string) {
-	sessName := t.resolveTarget(target)
+	sessName := t.resolveTarget(target, true)
 	t.mu.Lock()
 	t.sentLog = append(t.sentLog, SentKey{Target: normalizeTarget(target), Text: text})
 	s, ok := t.sessions[sessName]
@@ -326,7 +371,7 @@ func (t *TmuxSim) routeSendKeys(target, text string) {
 // down its attached pane sim (mirrors tmux dropping the foreground
 // process). Target resolution mirrors real tmux (see resolveTarget).
 func (t *TmuxSim) killSession(target string) {
-	name := t.resolveTarget(target)
+	name := t.resolveTarget(target, false)
 	if name == "" {
 		return
 	}

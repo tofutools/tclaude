@@ -271,7 +271,7 @@ func LiveTmuxSessions() (map[string]struct{}, error) {
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {
-	cmd := clcommon.TmuxCommand("display-message", "-t", clcommon.ExactTarget(sessionName), "-p", "#{session_attached}")
+	cmd := clcommon.TmuxCommand("display-message", "-t", clcommon.ExactTarget(sessionName)+":", "-p", "#{session_attached}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -499,7 +499,7 @@ func ShortenPath(path string, maxLen int) string {
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session
 func ParsePIDFromTmux(sessionName string) int {
-	cmd := clcommon.TmuxCommand("list-panes", "-t", clcommon.ExactTarget(sessionName), "-F", "#{pane_pid}")
+	cmd := clcommon.TmuxCommand("list-panes", "-t", clcommon.ExactTarget(sessionName)+":", "-F", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
