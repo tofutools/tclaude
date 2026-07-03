@@ -293,6 +293,54 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	// with "Instantiated from template crew", which must NOT leak back
 	// into the blueprint's own description on a re-snapshot.
 	assert.Equal(t, "curated descr", tmpl.Descr, "instance descr never clobbers curated template descr")
+
+	// Round two: dev1's member leaves the group, then another update
+	// re-snapshot. The departed agent is reported removed, lead's brief
+	// still survives, and the joiner — whose conv title is exactly
+	// "navigator" with no "voyage-" prefix (it was named at spawn, not
+	// by instantiate) — round-trips through the EXACT-title recover
+	// candidate, keeping its template name stable even though its
+	// roster position shifted.
+	joinerName := res.Added[0]
+	var membersList []struct {
+		ConvID string `json:"conv_id"`
+		Title  string `json:"title"`
+	}
+	rec = humanReq(t, f, http.MethodGet, "/v1/groups/voyage/members", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "list members: %s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &membersList)
+	dev1Conv := ""
+	for _, m := range membersList {
+		if m.Title == "voyage-dev1" {
+			dev1Conv = m.ConvID
+		}
+	}
+	require.NotEmpty(t, dev1Conv, "voyage-dev1 member resolvable by title")
+	rec = humanReq(t, f, http.MethodDelete, "/v1/groups/voyage/members/"+dev1Conv, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, "remove dev1's member: %s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/from-group",
+		map[string]any{"group": "voyage", "template_name": "crew", "update": true})
+	require.Equal(t, http.StatusOK, rec.Code, "second update from-group: %s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &res)
+	assert.ElementsMatch(t, []string{"lead"}, res.BriefsKept, "lead's brief survives round two")
+	assert.Empty(t, res.Added, "the joiner round-trips by exact title, not as a new agent")
+	assert.Equal(t, []string{"dev1"}, res.Removed, "the departed member is reported removed")
+
+	tmpl, err = db.GetGroupTemplate("crew")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	names := []string{}
+	for _, a := range tmpl.Agents {
+		names = append(names, a.Name)
+	}
+	assert.ElementsMatch(t, []string{"lead", joinerName}, names,
+		"dev1 dropped from the blueprint; the joiner kept its exact-title name")
+	for _, a := range tmpl.Agents {
+		if a.Name == "lead" {
+			assert.Equal(t, "Lead the crew.", a.InitialMessage, "lead's curated brief survives round two")
+		}
+	}
 }
 
 // Scenario (JOH-337): update:true against a name with NO existing

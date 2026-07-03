@@ -336,7 +336,30 @@ func TestRunTemplatesFromGroup_SendsBody(t *testing.T) {
 	require.True(t, ok, "body should be a map, got %T", calls[0].body)
 	assert.Equal(t, "src", body["group"])
 	assert.Equal(t, "src-tmpl", body["template_name"])
+	assert.Equal(t, false, body["update"], "plain from-group sends update:false")
 	assert.Contains(t, stdout.String(), "2 agents")
+}
+
+func TestRunTemplatesFromGroup_UpdateSendsFlagAndReportsDiff(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"lead","permissions":[]},{"name":"navigator","permissions":[]}],
+		"updated":true,"briefs_kept":["lead"],"added":["navigator"],"removed":["dev1"]}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl", Update: true,
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(map[string]any)
+	require.True(t, ok, "body should be a map, got %T", calls[0].body)
+	assert.Equal(t, true, body["update"], "--update lands in the request body")
+	out := stdout.String()
+	assert.Contains(t, out, `Updated template "src-tmpl" from group "src" — 2 agents`)
+	assert.Contains(t, out, "briefs kept: lead; added: navigator; removed: dev1")
+	assert.NotContains(t, out, "Created template", "update output replaces the create line")
 }
 
 func TestRunTemplatesFromGroup_MissingArgsRejected(t *testing.T) {

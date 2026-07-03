@@ -105,7 +105,10 @@ function templateCardHTML(t) {
 }
 
 function templatesByName() {
-  const m = {};
+  // Null prototype: template names are human-typed, and a plain {} would
+  // false-positive existence checks on Object.prototype keys — a template
+  // named "constructor" or "toString" must only exist if actually saved.
+  const m = Object.create(null);
   for (const t of (lastSnapshot && lastSnapshot.templates) || []) m[t.name] = t;
   return m;
 }
