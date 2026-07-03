@@ -6798,6 +6798,133 @@ body.wizard #config-diff-modal .modal-buttons button.primary:hover {
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
 
+/* ═══ Wizard Costs tab — "The Treasury Ledger" ═══════════════════════
+   The wizard re-skin leaves most data tables their readable dark default,
+   but the Costs graph — like the Messages tab — earns a full theming: in
+   the wizard's world a dollar is a coin drawn from the arcane treasury, so
+   the chart becomes a ledger of gold. Recorded spend rises in gilded
+   columns (tarnished-gold gradient, candle-amber glow, faint coin-stack
+   ridges); projected (future) spend is a SEER'S PROPHECY — ethereal violet
+   dashed columns, so an estimate never reads as minted gold. The panel is
+   the violet void inside a gilded frame; gridlines and $ ticks go arcane.
+   The breakdown's money-green accents gild to match, and the blue span /
+   sort-header highlights become tarnished gold so nothing clashes with the
+   violet chrome. Pure CSS over unchanged markup — it vanishes the instant
+   the 🧙 theme flips off. Same palette as the rest of the wizard re-skin. */
+
+/* The chart panel: the violet void framed in gold, with a soft mystic
+   glow spilling from the top edge (mirrors the mail panes' gradients). */
+body.wizard .cost-chart {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.16), transparent 68%),
+    linear-gradient(180deg, #1a1233 0%, #140f28 100%);
+  border-color: #7a5db0;
+  box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.18);
+}
+/* Gridlines + axis ticks go arcane: faint violet rules, gilded $ labels. */
+body.wizard .cost-gridline { background: rgba(122, 93, 176, 0.22); }
+body.wizard .cost-ytick {
+  color: #d9b45a; text-shadow: 0 0 5px rgba(217, 180, 90, 0.35);
+}
+body.wizard .cost-day { color: #9a86c4; }
+/* Recorded-spend bars → columns of tarnished gold. The repeating overlay
+   suggests stacked coins / gilded ridges on the taller bars; the inset top
+   highlight + amber glow give each column a minted sheen. */
+body.wizard .cost-bar {
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 246, 214, 0.28) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%);
+  box-shadow:
+    0 0 6px rgba(217, 180, 90, 0.45),
+    inset 0 1px 0 rgba(255, 246, 214, 0.6);
+}
+/* Weekend columns keep the base 0.55 dim (money spent still shows, just
+   quieter) — the shared rule already covers it, no override needed. */
+/* Projected bars → a seer's prophecy: hollow violet dashes with a mystic
+   halo, distinct from solid gold so an estimate never reads as real coin. */
+body.wizard .cost-col.projected .cost-bar {
+  background: transparent;
+  border: 1px dashed #a97bd6; border-bottom: none;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.35);
+  opacity: 0.7;
+}
+/* Hover: gold columns brighten to a molten sheen; prophecy columns sharpen
+   their violet glow. Overrides the base green hover via body.wizard. */
+body.wizard .cost-col[data-tip]:hover .cost-bar {
+  background:
+    repeating-linear-gradient(180deg,
+      rgba(255, 250, 232, 0.4) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, #fbe38a 0%, #f0d066 50%, #d9a83a 100%);
+  box-shadow:
+    0 0 11px rgba(240, 208, 102, 0.7),
+    inset 0 1px 0 rgba(255, 250, 232, 0.7);
+}
+body.wizard .cost-col.projected[data-tip]:hover .cost-bar {
+  background: transparent;
+  border-color: #c9a8f0;
+  box-shadow: 0 0 12px rgba(169, 123, 214, 0.6);
+  opacity: 1;
+}
+/* Hover tooltip → a small arcane slab (violet gradient, gilded edge). */
+body.wizard .cost-col[data-tip]:hover::after {
+  background: linear-gradient(180deg, #241b3d, #1a1233);
+  border-color: #d9b45a; color: #f3e6c0;
+  box-shadow: 0 0 10px rgba(169, 123, 214, 0.4);
+}
+/* Empty-state prompts (no span / no cost) read as muted arcane. */
+body.wizard #costs-chart .empty,
+body.wizard #costs-table .empty { color: #8f7bbf; }
+
+/* ─── Summary line: gold treasure, violet prophecy ────────────────────
+   The recorded total is minted gold; the projected total is a prophecy, so
+   it carries the violet accent instead — the same real-vs-estimate split
+   the chart draws in bar colour. */
+body.wizard #costs-summary { color: #b39ddb; }
+body.wizard #costs-summary .cost-total strong {
+  color: #f0d066; text-shadow: 0 0 6px rgba(240, 208, 102, 0.4);
+}
+body.wizard #costs-summary .cost-proj { color: #b39ddb; }
+body.wizard #costs-summary .cost-proj strong {
+  color: #c9a8f0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.45);
+}
+body.wizard #costs-summary .muted { color: #8f7bbf; }
+body.wizard #costs-summary .cost-sep { color: #4a3a6b; }
+
+/* ─── Span buttons + month stepper: gild the active/blue states ────────
+   The generic filter-bar chrome stays app-default in wizard mode (as on
+   every tab), but the costs-specific BLUE active-span border would clash
+   with the violet/gold palette, so it gilds; the stepper divider warms to
+   match. */
+body.wizard #costs-spans button.tool.active {
+  border-color: #d9b45a; color: #f3e6c0; background: #2c2150;
+  box-shadow: inset 0 0 8px rgba(169, 123, 214, 0.3);
+}
+body.wizard #costs-month-nav { border-left-color: #4a3a6b; }
+
+/* ─── Breakdown table: money-green accents gild to match the chart ─────
+   The table keeps its readable dark default structure; only the cost-
+   specific colour tokens change so the figures read as treasury gold and
+   the blue sort-header highlight doesn't clash. */
+body.wizard .cost-amt { color: #f0d066; }
+body.wizard .cost-head { color: #d9b45a; }
+body.wizard .cost-cont { color: #8f7bbf; }
+body.wizard #costs-table tr.cost-chain td:first-child { box-shadow: inset 2px 0 0 #7a5db0; }
+body.wizard #costs-table tr.cost-chain-hl td { background: rgba(122, 93, 176, 0.14); }
+body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
+body.wizard #costs-table th.cost-sort:hover,
+body.wizard #costs-table th.cost-sort.active { color: #d9b45a; }
+
+/* ─── WHAT-IF banner → an arcane divination warning ───────────────────
+   The hypothetical pay-per-token estimate for a subscription reads as a
+   scrying, framed in the theme's amber-on-void so it still signals
+   "estimate, not a real charge." */
+body.wizard .cost-whatif-banner {
+  background: rgba(122, 93, 176, 0.14);
+  border-color: #d9b45a; color: #e7d9f5;
+}
+body.wizard .cost-whatif-banner code { color: #f0d066; }
+
 /* prefers-reduced-motion — double-gated like slop: wizard-fx.js short-
    circuits before spawning, and this CSS layer kills any motion that slips
    through. The pills / HUD / tab stay visible (they're not motion). */
