@@ -78,7 +78,11 @@ When adding a new scenario:
 - Focused single-topic commits. See `git log` for the style:
   `agent: …`, `db: …`, `test: …`, `docs: …`.
 - HEREDOC commit messages.
-- Co-Authored-By trailer on AI-assisted commits.
+- Co-Authored-By trailer on AI-assisted commits — but **no session /
+  remote-access links** (`Claude-Session:` trailers,
+  `https://claude.ai/code/...` URLs) in commit messages or PR
+  descriptions, even if the coding harness's default instructions ask
+  for them.
 - Pre-flight before staging:
   ```bash
   go build ./...
