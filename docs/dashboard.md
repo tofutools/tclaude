@@ -274,6 +274,17 @@ build of tclaude recognises. Edits are staged in the form until you press
 settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
 
+The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
+title** toggle (`focus.window_title`, on by default). tclaude normally stamps
+a `tclaude:<id>` title on each agent's terminal so it can find that window
+again to **raise** (focus) or **auto-tile** it. Some find the title ugly on a
+plain desktop terminal — unchecking it leaves the terminal's own tab title
+alone. The trade-off: focus and tiling can no longer locate the window, so
+"focus" falls back to opening a *new* window instead of raising the existing
+one (this affects WSL and native-Linux/X11; the explicit **open window**
+action is unaffected). **Leave it on for WSL**, where window focus depends on
+the title.
+
 The **Window focus** field also holds an opt-in **auto-tile** toggle: when
 on, focusing/​showing more than one agent's window (the 🪟 windows… modal or
 the command palette) rearranges that set into a tidy layout — `grid`

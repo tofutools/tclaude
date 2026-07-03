@@ -20,3 +20,19 @@ func focusRaiseOnly() bool {
 // focusRaiseOnlyFn is the seam tests use to pin the raise-only decision
 // without writing a real config file.
 var focusRaiseOnlyFn = focusRaiseOnly
+
+// windowTitleEnabled reports whether tclaude should stamp the `tclaude:<id>`
+// window/tab title on its panes — config focus.window_title, default true.
+// Read live per call for the same reasons as focusRaiseOnly (session
+// spawn/attach is rare, config.Load is cheap, and a live read lets a config
+// edit take effect without restarting anything). config.Load returns a
+// non-nil DefaultConfig even on error and WindowTitleEnabled is nil-safe, so
+// this never panics and degrades to true (the historical behavior).
+func windowTitleEnabled() bool {
+	cfg, _ := config.Load()
+	return cfg.WindowTitleEnabled()
+}
+
+// windowTitleEnabledFn is the seam tests use to pin the window-title decision
+// without writing a real config file.
+var windowTitleEnabledFn = windowTitleEnabled
