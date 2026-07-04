@@ -17,7 +17,7 @@
 // wipe it, so submit carries those forward from the original (guarded on an
 // unchanged harness).
 
-import { $, esc, bindSelectTitles } from './helpers.js';
+import { $, esc, bindSelectTitles, bindModalSubmitHotkey } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
@@ -487,6 +487,9 @@ function bindProfilesUI() {
   // Editor modal.
   $('#profile-editor-cancel').addEventListener('click', closeProfileEditor);
   $('#profile-editor-submit').addEventListener('click', submitProfileEditor);
+  // Ctrl/Cmd+Enter saves from anywhere in the editor — the shared modal
+  // submit-hotkey convention (spawn / clone / reincarnate / export dialogs).
+  bindModalSubmitHotkey($('#profile-editor-modal'), $('#profile-editor-submit'));
   // Permissions… opens the stacked per-slug editor on the profile's buffer
   // — same sibling-overlay pattern as the spawn dialog's button.
   $('#profile-editor-perms').addEventListener('click', openProfilePermsEditor);

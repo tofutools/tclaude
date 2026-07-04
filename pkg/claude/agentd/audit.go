@@ -168,6 +168,9 @@ var auditRoutes = []auditRoute{
 	// both POST /…/templates/{name}/instantiate). Template authoring
 	// (create/update/delete/from-group) is config-shaped and left out.
 	{method: http.MethodPost, segs: []string{"templates", "{name}", "instantiate"}, verb: "template.instantiate", describe: describeTemplateInstantiate},
+	// Reinforce (JOH-376) spawns a template's roster INTO an existing group — a
+	// real coordination action against an existing team, so it is audited too.
+	{method: http.MethodPost, segs: []string{"templates", "{name}", "reinforce"}, verb: "template.reinforce", describe: describeTemplateInstantiate},
 
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-

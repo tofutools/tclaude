@@ -23,6 +23,7 @@ import {
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
 import { morphInto } from './morph.js';
+import { renderDock } from './dock.js';
 // renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
 // their feature modules; refreshSuspended() only reads them. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
@@ -33,6 +34,7 @@ import { renameEditing } from './row-actions.js';
 import { closeTerminalsForWindowOp } from './terminals-tab.js';
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
+import { dockDragActive } from './dock-dnd.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -78,6 +80,11 @@ function refreshSuspended({ ignoreModals = false } = {}) {
   // re-rendering the Groups tab would detach the dragged grip mid-drag and
   // lose the drag's own dragend cleanup (group-reorder.js).
   if (groupReorderActive) return true;
+  // A palette-dock drag is in flight (a profile/role card headed for a group) —
+  // same reasoning: re-rendering the dock (#dock-body morph) or the Groups tab
+  // would detach the drag source or the drop target mid-gesture and lose the
+  // drag's own dragend cleanup (dock-dnd.js).
+  if (dockDragActive) return true;
   // Any modal overlay is open (unless a force-refresh opted out — see the
   // ignoreModals note above).
   if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;
@@ -489,6 +496,10 @@ export async function refresh(opts = {}) {
     renderGroupsTab();
     renderGlobalActivity();
     renderTemplatesTab();
+    // The right-side palette dock (JOH-374) rides the poll like the rest —
+    // keyed morphInto so its selection/scroll survive and a manager edit
+    // shows up on the next tick.
+    renderDock();
     renderJobsTab();
     renderSudoTab();
     renderLinksTab();
@@ -3085,7 +3096,7 @@ function isValidRenameTitleJS(t) {
 //   null            — cancelled
 //   'noop'          — opened, nothing changed
 //   {rename?, role?, descr?, owner?} — only the fields that changed
-function editMemberModal({label, title, role, descr, owner, focusRole, openPerms}) {
+function editMemberModal({label, title, role, descr, tags, owner, focusRole, focusDescr, openPerms}) {
   return new Promise(resolve => {
     const overlay = $('#edit-member-modal');
     $('#edit-member-meta').textContent = label || '';
@@ -3095,6 +3106,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     const roleEl = $('#edit-member-role');
     const ownerEl = $('#edit-member-owner');
     const descrEl = $('#edit-member-descr');
+    const tagsEl = $('#edit-member-tags');
     const errEl = $('#edit-member-error');
     const permsBtn = $('#edit-member-perms');
     titleEl.value = title || '';
@@ -3103,6 +3115,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     roleEl.value = role || '';
     ownerEl.checked = !!owner;
     descrEl.value = descr || '';
+    tagsEl.value = tags || '';
     errEl.textContent = '';
     // The Permissions… button only makes sense for a known conv — the
     // caller wires openPerms when it has one. Hide it otherwise.
@@ -3172,6 +3185,13 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       const newDescr = descrEl.value;
       if (newRole !== (role || '')) out.role = newRole;
       if (newDescr !== (descr || '')) out.descr = newDescr;
+      // Tags half: parse the comma-separated field into a de-duped set and
+      // send the whole array (the endpoint is a replace-set) only when the
+      // SET actually changed — reordering or extra whitespace alone is not
+      // a change. The daemon does the real charset/length/count validation
+      // and 400s a bad tag, so the panel stays lenient here.
+      const newTags = parseTagsField(tagsEl.value);
+      if (!sameTagSet(newTags, parseTagsField(tags || ''))) out.tags = newTags;
       if (ownerEl.checked !== !!owner) out.owner = ownerEl.checked;
       cleanup(Object.keys(out).length === 0 ? 'noop' : out);
     };
@@ -3226,11 +3246,36 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     document.addEventListener('keydown', onKey, true);
     overlay.classList.add('show');
     // The role cell's click-to-edit lands here on the Role field; the
-    // ⚙ "edit" button lands on Title (the broader edit).
-    const focusEl = focusRole ? roleEl : titleEl;
+    // description cell's lands on the Tags field (the tags are what that
+    // cell's chips show); the ⚙ "edit" button lands on Title (the broader
+    // edit).
+    const focusEl = focusDescr ? tagsEl : (focusRole ? roleEl : titleEl);
     focusEl.focus();
     focusEl.select();
   });
+}
+
+// parseTagsField splits a comma-separated tags input into a de-duplicated,
+// order-preserving list of trimmed non-empty tags. The mirror of tagsAttr
+// (helpers.js), used both to prefill-compare and to build the replace-set
+// payload. Real validation (charset/length/count) is the daemon's.
+function parseTagsField(value) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(value || '').split(',')) {
+    const t = raw.trim();
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  return out;
+}
+
+// sameTagSet reports whether two tag lists are the same SET (order- and
+// duplicate-insensitive) — so reordering or whitespace-only edits to the
+// Tags field don't count as a change worth a write.
+function sameTagSet(a, b) {
+  if (a.length !== b.length) return false;
+  const sb = new Set(b);
+  return a.every(t => sb.has(t));
 }
 
 // addMemberModal opens an overlay anchored conceptually to a group's

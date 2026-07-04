@@ -546,6 +546,14 @@ type snapshotPayload struct {
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
+	// Profiles + Roles are the spawn-profile and role-library registries,
+	// carried on the poll so the retractable right-side palette dock
+	// (JOH-374) renders them off the live snapshot like the rest of the
+	// dashboard — no separate fetch, so a manager edit shows up on the next
+	// tick. Both are the same wire shapes their /api/{spawn-profiles,roles}
+	// endpoints serve. Empty slices (not nil) so JS .map() is safe.
+	Profiles []spawnProfileJSON `json:"profiles"`
+	Roles    []roleJSON         `json:"roles"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -928,6 +936,9 @@ type dashboardMember struct {
 	// taskRefView carries the per-agent task-reference link (Task
 	// column) — see taskref.go.
 	taskRefView
+	// tagsView carries the per-agent tag set (chips in the Description
+	// column) — see tags.go.
+	tagsView
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
@@ -953,6 +964,9 @@ type dashboardAgent struct {
 	// taskRefView carries the per-agent task-reference link (Task
 	// column) — see taskref.go.
 	taskRefView
+	// tagsView carries the per-agent tag set (chips in the Description
+	// column) — see tags.go.
+	tagsView
 	Online      bool                 `json:"online"`
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
@@ -1355,6 +1369,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	taskRefFor := func(convID string) taskRefView {
 		return taskRefViewFor(taskRefs[peerAgentID(convID)])
 	}
+	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
+	// keyed by agent_id, looked up per row (not a query per member/agent in
+	// this 2s-polled path). The stored set is already sorted alphabetically.
+	allTags, _ := db.ListAllAgentTags()
+	tagsFor := func(convID string) tagsView {
+		return tagsView{Tags: allTags[peerAgentID(convID)]}
+	}
 
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
@@ -1369,6 +1390,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			agentLocationView: loc,
 			repoLinksView:     branchLinksFor(convID, loc),
 			taskRefView:       taskRefFor(convID),
+			tagsView:          tagsFor(convID),
 			Online:            isConvOnlineIn(convID, aliveSessions),
 			State:             stateForConvIn(convID, aliveSessions),
 			// init non-nil so JSON serializes [] not null;
@@ -1462,6 +1484,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				agentLocationView: loc,
 				repoLinksView:     branchLinksFor(m.ConvID, loc),
 				taskRefView:       taskRefFor(m.ConvID),
+				tagsView:          tagsFor(m.ConvID),
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
 				State:             stateForConvIn(m.ConvID, aliveSessions),
@@ -1495,6 +1518,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				agentLocationView: ownerLoc,
 				repoLinksView:     branchLinksFor(ownerConv, ownerLoc),
 				taskRefView:       taskRefFor(ownerConv),
+				tagsView:          tagsFor(ownerConv),
 				Online:            online,
 				Owner:             true,
 				State:             stateForConvIn(ownerConv, aliveSessions),
@@ -1716,6 +1740,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = !hasRealCost && showOnSub
 	out.Templates = collectTemplatesSnapshot()
+	out.Profiles = collectProfilesSnapshot()
+	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 	var pluginsErr error
 	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()

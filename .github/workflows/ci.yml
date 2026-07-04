@@ -6,7 +6,9 @@ on:
     # its increment PRs with the same CI as main. Drop it once main-codex→main lands.
     # implement-stable-agent-identity is the long-lived JOH-26 integration branch
     # (stable agent_id, decoupled from conv_id) — same deal; drop it once it→main lands.
-    branches: [main, main-codex, implement-stable-agent-identity]
+    # dnd-palette is the long-lived drag-and-drop-palette integration branch
+    # (JOH-374..377) — same deal; drop it once dnd-palette→main lands.
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
 
 permissions:
   contents: read

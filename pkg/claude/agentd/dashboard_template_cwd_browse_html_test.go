@@ -29,7 +29,9 @@ func TestDashboardHTML_TemplateCwdBrowse(t *testing.T) {
 		"the summon dialog gains a Browse… button beside its cwd field")
 
 	// modal-templates.js imports the shared helper and wires the button.
-	must("import { $, $$, esc, makeModalResizable, pickDirectory } from './helpers.js';",
+	// (Needle tracks the file's literal import line — bindModalSubmitHotkey
+	// joined it for the editor's Ctrl/Cmd+Enter save.)
+	must("import { $, $$, esc, makeModalResizable, bindModalSubmitHotkey, pickDirectory } from './helpers.js';",
 		"modal-templates.js imports pickDirectory from helpers.js")
 	must(`wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');`,
 		"the summon dialog's Browse… is wired in bindTemplatesUI")

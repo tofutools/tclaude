@@ -109,6 +109,22 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 	return out
 }
 
+// collectProfilesSnapshot builds the dashboard's spawn-profile list for the
+// poll (the palette dock, JOH-374). Returns an empty (non-nil) slice on error
+// or when there are no profiles, so the page's JS .map() never trips on null.
+// db.ListSpawnProfiles already orders by name, so the output is stable.
+func collectProfilesSnapshot() []spawnProfileJSON {
+	out := []spawnProfileJSON{}
+	profiles, err := db.ListSpawnProfiles()
+	if err != nil {
+		return out
+	}
+	for _, p := range profiles {
+		out = append(out, profileToJSON(p))
+	}
+	return out
+}
+
 // buildProfileFromJSON validates a wire-shape profile and converts it to a
 // db.SpawnProfile. It returns a non-nil *spawnFailure (reused as a generic
 // "bad request" carrier) on the first validation problem so the caller can map

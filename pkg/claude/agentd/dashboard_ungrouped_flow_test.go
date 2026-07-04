@@ -105,6 +105,7 @@ type dashMember struct {
 	BranchPRState   string    `json:"branch_pr_state,omitempty"`
 	TaskURL         string    `json:"task_ref_url,omitempty"`
 	TaskLabel       string    `json:"task_ref_label,omitempty"`
+	Tags            []string  `json:"tags,omitempty"`
 	Online          bool      `json:"online"`
 	Notify          string    `json:"notify,omitempty"`
 	NotifyEffective bool      `json:"notify_effective"`

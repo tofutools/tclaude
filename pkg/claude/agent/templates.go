@@ -45,6 +45,7 @@ func templatesCmd() *cobra.Command {
 			templatesEditCmd(),
 			templatesRmCmd(),
 			templatesInstantiateCmd(),
+			templatesReinforceCmd(),
 			templatesFromGroupCmd(),
 			templatesExportCmd(),
 			templatesImportCmd(),
@@ -546,12 +547,13 @@ func templatesInstantiateCmd() *cobra.Command {
 // instantiateAgentResult / instantiateResponse mirror the daemon's
 // instantiate response (see agentd/templates.go).
 type instantiateAgentResult struct {
-	Name      string   `json:"name"`
-	FinalName string   `json:"final_name"`
-	ConvID    string   `json:"conv_id"`
-	Owner     bool     `json:"owner"`
-	Granted   []string `json:"granted"`
-	Error     string   `json:"error"`
+	Name         string   `json:"name"`
+	FinalName    string   `json:"final_name"`
+	ConvID       string   `json:"conv_id"`
+	Owner        bool     `json:"owner"`
+	OwnerDropped bool     `json:"owner_dropped"`
+	Granted      []string `json:"granted"`
+	Error        string   `json:"error"`
 }
 
 type instantiateResponse struct {
@@ -573,6 +575,13 @@ type instantiateResponse struct {
 	PendingWaves     int    `json:"pending_waves"`
 	PendingAgents    int    `json:"pending_agents"`
 	ChoreographyNote string `json:"choreography_note"`
+
+	// Reinforce framing (JOH-376): set when the roster was deployed INTO an
+	// existing group rather than a fresh one. OwnerNote reports how many template
+	// owner flags were dropped (reinforcement never transfers ownership). Both
+	// absent/zero for a plain instantiate/deploy.
+	Reinforced bool   `json:"reinforced"`
+	OwnerNote  string `json:"owner_note"`
 }
 
 // printStagedSpawnAndRhythms prints the JOH-244 staged-spawn + seeded-rhythm
@@ -662,6 +671,106 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 	// A partial (or total) spawn failure is a non-zero exit so scripts
 	// notice — the group + any spawned agents still exist for the human
 	// to finish or retry by hand.
+	if resp.Failed > 0 {
+		fmt.Fprintf(stderr, "Error: %d of %d agent(s) failed to spawn — see above\n",
+			resp.Failed, resp.Failed+resp.Spawned)
+		return rcIOFailure
+	}
+	return rcOK
+}
+
+// ---- reinforce ----
+
+type templatesReinforceParams struct {
+	Name     string `pos:"true" help:"Template whose roster to deploy (from 'tclaude agent templates ls')."`
+	Group    string `long:"group" help:"Existing group to reinforce. The roster spawns INTO it as '<group>-<agent>'; the group's own settings are left untouched."`
+	Task     string `long:"task" optional:"true" help:"Per-run task for the new members — folded into their startup briefing under '## Task'. Use --task-file for long or multi-line text."`
+	TaskFile string `long:"task-file" optional:"true" help:"Read the task text from this file ('-' reads stdin). Mutually exclusive with --task."`
+	Cwd      string `long:"cwd" optional:"true" help:"Working directory the new members spawn in (~ expands). Must exist. Defaults to the group's own default cwd."`
+}
+
+func templatesReinforceCmd() *cobra.Command {
+	return boa.CmdT[templatesReinforceParams]{
+		Use:   "reinforce <name> --group <group>",
+		Short: "Deploy a template's roster INTO an existing group",
+		Long: "Spawns a template's agents into an ALREADY-EXISTING group (the reinforcements verb), instead of " +
+			"creating a fresh one the way 'instantiate' / 'task-force deploy' do. The group's own settings — its " +
+			"description, shared context, max-members cap and process — are left untouched; the roster is what's " +
+			"deployed, and the new members inherit the group's existing context. Ownership is never transferred: a " +
+			"template owner flag is dropped (and reported). Everything is validated up-front — a name that collides " +
+			"with a live member, or a roster that would exceed the group's max-members cap, refuses the WHOLE call " +
+			"before anything spawns. Seeded rhythms and the kick-off work pattern still fire, scoped to the new members.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *templatesReinforceParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			return nil
+		},
+		RunFunc: func(p *templatesReinforceParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesReinforce(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesReinforce(p *templatesReinforceParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a template name is required")
+		return rcInvalidArg
+	}
+	if strings.TrimSpace(p.Group) == "" {
+		fmt.Fprintln(stderr, "Error: --group is required (the existing group to reinforce)")
+		return rcInvalidArg
+	}
+	task, rc := resolveBodyInput(p.Task, p.TaskFile, "--task", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	body := map[string]any{"group_name": strings.TrimSpace(p.Group)}
+	if task != "" {
+		body["task"] = task
+	}
+	if c := strings.TrimSpace(p.Cwd); c != "" {
+		body["cwd"] = c
+	}
+	var resp instantiateResponse
+	// Reinforcement spawns a whole roster sequentially — each spawn polls for a
+	// conv-id — so, like instantiate, it can run well past the default budget.
+	if err := DaemonRequest(http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/reinforce",
+		body, &resp, DaemonOpts{Timeout: 5 * time.Minute}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Reinforced group %q from template %q: %d spawned, %d failed\n",
+		resp.Group, resp.Template, resp.Spawned, resp.Failed)
+	for _, a := range resp.Agents {
+		if a.Error != "" {
+			fmt.Fprintf(stdout, "  ✗ %-24s  %s\n", a.FinalName, a.Error)
+			continue
+		}
+		tags := []string{"conv " + short(a.ConvID)}
+		if a.OwnerDropped {
+			tags = append(tags, "owner flag dropped")
+		}
+		if len(a.Granted) > 0 {
+			tags = append(tags, "granted: "+strings.Join(a.Granted, ","))
+		}
+		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
+	}
+	if note := strings.TrimSpace(resp.OwnerNote); note != "" {
+		fmt.Fprintf(stdout, "  note: %s\n", note)
+	}
+	if resp.PatternDelivered > 0 {
+		fmt.Fprintf(stdout, "  work pattern: %d message%s delivered\n",
+			resp.PatternDelivered, plural(resp.PatternDelivered))
+	}
+	for _, e := range resp.PatternErrors {
+		fmt.Fprintf(stdout, "  ⚠ work pattern: %s\n", e)
+	}
+	printStagedSpawnAndRhythms(stdout, resp)
 	if resp.Failed > 0 {
 		fmt.Fprintf(stderr, "Error: %d of %d agent(s) failed to spawn — see above\n",
 			resp.Failed, resp.Failed+resp.Spawned)

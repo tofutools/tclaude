@@ -173,6 +173,22 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	}, nil
 }
 
+// collectRolesSnapshot builds the dashboard's role-library list for the poll
+// (the palette dock, JOH-374). Returns an empty (non-nil) slice on error or
+// when there are no roles, so the page's JS .map() never trips on null.
+// db.ListRoles already orders by name, so the output is stable.
+func collectRolesSnapshot() []roleJSON {
+	out := []roleJSON{}
+	roles, err := db.ListRoles()
+	if err != nil {
+		return out
+	}
+	for _, rl := range roles {
+		out = append(out, roleToJSON(rl))
+	}
+	return out
+}
+
 // handleRoles dispatches the collection endpoint /v1/roles: GET lists every
 // role (open, read-only), POST creates one (gated on roles.manage).
 func handleRoles(w http.ResponseWriter, r *http.Request) {

@@ -13,8 +13,8 @@ import (
 //   - requireGroupPermission     → groups.{stop,resume,retire,spawn}
 //   - groups_links owner bypass  → groups.link.{add,rm}
 //   - requireCrossAgentPermission/requireGroupContextAccess →
-//       agent.{reincarnate,compact,rename,clone,context-info,task,schedule,
-//              stop,resume,delete,promote,retire}
+//       agent.{reincarnate,compact,rename,clone,context-info,task,tags,
+//              schedule,stop,resume,delete,promote,retire}
 //   - requireNotifyHumanPermission → human.notify
 //
 // If you add/remove an owner-bypass call site, update both the registry
@@ -30,6 +30,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentClone,
 		PermAgentContextInfo,
 		PermAgentTask,
+		PermAgentTags,
 		PermAgentSchedule,
 		PermAgentStop,
 		PermAgentResume,
