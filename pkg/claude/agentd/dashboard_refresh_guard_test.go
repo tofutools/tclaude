@@ -137,6 +137,7 @@ func TestDashboardHTML_ForceRefreshOnCircleMutations(t *testing.T) {
 		{"async function submitTemplateEditor(", "saving a circle must repaint the list at once"},
 		{"async function deleteTemplate(", "deleting a circle must drop the card at once"},
 		{"async function submitTemplateImport(", "importing a circle must show it in the list at once"},
+		{"async function submitDuplicate(", "duplicating a circle must show the copy in the list at once"},
 	} {
 		if !strings.Contains(funcBody(h.sig), "refresh({ force: true })") {
 			t.Errorf("%s must call refresh({ force: true }) — %s", h.sig, h.why)

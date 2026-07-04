@@ -1996,6 +1996,22 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="template-duplicate-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-duplicate-title">
+    <h3 id="template-duplicate-title"><span class="tpl-word-regular">Duplicate a template</span><span class="tpl-word-wizard">🪞 Mirror the circle</span></h3>
+    <div class="modal-meta"><span class="tpl-word-regular">Makes a full copy of <b id="template-duplicate-source"></b> under a new name — every agent (with roles, launch profiles, permissions, owner flag and initial message), waves, process phases, rhythms, work pattern, description and default context. Only the name changes.</span><span class="tpl-word-wizard">Chalks an identical twin of <b>the circle</b> under a new name — every familiar (with roles, launch rites, powers, ownership and opening whisper), ranks, quest chapters, drumbeats, rite of command, lore and shared context. Only the name changes.</span></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><span class="tpl-word-regular">New name</span><span class="tpl-word-wizard">New name</span></span>
+      <input id="template-duplicate-name" type="text" placeholder="kebab-or-snake-case label for the copy" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-error" id="template-duplicate-error"></div>
+    <div class="modal-buttons">
+      <button id="template-duplicate-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-duplicate-submit" class="primary" type="button">Duplicate template</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="group-import-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-import-title">
     <h3 id="group-import-title"><span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span></h3>
