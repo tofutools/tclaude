@@ -31,16 +31,15 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must(`id="agent-dock"`, "the dock shell exists")
 	must(`id="dock-toggle"`, "the edge toggle exists")
 	must(`id="dock-body"`, "the morph-target body exists")
-	// JOH-388 req 2: two more discoverable show/hide controls beyond the edge
-	// tab — a top-bar toggle next to the windows/power controls, and an in-dock
-	// collapse affordance in the (now title-less, req 6) dock header.
-	must(`id="dock-toggle-top"`, "the top-bar dock toggle exists (discoverable show/hide)")
+	// The in-dock collapse affordance in the (title-less, req 6) dock header.
 	must(`id="dock-collapse"`, "the in-dock collapse affordance exists")
-	// The "Palette"/"Grimoire" vocab span-pair moved from the dropped head title
-	// (req 6) onto the top-bar toggle — same established span-pair idiom, both
-	// modes, so the CSS .tpl-word-* swap picks the voice per theme.
-	must(`<span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span>`,
-		"the top-bar dock toggle carries both vocab modes")
+	// JOH-390 item 7: the top-bar "🧰 Palette"/"🧰 Grimoire" toggle (JOH-388 req 2)
+	// was REMOVED per operator request — a duplicate reopen control. The final
+	// show/hide surface is TWO controls (edge tab + in-dock collapse). The button,
+	// its id and its vocab span-pair must all be gone (the Palette/Grimoire vocab
+	// simply died with the button — the section headings carry the meaning, req 6).
+	mustNot(`id="dock-toggle-top"`, "the removed top-bar dock toggle leaves no id behind (JOH-390 item 7)")
+	mustNot(`🧰 Palette`, "the removed top-bar toggle's vocab span-pair is gone (JOH-390 item 7)")
 
 	// The dock is NAMED `dock`, not `palette`, because js/palette.js is the
 	// Ctrl/Cmd-K command palette — guard against a regression that reuses the
@@ -109,4 +108,33 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("snap.profiles", "the profiles section reads off the snapshot")
 	must("snap.templates", "the templates section reads off the snapshot")
 	must("snap.roles", "the roles section reads off the snapshot")
+
+	// --- JOH-390 dock polish r2 -------------------------------------------
+
+	// Item 1: the footer spans the FULL viewport width even with the dock open.
+	// The dock's bottom edge is pinned to var(--footer-h) — the same variable as
+	// the footer's height — so it never occupies the footer's band; squeezing the
+	// footer to viewport-minus-dock cramped/clipped the base-URL line. Guard the
+	// squeeze rule stays gone.
+	mustNot("body.dock-open footer {",
+		"the footer is not squeezed to viewport-minus-dock (JOH-390 item 1 — it spans full width, clear below the dock)")
+
+	// Item 4: the groups-toolbar globals ("+ new group", the ⚙ cog, the 🧠
+	// default-profile chip) re-home into the open dock's head — two static
+	// containers (outside #dock-body so the morph never clobbers them) that
+	// dock.js's syncDockActions moves the live nodes into on open / back to the
+	// toolbar on collapse.
+	must(`id="dock-actions-primary"`, "the dock head hosts the re-homed new-group + cog row")
+	must(`id="dock-actions-profile"`, "the dock head hosts the re-homed default-profile row")
+	must("function syncDockActions(", "dock.js moves the toolbar globals in/out of the dock head")
+	must(".dock-actions-profile:empty { display: none; }",
+		"the re-homed profile row collapses when its chip is back in the toolbar")
+
+	// Item 5: the profiles section carries its FULL name in the dock (operator
+	// request); templates + roles keep their short headings.
+	must(`wizWord('Agent profiles', 'Familiar patterns')`, "the profiles section heading is spelled out (JOH-390 item 5)")
+
+	// Item 6: the template card's per-item ⚙ deep-links into THAT template's
+	// editor (like profiles/roles), not the whole-kind manager.
+	must("openTemplateEditor(t)", "the template card ⚙ opens the item's editor (JOH-390 item 6)")
 }

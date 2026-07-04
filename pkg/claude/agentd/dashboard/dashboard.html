@@ -106,15 +106,11 @@
     </span>
   </span>
   <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
-  <!-- The discoverable show/hide for the right-side palette dock (JOH-388 req 2):
-       a top-bar toggle next to the windows/power controls, the obvious sibling
-       of the on-dock collapse chevron + the edge tab. dock.js wires it (by id)
-       to the same body.dock-open state the edge toggle drives, persisted via
-       dashPrefs. It carries the "🧰 Palette" / "🧰 Grimoire" vocab span-pair the
-       dock head used to (the head title was dropped, req 6) — the CSS
-       .tpl-word-regular/.tpl-word-wizard swap picks the voice per theme, since
-       this static control is never re-rendered by the poll. -->
-  <button id="dock-toggle-top" type="button" aria-controls="agent-dock" aria-expanded="true" aria-label="Show or hide the palette of profiles, templates and roles" title="Show / hide the palette dock (profiles, templates, roles) on the right edge"><span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span></button>
+  <!-- The top-bar Palette/Grimoire dock toggle (JOH-388 req 2) was REMOVED per
+       operator request (JOH-390 item 7): a duplicate reopen control next to the
+       panel's own on-dock collapse + edge tab. The remaining show/hide
+       affordances are the in-dock "Hide ›/Furl ›" collapse and the edge chevron
+       tab (dock.js drives both off the same body.dock-open state). -->
   <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
        .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
        see the wizard windows button/modal rules in dashboard.css), matching
@@ -1072,14 +1068,22 @@
     <span class="dock-toggle-chevron" aria-hidden="true">›</span>
   </button>
   <div class="dock-inner">
-    <!-- Slim dock header (JOH-388 req 6: the decorative "Palette" title row was
-         dropped — the section headings carry the meaning and the title only cost
-         vertical space). What remains is a thin bar holding the clear in-dock
-         collapse affordance (req 2): a labelled "Hide ›" / "Furl ›" control, the
-         obvious-from-inside twin of the top-bar toggle and the edge tab. dock.js
-         wires it (by id) to the same body.dock-open state. -->
+    <!-- Dock header (JOH-388 req 6 dropped the decorative "Palette" title). It
+         now hosts, while the dock is OPEN, the groups-toolbar globals re-homed
+         off the floating filter bar (JOH-390 item 4): row 1 is the "+ new group"
+         primary + the ⚙ more-actions cog (moved into #dock-actions-primary),
+         with the in-dock collapse affordance ("Hide ›"/"Furl ›") right-aligned;
+         row 2 is the 🧠 dashboard-default-profile chip on its own line. dock.js's
+         syncDockActions() moves those nodes here on open and back to the toolbar
+         on collapse (the toolbar renders them exactly as before when the dock is
+         closed). The containers are STATIC (outside #dock-body) so the 2s morph
+         never clobbers them. -->
     <div class="dock-head">
-      <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+      <div class="dock-head-main">
+        <span id="dock-actions-primary" class="dock-actions"></span>
+        <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+      </div>
+      <div id="dock-actions-profile" class="dock-actions-profile"></div>
     </div>
     <!-- dock.js renders the three keyed <details> sections here off the live
          snapshot; their open/collapsed state (req 5) persists via dashPrefs and

@@ -2483,6 +2483,12 @@ export {
   openGroupContextModal, bindGroupContextModal, groupDefaultContext,
   openGroupCloneModal, bindGroupCloneModal, openFromGroupModal,
   openTemplatesManageModal,
+  // The per-template editor (JOH-390 item 6): the dock's template-card ⚙
+  // deep-links straight into a template's editor, like the profiles/roles
+  // cards already do. #template-editor-modal is a top-level modal that opens
+  // standalone (it does not need the manage modal open behind it), so the dock
+  // can call it directly.
+  openTemplateEditor,
 };
 // openSummonForDrop is exported via its `export function` declaration above
 // (dock-dnd.js imports it for the template-drop flow).
