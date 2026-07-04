@@ -52,6 +52,28 @@ func ListCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// WatchParams mirrors the subset of ListParams that RunConvWatchMode consults
+// — no JSON/Watch fields, since watch is implied.
+type WatchParams struct {
+	Global bool   `short:"g" help:"List conversations from all projects"`
+	Since  string `long:"since" optional:"true" help:"Only include conversations modified after this time (e.g., 2024-01-15, 1h30m, 7d)"`
+	Before string `long:"before" optional:"true" help:"Only include conversations modified before this time (e.g., 2024-01-15, 1h30m, 7d)"`
+}
+
+func WatchCmd() *cobra.Command {
+	return boa.CmdT[WatchParams]{
+		Use:         "watch",
+		Short:       "Interactive watch mode for conversations (alias for `conv ls -w`)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(params *WatchParams, cmd *cobra.Command, args []string) {
+			if err := RunConvWatchMode(params.Global, params.Since, params.Before); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}.ToCobra()
+}
+
 func RunList(params *ListParams, stdout, stderr *os.File) int {
 	SetDebugLog(params.Verbose)
 
