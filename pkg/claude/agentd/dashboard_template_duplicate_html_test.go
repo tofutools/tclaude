@@ -45,6 +45,7 @@ func TestDashboardHTML_TemplateDuplicate(t *testing.T) {
 	// shared create endpoint — the fidelity contract this UI depends on.
 	must("const payload = { ...src, name };", "duplicate clones the source template JSON with the name swapped")
 	must("delete payload.created_at;", "duplicate drops the response-only created_at before re-POSTing")
+	must("delete payload.updated_at;", "duplicate drops the response-only updated_at before re-POSTing")
 	must("template duplicated:", "the success toast reports the new template")
 
 	// (e) Plain-mode skin for the new .tool card button (so it doesn't fall back

@@ -83,6 +83,32 @@ func TestTemplateDuplicate_FullFidelityRoundTrip(t *testing.T) {
 	var srcJSON map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &srcJSON))
 
+	// Guard that the rich fields actually landed in the stored source. The
+	// copy==source diff below shares templateToJSON on both sides, so a field
+	// the store/projection drops would vanish SYMMETRICALLY and the diff would
+	// still pass — asserting concrete source values makes such a drop fail here,
+	// on the source side, which is the fidelity guarantee this test claims.
+	assert.Equal(t, "a lead and a reviewer", srcJSON["descr"], "descr stored")
+	assert.Equal(t, "TEAM RULES: worktrees + PRs", srcJSON["default_context"], "default_context stored")
+	assert.EqualValues(t, 120, srcJSON["wave_max_wait"], "wave_max_wait stored")
+	require.Len(t, srcJSON["work_pattern"], 2, "work pattern stored")
+	require.Len(t, srcJSON["process"], 2, "process stored")
+	require.Len(t, srcJSON["rhythms"], 2, "rhythms stored")
+	agents, ok := srcJSON["agents"].([]any)
+	require.True(t, ok, "agents is a list")
+	require.Len(t, agents, 2, "both agents stored")
+	lead, _ := agents[0].(map[string]any)
+	assert.Equal(t, "lead", lead["name"])
+	assert.Equal(t, true, lead["is_owner"], "owner flag stored")
+	assert.Equal(t, "cheap", lead["spawn_profile"], "spawn profile ref stored")
+	assert.Equal(t, "opus", lead["model"], "inline model stored")
+	assert.Equal(t, "high", lead["effort"], "inline effort stored")
+	assert.Equal(t, "Lead the team.", lead["initial_message"], "initial message stored")
+	assert.Equal(t, []any{"groups.spawn"}, lead["permissions"], "permission slug stored")
+	rev, _ := agents[1].(map[string]any)
+	assert.Equal(t, "cold-reviewer", rev["role_ref"], "role_ref stored")
+	assert.EqualValues(t, 1, rev["wave"], "distinct wave stored")
+
 	// Client-side clone: shallow-copy the fetched JSON, drop the response-only
 	// timestamps, swap the name — the same payload submitDuplicate() builds.
 	dupPayload := maps.Clone(srcJSON)
