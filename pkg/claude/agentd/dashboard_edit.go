@@ -639,6 +639,13 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups/{name}/process/advance", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupProcessAdvance(w, asDashboardHumanPeer(r), g)
 	}))
+	// Re-brief a deployed force (JOH-247): re-deliver the source template's work
+	// pattern to the live roster. asDashboardHumanPeer so the shared,
+	// permission-checked handler sees the cookie-authed dashboard caller as the
+	// human (re-brief is templates.use-gated on the /v1 path).
+	mux.HandleFunc("POST /api/groups/{name}/rebrief", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupRebrief(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("POST /api/groups/{name}/links", groupRoute(dashboardAddLink))
 	mux.HandleFunc("PATCH /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardUpdateLink(w, r, g, r.PathValue("id"))

@@ -2813,6 +2813,11 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	// waves (open, read-only). 404 when the deploy has no pending waves.
 	mux.HandleFunc("GET /v1/groups/{name}/waves", v1GroupRoute(handleGroupWavesGet))
 
+	// Re-brief a deployed force (JOH-247): re-deliver the source template's
+	// work pattern to the live roster with the group's mission interpolated.
+	// Gated on templates.use + owner-pass (see handleGroupRebrief).
+	mux.HandleFunc("POST /v1/groups/{name}/rebrief", v1GroupRoute(handleGroupRebrief))
+
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
 	mux.HandleFunc("PATCH /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
