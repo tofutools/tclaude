@@ -178,6 +178,54 @@ function templatesByName() {
   return m;
 }
 
+// ---- Shared template preview helpers (JOH-356) ------------------------
+//
+// The instantiate, deploy and "Form a party" previews all render the same two
+// things: a compact readback of the template's shape (familiars / waves /
+// process / rhythms / pattern chips) and the roster's final agent names under
+// the typed group prefix. Extracted here so all three read identically and a
+// tweak lands in one place.
+
+// templateReadbackBadges renders the roster-shape chips for a full template
+// object — the starterBadges twin, driven off the template's own arrays so a
+// picked circle is never blind. "" for a null template.
+export function templateReadbackBadges(t) {
+  if (!t) return '';
+  const n = (t.agents || []).length;
+  const chips = [`<span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>`];
+  const waves = templateWaveCount(t);
+  if (waves > 1) chips.push(`<span class="tc-count" title="${wizWord('staged-spawn waves', 'marching ranks')}">🌊 ${waves} ${wizWord('waves', 'ranks')}</span>`);
+  if ((t.process || []).length) chips.push(`<span class="tc-count" title="${wizWord('process phases', 'quest chapters')}">◆ ${(t.process || []).length}-${wizWord('phase', 'chapter')}</span>`);
+  if ((t.rhythms || []).length) chips.push(`<span class="tc-count" title="${wizWord('seeded rhythms', 'drumbeats')}">🥁 ${(t.rhythms || []).length}</span>`);
+  if ((t.work_pattern || []).length) chips.push(`<span class="tc-count" title="${wizWord('work-pattern steps', 'rite verses')}">⇶ ${(t.work_pattern || []).length}</span>`);
+  return chips.join(' ');
+}
+
+// templateRosterRowsHTML renders the per-agent "final name + launch shape" rows
+// for a template's roster under the typed group prefix — agent "PO" shows as
+// "<group>-PO". A blank prefix falls back to a ‹group› placeholder. Shared by
+// the instantiate / deploy / party-create previews.
+export function templateRosterRowsHTML(t, prefix) {
+  const agents = (t && t.agents) || [];
+  if (!agents.length) {
+    return `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
+  }
+  const shown = (prefix || '').trim() || wizWord('‹group›', '‹party›');
+  return agents.map(a => {
+    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+    const np = (a.permissions || []).length;
+    // Per-role launch hint (JOH-239): the profile ref or the most telling
+    // inline override so the human sees each role's launch shape before spawning.
+    const launch = a.spawn_profile
+      ? `⚙ ${esc(a.spawn_profile)}`
+      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
+      .filter(Boolean).join(' · ');
+    return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
+      + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
+  }).join('');
+}
+
 function blankTemplateAgent() {
   return {
     name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
@@ -707,27 +755,8 @@ function closeInstantiateModal() { $('#template-instantiate-modal').classList.re
 // the human types the group name — agent "PO" shows as "<group>-PO".
 function renderInstantiatePreview() {
   const t = templatesByName()[$('#template-instantiate-template').value];
-  const prefix = $('#template-instantiate-group').value.trim();
-  const host = $('#template-instantiate-preview');
-  const agents = (t && t.agents) || [];
-  if (!agents.length) {
-    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
-    return;
-  }
-  const shown = prefix || wizWord('‹group›', '‹party›');
-  host.innerHTML = agents.map(a => {
-    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
-    const np = (a.permissions || []).length;
-    // Per-role launch hint (JOH-239): show the profile ref or the most telling
-    // inline override so the human sees each role's launch shape before spawning.
-    const launch = a.spawn_profile
-      ? `⚙ ${esc(a.spawn_profile)}`
-      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
-    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
-      .filter(Boolean).join(' · ');
-    return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
-      + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
-  }).join('');
+  $('#template-instantiate-preview').innerHTML =
+    templateRosterRowsHTML(t, $('#template-instantiate-group').value);
 }
 
 async function submitInstantiate() {
@@ -862,25 +891,8 @@ function syncDeployGroupPrefill() {
 // like the instantiate preview — agent "PO" shows as "<group>-PO".
 function renderDeployPreview() {
   const t = templatesByName()[$('#template-deploy-template').value];
-  const prefix = $('#template-deploy-group').value.trim();
-  const host = $('#template-deploy-preview');
-  const agents = (t && t.agents) || [];
-  if (!agents.length) {
-    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
-    return;
-  }
-  const shown = prefix || wizWord('‹group›', '‹party›');
-  host.innerHTML = agents.map(a => {
-    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
-    const np = (a.permissions || []).length;
-    const launch = a.spawn_profile
-      ? `⚙ ${esc(a.spawn_profile)}`
-      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
-    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
-      .filter(Boolean).join(' · ');
-    return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
-      + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
-  }).join('');
+  $('#template-deploy-preview').innerHTML =
+    templateRosterRowsHTML(t, $('#template-deploy-group').value);
 }
 
 // resolveDeployWorktree turns a branch + repo (the cwd) into a worktree path
@@ -1285,7 +1297,11 @@ function bindTemplatesUI() {
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
   $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
   $('#template-from-group-open').addEventListener('click', () => openFromGroupModal(null));
-  $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
+  // The cog's standalone "⎘ from template" shortcut now opens the "Form a party"
+  // dialog with the circle preselected (JOH-356 — one obvious create-a-group
+  // surface), so it is bound in bindGroupCreateModal (modal-message.js), not
+  // here. The template-card "⎘ instantiate / 🕯 cast" action below still opens
+  // the in-overlay instantiate dialog.
 
   // Template-card actions (delegated — the list re-renders every poll).
   // data-tact (not data-act) keeps these off the global row-action bus.
@@ -1971,4 +1987,5 @@ export {
   renderTemplatesTab, bindTemplatesUI, bindGroupImportModal,
   openGroupContextModal, bindGroupContextModal, groupDefaultContext,
   openGroupCloneModal, bindGroupCloneModal, openFromGroupModal,
+  openTemplatesManageModal,
 };

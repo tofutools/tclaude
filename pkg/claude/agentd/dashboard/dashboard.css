@@ -5643,6 +5643,37 @@ body.wizard #group-create-modal #group-create-submit:active {
 body.wizard #group-create-modal #group-create-submit:disabled { opacity: 0.7; }
 body.wizard #group-create-modal #group-create-submit:disabled::before { content: "⚔ Gathering the party…"; }
 
+/* Party-profile picker (JOH-356). The roster readback reuses .template-preview
+   (the instantiate/deploy preview surface); its chips are .tc-count spans, but
+   the base .tc-count rule is scoped to .template-card / .starter-row, so the
+   badge line needs its own colour here. .tp-badges is the chip row above the
+   roster rows. */
+.template-preview .tp-badges { margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 8px; }
+.template-preview .tp-badges .tc-count { color: #6e7681; font-size: 11px; }
+/* Wizard skin for the party-profile <select> + its options (mirrors the cron
+   dialog's select re-skin — the group-create modal gained its first <select>
+   with this feature, so these rules are new rather than an extension). */
+body.wizard #group-create-modal .cron-create-row select {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-create-modal .cron-create-row select:focus { border-color: #a97bd6; }
+/* Open <select> options render on the OS layer — keep them dark-on-parchment. */
+body.wizard #group-create-modal .cron-create-row select option {
+  color: #1a1330; background: #e7d9f5;
+}
+/* The roster readback: violet void, gilt names, gold owner-star — same palette
+   as the instantiate preview. */
+body.wizard #group-create-modal .template-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #group-create-modal .template-preview .tp-name { color: #f3e6c0; }
+body.wizard #group-create-modal .template-preview .tp-meta { color: #b39ddb; }
+body.wizard #group-create-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #group-create-modal .template-preview .tp-empty { color: #b39ddb; }
+body.wizard #group-create-modal .template-preview .tp-badges .tc-count { color: #b39ddb; }
+
 /* ─── Wizard reply dialog — "✒ Answer the familiar" ─────────────────
    The Human folder's reply dialog re-skinned arcane: answering a familiar's
    raven is the mail-tab twin of the Summon / Bind / Form-a-party dialogs, so
