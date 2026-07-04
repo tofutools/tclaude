@@ -82,6 +82,7 @@ type approvalRequest struct {
 	path            string
 	rawQuery        string // URL query string (without the '?'), if any
 	bodyPreview     string // request body, JSON-prettified when possible
+	bodyLabel       string // <dt> label for the body row; "" falls back to "Body"
 	targetGroup     string // populated for actions on a specific group
 	targetConvID    string // populated for actions on a specific other conv
 	targetConvTitle string // resolved display title for targetConvID
@@ -524,7 +525,15 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 
 	bodyRow := ""
 	if req.bodyPreview != "" {
-		bodyRow = "\n  <dt>Body</dt><dd><pre class=\"body\">" + html.EscapeString(req.bodyPreview) + "</pre></dd>"
+		label := req.bodyLabel
+		if label == "" {
+			label = "Body"
+		}
+		// req.bodyPreview is untrusted (agent-supplied request body or, for
+		// a clipboard write, the raw text to be copied) — html.EscapeString
+		// is the injection gate before it lands in the page.
+		bodyRow = "\n  <dt>" + html.EscapeString(label) + "</dt><dd><pre class=\"body\">" +
+			html.EscapeString(req.bodyPreview) + "</pre></dd>"
 	}
 
 	fmt.Fprintf(w, approvalPageTemplate,

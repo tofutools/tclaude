@@ -309,6 +309,18 @@ func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, s
 	return func() { humanMsgNotify = prev }
 }
 
+// SetClipboardWriterForTest swaps the platform clipboard-write seam so a
+// flow test can assert that handleClipboard reached the copy path with the
+// exact text — without execing a real wl-copy/xclip/pbcopy/clip.exe (which
+// would fail on a headless CI host anyway). The recorder returns the error
+// the fake wants the handler to see, so a test can also drive the
+// copy-tool-failure branch. Returns a restore function for t.Cleanup.
+func SetClipboardWriterForTest(fn func(text string) error) func() {
+	prev := clipboardWrite
+	clipboardWrite = fn
+	return func() { clipboardWrite = prev }
+}
+
 // SetDetachAgentWindowsForTest swaps the per-agent unfocus/detach seam
 // behind the bulk /api/agent-windows endpoint. The fake returns the
 // detached-client count the real session.DetachSessionClients would
