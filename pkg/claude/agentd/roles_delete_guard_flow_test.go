@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -93,6 +94,35 @@ func TestRoleDelete_FreedWhenReferencingTemplateDeleted(t *testing.T) {
 	require.Equalf(t, http.StatusNoContent,
 		humanReq(t, f, http.MethodDelete, "/v1/templates/freed-team", nil).Code, "delete template")
 	require.Equalf(t, http.StatusNoContent, deleteRole(t, f, "freed-role").Code, "role freed once template gone")
+}
+
+// Scenario: a template carries a DANGLING role_ref (its role was removed
+// out-of-band, e.g. legacy data). Deleting that now-missing role name answers
+// 404 "no such role" — the existence check runs before the reference guard, so
+// the operator isn't handed a misleading "still referenced" 409 for a role that
+// doesn't exist.
+func TestRoleDelete_DanglingRefStillAnswers404(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "ghost-role",
+	}).Code, "create role")
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "haunted-team",
+		"agents": []map[string]any{{"name": "a", "role_ref": "ghost-role"}},
+	}).Code, "create template referencing the role")
+
+	// Remove the role out-of-band via the DB primitive (which bypasses the wire
+	// guard), leaving haunted-team with a dangling role_ref.
+	n, err := db.DeleteRole("ghost-role")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "role removed out-of-band")
+
+	// Deleting the now-missing role via the API answers 404, not a 409 that would
+	// wrongly claim it's still referenced.
+	rec := deleteRole(t, f, "ghost-role")
+	require.Equalf(t, http.StatusNotFound, rec.Code, "missing role answers 404: %s", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "role_in_use", "no misleading in-use error for a missing role")
 }
 
 // Scenario: an unreferenced role deletes without a fuss — the guard only fires
