@@ -1881,13 +1881,26 @@ body.wizard .force-mission-label-wizard { display: inline; }
      inter-chip margin reads as loose once the chips are just icons. Kept
      CONSTANT across hover (not only at rest) so revealing the text animates
      the qo-text width alone, without the chips sliding sideways. The 👥
-     member chip tightens too so the whole cluster stays even. */
+     member chip tightens too so the whole cluster stays even. The margin
+     (1px) and halved horizontal padding (3px, from the base 6px) together
+     roughly halve the visual gap between adjacent icon chips. */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips {
-    margin-left: 2px;
+    margin-left: 1px;
+  }
+  /* Halve the icon chips' own inner horizontal padding too — the base 6px
+     dominates the inter-chip space once the labels are folded away. Scoped
+     to the four bordered-transparent icon chips; the .group-link-chips flex
+     container has no padding of its own (its inner pills keep their look). */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model {
+    padding-left: 3px;
+    padding-right: 3px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
