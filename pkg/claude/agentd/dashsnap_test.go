@@ -441,10 +441,18 @@ return new Promise(function(resolve, reject){
 // jobsNoDockJS builds a self-checking Groups-only-dock state: switch to the Jobs
 // tab, FORCE dock-open on (to prove the tab gate wins even against the open
 // flag), give dock.js's Groups-pane observer a beat to re-evaluate, then assert
-// the dock shell is entirely hidden — #agent-dock computes display:none and its
-// edge toggle isn't laid out (offsetParent null). The returned JS ends in a
-// Promise that REJECTS when any part of the dock leaks onto a non-Groups tab, so
+// the dock shell is entirely gone — #agent-dock computes display:none and
+// neither it nor its edge toggle is laid out. The returned JS ends in a Promise
+// that REJECTS when any part of the dock leaks onto a non-Groups tab, so
 // dashsnap's awaited Eval fails the state rather than capturing a silent "ok".
+//
+// "Laid out" is probed with getClientRects().length, NOT offsetParent:
+// #agent-dock is position:fixed (and #dock-toggle position:absolute), and Blink
+// reports offsetParent === null for a fixed element even when it's fully
+// visible — so an offsetParent probe on the panel is vacuous. getClientRects()
+// is the robust geometry check: EMPTY when the element is display:none (the
+// required off-tab state), NON-empty when it's laid out — so it also rejects a
+// regression that merely SLID the panel off (translateX) instead of removing it.
 func jobsNoDockJS() string {
 	return `document.querySelector('nav button[data-tab="jobs"]').click();
 document.body.classList.add('dock-open');
@@ -456,8 +464,8 @@ return new Promise(function(resolve, reject){
     var dock = document.getElementById('agent-dock');
     var toggle = document.getElementById('dock-toggle');
     var disp = dock ? getComputedStyle(dock).display : 'none';
-    var dockShown = dock && dock.offsetParent !== null;
-    var toggleShown = toggle && toggle.offsetParent !== null;
+    var dockShown = !!(dock && dock.getClientRects().length);
+    var toggleShown = !!(toggle && toggle.getClientRects().length);
     var o = document.createElement('div');
     o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
     o.textContent = 'groups-only dock: display=' + disp + ' dockShown=' + dockShown + ' toggleShown=' + toggleShown;
