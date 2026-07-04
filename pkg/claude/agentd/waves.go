@@ -157,7 +157,18 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.SpawnedConvs[a.Name] = outcome.ConvID
 		wr.SpawnedOrder = append(wr.SpawnedOrder, outcome.ConvID)
 
-		if a.IsOwner {
+		// Birth-time access controls (JOH-350 / JOH-354): owner + permission
+		// overrides now RIDE the agent's referenced spawn profile, composed with
+		// the role's default grants and any legacy inline grants. A vanished
+		// profile was already caught by resolveTemplateAgentLaunch above, so this
+		// second resolve failing is unexpected — record it per-agent, don't abort.
+		owner, overrides, afail := resolveTemplateAgentAccess(a, role)
+		if afail != nil {
+			res.Error = "spawned, but resolving access failed: " + afail.Msg
+			wr.Results = append(wr.Results, res)
+			continue
+		}
+		if owner {
 			if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, granter); err != nil {
 				slog.Warn("wave spawn: grant owner failed",
 					"group", g.Name, "conv", outcome.ConvID, "error", err)
@@ -166,13 +177,15 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 				res.Owner = true
 			}
 		}
-		for _, slug := range effectivePermissions(role, a.Permissions) {
-			if err := db.GrantAgentPermission(outcome.ConvID, slug, granter); err != nil {
-				slog.Warn("wave spawn: grant permission failed",
-					"conv", outcome.ConvID, "slug", slug, "error", err)
+		for _, ov := range overrides {
+			if err := db.SetAgentPermissionOverride(outcome.ConvID, ov.Slug, ov.Effect, granter); err != nil {
+				slog.Warn("wave spawn: apply permission override failed",
+					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Effect, "error", err)
 				continue
 			}
-			res.Granted = append(res.Granted, slug)
+			if ov.Effect == db.PermEffectGrant {
+				res.Granted = append(res.Granted, ov.Slug)
+			}
 		}
 		wr.Results = append(wr.Results, res)
 	}

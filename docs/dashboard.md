@@ -231,13 +231,22 @@ alone instantiates a working group. Everything below is an *optional advanced
 layer* you add only when you want it, so don't read the list as a wall of
 required concepts. A full template can carry:
 
-- a **roster** of agent specs — name, role label, description, task brief,
-  owner flag, and permission slugs;
+- a **roster** of agent specs — name, role label, description, task brief, and
+  an **owner** flag (which member leads the group);
 - a **role reference** per agent (`role_ref`) into the [roles library](#roles-library),
   so the agent inherits that role's canonical brief and launch defaults beneath
   its own fields;
-- **per-agent launch tuning** — a spawn-profile reference plus inline
-  harness / model / effort / sandbox / approval overrides that win over it;
+- **a launch profile per agent** — the agent's launch shape *and* its birth-time
+  permissions are a single **pick a stored [spawn profile](#spawn-profiles)**: the
+  profile's harness / model / effort / sandbox / approval and its
+  grant/deny permission overrides all ride onto the spawned agent. The editor's
+  launch row is a profile dropdown with **＋ new** (create one inline and use it)
+  and **⧉ manage…** (open the real profiles manager) — there is no duplicated
+  field set or permission-checkbox list in the template editor; a profile is the
+  unit of launch config. The **owner** flag stays a separate per-agent checkbox
+  because ownership is *structural* (which member leads), not launch config — at
+  deploy it is **unioned** with the profile's own `is_owner` default (either one
+  makes the agent an owner);
 - an ordered, routed **work pattern** — briefing messages delivered, in order,
   once the whole roster has spawned (each routed to one agent or `all`);
 - an advisory **process** — an ordered list of phases (the quest plan), tracked
@@ -246,6 +255,16 @@ required concepts. A full template can carry:
   order, each wave holding until the previous one has come up and gone idle;
 - **rhythms** — recurring nudges that become ordinary group cron jobs when the
   force is deployed (see [The rhythm model](#the-rhythm-model)).
+
+> **Templates authored before the profile picker** may carry inline launch
+> fields or an inline permission list on an agent. Those still apply when you
+> deploy and are preserved when you re-save — nothing is silently dropped — but
+> they can no longer be edited inline. The editor flags such an agent with a
+> **⚠ legacy inline** notice and an **Extract to profile…** button that
+> materializes the inline values into a reusable spawn profile and points the
+> agent at it. (Bundled [starters](#starter-task-forces) that still list an
+> inline `groups.spawn` grant on their lead deploy correctly for the same
+> reason.)
 
 Per-card actions: **🚀 deploy** (against a mission — see
 [Task forces](#task-forces)), **⎘ instantiate** (create a group with no
@@ -273,23 +292,30 @@ around the template:
   "format": "tclaude-task-force",
   "format_version": 1,
   "exported_at": "2026-07-03T21:00:00Z",
-  "template": { "name": "feature-team", "agents": [ ... ], "work_pattern": [ ... ] }
+  "template": { "name": "feature-team", "agents": [ ... ], "work_pattern": [ ... ] },
+  "roles":    [ ... ],
+  "profiles": [ ... ]
 }
 ```
 
 The `template` object is exactly the shape the editor and
 `tclaude agent templates show --json` use, so every template field — agents,
-per-role launch profiles, permission slugs, the work pattern — travels
-automatically. The file carries **no machine-local identity**: no database ids
-and no conversation links, just the blueprint.
+launch-profile references, the work pattern — travels automatically. The
+envelope also **embeds the full definition of every [role](#roles-library) and
+[spawn profile](#spawn-profiles) the template references**, so a profile-driven
+team reproduces its launch shape + permissions on another machine. The file
+carries **no machine-local identity**: no database ids and no conversation
+links, just the blueprint.
 
-On import, references that may not exist on the target machine **degrade with a
+On import, the embedded roles and profiles are **materialized only if they are
+missing** on the target machine — an existing role/profile of the same name is
+never overwritten (your local edits are sacred; the import reports it kept the
+local version). References that still can't be resolved **degrade with a
 warning** rather than failing the whole import:
 
-- a **spawn-profile reference** naming a profile that isn't defined here is
-  dropped (the agent falls back to the group/harness default); any inline launch
-  overrides on that agent are kept;
-- an **unknown permission slug** is dropped from that agent.
+- a **spawn-profile reference** naming a profile that isn't defined here and
+  wasn't embedded is dropped (the agent falls back to the group/harness default);
+- an **unknown permission slug** on an agent's legacy inline list is dropped.
 
 A **name collision** is refused unless you opt in: tick **Overwrite if it already
 exists** (CLI `--update`) to replace the existing template in place, or set

@@ -991,6 +991,17 @@ type templateExportEnvelope struct {
 	// reference whose definition isn't embedded and doesn't exist locally is
 	// dropped on import, exactly like an unknown spawn-profile reference.
 	Roles []roleJSON `json:"roles,omitempty"`
+	// Profiles embeds the full definitions of every spawn profile the template's
+	// agents (or their embedded roles) reference by name (JOH-350) — the profile
+	// now carries the agent's launch shape AND its birth-time permissions/owner,
+	// so it must travel for the export to reproduce the same team elsewhere.
+	// Import materializes any that are MISSING locally (never overwriting an
+	// existing profile of the same name — same sacred-edits rule as roles); a
+	// reference that stays unresolved is dropped + warned on import, exactly like
+	// today. This field is purely additive: a format_version-1 reader that
+	// predates it simply ignores it and degrades the ref, so the envelope stays
+	// version 1 (no bump).
+	Profiles []spawnProfileJSON `json:"profiles,omitempty"`
 }
 
 // collectReferencedRoles gathers the full definitions of every role the
@@ -1019,6 +1030,51 @@ func collectReferencedRoles(t *db.GroupTemplate) ([]roleJSON, error) {
 		j.CreatedAt = ""
 		j.UpdatedAt = ""
 		out = append(out, j)
+	}
+	return out, nil
+}
+
+// collectReferencedProfiles gathers the full definitions of every spawn profile
+// the template references, for embedding in a portable export (JOH-350). A
+// profile is referenced either directly by an agent's spawn_profile or by a
+// role the agent references (a role can name a default profile too), so both
+// sources are swept — with the given roles (the ones already gathered for
+// embedding) providing the role→profile links without a second role fetch.
+// Missing profiles (a ref whose row was deleted since authoring) are silently
+// skipped — import degrades such a dangling ref anyway. Order is stable
+// (first-referenced) and each profile is embedded once.
+func collectReferencedProfiles(t *db.GroupTemplate, roles []roleJSON) ([]spawnProfileJSON, error) {
+	seen := map[string]bool{}
+	out := []spawnProfileJSON{}
+	add := func(ref string) error {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || seen[ref] {
+			return nil
+		}
+		seen[ref] = true
+		p, err := db.GetSpawnProfile(ref)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return nil
+		}
+		j := profileToJSON(p)
+		// Portable: strip the machine-local timestamps (like the template's).
+		j.CreatedAt = ""
+		j.UpdatedAt = ""
+		out = append(out, j)
+		return nil
+	}
+	for _, a := range t.Agents {
+		if err := add(a.SpawnProfile); err != nil {
+			return nil, err
+		}
+	}
+	for _, rl := range roles {
+		if err := add(rl.SpawnProfile); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -1058,12 +1114,21 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// Embed the referenced spawn profiles too (JOH-350) — sweeping both the
+	// agents' direct refs and any the embedded roles carry — so a profile-driven
+	// team's launch shape + birth-time permissions travel with the export.
+	profiles, err := collectReferencedProfiles(t, roles)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, templateExportEnvelope{
 		Format:        templateExportFormat,
 		FormatVersion: templateExportVersion,
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
 		Template:      inner,
 		Roles:         roles,
+		Profiles:      profiles,
 	})
 }
 
@@ -1150,6 +1215,53 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 	}
 	body.Agents = agents
 	return body, warnings
+}
+
+// recreateMissingProfiles restores each embedded spawn profile that is MISSING
+// on this machine (JOH-350), so a template imported from another machine can
+// resolve its spawn_profile references (an agent's or an embedded role's). It
+// mirrors recreateMissingRoles exactly: an existing profile of the same name is
+// LEFT UNTOUCHED — never overwritten (sacred edits) — and the import reports it
+// kept the local version; a definition that fails validation here is warned and
+// skipped (the referencing agent/role then degrades in sanitize); a DB fault is
+// a hard failure. It runs BEFORE recreateMissingRoles, because a role's own
+// validation checks its referenced profile exists (buildRoleFromJSON), so the
+// profiles must be in place before the roles that name them.
+func recreateMissingProfiles(profiles []spawnProfileJSON) ([]string, *spawnFailure) {
+	warnings := []string{}
+	for _, pj := range profiles {
+		name := strings.TrimSpace(pj.Name)
+		if name == "" {
+			continue
+		}
+		existing, err := db.GetSpawnProfile(name)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if existing != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"spawn profile %q already exists here — kept the local version (import never overwrites a profile)", name))
+			continue
+		}
+		p, fail := buildProfileFromJSON(pj)
+		if fail != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"embedded spawn profile %q is invalid here (%s) — skipped; agents referencing it will use their own overrides",
+				name, fail.Msg))
+			continue
+		}
+		if _, err := db.CreateSpawnProfile(p); errors.Is(err, db.ErrSpawnProfileNameTaken) {
+			// Lost a create race with a concurrent writer — the name now exists,
+			// which is the outcome we wanted, so treat it as "kept".
+			warnings = append(warnings, fmt.Sprintf(
+				"spawn profile %q already exists here — kept the local version (import never overwrites a profile)", name))
+		} else if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		} else {
+			warnings = append(warnings, fmt.Sprintf("imported spawn profile %q", name))
+		}
+	}
+	return warnings, nil
 }
 
 // recreateMissingRoles restores each embedded role definition that is MISSING
@@ -1297,6 +1409,14 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 		body.Name = asName
 	}
 
+	// Re-create any embedded spawn profile that is MISSING locally FIRST (JOH-350)
+	// — before roles (a role's validation checks its referenced profile exists)
+	// and before the sanitize pass checks agent profile references. An existing
+	// profile of the same name is never overwritten (sacred edits).
+	profileWarnings, pfail := recreateMissingProfiles(env.Profiles)
+	if pfail != nil {
+		return templateImportResult{}, false, pfail
+	}
 	// Re-create any embedded role that is MISSING locally, BEFORE the sanitize
 	// pass checks role references — an existing role of the same name is never
 	// overwritten (sacred edits). Warnings report what was created / skipped.
@@ -1305,8 +1425,10 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 		return templateImportResult{}, false, rfail
 	}
 
-	cleaned, warnings := sanitizeImportedTemplate(body)
-	warnings = append(roleWarnings, warnings...)
+	cleaned, sanitizeWarnings := sanitizeImportedTemplate(body)
+	warnings := append([]string{}, profileWarnings...)
+	warnings = append(warnings, roleWarnings...)
+	warnings = append(warnings, sanitizeWarnings...)
 	t, fail := buildTemplateFromJSON(cleaned)
 	if fail != nil {
 		return templateImportResult{}, false, fail
@@ -1379,28 +1501,98 @@ func appendRoleBlock(groupContext, brief string) string {
 	return groupContext + "\n\n" + section
 }
 
-// effectivePermissions is the grant set for one instantiated agent: the
-// referenced role's default slugs UNION the agent's own (JOH-240). The role's
-// slugs come first (defaults), the agent's list extends them, and the result
-// is deduped preserving first-seen order. A nil role contributes nothing.
-func effectivePermissions(role *db.Role, agentPerms []string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	add := func(slugs []string) {
-		for _, s := range slugs {
-			s = strings.TrimSpace(s)
-			if s == "" || seen[s] {
-				continue
-			}
-			seen[s] = true
-			out = append(out, s)
+// permOverride is one resolved birth-time permission decision for an
+// instantiated template agent: a slug and its effect (grant | deny).
+type permOverride struct {
+	Slug   string
+	Effect string // db.PermEffectGrant | db.PermEffectDeny
+}
+
+// resolveTemplateAgentAccess computes the effective birth-time access controls
+// for one instantiated template agent (JOH-350 / JOH-354): whether it is a
+// group owner, and its ordered per-slug permission overrides. Ownership and
+// permissions now RIDE the agent's referenced spawn profile — the same profile
+// that carries its launch shape (resolveTemplateAgentLaunch) — so a template
+// role's access is configured ONCE, in the profile, instead of a duplicated
+// inline permission-checkbox list in the template editor.
+//
+// Composition, lowest → highest priority (a later tier wins per-slug):
+//
+//	role default grants → agent's spawn-profile overrides → agent inline grants
+//
+// So an inline grant beats a profile deny, and a profile deny beats a role
+// grant. Ownership is the UNION of the agent's own is_owner flag and its
+// profile's is_owner default — either marks it an owner. The (legacy) inline
+// agent.Permissions grants remain honoured here so a template authored before
+// the profile-picker cutover, or a bundled starter that still lists inline
+// grants, keeps deploying its escalated leads correctly (no migration).
+//
+// The referenced profile is fetched here with a cheap loopback read; it is
+// fetched again for launch fields in resolveTemplateAgentLaunch. The two
+// resolutions are kept separate for clarity — a vanished profile is reported
+// the same typed failure by both. A nil role contributes nothing.
+//
+// Scope note: only the ROLE's default grant list (role.Permissions) feeds access
+// here — a role's OWN referenced spawn profile (role.SpawnProfile) contributes
+// launch fields (resolveTemplateAgentLaunch) but NOT owner/permission overrides.
+// That matches the pre-JOH-350 contract (a role only ever contributed grants,
+// never denies or ownership) and keeps the access seam a single, obvious
+// profile: the one the AGENT picks. Widening it to role profiles would let a
+// role silently deny/own through an indirection, which is deliberately not done.
+func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
+	order := []string{}
+	eff := map[string]string{}
+	set := func(slug, effect string) {
+		slug = strings.TrimSpace(slug)
+		if slug == "" {
+			return
+		}
+		if _, ok := eff[slug]; !ok {
+			order = append(order, slug)
+		}
+		eff[slug] = effect
+	}
+	// Tier 1: the referenced role's default grants.
+	if role != nil {
+		for _, s := range role.Permissions {
+			set(s, db.PermEffectGrant)
 		}
 	}
-	if role != nil {
-		add(role.Permissions)
+	owner := a.IsOwner
+	// Tier 2: the agent's referenced spawn profile — its owner default + its
+	// grant/deny overrides. Profile slugs are applied in sorted order so a
+	// deploy's per-agent grant report is deterministic (the map itself is not).
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
+		prof, err := db.GetSpawnProfile(ref)
+		if err != nil {
+			return false, nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if prof == nil {
+			return false, nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
+		}
+		if prof.IsOwner != nil && *prof.IsOwner {
+			owner = true
+		}
+		slugs := make([]string, 0, len(prof.PermissionOverrides))
+		for slug := range prof.PermissionOverrides {
+			slugs = append(slugs, slug)
+		}
+		sort.Strings(slugs)
+		for _, slug := range slugs {
+			set(slug, prof.PermissionOverrides[slug])
+		}
 	}
-	add(agentPerms)
-	return out
+	// Tier 3: the agent's own inline grants (legacy per-agent list) — highest.
+	for _, s := range a.Permissions {
+		set(s, db.PermEffectGrant)
+	}
+
+	out := make([]permOverride, 0, len(order))
+	for _, s := range order {
+		out = append(out, permOverride{Slug: s, Effect: eff[s]})
+	}
+	return owner, out, nil
 }
 
 // instantiateAgentResult is the per-agent outcome of an instantiation.
