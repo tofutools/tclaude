@@ -539,6 +539,112 @@ function groupWavesChip(g) {
   return `<span class="group-waves-chip" title="${esc(titleParts.join('\n'))}">🌊 wave ${wv.current_wave}/${wv.total_waves} pending</span>`;
 }
 
+// isDeployedForce reports whether a group looks like a deployed task force
+// (JOH-247): it carries deployment provenance (a source template / mission) or
+// live process / wave machinery. Degrades gracefully — any one signal is
+// enough, so a plain-instantiated group (source template, no mission) still
+// gets the force block, and a hand-built group with none of these does not.
+function isDeployedForce(g) {
+  return !!(g.source_template || g.mission || (g.process && g.process.phases && g.process.phases.length) || g.waves);
+}
+
+// forceMemberLiveness classifies a member for the roles rollup + stalling
+// glance: an offline / exited member is 'dead'; an online member is 'idle' only
+// when its recorded status is literally idle, and 'working' for anything else in
+// flight (working / main_agent_idle / awaiting_* / error / an as-yet-unreported
+// online agent). The idle-vs-working split is deliberately conservative so the
+// stalling hint (all-live-idle) never fires while anything is mid-turn.
+function forceMemberLiveness(m) {
+  if (!m.online) return 'dead';
+  return ((m.state && m.state.status) || '') === 'idle' ? 'idle' : 'working';
+}
+
+// forceMemberPill renders one member in the roles rollup: a status glyph, its
+// name, and — when the snapshot already carries it — its context pressure
+// (e.g. 62%). No new data source: context_pct rides the same member.state the
+// members table reads.
+function forceMemberPill(m) {
+  const live = forceMemberLiveness(m);
+  const glyph = live === 'working' ? '●' : live === 'idle' ? '○' : '✕';
+  const pct = Math.round(Number((m.state && m.state.context_pct) || 0));
+  const name = m.title || (m.conv_id ? m.conv_id.slice(0, 8) : '(unnamed)');
+  const ctx = pct > 0 ? ` <span class="force-member-ctx">${pct}%</span>` : '';
+  const tip = `${name} — ${live}${pct > 0 ? ` · context ${pct}%` : ''}`;
+  return `<span class="force-member force-member-${live}" title="${esc(tip)}">${glyph} ${esc(name)}${ctx}</span>`;
+}
+
+// forceRolesRollup groups a force's members by role (first-seen order) and
+// renders a per-role line of member pills — the "who is working / idle / dead"
+// glance. Reuses the snapshot's existing per-member status; no new collection.
+function forceRolesRollup(members) {
+  const order = [];
+  const byRole = new Map();
+  members.forEach(m => {
+    const role = m.role || '(no role)';
+    if (!byRole.has(role)) { byRole.set(role, []); order.push(role); }
+    byRole.get(role).push(m);
+  });
+  return order.map(role => {
+    const pills = byRole.get(role).map(forceMemberPill).join('');
+    return `<div class="force-role-row"><span class="force-role-name">${esc(role)}</span><span class="force-role-members">${pills}</span></div>`;
+  }).join('');
+}
+
+// forceStalling reports whether every LIVE member is idle — a lean, derived
+// "nothing in flight" hint (presentation-only, no backend state). False when no
+// member is live (a fully-offline force is dormant, not stalling).
+function forceStalling(members) {
+  const live = members.filter(m => m.online);
+  return live.length > 0 && live.every(m => forceMemberLiveness(m) === 'idle');
+}
+
+// forcePhaseHistory renders a compact phase line + a transition-history affordance
+// for the force block. The summary already carries the phase chip; here the
+// transition log (already in the process payload) is one click/hover away via a
+// small "history (N)" element — the lean "access to the transition history" the
+// force view asks for. Returns '' for a force with no process.
+function forcePhaseHistory(g) {
+  const p = g.process;
+  if (!p || !p.phases || !p.phases.length) return '';
+  const idx = typeof p.phase_index === 'number' ? p.phase_index : -1;
+  const chip = idx >= 0 ? `phase ${idx + 1}/${p.phase_count}: ${p.current_phase}` : p.current_phase;
+  const trs = p.transitions || [];
+  const histTip = trs.length
+    ? trs.map(t => `${t.from || '(start)'} → ${t.to}${t.at ? '  ' + t.at : ''}`).join('\n')
+    : 'no transitions yet';
+  const hist = trs.length
+    ? `<span class="force-phase-history" title="${esc(histTip)}">history (${trs.length})</span>`
+    : '';
+  return `<div class="force-phase"><span class="force-phase-label">◆ ${esc(chip)}</span>${hist}</div>`;
+}
+
+// renderForceBlock builds the deployed-task-force glance for a group's expanded
+// body (JOH-247): mission (quest), phase + transition history, a per-role
+// live-status rollup, a stalling hint, and the re-brief control. Advance lives
+// in the summary chip and retire in the ⚙ cog (shutdown / delete) — not
+// duplicated here. Returns '' for a group that is not a deployed force. Renders
+// as ONE stable .group-force-block node so the 2s morph reconciles it in place
+// (its children are positional — no keys to collide).
+function renderForceBlock(g, members) {
+  if (!isDeployedForce(g)) return '';
+  const parts = [];
+  if (g.mission) {
+    const from = g.source_template ? ` <span class="force-from">from ${esc(g.source_template)}</span>` : '';
+    parts.push(`<div class="force-mission"><span class="force-mission-label-regular">🎯 Mission</span><span class="force-mission-label-wizard">🗺 Quest</span>: <span class="force-mission-text">${esc(g.mission)}</span>${from}</div>`);
+  } else if (g.source_template) {
+    parts.push(`<div class="force-mission force-mission-unset">Deployed from template <strong>${esc(g.source_template)}</strong> — no mission recorded</div>`);
+  }
+  parts.push(forcePhaseHistory(g));
+  if (members.length) {
+    const stalling = forceStalling(members)
+      ? `<span class="force-stalling" title="Every live member is idle — nothing appears to be in flight. The force may be waiting on a nudge, a decision, or the next phase.">⚠ stalling</span>`
+      : '';
+    parts.push(`<div class="force-roles"><div class="force-roles-head"><span class="force-roles-label">Roles</span>${stalling}</div>${forceRolesRollup(members)}</div>`);
+  }
+  parts.push(`<div class="force-controls"><button class="force-rebrief-btn" data-act="rebrief-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief</button></div>`);
+  return `<div class="group-force-block">${parts.filter(Boolean).join('')}</div>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     // The button label the hint names swaps per theme too (the same
@@ -615,6 +721,7 @@ function renderGroups(groups) {
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
+        ${renderForceBlock(g, members)}
         ${members.length === 0
           ? '<div class="muted">(no members yet)</div>'
           : visible.length === 0
