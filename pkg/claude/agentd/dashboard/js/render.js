@@ -395,18 +395,23 @@ function groupNotifyMenuItem(g) {
   return `<button data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${on ? '1' : '0'}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
-// groupActionsHTML renders a real group header's action cluster. The
-// three most-used controls — spawn, power on, shutdown — stay at the
-// TOP LEVEL; the rest (add member, multicast cron, message, startup
-// context, notifications, rename, export, cleanup, windows, delete) are
-// collected behind the ⚙ options cog so the header stays readable. Every
-// button keeps the exact data-act / data-* the row-action dispatcher
-// already expects — only their DOM position moves.
+// A real group's controls are split across three renderers: spawn / power on /
+// shutdown ride the expanded body (groupActionsHTML); the rest (add member,
+// multicast cron, message, startup context, notifications, rename, nest,
+// export, cleanup, windows, delete) are collected behind the ⚙ options cog,
+// which now lives in the SUMMARY header (groupHeaderCogHTML → groupMenuItems).
+// Every button keeps the exact data-act / data-* the row-action dispatcher
+// expects — only their DOM position moves, and handlers anchor on
+// closest('details'), so header vs body placement is transparent to them.
 // Feather "user-plus": a person silhouette with a + alongside. Same
 // monochrome-via-currentColor convention as the helpers.js eye icons.
 const SPAWN_ICO_SVG = '<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>';
 
-function groupActionsHTML(g, members) {
+// groupMenuItems builds the ⚙ menu's inner HTML (the flat run of <button>
+// rows) for a group. Split out of groupActionsHTML (JOH-392 follow-up) so the
+// cog can render up in the group HEADER while the spawn / power buttons stay in
+// the expanded body, below the nested subgroups.
+function groupMenuItems(g, members) {
   // Startup-context menu item: the label switches between
   // "📋 startup context (N chars)…" when one is configured and
   // "📋 set startup context…" when it isn't. The ellipsis matches
@@ -445,6 +450,25 @@ function groupActionsHTML(g, members) {
     + `<button data-act="cleanup-worktrees-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected.">🧹 cleanup worktrees…</button>`
     + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>`
     + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>`;
+  return menu;
+}
+
+// groupHeaderCogHTML renders the group's ⚙ options cog for the SUMMARY header
+// (JOH-392 follow-up: nested subgroups push the body's action cluster down, so
+// the most-used control moves up top). It reuses the .group-actions skin — the
+// button/menu styling AND the position:relative anchor the dropdown needs — and
+// adds .group-header-cog so the fold CSS reveals it only when the group's quick
+// options are expanded (hover / open / pinned / expanded mode), or while its
+// own menu is open. The menu's data-act handlers anchor on closest('details'),
+// which resolves fine from inside the summary.
+function groupHeaderCogHTML(g, members) {
+  return `<span class="group-actions group-header-cog">${actionCog('group-menu', groupMenuItems(g, members))}</span>`;
+}
+
+// groupActionsHTML renders the group's action cluster for the expanded body:
+// the spawn CTA + the power-on / shutdown controls. The ⚙ cog moved to the
+// header (groupHeaderCogHTML); nested subgroups render ABOVE this cluster.
+function groupActionsHTML(g, members) {
   // Spawn sits OUTSIDE .group-actions — the cluster fades to 0.4 at
   // rest, which made spawn (the primary CTA) hard to find. As a
   // sibling chip it keeps full opacity all the time and the
@@ -466,7 +490,6 @@ function groupActionsHTML(g, members) {
     // the Summon button above does.
     + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on</span><span class="pwr-label-wizard">✨ Awaken</span></button>`
     + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
-    + actionCog('group-menu', menu)
     + `</span>`;
 }
 
@@ -811,6 +834,7 @@ function renderRealGroup(g, childrenHTML) {
         ${groupActivityChip(members)}
         ${groupProcessChip(g)}
         ${groupWavesChip(g)}
+        ${g.virtual ? '' : groupHeaderCogHTML(g, members)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
@@ -818,9 +842,9 @@ function renderRealGroup(g, childrenHTML) {
         ${g.virtual ? '' : renderGroupLinkChips(g.name)}
       </summary>
       <div class="subtable">
+        ${childrenHTML}
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
         ${renderForceBlock(g, members)}
-        ${childrenHTML}
         ${members.length === 0
           ? '<div class="muted">(no members yet)</div>'
           : visible.length === 0
