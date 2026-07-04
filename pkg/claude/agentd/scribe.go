@@ -229,6 +229,15 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 	// rows across restarts — exactly the litter reuse-if-alive exists to avoid.
 	pruneDeadScribes(g)
 
+	// Adopt the operator's configured scribe launch profile (JOH-371) BEFORE we
+	// resolve the trust-seed harness and spawn. Both the trust seed
+	// (scribeSpawnHarness) and the launch shape (executeSpawn →
+	// applyDefaultProfile) read the group's default profile, so stamping it here
+	// makes them agree by construction — a codex-profile scribe gets codex trust
+	// seeding, never CC's. Fresh-spawn path only: a reused live scribe (handled
+	// above) keeps the launch shape it was born with.
+	stampScribeProfileFromConfig(g)
+
 	// Resolve + create the shared scribe workdir and pre-trust it for the
 	// harness this scribe will launch on, so its detached pane comes up without
 	// a folder-trust prompt (JOH-369).
@@ -302,6 +311,48 @@ func scribeSpawnHarness(g *db.AgentGroup) string {
 		return harnessOrDefault(prof.Harness)
 	}
 	return harness.DefaultName
+}
+
+// stampScribeProfileFromConfig points the scribe group's default spawn profile
+// at config.scribe.profile (JOH-371), so the existing group-default-profile
+// resolution launches the fresh scribe on that profile with ZERO new spawn
+// logic: scribeSpawnHarness → seedScribeDirTrust picks the profile's harness
+// for the trust pre-seed, and executeSpawn → applyDefaultProfile fills the
+// launch fields from it — BOTH reading the same stamped value, so the trust
+// seed can never target a different harness than the spawn (the coupling
+// JOH-369 introduced).
+//
+// Re-stamped on every fresh summon so it tracks a config edit between summons;
+// "" clears the stamp (harness default). A name whose profile was
+// deleted/renamed is stamped as-is and self-heals to the default at resolution
+// time (groupDefaultProfile → nil), mirroring `tclaude ask`'s live self-heal.
+// Only the fresh-spawn path calls this — a reused live scribe keeps the launch
+// shape it was born with (config applies to the NEXT fresh summon).
+//
+// Best-effort: a config-load or DB-write failure logs and leaves the group's
+// existing default profile in place (worst case the scribe launches on the
+// previously-stamped profile, or the harness default), never a failed summon.
+// The in-memory g.DefaultProfile is updated on success so the trust seed and
+// spawn this same summon runs observe the new stamp without a group reload.
+func stampScribeProfileFromConfig(g *db.AgentGroup) {
+	cfg, err := config.Load()
+	if err != nil {
+		// config.Load already degraded to defaults; keep the group's current
+		// default rather than clearing it on a transient/corrupt-file error.
+		slog.Warn("scribe: load config for profile stamp failed; keeping group default",
+			"group", g.Name, "error", err)
+		return
+	}
+	profile := cfg.ScribeProfileName()
+	if g.DefaultProfile == profile {
+		return // already stamped — idempotent, skip the write
+	}
+	if _, err := db.SetAgentGroupDefaultProfile(g.Name, profile); err != nil {
+		slog.Warn("scribe: stamp default profile failed; keeping group default",
+			"group", g.Name, "profile", profile, "error", err)
+		return
+	}
+	g.DefaultProfile = profile
 }
 
 // seedScribeDirTrust pre-trusts the shared scribe workdir for the given harness

@@ -528,8 +528,12 @@ func SetAgentGroupDefaultContext(name, context string) (int64, error) {
 
 // SetAgentGroupDefaultProfile sets (or, with profile == "", clears) the
 // name of the spawn profile whose launch fields fill blank spawn fields
-// for agents spawned into the named group (JOH-210). The caller validates
-// that the referenced profile exists before it gets here. Returns the
+// for agents spawned into the named group (JOH-210). Callers that stamp a
+// name for immediate use validate the referenced profile exists first;
+// callers that resolve the profile LIVE at spawn time (the scribe summon,
+// JOH-371) may deliberately stamp a name whose profile can later vanish —
+// a dangling reference self-heals to the no-profile path at read time
+// (groupDefaultProfile → nil) rather than erroring here. Returns the
 // number of rows affected — 0 means no group by that name, so the caller
 // can answer 404.
 func SetAgentGroupDefaultProfile(name, profile string) (int64, error) {

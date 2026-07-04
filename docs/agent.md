@@ -669,6 +669,19 @@ each names the offending field (`role_ref`, `spawn_profile`, a `work_pattern`
 and the wizard-mode vocabulary a human may speak; install it (with the other
 agent skills) via `tclaude setup --install-agent-skills`.
 
+**Scribe launch profile.** By default a summoned scribe launches on the
+harness default (Claude Code at its default model/effort). To run scribes on a
+different harness/model — e.g. Codex, or a cheaper model for their light
+editing — set `scribe.profile` in `~/.tclaude/config.json` (or pick it from the
+dashboard **Config tab → Scribe defaults**) to the name of a saved [spawn
+profile](#roles); the next fresh summon adopts that profile's whole launch
+shape, and the harness-matched dir-trust pre-seed follows it automatically.
+Resolved live at summon time — a deleted or renamed profile self-heals to the
+default rather than wedging the summon — and it applies to the **next fresh**
+summon: a live scribe you re-summon keeps the launch shape it was born with.
+Blank/absent = today's default. This mirrors the `ask.profile` knob `tclaude
+ask` uses.
+
 `from-group` bootstraps a template from a running group's structure (roles,
 owners, per-agent permission grants, context); per-agent task briefs come
 through blank (a live group stores none), so fill them in with `edit`. With

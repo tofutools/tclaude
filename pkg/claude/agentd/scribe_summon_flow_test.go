@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -376,4 +378,195 @@ func TestScribeSummon_ValidationRejections(t *testing.T) {
 			assert.Equalf(t, http.StatusBadRequest, rec.Code, "expected 400; body=%s", rec.Body.String())
 		})
 	}
+}
+
+// summonCircleScribe posts a standard human summon for the "circle-scribe"
+// name and returns the decoded 200 response — the shared spawn used by the
+// JOH-371 profile scenarios below.
+func summonCircleScribe(t *testing.T, f *testharness.Flow) scribeSummonResp {
+	t.Helper()
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name":  "circle-scribe",
+			"slugs": []string{agentd.PermTemplatesManage},
+			"brief": "Edit summoning circles.",
+		})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+	return decodeScribeResp(t, rec)
+}
+
+// Scenario (JOH-371): the operator pins config.scribe.profile to a saved spawn
+// profile. A fresh summon adopts that profile's harness / model / effort — the
+// sim spawner records them — and the profile is stamped as the scribe group's
+// default (mechanism (a): the existing group-default-profile resolution then
+// carries the launch shape with no new spawn logic).
+func TestScribeSummon_AppliesConfiguredProfile(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	// A saved spawn profile pinning a specific Claude model + effort.
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name:    "editor-prof",
+		Harness: harness.DefaultName,
+		Model:   "sonnet",
+		Effort:  "high",
+	})
+	require.NoError(t, err)
+
+	// The operator's Config-tab choice, on disk in the same config.json the CLI
+	// reads (config.Save writes under the flow's temp HOME).
+	require.NoError(t, config.Save(&config.Config{
+		Scribe: &config.ScribeConfig{Profile: "editor-prof"},
+	}))
+
+	resp := summonCircleScribe(t, f)
+	require.NotEmpty(t, resp.ConvID)
+	require.False(t, resp.Reused, "first summon spawns fresh")
+
+	// The sim spawner observed the profile's harness / model / effort.
+	sessions, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions, "the scribe has a session row")
+	assert.Equal(t, harness.DefaultName, sessions[0].Harness, "spawn adopted the profile's harness")
+
+	model, ok := f.World.SpawnModel(resp.ConvID)
+	require.True(t, ok, "the spawn was observed by the sim spawner")
+	assert.Equal(t, "sonnet", model, "spawn adopted the profile's model")
+	effort, ok := f.World.SpawnEffort(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "high", effort, "spawn adopted the profile's effort")
+
+	// Mechanism (a): the profile was stamped as the scribe group's default, so
+	// scribeSpawnHarness + applyDefaultProfile resolve from one source.
+	g, err := db.GetAgentGroupByName("circle-scribe")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "editor-prof", g.DefaultProfile, "config.scribe.profile stamped as the group default")
+}
+
+// Scenario (JOH-371 coupling to JOH-369): a Codex scribe profile makes the
+// summon launch on Codex AND pre-seed the CODEX dir-trust store (not CC's) for
+// the scribe workdir — the trust seed follows the harness the spawn actually
+// resolves to, because both read the same stamped group default profile.
+func TestScribeSummon_CodexProfileSeedsCodexTrust(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "codex-prof", Harness: harness.CodexName})
+	require.NoError(t, err)
+	require.NoError(t, config.Save(&config.Config{
+		Scribe: &config.ScribeConfig{Profile: "codex-prof"},
+	}))
+
+	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
+	codexTOML := filepath.Join(f.World.HomeDir, ".codex", "config.toml")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+
+	resp := summonCircleScribe(t, f)
+	require.NotEmpty(t, resp.ConvID)
+	require.False(t, resp.Reused, "first summon spawns fresh")
+
+	// The scribe launched on Codex — observed at the SessionRow harness column.
+	sessions, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions, "the scribe has a session row")
+	assert.Equal(t, harness.CodexName, sessions[0].Harness, "codex-profile scribe launched on codex")
+
+	// The CODEX trust store was seeded for the scribe workdir — the harness the
+	// spawn resolved to (the JOH-369 coupling this ticket must preserve).
+	codexData, err := os.ReadFile(codexTOML)
+	require.NoError(t, err, "the codex trust store was written")
+	assert.Contains(t, string(codexData), `[projects."`+wantCwd+`"]`)
+	assert.Contains(t, string(codexData), `trust_level = "trusted"`)
+
+	// CC's trust store was NOT seeded — a codex scribe must never touch
+	// ~/.claude.json (that would be the wrong-harness trust seed the ticket
+	// explicitly warns against).
+	_, err = os.Stat(claudeJSON)
+	assert.Truef(t, os.IsNotExist(err), "codex-profile scribe must not seed the CC trust store (~/.claude.json), got err=%v", err)
+}
+
+// Scenario (JOH-371): a config.scribe.profile that names a since-deleted /
+// renamed profile self-heals to the no-profile default — the scribe still
+// summons, on the harness default (Claude), with CC dir-trust seeding — rather
+// than wedging the summon. The dangling name is stamped as-is; resolution
+// (groupDefaultProfile → nil) is what self-heals.
+func TestScribeSummon_DeletedProfileSelfHeals(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	// Point at a profile that was never created (or was deleted after config
+	// was written) — no db.CreateSpawnProfile for "gone-prof".
+	require.NoError(t, config.Save(&config.Config{
+		Scribe: &config.ScribeConfig{Profile: "gone-prof"},
+	}))
+
+	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+
+	resp := summonCircleScribe(t, f)
+	require.NotEmpty(t, resp.ConvID, "the scribe still summoned despite the dangling profile")
+	require.False(t, resp.Reused)
+
+	// Self-healed to the harness default: Claude, with no pinned model/effort.
+	sessions, err := db.FindSessionsByConvID(resp.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, harness.DefaultName, sessions[0].Harness, "dangling profile self-heals to the default harness")
+	if model, ok := f.World.SpawnModel(resp.ConvID); ok {
+		assert.Empty(t, model, "no model is pinned when the profile self-heals")
+	}
+	if effort, ok := f.World.SpawnEffort(resp.ConvID); ok {
+		assert.Empty(t, effort, "no effort is pinned when the profile self-heals")
+	}
+
+	// CC dir-trust was seeded (the default-harness path), not skipped.
+	assert.True(t, claudeDirTrusted(t, claudeJSON, wantCwd),
+		"the default-harness path still pre-seeds the CC trust store")
+}
+
+// Scenario (JOH-371): the config change applies to the NEXT fresh summon only.
+// A live scribe that gets reused keeps the launch shape it was born with —
+// changing config.scribe.profile between summons does not re-stamp or relaunch
+// the reused scribe.
+func TestScribeSummon_ReuseIgnoresConfigChange(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "prof-a", Harness: harness.DefaultName, Model: "sonnet", Effort: "high",
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "prof-b", Harness: harness.DefaultName, Model: "opus", Effort: "low",
+	})
+	require.NoError(t, err)
+
+	// First summon under profile A → fresh spawn, born with A's shape.
+	require.NoError(t, config.Save(&config.Config{Scribe: &config.ScribeConfig{Profile: "prof-a"}}))
+	first := summonCircleScribe(t, f)
+	require.False(t, first.Reused, "first summon spawns fresh")
+	if model, ok := f.World.SpawnModel(first.ConvID); ok {
+		assert.Equal(t, "sonnet", model, "the fresh scribe was born with profile A's model")
+	}
+
+	// Operator changes the config to profile B between summons.
+	require.NoError(t, config.Save(&config.Config{Scribe: &config.ScribeConfig{Profile: "prof-b"}}))
+
+	// Second summon reuses the live scribe — no relaunch.
+	second := summonCircleScribe(t, f)
+	require.True(t, second.Reused, "second summon reuses the live scribe")
+	require.Equal(t, first.ConvID, second.ConvID, "reuse returns the same scribe conv")
+
+	// The reused scribe kept its born launch shape (the sim never re-recorded a
+	// new model — reuse does not respawn).
+	if model, ok := f.World.SpawnModel(second.ConvID); ok {
+		assert.Equal(t, "sonnet", model, "reuse keeps the born launch shape, not the changed config's profile B")
+	}
+	// And the group default was NOT re-stamped to B — the reuse path never
+	// touches the profile stamp (config applies to the next FRESH summon).
+	g, err := db.GetAgentGroupByName("circle-scribe")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Equal(t, "prof-a", g.DefaultProfile, "reuse did not re-stamp the group default to the changed config's profile")
 }

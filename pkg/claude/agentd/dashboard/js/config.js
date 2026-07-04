@@ -123,6 +123,45 @@ function setAskSelectValue(sel, value) {
   sel.value = value;
 }
 
+// populateScribeProfileSelect fills the Scribe-defaults Profile dropdown from
+// the saved spawn profiles (the Groups-tab profiles), selecting `selected`. A
+// chosen profile is the launch shape a FRESHLY summoned scribe adopts
+// (JOH-371) — the harness-independent way to run scribes on Codex as well as
+// Claude. Profile-only (no Model/Effort twins like Ask): the profile carries
+// those. The fetch is async + best-effort: an endpoint error leaves just the
+// "(default)" option. A hand-set profile that's since been deleted is kept as a
+// "(missing)" option so the form shows what's on disk, not a silent reset.
+async function populateScribeProfileSelect(selected) {
+  const sel = $('#scribe-profile');
+  if (!sel) return;
+  const selectedName = (selected || '').trim();
+
+  // Seed the selection SYNCHRONOUSLY before the async list load, so a Save that
+  // races ahead of loadProfiles() still reads the real profile name off
+  // #scribe-profile rather than an empty value (which assembleConfig would
+  // persist as "delete scribe.profile", silently clearing a saved profile).
+  sel.innerHTML = '<option value="">(default — harness default)</option>';
+  if (selectedName) {
+    const pending = document.createElement('option');
+    pending.value = selectedName;
+    pending.textContent = `${selectedName} (loading…)`;
+    sel.appendChild(pending);
+  }
+  sel.value = selectedName;
+
+  let profiles = [];
+  try { profiles = await loadProfiles(); } catch { profiles = []; }
+  sel.innerHTML = '<option value="">(default — harness default)</option>' +
+    profiles.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  if (selectedName && !profiles.some(p => p.name === selectedName)) {
+    const o = document.createElement('option');
+    o.value = selectedName;
+    o.textContent = `${selectedName} (missing)`;
+    sel.appendChild(o);
+  }
+  sel.value = selectedName;
+}
+
 // cfgStringRow / cfgTransitionRow build one removable row of a list
 // editor. renderCfg*List (re)populates a container with rows + an
 // "+ add" button; readCfg*List collects the non-blank values back.
@@ -485,6 +524,12 @@ function populateConfigForm(cfg) {
   setAskSelectValue($('#ask-effort'), ask.effort);
   void populateAskProfileSelect(ask.profile);
 
+  // Scribe defaults — the spawn profile a freshly summoned scribe launches
+  // with (JOH-371). Options are the saved spawn profiles; "(default)" (empty)
+  // means the harness default. Async (fetches the profile list), like the ask
+  // profile select above.
+  void populateScribeProfileSelect((cfg.scribe || {}).profile);
+
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
   // keep: 0 and absent both mean "built-in default", so show a stored 0
@@ -683,6 +728,15 @@ function assembleConfig() {
   if (askModel) ask.model = askModel; else delete ask.model;
   if (askEffort) ask.effort = askEffort; else delete ask.effort;
   if (Object.keys(ask).length) cfg.ask = ask; else delete cfg.ask;
+
+  // scribe is an optional block (JOH-371). Clone the existing one so a future
+  // sub-field with no widget round-trips, set the one form-owned key, and drop
+  // the block when the profile is cleared and nothing else remains — an
+  // all-default scribe must not marshal as a spurious "scribe": {} diff.
+  const scribe = (cfg.scribe && typeof cfg.scribe === 'object') ? cfg.scribe : {};
+  const scribeProfile = $('#scribe-profile') ? $('#scribe-profile').value.trim() : '';
+  if (scribeProfile) scribe.profile = scribeProfile; else delete scribe.profile;
+  if (Object.keys(scribe).length) cfg.scribe = scribe; else delete cfg.scribe;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and
