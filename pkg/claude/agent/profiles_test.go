@@ -123,28 +123,37 @@ func TestMergeProfileIntoSpawn_BlankHarnessAdoptsProfile(t *testing.T) {
 // fields, which are harness-agnostic, still come from the profile.
 func TestMergeProfileIntoSpawn_HarnessMismatchSkipsLaunch(t *testing.T) {
 	prof := &profileJSON{
-		Harness:    "codex",
-		Model:      "gpt-5-codex",
-		Sandbox:    "read-only",
-		Approval:   "never",
-		AutoReview: boolPtr(true),
-		TrustDir:   boolPtr(true),
-		AgentName:  "reviewer",
-		Role:       "qa",
+		Harness:             "codex",
+		Model:               "gpt-5-codex",
+		Sandbox:             "read-only",
+		Approval:            "never",
+		AutoReview:          boolPtr(true),
+		TrustDir:            boolPtr(true),
+		AgentName:           "reviewer",
+		Role:                "qa",
+		AutoFocus:           boolPtr(true),
+		IsOwner:             boolPtr(true),
+		PermissionOverrides: map[string]string{"human.notify": "grant"},
 	}
 	// Pin claude explicitly — a different harness than the codex profile.
 	p := &SpawnParams{Harness: "claude"}
 	got := mergeProfileIntoSpawn(p, "", prof)
 
+	// Launch fields belong to the profile's (codex) harness — dropped.
 	assert.Equal(t, "claude", got.Harness, "explicit harness kept")
 	assert.Empty(t, got.Model, "codex profile's model must NOT leak onto a claude spawn")
 	assert.Empty(t, got.Sandbox)
 	assert.Empty(t, got.Approval)
 	assert.False(t, got.AutoReview, "launch toggle not inherited across harness")
 	assert.False(t, got.TrustDir)
-	// Identity is harness-agnostic and still inherited.
+	// Identity + harness-agnostic access/toggles are still inherited across the
+	// mismatch — is_owner / permission_overrides are authority, not launch shape.
 	assert.Equal(t, "reviewer", got.Name)
 	assert.Equal(t, "qa", got.Role)
+	assert.True(t, got.AutoFocus, "auto_focus is harness-agnostic")
+	assert.True(t, got.IsOwner, "is_owner inherited regardless of harness")
+	assert.Equal(t, map[string]string{"human.notify": "grant"}, got.PermissionOverrides,
+		"permission_overrides inherited regardless of harness")
 }
 
 // --no-group-context forces exclude even when the profile says include; a

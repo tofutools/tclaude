@@ -387,7 +387,13 @@ func harnessEquivalent(a, b string) bool {
 // flags, mirroring the dashboard's client-side pre-fill (JOH-210). Precedence,
 // per field: explicit flag > profile > blank. The daemon then fills a still-
 // blank field from the group's default profile, then the harness default — so
-// the full order is flag > --profile > group-default profile > harness default.
+// the intended order is flag > --profile > group-default profile > harness
+// default. (Caveat: for the two fields a harness resolves a launch default for
+// client-side — Codex sandbox/approval, via ResolveSandboxMode/
+// ResolveApprovalPolicy below — a blank reaches the daemon already filled with
+// the harness default, so the group-default-profile layer applies in practice
+// only to harness/model/effort. This is pre-existing CLI behavior, unchanged by
+// --profile.)
 //
 // The launch fields (harness/model/effort/sandbox/approval/auto_review/
 // trust_dir) are inherited ONLY when the effective harness matches the
@@ -399,10 +405,18 @@ func harnessEquivalent(a, b string) bool {
 // agnostic toggles (auto_focus, include_group_context, is_owner,
 // permission_overrides) are inherited regardless of harness.
 //
-// remote_control is deliberately NOT inherited from the profile: the CLI can't
-// see the group's remote-control policy, which must win over a profile default
-// (JOH-262), and the wire carries RemoteControl as an authoritative *bool with
-// no "soft default" channel. Use the explicit --remote-control flag to arm it.
+// Two profile fields are deliberately NOT applied here:
+//   - remote_control: the CLI can't see the group's remote-control policy, which
+//     must win over a profile default (JOH-262), and the wire carries
+//     RemoteControl as an authoritative *bool with no "soft default" channel.
+//     Use the explicit --remote-control flag to arm it.
+//   - sync_worktree: CLI worktrees are flag-driven (--worktree <branch>) and a
+//     profile carries no branch, so the toggle has nothing to act on here.
+//
+// The bool toggles (auto_review, auto_focus) are opt-in-only on the CLI: a
+// profile's true is honoured, but a plain-bool flag can't distinguish "unset"
+// from an explicit false, so there is no CLI way to force a profile's true back
+// off. That asymmetry mirrors the plain-flag surface, not a precedence bug.
 //
 // explicitMessage is the already-resolved --initial-message / --file body (the
 // profile fills it only when the caller passed none). prof may be nil (no
@@ -563,10 +577,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	merged := mergeProfileIntoSpawn(p, explicitMessage, prof)
 
 	// Effective brief: an explicit one was cap-checked above; a profile one was
-	// validated at save. Re-check defends a future profile field that skips it.
+	// validated at save (buildProfileFromJSON runs the same isValidInitialMessage
+	// gate), so this re-check is belt-and-suspenders — it defends any future
+	// profile-sourced brief that reaches here unvalidated.
 	initialMessage := merged.InitialMessage
 	if !isValidInitialMessage(initialMessage) {
-		fmt.Fprintf(stderr, "Error: REJECTED. the profile's initial message must be at most %d characters.\n", MaxInitialMessageBytes)
+		fmt.Fprintf(stderr, "Error: REJECTED. the profile's initial message must be at most %d characters, "+
+			"with no control characters other than newlines and tabs.\n", MaxInitialMessageBytes)
 		return nil, rcInvalidArg
 	}
 
