@@ -909,6 +909,20 @@ tclaude agent groups create foo --ask-human 30s
 popup is loopback-only and authenticated by the same init-token
 exchange the [dashboard](dashboard.md#auth) uses.
 
+**Always allow for this agent.** For a small allowlist of low-blast-radius
+slugs (today `human.clipboard` and `human.notify`), the popup shows a
+fourth button — **Always allow for this agent**. It approves the pending
+request *and* persists an allow override, so the agent's future calls skip
+the popup entirely. The grant is keyed on the agent's **stable identity**
+(agent-id), so it follows the agent through `/clear` conv-rotation and
+reincarnation — "this agent", not "this one conversation". It shows up in
+the [dashboard](dashboard.md) permission editor as a normal allow override
+(granted-by `human:popup-always`) and can be revoked there or with
+`tclaude agent permissions revoke <agent> <slug>`. A **deny** override
+still beats it — deny is always authoritative. The button is rendered (and
+its action accepted) **only** for eligible slugs; destructive or
+fleet-affecting slugs (e.g. `agent.delete`, `groups.rm`) never offer it.
+
 For a *bundle* of slugs over a *window* of time rather than one
 command, use [`sudo`](#permissions--sudo) instead.
 
