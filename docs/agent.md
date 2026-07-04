@@ -588,6 +588,34 @@ template, deploy it against a mission, steer the live force, wind it down — ha
 a full CLI twin. Every verb below is a thin client over the same `agentd`
 endpoints the dashboard drives.
 
+### Concepts: pattern, process & rhythms
+
+A template carries three things that shape a deployed force, and they work
+**together**:
+
+- a **work pattern** — an ordered list of routed briefing messages delivered
+  **once**, after the whole roster has spawned (`task-force deploy` delivers it;
+  [`groups rebrief`](#groups-rebrief) re-delivers the template's *current*
+  pattern to the live force on demand). It is a one-shot briefing, not a loop.
+- a **process** — an ordered, **advisory** phase plan the force advances through
+  (`task-force status` shows the current phase; `process advance` records a
+  transition and nudges the entering roles). Advisory means exactly that:
+  advancing blocks nothing, changes no permissions, and never auto-advances.
+- **rhythms** — recurring nudges materialized as group cron jobs **at deploy
+  time** (a snapshot). Editing the template afterwards does **not** retune a
+  force already deployed. `task-force stand-down` deletes them; a `groups
+  retire` that empties the group disables them (reversible via `groups resume`).
+
+| Concept | Delivered | Repeats? | Enforced? | On stand-down |
+|---|---|---|---|---|
+| Work pattern | once, after the roster is up | no — `rebrief` re-sends on demand | no — it is a briefing | already delivered (nothing to sweep) |
+| Process | snapshot at deploy | `process advance` by hand | no — advisory | phase history kept |
+| Rhythms | cron jobs at deploy | yes, on a schedule | no — nudges | cron jobs deleted |
+
+The verbs that drive each are below; the dashboard's
+[Concepts](dashboard.md#concepts-pattern-process--rhythms) note covers the same
+model from the UI side.
+
 ### templates
 
 Manage reusable team blueprints. `ls` / `show` are open reads; `create` /

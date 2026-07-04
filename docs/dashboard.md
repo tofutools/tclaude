@@ -488,6 +488,33 @@ pick a template → deploy it against a mission → watch and steer the live for
 on its group → wind it down when the work is done. (The
 [CLI](agent.md#task-forces-cli) drives the same journey headlessly.)
 
+### Concepts: pattern, process & rhythms
+
+Three things shape a deployed force, and they work **together**:
+
+- the **work pattern** (*rite of command* in wizard mode) **briefs it once** —
+  an ordered list of routed messages delivered a single time, after the whole
+  team has spawned. It fires at deploy and does not repeat, but
+  [Re-brief](#steering-a-force) re-delivers the template's *current* pattern
+  to the live team on demand.
+- the **process** (*quest plan*) gives it a **shared map of phases** to advance
+  through. It is **advisory**: advancing records a transition and nudges the
+  roles now active — nothing is blocked, no permissions change, nothing
+  auto-advances.
+- the **rhythms** (*drumbeats*) **keep it moving between phases** — recurring
+  nudges materialized as group cron jobs at deploy (a **snapshot**; editing the
+  template afterwards does not retune a force already in the field, see
+  [The rhythm model](#the-rhythm-model)).
+
+| Concept | Delivered | Repeats? | Enforced? | On stand-down |
+|---|---|---|---|---|
+| Work pattern | once, after the team is up | no — re-brief re-sends on demand | no — it is a briefing | already delivered (nothing to sweep) |
+| Process | snapshot at deploy | advance by hand | no — advisory | phase history kept |
+| Rhythms | cron jobs at deploy | yes, on a schedule | no — nudges | cron jobs deleted |
+
+The template editor carries the same summary in a collapsible **“How deploying
+works”** panel above its pattern / process / rhythms sections.
+
 ### Deploying a force
 
 A template card's **🚀 deploy** button opens the deploy modal: pick the

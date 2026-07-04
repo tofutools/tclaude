@@ -3023,6 +3023,33 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .role-inspect-foot { color: #6e7681; font-size: 10px; border-top: 1px solid #21262d; padding-top: 5px; }
 .ta-legacy-note .ta-legacy-text { flex: 1; min-width: 0; }
+/* Concepts explainer (JOH-352): a collapsed <details> in the template editor
+   that tells the work-pattern / process / rhythms story together. Two body
+   variants (.tpl-concepts-plain / .tpl-concepts-wizard) both live in the DOM;
+   the wizard skin below swaps which one shows, so a theme toggle re-flavours it
+   without a re-render. Base (dark dashboard) chrome here. */
+.tpl-concepts {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 5px;
+  padding: 2px 11px; margin-top: 4px;
+}
+.tpl-concepts > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  color: #58a6ff; font-size: 11px; font-weight: 600; padding: 6px 0;
+}
+.tpl-concepts > summary::-webkit-details-marker { display: none; }
+.tpl-concepts > summary:hover { color: #79c0ff; }
+.tpl-concepts-body { font-size: 12px; color: #c9d1d9; line-height: 1.5; padding-bottom: 8px; }
+.tpl-concepts-body p { margin: 4px 0 8px; }
+.tpl-concepts-body b { color: #e6edf3; }
+.tpl-concepts-list { margin: 0 0 10px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.tpl-concepts-wizard { display: none; }
+.tpl-concepts-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.tpl-concepts-table th, .tpl-concepts-table td {
+  border: 1px solid #2a3340; padding: 4px 7px; text-align: left; vertical-align: top;
+}
+.tpl-concepts-table thead th { color: #7d8590; font-weight: 600; background: #161b22; }
+.tpl-concepts-table tbody th { color: #58a6ff; font-weight: 600; white-space: nowrap; }
+.tpl-concepts-table td { color: #adbac7; }
 /* Permission checkbox list — the template editor's inline list is gone
    (JOH-350: permissions ride the picked profile), but the role editor
    (modal-roles.js) still renders one into #role-editor-perms-list, so its
@@ -6533,6 +6560,25 @@ body.wizard #template-editor-modal #template-editor-submit:active {
 }
 body.wizard #template-editor-modal #template-editor-submit:disabled { opacity: 0.7; }
 body.wizard #template-editor-modal #template-editor-submit:disabled::before { content: "🕯 Sealing…"; }
+/* Concepts explainer (JOH-352): swap the plain body out for the flavored one
+   and recolor the panel arcane. The plain/wizard body swap is theme-global (not
+   scoped to the editor id) so it tracks body.wizard everywhere the panel could
+   appear; the chrome recolor is scoped to #template-editor-modal like its
+   siblings. */
+body.wizard .tpl-concepts-plain { display: none; }
+body.wizard .tpl-concepts-wizard { display: block; }
+body.wizard #template-editor-modal .tpl-concepts {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #template-editor-modal .tpl-concepts > summary { color: #d9b45a; }
+body.wizard #template-editor-modal .tpl-concepts > summary:hover { color: #f3e6c0; }
+body.wizard #template-editor-modal .tpl-concepts-body { color: #e7d9f5; }
+body.wizard #template-editor-modal .tpl-concepts-body b { color: #f3e6c0; }
+body.wizard #template-editor-modal .tpl-concepts-table th,
+body.wizard #template-editor-modal .tpl-concepts-table td { border-color: rgba(122, 93, 176, 0.4); }
+body.wizard #template-editor-modal .tpl-concepts-table thead th { color: #b39ddb; background: #140f28; }
+body.wizard #template-editor-modal .tpl-concepts-table tbody th { color: #a97bd6; }
+body.wizard #template-editor-modal .tpl-concepts-table td { color: #e7d9f5; }
 
 /* ─── Wizard cast dialog — "🕯 Cast a summoning circle" ──────────────
    Instantiate-from-template: pick a circle, name the party, state the
