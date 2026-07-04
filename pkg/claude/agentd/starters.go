@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Bundled starter task forces (JOH-246). tclaude ships a small library of
@@ -49,11 +50,24 @@ type starter struct {
 	Envelope templateExportEnvelope
 }
 
-// loadStarters parses every embedded starter JSON into its envelope, sorted by
-// name. An embedded file that isn't a well-formed task-force envelope is a
+// startersOnce caches the parsed embedded starters — they are compile-time
+// constant, so parsing once and reusing is safe across the process lifetime.
+var (
+	startersOnce  sync.Once
+	startersValue []starter
+	startersErr   error
+)
+
+// loadStarters returns every embedded starter, parsed once and cached (sorted
+// by name). An embedded file that isn't a well-formed task-force envelope is a
 // build-data bug: it surfaces as an error here (and a flow test installs each
 // starter on a fresh DB through the real validator, so schema drift fails CI).
 func loadStarters() ([]starter, error) {
+	startersOnce.Do(func() { startersValue, startersErr = parseStarters() })
+	return startersValue, startersErr
+}
+
+func parseStarters() ([]starter, error) {
 	entries, err := fs.ReadDir(startersFS, "starters")
 	if err != nil {
 		return nil, fmt.Errorf("read starters dir: %w", err)
