@@ -119,6 +119,15 @@ t.Cleanup(func() { clcommon.Default = prevTmux })
 
 When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
 
+### Visual smoke harness (dashsnap) — *if a headless Chrome is available*
+
+A manually-run **visual smoke harness** for the agentd dashboard (JOH-386): it drives a real headless Chrome over the **real dashboard handler** against a canned fixture, screenshots a both-skins state matrix (`{default, wizard}` × `{groups, dock open/collapsed, summon normal/reinforce/copy}`), and writes an `index.html` contact sheet. It gives a sandboxed agent **eyes** on the CSS cascade / rendering that string pins and `node --check` cannot see (the palette epic's only real visual blockers were caught solely by a human reading CSS).
+
+- **Run:** `TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s`. Output lands in `dashsnap-out/<timestamp>/` (gitignored) — open its `index.html`.
+- **Probe availability FIRST.** It needs a **Linux-side** headless Chrome/Chromium (default `/usr/bin/google-chrome`, override `TCLAUDE_DASHSNAP_CHROME`, else `$PATH`; a Windows Chrome under `/mnt/c/...` does **not** count). If none is found the run fails with a clear message — that's an *environment* limitation, not a code failure. `stat` the default path (or `command -v google-chrome`) before relying on it.
+- **Never CI-wired.** With `TCLAUDE_DASHSNAP` unset the test **skips**, so `go test ./...` compiles it (no bit-rot) but never launches a browser. The browser driver (`github.com/go-rod/rod`) stays **out of the tclaude binary's dep graph** — `pkg/claude/agentd/dashsnap` is its only importer, reached only by the driver test (`go list -deps ./` is rod-free). No pixel-diff gating; a tool run on demand.
+- Full runtime prerequisites (`--no-sandbox`, the harmless crashpad/dbus stderr noise) and known traps (headless `(hover: hover)`, emoji-tofu) live in the `pkg/claude/agentd/dashsnap` package header.
+
 ## Commits & PRs
 
 **Never include remote-access/session links in commit messages or PR descriptions** — no `Claude-Session:` trailers and no `https://claude.ai/code/...` session URLs, even where a harness's default footer instructions ask for them (this file overrides those). Those links point at the operator's live remote-access sessions and don't belong in the repo. A plain `Co-Authored-By` attribution trailer is fine.
