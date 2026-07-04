@@ -1456,6 +1456,12 @@ tr:hover .agent-harness { color: #c9d1d9; }
   display: inline-flex; align-items: center; padding: 2px 6px;
 }
 .eye-ico { display: block; }
+/* The top-level 🗑 retire icon reuses the eye pair's icon-btn frame + the
+   .warn hover semantics (amber, reversible-demotion — never the red
+   `danger` of a permanent delete). Its glyph inherits currentColor like
+   the eyes, so it dims at rest and lights amber on hover via the shared
+   `.row-actions button.warn:hover` rule above. */
+.trash-ico { display: block; }
 .group-actions {
   display: inline-flex; gap: 4px; margin-left: 8px; position: relative;
   opacity: 0.4; transition: opacity 0.15s ease;
@@ -7721,6 +7727,31 @@ body.wizard .group-actions .cog-btn:focus-visible .cog-glyph {
 @keyframes wizard-cog-turn {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
+}
+
+/* ─── Wizard trash icon — the banishment sigil (body.wizard) ─────────
+   The top-level 🗑 retire icon that rides beside each row's cog becomes,
+   in the wizard reskin, a banishment sigil — retiring an agent is
+   "banishing" it (mirroring the retireConfirm title swap "Retire this
+   agent?" → "Banish this…"). At rest it wears the same tarnished-gold /
+   mystic-purple edge the wizard cogs wear, so the trash + cog read as a
+   matched clockwork pair; reach for it (hover/focus) and the sigil flares
+   to candle-gold with an arcane halo — a spell readied. The glow rides a
+   drop-shadow on the SVG (not the cog's text-shadow, which wouldn't wreath
+   an icon's strokes). Pure chrome — the button, its data-act and its
+   retire flow are untouched; only the look changes. */
+body.wizard .row-actions .icon-btn.warn {
+  color: #d9b45a;
+  border-color: #7a5db0;
+}
+body.wizard .row-actions .icon-btn.warn:hover,
+body.wizard .row-actions .icon-btn.warn:focus-visible {
+  color: #f3d98a;
+  border-color: #d9b45a;
+}
+body.wizard .row-actions .icon-btn.warn:hover .trash-ico,
+body.wizard .row-actions .icon-btn.warn:focus-visible .trash-ico {
+  filter: drop-shadow(0 0 4px rgba(217, 180, 90, 0.9));
 }
 
 /* The cog's dropdown — the little "spell list" of collected actions —
