@@ -2787,6 +2787,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row {
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
+/* The author `display: flex` above beats the UA `[hidden] { display: none }`
+   (author origin wins over UA), so the `hidden` attribute is inert on a
+   .cron-create-row without this — the same gotcha documented for .tab-badge /
+   .mail-pager elsewhere. JOH-377 toggles the copy-only + worktree rows via
+   .hidden, so make `hidden` actually hide. */
+.cron-create-row[hidden] { display: none; }
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
@@ -3570,6 +3576,32 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .reincarnate-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
 .reincarnate-mode .opt-note { font-size: 11px; color: #7d8590; }
+/* Summon dialog drop-mode chooser (JOH-377) — same vertical radio-list-with-
+   notes shape as .reincarnate-mode. Shown only when a template is dragged onto
+   an existing group. */
+.deploy-mode {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; margin: 6px 0;
+}
+/* Author `display: flex` beats the UA `[hidden]` rule, so the chooser's `hidden`
+   attribute needs this to actually hide on a normal open (see .cron-create-row
+   [hidden] above for the same gotcha). Without it the mode chooser shows on the
+   plain 🚀 deploy, breaking the normal-open invariant. */
+.deploy-mode[hidden] { display: none; }
+.deploy-mode label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.deploy-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.deploy-mode .opt-note { font-size: 11px; color: #7d8590; }
+/* The per-mode note under the group field (locked / copied) + the locked group
+   input in reinforce mode (read-only, visibly muted so nothing is silently
+   ignored). */
+.deploy-group-note { font-size: 11px; color: #7d8590; margin: -2px 0 4px; }
+#template-deploy-group.locked {
+  background: #161b22; color: #8b949e; cursor: not-allowed; opacity: 0.85;
+}
 .window-roles, .window-groups {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 11px; color: #7d8590; min-height: 18px;
@@ -7240,6 +7272,17 @@ body.wizard #template-deploy-modal #template-deploy-submit:active {
 }
 body.wizard #template-deploy-modal #template-deploy-submit:disabled { opacity: 0.7; }
 body.wizard #template-deploy-modal #template-deploy-submit:disabled::before { content: "🧙 Summoning…"; }
+/* Drop-mode chooser + notes re-skinned to the parchment palette (JOH-377),
+   scoped under #template-deploy-modal so this feature never widens body.wizard. */
+body.wizard #template-deploy-modal .deploy-mode {
+  background: #241b3d; border-color: #d9b45a;
+}
+body.wizard #template-deploy-modal .deploy-mode label { color: #f3e6c0; }
+body.wizard #template-deploy-modal .deploy-mode .opt-note { color: #b39ddb; }
+body.wizard #template-deploy-modal .deploy-group-note { color: #b39ddb; }
+body.wizard #template-deploy-modal #template-deploy-group.locked {
+  background: #1a1430; color: #b39ddb;
+}
 
 /* ─── Wizard trace dialog — "🕯 Trace the party's circle" ────────────
    Save-a-group-as-a-template: copy a live party's shape into a fresh

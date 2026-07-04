@@ -4,9 +4,11 @@
 // you can drop onto a group: your spawn PROFILES, your group TEMPLATES
 // (summoning circles) and your ROLES (classes). The panel SHELL + card
 // rendering live here; the DRAG behaviour (dragstart/dragover/drop) lives in
-// dock-dnd.js. Profile + role cards are drag sources now (JOH-375 2/4) —
-// drop one onto a group to open the spawn dialog prefilled; template drag
-// lands in 4/4, so those cards stay non-draggable.
+// dock-dnd.js. All three kinds are drag sources now: profile + role cards
+// drop onto a group to open the spawn dialog prefilled (JOH-375 2/4);
+// template cards drop onto a group to open the unified summon dialog with a
+// drop-mode chooser (reinforce the group / new group in its image), or onto
+// empty space for a plain "new party from circle" open (JOH-377 4/4).
 //
 // NB the name: js/palette.js is already taken (the Ctrl/Cmd-K command
 // palette), so this module + its CSS/ids live under the `dock` namespace
@@ -86,9 +88,9 @@ function summaryChips(summary, max = 4) {
 //   onManageAll()       jump to the whole-kind manager overlay
 //
 // `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
-// data-dock-kind): profiles + roles drop onto a group to open the spawn dialog
-// prefilled (JOH-375 2/4); templates drop lands in 4/4, so their cards stay
-// non-draggable for now.
+// data-dock-kind): all three kinds drop onto a group — profiles + roles open
+// the spawn dialog prefilled (JOH-375 2/4), templates open the unified summon
+// dialog with a drop-mode chooser (JOH-377 4/4).
 const SECTIONS = [
   {
     key: 'profiles',
@@ -110,6 +112,7 @@ const SECTIONS = [
     items: (snap) => (snap && snap.templates) || [],
     name: (t) => t.name,
     chips: (t) => templateReadbackBadges(t),
+    drag: true,
     onManageItem: () => openTemplatesManageModal(),
     onManageAll: () => openTemplatesManageModal(),
   },
@@ -137,7 +140,9 @@ function sectionByKey(key) {
 // compact chip row, and a ⚙ manage affordance that jumps to the item's editor.
 // The card carries data-dock-kind / data-dock-name — dock-dnd.js reads them off
 // dragstart. A section flagged `drag` makes its cards drag SOURCES
-// (draggable="true"); the others stay non-draggable (templates land in 4/4).
+// (draggable="true"); a future non-drag section (an editor / work-graph node)
+// would leave `drag` unset and fall back to the "(coming soon)" grip hint. All
+// three current kinds — profiles, templates, roles — are drag sources.
 function cardHTML(section, item) {
   const name = section.name(item);
   const chips = section.chips(item) || '';
