@@ -6053,6 +6053,129 @@ body.wizard #window-modal #window-submit:hover {
 }
 body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
 
+/* ─── Wizard bulk cleanup — "🧹 Clean up agents and conversations" ────
+   The global filter-bar cog's "🧹 clean up" item (and the group cog's
+   "🧹 cleanup") open openCleanupModal in refresh.js: the rich multi-category
+   tool that bulk unjoins / retires / deletes / reinstates active agents,
+   retired agents and plain conversations. It reuses the same shared
+   .cleanup-modal shell the #window-modal skin above re-skins, so — exactly as
+   there — every rule is scoped to #cleanup-modal, leaving the sibling
+   worktree-cleanup / retire-preview / delete-retired dialogs on the default
+   chrome (the same discipline the retire / edit-member / window re-skins
+   follow, guarded by TestDashboardCSS_WizardWindowModalScoped and friends).
+
+   The title + hint copy is JS-set honest prose (applyChrome / applyHint),
+   not a per-theme span pair, so it is left legible and only the chrome is
+   re-skinned — matching the terminal-picker re-skin. Because every rule keys
+   on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
+   with no JS wiring. */
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the Summon / Banish palette, same as #window-modal. */
+body.wizard #cleanup-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #cleanup-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #cleanup-modal .cleanup-hint { color: #b39ddb; }
+/* The delete-tier hint keeps a caution tone — a warm ember rather than the
+   base orange — so its "cannot be undone" warning still reads as danger on
+   the violet surface. The .cleanup-warn / .cleanup-error status lines below
+   are likewise left their honest warning hues (a signal, not chrome). */
+body.wizard #cleanup-modal .cleanup-hint.danger { color: #f0a868; }
+
+/* Toolbar: select-all / none take the tarnished-gold secondary skin; the
+   inactivity (number) + filter (search) fields go dark-violet; the count
+   reads parchment. */
+body.wizard #cleanup-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #cleanup-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #cleanup-modal .cleanup-toolbar input[type=number],
+body.wizard #cleanup-modal .cleanup-toolbar input[type=search] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #cleanup-modal .cleanup-count { color: #e7d9f5; }
+
+/* Category-filter row (agents mode only): parchment toggles, violet label
+   + per-category counts. */
+body.wizard #cleanup-modal .cleanup-cats,
+body.wizard #cleanup-modal .cleanup-cats-label { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-cat-toggle { color: #f3e6c0; }
+body.wizard #cleanup-modal .cleanup-cats .muted { color: #8f7bb5; }
+
+/* The candidate list: a deeper violet-void well with a mystic-purple frame;
+   rows divide on a faint violet line, titles parchment, ids + activity violet.
+   The sticky per-category sub-header repaints violet so it doesn't flash the
+   base slate as the list scrolls under it. The semantic status badges
+   (owner / online / deleted / retired / failed …) keep their base hues —
+   they carry meaning, so the re-skin deliberately leaves them alone. */
+body.wizard #cleanup-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #cleanup-modal .cleanup-cat-head {
+  background: #1c1436; border-bottom-color: #241b3d; color: #b39ddb;
+}
+body.wizard #cleanup-modal .cleanup-cat-head span { color: #8f7bb5; }
+body.wizard #cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #cleanup-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #cleanup-modal .cleanup-row .id,
+body.wizard #cleanup-modal .cleanup-row .meta,
+body.wizard #cleanup-modal .cleanup-row .seen { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-empty { color: #b39ddb; }
+
+/* The tier selector + its sub-options: an arcane inset panel, parchment
+   labels, violet notes. The native radios / checkboxes stay legible. */
+body.wizard #cleanup-modal .cleanup-options { color: #e7d9f5; }
+body.wizard #cleanup-modal .cleanup-options .opt-note { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-tier {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+
+/* Footer: Cancel gets the tarnished-gold secondary treatment; the submit
+   becomes a gilded lever (Summon / Banish's sibling). Its label is JS-set
+   with a live count + verb, so the CSS only gilds the chrome. The delete
+   tier flags the submit .danger — kept as a crimson-ember lever so the
+   irreversible action still signals danger inside the arcane frame. */
+body.wizard #cleanup-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #cleanup-modal #cleanup-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+body.wizard #cleanup-modal #cleanup-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #cleanup-modal #cleanup-submit.danger {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
+  border-color: #f0883e;
+  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
+}
+body.wizard #cleanup-modal #cleanup-submit.danger:hover {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
+  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
+
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
    single agent (termDirModal in refresh.js): pick Current / Worktree / Launch
