@@ -30,7 +30,7 @@ func migrate(db *sql.DB) error {
 		// can tell "nothing to migrate" apart from "migrated" or "failed
 		// before reporting". The reporter is nil for every CLI command, so
 		// this stays agentd-startup-only (see MigrationReporter).
-		r.reportAlreadyCurrent(ver)
+		r.reportAlreadyCurrent(ver, currentVersion)
 		return nil
 	}
 	// The DB's true starting version, reported to the caller before any work
@@ -52,7 +52,7 @@ func migrate(db *sql.DB) error {
 	// binary — applies nothing either; report it as a no-op too (with the DB's
 	// actual version) rather than returning wordlessly.
 	if ver >= currentVersion {
-		r.reportAlreadyCurrent(ver)
+		r.reportAlreadyCurrent(ver, currentVersion)
 		return nil
 	}
 	r.reportBegin(from, currentVersion)

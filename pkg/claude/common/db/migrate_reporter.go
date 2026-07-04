@@ -132,10 +132,13 @@ var migrationSteps = []migrationStep{
 type MigrationReporter struct {
 	// AlreadyCurrent fires once, INSTEAD of the whole Begin…Done sequence, when
 	// migrate() finds no forward work: the DB is already at head (version ==
-	// currentVersion) or, pathologically, past it (a newer binary wrote the
-	// schema). version is the DB's actual schema version. This is the only
-	// callback that fires on a no-op restart.
-	AlreadyCurrent func(version int)
+	// head) or, pathologically, past it (version > head — a newer binary wrote
+	// the schema, so this older binary applies nothing and may not understand
+	// it). version is the DB's actual schema version; head is the version this
+	// binary knows (currentVersion), passed so the consumer can distinguish the
+	// benign at-head case from the version > head anomaly without importing the
+	// constant. This is the only callback that fires on a no-op restart.
+	AlreadyCurrent func(version, head int)
 	// Begin fires once before the first migration runs, when there is work to
 	// do. from is the DB's current schema version (0 for a brand-new DB), to
 	// the head version being migrated to.
@@ -173,9 +176,9 @@ func SetMigrationReporter(r *MigrationReporter) {
 // call them unconditionally: a nil reporter (the CLI default) or an unset
 // field is simply a no-op.
 
-func (r *MigrationReporter) reportAlreadyCurrent(version int) {
+func (r *MigrationReporter) reportAlreadyCurrent(version, head int) {
 	if r != nil && r.AlreadyCurrent != nil {
-		r.AlreadyCurrent(version)
+		r.AlreadyCurrent(version, head)
 	}
 }
 
