@@ -367,6 +367,48 @@ func TestReinforce_SingleWaveWhileChoreographyPending_Allowed(t *testing.T) {
 	assert.Equal(t, "staged", after.TemplateName, "still the original staged choreography, not clobbered")
 }
 
+// Scenario (queued-name collision): a single-wave reinforce may run alongside a
+// pending choreography, but NOT claim a name a queued wave will spawn —
+// spawnWaveAgents dedupes later waves against live names, so a reinforced
+// name-twin would make that wave silently adopt the reinforcement instead of
+// spawning its own agent (CodeRabbit finding on #839).
+func TestReinforce_SingleWaveClaimingQueuedWaveName_Refused(t *testing.T) {
+	f := newFlow(t)
+
+	// A group with a pending choreography whose wave 1 will spawn "raid-dev".
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name": "staged",
+			"agents": []templateAgentSpec{
+				{Name: "lead", Role: "lead", Wave: 0},
+				{Name: "dev", Role: "dev", Wave: 1},
+			},
+		}).Code, "create staged template")
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/staged/deploy",
+			map[string]any{"group_name": "raid", "mission": "m"}).Code, "deploy staged")
+	agentd.WaitForBackgroundForTest()
+	g, err := db.GetAgentGroupByName("raid")
+	require.NoError(t, err)
+	before, err := db.GetWaveChoreography(g.ID)
+	require.NoError(t, err)
+	require.NotNil(t, before, "raid has a pending choreography")
+	membersBefore := memberCount(t, "raid")
+
+	// A single-wave reinforce whose roster name is exactly the queued wave-1
+	// agent ("dev" → raid-dev) is refused up-front as a name collision.
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "twin", "agents": []templateAgentSpec{{Name: "dev", Role: "dev"}}}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/twin/reinforce",
+		map[string]any{"group_name": "raid"})
+	require.Equalf(t, http.StatusConflict, rec.Code, "queued-name collision should 409: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "raid-dev", "the reserved name is reported")
+	assert.Contains(t, rec.Body.String(), "queued in wave 1", "the reserving wave is reported")
+
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, membersBefore, memberCount(t, "raid"), "nothing spawned — the reinforce was refused whole")
+}
+
 // Scenario (multi-wave reinforce): a two-wave roster reinforces an existing
 // group — wave 0 spawns synchronously, wave 1 via the background runner once
 // wave 0 settles. Owner suppression holds across BOTH waves (carried on the

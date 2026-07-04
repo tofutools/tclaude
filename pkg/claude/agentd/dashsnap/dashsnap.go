@@ -194,15 +194,17 @@ func Capture(cfg Config) ([]Shot, error) {
 		Set("disable-gpu").
 		Set("hide-scrollbars").
 		Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height))
+	// Leakless(false) disables rod's reaper watchdog, so once Launch may have
+	// spawned a process we must kill it ourselves or orphan a headless Chrome.
+	// Registered BEFORE Launch: Launch can fail after the spawn (e.g. "Failed to
+	// get the debug url"), and Kill is a guarded no-op when nothing started. It
+	// also precedes browser.Close's defer so it runs LAST (LIFO): a graceful
+	// Close on the happy path, then this reaps whatever's left.
+	defer l.Kill()
 	controlURL, err := l.Launch()
 	if err != nil {
 		return nil, fmt.Errorf("launch chrome (%s): %w", chromeBin, err)
 	}
-	// Leakless(false) disables rod's reaper watchdog, so if we bail before (or
-	// after) the browser owns the process we must kill it ourselves or orphan a
-	// headless Chrome. Registered before browser.Close's defer so it runs LAST
-	// (LIFO): a graceful Close on the happy path, then this reaps whatever's left.
-	defer l.Kill()
 
 	browser := rod.New().ControlURL(controlURL)
 	if err := browser.Connect(); err != nil {

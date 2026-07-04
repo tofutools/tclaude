@@ -2372,15 +2372,40 @@ func validateReinforcement(g *db.AgentGroup, tmpl *db.GroupTemplate) *reinforceH
 	// second (multi-wave) deploy into the same group would REPLACE the pending
 	// one, orphaning its remaining waves. Refuse a multi-wave reinforce while a
 	// choreography is pending. A single-wave reinforce never writes a
-	// choreography, so it is always allowed.
-	if len(partitionWaves(tmpl.Agents)) > 1 {
-		if c, cerr := db.GetWaveChoreography(g.ID); cerr != nil {
-			return &reinforceHTTPError{http.StatusInternalServerError, "io", "check staged deploy: " + cerr.Error()}
-		} else if c != nil {
+	// choreography, so it may proceed — but its names must not claim a slot a
+	// QUEUED wave will spawn: spawnWaveAgents dedupes later waves against the
+	// live-name set, so a reinforced name-twin would make that wave silently
+	// adopt the reinforcement instead of spawning its own agent. Treat the
+	// remaining choreography roster as reserved names.
+	c, cerr := db.GetWaveChoreography(g.ID)
+	if cerr != nil {
+		return &reinforceHTTPError{http.StatusInternalServerError, "io", "check staged deploy: " + cerr.Error()}
+	}
+	if c != nil {
+		if len(partitionWaves(tmpl.Agents)) > 1 {
 			return &reinforceHTTPError{http.StatusConflict, "staged_deploy_in_flight",
 				fmt.Sprintf("cannot reinforce %q with a multi-wave roster: the group has a staged deploy still in flight "+
 					"(wave %d/%d). Wait for it to finish, or reinforce with a single-wave template.",
 					g.Name, c.NextWave, len(c.Waves))}
+		}
+		queued := map[string]int{} // reserved finalName -> the wave that will spawn it
+		for i := c.NextWave; i < len(c.Waves); i++ {
+			for _, a := range c.Waves[i].Agents {
+				queued[g.Name+"-"+a.Name] = c.Waves[i].Wave
+			}
+		}
+		reserved := []string{}
+		for _, a := range tmpl.Agents {
+			finalName := g.Name + "-" + a.Name
+			if wv, ok := queued[finalName]; ok {
+				reserved = append(reserved, fmt.Sprintf("%s (queued in wave %d)", finalName, wv))
+			}
+		}
+		if len(reserved) > 0 {
+			return &reinforceHTTPError{http.StatusConflict, "name_collision",
+				fmt.Sprintf("cannot reinforce %q: %d roster member name(s) reserved by the group's staged deploy still in flight: %s. "+
+					"Rename the template agent(s), or wait for the staged deploy to finish.",
+					g.Name, len(reserved), strings.Join(reserved, ", "))}
 		}
 	}
 	return nil
