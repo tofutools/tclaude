@@ -496,7 +496,7 @@ Expand a deployed force's group on the Groups tab and its body leads with a
   live member is idle** — a conservative "nothing appears to be in flight"
   glance. A fully-offline force is dormant, not stalling, so the hint stays off
   when no member is live.
-- a **↻ re-brief** button (see below).
+- a **↻ re-brief** button and a **⏻ stand down** button (see below).
 
 The group's **summary line** also carries a **◆ phase** chip (with a **▸
 advance** button when a next phase exists) and a **🌊 wave *N/M* pending** chip
@@ -518,6 +518,9 @@ retiring lives in the group's ⚙ cog, so the force block does not duplicate the
   the human, group owners, or the **`templates.instantiate`** slug. A force with
   no source template, a deleted template, or a template with no work pattern is
   refused cleanly (nothing is sent).
+- **Stand down.** **⏻ stand down** winds the whole force down — the mirror of
+  deploy (see [Winding a force down](#winding-a-force-down)). It is gated on the
+  human, group owners, or the **`groups.retire`** slug.
 
 ### The rhythm model
 
@@ -535,17 +538,37 @@ mirror of the blueprint it came from.
 
 ### Winding a force down
 
-Two verbs, with different blast radii:
+Three verbs, with different blast radii:
 
 - **Retire** (per-member status dot / the group ⚙ cog, or `groups retire`) is
   **non-destructive**: it demotes agents to plain conversations. The group and
   its history survive, and a retired conversation can be reinstated.
+  - When a retire leaves the group with **no live members**, its group-target
+    rhythms would otherwise keep firing every interval to nobody. So a retire
+    that empties the group **auto-disables** those cron jobs (they stay visible
+    and reversible in the **Cron** tab, marked *group-retired*) rather than
+    leaving them running. A later **`groups resume`** on the group **re-enables
+    exactly** the jobs that auto-disable turned off — never a job you paused by
+    hand (once you flip a job's enabled state yourself, it stops being a
+    candidate for the auto-re-enable).
+- **Stand down** (the force block's **⏻ stand down** button, or
+  `task-force stand-down`) is the **mirror of deploy** — the composed wind-down.
+  It **retires the whole roster** *and* **sweeps** (deletes) the deploy-seeded
+  runtime: the group-target **rhythm cron jobs** and any pending **wave
+  choreography**. It **keeps the group row** as a dormant record — the mission,
+  provenance, and process history all survive — so it is *not* a delete. Reach
+  for it when a mission is done and you want the force wound down but its record
+  kept. Gated on the human, group owners, or `groups.retire`.
 - **Delete group** (the group ⚙ cog, or `groups rm`) is the **full sweep**: it
   removes the group and, in one transaction, its advisory **process state** and
   transition log, its staged-spawn **wave choreography**, and its group-target
   **cron jobs** (including the template-seeded rhythms). What each member *said*
   to the others is preserved as direct messages, and cron jobs that merely
   routed *through* the group (conv-targeted) still deliver and are left alone.
+
+The difference between **stand down** and **delete group**: stand-down sweeps the
+same rhythms + waves but **keeps the group** (mission and history preserved);
+delete erases the group row entirely.
 
 ## Spawning agents from the dashboard
 
