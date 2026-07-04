@@ -6639,23 +6639,23 @@ body.wizard #export-agent-modal #export-agent-submit:disabled::before { content:
    TestDashboardCSS_WizardGroupCreateModalScoped), collapsed with :is() so the
    five ids don't have to be spelled out on every pseudo-element rule. All five
    share the #140f28 arcane field palette. Treatment mirrors the mail panes. */
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea {
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-track,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-corner,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-track,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-corner,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #7a5db0, #3a2a63);
   border: 1px solid #d9b45a; border-radius: 6px;
 }
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
-body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-instantiate-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-modal::-webkit-scrollbar-thumb:hover,
+body.wizard :is(#agent-spawn-modal, #cron-create-modal, #group-create-modal, #profile-editor-modal, #export-agent-modal, #template-editor-modal, #template-from-group-modal, #group-import-modal, #group-context-modal, #group-clone-modal) .cron-create-row textarea::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #8f6fca, #4a367d);
 }
 
@@ -7137,90 +7137,12 @@ body.wizard #template-editor-modal .tpl-concepts-table thead th { color: #b39ddb
 body.wizard #template-editor-modal .tpl-concepts-table tbody th { color: #a97bd6; }
 body.wizard #template-editor-modal .tpl-concepts-table td { color: #e7d9f5; }
 
-/* ─── Wizard cast dialog — "🕯 Cast a summoning circle" ──────────────
-   Instantiate-from-template: pick a circle, name the party, state the
-   mission — the preview shows the familiars the rite will call forth.
-   Scoped to #template-instantiate-modal (same shared-class caveat as the
-   editor above). */
-body.wizard #template-instantiate-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
-body.wizard #template-instantiate-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
-body.wizard #template-instantiate-modal .cron-create-label { color: #b39ddb; }
-body.wizard #template-instantiate-modal .cron-create-row input[type=text],
-body.wizard #template-instantiate-modal .cron-create-row select,
-body.wizard #template-instantiate-modal .cron-create-row textarea {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
-body.wizard #template-instantiate-modal .cron-create-row input[type=text]:focus,
-body.wizard #template-instantiate-modal .cron-create-row select:focus,
-body.wizard #template-instantiate-modal .cron-create-row textarea:focus {
-  border-color: #a97bd6;
-}
-/* Open <select> options render on the OS layer — dark-on-parchment. */
-body.wizard #template-instantiate-modal .cron-create-row select option {
-  color: #1a1330; background: #e7d9f5;
-}
-/* The final-names preview: violet void, gilt names, gold owner-star. */
-body.wizard #template-instantiate-modal .template-preview {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
-body.wizard #template-instantiate-modal .template-preview .tp-name { color: #f3e6c0; }
-body.wizard #template-instantiate-modal .template-preview .tp-meta { color: #b39ddb; }
-body.wizard #template-instantiate-modal .template-preview .tp-owner { color: #d9b45a; }
-body.wizard #template-instantiate-modal .template-preview .tp-empty { color: #b39ddb; }
-body.wizard #template-instantiate-modal button:not(#template-instantiate-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #template-instantiate-modal button:not(#template-instantiate-submit):hover { background: #3a2a63; }
-body.wizard #template-instantiate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-/* Create & spawn = 🕯 Cast it! — the gilded lever. The in-flight state
-   (JS swaps the text to "Spawning…" and disables) stays hidden behind
-   font-size: 0 and reads "🕯 Casting…" instead, staying in voice. */
-body.wizard #template-instantiate-modal #template-instantiate-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
-body.wizard #template-instantiate-modal #template-instantiate-submit::before {
-  content: "🕯 Cast it!";
-  font-size: 14px;
-  letter-spacing: 1px;
-}
-body.wizard #template-instantiate-modal #template-instantiate-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #template-instantiate-modal #template-instantiate-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #template-instantiate-modal #template-instantiate-submit:disabled { opacity: 0.7; }
-body.wizard #template-instantiate-modal #template-instantiate-submit:disabled::before { content: "🕯 Casting…"; }
-
 /* ─── Wizard summon dialog — "🧙 Summon a hero party" ────────────────
-   Deploy-a-task-force (JOH-245): pick a circle, speak the quest, and the
-   preview shows the familiars the summoning will call forth. Deploy is
-   instantiate's mission-framed sibling, so it borrows the cast dialog's
-   violet-and-gilt skin. Scoped to #template-deploy-modal. */
+   The unified summon/deploy dialog (JOH-245, JOH-373 folded the old cast
+   dialog into it): pick a circle, speak the quest (or leave it blank to
+   just gather the party), and the preview shows the familiars the
+   summoning will call forth. Violet-and-gilt skin, scoped to
+   #template-deploy-modal. */
 body.wizard #template-deploy-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
