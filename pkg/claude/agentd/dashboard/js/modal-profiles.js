@@ -17,7 +17,7 @@
 // wipe it, so submit carries those forward from the original (guarded on an
 // unchanged harness).
 
-import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue, syncCustomModelRow } from './helpers.js';
+import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
@@ -69,7 +69,7 @@ function profileActiveModelEl() {
   const codexStyle = h && (!h.models || h.models.length === 0);
   if (codexStyle) return $('#profile-editor-model-codex');
   const sel = $('#profile-editor-model');
-  return sel.value === '__custom__' ? $('#profile-editor-model-custom') : sel;
+  return sel.value === MODEL_CUSTOM_VALUE ? $('#profile-editor-model-custom') : sel;
 }
 
 function populateProfileHarnessSelect() {

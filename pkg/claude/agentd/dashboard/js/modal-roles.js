@@ -13,7 +13,7 @@
 // the chosen harness. Because the server's PATCH is a FULL replace, the editor
 // surfaces every stored field.
 
-import { $, $$, esc, bindSelectTitles, setModelSelectValue, syncCustomModelRow } from './helpers.js';
+import { $, $$, esc, bindSelectTitles, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { loadRoles, createRole, updateRole, deleteRole, roleSummary } from './roles.js';
@@ -49,7 +49,7 @@ function roleActiveModelEl() {
   const codexStyle = h && (!h.models || h.models.length === 0);
   if (codexStyle) return $('#role-editor-model-codex');
   const sel = $('#role-editor-model');
-  return sel.value === '__custom__' ? $('#role-editor-model-custom') : sel;
+  return sel.value === MODEL_CUSTOM_VALUE ? $('#role-editor-model-custom') : sel;
 }
 
 function populateRoleHarnessSelect() {

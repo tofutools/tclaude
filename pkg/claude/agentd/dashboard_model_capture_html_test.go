@@ -76,8 +76,9 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			`id="` + base + `-custom"`,     // the free-text input
 			`id="` + base + `-custom-row"`, // its toggled row
 			// The select routes to the custom input on the sentinel (reads:
-			// submit + effort read the typed value).
-			"sel.value === '__custom__' ? $('#" + base + "-custom')",
+			// submit + effort read the typed value). Compared against the shared
+			// MODEL_CUSTOM_VALUE constant, not a hardcoded literal.
+			"sel.value === MODEL_CUSTOM_VALUE ? $('#" + base + "-custom')",
 			// The harness reshape reconciles the row with the select.
 			"syncCustomModelRow('" + base + "')",
 			// Picking "Custom…" reveals + focuses the row.
@@ -92,5 +93,11 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 	// The sentinel <option> must appear once per editor (3 curated selects).
 	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 3 {
 		t.Errorf("expected 3 \"Custom model id…\" sentinel options (spawn/profile/role), got %d", got)
+	}
+
+	// Each revealed free-text input carries an accessible name — its row's label
+	// span is empty (grid alignment), so without this the input has no a11y name.
+	if got := strings.Count(dashboardAssets, `aria-label="Custom model id"`); got != 3 {
+		t.Errorf("expected 3 aria-labelled custom-model inputs (spawn/profile/role), got %d", got)
 	}
 }
