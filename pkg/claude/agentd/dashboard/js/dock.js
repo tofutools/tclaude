@@ -293,14 +293,20 @@ export function bindDock() {
   $('#dock-collapse')?.addEventListener('click', toggleDock);
 
   // Keep the content-area top-inset (req 1) fresh as the page scrolls the
-  // chrome away and as the chrome's own height changes (slop marquee, wrapping
-  // controls, window resize). syncDockTop is rAF-coalesced, so these can fire
-  // freely. Passive scroll listener — we never preventDefault.
+  // chrome away and as the chrome's own height changes (slop marquee showing/
+  // hiding, wrapping controls or tab strip, window resize). syncDockTop is
+  // rAF-coalesced, so these can fire freely. Passive scroll listener — we never
+  // preventDefault. Observe EVERY chrome bar, not just the header: --dock-top
+  // tracks nav's bottom, which also moves when the marquee toggles between
+  // header and nav or the nav strip wraps — neither resizes the header.
   window.addEventListener('scroll', syncDockTop, { passive: true });
   window.addEventListener('resize', syncDockTop);
-  const chrome = document.querySelector('header');
-  if (chrome && 'ResizeObserver' in window) {
-    new ResizeObserver(syncDockTop).observe(chrome);
+  if ('ResizeObserver' in window) {
+    const ro = new ResizeObserver(syncDockTop);
+    for (const sel of ['header', '#slop-marquee', 'nav']) {
+      const el = document.querySelector(sel);
+      if (el) ro.observe(el);
+    }
   }
 
   // Persist each section's collapse/expand (req 5). <details> only fires
