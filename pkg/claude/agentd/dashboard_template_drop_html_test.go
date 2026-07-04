@@ -74,4 +74,11 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must(".deploy-mode {", "the drop-mode chooser has a base CSS rule")
 	must("body.wizard #template-deploy-modal .deploy-mode {", "the wizard chooser skin is scoped to the summon modal")
 	must("#template-deploy-group.locked {", "the locked group field is visibly muted")
+
+	// The [hidden] overrides are load-bearing: the author `display:flex` on
+	// .deploy-mode / .cron-create-row beats the UA `[hidden]{display:none}`, so
+	// without these the chooser + copy-only rows show on a NORMAL open (the
+	// normal-open invariant). String tests can't see the cascade, so pin the rules.
+	must(".deploy-mode[hidden] { display: none; }", "the chooser's hidden attr actually hides (author display beats UA [hidden])")
+	must(".cron-create-row[hidden] { display: none; }", "the copy-only + worktree rows' hidden attr actually hides")
 }

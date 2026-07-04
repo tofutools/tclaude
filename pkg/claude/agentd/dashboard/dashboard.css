@@ -2787,6 +2787,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row {
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
+/* The author `display: flex` above beats the UA `[hidden] { display: none }`
+   (author origin wins over UA), so the `hidden` attribute is inert on a
+   .cron-create-row without this — the same gotcha documented for .tab-badge /
+   .mail-pager elsewhere. JOH-377 toggles the copy-only + worktree rows via
+   .hidden, so make `hidden` actually hide. */
+.cron-create-row[hidden] { display: none; }
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
@@ -3578,6 +3584,11 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
   background: #161b22; margin: 6px 0;
 }
+/* Author `display: flex` beats the UA `[hidden]` rule, so the chooser's `hidden`
+   attribute needs this to actually hide on a normal open (see .cron-create-row
+   [hidden] above for the same gotcha). Without it the mode chooser shows on the
+   plain 🚀 deploy, breaking the normal-open invariant. */
+.deploy-mode[hidden] { display: none; }
 .deploy-mode label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
   font-size: 12px; color: #c9d1d9;

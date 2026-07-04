@@ -1943,7 +1943,16 @@ function bindTemplatesUI() {
   wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
   $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
-  $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
+  $('#template-deploy-group').addEventListener('input', () => {
+    deployGroupEdited = true;
+    // In copy mode the group field IS the new group's name — track edits on the
+    // copy defaults so a reinforce↔copy toggle restores what the human typed
+    // rather than resetting to the suggested <target>-N.
+    if (deployDropGroup && deployMode() === 'copy' && deployCopyDefaults) {
+      deployCopyDefaults.groupName = $('#template-deploy-group').value;
+    }
+    renderDeployPreview();
+  });
   // The drop-mode chooser (JOH-377) reflows the dialog live — no re-open.
   $$('input[name=template-deploy-mode]').forEach(rdo =>
     rdo.addEventListener('change', applyDeployMode));
