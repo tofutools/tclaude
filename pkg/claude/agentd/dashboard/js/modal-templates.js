@@ -2506,6 +2506,10 @@ export {
   // modal-clone.js dialog); a template clone carries a whole roster, so its
   // bespoke blurb stays worthwhile. Both are just "enter a new name" dialogs.
   openDuplicateModal,
+  // deleteTemplate — the dock card ⚙ → Delete menu item reuses the manager's
+  // confirm + DELETE + force-refresh (it already refreshes the dashboard, so
+  // the dock's Delete hook calls it directly, unlike the profile/role removes).
+  deleteTemplate,
 };
 // openSummonForDrop is exported via its `export function` declaration above
 // (dock-dnd.js imports it for the template-drop flow).

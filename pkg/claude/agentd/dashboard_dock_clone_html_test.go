@@ -33,9 +33,11 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must(`class="dock-card-menu"`, "the card renders its actions menu")
 	must(`data-dock-act="edit-item"`, "the menu's Edit item dispatches to the editor")
 	must(`data-dock-act="clone-item"`, "the menu's Clone item dispatches to the clone dialog")
+	must(`data-dock-act="delete-item"`, "the menu's Delete item dispatches to the delete flow")
 	// Clone re-letters to "Mirror" in wizard mode, echoing the templates
-	// manager's 🪞 duplicate wording.
+	// manager's 🪞 duplicate wording; Delete → "Dispel".
 	must(`wizWord('Clone', 'Mirror')`, "the Clone menu item carries the wizard vocabulary")
+	must(`wizWord('Delete', 'Dispel')`, "the Delete menu item carries the wizard vocabulary")
 	// The old direct deep-link act is gone — the repurpose is complete, not a
 	// second parallel path.
 	mustNot(`data-dock-act="manage-item"`, "the card ⚙ no longer deep-links straight to the editor")
@@ -53,6 +55,18 @@ func TestDashboardHTML_DockCardCloneMenu(t *testing.T) {
 	must("openCloneModal({ kind: 'profile'", "profiles clone via the generic name dialog")
 	must("openCloneModal({ kind: 'role'", "roles clone via the generic name dialog")
 	must("onCloneItem: (t) => openDuplicateModal(t.name)", "templates reuse their own duplicate dialog")
+
+	// Delete reuses each kind's existing manager delete flow (confirm + delete +
+	// toast). Profiles/roles get a dashboard refresh after (their removes only
+	// repaint the closed manager overlay); deleteTemplate already refreshes.
+	must("onDeleteItem:", "the sections carry a delete hook")
+	must("removeProfile(p.name).then(() => refresh({ force: true }))", "profile delete reuses removeProfile + refreshes the dock")
+	must("removeRole(rl.name).then(() => refresh({ force: true }))", "role delete reuses removeRole + refreshes the dock")
+	must("onDeleteItem: (t) => deleteTemplate(t.name)", "template delete reuses deleteTemplate (which self-refreshes)")
+	// The Delete item is styled destructive (red), distinct from Edit / Clone.
+	must(`class="dock-card-menu-item danger"`, "the Delete menu item is marked destructive")
+	must(".dock-card-menu-item.danger {", "the destructive Delete item has a red skin")
+	must("body.wizard #agent-dock .dock-card-menu-item.danger", "the Delete item's destructive skin re-skins in wizard mode")
 
 	// An open card menu must pause the 2s poll (which morphs the dock cards),
 	// or a re-render would rebuild the card and drop the menu mid-use.

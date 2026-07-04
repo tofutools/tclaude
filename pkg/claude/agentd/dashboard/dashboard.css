@@ -9541,6 +9541,10 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   padding: 4px 9px;
 }
 .dock-card-menu-item:hover { color: #d4d4d4; border-color: #58a6ff; background: #1a2029; }
+/* Delete is destructive — tinted red per the dashboard's danger convention
+   (#f85149 / #ff7b72), so it reads apart from the benign Edit / Clone rows. */
+.dock-card-menu-item.danger { color: #f0a3a0; }
+.dock-card-menu-item.danger:hover { color: #ff7b72; border-color: #f85149; background: #2b1516; }
 
 /* Wizard skin (JOH-388 req 4) — the palette becomes a shelf in The Wizard's
    Tower: a deep arcane-purple re-skin (backgrounds, borders AND accents, not
@@ -9589,6 +9593,12 @@ body.wizard #agent-dock .dock-card-menu-item {
 }
 body.wizard #agent-dock .dock-card-menu-item:hover {
   border-color: #7c5cc4; background: #2d2148; color: #efe6ff;
+}
+/* Dispel (Delete) — a cursed-ember tint so the destructive rite still reads red
+   through the grimoire's violet chrome. */
+body.wizard #agent-dock .dock-card-menu-item.danger { color: #e6a3ad; }
+body.wizard #agent-dock .dock-card-menu-item.danger:hover {
+  color: #ffb3b0; border-color: #b0466a; background: #3a1b2c;
 }
 /* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
    itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
