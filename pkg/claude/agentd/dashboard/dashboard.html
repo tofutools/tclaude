@@ -2652,6 +2652,28 @@
   </div>
 </div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>
+<!-- Drag-to-retire bin. A fixed overlay on the right edge that appears
+     only while a retireable agent row is being dragged (dnd.js toggles
+     .show on dragstart / dragend). Dropping a row on it runs the exact
+     same retire path as dropping onto the virtual "Retired" group — it
+     carries data-dnd-target-retired so dnd.js's existing drop handler
+     routes it to runDndRetire (full retire-confirm modal and all). It
+     exists so you don't have to drag all the way down to the Retired
+     group, which can be far offscreen when there are many groups.
+     aria-hidden: native DnD is mouse-only, and the per-row retire
+     button already covers keyboard / screen-reader users. -->
+<div id="dnd-trash" data-dnd-target-retired="1" aria-hidden="true" title="Drop here to retire">
+  <svg class="dnd-trash-icon" viewBox="0 0 24 24" width="52" height="52" fill="none"
+       stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <g class="dnd-trash-lid">
+      <path d="M4 7h16"/>
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    </g>
+    <path d="M6 7l1 12.5a2 2 0 0 0 2 1.9h6a2 2 0 0 0 2-1.9L18 7"/>
+    <path d="M10 11.5v6M14 11.5v6"/>
+  </svg>
+  <span class="dnd-trash-label">Retire</span>
+</div>
 <div class="toast" id="toast"></div>
 <!-- Command palette ("spotlight") — a Ctrl/Cmd-K keyboard launcher that
      searches across the dashboard's existing operations (hide / focus
