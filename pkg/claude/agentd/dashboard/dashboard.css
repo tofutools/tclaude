@@ -8890,3 +8890,155 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
   }
   body.wizard-shake { animation: none; }
 }
+
+/* ============================================================
+   Retractable right-side PALETTE DOCK (JOH-374, js/dock.js).
+   Lists spawn profiles / group templates / roles as future drag
+   SOURCES (drag lands in the follow-up tickets). Namespaced `dock-*`
+   / #agent-dock — NOT .palette-* (that's the Ctrl/Cmd-K command
+   palette). The wizard skin below is deliberately scoped under
+   #agent-dock so it never widens body.wizard globally.
+   ============================================================ */
+:root { --dock-w: 264px; --dock-tab-w: 22px; }
+
+/* The dock is fixed to the right edge, spanning from the top to just above
+   the fixed footer, and slides off to the right when collapsed. overflow is
+   visible so the edge toggle (negative-left, see below) isn't clipped; the
+   inner panel owns the scroll + chrome. z-index sits above the footer (40)
+   but below dropdowns (50+) and modals (100+) so a manager overlay covers it. */
+#agent-dock {
+  position: fixed;
+  top: 0; right: 0; bottom: var(--footer-h);
+  width: var(--dock-w);
+  z-index: 45;
+  transition: transform .2s ease;
+}
+body:not(.dock-open) #agent-dock { transform: translateX(100%); }
+
+/* When open, reserve the dock's width so <main> reflows and no content hides
+   behind it (the "reclaim the space, don't overlay dead area" rule). The
+   in-flow header/nav/main shrink via body padding; the viewport-fixed footer +
+   slop lever are pushed off the dock explicitly. Collapsed → padding drops to
+   0 and the space is reclaimed. */
+body.dock-open { padding-right: var(--dock-w); }
+body.dock-open footer { right: var(--dock-w); }
+body.dock-open #slop-lever { right: var(--dock-w); }
+
+/* Edge toggle — a chevron tab riding the dock's left edge (negative left), so
+   it stays reachable in BOTH states: open it sits just left of the panel;
+   collapsed it rides the translate to the viewport's right edge. */
+.dock-toggle {
+  position: absolute;
+  left: calc(-1 * var(--dock-tab-w));
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--dock-tab-w);
+  height: 54px;
+  padding: 0;
+  border: 1px solid #2a3340;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  background: #161b22;
+  color: #c9d1d9;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dock-toggle:hover { background: #21262d; border-color: #58a6ff; color: #58a6ff; }
+.dock-toggle-chevron { font-size: 16px; line-height: 1; transition: transform .2s ease; }
+/* Open → chevron points right (the "collapse toward the edge" direction);
+   collapsed → flip it to point left (the "expand back in" direction). */
+body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
+
+.dock-inner {
+  height: 100%;
+  box-sizing: border-box;
+  background: #12171d;
+  border-left: 1px solid #2a3340;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.dock-head {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a3340;
+}
+.dock-head-title { font-weight: 600; font-size: 13px; color: #d4d4d4; }
+.dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+
+.dock-section { margin-bottom: 12px; }
+.dock-section:last-child { margin-bottom: 0; }
+/* The section heading sticks while its cards scroll under it — a long
+   profile list still tells you which kind you're looking at. */
+.dock-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 4px 6px;
+  position: sticky; top: 0;
+  background: #12171d;
+  z-index: 1;
+}
+.dock-section-title { font-size: 12px; font-weight: 600; color: #adbac7; }
+.dock-section-icon { font-size: 12px; }
+.dock-section-count { color: #6e7681; font-weight: 400; font-size: 11px; margin-left: 2px; }
+.dock-section-manage {
+  background: none; border: 1px solid transparent; color: #7d8590;
+  cursor: pointer; border-radius: 4px; font-size: 13px; line-height: 1; padding: 2px 6px;
+}
+.dock-section-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+
+.dock-empty { color: #6e7681; font-size: 11px; font-style: italic; padding: 2px 6px 4px; }
+
+/* A card is a future drag source: the grab cursor + grip glyph advertise it,
+   data-dock-kind/name on the element carry the payload the DnD tickets wire.
+   No draggable attr yet — this ticket is the shell. */
+.dock-card {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; margin-bottom: 4px;
+  background: #161b22;
+  border: 1px solid #2a3340;
+  border-radius: 6px;
+  cursor: grab;
+}
+.dock-card:hover { border-color: #3d444d; background: #1a2029; }
+.dock-card:active { cursor: grabbing; }
+.dock-grip { flex: 0 0 auto; color: #545d68; font-size: 12px; cursor: grab; user-select: none; }
+.dock-card-icon { flex: 0 0 auto; font-size: 13px; }
+.dock-card-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dock-card-name {
+  font-size: 12px; color: #d4d4d4; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dock-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.dock-chip {
+  font-size: 10px; color: #8b949e;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 0 4px; white-space: nowrap;
+}
+.dock-chip-more { color: #6e7681; }
+/* Templates render their roster-shape chips via templateReadbackBadges, whose
+   spans carry .tc-count — the base .tc-count rule is scoped to the template
+   cards, so re-skin it for the dock here. */
+#agent-dock .tc-count { color: #6e7681; font-size: 10px; }
+.dock-card-manage {
+  flex: 0 0 auto;
+  background: none; border: 1px solid transparent; color: #7d8590;
+  cursor: pointer; border-radius: 4px; font-size: 12px; line-height: 1; padding: 3px 5px;
+  opacity: 0; transition: opacity .1s ease;
+}
+.dock-card:hover .dock-card-manage, .dock-card-manage:focus-visible { opacity: 1; }
+.dock-card-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+
+/* Wizard skin — arcane purple, scoped strictly under #agent-dock so it never
+   widens body.wizard globally (the anti-pin invariant). */
+body.wizard #agent-dock .dock-inner { background: #17131f; border-left-color: #4a3d6b; }
+body.wizard #agent-dock .dock-head { border-bottom-color: #4a3d6b; }
+body.wizard #agent-dock .dock-head-title { color: #d7c9ff; text-shadow: 0 0 6px rgba(139, 109, 214, 0.5); }
+body.wizard #agent-dock .dock-section-head { background: #17131f; }
+body.wizard #agent-dock .dock-section-title { color: #c9b8f0; }
+body.wizard #agent-dock .dock-card { background: #1d1730; border-color: #3a2f57; }
+body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #241a3a; }
+body.wizard #agent-dock .dock-chip { background: #241a3a; border-color: #3a2f57; color: #b39ddb; }
+body.wizard #agent-dock .tc-count { color: #b39ddb; }
+body.wizard #agent-dock .dock-toggle { background: #17131f; border-color: #4a3d6b; }
+body.wizard #agent-dock .dock-toggle:hover { border-color: #7c5cc4; color: #d7c9ff; }
+body.wizard #agent-dock .dock-section-manage:hover,
+body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }

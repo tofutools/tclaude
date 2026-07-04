@@ -65,6 +65,7 @@ import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
+import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -126,6 +127,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // The Ctrl/Cmd-K command palette. After bindTabs() so its "Go to <tab>"
   // commands click nav buttons whose handlers are already wired.
   bindCommandPalette();
+  // The retractable right-side palette dock (JOH-374). After initDashPrefs
+  // (awaited above) so its open/collapsed state seeds from the persisted
+  // pref; the shell + edge toggle are static so this binds once and survives
+  // the poll (renderDock only reconciles #dock-body).
+  bindDock();
   bindAccessSubtabs();
   bindDetailsPersistence();
   bindGroupTitleToggle();
