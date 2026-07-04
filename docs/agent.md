@@ -645,6 +645,30 @@ $EDITOR ft.json
 tclaude agent templates edit feature-team --file ft.json
 ```
 
+**Agentic template editing (a "scribe" agent).** These are ordinary
+permission-gated endpoints, so an agent can drive the whole edit loop by chat —
+no dashboard required. Grant bundle:
+
+- **`templates.manage`** — the one slug a scribe needs: `create`, `edit`, `rm`,
+  `from-group`, and `import`. This is the whole job for authoring/editing
+  circles.
+- **`templates.instantiate`** — only if the scribe should also *spawn* whole
+  teams (`instantiate` / `deploy`). Strictly more powerful, so usually left to
+  the human.
+- **`roles.manage`** / **`profiles.manage`** — only when the edit must also
+  *create or change* the shared [role library](#roles) or spawn
+  profiles a template references. A template merely *referencing* an existing
+  role/profile by name needs neither.
+- **Reads are open** — `ls`, `show`, and `export` need no grant, so a scribe can
+  always discover and inspect circles.
+
+Validation errors from `create`/`edit` are written to be actionable for an LLM:
+each names the offending field (`role_ref`, `spawn_profile`, a `work_pattern`
+`send_to`, a permission slug, …) and lists what *is* allowed. The bundled
+**`agent-circles`** skill teaches an agent this loop, the full JSON wire shape,
+and the wizard-mode vocabulary a human may speak; install it (with the other
+agent skills) via `tclaude setup --install-agent-skills`.
+
 `from-group` bootstraps a template from a running group's structure (roles,
 owners, per-agent permission grants, context); per-agent task briefs come
 through blank (a live group stores none), so fill them in with `edit`. With
@@ -899,7 +923,7 @@ with care.
 
 ## Bundled skills
 
-Seven skills ship with the binary and install to `~/.claude/skills/`
+Nine skills ship with the binary and install to `~/.claude/skills/`
 for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 (default `~/.codex/skills`) for Codex CLI, via
 `tclaude setup --install-agent-skills`:
@@ -909,6 +933,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   prompts asking the agent to coordinate.
 - **`agent-rename`** — split out as its own skill so renames are
   obvious in the skill list.
+- **`agent-task`** — set / clear / show an agent's task-reference link
+  (the clickable URL in the dashboard's Task column).
 - **`agent-lifecycle`** — context-window self-management: `compact`,
   `reincarnate`, `clone`, `context-info`.
 - **`agent-dir`** — report or open a terminal in an agent's working
@@ -917,6 +943,10 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`agent-remote-control`** — toggle Claude Code Remote Access
   (claude.ai/code + the Claude mobile app) on/off via
   `tclaude agent remote-control`; Claude-Code-only.
+- **`agent-circles`** — author and edit group templates ("summoning
+  circles" / task forces): the JSON wire shape, the safe
+  show-json → edit → edit-file round-trip, the scribe grant bundle, and
+  the wizard-mode vocabulary. See [templates](#templates).
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
   [Messages tab](dashboard.md#messages).

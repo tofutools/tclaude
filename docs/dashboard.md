@@ -280,6 +280,13 @@ and **⭐ starters** (see [Starter task forces](#starter-task-forces)).
 > a preset party**, and so on. The affordances are identical; only the copy
 > changes.
 
+> **Editing circles by chat.** Everything this editor does is also a
+> permission-gated CLI/daemon endpoint, so a **scribe agent** granted
+> `templates.manage` can author and edit templates by conversation — no
+> dashboard needed. Reads stay open, so any agent can discover and inspect
+> circles. See [Agentic template editing](agent.md#templates) for the grant
+> bundle and the bundled `agent-circles` skill.
+
 #### Sharing task forces as a file
 
 A template can be exported to a single self-contained JSON file and imported on

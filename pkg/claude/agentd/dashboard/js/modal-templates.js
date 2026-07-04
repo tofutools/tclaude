@@ -699,7 +699,9 @@ async function submitTemplateEditor() {
     if (!r.ok) { errEl.textContent = (await r.text()) || `HTTP ${r.status}`; return; }
     closeTemplateEditor();
     toast(editing ? `template updated: ${name}` : `template created: ${name}`);
-    refresh();
+    // force keeps every circle-list mutation's refresh uniform: harmless here
+    // (the editor is already closed), but immune to a modal left open above it.
+    refresh({ force: true });
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
@@ -721,7 +723,8 @@ async function deleteTemplate(name) {
     });
     if (!r.ok && r.status !== 204) { toast((await r.text()) || `HTTP ${r.status}`, true); return; }
     toast(`template deleted: ${name}`);
-    refresh();
+    // force so the deleted card leaves the list at once (see submitTemplateEditor).
+    refresh({ force: true });
   } catch (err) {
     toast((err && err.message) || String(err), true);
   }
@@ -1071,7 +1074,11 @@ async function submitFromGroup() {
     } else {
       toast(`template created from ${group}: ${name}${blankNote}`);
     }
-    refresh();
+    // force: the editor reopens on the fresh circle right below, so this
+    // refresh runs with a .modal-overlay open — without force its post-fetch
+    // suspend re-check would drop the tick and the circle list behind the
+    // editor would miss the just-created circle until a later poll.
+    refresh({ force: true });
     // Open the editor on the fresh template so the human can fill in
     // per-agent task briefs (from-group leaves new agents' blank).
     if (tmpl) openTemplateEditor(tmpl);
@@ -1236,7 +1243,8 @@ async function submitTemplateImport() {
     let msg = res && res.updated ? `template overwritten: ${name}` : `template imported: ${name}`;
     if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
     toast(msg);
-    refresh();
+    // force so the imported circle shows in the list at once (see submitTemplateEditor).
+    refresh({ force: true });
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
@@ -1347,7 +1355,11 @@ async function installStarter(name) {
       if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
       toast(msg);
     }
-    refresh();
+    // force: the starters picker stays open so several can be copied in a row,
+    // and it is a .modal-overlay that would otherwise suspend the poll — so a
+    // plain refresh() drops this tick and the circle list behind it stays stale
+    // until the human closes and reopens the view. force repaints it now.
+    refresh({ force: true });
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
