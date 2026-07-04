@@ -17,6 +17,7 @@ import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
+import { openNestModal } from './modal-nest.js';
 import { openExportModal } from './modal-export.js';
 import { triggerExportDownload } from './export-progress.js';
 import { openTermModal } from './modal-term.js';
@@ -1455,6 +1456,24 @@ function bindRowActions() {
           // reusable blueprint" path. The modal owns submit + refresh.
           openFromGroupModal(group);
           return;
+        }
+        case 'nest-group': {
+          // Open the parent picker (n-level groups-in-groups, JOH-392). The
+          // modal owns its PUT + toast + refresh.
+          openNestModal({ group });
+          return;
+        }
+        case 'unnest-group': {
+          // One-click "back to top level": clear the group's parent directly.
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/parent`, {
+            method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parent: '' }),
+          });
+          ok = r.ok;
+          if (!ok) toast(`Un-nest failed: ${await r.text()}`, true);
+          else toast(`${group}: moved to top level`);
+          break;
         }
         case 'delete-group': {
           const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);

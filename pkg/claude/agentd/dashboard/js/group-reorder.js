@@ -1,10 +1,17 @@
-// group-reorder.js — drag-to-reorder the REAL groups in the Groups tab.
+// group-reorder.js — drag-to-reorder AND drag-to-nest the REAL groups in the
+// Groups tab (n-level groups-in-groups, JOH-392).
 //
 // A real group's HEADER (its <summary>, carrying data-group-reorder +
-// draggable, see render.js) is the reorder drag handle: press the bare
-// header and drag to reorder that group relative to the other real groups.
-// The order is persisted as a JSON array of group names in dashPrefs under
-// GROUP_ORDER_KEY.
+// draggable, see render.js) is the drag handle: press the bare header and drag.
+// Where you DROP on a target group decides the gesture (see dropZone):
+//   - onto the target header's MIDDLE band → NEST the dragged group inside it
+//   - onto the target header's top/bottom edge → place it as a SIBLING before/
+//     after the target, adopting the target's OWN parent — so dropping a nested
+//     group onto a TOP-LEVEL group's edge pulls it back out to the top level.
+// Sibling order is persisted as a JSON array of group names in dashPrefs under
+// GROUP_ORDER_KEY (a pure browser-view concern, every depth ordered by this one
+// flat list). The parent edge is server state (agent_groups.parent_id): a nest/
+// un-nest drop PUTs /api/groups/{name}/parent, the only server round-trip here.
 //
 // The header also holds CLICK targets — the title (.group-name, click to
 // fold/unfold), the click-to-edit chips (descr / cwd / cap / profile, all
@@ -47,6 +54,7 @@ import { $, $$ } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
+import { refresh, toast } from './refresh.js';
 
 const GROUP_ORDER_KEY = 'tclaude.dash.groupOrder';
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
@@ -131,10 +139,72 @@ function dropsBefore(e, details) {
   return e.clientY < rect.top + rect.height / 2;
 }
 
-// clearDropMarkers strips the insertion-line classes from every group.
+// clearDropMarkers strips the insertion-line + nest-target classes from every
+// group.
 function clearDropMarkers() {
-  $$('.group-drop-before, .group-drop-after').forEach(d =>
-    d.classList.remove('group-drop-before', 'group-drop-after'));
+  $$('.group-drop-before, .group-drop-after, .group-drop-into').forEach(d =>
+    d.classList.remove('group-drop-before', 'group-drop-after', 'group-drop-into'));
+}
+
+// snapshotGroupsByName returns a name→group map of the current snapshot's real
+// groups, or null when the snapshot isn't ready.
+function snapshotGroupsByName() {
+  if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return null;
+  return new Map(lastSnapshot.groups.map(g => [g.name, g]));
+}
+
+// isDescendantOrSelf reports whether `name` is `ancestor` itself or sits
+// anywhere in the subtree BELOW `ancestor` — walking UP from `name` via the
+// snapshot's parent edges until a root. A visited set bounds the walk so a
+// pre-existing corrupt loop still terminates. Used to reject a drop that would
+// nest a group under itself or one of its own descendants (a cycle).
+function isDescendantOrSelf(name, ancestor, byName) {
+  let cur = name;
+  const seen = new Set();
+  while (cur && !seen.has(cur)) {
+    if (cur === ancestor) return true;
+    seen.add(cur);
+    cur = (byName.get(cur) || {}).parent || '';
+  }
+  return false;
+}
+
+// dropZone classifies a drag over a target group's box into one of three
+// gestures, using the target's HEADER band:
+//   'before' — cursor in the header's top strip → sibling, before target
+//   'after'  — cursor in the header's bottom strip (or below the header, over
+//              an expanded body) → sibling, after target
+//   'nest'   — cursor in the header's middle band → child OF target
+// The middle band is what makes "drag INTO a group" distinct from "reorder
+// next to it"; the edge strips give "drag back OUT" (dropping a nested group
+// onto a top-level group's edge re-parents it to top level).
+function dropZone(e, details) {
+  const summary = details.querySelector(':scope > summary');
+  const r = (summary || details).getBoundingClientRect();
+  if (summary && e.clientY >= r.top && e.clientY <= r.bottom) {
+    const rel = (e.clientY - r.top) / (r.height || 1);
+    if (rel < 0.3) return 'before';
+    if (rel > 0.7) return 'after';
+    return 'nest';
+  }
+  // Over the expanded body, below the header: reuse the whole-box midpoint so a
+  // low hover drops AFTER the whole group (matches the pre-nesting behaviour).
+  return dropsBefore(e, details) ? 'before' : 'after';
+}
+
+// resolveDrop turns a (dragName, targetName, zone) gesture into the concrete
+// mutation: the desired parent (nest → target; edge → target's OWN parent, so
+// dropping beside a top-level group lands the dragged group at top level) and
+// the reorder side. Returns null when the drop is a no-op or would form a cycle.
+function resolveDrop(dragName, targetName, zone, byName) {
+  if (!dragName || !targetName || dragName === targetName) return null;
+  const target = byName.get(targetName);
+  if (!target) return null;
+  const desiredParent = zone === 'nest' ? targetName : (target.parent || '');
+  // Cycle guard: the new parent must not be the dragged group itself nor any
+  // group inside the dragged group's own subtree.
+  if (desiredParent && isDescendantOrSelf(desiredParent, dragName, byName)) return null;
+  return { desiredParent, before: zone === 'before' };
 }
 
 // reorderPill reuses the shared #dnd-pill chip (the member-row DnD's hint)
@@ -152,13 +222,13 @@ function reorderPill(e, text) {
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
 }
 
-// applyReorder mutates the persisted order so `dragName` lands before/after
-// `targetName`, then re-renders the tab. It computes the new order from the
-// FULL snapshot's effective order (not the possibly-filtered DOM), so
-// reordering while a text filter is active never drops the hidden groups
-// out of the saved order.
-function applyReorder(dragName, targetName, before) {
-  if (!dragName || !targetName || dragName === targetName) return;
+// persistSiblingOrder mutates the persisted flat order so `dragName` lands
+// before/after `targetName`. It computes the new order from the FULL snapshot's
+// effective order (not the possibly-filtered DOM), so reordering while a text
+// filter is active never drops the hidden groups out of the saved order. The
+// flat order governs sibling order WITHIN each parent scope at render time
+// (siblings compare by flat index), so this one list serves every depth.
+function persistSiblingOrder(dragName, targetName, before) {
   if (!lastSnapshot || !Array.isArray(lastSnapshot.groups)) return;
   const names = sortGroupsByPref(lastSnapshot.groups.slice()).map(g => g.name);
   const from = names.indexOf(dragName);
@@ -169,7 +239,47 @@ function applyReorder(dragName, targetName, before) {
   if (!before) to += 1;
   names.splice(to, 0, dragName);
   setGroupOrderPref(names);
-  renderGroupsTab();
+}
+
+// applyGroupDrop is the single drop resolver for the group tree. It positions
+// `dragName` relative to `targetName` in the flat order (client dashPref) AND,
+// when the gesture changes the dragged group's parent (nest into a group, or
+// drop beside a top-level group to pull it back out), PUTs the new parent to
+// the server. The parent write is the only server round-trip; sibling order
+// stays a pure browser-view concern.
+function applyGroupDrop(dragName, targetName, zone) {
+  const byName = snapshotGroupsByName();
+  if (!byName) return;
+  const plan = resolveDrop(dragName, targetName, zone, byName);
+  if (!plan) return; // no-op or would-be cycle
+  const curParent = (byName.get(dragName) || {}).parent || '';
+  const parentChanged = curParent !== plan.desiredParent;
+
+  // Sibling order first (synchronous, client-only) so a subsequent server
+  // refresh honours it.
+  persistSiblingOrder(dragName, targetName, plan.before);
+
+  if (!parentChanged) {
+    renderGroupsTab();
+    return;
+  }
+  // Re-parent on the server; the response-driven refresh re-lays-out the tree.
+  fetch(`/api/groups/${encodeURIComponent(dragName)}/parent`, {
+    method: 'PUT', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent: plan.desiredParent }),
+  }).then(async (r) => {
+    if (!r.ok) {
+      toast(`nest failed: ${await r.text()}`, true);
+      renderGroupsTab(); // roll the view back to server truth
+      return;
+    }
+    toast(plan.desiredParent ? `${dragName}: nested under ${plan.desiredParent}` : `${dragName}: moved to top level`);
+    refresh({ force: true });
+  }).catch((err) => {
+    toast(`nest failed: ${(err && err.message) || err}`, true);
+    renderGroupsTab();
+  });
 }
 
 // endGroupDrag is the single teardown for a reorder drag: clear the active
@@ -247,18 +357,31 @@ function bindGroupReorder() {
       reorderPill(e, null);
       return;
     }
-    e.preventDefault(); // required for `drop` to fire on this element
-    e.dataTransfer.dropEffect = 'move';
-    const before = dropsBefore(e, details);
-    // No indicator when the result wouldn't move anything (dropping a
-    // group onto the gap it already occupies).
     const targetName = details.getAttribute('data-group-key');
-    if (targetName === groupDragName) {
+    const byName = snapshotGroupsByName();
+    const zone = dropZone(e, details);
+    // Reject up front (no preventDefault ⇒ no drop) a gesture that resolves to
+    // nothing or a cycle — e.g. dropping a group onto itself, or nesting under
+    // one of its own descendants. The marker/pill only show for a valid drop.
+    const plan = byName ? resolveDrop(groupDragName, targetName, zone, byName) : null;
+    if (!plan) {
       reorderPill(e, null);
       return;
     }
-    details.classList.add(before ? 'group-drop-before' : 'group-drop-after');
-    reorderPill(e, `↕ reorder ${groupDragName}`);
+    e.preventDefault(); // required for `drop` to fire on this element
+    e.dataTransfer.dropEffect = 'move';
+    if (zone === 'nest') {
+      details.classList.add('group-drop-into');
+      reorderPill(e, `⤵ nest ${groupDragName} in ${targetName}`);
+    } else {
+      details.classList.add(plan.before ? 'group-drop-before' : 'group-drop-after');
+      const curParent = (byName.get(groupDragName) || {}).parent || '';
+      // Signal a re-parent (drag OUT of / across subtrees) distinctly from a
+      // plain same-scope reorder.
+      reorderPill(e, curParent !== plan.desiredParent
+        ? (plan.desiredParent ? `↕ move ${groupDragName} beside ${targetName}` : `⤴ ${groupDragName} → top level`)
+        : `↕ reorder ${groupDragName}`);
+    }
   });
 
   document.addEventListener('drop', (e) => {
@@ -267,18 +390,18 @@ function bindGroupReorder() {
     if (!details) return;
     e.preventDefault();
     // Snapshot everything we need from the live DOM BEFORE tearing down /
-    // re-rendering: the target name, and the drop side (measured against the
+    // re-rendering: the target name and the drop zone (measured against the
     // still-attached target box).
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
-    const before = dropsBefore(e, details);
-    // Tear down NOW, before applyReorder re-renders #groups-list and detaches
+    const zone = dropZone(e, details);
+    // Tear down NOW, before applyGroupDrop re-renders #groups-list and detaches
     // the dragged header. If we left teardown to dragend, that event — fired
     // on the detached header — would never bubble here, so the pill would stay
     // stuck and groupReorderActive would wedge auto-refresh on. endGroupDrag
     // is idempotent, so a dragend that does still fire is a harmless no-op.
     endGroupDrag();
-    applyReorder(dragName, targetName, before);
+    applyGroupDrop(dragName, targetName, zone);
   });
 }
 

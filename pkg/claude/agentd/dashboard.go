@@ -924,6 +924,14 @@ type dashboardGroup struct {
 	// as a deployed force only when SourceTemplate is set.
 	Mission        string            `json:"mission,omitempty"`
 	SourceTemplate string            `json:"source_template,omitempty"`
+	// Parent is the NAME of the group this one is nested under (n-level
+	// groups-in-groups, JOH-392); "" = top-level. Resolved from the row's
+	// parent_id against the same snapshot's group set — name-keyed to match
+	// how the client's sibling-order and collapse prefs already key. A
+	// parent_id that doesn't resolve to a live group (should not happen — the
+	// FK is ON DELETE SET NULL) is shipped as "" so the child renders
+	// top-level rather than dangling.
+	Parent string `json:"parent,omitempty"`
 	// Process is the group's advisory process state (JOH-242): the current
 	// phase, the ordered phase map, and the transition log. nil for a group
 	// with no process (the phase chip + advance control render only when set).
@@ -1475,8 +1483,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// which would crash on null.
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
+	// id→name for resolving each group's parent_id to a parent NAME the
+	// client tree keys off. Built from the same group set we're serializing,
+	// so a parent_id with no live group simply doesn't resolve (child stays
+	// top-level) — the FK's ON DELETE SET NULL should already prevent that.
+	groupNameByID := make(map[int64]string, len(groups))
+	for _, g := range groups {
+		groupNameByID[g.ID] = g.Name
+	}
 	for _, g := range groups {
 		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Members: []dashboardMember{}}
+		if g.ParentGroupID != nil {
+			dg.Parent = groupNameByID[*g.ParentGroupID]
+		}
 		// Advisory process state (JOH-242): attach the current phase + phase map
 		// + transition log so the group view can render a phase chip + advance
 		// control. nil for a group with no process.

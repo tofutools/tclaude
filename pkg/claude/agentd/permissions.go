@@ -190,6 +190,11 @@ var permissionRegistry = []PermSlug{
 		Description: "Archive (soft-delete) a group: freezes membership + ownership and hides the group from default listings, while preserving message history (tclaude agent groups archive / unarchive)",
 	},
 	{
+		Slug:         PermGroupsNest,
+		OwnerImplied: true,
+		Description:  "Nest a group under another as a subgroup, or clear its parent (tclaude agent groups nest <child> --under <parent> | --none). Board-organisation only — it shapes the dashboard tree, not messaging or permissions. Group owners can re-parent groups they own without this slug.",
+	},
+	{
 		Slug:         PermAgentDelete,
 		OwnerImplied: true,
 		Description:  "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",

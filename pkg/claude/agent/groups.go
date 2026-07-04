@@ -39,6 +39,7 @@ func groupsCmd() *cobra.Command {
 			groupsRmCmd(),
 			groupsArchiveCmd(),
 			groupsUnarchiveCmd(),
+			groupsNestCmd(),
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),
@@ -1092,6 +1093,87 @@ func groupsUnarchiveCmd() *cobra.Command {
 			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+// --- groups nest ---
+
+type groupsNestParams struct {
+	Name     string `pos:"true" help:"Group to nest (the child)"`
+	Under    string `long:"under" optional:"true" help:"Parent group to nest this one under."`
+	None     bool   `long:"none" help:"Clear the parent — make this group top-level again."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsNestCmd() *cobra.Command {
+	return boa.CmdT[groupsNestParams]{
+		Use:   "nest",
+		Short: "Nest a group under another (dashboard tree), or clear its parent",
+		Long: "Sets (with --under <parent>) or clears (with --none) a group's parent, " +
+			"nesting it as a subgroup on the dashboard's Groups tab. A nested group draws " +
+			"inside its parent, so collapsing the parent hides the whole subtree — a way to " +
+			"declutter the board and bring groups back when needed.\n\n" +
+			"This is board-organisation ONLY: nesting shapes the visual tree and does not " +
+			"change messaging, permissions, cron multicast or spawn targets — none of those " +
+			"traverse the parent edge. Arbitrary depth is allowed; a nesting that would form " +
+			"a loop (a group under itself or one of its own descendants) is refused.\n\n" +
+			"Reference is by group, and survives a parent rename. Deleting a parent group " +
+			"automatically returns its children to the top level.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsNestParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Under).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsNestParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsNest(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsNest(p *groupsNestParams, stdout, stderr io.Writer) int {
+	if p.Name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	under := strings.TrimSpace(p.Under)
+	switch {
+	case p.None && under != "":
+		fmt.Fprintf(stderr, "Error: pass either --under <parent> or --none, not both\n")
+		return rcInvalidArg
+	case !p.None && under == "":
+		fmt.Fprintf(stderr, "Error: specify a parent with --under <parent>, or --none to clear\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group  string `json:"group"`
+		Parent string `json:"parent"`
+		Action string `json:"action"`
+	}
+	// under == "" here means --none → clear the parent.
+	body := map[string]any{"parent": under}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/parent"
+	if err := DaemonRequest(http.MethodPut, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if resp.Parent == "" {
+		fmt.Fprintf(stdout, "%s: now top-level (parent cleared)\n", resp.Group)
+	} else {
+		fmt.Fprintf(stdout, "%s: nested under %s\n", resp.Group, resp.Parent)
+	}
+	return rcOK
 }
 
 // --- groups clone ---

@@ -43,6 +43,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsSpawn,
 		PermGroupsLinkAdd,
 		PermGroupsLinkRm,
+		PermGroupsNest,
 		PermProcessAdvance,
 		PermHumanNotify,
 	}

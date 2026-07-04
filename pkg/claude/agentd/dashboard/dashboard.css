@@ -1042,6 +1042,14 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 
 .subtable { margin: 4px 0 12px 24px; border-left: 2px solid #2a3340; padding-left: 12px; }
+/* Nested subgroups (n-level groups-in-groups, JOH-392): a child group's
+   <details> renders inside its parent's body, between the header actions and
+   the direct member list. A little top/bottom breathing room + a subtle accent
+   on the left rail marks the nesting depth without competing with .subtable's
+   own rail (which each nested group brings recursively). */
+.group-subgroups { margin: 6px 0 10px 0; }
+.group-subgroups > details[data-group-key] { margin: 4px 0; }
+.group-subgroups > details[data-group-key] > summary { border-left: 2px solid #3d4a5c; padding-left: 6px; margin-left: -6px; }
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
@@ -2406,6 +2414,15 @@ details[data-group-key].group-drop-before {
 }
 details[data-group-key].group-drop-after {
   box-shadow: 0 3px 0 0 #58a6ff;
+}
+/* Nest target: dropping in the header's MIDDLE band nests the dragged group
+   INTO this one (n-level groups-in-groups, JOH-392). A ring + tint around the
+   whole target box reads as "into this container", distinct from the thin
+   before/after insertion line of a sibling reorder. */
+details[data-group-key].group-drop-into {
+  box-shadow: inset 0 0 0 2px #58a6ff;
+  background: rgba(88, 166, 255, 0.08);
+  border-radius: 6px;
 }
 .dnd-mod-pill {
   position: fixed;

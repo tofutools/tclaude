@@ -437,6 +437,7 @@ function groupActionsHTML(g, members) {
     + remoteControlPolicyMenuItem(g)
     + quickPinItem
     + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
+    + groupNestMenuItems(g)
     + `<button data-act="clone-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clone this group — copy every setting (directory, description, startup context, default profile, max-members, notify) and the owners into a new group. Optionally clone the member agents too.">⧉ clone…</button>`
     + `<button data-act="template-from-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team">⧉ save as template…</button>`
     + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
@@ -467,6 +468,18 @@ function groupActionsHTML(g, members) {
     + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
     + actionCog('group-menu', menu)
     + `</span>`;
+}
+
+// groupNestMenuItems renders the group ⚙ menu's nesting controls (n-level
+// groups-in-groups, JOH-392): a "nest under…" item that opens the parent
+// picker, plus — only when the group is already nested — a one-click
+// "un-nest" that clears the parent (data-act="unnest-group"). Both are
+// board-layout only; the picker's dialog spells that out.
+function groupNestMenuItems(g) {
+  const nestUnder = `<button data-act="nest-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the subgroup away. Board layout only.">📂 nest under…</button>`;
+  if (!g.parent) return nestUnder;
+  return nestUnder
+    + `<button data-act="unnest-group" data-group="${esc(g.name)}" data-parent="${esc(g.parent)}" data-label="${esc(g.name)}" title="Move this group back to the top level (currently nested under ${esc(g.parent)}).">📂 un-nest (under ${esc(g.parent)})</button>`;
 }
 
 // remoteControlPolicyMenuItem renders the group's remote-control policy as a
@@ -670,6 +683,25 @@ function renderForceBlock(g, members) {
   return `<div class="group-force-block">${parts.filter(Boolean).join('')}</div>`;
 }
 
+// renderGroups renders the Groups-tab list as a TREE (n-level groups-in-
+// groups, JOH-392). A real group's `parent` names the group it nests under;
+// a nested group is rendered INSIDE its parent's <details> body, so
+// collapsing the parent hides the whole subtree — that is the board-declutter
+// mechanism (no separate hide flag needed).
+//
+// Tree assembly is defensive by construction, so a bad `parent` never
+// crashes the render (the daemon's FK + cycle checks are the first line, this
+// is the second):
+//   - A `parent` that is not among the groups currently being rendered
+//     (filtered out by the text search, a virtual group, or — should not
+//     happen — a dangling id) makes the child a ROOT, so it stays visible
+//     instead of disappearing under a parent that isn't there.
+//   - Virtual groups (Ungrouped/Retired/…) never nest and are never parents;
+//     they always render at the top level in their fixed slots.
+//   - A cycle is broken by a visited-set on the recursion path (a group is
+//     rendered at most once), so even a corrupt loop terminates.
+// Sibling order and the roots' order both follow the incoming `groups` order
+// (already the human's persisted reorder from sortGroupsByPref).
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     // The button label the hint names swaps per theme too (the same
@@ -678,12 +710,53 @@ function renderGroups(groups) {
     // variant, no JS theme read needed.
     return '<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>';
   }
-  return groups.map(g => {
+  // Only real (non-virtual) groups present in THIS render can be a parent.
+  const present = new Set(groups.filter(g => !g.virtual).map(g => g.name));
+  const childrenByParent = new Map();
+  const roots = [];
+  for (const g of groups) {
+    const parent = !g.virtual && g.parent && present.has(g.parent) && g.parent !== g.name
+      ? g.parent : '';
+    if (parent) {
+      if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+      childrenByParent.get(parent).push(g);
+    } else {
+      roots.push(g);
+    }
+  }
+  const rendered = new Set(); // cycle guard: render each group at most once
+  const renderNode = (g) => {
     if (g.virtual) return g.conversations ? renderVirtualConversationsGroup(g)
       : g.retired ? renderVirtualRetiredGroup(g)
       : g.replaced ? renderVirtualReplacedGroup(g)
       : g.pending ? renderVirtualPendingGroup(g)
       : renderVirtualGroup(g);
+    if (rendered.has(g.name)) return ''; // already drawn — a cycle would loop here
+    rendered.add(g.name);
+    const kids = childrenByParent.get(g.name) || [];
+    const childrenHTML = kids.length
+      ? `<div class="group-subgroups">${kids.map(renderNode).join('')}</div>`
+      : '';
+    return renderRealGroup(g, childrenHTML);
+  };
+  let html = roots.map(renderNode).join('');
+  // Orphan rescue: a group reachable only through a cycle (e.g. corrupt data
+  // where A.parent=B and B.parent=A) is in nobody's root set and would never be
+  // visited above. The server rejects cycles, so this is corruption-only — but
+  // rather than let such groups silently vanish, draw any real group the tree
+  // walk missed as a top-level node. renderNode's `rendered` guard keeps this
+  // from double-drawing anything already shown.
+  for (const g of groups) {
+    if (!g.virtual && !rendered.has(g.name)) html += renderNode(g);
+  }
+  return html;
+}
+
+// renderRealGroup renders one non-virtual group's <details> block.
+// childrenHTML is the already-rendered subgroup tree (empty string when the
+// group has no children); it is inserted in the group body BELOW the header
+// action buttons and ABOVE the direct member list, per the tree layout.
+function renderRealGroup(g, childrenHTML) {
     const members = g.members || [];
     // Offline visibility: per-group override falls back to the
     // tab-wide checkbox. Hidden members still count toward the
@@ -747,6 +820,7 @@ function renderGroups(groups) {
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
         ${renderForceBlock(g, members)}
+        ${childrenHTML}
         ${members.length === 0
           ? '<div class="muted">(no members yet)</div>'
           : visible.length === 0
@@ -762,7 +836,6 @@ function renderGroups(groups) {
       </div>
     </details>
   `;
-  }).join('');
 }
 
 // renderGroupLinkChips: compact, always-visible (even when collapsed)

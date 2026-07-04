@@ -28,6 +28,13 @@ type AgentGroup struct {
 	SourceTemplate string
 	CreatedAt      time.Time
 	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
+	// ParentGroupID nests this group under another (n-level groups-in-groups,
+	// JOH-392). nil = top-level. Referenced by ID (not name) so it survives a
+	// parent rename, and the column is declared ON DELETE SET NULL so deleting
+	// the parent auto-orphans children back to top-level — see migrateV98toV99.
+	// v1 is structure-only: it shapes the dashboard tree but does not (yet)
+	// inherit permissions, message routing, or spawn-target down the tree.
+	ParentGroupID *int64
 }
 
 // IsArchived reports whether the group has been soft-deleted via
@@ -677,7 +684,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -692,7 +699,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -706,7 +713,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -755,7 +762,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at, parent_id FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -885,6 +892,91 @@ func UnarchiveAgentGroup(name string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ErrGroupParentNotFound is returned by SetAgentGroupParent when the named
+// parent group does not exist.
+var ErrGroupParentNotFound = errors.New("parent group not found")
+
+// ErrGroupParentCycle is returned by SetAgentGroupParent when the requested
+// nesting would create a loop — a group cannot be its own parent, nor be
+// nested under a group that is already one of its own descendants.
+var ErrGroupParentCycle = errors.New("cannot nest a group under itself or one of its own descendants")
+
+// SetAgentGroupParent nests the group childID under the group named
+// parentName (n-level groups-in-groups, JOH-392). parentName == "" (after
+// trimming) clears the parent, making the child top-level. Returns the
+// updated child group.
+//
+// Cycle safety: rejects self-parenting and any edge that would close a loop.
+// The check walks UP the prospective parent's ancestor chain; sighting the
+// child means the child is already an ancestor of the parent, so the new
+// edge would loop — refuse with ErrGroupParentCycle. A visited set bounds
+// the walk so even a pre-existing corrupt cycle in the table cannot spin
+// forever. Returns ErrGroupParentNotFound if parentName resolves to nothing,
+// and sql.ErrNoRows if the child vanished mid-flight.
+//
+// All work is one transaction; the child row's parent_id is the only write.
+// (Deleting a parent needs no code here — the column's ON DELETE SET NULL
+// FK auto-orphans children back to top-level; see migrateV98toV99.)
+func SetAgentGroupParent(childID int64, parentName string) (*AgentGroup, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var newParent sql.NullInt64
+	if parentName = strings.TrimSpace(parentName); parentName != "" {
+		var pid int64
+		err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, parentName).Scan(&pid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrGroupParentNotFound
+		} else if err != nil {
+			return nil, err
+		}
+		if pid == childID {
+			return nil, ErrGroupParentCycle
+		}
+		// Walk up from the prospective parent. If we reach childID, the child
+		// is already an ancestor of pid and this edge would loop.
+		seen := map[int64]bool{}
+		cur := sql.NullInt64{Int64: pid, Valid: true}
+		for cur.Valid {
+			if cur.Int64 == childID {
+				return nil, ErrGroupParentCycle
+			}
+			if seen[cur.Int64] {
+				break // pre-existing corrupt cycle in the table; stop walking
+			}
+			seen[cur.Int64] = true
+			var next sql.NullInt64
+			err := tx.QueryRow(`SELECT parent_id FROM agent_groups WHERE id = ?`, cur.Int64).Scan(&next)
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			} else if err != nil {
+				return nil, err
+			}
+			cur = next
+		}
+		newParent = sql.NullInt64{Int64: pid, Valid: true}
+	}
+
+	res, err := tx.Exec(`UPDATE agent_groups SET parent_id = ? WHERE id = ?`, newParent, childID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return GetAgentGroupByID(childID)
 }
 
 // AddAgentGroupMember inserts (or replaces) a member in a group.
@@ -1317,7 +1409,7 @@ func ListGroupsForAgent(agentID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at, g.parent_id
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.agent_id = ?
@@ -1388,7 +1480,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if agentA == "" || agentB == "" {
 		return nil, nil
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at, g.parent_id
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.agent_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.agent_id = ?
@@ -2953,11 +3045,12 @@ type rowScanner interface {
 func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
-	var remoteControl sql.NullInt64
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &createdAt, &archivedAt); err != nil {
+	var remoteControl, parentID sql.NullInt64
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &createdAt, &archivedAt, &parentID); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)
+	g.ParentGroupID = nullToInt64Ptr(parentID)
 	g.CreatedAt = parseTimeOrZero(createdAt)
 	g.ArchivedAt = parseTimeOrZero(archivedAt)
 	return &g, nil

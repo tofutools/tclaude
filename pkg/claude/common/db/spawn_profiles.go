@@ -93,6 +93,17 @@ func nullToBoolPtr(n sql.NullInt64) *bool {
 	return &b
 }
 
+// nullToInt64Ptr maps a nullable INTEGER column back to a *int64: NULL → nil,
+// otherwise a pointer to the value. Used for optional foreign keys like
+// agent_groups.parent_id (NULL = top-level, no parent).
+func nullToInt64Ptr(n sql.NullInt64) *int64 {
+	if !n.Valid {
+		return nil
+	}
+	v := n.Int64
+	return &v
+}
+
 // CreateSpawnProfile inserts a new profile and returns its ID. A name
 // collision surfaces as ErrSpawnProfileNameTaken.
 func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
