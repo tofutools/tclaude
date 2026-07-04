@@ -1,16 +1,19 @@
-// dock-dnd.js — drag a PALETTE DOCK card (a spawn profile or a role) onto a
-// group to open the spawn dialog prefilled (JOH-375 2/4).
+// dock-dnd.js — drag a PALETTE DOCK card (a spawn profile, a role, or a group
+// template) onto a group to open a prefilled dialog (JOH-375 2/4 + JOH-377 4/4).
 //
-// The dock (dock.js) renders profile/role cards as drag sources
-// (draggable="true" + data-dock-kind/name). Dropping one onto a real group's
-// box (its whole <details>, header or expanded body) opens the existing spawn
-// modal (modal-spawn.js) with the target group pinned and the profile/role
-// prefilled — no new spawn semantics, just a shortcut into the same dialog.
-// Dropping onto the groups-list background (empty space, no group box) opens
-// the same dialog with the profile/role prefilled but the group left to the
-// picker (a plain spawn). The VIRTUAL group boxes (Ungrouped / Retired / …) are
-// inert — "spawn into Retired" is meaningless — so only real groups and genuine
-// empty space are drop targets.
+// The dock (dock.js) renders profile/role/template cards as drag sources
+// (draggable="true" + data-dock-kind/name). Dropping a PROFILE or ROLE onto a
+// real group's box (its whole <details>, header or expanded body) opens the
+// existing spawn modal (modal-spawn.js) with the target group pinned and the
+// profile/role prefilled — no new spawn semantics, just a shortcut into the
+// same dialog. Dropping a TEMPLATE onto a group opens the unified summon dialog
+// (modal-templates.js) with a drop-mode chooser: reinforce the group in place,
+// or spawn a NEW group in its image (JOH-377). Dropping onto the groups-list
+// background (empty space, no group box) opens the relevant dialog with the item
+// prefilled but no group pinned (a plain spawn / a plain "new party from
+// circle" open). The VIRTUAL group boxes (Ungrouped / Retired / …) are inert —
+// "spawn into Retired" is meaningless — so only real groups and genuine empty
+// space are drop targets.
 //
 // Isolation from the two OTHER document-level DnD features is deliberate and
 // total, mirroring how group-reorder.js coexists with dnd.js:
@@ -35,15 +38,17 @@
 import { $, $$ } from './helpers.js';
 import { wizWord } from './slop.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
+import { openSummonForDrop } from './modal-templates.js';
 
 // Custom drag payload MIME. Intentionally NOT 'text/plain' — see the module
 // header: withholding text/plain is what makes dnd.js's member-row drop handler
 // bail on a dock drop (it also has an explicit guard on this MIME).
 const DOCK_DRAG_MIME = 'application/x-tclaude-dock-item';
-// Only these dock kinds are drag sources in this ticket. Templates (4/4) render
-// non-draggable, so their cards never fire dragstart; this set is the belt to
-// dock.js's braces (a stray draggable template card would still be ignored).
-const DRAGGABLE_KINDS = new Set(['profiles', 'roles']);
+// The dock kinds that are drag sources: profiles + roles (JOH-375 2/4) and now
+// templates (JOH-377 4/4). This set is the belt to dock.js's braces (its
+// SECTIONS `drag` flag) — a card whose kind isn't here is ignored on dragstart
+// even if some other code marked it draggable.
+const DRAGGABLE_KINDS = new Set(['profiles', 'roles', 'templates']);
 
 // dockDragActive mirrors dnd.js's dndDragActive / group-reorder's
 // groupReorderActive: a live-binding flag refreshSuspended() reads so a 2s
@@ -97,11 +102,18 @@ function dockPill(e, text) {
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
 }
 
-// dockPillText composes the hover hint for a target. A profile "spawns" and a
-// role "seeds"; onto a group names the group, onto empty space says "(no group)".
+// dockPillText composes the hover hint for a target. A template "deploys" a
+// whole roster onto a group (or seeds a new party from empty space); a profile
+// "spawns" and a role "summons as a class". Onto a group names the group, onto
+// empty space says "(no group)".
 function dockPillText(target) {
   if (!dockDragItem) return '';
   const { kind, name } = dockDragItem;
+  if (kind === 'templates') {
+    return target.group
+      ? `→ ${wizWord('deploy', 'summon')} ${name} → ${target.group}`
+      : `→ ${wizWord('new group from', 'new party from')} ${name}`;
+  }
   const verb = kind === 'roles'
     ? wizWord('spawn with role', 'summon as class')
     : wizWord('spawn from', 'summon from');
@@ -218,6 +230,15 @@ function bindDockDnd() {
     // still fires afterwards is a harmless no-op.
     endDockDrag();
     if (!item || !item.name) return;
+    // A TEMPLATE opens the unified summon dialog (JOH-377). Onto a group it
+    // shows the drop-mode chooser (reinforce in place / new group in its image);
+    // onto empty space it opens the plain "new party from circle" flow (the same
+    // as the templates-manage 🚀 button). No new endpoint — the dialog dispatches
+    // to the existing reinforce / instantiate / deploy paths by mode.
+    if (item.kind === 'templates') {
+      openSummonForDrop(item.name, group);
+      return;
+    }
     // Prefill grammar: a profile preselects the spawn Profile (JOH-350/210), a
     // role presets the Role field. A group pins the target; empty space leaves
     // the group picker (a plain spawn). No new spawn semantics — this is the
