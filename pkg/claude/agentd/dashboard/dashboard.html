@@ -2113,6 +2113,22 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="group-nest-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-nest-title">
+    <h3 id="group-nest-title"></h3>
+    <div class="modal-meta">Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants.</div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Parent</span>
+      <select id="group-nest-parent"></select>
+    </label>
+    <div class="cron-create-error" id="group-nest-error"></div>
+    <div class="modal-buttons">
+      <button id="group-nest-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="group-nest-submit" class="primary" type="button">Save</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="group-import-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-import-title">
     <h3 id="group-import-title"><span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span></h3>

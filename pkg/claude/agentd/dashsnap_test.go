@@ -170,6 +170,14 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 		seedMember(t, f, infra.ID, otherGroup, m)
 	}
 
+	// Nest infra-crew under frontend-squad so the Groups tab renders the group
+	// TREE (n-level groups-in-groups, JOH-392): infra-crew draws inside
+	// frontend-squad's <details>, above its own member list. The groups-nested
+	// scenario self-checks that structure.
+	if _, err := db.SetAgentGroupParent(infra.ID, tfTemplate); err != nil {
+		t.Fatalf("nest %s under %s: %v", otherGroup, tfTemplate, err)
+	}
+
 	seedPalette(t, f)
 }
 
@@ -298,6 +306,29 @@ func baseStates() []dashsnap.State {
 			Title:   "Groups tab",
 			Caption: "Groups tab, members expanded: tf:frontend-squad chips, owner ★, online + offline, task links.",
 			JS:      showGroups + expandGroups + `document.body.classList.add('dock-open');`,
+		},
+		{
+			// JOH-392 — the group TREE. infra-crew is nested under frontend-squad
+			// in the fixture, so it must render INSIDE frontend-squad's .subtable,
+			// in a .group-subgroups block that sits ABOVE the parent's own member
+			// table. Self-checking (throws) so a broken tree fails the run instead
+			// of passing as a silent "ok".
+			Key:     "groups-nested",
+			Title:   "Groups tab — nested subgroup",
+			Caption: "JOH-392 (self-checked): infra-crew nested inside frontend-squad — drawn in the parent's body above its member list; collapse the parent to hide the whole subtree.",
+			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `(function(){
+  var parent = document.querySelector('details[data-group-key="frontend-squad"]');
+  var child = document.querySelector('details[data-group-key="infra-crew"]');
+  if (!parent) throw new Error('groups-nested: frontend-squad not found');
+  if (!child) throw new Error('groups-nested: infra-crew not found');
+  var sub = parent.querySelector(':scope > .subtable > .group-subgroups');
+  if (!sub) throw new Error('groups-nested: no .group-subgroups under frontend-squad');
+  if (!sub.contains(child)) throw new Error('groups-nested: infra-crew is not nested inside frontend-squad');
+  var table = parent.querySelector(':scope > .subtable > table');
+  if (table && !(sub.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+    throw new Error('groups-nested: subgroups must render above the parent member list');
+  }
+})();`,
 		},
 		{
 			Key:   "dock-open",

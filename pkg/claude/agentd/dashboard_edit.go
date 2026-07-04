@@ -623,6 +623,12 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		handleGroupClone(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/rename", groupRoute(dashboardRenameGroup))
+	// Nest a group under another / clear its parent (JOH-392). asDashboardHumanPeer
+	// so the shared, permission-checked handleGroupParent sees the cookie-authed
+	// dashboard caller as the human (groups.nest-gated on the /v1 path). Body: {parent}.
+	mux.HandleFunc("PUT /api/groups/{name}/parent", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupParent(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
 	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))

@@ -2773,6 +2773,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 //	POST   /v1/groups/{name}/spawn           → spawn a session into the group
 //	POST   /v1/groups/{name}/archive         → soft-delete (archive)
 //	POST   /v1/groups/{name}/unarchive       → restore an archived group
+//	PUT    /v1/groups/{name}/parent          → nest under another group (body: {parent}); "" clears
 //	POST   /v1/groups/{name}/rename          → rename (body: {new_name})
 //	POST   /v1/groups/{name}/clone           → clone the group
 //	GET    /v1/groups/{name}/owners          → list owners
@@ -2801,6 +2802,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
 	mux.HandleFunc("POST /v1/groups/{name}/archive", v1GroupRoute(handleGroupArchive))
 	mux.HandleFunc("POST /v1/groups/{name}/unarchive", v1GroupRoute(handleGroupUnarchive))
+	mux.HandleFunc("PUT /v1/groups/{name}/parent", v1GroupRoute(handleGroupParent))
 	mux.HandleFunc("POST /v1/groups/{name}/rename", v1GroupRoute(handleGroupRename))
 	mux.HandleFunc("POST /v1/groups/{name}/clone", v1GroupRoute(handleGroupClone))
 	mux.HandleFunc("GET /v1/groups/{name}/export", v1GroupRoute(handleGroupExport))

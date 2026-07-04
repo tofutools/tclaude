@@ -285,6 +285,7 @@ const (
 	PermAgentResume        = "agent.resume"
 	PermAgentDelete        = "agent.delete"
 	PermGroupsArchive      = "groups.archive"
+	PermGroupsNest         = "groups.nest"
 	PermAgentInboxWatch    = "agent.inbox-watch"
 	PermGroupsRename       = "groups.rename"
 	PermGroupsClone        = "groups.clone"
