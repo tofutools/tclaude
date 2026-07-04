@@ -142,14 +142,17 @@ func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
 	if row.GitBranchStartup == "" {
 		row.GitBranchStartup = row.GitBranch
 	}
+	if row.Created == "" {
+		row.Created = row.IndexedAt.UTC().Format(time.RFC3339)
+	}
 	harness := row.Harness
 	if harness == "" {
 		harness = DefaultHarness
 	}
 	_, err = conn.Exec(`INSERT INTO conv_index
 		(conv_id, project_dir, full_path, file_mtime, file_size,
-		 git_branch, project_path, indexed_at, git_branch_startup, harness)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 git_branch, project_path, indexed_at, git_branch_startup, created, harness)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET
 		 git_branch=excluded.git_branch,
 		 git_branch_startup=CASE
@@ -182,10 +185,15 @@ func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
 		   THEN excluded.file_size
 		   ELSE conv_index.file_size
 		 END,
+		 created=CASE
+		   WHEN conv_index.created = '' OR conv_index.created IS NULL
+		   THEN excluded.created
+		   ELSE conv_index.created
+		 END,
 		 indexed_at=excluded.indexed_at`,
 		row.ConvID, row.ProjectDir, row.FullPath, row.FileMtime, row.FileSize,
 		row.GitBranch, row.ProjectPath, row.IndexedAt.Format(time.RFC3339Nano),
-		row.GitBranchStartup, harness)
+		row.GitBranchStartup, row.Created, harness)
 	return err
 }
 
