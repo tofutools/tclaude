@@ -9283,15 +9283,20 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    default-profile chip. When the dock is collapsed those controls live back in
    the toolbar, so the containers are empty — :empty collapses row 2 and the
    header is just the collapse control (its original slim look).
-   The 16px TOP padding (vs 6px on the sides/bottom) matches <main>'s 16px
-   content inset: the dock's fixed top sits at nav's bottom (--dock-top) exactly
-   like <main>'s border-box, so an equal top inset lands the re-homed "+ new
-   group" primary at the SAME height it shows at in the floating toolbar when the
-   dock is collapsed — no vertical jump as the panel opens/closes. */
+   The 16px TOP padding (vs 6px on the bottom) matches <main>'s 16px content
+   inset: the dock's fixed top sits at nav's bottom (--dock-top) exactly like
+   <main>'s border-box, so an equal top inset lands the re-homed "+ new group"
+   primary at the SAME height it shows at in the floating toolbar when the dock
+   is collapsed — no vertical jump as the panel opens/closes. The 12px LEFT inset
+   (vs 6px right) gives the left-mounted "+ new group" primary some breathing room
+   off the dock's left border rather than hugging it; both head rows (the
+   primary+cog cluster and the row-2 profile chip) share it, so their left edges
+   stay aligned. The quiet "Hide ›" text control keeps the tighter 6px on the
+   right. */
 .dock-head {
   flex: 0 0 auto;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 16px 6px 6px;
+  padding: 16px 6px 6px 12px;
   border-bottom: 1px solid #2a3340;
 }
 .dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
