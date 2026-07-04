@@ -475,9 +475,10 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				targetGroup:     targetGroup,
 				targetConvID:    targetConvID,
 				targetConvTitle: targetConvTitle,
+				autoGrantable:   IsAutoGrantableSlug(perm),
 				createdAt:       time.Now(),
 				timeout:         timeout,
-				decision:        make(chan bool, 1),
+				decision:        make(chan approvalOutcome, 1),
 				extend:          make(chan time.Duration, 1),
 			}
 			if requestHumanApproval(req, popupBaseURL) {

@@ -234,7 +234,7 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 		path:        "/v1/messages",
 		targetGroup: "crew",
 	}
-	recordApprovalDecision(req, true)
+	recordApprovalDecision(req, outcomeApprove)
 
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve"})
 	if err != nil {
@@ -261,12 +261,23 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	}
 
 	// A deny writes the mirror verb.
-	recordApprovalDecision(req, false)
+	recordApprovalDecision(req, outcomeDeny)
 	denies, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.deny"})
 	if err != nil {
 		t.Fatalf("list deny rows: %v", err)
 	}
 	if len(denies) != 1 {
 		t.Fatalf("want 1 approval.deny row, got %d", len(denies))
+	}
+
+	// An "always allow" writes its own distinct verb (JOH-367), so the audit
+	// trail tells a one-off approval apart from a persistent grant.
+	recordApprovalDecision(req, outcomeApproveAlways)
+	always, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve-always"})
+	if err != nil {
+		t.Fatalf("list always rows: %v", err)
+	}
+	if len(always) != 1 {
+		t.Fatalf("want 1 approval.approve-always row, got %d", len(always))
 	}
 }
