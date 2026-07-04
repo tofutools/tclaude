@@ -2,9 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -242,6 +246,48 @@ func TestPrintProfileHuman_Sparse(t *testing.T) {
 	var buf bytes.Buffer
 	printProfileHuman(&buf, profileJSON{Name: "bare"})
 	assert.Equal(t, "Profile: bare\n", buf.String())
+}
+
+// loadProfileFile round-trips the `profiles show --json` shape that `create` /
+// `edit` accept — the file-based input the mutating verbs share.
+func TestLoadProfileFile_RoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p.json")
+	body := `{"name":"team","harness":"codex","model":"gpt-5-codex","effort":"high",` +
+		`"is_owner":true,"permission_overrides":{"human.notify":"grant"}}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	prof, rc := loadProfileFile(path, nil, new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, prof)
+	assert.Equal(t, "team", prof.Name)
+	assert.Equal(t, "codex", prof.Harness)
+	assert.Equal(t, "gpt-5-codex", prof.Model)
+	assert.Equal(t, "high", prof.Effort)
+	if assert.NotNil(t, prof.IsOwner) {
+		assert.True(t, *prof.IsOwner)
+	}
+	assert.Equal(t, map[string]string{"human.notify": "grant"}, prof.PermissionOverrides)
+}
+
+// "-" reads the profile JSON from stdin (sidesteps shell quoting for long bodies).
+func TestLoadProfileFile_Stdin(t *testing.T) {
+	prof, rc := loadProfileFile("-", strings.NewReader(`{"name":"from-stdin"}`), new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, prof)
+	assert.Equal(t, "from-stdin", prof.Name)
+}
+
+// A missing --file and malformed JSON both fail fast, before any daemon call.
+func TestLoadProfileFile_Errors(t *testing.T) {
+	_, rc := loadProfileFile("", nil, new(bytes.Buffer))
+	assert.Equal(t, rcInvalidArg, rc, "missing --file")
+
+	path := filepath.Join(t.TempDir(), "bad.json")
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
+	stderr := new(bytes.Buffer)
+	_, rc = loadProfileFile(path, nil, stderr)
+	assert.Equal(t, rcInvalidArg, rc, "malformed JSON")
+	assert.Contains(t, stderr.String(), "not valid profile JSON")
 }
 
 // IsOwner is tri-state: an explicit false renders "owner: no" (distinct from
