@@ -17,7 +17,12 @@ import { wizWord } from './slop.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
-import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+import { refresh, confirmModal, confirmDiscard, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+// Scribe summon (JOH-361): the "Edit with agent" buttons hand a template off to
+// a pre-briefed, pre-granted chat agent. On a headless daemon the summon opens
+// an in-browser terminal instead of a native window — same fallback the spawn
+// dialog / open-window action use, so we reuse their modal.
+import { openTermModal } from './modal-term.js';
 // Roles (JOH-240): the per-agent role dropdown reads the role library through
 // the roles.js data layer. loadRoles fills the cache on editor open; cachedRoles
 // feeds the synchronous row render.
@@ -100,6 +105,103 @@ function openTemplatesManageModal() {
 }
 
 function closeTemplatesManageModal() { $('#templates-manage-modal').classList.remove('show'); }
+
+// ---- Edit with agent: summon a scribe (JOH-361) -----------------------
+//
+// A "scribe" is an ordinary chat agent summoned to edit templates for the
+// human — it comes up already briefed on the task and already holding the
+// templates.manage permission (see the bundled agent-circles skill). Two entry
+// points share one reusable summon: the Templates overlay header (library
+// scope — edit any circle) and the template editor (template scope — anchored
+// on the open circle). Both reuse ONE stable scribe (reuse-if-alive on the
+// daemon), so a repeat click re-briefs + re-focuses the live scribe rather than
+// littering a new one per click. The daemon endpoint is generic {name, slugs,
+// brief}; the brief is the only thing that differs between the two entry points.
+
+// SCRIBE_NAME is the stable name the daemon reuses-if-alive; both entry points
+// summon the same scribe, differing only in the brief. SCRIBE_SLUGS is the
+// minimal grant bundle a template scribe needs (the agent-circles skill's
+// recommendation) — templates.manage only; instantiate/roles/profiles stay with
+// the human.
+const SCRIBE_NAME = 'circle-scribe';
+const SCRIBE_SLUGS = ['templates.manage'];
+
+// scribeLibraryBrief anchors the scribe on the whole template library.
+function scribeLibraryBrief() {
+  return [
+    'You are a scribe: your job is editing this daemon’s tclaude group templates (a.k.a. summoning circles) by chat, on the human’s behalf.',
+    'Read the `agent-circles` skill for the full workflow and the template JSON wire shape.',
+    'Discover templates with `tclaude agent templates ls`, inspect one with `tclaude agent templates show <name> --json`, then edit with the safe show-json → edit --file loop — `edit` is a FULL REPLACE, so always post the whole desired state.',
+    'Verify with `tclaude agent templates show <name>` after each edit. You already hold the templates.manage grant.',
+    'The human will tell you which circle to change and how — wait for their instructions.',
+  ].join('\n\n');
+}
+
+// scribeTemplateBrief anchors the scribe on one existing template by name.
+function scribeTemplateBrief(name) {
+  return [
+    `You are a scribe: your job is editing the tclaude group template (summoning circle) named "${name}" by chat, on the human’s behalf.`,
+    'Read the `agent-circles` skill for the workflow and the template JSON wire shape.',
+    `Start by loading its current state: \`tclaude agent templates show "${name}" --json\`. Then edit with the safe show-json → edit --file loop — \`edit\` is a FULL REPLACE, so always post the whole desired state.`,
+    `Verify with \`tclaude agent templates show "${name}"\` after each edit. You already hold the templates.manage grant.`,
+    'The human will tell you what to change — wait for their instructions.',
+  ].join('\n\n');
+}
+
+// scribeNewTemplateBrief anchors the scribe on creating a fresh template.
+function scribeNewTemplateBrief() {
+  return [
+    'You are a scribe: your job is creating a new tclaude group template (summoning circle) by chat, on the human’s behalf.',
+    'Read the `agent-circles` skill for the workflow and the template JSON wire shape — a minimal template is just a name plus an agents roster (each with a name and an initial_message).',
+    'Gather the roster and any choreography from the human, write the JSON, and create it with `tclaude agent templates create --file <path>`.',
+    'Verify with `tclaude agent templates show <name>` after creating. You already hold the templates.manage grant.',
+    'Wait for the human to describe the team they want.',
+  ].join('\n\n');
+}
+
+// summonScribe POSTs the brief to the daemon's reusable scribe endpoint and
+// surfaces the result. On a headless daemon (no native window) it opens the
+// in-browser terminal the daemon hands back, mirroring the spawn dialog's focus
+// fallback (openTermModal + hideConv so closing it detaches cleanly).
+async function summonScribe(brief) {
+  try {
+    const r = await fetch('/api/scribe', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: SCRIBE_NAME, slugs: SCRIBE_SLUGS, brief }),
+    });
+    if (!r.ok) { toast((await r.text()) || `HTTP ${r.status}`, true); return; }
+    let resp = {};
+    try { resp = await r.json(); } catch (_) {}
+    const verb = resp.reused ? 'resumed' : 'summoned';
+    if (resp.focus_mode === 'browser' && resp.focus_ws) {
+      openTermModal({ wsPath: resp.focus_ws, label: SCRIBE_NAME, hideConv: resp.conv_id || null });
+      toast(`${verb} scribe ${SCRIBE_NAME} — opened in-browser terminal`);
+    } else {
+      toast(`${verb} scribe ${SCRIBE_NAME} — opening its terminal`);
+    }
+  } catch (err) {
+    toast((err && err.message) || String(err), true);
+  }
+}
+
+// templateEditorDiscard holds bindBackdropDiscard's dirty handle for the
+// editor, so the editor's "Edit with agent" button can offer the same discard
+// confirm before it closes the editor to hand off (JOH-361).
+let templateEditorDiscard = null;
+
+// summonScribeFromEditor hands the open editor off to a scribe. Handling dirty
+// state first is a correctness requirement: `edit` is a full replace, so an
+// editor left open with unsaved changes would overwrite the scribe's work on
+// its next Save. So we close the editor before summoning; if it is dirty we
+// offer the same discard confirm Escape does (Save first + re-click to keep the
+// edits). templateEditorEditing carries the saved name, or null when creating.
+async function summonScribeFromEditor() {
+  if (templateEditorDiscard && templateEditorDiscard.isDirty() && !(await confirmDiscard())) return;
+  const editing = templateEditorEditing;
+  closeTemplateEditor();
+  await summonScribe(editing ? scribeTemplateBrief(editing) : scribeNewTemplateBrief());
+}
 
 // templateWaveCount is the number of distinct staged-spawn waves a template's
 // agents span (JOH-244). 1 (or 0) = a single synchronous pass, no wave badge.
@@ -1384,6 +1486,9 @@ function bindTemplatesUI() {
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
   $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
   $('#template-from-group-open').addEventListener('click', () => openFromGroupModal(null));
+  // "Edit with agent" (JOH-361): the header button summons a library-scope
+  // scribe; the editor's button (bound below) summons a template-scope one.
+  $('#scribe-templates-open').addEventListener('click', () => summonScribe(scribeLibraryBrief()));
   // The cog's standalone "⎘ from template" shortcut now opens the "Form a party"
   // dialog with the circle preselected (JOH-356 — one obvious create-a-group
   // surface), so it is bound in bindGroupCreateModal (modal-message.js), not
@@ -1552,7 +1657,10 @@ function bindTemplatesUI() {
     else if (btn.classList.contains('trh-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
     renderEditorRhythms();
   });
-  bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
+  // Capture the dirty handle so the editor's "Edit with agent" button can offer
+  // the discard confirm before it hands off to a scribe (JOH-361).
+  templateEditorDiscard = bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
+  $('#scribe-editor-open').addEventListener('click', summonScribeFromEditor);
   // The summoning-circle editor is user-resizable, exactly like the spawn /
   // clone dialogs (JOH-357): drag the bottom-right grip on both axes, size
   // persists per modal via dashPrefs. See makeModalResizable + the paired
