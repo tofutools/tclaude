@@ -2350,9 +2350,10 @@ details[data-group-key].group-drop-after {
   background: rgba(77, 29, 29, 0.92);
   transform: translateY(-50%) scale(1.08);
 }
-/* The icon + label are inert to the pointer so #dnd-trash itself is
-   always the drag event target — no child-boundary dragleave flicker. */
-.dnd-trash-icon, .dnd-trash-label { pointer-events: none; }
+/* The icon, wizard glyph + label are inert to the pointer so #dnd-trash
+   itself is always the drag event target — no child-boundary dragleave
+   flicker. */
+.dnd-trash-icon, .dnd-trash-glyph-wizard, .dnd-trash-label { pointer-events: none; }
 .dnd-trash-icon { display: block; }
 /* The lid lifts open when the bin is armed (pivoting on its left hinge),
    a small affordance that the drop will land. */
@@ -5105,6 +5106,56 @@ body.wizard .group-actions button[data-act="shutdown-group"]:hover {
   background: linear-gradient(180deg, #bb5567 0%, #4d2131 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 14px rgba(242, 119, 122, 0.8);
+}
+
+/* ─── Wizard drag-to-banish portal (body.wizard #dnd-trash) ──────────
+   The drag-to-retire bin, re-skinned for 🧙 mode. Retiring an agent IS
+   "banishing a familiar" (the retire dialog reads "Banish this familiar?"),
+   so the mundane trashcan is swapped for a swirling banishment portal: the
+   SVG hides, a 🌀 vortex glyph takes its place, the label reads "Banish",
+   and the box wears the arcane violet-and-gold chrome with a purple glow.
+   Armed (a familiar hovering the portal) it flares crimson — the same
+   reversible-but-destructive tone the retire dialog and the 🌙 Slumber
+   lever carry — and the vortex spins up. The scale-on-arm still comes from
+   the theme-neutral #dnd-trash.dnd-drop-over rule (this block leaves
+   `transform` untouched), so it composes rather than restating it.
+   Both label voices are always emitted; CSS picks one per theme. */
+.dnd-trash-glyph-wizard { display: none; }
+.dnd-trash-label-wizard { display: none; }
+body.wizard .dnd-trash-label-regular { display: none; }
+body.wizard .dnd-trash-label-wizard { display: inline; }
+body.wizard .dnd-trash-icon { display: none; }
+body.wizard .dnd-trash-glyph-wizard {
+  display: block;
+  font-size: 42px;
+  line-height: 1;
+  animation: wizard-portal-spin 7s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(169, 123, 214, 0.7));
+}
+@keyframes wizard-portal-spin { to { transform: rotate(360deg); } }
+body.wizard #dnd-trash {
+  background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
+  border-color: #d9b45a;
+  color: #e7d9f5;
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.4), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+body.wizard #dnd-trash .dnd-trash-label {
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  text-transform: none;
+  letter-spacing: 0.5px;
+  color: #f3e6c0;
+  text-shadow: 0 1px 2px rgba(20, 15, 40, 0.8);
+}
+body.wizard #dnd-trash.dnd-drop-over {
+  color: #f3e6c0;
+  border-color: #d9b45a;
+  border-style: solid;
+  background: linear-gradient(180deg, #9c4453 0%, #3a1826 100%);
+  box-shadow: 0 0 20px rgba(242, 119, 122, 0.75), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+body.wizard #dnd-trash.dnd-drop-over .dnd-trash-glyph-wizard {
+  animation-duration: 1.1s;
+  filter: drop-shadow(0 0 9px rgba(242, 119, 122, 0.9));
 }
 
 /* ─── Wizard state pill (body.wizard) ───────────────────────────────
