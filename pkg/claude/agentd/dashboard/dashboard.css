@@ -3098,7 +3098,13 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 8px; box-sizing: border-box; width: 100%;
 }
-.template-agent-row textarea { resize: vertical; }
+/* resize:vertical needs flex-basis:auto to work here (JOH-359). The rule above
+   gives every row control flex:1 (= flex-basis:0) so the grid inputs share
+   width; but these textareas are DIRECT children of the column-flex row, where
+   flex-basis:0 makes the flex algorithm own the height and silently ignore the
+   grip-dragged inline height — the grip renders but drags do nothing. Resetting
+   to flex:0 0 auto lets the textarea's own (resized) height govern. */
+.template-agent-row textarea { resize: vertical; flex: 0 0 auto; }
 .template-agent-row input:focus,
 .template-agent-row textarea:focus { outline: none; border-color: #58a6ff; }
 /* Work-pattern rows (JOH-336) share the agent-row panel chrome; the
