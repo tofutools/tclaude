@@ -20,6 +20,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -57,6 +58,19 @@ func serveCmd() *cobra.Command {
 var popupBaseURL string
 
 func runServe(p *serveParams) error {
+	// Open (and, if needed, migrate) the SQLite DB up front — before the
+	// socket, the dashboard/approval-popup listener, the auto-launched
+	// browser, and every background goroutine. The daemon owns the DB and
+	// every one of those depends on it, so a failed schema migration must
+	// fail the whole startup here, loudly, rather than after we have brought
+	// listeners up on a half-migrated store. Migrations run lazily inside the
+	// first Open(); installing a reporter first surfaces their progress (and
+	// which one failed) on the operator's terminal. CLI commands install no
+	// reporter, so they migrate silently — this output is agentd-only.
+	if err := openDatabaseReportingMigrations(); err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+
 	sockPath := p.Socket
 	if sockPath == "" {
 		sockPath = SocketPath()
@@ -370,6 +384,43 @@ func runServe(p *serveParams) error {
 		_ = remoteSrv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// openDatabaseReportingMigrations opens the singleton SQLite DB, printing
+// schema-migration progress to the operator's terminal as it goes. It is the
+// first thing runServe does so a migration failure aborts startup before any
+// listener, dashboard, or goroutine comes up (see the call site).
+//
+// The reporter prints to stdout — the same channel as the rest of the startup
+// banner — and mirrors the summary bookends (begin/done/failure) into
+// output.log via slog so the Logs tab keeps a durable record. Nothing prints
+// when the DB is already at head: a normal restart with no pending migration
+// stays quiet. It is set only here, before the first Open(), so no CLI command
+// ever inherits it.
+func openDatabaseReportingMigrations() error {
+	db.SetMigrationReporter(&db.MigrationReporter{
+		Begin: func(from, to int) {
+			slog.Info("db: applying schema migrations", "from", from, "to", to)
+			fmt.Printf("migrating database schema v%d → v%d…\n", from, to)
+		},
+		Applying: func(version int) {
+			// No trailing newline: reportApplied / reportFailed completes the line.
+			fmt.Printf("  applying migration v%d… ", version)
+		},
+		Applied: func(_ int) {
+			fmt.Println("ok")
+		},
+		Failed: func(version int, err error) {
+			fmt.Printf("FAILED: %v\n", err)
+			slog.Error("db: schema migration failed", "version", version, "error", err)
+		},
+		Done: func(to int) {
+			fmt.Printf("database schema up to date (v%d)\n", to)
+			slog.Info("db: schema migrations complete", "version", to)
+		},
+	})
+	_, err := db.Open()
+	return err
 }
 
 // shouldDisableTray reports whether `tclaude agentd serve` should skip
