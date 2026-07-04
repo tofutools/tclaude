@@ -128,8 +128,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// colliding with the command palette's own name. Pinned by the wiz(plain,
 	// arcane) labels + the reused opener; the arcane twins are covered by
 	// TestDashboardHTML_WizardCommandPaletteSynonyms.
-	must("import { isDockOpen, setDockOpen } from './dock.js'",
-		"the palette imports the dock's shared open-state ops")
+	must("import { setDockOpen } from './dock.js'",
+		"the palette imports the dock's shared open/collapse mutation")
 	must("export function setDockOpen(",
 		"dock.js exports the shared open/collapse mutation for the palette")
 	must("wiz('Show right panel', 'Unfurl the grimoire')",

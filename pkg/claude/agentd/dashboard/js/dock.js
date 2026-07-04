@@ -225,9 +225,7 @@ export function renderDock() {
 
 // isDockOpen reads the persisted flag, defaulting to OPEN when unset (the
 // dock is a new, discovery-worthy surface). Only an explicit '0' collapses.
-// Exported so the Ctrl/Cmd-K command palette can read the live state to
-// present its "Show / Hide right panel" command (js/palette.js).
-export function isDockOpen() {
+function isDockOpen() {
   return dashPrefs.getItem(DOCK_OPEN_KEY) !== '0';
 }
 

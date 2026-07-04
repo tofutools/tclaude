@@ -55,7 +55,7 @@ import { openGroupCreateModal } from './modal-message.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
-import { isDockOpen, setDockOpen } from './dock.js';
+import { setDockOpen } from './dock.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
