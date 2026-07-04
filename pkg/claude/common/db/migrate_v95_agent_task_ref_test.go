@@ -8,8 +8,9 @@ import (
 )
 
 // TestMigrateV94toV95_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v95 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v94).
+// chain and asserts it lands at currentVersion. The literal-currentVersion
+// tripwire moved forward to the v96 test (the new head); this one just checks
+// the fresh chain reaches head.
 func TestMigrateV94toV95_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -18,7 +19,6 @@ func TestMigrateV94toV95_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 95, currentVersion, "tripwire: bump this and add a v95→v96 test when you add a migration")
 }
 
 // TestMigrateV94toV95_AddsColumns drives the real v94→v95 ALTER over a

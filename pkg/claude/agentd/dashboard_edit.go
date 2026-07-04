@@ -344,6 +344,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardSetAgentNotify(w, r, convSelector)
 			return
+		case "tags":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardSetAgentTags(w, r, convSelector)
+			return
 		case "remote-control":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -1373,6 +1380,51 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
+}
+
+// dashboardSetAgentTags replaces an agent's tag set from the dashboard's
+// edit-member panel (POST /api/agents/{conv}/tags {"tags": [...]}). This
+// is the cookie-authed human twin of the CLI's /v1/agent/{conv}/tags — no
+// permission slug (the dashboard IS the operator). The tags are agent-
+// level (keyed on the stable agent_id), so they follow the actor across
+// groups; the write is a replace-set, validated + de-duped + count-capped
+// by db.ReplaceAgentTags. A bad tag is a 400 while a DB failure is a 500.
+func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector string) {
+	res, _, err := agent.ResolveSelector(convSelector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	agentID, err := db.AgentIDForConv(res.ConvID)
+	if err != nil {
+		http.Error(w, "resolve agent id: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if agentID == "" {
+		http.Error(w, "no agent enrolled for this conversation", http.StatusNotFound)
+		return
+	}
+	if err := db.ReplaceAgentTags(agentID, body.Tags); err != nil {
+		if isTagValidationError(err) {
+			http.Error(w, "invalid tag: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "set tags: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tags, err := db.ListAgentTags(agentID)
+	if err != nil {
+		http.Error(w, "read tags: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "tags": tags})
 }
 
 // notificationsStateJSON is the shared GET/POST response shape for the

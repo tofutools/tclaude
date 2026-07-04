@@ -936,6 +936,9 @@ type dashboardMember struct {
 	// taskRefView carries the per-agent task-reference link (Task
 	// column) — see taskref.go.
 	taskRefView
+	// tagsView carries the per-agent tag set (chips in the Description
+	// column) — see tags.go.
+	tagsView
 	Online bool       `json:"online"`
 	Owner  bool       `json:"owner,omitempty"`
 	State  agentState `json:"state"`
@@ -961,6 +964,9 @@ type dashboardAgent struct {
 	// taskRefView carries the per-agent task-reference link (Task
 	// column) — see taskref.go.
 	taskRefView
+	// tagsView carries the per-agent tag set (chips in the Description
+	// column) — see tags.go.
+	tagsView
 	Online      bool                 `json:"online"`
 	State       agentState           `json:"state"`
 	Groups      []string             `json:"groups"`
@@ -1363,6 +1369,13 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	taskRefFor := func(convID string) taskRefView {
 		return taskRefViewFor(taskRefs[peerAgentID(convID)])
 	}
+	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
+	// keyed by agent_id, looked up per row (not a query per member/agent in
+	// this 2s-polled path). The stored set is already sorted alphabetically.
+	allTags, _ := db.ListAllAgentTags()
+	tagsFor := func(convID string) tagsView {
+		return tagsView{Tags: allTags[peerAgentID(convID)]}
+	}
 
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
@@ -1377,6 +1390,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			agentLocationView: loc,
 			repoLinksView:     branchLinksFor(convID, loc),
 			taskRefView:       taskRefFor(convID),
+			tagsView:          tagsFor(convID),
 			Online:            isConvOnlineIn(convID, aliveSessions),
 			State:             stateForConvIn(convID, aliveSessions),
 			// init non-nil so JSON serializes [] not null;
@@ -1470,6 +1484,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				agentLocationView: loc,
 				repoLinksView:     branchLinksFor(m.ConvID, loc),
 				taskRefView:       taskRefFor(m.ConvID),
+				tagsView:          tagsFor(m.ConvID),
 				Online:            online,
 				Owner:             ownerSet[m.ConvID],
 				State:             stateForConvIn(m.ConvID, aliveSessions),
@@ -1503,6 +1518,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				agentLocationView: ownerLoc,
 				repoLinksView:     branchLinksFor(ownerConv, ownerLoc),
 				taskRefView:       taskRefFor(ownerConv),
+				tagsView:          tagsFor(ownerConv),
 				Online:            online,
 				Owner:             true,
 				State:             stateForConvIn(ownerConv, aliveSessions),
