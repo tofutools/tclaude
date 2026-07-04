@@ -697,11 +697,27 @@ a.task-link:hover { color: #58a6ff; text-decoration: underline; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .rowname { font-weight: 600; }
 /* Floor the NAME column at 14ch so short titles don't let it collapse
-   into the ID column on the left. Auto layout honours min-width on a
-   td as a column-width minimum. Same trick for the Description
-   column — 40ch so short descriptions don't squish it. */
+   into the ID column on the left. Auto layout honours min-width on a td
+   as a column-width minimum. The Description column gets a modest floor
+   (16ch) so a short descr / chip row doesn't squish — its old 40ch floor
+   forced the table wider than the dock-shrunk <main>, manufacturing a
+   horizontal-scroll gutter that read as giant right padding (JOH-391).
+   16ch lets normal pages fit, so #dock-hscroll-pad self-gates to zero. */
 .name-cell { min-width: 14ch; }
-.descr-cell { min-width: 40ch; }
+.descr-cell { min-width: 16ch; }
+/* Cap the Description width on the cell's INNER box, not the <td>: Blink
+   ignores max-width on an auto-layout table cell but honours it on a
+   non-table inline-block. .descr-edit wraps the whole interactive cell
+   (text + chips); .descr-text is the bare text in the non-interactive
+   Ungrouped / pure-owner rows. Capping them stops a long description
+   dominating the row; overflow-wrap:anywhere lets an unbroken token wrap
+   within the cap instead of spilling past it. The chips keep their own
+   white-space:nowrap, so the cap wraps the chip row without splitting a
+   chip mid-token. */
+.descr-cell > .descr-edit,
+.descr-cell > .descr-text {
+  display: inline-block; max-width: 36ch; overflow-wrap: anywhere;
+}
 /* The agent name is click-to-edit: the .rowname-text span swaps for a
    .rowname-input on click (the rename-name handler). The transparent
    border keeps the row height stable as it lights up on hover. */
