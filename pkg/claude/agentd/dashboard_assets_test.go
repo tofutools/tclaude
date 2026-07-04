@@ -491,8 +491,8 @@ func TestDashboardAssets_ShowAgentHideButtonWired(t *testing.T) {
 // round-trip is covered separately by config.TestShowGroupDescription. A rename
 // in any one file silently breaks the toggle only in the browser:
 //   - refresh.js toggles body.show-group-description off the snapshot flag;
-//   - dashboard.css hides the .group-descr chip by default and restores it
-//     under body.show-group-description;
+//   - dashboard.css hides the .group-descr chip AND the group-create dialog's
+//     Descr row by default and restores both under body.show-group-description;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
 //
 // The chip itself (render.js) still always renders .group-descr; visibility is
@@ -504,6 +504,11 @@ func TestDashboardAssets_ShowGroupDescriptionWired(t *testing.T) {
 		// dashboard.css — hide by default, restore under the body class.
 		`.group-descr { display: none; }`,
 		`body.show-group-description .group-descr { display: inline; }`,
+		// dashboard.css + dashboard.html — the group-create dialog's Descr row
+		// follows the same deprecation (hidden unless opted in).
+		`.group-create-descr-row { display: none; }`,
+		`body.show-group-description .group-create-descr-row { display: flex; }`,
+		`class="cron-create-row group-create-descr-row"`,
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-show-group-description",
 		"dashboard.show_group_description = true",
