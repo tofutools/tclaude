@@ -1173,14 +1173,17 @@ async function submitCopyGroup() {
     if (branch) {
       cwd = await resolveDeployWorktree(branch, cwd);
     }
-    // context_override is sent ALWAYS (even when empty): mode 2's whole point is
-    // that the new group carries the TARGET's context, never the template's, so
-    // we override unconditionally (an explicit "" clears it — a faithful copy of
-    // a context-less group).
-    const payload = { group_name: groupName, context_override: context };
+    // context_override AND descr_override are sent ALWAYS (even when empty):
+    // mode 2's whole point is that the new group carries the TARGET's settings
+    // verbatim, never the template's, so we override unconditionally. An
+    // explicit "" clears the field — a faithful copy of a context-less /
+    // description-less group. (Sending a bare `descr` instead of descr_override
+    // would let the backend re-default an empty description to "Instantiated
+    // from template X", giving the copy a description its source never had —
+    // JOH-385.)
+    const payload = { group_name: groupName, context_override: context, descr_override: descr };
     if (task) payload.task = task;
     if (cwd) payload.cwd = cwd;
-    if (descr) payload.descr = descr;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
