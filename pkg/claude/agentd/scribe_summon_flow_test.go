@@ -129,6 +129,48 @@ func TestScribeSummon_ReuseIfAliveNoDoubleSpawn(t *testing.T) {
 	assert.Equal(t, 2, *opens, "each summon opened the scribe's window")
 }
 
+// Scenario: after the scribe's session dies (e.g. a daemon restart leaves the
+// membership row but kills the tmux session), a re-summon spawns a FRESH scribe
+// and prunes the dead one — the group does not accumulate stale members.
+func TestScribeSummon_DeadScribePrunedOnResummon(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	summon := func() scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name":  "circle-scribe",
+				"slugs": []string{agentd.PermTemplatesManage},
+				"brief": "Edit summoning circles.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+
+	first := summon()
+	require.False(t, first.Reused, "first summon spawns")
+
+	// Kill the scribe's tmux session but leave its membership row (what a daemon
+	// restart does).
+	sessions, err := db.FindSessionsByConvID(first.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions, "the fresh scribe has a session row")
+	f.MarkOffline(sessions[0].TmuxSession)
+
+	second := summon()
+	assert.False(t, second.Reused, "a dead scribe is not reused — a fresh one is spawned")
+	assert.NotEqual(t, first.ConvID, second.ConvID, "the fresh scribe is a new conv")
+
+	// The dead scribe was pruned: exactly one (live) member remains.
+	g, err := db.GetAgentGroupByName("circle-scribe")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 1, "the dead scribe was pruned, not accumulated")
+	assert.Equal(t, second.ConvID, members[0].ConvID, "the sole member is the fresh scribe")
+}
+
 // Scenario: gating parity with the spawn path. An agent caller is refused
 // unless it holds groups.spawn AND — because a summon applies birth-time grants
 // — permissions.grant; the human always passes.

@@ -210,9 +210,16 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 		return out, nil
 	}
 
-	// Fresh summon. executeSpawn enrolls the scribe into its group, applies the
-	// birth-time grants (enrollSpawnedConv), delivers the brief to its inbox and
-	// — AutoFocus — opens its terminal window. Synchronous (Async left false) so
+	// No live scribe — spawn a fresh one. First prune any dead scribe left in
+	// the group by a prior generation (a daemon restart kills the tmux session
+	// but leaves the membership row; group membership is not auto-reaped on
+	// death). Otherwise the "one-member" group would slowly accumulate stale
+	// rows across restarts — exactly the litter reuse-if-alive exists to avoid.
+	pruneDeadScribes(g)
+
+	// executeSpawn enrolls the scribe into its group, applies the birth-time
+	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
+	// AutoFocus — opens its terminal window. Synchronous (Async left false) so
 	// the conv-id materialises for the grants + the response.
 	p := spawnParams{
 		Name:                name,
@@ -271,6 +278,25 @@ func aliveScribeConv(g *db.AgentGroup) string {
 		}
 	}
 	return ""
+}
+
+// pruneDeadScribes unlinks any non-alive member from the scribe group so it
+// stays a clean single-member container. Best-effort — a failed removal just
+// leaves a harmless stale row (reuse-if-alive still skips it, since it isn't
+// alive). Removing membership does not delete the conv, only the group link.
+func pruneDeadScribes(g *db.AgentGroup) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return
+	}
+	for _, m := range members {
+		if pickAliveSession(m.ConvID) != nil {
+			continue
+		}
+		if err := db.RemoveAgentGroupMember(g.ID, m.ConvID); err != nil {
+			slog.Warn("scribe: prune dead member failed", "group", g.Name, "conv", short8(m.ConvID), "error", err)
+		}
+	}
 }
 
 // grantScribeSlugs (re)applies the requested slug grants to a reused scribe —
