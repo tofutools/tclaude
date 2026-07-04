@@ -238,12 +238,18 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                                  // helper exists (helpers.js)
+		"function makeModalResizable(",                                      // helper exists (helpers.js)
 		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')",     // spawn modal wires it
 		"makeModalResizable($('#clone-agent-modal .cron-create-modal')",     // clone modal wires it
 		"makeModalResizable($('#template-editor-modal .cron-create-modal')", // template editor wires it (JOH-357)
-		"tclaude.dash.modalSize.agent-spawn",                                // per-modal pref key
-		"tclaude.dash.modalSize.template-editor",                            // template editor pref key (JOH-357)
+		// The summoning-circles management panel wires it as a LIST (not a form):
+		// { fitContent: false } keeps persist/restore but drops the content-tracking
+		// min-size + auto-grow. Pinning the full call guards both the wiring and the
+		// list opt-out (a refactor dropping fitContent would make a long list
+		// un-shrinkable and fight the 2s live refresh).
+		"makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false })",
+		"tclaude.dash.modalSize.agent-spawn",     // per-modal pref key
+		"tclaude.dash.modalSize.template-editor", // template editor pref key (JOH-357)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
@@ -274,6 +280,38 @@ func TestDashboardCSS_TemplateEditorResizable(t *testing.T) {
 		"}"
 	if !strings.Contains(css, needle) {
 		t.Errorf("dashboard.css missing %q — template editor resize regressed", needle)
+	}
+}
+
+// TestDashboardCSS_TemplatesManageResizable guards the paired CSS half of the
+// resizable summoning-circles management PANEL (the group-templates list). It
+// is a LIST panel, not a form, so unlike the editor it carries a fixed
+// min-height floor (the JS opts out of content-tracking min via fitContent:false
+// — a content-tracking floor would pin at the 86vh cap and make a long list
+// un-shrinkable). The id-scoped card must carry `resize: both` with non-visible
+// overflow on both axes (overflow:auto overriding the base overflow-y:auto,
+// else the grip is inert), an explicit width that keeps the default 880 while
+// max-width raises only the drag ceiling, and the min-height floor. Scoped to
+// the #id, NOT the shared .manage-modal class, so the profiles/roles/links
+// panels that also carry that class stay unaffected.
+func TestDashboardCSS_TemplatesManageResizable(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	needle := "#templates-manage-modal .manage-modal {\n" +
+		"  resize: both; overflow: auto;\n" +
+		"  width: min(880px, calc(100vw - 32px));\n" +
+		"  max-width: min(1100px, calc(100vw - 32px));\n" +
+		"  min-height: 260px;\n" +
+		"}"
+	if !strings.Contains(css, needle) {
+		t.Errorf("dashboard.css missing %q — templates-manage panel resize regressed", needle)
+	}
+	// The list host must flex so an enlarged panel keeps its footer at the bottom.
+	if !strings.Contains(css, "#templates-manage-modal #templates-list { flex: 1 1 auto; }") {
+		t.Error("dashboard.css missing the #templates-list flex rule — enlarged panel footer would float")
 	}
 }
 
