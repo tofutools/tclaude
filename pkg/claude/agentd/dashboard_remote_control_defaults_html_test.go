@@ -68,7 +68,7 @@ func TestDashboardHTML_RemoteControlDefaultsWired(t *testing.T) {
 	must("policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit'",
 		"the item cycles inherit → optin → deny")
 	must(`data-act="set-group-remote-control"`, "the item dispatches the group remote-control action")
-	// It renders as a button INTO the group ⚙ menu (groupActionsHTML), not as
+	// It renders as a button INTO the group ⚙ menu (groupMenuItems), not as
 	// a header chip — the move that decluttered the group summary.
 	must("+ remoteControlPolicyMenuItem(g)", "the policy item is wired into the group cog menu")
 

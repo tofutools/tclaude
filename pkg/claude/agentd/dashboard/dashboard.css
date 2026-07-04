@@ -1648,7 +1648,13 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-model,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-link-chips,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-header-cog,
-  details[data-group-key] > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
+  /* Cog-menu-open brighten: must out-specify the 0.4 dim rule above, so it
+     carries the SAME collapsed/unpinned fold prefix as the hover branches
+     (the dim rule is (0,5,3); a bare `details > summary:has(…)` selector is
+     only (0,5,2) and LOSES the cascade — the open menu, a DOM descendant of
+     the dimmed .group-header-cog, would then composite at 40%). Scoping it to
+     the fold context is exact: that's the only place the cog ever dims. */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
     opacity: 1;
   }
 }
@@ -2508,10 +2514,11 @@ details[data-group-key].group-drop-before {
 details[data-group-key].group-drop-after {
   box-shadow: 0 3px 0 0 #58a6ff;
 }
-/* Nest target: dropping in the header's MIDDLE band nests the dragged group
-   INTO this one (n-level groups-in-groups, JOH-392). A ring + tint around the
-   whole target box reads as "into this container", distinct from the thin
-   before/after insertion line of a sibling reorder. */
+/* Nest target: dropping over the BULK of the box (everything but the thin
+   top/bottom edge strips — see dropZone) nests the dragged group INTO this one
+   (n-level groups-in-groups, JOH-392). A ring + tint around the whole target
+   box reads as "into this container", distinct from the thin before/after
+   insertion line of a sibling reorder. */
 details[data-group-key].group-drop-into {
   box-shadow: inset 0 0 0 2px #58a6ff;
   background: rgba(88, 166, 255, 0.08);
