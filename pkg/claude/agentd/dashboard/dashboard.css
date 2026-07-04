@@ -2062,6 +2062,32 @@ body.wizard .force-mission-label-wizard { display: inline; }
 /* The relocated filter bars sit flush inside the panel rather than spanning
    a full page width. */
 .manage-modal .filter-bar { margin: 0; }
+/* The Group-templates (summoning-circles) management PANEL is user-resizable —
+   a long roster of circles, or a small screen, makes the fixed panel cramped.
+   Drag the bottom-right grip on both axes; the size persists per panel
+   (makeModalResizable → dashPrefs key tclaude.dash.modalSize.templates-manage).
+   Unlike the spawn/clone/editor FORM dialogs — which grow to fit their fields
+   (content-tracking min-height + auto-grow) — this is a LIST panel whose
+   #templates-list is meant to SCROLL, so its JS wires with { fitContent: false }
+   (no content-tracking min, which would pin the floor at the 86vh cap and make
+   the panel un-shrinkable; no auto-grow, which would re-expand a deliberately-
+   shortened box on the 2s live refresh). The floor is the fixed min-height
+   here. resize needs overflow non-visible on both axes, so overflow:auto
+   overrides the base overflow-y:auto. An explicit width keeps the default at
+   the base 880 ceiling while max-width raises only the horizontal drag ceiling
+   (the base uses width:calc(100%-32px), which would otherwise widen the default
+   to the raised max). max-height:86vh (base) stays the vertical drag ceiling. */
+#templates-manage-modal .manage-modal {
+  resize: both; overflow: auto;
+  width: min(880px, calc(100vw - 32px));
+  max-width: min(1100px, calc(100vw - 32px));
+  min-height: 260px;
+}
+/* Let the circle list absorb extra vertical space when the panel is enlarged,
+   keeping the footer Close button at the bottom; the panel still scrolls as one
+   unit (as it already does at the 86vh cap) when the list outgrows a shortened
+   box, since #templates-list keeps its content-driven min-height. */
+#templates-manage-modal #templates-list { flex: 1 1 auto; }
 /* The cron-pick-target overlay is opened FROM inside the cron-create
    form (Owner / Target 🔍 buttons), so it has to stack on top of the
    create modal — not below it. Plain z-index:100 ties with the create

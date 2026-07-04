@@ -190,7 +190,16 @@ function growModalToFitContent(modalEl) {
 // card's own width/height changes are the user's resize drag and our own
 // grow-write. Filtering those out means auto-grow never fights a deliberate
 // drag-shrink and our height write can't recurse — no re-entrancy guard needed.
-function makeModalResizable(modalEl, key) {
+//
+// Those last two behaviours (content-tracking min-size + auto-grow) suit FORM
+// dialogs, whose whole body should stay visible. A LIST panel — the templates-
+// manage overlay, whose body is a scroll region — opts out with
+// `{ fitContent: false }`: content-tracking would pin the min-height at the
+// max-height cap (making a long list un-shrinkable) and auto-grow would re-
+// expand a deliberately-shortened box on the panel's 2s live refresh. Opting
+// out keeps only the persist/restore + pointer-bracketed save; the resize floor
+// is then a fixed CSS min-height on the card.
+function makeModalResizable(modalEl, key, opts = {}) {
   if (!modalEl) return;
   let saved = { w: 0, h: 0 };
   try {
@@ -210,6 +219,9 @@ function makeModalResizable(modalEl, key) {
     saved = { w, h };
     try { dashPrefs.setItem(key, JSON.stringify(saved)); } catch (_) {}
   });
+  // List panels stop here (see the header note): no content-tracking min-size,
+  // no auto-grow — just the persist/restore above, with a fixed CSS floor.
+  if (opts.fitContent === false) return;
   // Re-measure the min size whenever the modal becomes visible (its overlay
   // gains `show`) — content and viewport can differ per open. Observing the
   // class avoids editing every open*Modal call site, and only fires on the

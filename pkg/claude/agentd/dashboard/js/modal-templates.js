@@ -1681,6 +1681,14 @@ function bindTemplatesUI() {
   // persists per modal via dashPrefs. See makeModalResizable + the paired
   // #template-editor-modal .cron-create-modal { resize } rule in dashboard.css.
   makeModalResizable($('#template-editor-modal .cron-create-modal'), 'tclaude.dash.modalSize.template-editor');
+  // The summoning-circles management PANEL itself is resizable too — a long
+  // roster of circles (or a small screen) makes the fixed panel cramped. It is
+  // a scrollable LIST, not a form, so it wires with { fitContent: false }: keep
+  // the persist/restore, drop the form-only content-tracking min-size + auto-
+  // grow (which would make a long list un-shrinkable and fight the 2s live
+  // refresh). Paired #templates-manage-modal .manage-modal { resize } rule in
+  // dashboard.css supplies the resize + the fixed min-height floor.
+  makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false });
 
   // Instantiate modal.
   $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
