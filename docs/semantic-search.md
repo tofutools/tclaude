@@ -114,7 +114,7 @@ Aliases: `sem`, `semantic`, `ai`, `ask`, `ai-search`
 
 ## Interactive Watch Mode
 
-Semantic search is integrated into the interactive conversation browser (`tclaude conv ls -w`).
+Semantic search is integrated into the interactive conversation browser (`tclaude conv ls -w` or `tclaude conv watch`).
 
 ### Usage
 

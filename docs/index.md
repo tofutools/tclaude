@@ -124,10 +124,10 @@ tclaude session new --harness codex
 tclaude session new --resume <conv-id>
 
 # Interactive session browser
-tclaude session ls -w
+tclaude session watch
 
 # Interactive conversation browser
-tclaude conv ls -w
+tclaude conv watch
 ```
 
 ## Commands
@@ -136,10 +136,12 @@ tclaude conv ls -w
 |--------------------|------------------------------------------------------------|
 | `session new`      | Start Claude in a tmux session                             |
 | `session ls`       | List sessions (`-w` for interactive)                       |
+| `session watch`    | Interactive session browser (shortcut for `session ls -w`) |
 | `session attach`   | Attach to a session                                        |
 | `session kill`     | Kill sessions                                              |
 | `web`              | Serve a session via web terminal (deprecated)              |
 | `conv ls`          | List conversations (`-w` for interactive, `-g` for global) |
+| `conv watch`       | Interactive conversation browser (shortcut for `conv ls -w`) |
 | `conv search`      | Search conversation text                                   |
 | `conv search-embeddings` | Semantic search by meaning (requires Ollama)         |
 | `conv index-embeddings`  | Build/update semantic search index                   |
@@ -149,7 +151,7 @@ tclaude conv ls -w
 
 ## Interactive Watch Mode Keys ⌨️
 
-Both `session ls -w` and `conv ls -w` support these keys:
+Both `session watch` (`session ls -w`) and `conv watch` (`conv ls -w`) support these keys:
 
 | Key                | Action                          |
 |--------------------|---------------------------------|

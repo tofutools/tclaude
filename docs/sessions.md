@@ -67,6 +67,15 @@ tclaude session ls --hide exited
 
 **Status values:** `idle`, `working`, `awaiting_permission`, `awaiting_input`, `error`, `exited`
 
+### session watch
+
+Shortcut for `session ls -w` — jumps straight into interactive watch mode. Takes the same
+`-a`, `--show`, `--hide`, and `--sort` flags as `session ls`.
+
+```bash
+tclaude session watch
+```
+
 ### session attach
 
 Attach to an existing session.
