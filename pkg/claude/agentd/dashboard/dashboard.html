@@ -192,8 +192,8 @@
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
           <button role="menuitem" id="group-from-template-open" title="Create a new group from a template — spawns the template's whole agent team in one shot"><span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span></button>
-          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
+          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="links-manage-open" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
@@ -1124,7 +1124,12 @@
 </div>
 <div class="modal-overlay" id="term-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="term-title">
-    <h3 id="term-title">Open a terminal</h3>
+    <!-- Title copy swaps per theme (pure-CSS span swap, the same mechanism as
+         the spawn / retire / window-picker titles): "Open a terminal" normally,
+         "🔮 Open a scrying portal" in 🧙 wizard mode — a terminal onto a familiar
+         is a scrying portal in the palette's voice (the Terminals tab reads
+         "🔮 Scrying"). -->
+    <h3 id="term-title"><span class="term-title-regular">Open a terminal</span><span class="term-title-wizard">🔮 Open a scrying portal</span></h3>
     <p>Spawn a terminal window for this agent. <strong>Current</strong> is where it
     has most recently been editing files; <strong>Worktree</strong> is the git
     worktree/repo root around that; <strong>Launch</strong> is where Claude Code
