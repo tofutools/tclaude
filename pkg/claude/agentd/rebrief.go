@@ -3,6 +3,7 @@ package agentd
 import (
 	"net/http"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -70,10 +71,16 @@ func handleGroupRebrief(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		return
 	}
 
-	// Reconstruct the deliverWorkPattern inputs from the LIVE roster. Targeted
-	// steps (send_to: <agent>) route by the template-agent name → live conv map;
-	// broadcast steps (send_to: all) reach every current member.
-	spawnedConvs, spawnedOrder, rosterNames := rebriefRoster(g, tmpl)
+	// Reconstruct the deliverWorkPattern inputs from the current roster. Targeted
+	// steps (send_to: <agent>) route by the template-agent name → conv map;
+	// broadcast steps (send_to: all) reach every current member. A failed member
+	// read is a hard 500 — otherwise an empty roster would report a false
+	// "delivered nothing, no errors" success.
+	spawnedConvs, spawnedOrder, rosterNames, err := rebriefRoster(g, tmpl)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 
 	assignment := normalizeAssignment(g.Mission)
 	delivered, patErrs := deliverWorkPattern(g, tmpl.WorkPattern, tmpl.Name, assignment, caller,
@@ -89,36 +96,45 @@ func handleGroupRebrief(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 }
 
 // rebriefRoster reconstructs deliverWorkPattern's (spawnedConvs, spawnedOrder,
-// rosterNames) inputs for a re-brief from a force's LIVE membership — the
-// re-brief analogue of the (name→conv) map a deploy builds as it spawns.
+// rosterNames) inputs for a re-brief from a force's CURRENT membership — the
+// re-brief analogue of the (name→conv) map a deploy builds as it spawns. It
+// reads the roster ONCE and feeds both maps from it (a failed read is returned,
+// not swallowed — otherwise an empty roster would look like a clean "nothing to
+// deliver" success).
 //
-//   - spawnedConvs maps each template-agent name to its live conv, matched by
-//     the member's effective title ("<group>-<agent>", the same restart-
-//     idempotency key the wave runner dedupes against via groupMemberNames). A
-//     member the human has RENAMED away from that title won't match — its
-//     targeted steps then report "did not spawn" rather than mis-routing. That
-//     is an accepted, honest degradation: the agent NAME is the work pattern's
-//     routing key, so a renamed member is genuinely unaddressable by it.
-//   - spawnedOrder (the "all" broadcast target) is every current member, so a
-//     broadcast re-brief reaches the whole live force regardless of renames.
+//   - spawnedConvs maps each template-agent name to its conv, matched by the
+//     member's effective title ("<group>-<agent>", the same restart-idempotency
+//     key the wave runner dedupes against via agent.CachedTitle). A member the
+//     human has RENAMED away from that title won't match — its targeted steps
+//     then report "did not spawn" rather than mis-routing. That is an accepted,
+//     honest degradation: the agent NAME is the work pattern's routing key, so a
+//     renamed member is genuinely unaddressable by it.
+//   - spawnedOrder (the "all" broadcast target) is every current member (offline
+//     ones included — they read the re-brief on resume), so a broadcast re-brief
+//     reaches the whole force regardless of renames.
 //   - rosterNames is the template's full agent-name set, so deliverWorkPattern
-//     can tell "target dropped out of a live roster" from "stale work-pattern
-//     step naming an agent the template never had".
-func rebriefRoster(g *db.AgentGroup, tmpl *db.GroupTemplate) (map[string]string, []string, map[string]bool) {
-	byName := groupMemberNames(g)
+//     can tell "target dropped out of the roster" from "stale work-pattern step
+//     naming an agent the template never had".
+func rebriefRoster(g *db.AgentGroup, tmpl *db.GroupTemplate) (map[string]string, []string, map[string]bool, error) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	byTitle := make(map[string]string, len(members))
+	spawnedOrder := make([]string, 0, len(members))
+	for _, m := range members {
+		spawnedOrder = append(spawnedOrder, m.ConvID)
+		if title := agent.CachedTitle(m.ConvID); title != "" {
+			byTitle[title] = m.ConvID
+		}
+	}
 	spawnedConvs := make(map[string]string, len(tmpl.Agents))
 	rosterNames := make(map[string]bool, len(tmpl.Agents))
 	for _, a := range tmpl.Agents {
 		rosterNames[a.Name] = true
-		if conv, ok := byName[g.Name+"-"+a.Name]; ok {
+		if conv, ok := byTitle[g.Name+"-"+a.Name]; ok {
 			spawnedConvs[a.Name] = conv
 		}
 	}
-	spawnedOrder := []string{}
-	if members, err := db.ListAgentGroupMembers(g.ID); err == nil {
-		for _, m := range members {
-			spawnedOrder = append(spawnedOrder, m.ConvID)
-		}
-	}
-	return spawnedConvs, spawnedOrder, rosterNames
+	return spawnedConvs, spawnedOrder, rosterNames, nil
 }
