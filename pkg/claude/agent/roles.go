@@ -161,9 +161,19 @@ func runRolesShow(p *rolesShowParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "Role: %s\n", rl.Name)
+	printRoleHuman(stdout, rl)
+	return rcOK
+}
+
+// printRoleHuman renders a role's human-readable detail view — name, descr, the
+// set launch fields (stable order), the permission slugs, and the brief. The
+// transparency floor for a terminal-driven operator (JOH-351): the same
+// descr / launch / grants / brief the dashboard role-inspect panel surfaces.
+// Pure (writer in) so it is unit-tested without a daemon.
+func printRoleHuman(w io.Writer, rl roleJSON) {
+	fmt.Fprintf(w, "Role: %s\n", rl.Name)
 	if rl.Descr != "" {
-		fmt.Fprintf(stdout, "  descr:   %s\n", rl.Descr)
+		fmt.Fprintf(w, "  descr:   %s\n", rl.Descr)
 	}
 	launch := []string{}
 	if rl.SpawnProfile != "" {
@@ -179,18 +189,17 @@ func runRolesShow(p *rolesShowParams, stdout, stderr io.Writer) int {
 		}
 	}
 	if len(launch) > 0 {
-		fmt.Fprintf(stdout, "  launch:  %s\n", strings.Join(launch, " · "))
+		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))
 	}
 	if len(rl.Permissions) > 0 {
-		fmt.Fprintf(stdout, "  perms:   %s\n", strings.Join(rl.Permissions, ", "))
+		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(rl.Permissions, ", "))
 	}
 	if brief := strings.TrimSpace(rl.Brief); brief != "" {
-		fmt.Fprintln(stdout, "  brief:")
+		fmt.Fprintln(w, "  brief:")
 		for _, line := range strings.Split(rl.Brief, "\n") {
-			fmt.Fprintf(stdout, "    %s\n", line)
+			fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
-	return rcOK
 }
 
 // ---- create / edit ----
@@ -314,9 +323,10 @@ func rolesRmCmd() *cobra.Command {
 	return boa.CmdT[rolesRmParams]{
 		Use:   "rm <name>",
 		Short: "Delete a role",
-		Long: "Removes a role from the library. Template agents that reference it are left untouched — the reference " +
-			"simply resolves to nothing at instantiate, so those agents fall back to their own overrides. A deleted " +
-			"canonical seed role reappears the next time the daemon opens the database (seeds self-heal).",
+		Long: "Removes a role from the library. Roles resolve at deploy time, so a delete is REFUSED while any template " +
+			"still references the role — the error lists the referencing templates; edit them to drop or repoint the " +
+			"reference first. A deleted canonical seed role reappears the next time the daemon opens the database (seeds " +
+			"self-heal).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *rolesRmParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeRoleNames)

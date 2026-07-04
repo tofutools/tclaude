@@ -313,7 +313,7 @@ async function submitRoleEditor() {
 async function removeRole(name) {
   const ok = await confirmModal({
     title: 'Delete role?',
-    body: `Delete the role "${name}"? Template agents that reference it fall back to their own launch overrides at instantiate; agents already spawned are untouched. A deleted canonical seed role reappears the next time the daemon opens its database.`,
+    body: `Delete the role "${name}"? Roles resolve at deploy time, so this is refused while any template still references it — edit those templates to drop or repoint the reference first. A deleted canonical seed role reappears the next time the daemon opens its database.`,
     meta: name,
     okLabel: 'Delete role',
   });
@@ -323,6 +323,8 @@ async function removeRole(name) {
     toast(`role deleted: ${name}`);
     reloadRolesList();
   } catch (err) {
+    // A 409 role_in_use carries the referencing-template list — surface it as a
+    // sticky error toast so the human can go fix those templates (JOH-351).
     toast((err && err.message) || String(err), true);
   }
 }

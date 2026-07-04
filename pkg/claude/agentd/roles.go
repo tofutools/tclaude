@@ -275,6 +275,38 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermRolesManage); !ok {
 			return
 		}
+		// Confirm the role exists first, so deleting a name that doesn't exist
+		// answers 404 — even if some template carries a dangling role_ref to it
+		// (which would otherwise trip the reference guard below with a misleading
+		// "still referenced" 409). Mirrors the PATCH existence check.
+		existing, err := db.GetRole(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if existing == nil {
+			writeError(w, http.StatusNotFound, "not_found", "no such role")
+			return
+		}
+		// Refuse while a template still references the role (JOH-351): roles
+		// resolve at DEPLOY time, so deleting one a template names would silently
+		// change that template's next deploy. Refusal is predictable — clear the
+		// references (or repoint them) first. The check is a cheap indexed read.
+		refs, err := db.TemplatesReferencingRole(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if len(refs) > 0 {
+			plural := ""
+			if len(refs) != 1 {
+				plural = "s"
+			}
+			writeError(w, http.StatusConflict, "role_in_use",
+				fmt.Sprintf("role %q is still referenced by %d template%s (%s) — edit those templates to drop or repoint the reference before deleting the role",
+					name, len(refs), plural, strings.Join(refs, ", ")))
+			return
+		}
 		n, err := db.DeleteRole(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())

@@ -376,17 +376,32 @@ and the agent's own fields always override it. This is distinct from the
 freeform `role` **label** on an agent (e.g. `tech-lead`), which is just
 display / routing text and carries no defaults.
 
+Each saved role is fully **editable** — create, edit or delete any of them, over
+every field above, from this dialog (**+ new role** / per-card **edit** /
+**delete**). Every role picker (today: the templates editor's per-agent **Role
+library** dropdown) shows an inline **inspect panel** beneath the selection —
+the role's description, its launch shape (spawn-profile / harness / model /
+effort / sandbox / approval), its granted permission **slugs**, and its brief
+(expandable) — so picking a role is never blind. The same view is available from
+the CLI with `tclaude agent roles show <name>`.
+
+**Roles resolve at deploy time.** A template stores only a role's *name* in its
+`role_ref`; the role's actual fields are read when the template is deployed. So
+editing a role changes what **future** deploys inherit — already-deployed groups
+are untouched (they captured the role's values at their own deploy). Because a
+live reference matters, **deleting a role is refused while any template still
+references it** — the dialog surfaces the referencing templates so you can edit
+them to drop or repoint the reference first, then delete the role.
+
 tclaude ships six **seed roles** — `po`, `lead`, `dev`, `designer`, `reviewer`,
 and `tester` — as short, generic starting points. Their briefs are sensible
 defaults, not policy, and their launch fields and permissions are deliberately
 left blank (what a role launches on or is granted is your call). The seeds are
 **self-healing**: they are re-checked on every daemon start, so a seed you
-delete reappears on the next open — but **your edits are sacred**, never
-overwritten by the re-seed. Edit a seed to taste, or add your own roles, and
-they stick. (The name `all` is reserved — it is the work-pattern broadcast
-target — so you cannot create a role called `all`.) A role a template
-references but which no longer exists simply resolves to nothing at deploy: that
-agent falls back to its own inline overrides.
+delete (once no template references it) reappears on the next open — but **your
+edits are sacred**, never overwritten by the re-seed. Edit a seed to taste, or
+add your own roles, and they stick. (The name `all` is reserved — it is the
+work-pattern broadcast target — so you cannot create a role called `all`.)
 
 ### Cron
 
