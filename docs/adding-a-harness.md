@@ -7,6 +7,12 @@ contracts and register a descriptor. Everything tclaude owns — tmux sessions,
 the conversation index, agent coordination, the dashboard — then works for your
 harness unchanged.
 
+> Not every worked example under `pkg/claude/session` follows this recipe.
+> `--harness shell` (`session/shell.go`) starts a plain, conversation-less
+> interactive shell and is deliberately handled outside this registry — see
+> the note in [harnesses.md](harnesses.md). It isn't a template for adding a
+> real coding-harness integration.
+
 ## The shape of the seam
 
 The seam lives in `pkg/claude/harness`. It is **deliberately not one monolithic

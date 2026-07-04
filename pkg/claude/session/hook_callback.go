@@ -504,6 +504,21 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 	slog.Info("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 
+	// A shell row never has a ConvID, so the foreign-process guard below
+	// (keyed off state.ConvID != "") can never engage for one. runNewShell
+	// still exports TCLAUDE_SESSION_ID (goto/focus need it), so a headless
+	// coding-harness run launched from inside the shell (`claude -p "hi"`,
+	// an interactive `claude`, …) inherits it and its hooks land here,
+	// against the shell's own row. Without this guard that hijacks the
+	// row: the throwaway conv-id gets stamped onto it, its PID gets
+	// rewritten via FindClaudePID, it gets enrolled as a dashboard agent,
+	// and it flips to "exited" when the child exits — while the shell
+	// itself is still alive. A shell row has no hooks of its own, ever,
+	// so drop every hook unconditionally.
+	if state.Harness == ShellHarnessName {
+		return nil
+	}
+
 	// Foreign-process guard. An env-keyed session's hooks normally all
 	// carry the conversation its row tracks. A hook carrying a DIFFERENT
 	// conv-id is one of two things:
@@ -901,7 +916,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// gate the injection on the harness actually understanding those
 		// commands, or a Codex pane would be typed a hint it can't act on.
 		// Harness-aware nudging is future work (Codex Lifecycle).
-		handleContextNudge(input, envSessionID)
+		handleContextNudge(envSessionID)
 	}
 
 	state.Updated = time.Now()
@@ -1574,7 +1589,7 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-func handleContextNudge(input HookCallbackInput, sessionID string) {
+func handleContextNudge(sessionID string) {
 	if sessionID == "" {
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -44,8 +45,17 @@ type NewParams struct {
 	// "claude"). "codex" launches OpenAI Codex CLI in the tmux pane via
 	// the codex Spawner. The chosen harness's ModelCatalog validates
 	// --model/--effort and its Spawner builds the launch command, so the
-	// rest of runNew stays harness-agnostic.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
+	// rest of runNew stays harness-agnostic. The special value "shell"
+	// (ShellHarnessName) is NOT a registered harness — it starts a plain,
+	// ephemeral interactive shell instead (no conversation, no hooks, no
+	// model/sandbox/approval), handled by runNewShell before any harness
+	// resolution happens. See shell.go.
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex | shell (a plain, ephemeral shell — no conversation)"`
+
+	// Shell is shorthand for --harness shell: it sets Harness to
+	// ShellHarnessName in runNew before any harness resolution happens.
+	// Mutually exclusive with an explicit --harness naming anything else.
+	Shell bool `long:"shell" short:"s" help:"Start a plain interactive shell instead of a coding harness (shorthand for --harness shell)"`
 
 	// Sandbox selects a harness's launch containment. On a direct `session new`
 	// it is opt-in: unset emits no flag, so each harness uses its own config
@@ -214,6 +224,23 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
+	// before any harness resolution so a plain shell never touches the
+	// coding-harness machinery below (model/effort validation, sandbox,
+	// approval, hooks, --join-group, …). --shell is shorthand for
+	// --harness shell; an explicit --harness naming anything else alongside
+	// it is a conflicting request rather than something to silently resolve.
+	params.Harness = strings.TrimSpace(params.Harness)
+	if params.Shell {
+		if params.Harness != "" && params.Harness != ShellHarnessName {
+			return fmt.Errorf("--shell conflicts with --harness %s", params.Harness)
+		}
+		params.Harness = ShellHarnessName
+	}
+	if params.Harness == ShellHarnessName {
+		return runNewShell(params)
+	}
+
 	// The spawn command, model/effort validation and resume form all come
 	// from the selected harness behind the seam (pkg/claude/harness).
 	// --harness picks it (default "claude"); an unknown value errors here
@@ -402,19 +429,9 @@ func runNew(params *NewParams) error {
 	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
 	// Determine working directory
-	cwd := params.Dir
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
-	}
-
-	// Make path absolute
-	if cwd[0] != '/' {
-		wd, _ := os.Getwd()
-		cwd = wd + "/" + cwd
+	cwd, err := resolveSessionDir(params.Dir)
+	if err != nil {
+		return err
 	}
 
 	// Set up signal handling for clean shutdown
@@ -495,10 +512,11 @@ func runNew(params *NewParams) error {
 	// the names diverge. A row owned only by a DEAD session is fine to reuse.
 	// (This PK guard primarily backstops a reused --label; the resumed-conv
 	// case is covered by the conv_id guard above. See JOH-332.)
-	if owner := liveSessionOwningID(sessionID); owner != nil {
-		if params.Label != "" {
-			return fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)
-		}
+	owner, err := liveOwnerConflict(sessionID, params.Label)
+	if err != nil {
+		return err
+	}
+	if owner != nil {
 		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
 	}
 
@@ -582,7 +600,7 @@ func runNew(params *NewParams) error {
 		rowConvID = params.SessionID
 	}
 
-	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports:        envExports,
 		ResumeID:          fullConvID,
 		SessionID:         params.SessionID,
@@ -598,34 +616,12 @@ func runNew(params *NewParams) error {
 		InitialPrompt:     params.InitialPrompt,
 	})
 
-	// Create tmux session with claude
-	// Use tmux new-session -d to create detached
-	// We use sh -c to set the environment variable
-	tmuxArgs := []string{
-		"new-session",
-		"-d",              // detached
-		"-s", tmuxSession, // session name
-		"-c", cwd, // working directory
-		"sh", "-c", claudeCmd,
+	// Create the detached tmux session running the harness command.
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
+		return err
 	}
 
-	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
-	tmuxCmd.Stdout = os.Stdout
-	tmuxCmd.Stderr = os.Stderr
-
-	if err := tmuxCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
-	}
-
-	// Configure tmux to set window title with our session ID
-	// This ensures the title persists and is visible for window focus.
-	// Gated on config focus.window_title (default on): an explicit false
-	// leaves the terminal's own title alone, at the cost of title-based
-	// window focus/tiling on WSL + native-Linux/X11.
-	if windowTitleEnabledFn() {
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
-	}
+	applyTmuxWindowTitle(tmuxSession, sessionID)
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness
 	// relies on tmux for history (Codex CLI). Scoped to this session only so
@@ -677,10 +673,72 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	fmt.Printf("Created session %s\n", tmuxSession)
+	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+// The CC launch-command builder lives behind the harness seam now —
+// see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
+
+// resolveSessionDir resolves the --dir/-C value to an absolute working
+// directory: the current directory when unset, else dir made absolute
+// against the current directory. Shared by runNew and runNewShell.
+func resolveSessionDir(dir string) (string, error) {
+	cwd := dir
+	if cwd == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		return cwd, nil
+	}
+	if cwd[0] != '/' {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		cwd = filepath.Join(wd, cwd)
+	}
+	return cwd, nil
+}
+
+// launchDetachedTmuxSession creates the detached tmux session that hosts a
+// launch — `tmux new-session -d -s <name> -c <cwd> sh -c <cmd>` — wiring the
+// child's stdout/stderr through. cmd is the harness command (claudeSpawner's
+// BuildCommand output) or the plain shell's exec line. Shared by runNew and
+// runNewShell.
+func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
+	// Use tmux new-session -d to create detached; sh -c carries the env exports.
+	tmuxCmd := clcommon.TmuxCommand("new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", "-c", cmd)
+	tmuxCmd.Stdout = os.Stdout
+	tmuxCmd.Stderr = os.Stderr
+	if err := tmuxCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create tmux session: %w", err)
+	}
+	return nil
+}
+
+// applyTmuxWindowTitle sets this session's tmux window title to
+// `tclaude:<sessionID>` when config focus.window_title is enabled (default on),
+// so the title persists and drives title-based window focus/tiling. An explicit
+// false leaves the terminal's own title alone. Best-effort. Shared by both
+// launch paths.
+func applyTmuxWindowTitle(tmuxSession, sessionID string) {
+	if !windowTitleEnabledFn() {
+		return
+	}
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+}
+
+// announceAndAttach prints the created-session summary and then either reports
+// the detach hint (detached launches) or attaches to the pane. createdLine is
+// the harness-specific "Created …" headline (a coding session vs a shell
+// session). Shared launch tail of runNew and runNewShell.
+func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
+	fmt.Println(createdLine)
 	fmt.Printf("  Directory: %s\n", cwd)
 
-	if params.Detached {
+	if detached {
 		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
@@ -688,9 +746,6 @@ func runNew(params *NewParams) error {
 	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
 }
-
-// The CC launch-command builder lives behind the harness seam now —
-// see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
 
 // resolveResumeConv resolves a --resume id prefix to a full conversation
 // id + its project path, using the harness's own conversation source:
