@@ -1608,7 +1608,9 @@ details[open] > summary .group-actions { opacity: 1; }
    middle + line-height:1 centre it on the row, and margin: 0 6px matches the
    activity-bot spacing so the cog sits in the header's rhythm. */
 .group-header-cog {
-  margin: 0 6px; opacity: 1; vertical-align: middle; line-height: 1;
+  /* A touch more room on the LEFT so the cog doesn't crowd the activity
+     indicators; right margin stays 6px to keep the rhythm with the chips. */
+  margin: 0 6px 0 12px; opacity: 1; vertical-align: middle; line-height: 1;
   transition: opacity 0.15s ease;
 }
 /* The cog sits near the LEFT of the row now, so its dropdown opens rightward
