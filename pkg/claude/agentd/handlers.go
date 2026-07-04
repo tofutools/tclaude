@@ -3360,26 +3360,27 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	aliveSessions, _ := session.LiveTmuxSessions()
 	out := make([]groupContextEntry, 0, len(members))
 	for _, m := range members {
-		snap, _, hasSession := contextSnapshotForConvIn(m.ConvID, aliveSessions)
-		// A row that exists but whose statusline hook never fired reads
-		// as all-zero — same "unknown" state as no row at all. Either way
-		// there's no real context figure to show.
-		hasSnapshot := hasSession && snapshotPopulated(snap)
+		// One read per member through stateForConvIn — the SAME reader the
+		// dashboard snapshot uses, so this endpoint's context figures AND its
+		// settled status (idle / working / awaiting_* / exited, incl. the
+		// subagent-idle settle) agree with the dashboard force block that
+		// classifies liveness on them (JOH-346). A populated snapshot implies
+		// a session row, so has_snapshot collapses to "any real context figure"
+		// — the separate hasSession gate was redundant.
+		st := stateForConvIn(m.ConvID, aliveSessions)
 		out = append(out, groupContextEntry{
-			AgentID: peerAgentID(m.ConvID),
-			ConvID:  m.ConvID,
-			Title:   agent.FreshTitle(m.ConvID),
-			Role:    m.Role,
-			Online:  isConvOnlineIn(m.ConvID, aliveSessions),
-			// Settled status from the same reader the dashboard uses, so
-			// the CLI force-liveness rollup never disagrees about stalling.
-			Status:            stateForConvIn(m.ConvID, aliveSessions).Status,
-			HasSnapshot:       hasSnapshot,
-			ContextPct:        snap.ContextPct,
-			TokensInput:       snap.TokensInput,
-			TokensOutput:      snap.TokensOutput,
-			ContextWindowSize: snap.ContextWindowSize,
-			Model:             snap.Model,
+			AgentID:           peerAgentID(m.ConvID),
+			ConvID:            m.ConvID,
+			Title:             agent.FreshTitle(m.ConvID),
+			Role:              m.Role,
+			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
+			Status:            st.Status,
+			HasSnapshot:       agentStateHasSnapshot(st),
+			ContextPct:        st.ContextPct,
+			TokensInput:       st.TokensInput,
+			TokensOutput:      st.TokensOutput,
+			ContextWindowSize: st.ContextWindowSize,
+			Model:             st.Model,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -3392,6 +3393,20 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // fired" separately from a genuine 0%.
 func snapshotPopulated(s db.ContextSnapshot) bool {
 	return s.ContextPct != 0 || s.TokensInput != 0 || s.TokensOutput != 0 || s.ContextWindowSize != 0
+}
+
+// agentStateHasSnapshot applies snapshotPopulated to the context figures an
+// stateForConvIn read carries — true once the statusline hook has reported at
+// least one real figure. A populated snapshot implies a live-or-past session
+// row, so this needs no separate hasSession gate. Delegates to snapshotPopulated
+// so the "is this real data" rule lives in exactly one place.
+func agentStateHasSnapshot(s agentState) bool {
+	return snapshotPopulated(db.ContextSnapshot{
+		ContextPct:        s.ContextPct,
+		TokensInput:       s.TokensInput,
+		TokensOutput:      s.TokensOutput,
+		ContextWindowSize: s.ContextWindowSize,
+	})
 }
 
 // requireGroupContextAccess gates the group-wide context read. The human

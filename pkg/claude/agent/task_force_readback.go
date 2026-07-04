@@ -172,9 +172,9 @@ type taskForceLsParams struct {
 func taskForceLsCmd() *cobra.Command {
 	return boa.CmdT[taskForceLsParams]{
 		Use:   "ls",
-		Short: "List deployed task forces (groups with a mission + source template)",
-		Long: "Lists the deployed task forces — the groups a `deploy` created, carrying a mission and a source " +
-			"template. For each: its mission (truncated), source template, current process phase (if any), pending " +
+		Short: "List deployed task forces (groups with a source template)",
+		Long: "Lists the deployed task forces — the groups a `deploy` created, tagged with a source template. For " +
+			"each: its mission (truncated), source template, current process phase (if any), pending " +
 			"staged-spawn waves, and live/total members. A plain hand-built group (no source template) is not a force " +
 			"and is not listed — `tclaude agent groups ls` covers those. Composes the same group reads the dashboard " +
 			"force block uses. Read-only.",
@@ -192,12 +192,16 @@ type taskForceLsEntry struct {
 	Mission        string `json:"mission,omitempty"`
 	SourceTemplate string `json:"source_template,omitempty"`
 	CurrentPhase   string `json:"current_phase,omitempty"`
-	PhaseIndex     int    `json:"phase_index,omitempty"`
-	PhaseCount     int    `json:"phase_count,omitempty"`
-	PendingWaves   int    `json:"pending_waves"`
-	TotalWaves     int    `json:"total_waves,omitempty"`
-	Online         int    `json:"online"`
-	Members        int    `json:"members"`
+	// PhaseIndex is the 0-based current phase, or -1 when the force has no
+	// process. Serialized unconditionally (no omitempty) so a --json consumer
+	// reads a real phase 0 the same way it reads any other, rather than losing
+	// the field to omitempty and having to infer it from current_phase.
+	PhaseIndex   int `json:"phase_index"`
+	PhaseCount   int `json:"phase_count"`
+	PendingWaves int `json:"pending_waves"`
+	TotalWaves   int `json:"total_waves,omitempty"`
+	Online       int `json:"online"`
+	Members      int `json:"members"`
 }
 
 func runTaskForceLs(p *taskForceLsParams, stdout, stderr io.Writer) int {
