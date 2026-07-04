@@ -205,6 +205,97 @@ func TestGroupTemplate_InstantiateContextOverride(t *testing.T) {
 	assert.NotContains(t, msgs[0].Body, boilerplate, "member briefing drops the replaced boilerplate")
 }
 
+// Scenario (JOH-385): the summon dialog's copy mode ("new group in this group's
+// image") copies the drop target's description into the new group by POSTing a
+// descr_override to instantiate. descr_override mirrors context_override's
+// grammar — present = honored verbatim INCLUDING empty, absent = today's
+// default — so a source group whose description is EMPTY can be faithfully
+// copied (an explicit "" suppresses the "Instantiated from template X" default
+// that a bare/absent descr would trigger).
+//
+// This pins the four wire behaviors the copy-mode fix depends on, plus the
+// both-fields precedence, all read off the real surface (the created group
+// row's Descr):
+//
+//	(a) descr_override "" of an empty-descr source → an empty-descr group
+//	(b) a non-empty descr_override → landed verbatim
+//	(c) no descr + no override → today's "Instantiated from template X" default
+//	(d) a plain descr alone → unchanged behavior
+//	(e) BOTH descr and descr_override → descr_override wins (the more explicit)
+func TestGroupTemplate_InstantiateDescrOverride(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+			"name":   "descr-circle",
+			"agents": []templateAgentSpec{{Name: "lead", Role: "lead", IsOwner: true}},
+		}).Code, "create template")
+
+	descrOf := func(group string) string {
+		t.Helper()
+		g, err := db.GetAgentGroupByName(group)
+		require.NoError(t, err)
+		require.NotNil(t, g, "group %s created", group)
+		return g.Descr
+	}
+
+	// (a) copy of an empty-descr source: descr_override "" suppresses the default.
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{"group_name": "copy-empty", "descr_override": ""}).Code,
+		"instantiate (a)")
+	assert.Empty(t, descrOf("copy-empty"),
+		"descr_override \"\" yields a group with NO description (suppresses the default)")
+
+	// (b) a non-empty descr_override lands verbatim.
+	const verbatim = "backend squad — auth work"
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{"group_name": "copy-label", "descr_override": verbatim}).Code,
+		"instantiate (b)")
+	assert.Equal(t, verbatim, descrOf("copy-label"),
+		"a non-empty descr_override is honored verbatim")
+
+	// (c) no descr + no override: today's default still applies.
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{"group_name": "plain-default"}).Code,
+		"instantiate (c)")
+	assert.Equal(t, "Instantiated from template descr-circle", descrOf("plain-default"),
+		"absent descr_override keeps the default-descr behavior")
+
+	// (d) a plain descr alone (no override): unchanged behavior — the field wins
+	// over the default, exactly as before this feature.
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{"group_name": "plain-descr", "descr": "hand-typed descr"}).Code,
+		"instantiate (d)")
+	assert.Equal(t, "hand-typed descr", descrOf("plain-descr"),
+		"a plain descr alone is unchanged by the new grammar")
+
+	// (e) BOTH sent: descr_override wins over the plain descr (the more explicit
+	// grammar — same precedence as context_override vs the template context).
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{
+				"group_name":     "both-fields",
+				"descr":          "the plain descr (loses)",
+				"descr_override": "the override (wins)",
+			}).Code, "instantiate (e)")
+	assert.Equal(t, "the override (wins)", descrOf("both-fields"),
+		"when both are sent, descr_override wins over the plain descr")
+
+	// (f) a whitespace-only descr_override trims to empty and still suppresses
+	// the default — pins the backend trim (a source group can only ever hold a
+	// trimmed descr, but a direct API caller could send whitespace).
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/descr-circle/instantiate",
+			map[string]any{"group_name": "copy-blank", "descr_override": "   "}).Code,
+		"instantiate (f)")
+	assert.Empty(t, descrOf("copy-blank"),
+		"a whitespace-only descr_override trims to empty (default still suppressed)")
+}
+
 // Scenario: a human snapshots a live group into a template. The
 // template must carry the group's context plus one agent per member,
 // with the owner flag set on the member that owns the group.
