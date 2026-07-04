@@ -364,6 +364,19 @@ func baseStates() []dashsnap.State {
 			SettleMS: 350,
 		},
 		{
+			// The dock is Groups-tab-only: on any other tab the whole shell —
+			// panel AND edge toggle — is gone and no page space is reserved.
+			// Self-checking (see jobsNoDockJS): switches to the Jobs tab with
+			// dock-open FORCED on, then asserts #agent-dock computes display:none
+			// and its edge toggle isn't laid out — so a regression that let the
+			// dock leak onto another tab fails the run instead of passing silently.
+			Key:      "jobs-nodock",
+			Title:    "Jobs tab — dock hidden (Groups-only)",
+			Caption:  "Groups-only gate (self-checked): on the Jobs tab the palette dock is entirely gone (panel + edge toggle), even with dock-open forced; throws if any part leaks through.",
+			JS:       jobsNoDockJS(),
+			SettleMS: 300,
+		},
+		{
 			Key:      "summon-normal",
 			Title:    "Summon dialog (normal)",
 			Caption:  "Template dropped on empty space → plain summon, no mode chooser.",
@@ -423,6 +436,37 @@ return new Promise(function(resolve, reject){
   }, 200);
 });
 `, blockWidth, label, blockWidth, label, label)
+}
+
+// jobsNoDockJS builds a self-checking Groups-only-dock state: switch to the Jobs
+// tab, FORCE dock-open on (to prove the tab gate wins even against the open
+// flag), give dock.js's Groups-pane observer a beat to re-evaluate, then assert
+// the dock shell is entirely hidden — #agent-dock computes display:none and its
+// edge toggle isn't laid out (offsetParent null). The returned JS ends in a
+// Promise that REJECTS when any part of the dock leaks onto a non-Groups tab, so
+// dashsnap's awaited Eval fails the state rather than capturing a silent "ok".
+func jobsNoDockJS() string {
+	return `document.querySelector('nav button[data-tab="jobs"]').click();
+document.body.classList.add('dock-open');
+return new Promise(function(resolve, reject){
+  // The gate re-evaluates via a MutationObserver on the Groups pane's class
+  // (fires on the next microtask after the tab click); give it a beat, then read
+  // the settled layout.
+  setTimeout(function(){
+    var dock = document.getElementById('agent-dock');
+    var toggle = document.getElementById('dock-toggle');
+    var disp = dock ? getComputedStyle(dock).display : 'none';
+    var dockShown = dock && dock.offsetParent !== null;
+    var toggleShown = toggle && toggle.offsetParent !== null;
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+    o.textContent = 'groups-only dock: display=' + disp + ' dockShown=' + dockShown + ' toggleShown=' + toggleShown;
+    document.body.appendChild(o);
+    if (disp === 'none' && !dockShown && !toggleShown) resolve();
+    else reject(new Error('dock leaked onto the Jobs tab: display=' + disp + ' dockShown=' + dockShown + ' toggleShown=' + toggleShown));
+  }, 150);
+});
+`
 }
 
 // cogMenuClearJS builds a self-checking JOH-390 item-4 state: on the groups tab
