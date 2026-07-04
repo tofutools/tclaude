@@ -4,7 +4,7 @@
 // from-group modals, the group-import modal, and the group-context
 // modal. Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, makeModalResizable, pickDirectory } from './helpers.js';
+import { $, $$, esc, makeModalResizable, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
 import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -1797,6 +1797,9 @@ function bindTemplatesUI() {
   // Editor modal.
   $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
   $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
+  // Ctrl/Cmd+Enter saves from anywhere in the editor — the shared modal
+  // submit-hotkey convention (spawn / clone / reincarnate / export dialogs).
+  bindModalSubmitHotkey($('#template-editor-modal'), $('#template-editor-submit'));
   $('#template-editor-add-agent').addEventListener('click', () => {
     scrapeEditorAgents();
     scrapeEditorPattern();
