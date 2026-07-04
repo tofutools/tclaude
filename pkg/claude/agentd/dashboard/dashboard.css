@@ -2268,6 +2268,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .view-menu label.filter-toggle input { margin: 0; }
 .view-menu label.filter-toggle:hover { background: #161b22; }
+/* Divider + heading between the "show X" row/group toggles and the
+   per-column "Columns" toggles below them, so the two concerns read as
+   distinct sections of the same popover. */
+.view-menu .view-menu-sep {
+  height: 1px; margin: 5px 2px; background: #2a3340;
+}
+.view-menu .view-menu-heading {
+  padding: 2px 8px; font-size: 10px; font-weight: bold;
+  letter-spacing: 0.04em; text-transform: uppercase; color: #7d8590;
+}
+/* The generated column checkboxes reuse .filter-toggle (same grid
+   alignment); this just stacks them like the toggles above. */
+.view-menu .view-cols { display: flex; flex-direction: column; gap: 2px; }
 .group-offline-toggle {
   font-size: 11px; color: #7d8590; margin-left: 8px;
   border: 1px solid #2a3340; border-radius: 4px;
@@ -6380,6 +6393,11 @@ body.wizard .view-menu {
   border-color: rgba(122, 93, 176, 0.5);
 }
 body.wizard .view-menu label.filter-toggle:hover { background: #241b3d; }
+/* Columns section — the divider + "Columns" heading pick up the popover's
+   arcane palette (purple rule, faded-amethyst heading) instead of the
+   default blue-grey, so the section reads as part of the same spellbook. */
+body.wizard .view-menu .view-menu-sep { background: rgba(122, 93, 176, 0.5); }
+body.wizard .view-menu .view-menu-heading { color: #9a86c4; }
 /* Secondary "⟳" tool levers (Plugins' check-all, the Runes refresh).
    #costs-spans opts out — the Treasury gilds its own span control. */
 body.wizard .filter-bar:not(#costs-spans) button.tool {
