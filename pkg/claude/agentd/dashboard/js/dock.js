@@ -147,13 +147,15 @@ function sectionHTML(section, snap) {
   const body = items.length
     ? items.map(it => cardHTML(section, it)).join('')
     : `<div class="dock-empty">(${esc(section.empty())})</div>`;
-  return `<section class="dock-section" data-key="${esc(section.key)}">
+  // A <div>, NOT a <section>: the dashboard's global `section { display:none }`
+  // rule (only tab panes with .active show) would otherwise hide the whole dock.
+  return `<div class="dock-section" data-key="${esc(section.key)}">
     <div class="dock-section-head">
       <span class="dock-section-title"><span class="dock-section-icon" aria-hidden="true">${section.icon}</span> ${esc(section.title())} <span class="dock-section-count">${items.length}</span></span>
       <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="${esc(section.key)}" title="${wizWord('Open the manager for this kind', 'Open the manager for this kind')}">⧉</button>
     </div>
     <div class="dock-section-items">${body}</div>
-  </section>`;
+  </div>`;
 }
 
 // renderDock repaints #dock-body from the live snapshot through morphInto —
