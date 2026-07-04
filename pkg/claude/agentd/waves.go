@@ -86,8 +86,15 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // is RECORDED (its existing conv threaded into the results) rather than
 // re-spawned. nil/empty for the inline first wave (a fresh group has no
 // members).
+//
+// suppressOwner drops the per-agent template owner flag: a template may mark an
+// agent as a group owner, but when the roster is deployed INTO an existing group
+// (reinforce mode) ownership is never transferred — the existing group already
+// has its owner. A would-be owner is recorded with OwnerDropped instead of
+// AddAgentGroupOwner. Permission grants still apply; only ownership is dropped.
+// false for the create-new path (a fresh group's template owner IS its owner).
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, cwd, caller, granter string, existing map[string]string) waveSpawnResult {
+	groupContext, cwd, caller, granter string, existing map[string]string, suppressOwner bool) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -169,12 +176,18 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			continue
 		}
 		if owner {
-			if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, granter); err != nil {
-				slog.Warn("wave spawn: grant owner failed",
-					"group", g.Name, "conv", outcome.ConvID, "error", err)
-				res.Error = "spawned, but grant-owner failed: " + err.Error()
-			} else {
-				res.Owner = true
+			switch {
+			case suppressOwner:
+				// Reinforce mode: never transfer ownership of an existing group.
+				res.OwnerDropped = true
+			default:
+				if err := db.AddAgentGroupOwner(g.ID, outcome.ConvID, granter); err != nil {
+					slog.Warn("wave spawn: grant owner failed",
+						"group", g.Name, "conv", outcome.ConvID, "error", err)
+					res.Error = "spawned, but grant-owner failed: " + err.Error()
+				} else {
+					res.Owner = true
+				}
 			}
 		}
 		for _, ov := range overrides {
@@ -462,7 +475,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd, c.Caller, c.Granter,
-		groupMemberNames(g))
+		groupMemberNames(g), c.SuppressOwner)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
