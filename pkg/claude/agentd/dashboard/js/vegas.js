@@ -231,6 +231,25 @@ export function setMusicVolume(pct) {
 // a removed <audio>.
 let cancelUnmuteArm = null;
 
+// connectionLost is raised by connection.js when the dashboard loses contact
+// with agentd (the 2s poll can't reach it). While it's set we force the radio
+// off and refuse to (re)start it — a disconnected dashboard shouldn't keep
+// streaming music as if nothing were wrong. connection.js clears it on
+// reconnect, which re-runs syncVegas() to restore the radio to the live state.
+let connectionLost = false;
+
+// setConnectionLost is called by connection.js on the disconnect/reconnect
+// edges. Raising it stops the music now (and syncVegas() below keeps it
+// stopped); clearing it reconciles the radio back to whatever the current
+// theme + master sound switch want.
+export function setConnectionLost(lost) {
+  lost = !!lost;
+  if (lost === connectionLost) return;
+  connectionLost = lost;
+  if (lost) stopMusic();
+  else syncVegas();
+}
+
 function startMusic() {
   const host = document.getElementById('vegas-player');
   if (!host) return;
@@ -590,6 +609,10 @@ function leaveVegasTabIfActive() {
 // first interaction. leaveVegasTabIfActive only fires when the features go
 // fully inactive, so merely muting the sound never kicks you off the tab.
 function syncVegas() {
+  // Disconnected from agentd — keep the radio off no matter what any theme /
+  // sound event asks for. connection.js re-runs us via setConnectionLost(false)
+  // when the link is back, at which point the checks below resume normally.
+  if (connectionLost) { stopMusic(); return; }
   if (isVegasActive()) {
     // For a fresh listener (no explicit saved/picked channel), keep the
     // station in step with the active theme — the wizard soundtrack opens on

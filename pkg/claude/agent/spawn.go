@@ -224,8 +224,6 @@ type SpawnParams struct {
 	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
-	Task           string `long:"task" optional:"true" help:"Task-reference link (http(s)) for the new agent — e.g. its Linear issue or GitHub PR. Rendered as a clickable label in the dashboard's Task column"`
-	TaskLabel      string `long:"task-label" optional:"true" help:"Optional display label overriding the auto-derived one for --task (Linear->JOH-xxx, GitHub->#nnn, else host)"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
 	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
@@ -244,6 +242,17 @@ type SpawnParams struct {
 
 	AutoFocus      bool `long:"auto-focus" help:"Open a terminal window attached to the new agent once it spawns (default: off — CLI spawns are usually programmatic; the dashboard's modal defaults this on)"`
 	NoGroupContext bool `long:"no-group-context" help:"Do not deliver the group's shared startup context to the new agent (default: the group context is included, same as every other spawn path)"`
+
+	// Task and TaskLabel take no short and are declared here — after every
+	// explicit-short field — for the same reason as Effort/Model/Harness
+	// below: boa's short-flag enricher assigns the first free letter in field
+	// order, so a no-short `--task` declared earlier would grab `-t` and then
+	// collide with `--timeout`'s explicit `-t` (a pflag duplicate-shorthand
+	// panic at command construction — the whole CLI, not just spawn). Declared
+	// after `--timeout` claims `-t`, both simply get no short.
+	// TestCommandTreeConstructs guards this class of regression.
+	Task      string `long:"task" optional:"true" help:"Task-reference link (http(s)) for the new agent — e.g. its Linear issue or GitHub PR. Rendered as a clickable label in the dashboard's Task column"`
+	TaskLabel string `long:"task-label" optional:"true" help:"Optional display label overriding the auto-derived one for --task (Linear->JOH-xxx, GitHub->#nnn, else host)"`
 
 	// Effort and Model are declared last so boa's short-flag enricher
 	// (which assigns the first free letter in field order) cannot steal

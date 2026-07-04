@@ -1024,7 +1024,7 @@ function memberActions(g, m, canRemote) {
     cloneAgentButton(m) + reincarnateAgentButton(m),
     removeMemberButton(g, m) + retireMemberButton(m),
   ]);
-  return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
+  return `<div class="row-actions">${focusHideButtons(m)}${retireIconButton(m)}${actionCog('row-menu', menu)}</div>`;
 }
 // cloneAgentButton renders a "clone" button for any row that
 // represents a single agent. Clone forks a sibling that inherits the
@@ -1142,6 +1142,14 @@ function webOpenWindowButton(m) {
 const EYE_OPEN_SVG = '<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_SVG = '<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
+// Trash-can glyph for the top-level "retire this agent" quick control —
+// the icon twin of the ⚙-menu "retire" item (retireMemberButton). Feather-
+// style inline SVG (MIT line icons) matching the eye pair: monochrome, it
+// inherits the button's text colour via stroke="currentColor", so it dims
+// and brightens with the rest of the row-action cluster. aria-hidden
+// because the host <button> carries the accessible name (aria-label).
+const TRASH_SVG = '<svg class="trash-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
 // focusHideButtons renders the window pair kept at the TOP LEVEL of a
 // member row: focus raises the agent's terminal window, hide detaches
 // it (the per-agent twin of the group "windows" bulk unfocus). They
@@ -1163,6 +1171,29 @@ function focusHideButtons(m) {
   const why = m.online ? '' : ' — unavailable while the agent is offline';
   return `<button class="icon-btn" data-act="jump" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Focus this agent's terminal window${why}" aria-label="Focus window"${dis}>${EYE_OPEN_SVG}</button>`
     + `<button class="icon-btn" data-act="hide" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(label)}" title="Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${why}" aria-label="Hide window"${dis}>${EYE_OFF_SVG}</button>`;
+}
+
+// retireIconButton renders the top-level 🗑 "retire this agent" quick
+// control that rides beside the ⚙ cog in the row-action cluster — the icon
+// twin of the ⚙-menu retire item (retireMemberButton). It carries the SAME
+// data-act="retire-agent" and the SAME conv-keyed selector (data-conv +
+// data-label, deliberately NO data-agent — see retireMemberButton for why
+// retire must stay conv-keyed, JOH-322), so the delegated dispatcher routes
+// it through the identical retireAgentInteractive → retireConfirm flow. It
+// exists to promote retire from a buried menu item to a one-click icon,
+// sparing the operator the menu (or the long drag-onto-Retired) for the
+// common "send this agent to the bin" action — the menu item stays for
+// discoverability, exactly as focus/hide live top-level while heavier
+// actions collect in the cog.
+//
+// Styled `warn` (not `danger`) to match the menu item's semantics: retire
+// is a REVERSIBLE demotion (reinstate), heavier than the group actions yet
+// lighter than a permanent delete — so on hover it lights amber, not red.
+// Always present and enabled: retiring an offline agent is valid (its
+// shutdown is then a no-op), matching both the menu item and the drag.
+function retireIconButton(m) {
+  const label = m.title || m.conv_id;
+  return `<button class="icon-btn warn" data-act="retire-agent" data-conv="${esc(m.conv_id)}" data-label="${esc(label)}" title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent">${TRASH_SVG}</button>`;
 }
 
 // actionCog renders the ⚙ "more actions" cog and its collapsed
@@ -1261,7 +1292,7 @@ function ungroupedMemberActions(m, canRemote) {
     retireMemberButton(m)
       + `<button class="danger" data-act="delete-agent" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" title="Permanently delete this conversation">delete</button>`,
   ]);
-  return `<div class="row-actions">${focusHideButtons(m)}${actionCog('row-menu', menu)}</div>`;
+  return `<div class="row-actions">${focusHideButtons(m)}${retireIconButton(m)}${actionCog('row-menu', menu)}</div>`;
 }
 
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.

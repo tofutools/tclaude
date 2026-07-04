@@ -1456,6 +1456,12 @@ tr:hover .agent-harness { color: #c9d1d9; }
   display: inline-flex; align-items: center; padding: 2px 6px;
 }
 .eye-ico { display: block; }
+/* The top-level 🗑 retire icon reuses the eye pair's icon-btn frame + the
+   .warn hover semantics (amber, reversible-demotion — never the red
+   `danger` of a permanent delete). Its glyph inherits currentColor like
+   the eyes, so it dims at rest and lights amber on hover via the shared
+   `.row-actions button.warn:hover` rule above. */
+.trash-ico { display: block; }
 .group-actions {
   display: inline-flex; gap: 4px; margin-left: 8px; position: relative;
   opacity: 0.4; transition: opacity 0.15s ease;
@@ -1891,6 +1897,54 @@ body.wizard .force-mission-label-wizard { display: inline; }
   display: none; align-items: center; justify-content: center; z-index: 100;
 }
 .modal-overlay.show { display: flex; }
+
+/* Disconnected overlay — connection.js adds .show when the 2s poll can't
+   reach agentd for FAIL_THRESHOLD consecutive ticks, and removes it the moment
+   a poll succeeds again. Deliberately NOT .modal-overlay: the auto-refresh
+   must keep polling beneath it to notice the reconnect, so it stays off the
+   refreshSuspended() selector. z-index sits above every modal/palette/toast
+   (ceiling 10001) so nothing can paint over the "you are disconnected"
+   message. */
+.disconnect-overlay {
+  position: fixed; inset: 0; z-index: 10050;
+  display: none; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.disconnect-overlay.show { display: flex; }
+.disconnect-card {
+  width: min(480px, calc(100vw - 48px));
+  text-align: center;
+  background: #21262d;
+  border: 2px solid #f85149;
+  border-radius: 12px;
+  padding: 32px 28px;
+  color: #c9d1d9;
+  box-shadow: 0 0 0 4px rgba(248,81,73,0.22), 0 18px 60px rgba(0,0,0,0.7);
+  animation: disconnect-pulse 1.6s ease-in-out infinite;
+}
+@keyframes disconnect-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(248,81,73,0.18), 0 18px 60px rgba(0,0,0,0.7); }
+  50%      { box-shadow: 0 0 0 9px rgba(248,81,73,0.40), 0 18px 60px rgba(0,0,0,0.7); }
+}
+.disconnect-icon { font-size: 56px; line-height: 1; margin-bottom: 12px; }
+.disconnect-title { margin: 0 0 10px; font-size: 24px; font-weight: 700; color: #f85149; }
+.disconnect-body { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: #adbac7; }
+.disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
+.disconnect-status::before {
+  content: ''; display: inline-block;
+  width: 8px; height: 8px; margin-right: 7px;
+  border-radius: 50%; background: #f85149; vertical-align: middle;
+  animation: disconnect-blink 1s steps(2, start) infinite;
+}
+@keyframes disconnect-blink { 50% { opacity: 0.25; } }
+/* Respect reduced-motion: keep the banner, drop the pulse/blink. */
+@media (prefers-reduced-motion: reduce) {
+  .disconnect-card { animation: none; }
+  .disconnect-status::before { animation: none; }
+}
 
 /* Command palette ("spotlight") — palette.js. It rides on .modal-overlay
    for the shared backdrop and the auto-refresh suspend, but anchors near
@@ -7673,6 +7727,31 @@ body.wizard .group-actions .cog-btn:focus-visible .cog-glyph {
 @keyframes wizard-cog-turn {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
+}
+
+/* ─── Wizard trash icon — the banishment sigil (body.wizard) ─────────
+   The top-level 🗑 retire icon that rides beside each row's cog becomes,
+   in the wizard reskin, a banishment sigil — retiring an agent is
+   "banishing" it (mirroring the retireConfirm title swap "Retire this
+   agent?" → "Banish this…"). At rest it wears the same tarnished-gold /
+   mystic-purple edge the wizard cogs wear, so the trash + cog read as a
+   matched clockwork pair; reach for it (hover/focus) and the sigil flares
+   to candle-gold with an arcane halo — a spell readied. The glow rides a
+   drop-shadow on the SVG (not the cog's text-shadow, which wouldn't wreath
+   an icon's strokes). Pure chrome — the button, its data-act and its
+   retire flow are untouched; only the look changes. */
+body.wizard .row-actions .icon-btn.warn {
+  color: #d9b45a;
+  border-color: #7a5db0;
+}
+body.wizard .row-actions .icon-btn.warn:hover,
+body.wizard .row-actions .icon-btn.warn:focus-visible {
+  color: #f3d98a;
+  border-color: #d9b45a;
+}
+body.wizard .row-actions .icon-btn.warn:hover .trash-ico,
+body.wizard .row-actions .icon-btn.warn:focus-visible .trash-ico {
+  filter: drop-shadow(0 0 4px rgba(217, 180, 90, 0.9));
 }
 
 /* The cog's dropdown — the little "spell list" of collected actions —
