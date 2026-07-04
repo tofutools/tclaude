@@ -268,6 +268,11 @@ function bindDnd() {
     // happened to bail. The explicit check keeps the two handlers cleanly
     // separated instead of relying on a parse failure.
     if (e.dataTransfer.types.includes('application/x-tclaude-group')) return;
+    // A dock profile/role drag (dock-dnd.js) likewise carries its own custom
+    // MIME and no text/plain; it opens the spawn dialog, never a membership
+    // move. Bail so this handler doesn't preventDefault + clear the shared pill
+    // on a dock drop before the JSON.parse below happened to fail on it.
+    if (e.dataTransfer.types.includes('application/x-tclaude-dock-item')) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     e.preventDefault();

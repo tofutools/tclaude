@@ -34,6 +34,7 @@ import { renameEditing } from './row-actions.js';
 import { closeTerminalsForWindowOp } from './terminals-tab.js';
 import { dndDragActive } from './dnd.js';
 import { groupReorderActive } from './group-reorder.js';
+import { dockDragActive } from './dock-dnd.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
@@ -79,6 +80,11 @@ function refreshSuspended({ ignoreModals = false } = {}) {
   // re-rendering the Groups tab would detach the dragged grip mid-drag and
   // lose the drag's own dragend cleanup (group-reorder.js).
   if (groupReorderActive) return true;
+  // A palette-dock drag is in flight (a profile/role card headed for a group) —
+  // same reasoning: re-rendering the dock (#dock-body morph) or the Groups tab
+  // would detach the drag source or the drop target mid-gesture and lose the
+  // drag's own dragend cleanup (dock-dnd.js).
+  if (dockDragActive) return true;
   // Any modal overlay is open (unless a force-refresh opted out — see the
   // ignoreModals note above).
   if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;
