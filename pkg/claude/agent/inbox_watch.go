@@ -137,8 +137,8 @@ func newInboxWatchModel(p *inboxWatchParams) *inboxWatchModel {
 	ti.Prompt = ""
 	ti.Placeholder = "Filter by subject / from / group…"
 	tiStyles := ti.Styles()
-	tiStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	tiStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	tiStyles.Focused.Placeholder = inboxHelpStyle
+	tiStyles.Blurred.Placeholder = inboxHelpStyle
 	ti.SetStyles(tiStyles)
 
 	return &inboxWatchModel{

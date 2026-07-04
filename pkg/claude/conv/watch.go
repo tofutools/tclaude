@@ -211,9 +211,9 @@ func newSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
 	s := ti.Styles()
-	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Focused.Placeholder = wHelpStyle
 	s.Focused.Text = wSearchStyle
-	s.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Blurred.Placeholder = wHelpStyle
 	s.Blurred.Text = wSearchStyle
 	ti.SetStyles(s)
 	return ti
@@ -251,7 +251,7 @@ func newSemanticInput() textarea.Model {
 	focused := textarea.StyleState{
 		Base:        lipgloss.NewStyle(),
 		Text:        wSemanticStyle,
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+		Placeholder: wHelpStyle,
 	}
 	styles := ta.Styles()
 	styles.Focused = focused
