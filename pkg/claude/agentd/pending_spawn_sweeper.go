@@ -136,6 +136,16 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return
 	}
 
+	claimed, err := db.ClaimPendingSpawn(ps.Label)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: claim failed",
+			"label", ps.Label, "conv", convID, "error", err)
+		return // transient — retry
+	}
+	if !claimed {
+		return // another back-fill path claimed it
+	}
+
 	// Reconstruct the spawnParams subset finishSpawnEnrollment consumes from
 	// the persisted intent, then back-fill the enrollment. This runs the same
 	// membership add + pending-name + inbox briefing + post-init (/rename +
@@ -172,13 +182,17 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		PermissionOverrides: ps.PermissionOverrides,
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
+		if err := db.InsertPendingSpawn(ps); err != nil {
+			slog.Warn("pending-spawn sweeper: enrollment failed and requeue failed",
+				"label", ps.Label, "conv", convID, "enroll_error", fail.Msg, "requeue_error", err)
+			return
+		}
 		slog.Warn("pending-spawn sweeper: enrollment failed; will retry",
 			"label", ps.Label, "conv", convID, "error", fail.Msg)
 		return // leave the row; retry next tick
 	}
 	slog.Info("pending-spawn sweeper: enrolled pending spawn",
 		"label", ps.Label, "conv", convID, "group", g.Name)
-	deletePendingSpawnRow(ps.Label)
 }
 
 // deletePendingSpawnRow removes a pending row, logging (not bubbling) a

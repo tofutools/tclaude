@@ -428,6 +428,16 @@ func SetAsyncSpawnInlineGraceForTest(d time.Duration) func() {
 	return func() { asyncSpawnInlineGrace = prev }
 }
 
+// SetCodexAsyncSpawnResponseGraceForTest shrinks the seed-needing harness
+// response grace separately from the background inline-discovery budget, so a
+// flow test can assert that the HTTP response returns Pending quickly while the
+// short back-fill still promotes the spawn when its conv-id appears soon after.
+func SetCodexAsyncSpawnResponseGraceForTest(d time.Duration) func() {
+	prev := codexAsyncSpawnResponseGrace
+	codexAsyncSpawnResponseGrace = d
+	return func() { codexAsyncSpawnResponseGrace = prev }
+}
+
 // RunPendingSpawnSweepForTest runs one pending-spawn sweep synchronously,
 // so a flow test can deterministically trigger the back-fill that enrolls a
 // pending spawn once its conv-id has materialised — without starting the

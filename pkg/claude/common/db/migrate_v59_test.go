@@ -159,3 +159,21 @@ func TestMigrateV58toV59_FreshSchemaRoundTrips(t *testing.T) {
 	// Deleting a missing row is idempotent.
 	require.NoError(t, DeletePendingSpawn("spwn-roundtrip"), "DeletePendingSpawn is idempotent")
 }
+
+func TestPendingSpawnClaim(t *testing.T) {
+	setupTestDB(t)
+
+	require.NoError(t, InsertPendingSpawn(&PendingSpawn{Label: "spwn-claim", GroupID: 42}))
+
+	claimed, err := ClaimPendingSpawn("spwn-claim")
+	require.NoError(t, err)
+	assert.True(t, claimed, "first claim wins")
+
+	gone, err := GetPendingSpawn("spwn-claim")
+	require.NoError(t, err)
+	assert.Nil(t, gone, "claim removes the pending row")
+
+	claimed, err = ClaimPendingSpawn("spwn-claim")
+	require.NoError(t, err)
+	assert.False(t, claimed, "second claim loses cleanly")
+}

@@ -1713,9 +1713,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 // length/charset-checked, reply-to resolved to a conv-id — so the
 // shared core does no HTTP-shaped validation of its own.
 type spawnParams struct {
-	Name           string
-	Role           string
-	Descr          string
+	Name  string
+	Role  string
+	Descr string
 	// TaskURL / TaskLabel are the optional per-agent task-reference link
 	// (the dashboard Task column). Validated at the spawn boundary
 	// (handleGroupSpawn) and persisted onto the new actor in
@@ -1887,6 +1887,13 @@ type spawnFailure struct {
 // A var, not a const, so a flow test can shrink it (SetAsyncSpawnInlineGrace-
 // ForTest) and drive the pending path without a multi-second real wait.
 var asyncSpawnInlineGrace = 6 * time.Second
+
+// codexAsyncSpawnResponseGrace bounds how long the HTTP spawn endpoint waits
+// for a seed-needing harness (Codex) before returning a visible Pending row.
+// Codex may still materialise its conv-id a second or two later, but that
+// wait should not keep the spawn modal open; a background back-fill continues
+// the old inline discovery window after the response returns.
+var codexAsyncSpawnResponseGrace = 750 * time.Millisecond
 
 // groupDefaultProfile loads the group's default spawn profile (JOH-210), or nil
 // when the group has none or the referenced row is missing/unreadable (the
@@ -2257,6 +2264,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if p.Async && asyncSpawnInlineGrace < pollBudget {
 		pollBudget = asyncSpawnInlineGrace
 	}
+	backgroundBackfillBudget := pollBudget
+	if p.Async && spawnHarness.NeedsSpawnSeed() && codexAsyncSpawnResponseGrace > 0 && codexAsyncSpawnResponseGrace < pollBudget {
+		pollBudget = codexAsyncSpawnResponseGrace
+	}
 	deadline := launchedAt.Add(pollBudget)
 	var convID, tmuxSession string
 	var lastDiscoveryScan time.Time
@@ -2308,7 +2319,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				break
 			}
 		}
-		time.Sleep(250 * time.Millisecond)
+		sleepSpawnPoll(deadline)
 	}
 
 	// Launch-enrollment path: the conv-id was PRESET, the enrollment
@@ -2348,27 +2359,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// needs.
 	if p.Async {
 		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
-		pending := &db.PendingSpawn{
-			Label:               label,
-			GroupID:             g.ID,
-			Role:                p.Role,
-			Descr:               p.Descr,
-			Name:                p.Name,
-			InitialMessage:      p.InitialMessage,
-			GroupContext:        p.GroupContext,
-			ReplyToConv:         p.ReplyToConv,
-			SpawnedByConv:       p.SpawnedByConv,
-			WorktreePath:        p.WorktreePath,
-			WorktreeBranch:      p.WorktreeBranch,
-			IsOwner:             p.IsOwner,
-			PermissionOverrides: p.PermissionOverrides,
-		}
-		if err := db.InsertPendingSpawn(pending); err != nil {
+		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
 				"spawned session " + label + " but failed to record it as pending: " + err.Error()}
 		}
 		slog.Info("spawn: conv-id not yet materialised; recorded pending spawn",
 			"label", label, "group", g.Name, "harness", p.Harness)
+		if spawnHarness.NeedsSpawnSeed() && backgroundBackfillBudget > pollBudget {
+			goBackground(func() {
+				backfillPendingSpawnInline(g, p, label, spawnHarness, launchedAt, backgroundBackfillBudget)
+			})
+		}
 		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
 	}
 
@@ -2377,6 +2378,124 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.PendingSpawn {
+	return &db.PendingSpawn{
+		Label:               label,
+		GroupID:             g.ID,
+		Role:                p.Role,
+		Descr:               p.Descr,
+		Name:                p.Name,
+		InitialMessage:      p.InitialMessage,
+		GroupContext:        p.GroupContext,
+		ReplyToConv:         p.ReplyToConv,
+		SpawnedByConv:       p.SpawnedByConv,
+		WorktreePath:        p.WorktreePath,
+		WorktreeBranch:      p.WorktreeBranch,
+		IsOwner:             p.IsOwner,
+		PermissionOverrides: p.PermissionOverrides,
+	}
+}
+
+// backfillPendingSpawnInline continues the old short Codex conv-id discovery
+// window after the HTTP response has already returned a Pending row. This keeps
+// the dashboard responsive while preserving the previous fast-path behavior:
+// a trusted Codex pane whose rollout appears seconds after launch is promoted
+// into the target group without waiting for the coarse pending-spawn sweeper.
+//
+// The sweep goroutine remains the restart-safe and long-lived fallback. This
+// helper deliberately stops at the original inline budget, so conv-store
+// discovery stays a seconds-wide launch-time heuristic rather than a minutes-
+// wide guess that could confuse concurrent pending Codex spawns in one cwd.
+func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h *harness.Harness, launchedAt time.Time, budget time.Duration) {
+	deadline := launchedAt.Add(budget)
+	var lastDiscoveryScan time.Time
+	for time.Now().Before(deadline) {
+		s, err := db.LoadSession(label)
+		if err != nil {
+			slog.Warn("spawn: pending inline back-fill load failed",
+				"label", label, "error", err)
+			sleepSpawnPoll(deadline)
+			continue
+		}
+		if s == nil {
+			return
+		}
+		convID := s.ConvID
+		if convID == "" && s.TmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
+			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
+			lastDiscoveryScan = time.Now()
+			if id := discoverSpawnedConvID(h, p.Cwd, launchedAt); id != "" {
+				if err := db.SetSessionConvID(label, id); err != nil {
+					slog.Warn("spawn: failed to persist discovered conv-id during pending back-fill",
+						"label", label, "conv", id, "error", err)
+				}
+				convID = id
+			}
+		}
+		if convID != "" {
+			completePendingSpawnBackfill(g, p, label, convID)
+			return
+		}
+		sleepSpawnPoll(deadline)
+	}
+}
+
+func sleepSpawnPoll(deadline time.Time) {
+	const interval = 250 * time.Millisecond
+	d := time.Until(deadline)
+	if d <= 0 {
+		return
+	}
+	if d > interval {
+		d = interval
+	}
+	time.Sleep(d)
+}
+
+func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID string) {
+	ps, err := db.GetPendingSpawn(label)
+	if err != nil {
+		slog.Warn("spawn: pending inline back-fill lookup failed",
+			"label", label, "conv", convID, "error", err)
+		return
+	}
+	if ps == nil {
+		return
+	}
+	claimed, err := db.ClaimPendingSpawn(label)
+	if err != nil {
+		slog.Warn("spawn: pending inline back-fill claim failed",
+			"label", label, "conv", convID, "error", err)
+		return
+	}
+	if !claimed {
+		return
+	}
+	if m, err := db.FindMemberInGroup(g.ID, convID); err != nil {
+		slog.Warn("spawn: pending inline back-fill membership check failed",
+			"label", label, "conv", convID, "error", err)
+		requeuePendingSpawn(label, ps)
+		return
+	} else if m != nil {
+		return
+	}
+	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
+		requeuePendingSpawn(label, ps)
+		slog.Warn("spawn: pending inline back-fill enrollment failed; sweeper will retry",
+			"label", label, "conv", convID, "error", fail.Msg)
+		return
+	}
+	slog.Info("spawn: pending inline back-fill enrolled spawn",
+		"label", label, "conv", convID, "group", g.Name)
+}
+
+func requeuePendingSpawn(label string, ps *db.PendingSpawn) {
+	if err := db.InsertPendingSpawn(ps); err != nil {
+		slog.Warn("spawn: failed to requeue claimed pending spawn",
+			"label", label, "error", err)
+	}
 }
 
 // finishSpawnEnrollment completes a spawn once its conv-id is known: it joins
