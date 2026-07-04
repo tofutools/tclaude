@@ -2530,6 +2530,13 @@ type groupSummary struct {
 	// or "deny" (force it off). Always serialized (the canonical token) so a
 	// consumer never has to guess between "absent" and "inherit".
 	RemoteControlPolicy string `json:"remote_control_policy"`
+	// Mission and SourceTemplate are the deploy provenance (JOH-245) carried
+	// on the group row. They are what tells a plain group apart from a deployed
+	// task force: `tclaude agent task-force ls` (JOH-346) filters on a
+	// non-empty SourceTemplate and shows the truncated mission. omitempty — a
+	// hand-built group carries neither, and plain `groups ls` ignores them.
+	Mission        string `json:"mission,omitempty"`
+	SourceTemplate string `json:"source_template,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -2614,6 +2621,8 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Archived:            g.IsArchived(),
 				NotifyMuted:         !g.NotifyEnabled,
 				RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl),
+				Mission:             g.Mission,
+				SourceTemplate:      g.SourceTemplate,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -3305,11 +3314,18 @@ type groupContextEntry struct {
 	// AgentID is the member's stable actor key — the canonical ID the CLI
 	// leads with; ConvID is the live generation behind it (kept as the
 	// snapshot/hover). "" when the conv is not a known agent.
-	AgentID           string  `json:"agent_id,omitempty"`
-	ConvID            string  `json:"conv_id"`
-	Title             string  `json:"title"`
-	Role              string  `json:"role,omitempty"`
-	Online            bool    `json:"online"`
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Online  bool   `json:"online"`
+	// Status is the member's settled hook status (idle / working /
+	// awaiting_* / exited …) — the SAME value stateForConvIn feeds the
+	// dashboard, so a caller classifying force liveness (JOH-346's
+	// task-force status) agrees with the dashboard force block's rollup:
+	// offline → dead, online+idle → idle, anything else in flight →
+	// working. Empty when no session row exists for the conv.
+	Status            string  `json:"status,omitempty"`
 	HasSnapshot       bool    `json:"has_snapshot"`
 	ContextPct        float64 `json:"context_pct"`
 	TokensInput       int64   `json:"tokens_input"`
@@ -3350,11 +3366,14 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		// there's no real context figure to show.
 		hasSnapshot := hasSession && snapshotPopulated(snap)
 		out = append(out, groupContextEntry{
-			AgentID:           peerAgentID(m.ConvID),
-			ConvID:            m.ConvID,
-			Title:             agent.FreshTitle(m.ConvID),
-			Role:              m.Role,
-			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
+			AgentID: peerAgentID(m.ConvID),
+			ConvID:  m.ConvID,
+			Title:   agent.FreshTitle(m.ConvID),
+			Role:    m.Role,
+			Online:  isConvOnlineIn(m.ConvID, aliveSessions),
+			// Settled status from the same reader the dashboard uses, so
+			// the CLI force-liveness rollup never disagrees about stalling.
+			Status:            stateForConvIn(m.ConvID, aliveSessions).Status,
 			HasSnapshot:       hasSnapshot,
 			ContextPct:        snap.ContextPct,
 			TokensInput:       snap.TokensInput,

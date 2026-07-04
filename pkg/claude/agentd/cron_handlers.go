@@ -59,9 +59,16 @@ type jobJSON struct {
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	LastRunAt       string `json:"last_run_at,omitempty"`
-	LastRunStatus   string `json:"last_run_status,omitempty"`
+	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
+	// a normal human enable/disable, or "group-retired" when a retire that
+	// emptied the target group auto-paused it. Surfaced so a reader can tell a
+	// tclaude-paused rhythm from a hand-paused one — `task-force status`
+	// (JOH-346) renders it as "disabled (auto: group-retired)". omitempty:
+	// only the exceptional auto-disabled state serializes.
+	DisabledReason string `json:"disabled_reason,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	LastRunAt      string `json:"last_run_at,omitempty"`
+	LastRunStatus  string `json:"last_run_status,omitempty"`
 }
 
 func toJobJSON(j *db.AgentCronJob) jobJSON {
@@ -80,6 +87,7 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
+		DisabledReason:  j.DisabledReason,
 		LastRunStatus:   j.LastRunStatus,
 	}
 	// For a group-target job, resolve the group's display name so the

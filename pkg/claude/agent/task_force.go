@@ -38,6 +38,8 @@ func taskForceCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskForceDeployCmd(),
+			taskForceLsCmd(),
+			taskForceStatusCmd(),
 			taskForceStandDownCmd(),
 		},
 	}.ToCobra()
