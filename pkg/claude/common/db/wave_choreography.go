@@ -57,6 +57,13 @@ type WaveChoreography struct {
 	// MaxWaitSeconds caps how long each wave's idle-gate waits before the next
 	// wave spawns anyway.
 	MaxWaitSeconds int `json:"max_wait_seconds"`
+	// SuppressOwner drops the per-agent template owner flag for every wave of
+	// this deploy — set when the roster is deployed INTO an existing group
+	// (reinforce mode), which never transfers ownership. Carried on the
+	// choreography so LATER waves honour it too, not just the synchronous first
+	// wave. Stored in the JSON `state` blob, so no schema change (omitempty keeps
+	// pre-existing create-new choreographies byte-identical on the wire).
+	SuppressOwner bool `json:"suppress_owner,omitempty"`
 
 	// --- progress cursor (advanced as waves land) ---
 
