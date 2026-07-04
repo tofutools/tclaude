@@ -4,10 +4,12 @@
 // A real group's HEADER (its <summary>, carrying data-group-reorder +
 // draggable, see render.js) is the drag handle: press the bare header and drag.
 // Where you DROP on a target group decides the gesture (see dropZone):
-//   - onto the target header's MIDDLE band → NEST the dragged group inside it
-//   - onto the target header's top/bottom edge → place it as a SIBLING before/
-//     after the target, adopting the target's OWN parent — so dropping a nested
-//     group onto a TOP-LEVEL group's edge pulls it back out to the top level.
+//   - onto the BULK of the target box (most of the header + its whole expanded
+//     body — a big, forgiving zone like the member-row DnD's whole-box target)
+//     → NEST the dragged group inside it
+//   - onto the thin top/bottom EDGE strip of the box → place it as a SIBLING
+//     before/after the target, adopting the target's OWN parent — so dropping a
+//     nested group onto a TOP-LEVEL group's edge pulls it back out to top level.
 // Sibling order is persisted as a JSON array of group names in dashPrefs under
 // GROUP_ORDER_KEY (a pure browser-view concern, every depth ordered by this one
 // flat list). The parent edge is server state (agent_groups.parent_id): a nest/
@@ -126,19 +128,6 @@ function reorderTarget(e) {
   return details;
 }
 
-// dropsBefore reports whether a drop on `details` should land the dragged
-// group BEFORE it (cursor in the top half) or AFTER it (bottom half).
-// Measured against the WHOLE <details> box, not just its <summary> header,
-// so an EXPANDED group's full area counts: hovering low over its open body
-// drops AFTER the entire group, and the after-indicator (drawn on the
-// <details>, see the CSS) sits below the expanded body — not tucked under
-// the header. A collapsed group's box is just its header, so it behaves the
-// same as before.
-function dropsBefore(e, details) {
-  const rect = details.getBoundingClientRect();
-  return e.clientY < rect.top + rect.height / 2;
-}
-
 // clearDropMarkers strips the insertion-line + nest-target classes from every
 // group.
 function clearDropMarkers() {
@@ -169,27 +158,31 @@ function isDescendantOrSelf(name, ancestor, byName) {
   return false;
 }
 
+// REORDER_EDGE is the height (px) of the thin strip at the very top / bottom of
+// a group box reserved for sibling REORDER; everything between is a generous
+// NEST zone. Capped at a third of the box so even a short collapsed header
+// still yields all three zones.
+const REORDER_EDGE = 12;
+
 // dropZone classifies a drag over a target group's box into one of three
-// gestures, using the target's HEADER band:
-//   'before' — cursor in the header's top strip → sibling, before target
-//   'after'  — cursor in the header's bottom strip (or below the header, over
-//              an expanded body) → sibling, after target
-//   'nest'   — cursor in the header's middle band → child OF target
-// The middle band is what makes "drag INTO a group" distinct from "reorder
-// next to it"; the edge strips give "drag back OUT" (dropping a nested group
-// onto a top-level group's edge re-parents it to top level).
+// gestures, measured against the WHOLE <details> box (like the member-row DnD's
+// whole-box target — a big, forgiving drop area):
+//   'before' — cursor in the box's top edge strip → sibling, before target
+//   'after'  — cursor in the box's bottom edge strip → sibling, after target
+//   'nest'   — anywhere in between (the bulk of the box, header + expanded body)
+//              → child OF target
+// The big middle makes "drag INTO a group" easy to hit; the thin edge strips
+// keep sibling reorder — and give "drag back OUT" (dropping a nested group onto
+// a top-level group's edge re-parents it to top level). When a group is
+// expanded, `closest` resolves to the INNERMOST group box under the cursor, so
+// hovering a child's area nests into the child, not the parent — the natural
+// tree behaviour.
 function dropZone(e, details) {
-  const summary = details.querySelector(':scope > summary');
-  const r = (summary || details).getBoundingClientRect();
-  if (summary && e.clientY >= r.top && e.clientY <= r.bottom) {
-    const rel = (e.clientY - r.top) / (r.height || 1);
-    if (rel < 0.3) return 'before';
-    if (rel > 0.7) return 'after';
-    return 'nest';
-  }
-  // Over the expanded body, below the header: reuse the whole-box midpoint so a
-  // low hover drops AFTER the whole group (matches the pre-nesting behaviour).
-  return dropsBefore(e, details) ? 'before' : 'after';
+  const r = details.getBoundingClientRect();
+  const edge = Math.min(REORDER_EDGE, r.height / 3);
+  if (e.clientY < r.top + edge) return 'before';
+  if (e.clientY > r.bottom - edge) return 'after';
+  return 'nest';
 }
 
 // resolveDrop turns a (dragName, targetName, zone) gesture into the concrete
