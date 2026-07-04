@@ -53,7 +53,13 @@ let dndSourceGroup = '';
 // from the <summary> header to the whole <details> so a release
 // anywhere over an expanded group lands in it. The DnD listeners share
 // this selector. The Conversations box is a drag SOURCE only.
-const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired]';
+//
+// #dnd-trash (the fixed drag-to-retire bin, dashboard.html) is also a
+// target: it carries data-dnd-target-retired, so every handler below —
+// which keys off that attribute — treats it exactly like the virtual
+// Retired group and routes a drop to runDndRetire. It is a plain <div>,
+// not a <details>, hence listed by id rather than the details[...] rules.
+const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired],#dnd-trash';
 // isCloneGesture: a Ctrl/Cmd-held drag onto a REAL-group box with a
 // non-retired source. Clone is meaningless for the virtual targets, and
 // a retired source always reinstates (never clones). dragover, dragenter
@@ -97,6 +103,21 @@ function updateDndPill(e, info) {
   // of the user's pointer. clientX/clientY on `dragover` events
   // jitter on some browsers; the offset masks that.
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
+}
+// showDndTrash / hideDndTrash toggle the fixed drag-to-retire bin. It is
+// revealed on dragstart ONLY for a source that a retire would actually
+// change — a real-group member or an ungrouped agent — and hidden again
+// on dragend. A retired row (already retired) or a plain conversation
+// (can't be retired) never shows the bin, mirroring the drop handler's
+// `if (sourceRetired || sourceConversation) return;` no-op guard, so the
+// bin is never a target that would do nothing.
+function showDndTrash(retireable) {
+  const bin = $('#dnd-trash');
+  if (bin && retireable) bin.classList.add('show');
+}
+function hideDndTrash() {
+  const bin = $('#dnd-trash');
+  if (bin) bin.classList.remove('show', 'dnd-drop-over');
 }
 function bindDnd() {
   // The whole <tr> is draggable="true", so a press on an in-row control
@@ -176,6 +197,11 @@ function bindDnd() {
     dndSourceConversation = sourceConversation;
     dndSourceRetired = sourceRetired;
     dndSourceGroup = sourceGroup || '';
+    // Reveal the fixed drag-to-retire bin for a retireable source (a
+    // real-group member or an ungrouped agent — not an already-retired
+    // row, not a plain conversation), so retiring never means dragging
+    // all the way to the possibly-offscreen Retired group.
+    showDndTrash(!sourceRetired && !sourceConversation);
     // dndDragActive (set above) is what suspends auto-refresh for the
     // duration of the drag — see refreshSuspended().
   });
@@ -192,6 +218,12 @@ function bindDnd() {
     dndSourceConversation = false;
     dndSourceRetired = false;
     dndSourceGroup = '';
+    // Hide the drag-to-retire bin alongside the flag resets, ahead of the
+    // DOM cleanup below: like those resets it must run on every drag-end
+    // outcome (drop, Escape-cancel, release over nothing), so it sits
+    // before any classList/query line that could in principle throw. It is
+    // itself null-guarded.
+    hideDndTrash();
     const row = e.target.closest('.dnd-draggable');
     if (row) row.classList.remove('dnd-source-row');
     // Clear any lingering hover highlight (Firefox sometimes fires

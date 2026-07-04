@@ -2300,6 +2300,73 @@ details[data-group-key].group-drop-after {
   border-color: #3fb950;
   color: #3fb950;
 }
+/* Drag-to-retire bin (#dnd-trash, in dashboard.html). A fixed target on
+   the right edge, hidden until a retireable agent row is dragged — dnd.js
+   toggles .show on dragstart/dragend. It carries data-dnd-target-retired,
+   so dnd.js's existing drop path treats it exactly like the virtual
+   "Retired" group and runs runDndRetire. Purpose: a retire target that is
+   always in reach, so you don't have to drag to the far-off Retired group.
+   Hidden state keeps pointer-events off so it never intercepts a click;
+   .show turns them on so it can receive the drag. */
+#dnd-trash {
+  position: fixed;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 250;
+  /* display:none when idle (not visibility:hidden) so the box has ZERO
+     layout footprint — it can never nudge the document's scrollWidth and
+     latch the sticky-bar hscroll-overflow state (hscroll.js). Mirrors the
+     sibling fixed overlay .dnd-mod-pill. .show flips it to flex; the
+     entrance slide is a keyframe (a display swap can't transition). */
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 108px;
+  padding: 16px 10px;
+  color: #8b949e;
+  background: rgba(22, 27, 34, 0.92);
+  border: 2px dashed #30363d;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: color 0.12s ease, border-color 0.12s ease,
+              background 0.12s ease, transform 0.12s ease;
+}
+#dnd-trash.show {
+  display: flex;
+  animation: dnd-trash-in 0.16s ease;
+}
+@keyframes dnd-trash-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(28px); }
+  to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+/* Hover / drag-over: dnd.js adds the shared .dnd-drop-over class. Go
+   danger-red and swell slightly so the drop feels armed. */
+#dnd-trash.dnd-drop-over {
+  color: #f85149;
+  border-color: #f85149;
+  border-style: solid;
+  background: rgba(77, 29, 29, 0.92);
+  transform: translateY(-50%) scale(1.08);
+}
+/* The icon + label are inert to the pointer so #dnd-trash itself is
+   always the drag event target — no child-boundary dragleave flicker. */
+.dnd-trash-icon, .dnd-trash-label { pointer-events: none; }
+.dnd-trash-icon { display: block; }
+/* The lid lifts open when the bin is armed (pivoting on its left hinge),
+   a small affordance that the drop will land. */
+.dnd-trash-lid {
+  transform-origin: 5px 7px;
+  transition: transform 0.12s ease;
+}
+#dnd-trash.dnd-drop-over .dnd-trash-lid { transform: rotate(-22deg); }
+.dnd-trash-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
 /* The virtual "Ungrouped" group: online agents in no group. Styled
    distinctly from real groups — a dashed left rule + muted name — so
    it reads as a derived bucket, not a real group you can operate on. */
