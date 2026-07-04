@@ -153,7 +153,7 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	// value is forwarded in the spawn body. Pins the JS/HTML so a JS-stale
 	// worktree (embedded assets) trips here rather than silently at integration.
 	must(`id="agent-spawn-ask-timeout"`, "spawn dialog has an AskUserQuestion-timeout selector")
-	must("h.can_ask_timeout && h.ask_timeout_modes", "the timeout row gates on the harness catalog's can_ask_timeout")
+	must("can: 'can_ask_timeout', modes: 'ask_timeout_modes'", "the timeout row gates on the harness catalog's can_ask_timeout (via the shared SPAWN_LAUNCH_SETTINGS table)")
 	must("body.ask_user_question_timeout = askTimeout", "the chosen AskUserQuestion timeout is sent in the spawn body")
 	// modal-profiles.js: the profile editor edits + persists the same field.
 	must(`id="profile-editor-ask-timeout"`, "profile editor has an AskUserQuestion-timeout selector")

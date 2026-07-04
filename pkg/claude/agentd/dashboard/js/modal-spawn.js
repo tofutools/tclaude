@@ -177,57 +177,11 @@ function applySpawnHarness(harnessName) {
   $('#agent-spawn-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#agent-spawn-model-codex-row').style.display = hasModelList ? 'none' : '';
 
-  const canSandbox = !!(h && h.can_sandbox && h.sandbox_modes && h.sandbox_modes.length);
-  const sandboxRow = $('#agent-spawn-sandbox-row');
-  sandboxRow.style.display = canSandbox ? '' : 'none';
-  if (canSandbox) {
-    const sandSel = $('#agent-spawn-sandbox');
-    // The default mode (Codex: the managed tclaude-agent profile) is flagged
-    // "(recommended)" in its label — data-driven off default_sandbox, so no
-    // mode name is hardcoded here. The option value stays the raw mode token.
-    sandSel.innerHTML = h.sandbox_modes
-      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_sandbox ? ' (recommended)' : ''}</option>`)
-      .join('');
-    // Pre-select the harness's secure default (the managed profile for Codex).
-    sandSel.value = h.default_sandbox || h.sandbox_modes[0];
-    applySpawnSandboxHint(h);
-  } else {
-    applySpawnSandboxHint(null);
-  }
-
-  // Permission mode (Claude Code's --permission-mode). Mirrors the sandbox row:
-  // a harness exposes approval modes via the catalog, and the row shows only
-  // when there are modes to offer (Codex has approval but surfaces no dialog
-  // modes yet → can_approval true but approval_modes empty → row hidden).
-  const canApproval = !!(h && h.can_approval && h.approval_modes && h.approval_modes.length);
-  $('#agent-spawn-approval-row').style.display = canApproval ? '' : 'none';
-  if (canApproval) {
-    const apprSel = $('#agent-spawn-approval');
-    apprSel.innerHTML = h.approval_modes
-      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_approval ? ' (recommended)' : ''}</option>`)
-      .join('');
-    apprSel.value = h.default_approval || h.approval_modes[0];
-    applySpawnApprovalHint(h);
-  } else {
-    applySpawnApprovalHint(null);
-  }
-
-  // AskUserQuestion idle-timeout (Claude Code's askUserQuestionTimeout, delivered
-  // via --settings). Mirrors the sandbox row: a harness exposes timeout values
-  // via the catalog, and the row shows only when there are values to offer
-  // (Codex has no AskUserQuestion dialog → can_ask_timeout false → row hidden).
-  const canAskTimeout = !!(h && h.can_ask_timeout && h.ask_timeout_modes && h.ask_timeout_modes.length);
-  $('#agent-spawn-ask-timeout-row').style.display = canAskTimeout ? '' : 'none';
-  if (canAskTimeout) {
-    const atSel = $('#agent-spawn-ask-timeout');
-    atSel.innerHTML = h.ask_timeout_modes
-      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_ask_timeout ? ' (recommended)' : ''}</option>`)
-      .join('');
-    atSel.value = h.default_ask_timeout || h.ask_timeout_modes[0];
-    applySpawnAskTimeoutHint(h);
-  } else {
-    applySpawnAskTimeoutHint(null);
-  }
+  // Reshape the catalog-driven launch selectors — sandbox / permission-mode /
+  // question-timeout — for this harness. Each shares one shape (capability flag +
+  // mode list + recommended default + live hint), so they're driven off a single
+  // spec table; see SPAWN_LAUNCH_SETTINGS for what each row is and why it hides.
+  for (const s of SPAWN_LAUNCH_SETTINGS) applySpawnLaunchSetting(h, s);
 
   // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
   // the user's ~/.codex/config.toml, so it is OFF by default and never
@@ -296,6 +250,72 @@ function applySpawnAskTimeoutHint(h) {
   const text = help[$('#agent-spawn-ask-timeout').value] || '';
   hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
   hintEl.classList.toggle('warn', text.includes('⚠'));
+}
+
+// SPAWN_LAUNCH_SETTINGS describes the three catalog-driven launch <select>s that
+// share one shape — a capability flag + a mode list + a recommended default + a
+// live hint line. applySpawnLaunchSetting (harness reshape) and
+// applyProfileLaunchSetting (profile pre-fill) both iterate this so the three
+// stay in lockstep; a fourth such setting is one more entry, not another copied
+// block. Each entry names the row/select element ids, the catalog fields, the
+// hint fn, and the profile field the value persists under.
+//   • sandbox     — Codex's native --sandbox / Claude Code's inherit|on|off
+//                   --settings override; hint calls out agentd-socket reachability.
+//   • approval    — Claude Code's --permission-mode; Codex has approval but no
+//                   dialog modes yet (can_approval, empty modes → row hidden);
+//                   hint flags modes unsafe for a DETACHED agent.
+//   • ask-timeout — Claude Code's askUserQuestionTimeout (via --settings); Codex
+//                   has no AskUserQuestion dialog → row hidden.
+const SPAWN_LAUNCH_SETTINGS = [
+  {
+    row: 'agent-spawn-sandbox-row', sel: 'agent-spawn-sandbox',
+    can: 'can_sandbox', modes: 'sandbox_modes', dflt: 'default_sandbox',
+    hint: applySpawnSandboxHint, profileField: 'sandbox',
+  },
+  {
+    row: 'agent-spawn-approval-row', sel: 'agent-spawn-approval',
+    can: 'can_approval', modes: 'approval_modes', dflt: 'default_approval',
+    hint: applySpawnApprovalHint, profileField: 'approval',
+  },
+  {
+    row: 'agent-spawn-ask-timeout-row', sel: 'agent-spawn-ask-timeout',
+    can: 'can_ask_timeout', modes: 'ask_timeout_modes', dflt: 'default_ask_timeout',
+    hint: applySpawnAskTimeoutHint, profileField: 'ask_user_question_timeout',
+  },
+];
+
+// applySpawnLaunchSetting reshapes one launch <select> (a SPAWN_LAUNCH_SETTINGS
+// entry) for the chosen harness: it reveals the row and populates the options
+// (flagging the harness's recommended default) when the harness offers modes for
+// it, hides the row otherwise, and drives the setting's live hint line either
+// way. Fully data-driven off the catalog — no mode name is hardcoded, and the
+// option value stays the raw mode token.
+function applySpawnLaunchSetting(h, spec) {
+  const on = !!(h && h[spec.can] && h[spec.modes] && h[spec.modes].length);
+  $('#' + spec.row).style.display = on ? '' : 'none';
+  if (!on) { spec.hint(null); return; }
+  const sel = $('#' + spec.sel);
+  const dflt = h[spec.dflt];
+  sel.innerHTML = h[spec.modes]
+    .map(m => `<option value="${esc(m)}">${esc(m)}${m === dflt ? ' (recommended)' : ''}</option>`)
+    .join('');
+  sel.value = dflt || h[spec.modes][0];
+  spec.hint(h);
+}
+
+// applyProfileLaunchSetting sets one launch <select> (a SPAWN_LAUNCH_SETTINGS
+// entry) from a loaded profile: it applies the profile's value only when the
+// profile carries it AND that value is one of the options the current harness
+// offers — else the field keeps the harness default applySpawnLaunchSetting set —
+// then refreshes the setting's hint.
+function applyProfileLaunchSetting(p, spec) {
+  const v = p[spec.profileField];
+  if (!v) return;
+  const sel = $('#' + spec.sel);
+  if ([...sel.options].some(o => o.value === v)) {
+    sel.value = v;
+    spec.hint(spawnHarnessByName($('#agent-spawn-harness').value));
+  }
 }
 
 // spawnAutoFocusPref reads the persisted "auto focus" checkbox state
@@ -605,27 +625,11 @@ function applyProfileToSpawnForm(p) {
     applyRememberedEffort(activeSpawnModelEl().value);
   }
 
-  if (p.sandbox) {
-    const sandSel = $('#agent-spawn-sandbox');
-    if ([...sandSel.options].some(o => o.value === p.sandbox)) {
-      sandSel.value = p.sandbox;
-      applySpawnSandboxHint(spawnHarnessByName($('#agent-spawn-harness').value));
-    }
-  }
-  if (p.approval) {
-    const apprSel = $('#agent-spawn-approval');
-    if ([...apprSel.options].some(o => o.value === p.approval)) {
-      apprSel.value = p.approval;
-      applySpawnApprovalHint(spawnHarnessByName($('#agent-spawn-harness').value));
-    }
-  }
-  if (p.ask_user_question_timeout) {
-    const atSel = $('#agent-spawn-ask-timeout');
-    if ([...atSel.options].some(o => o.value === p.ask_user_question_timeout)) {
-      atSel.value = p.ask_user_question_timeout;
-      applySpawnAskTimeoutHint(spawnHarnessByName($('#agent-spawn-harness').value));
-    }
-  }
+  // Sandbox / approval / question-timeout: apply the profile's value into
+  // whichever of these the harness offers (SPAWN_LAUNCH_SETTINGS), leaving a
+  // field the profile didn't set at the harness default applySpawnHarness gave it.
+  for (const s of SPAWN_LAUNCH_SETTINGS) applyProfileLaunchSetting(p, s);
+
   // trust_dir is a *bool — apply only when the profile set it (null = unset).
   // The row is Codex-only and hidden otherwise; setting the checkbox while
   // hidden is harmless (submit reads it only for Codex).
