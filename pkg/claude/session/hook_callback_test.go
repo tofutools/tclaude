@@ -317,6 +317,40 @@ func TestRunHookCallback_ForeignProcessHooksIgnored(t *testing.T) {
 	}
 }
 
+// A shell row (--harness shell) has no ConvID, ever, so the
+// foreign-process guard above — gated on state.ConvID != "" — can never
+// engage for one. runNewShell still exports TCLAUDE_SESSION_ID (goto/focus
+// need it), so a headless coding-harness run launched from inside the
+// shell (`claude -p "hi"`) inherits it and its hooks land against the
+// shell's row. Without the harness-gate this hijacks the row: the
+// throwaway conv-id gets stamped onto it and it flips to "exited" when the
+// foreign child ends, even though the shell itself is still alive.
+func TestRunHookCallback_ShellRowIgnoresAllHooks(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:      "shell-sess",
+		Harness: ShellHarnessName,
+		Status:  StatusRunning,
+	}))
+
+	feedHook(t, "shell-sess", map[string]any{
+		"hook_event_name": "SessionEnd",
+		"session_id":      "conv-throwaway",
+		"reason":          "other",
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("shell-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusRunning, got.Status,
+		"a foreign process's hook must not change the shell row's status")
+	assert.Equal(t, "", got.ConvID,
+		"a foreign process's hook must not stamp a conv-id onto the shell row")
+}
+
 // The announced-transition path: a SessionStart whose source names an
 // in-process conversation transition (clear/resume/compact) IS allowed
 // to carry a new conv-id — it records the announcement and the session

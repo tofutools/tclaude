@@ -504,6 +504,21 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 	slog.Info("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 
+	// A shell row never has a ConvID, so the foreign-process guard below
+	// (keyed off state.ConvID != "") can never engage for one. runNewShell
+	// still exports TCLAUDE_SESSION_ID (goto/focus need it), so a headless
+	// coding-harness run launched from inside the shell (`claude -p "hi"`,
+	// an interactive `claude`, …) inherits it and its hooks land here,
+	// against the shell's own row. Without this guard that hijacks the
+	// row: the throwaway conv-id gets stamped onto it, its PID gets
+	// rewritten via FindClaudePID, it gets enrolled as a dashboard agent,
+	// and it flips to "exited" when the child exits — while the shell
+	// itself is still alive. A shell row has no hooks of its own, ever,
+	// so drop every hook unconditionally.
+	if state.Harness == ShellHarnessName {
+		return nil
+	}
+
 	// Foreign-process guard. An env-keyed session's hooks normally all
 	// carry the conversation its row tracks. A hook carrying a DIFFERENT
 	// conv-id is one of two things:
