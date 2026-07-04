@@ -1720,6 +1720,11 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
    brings it back (refresh.js toggles the class off the snapshot each poll). */
 .group-descr { display: none; }
 body.show-group-description .group-descr { display: inline; }
+/* The group-create dialog's Descr input follows the same deprecation: no point
+   offering a field for a description that's hidden everywhere else. Hidden by
+   default, restored under the same opt-in body class. */
+.group-create-descr-row { display: none; }
+body.show-group-description .group-create-descr-row { display: flex; }
 .group-descr {
   font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
