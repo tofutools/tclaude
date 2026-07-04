@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,6 +214,106 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	assert.Equal(t, "grant",
 		mustOverrides(t, decodeScribeResp(t, rec).ConvID)[agentd.PermTemplatesManage],
 		"authorised agent's scribe carries the grant")
+}
+
+// Scenario: the JOH-369 fix. A summon spawns the scribe into the stable,
+// shared, pre-trusted workdir (~/.tclaude/scribe) — NOT $HOME — so its
+// detached pane can start unprompted; the CC folder-trust store is pre-seeded
+// for that dir; and a reuse-if-alive click keeps the SAME cwd (the dir must
+// never move under a cwd-bound CC conversation).
+func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	// Paths derived from the flow's temp HOME (World.New t.Setenv's HOME to it,
+	// so summonScribe's os.UserHomeDir() resolves here — no real ~ is touched).
+	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+
+	summon := func() scribeSummonResp {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+			map[string]any{
+				"name":  "circle-scribe",
+				"slugs": []string{agentd.PermTemplatesManage},
+				"brief": "Edit summoning circles.",
+			})))
+		require.Equalf(t, http.StatusOK, rec.Code, "summon body=%s", rec.Body.String())
+		return decodeScribeResp(t, rec)
+	}
+
+	first := summon()
+	require.False(t, first.Reused, "first summon spawns")
+
+	// (1) The scribe spawned with cwd = the shared workdir — observed at the
+	// SessionRow surface (what conv/session lookups walk), exactly how other
+	// spawn flow tests observe the launch cwd.
+	sessions, err := db.FindSessionsByConvID(first.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions, "the scribe has a session row")
+	assert.Equal(t, wantCwd, sessions[0].Cwd, "scribe spawns in the shared ~/.tclaude/scribe workdir, not $HOME")
+
+	// (2) The workdir was actually created on disk.
+	fi, err := os.Stat(wantCwd)
+	require.NoError(t, err, "the scribe workdir exists")
+	assert.True(t, fi.IsDir(), "the scribe workdir is a directory")
+
+	// (3) The CC folder-trust store was pre-seeded for that dir, so an
+	// interactive CC start there won't raise the trust dialog.
+	assert.True(t, claudeDirTrusted(t, claudeJSON, wantCwd),
+		"~/.claude.json marks the scribe workdir hasTrustDialogAccepted=true")
+
+	// (4) Reuse-if-alive keeps the SAME cwd — the dir is stable under the
+	// cwd-bound CC conversation.
+	second := summon()
+	require.True(t, second.Reused, "second summon reuses the live scribe")
+	require.Equal(t, first.ConvID, second.ConvID)
+	sessions2, err := db.FindSessionsByConvID(second.ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions2)
+	assert.Equal(t, wantCwd, sessions2[0].Cwd, "reuse keeps the same stable workdir")
+}
+
+// Scenario: trust-seeding is best-effort. A malformed ~/.claude.json (which
+// makes the CC trust editor refuse) must NOT fail the summon — the scribe
+// still spawns (worst case it sees a one-time trust dialog), and the daemon
+// leaves the broken config untouched rather than corrupting it further.
+func TestScribeSummon_ProceedsWhenClaudeConfigMalformed(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+	const garbage = "{ this is not valid json ][" // parse fails → editor refuses
+	require.NoError(t, os.WriteFile(claudeJSON, []byte(garbage), 0o600))
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name":  "circle-scribe",
+			"slugs": []string{agentd.PermTemplatesManage},
+			"brief": "Edit summoning circles.",
+		})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon must succeed despite a malformed CC config; body=%s", rec.Body.String())
+	resp := decodeScribeResp(t, rec)
+	require.NotEmpty(t, resp.ConvID, "the scribe still spawned")
+
+	// The daemon did not touch the broken file (best-effort skip, not a rewrite).
+	after, err := os.ReadFile(claudeJSON)
+	require.NoError(t, err)
+	assert.Equal(t, garbage, string(after), "a malformed CC config is left untouched, not corrupted further")
+}
+
+// claudeDirTrusted reports whether ~/.claude.json marks dir as
+// hasTrustDialogAccepted=true — the surface Claude Code reads at startup.
+func claudeDirTrusted(t *testing.T, claudeJSONPath, dir string) bool {
+	t.Helper()
+	data, err := os.ReadFile(claudeJSONPath)
+	require.NoErrorf(t, err, "read %s", claudeJSONPath)
+	var root struct {
+		Projects map[string]struct {
+			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(data, &root))
+	return root.Projects[dir].HasTrustDialogAccepted
 }
 
 // mustOverrides is a tiny read helper for the per-conv override map.

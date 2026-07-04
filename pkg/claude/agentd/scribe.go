@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Scribe summon (JOH-361) — the reusable "summon a pre-briefed, pre-granted
@@ -32,8 +35,11 @@ import (
 //     group-bound (no group-less spawn primitive), and an eponymous group makes
 //     reuse-if-alive an unambiguous name lookup rather than a global
 //     title-selector guess.
-//   - Neutral cwd (the human's home): a scribe edits daemon-side state through
-//     the `tclaude agent` CLI, so it needs no repo checkout.
+//   - Stable, shared, pre-trusted cwd (~/.tclaude/scribe, NOT $HOME): a scribe
+//     edits daemon-side state through the `tclaude agent` CLI, so it needs no
+//     repo checkout — but it does need a directory it can START in unprompted.
+//     $HOME made the harness ask the human to approve the folder on every
+//     launch (JOH-369). See scribeWorkdir for why the dir is stable + shared.
 
 // scribeGroupDescr is the descr stamped on a scribe's eponymous group so the
 // Groups tab explains what the stray one-member group is.
@@ -192,16 +198,11 @@ func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
 var scribeSummonMu sync.Mutex
 
 // summonScribe is the reusable core: ensure the scribe's eponymous group,
-// reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one with the
-// birth-time grants and auto-focus. Neutral cwd = the human's home.
+// reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one in the
+// shared, pre-trusted scribe workdir with the birth-time grants and auto-focus.
 func summonScribe(name string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory: " + err.Error()}
-	}
 
 	g, fail := ensureScribeGroup(name)
 	if fail != nil {
@@ -211,7 +212,8 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 	// Reuse-if-alive: a repeat click on a live scribe re-grants the slugs
 	// (idempotent — covers a widened slug set), re-briefs it (a repeat click may
 	// carry a fresh scope: library-wide vs one specific template), and just
-	// re-opens its window.
+	// re-opens its window. The live scribe already spawned into the trusted
+	// workdir, so no dir/trust work is needed on this path.
 	if convID := aliveScribeConv(g); convID != "" {
 		grantScribeSlugs(convID, overrides)
 		rebriefScribe(convID, brief)
@@ -227,13 +229,22 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 	// rows across restarts — exactly the litter reuse-if-alive exists to avoid.
 	pruneDeadScribes(g)
 
+	// Resolve + create the shared scribe workdir and pre-trust it for the
+	// harness this scribe will launch on, so its detached pane comes up without
+	// a folder-trust prompt (JOH-369).
+	cwd, fail := ensureScribeWorkdir()
+	if fail != nil {
+		return nil, fail
+	}
+	seedScribeDirTrust(scribeSpawnHarness(g), cwd)
+
 	// executeSpawn enrolls the scribe into its group, applies the birth-time
 	// grants (enrollSpawnedConv), delivers the brief to its inbox and —
 	// AutoFocus — opens its terminal window. Synchronous (Async left false) so
 	// the conv-id materialises for the grants + the response.
 	p := spawnParams{
 		Name:                name,
-		Cwd:                 home,
+		Cwd:                 cwd,
 		InitialMessage:      brief,
 		AutoFocus:           true,
 		PermissionOverrides: overrides,
@@ -247,6 +258,75 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 		out.FocusWS = spawnFocusWSPath(outcome.Label)
 	}
 	return out, nil
+}
+
+// scribeWorkdir returns the ONE shared workdir all scribes spawn into,
+// ~/.tclaude/scribe. Deliberately flat and shared across every scribe kind
+// (JOH-369, revised from a per-name dir): a per-name dir would fire the
+// harness's folder-trust prompt once PER scribe kind (every future JOH-362
+// scribe — profiles, roles, … — re-prompting), whereas one shared path is
+// trusted ONCE, ever. Still stable (not a per-summon temp dir), so a scribe's
+// CC conversation — which is cwd-bound — resumes/reuses from the same place and
+// the path-attached trust holds. Accepted trade-off: all scribes share this
+// dir's CC per-project memory (a shared "scribe house" know-how; revisit
+// per-kind isolation only if cross-contamination ever bites).
+func scribeWorkdir() (string, bool) {
+	dir := config.ConfigDir() // ~/.tclaude, or "" if home can't be resolved
+	if dir == "" {
+		return "", false
+	}
+	return filepath.Join(dir, "scribe"), true
+}
+
+// ensureScribeWorkdir resolves and creates the shared scribe workdir. 0700:
+// it's a private per-user scratch dir agents operate in — no need for group /
+// other access.
+func ensureScribeWorkdir() (string, *spawnFailure) {
+	dir, ok := scribeWorkdir()
+	if !ok {
+		return "", &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory for scribe workdir"}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", &spawnFailure{http.StatusInternalServerError, "workdir", "create scribe workdir: " + err.Error()}
+	}
+	return dir, nil
+}
+
+// scribeSpawnHarness reports the harness this scribe summon will actually
+// launch on. A scribe leaves --harness unset, so it follows the eponymous
+// group's default spawn profile (a bare scribe group has none → the default
+// harness). Mirrors the resolution executeSpawn → applyDefaultProfile performs,
+// so the dir we pre-trust matches the harness that will read the trust store.
+func scribeSpawnHarness(g *db.AgentGroup) string {
+	if prof := groupDefaultProfile(g); prof != nil {
+		return harnessOrDefault(prof.Harness)
+	}
+	return harness.DefaultName
+}
+
+// seedScribeDirTrust pre-trusts the shared scribe workdir for the given harness
+// so a detached scribe pane never freezes on a folder-trust prompt (JOH-369).
+// Best-effort by design: a failure logs and the summon proceeds — the worst
+// case is a single one-time trust dialog the human clears via the pane's focus
+// button, never a failed summon. Human-consented by construction: it only ever
+// pre-trusts the daemon-created scribe dir, never a caller-supplied path.
+func seedScribeDirTrust(harnessName, dir string) {
+	switch harnessName {
+	case harness.CodexName:
+		if err := harness.EnsureCodexDirTrusted(dir); err != nil {
+			slog.Warn("scribe: pre-trust codex workdir failed", "dir", dir, "error", err)
+		}
+	case harness.DefaultName: // "claude"
+		if err := harness.EnsureClaudeDirTrusted(dir); err != nil {
+			slog.Warn("scribe: pre-trust claude workdir failed", "dir", dir, "error", err)
+		}
+	default:
+		// A harness with no known trust store (or one added later without a
+		// seeding path wired here). Skip rather than guess — the pane may raise
+		// a one-time trust prompt the human clears via its focus button.
+		slog.Warn("scribe: no dir-trust seeding for harness; pane may prompt once",
+			"harness", harnessName, "dir", dir)
+	}
 }
 
 // ensureScribeGroup returns the scribe's eponymous group, creating it on first
