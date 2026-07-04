@@ -3065,6 +3065,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       saveBtn.removeEventListener('click', onSave);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
+      overlay.removeEventListener('mousedown', onMouseDown);
       overlay.removeEventListener('input', markDirty);
       overlay.removeEventListener('change', markDirty);
       autoEl.removeEventListener('change', onAuto);
@@ -3112,7 +3113,17 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       cleanup(Object.keys(out).length === 0 ? 'noop' : out);
     };
     const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) tryDismiss(); };
+    // Gesture guard (mirrors bindBackdropDiscard): only treat a click as a
+    // backdrop dismiss when the mousedown ALSO originated on the backdrop, so
+    // a text-selection drag out of the description textarea (or a scrollbar
+    // drag) that releases on the backdrop doesn't dismiss the form.
+    let pressedOnBackdrop = false;
+    const onMouseDown = (e) => { pressedOnBackdrop = (e.target === overlay); };
+    const onOverlay = (e) => {
+      const isBackdrop = (e.target === overlay) && pressedOnBackdrop;
+      pressedOnBackdrop = false;
+      if (isBackdrop) tryDismiss();
+    };
     const onKey = (e) => {
       // While the Permissions editor is stacked on top (it opens from
       // this modal's Permissions… button), it owns the keyboard — let
@@ -3140,6 +3151,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     saveBtn.addEventListener('click', onSave);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
+    overlay.addEventListener('mousedown', onMouseDown);
     overlay.addEventListener('input', markDirty);
     overlay.addEventListener('change', markDirty);
     autoEl.addEventListener('change', onAuto);
