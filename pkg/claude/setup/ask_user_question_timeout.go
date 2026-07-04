@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -33,7 +34,7 @@ import (
 // value the operator runs with. It is one of Claude Code's options
 // (never|60s|5m|10m); "5m" gives an unattended agent a few minutes to be
 // answered before it proceeds on its own.
-const recommendedAskTimeout = "5m"
+const recommendedAskTimeout = harness.ClaudeAskTimeout5m
 
 // askTimeoutSettingsKey is the top-level settings.json key Claude Code reads the
 // AskUserQuestion idle-timeout from.
@@ -109,6 +110,40 @@ func writeClaudeAskTimeout(settingsPath, value string) error {
 	return os.WriteFile(settingsPath, append(out, '\n'), mode)
 }
 
+// askTimeoutStatus classifies the current AskUserQuestion-timeout state of the
+// user-level settings.json, so the configure and --check paths detect it
+// identically and only differ in how they render each state.
+type askTimeoutStatus int
+
+const (
+	askTimeoutNoPath  askTimeoutStatus = iota // settings path undeterminable
+	askTimeoutReadErr                         // settings.json corrupt / unreadable
+	askTimeoutNever                           // key present and explicitly "never"
+	askTimeoutSet                             // key present with an interval
+	askTimeoutAbsent                          // key not present
+)
+
+// detectAskTimeoutStatus resolves the AskUserQuestion-timeout state from
+// settingsPath — the shared classifier behind both configureAskUserQuestionTimeout
+// and checkAskUserQuestionTimeout. value carries the interval for askTimeoutSet;
+// err carries the read error for askTimeoutReadErr (nil otherwise).
+func detectAskTimeoutStatus(settingsPath string) (status askTimeoutStatus, value string, err error) {
+	if settingsPath == "" {
+		return askTimeoutNoPath, "", nil
+	}
+	value, present, err := readClaudeAskTimeout(settingsPath)
+	switch {
+	case err != nil:
+		return askTimeoutReadErr, "", err
+	case present && value == harness.ClaudeAskTimeoutNever:
+		return askTimeoutNever, value, nil
+	case present:
+		return askTimeoutSet, value, nil
+	default:
+		return askTimeoutAbsent, "", nil
+	}
+}
+
 // configureAskUserQuestionTimeout handles the "=== AskUserQuestion Timeout ==="
 // install step.
 //
@@ -120,24 +155,22 @@ func writeClaudeAskTimeout(settingsPath, value string) error {
 // setup only prints the advice, matching the "don't modify by default" policy.
 func configureAskUserQuestionTimeout(params *Params) {
 	settingsPath := session.ClaudeSettingsPath()
-	if settingsPath == "" {
+	status, value, err := detectAskTimeoutStatus(settingsPath)
+	switch status {
+	case askTimeoutNoPath:
 		fmt.Println("  Warning: could not determine Claude Code settings path — skipping")
 		return
-	}
-
-	value, present, err := readClaudeAskTimeout(settingsPath)
-	switch {
-	case err != nil:
+	case askTimeoutReadErr:
 		// Never rewrite an unparseable settings.json — it also holds hooks,
 		// permissions, sandbox config. Warn and leave it for the operator.
 		fmt.Printf("  ⚠ Could not read %s (%v) — leaving it untouched\n", settingsPath, err)
 		return
-	case present && value == "never":
-		fmt.Println("  Claude Code askUserQuestionTimeout is set to \"never\" in your config — leaving it as-is.")
-		fmt.Println("  (unattended agents will WAIT for a human on a question; set an interval like \"5m\" to")
+	case askTimeoutNever:
+		fmt.Printf("  Claude Code askUserQuestionTimeout is set to %q in your config — leaving it as-is.\n", harness.ClaudeAskTimeoutNever)
+		fmt.Printf("  (unattended agents will WAIT for a human on a question; set an interval like %q to\n", recommendedAskTimeout)
 		fmt.Println("   auto-continue, or override per-agent in the dashboard spawn dialog / profile editor)")
 		return
-	case present:
+	case askTimeoutSet:
 		fmt.Printf("✓ AskUserQuestion auto-continue timeout already set to %q\n", value)
 		return
 	}
@@ -173,20 +206,18 @@ func configureAskUserQuestionTimeout(params *Params) {
 // `tclaude setup --check`. Read-only — it never writes.
 func checkAskUserQuestionTimeout() {
 	settingsPath := session.ClaudeSettingsPath()
-	if settingsPath == "" {
+	status, value, err := detectAskTimeoutStatus(settingsPath)
+	switch status {
+	case askTimeoutNoPath:
 		fmt.Println("⚠ Could not determine Claude Code settings path")
-		return
-	}
-	value, present, err := readClaudeAskTimeout(settingsPath)
-	switch {
-	case err != nil:
+	case askTimeoutReadErr:
 		fmt.Printf("⚠ Could not read settings.json: %v\n", err)
-	case present && value == "never":
-		fmt.Println("  askUserQuestionTimeout is \"never\" (unattended agents wait for a human)")
-		fmt.Println("  Set an interval like \"5m\", or override per-agent in the dashboard")
-	case present:
+	case askTimeoutNever:
+		fmt.Printf("  askUserQuestionTimeout is %q (unattended agents wait for a human)\n", harness.ClaudeAskTimeoutNever)
+		fmt.Printf("  Set an interval like %q, or override per-agent in the dashboard\n", recommendedAskTimeout)
+	case askTimeoutSet:
 		fmt.Printf("✓ askUserQuestionTimeout set to %q (unattended agents auto-continue)\n", value)
-	default:
+	default: // askTimeoutAbsent
 		fmt.Println("✗ askUserQuestionTimeout not set — unattended agents will stall on a question")
 		fmt.Println("  Run 'tclaude setup' to set it, or override per-agent in the dashboard spawn dialog")
 	}

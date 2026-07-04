@@ -80,6 +80,92 @@ func TestConfigureAskTimeout_PresentNeverRespected(t *testing.T) {
 	assert.Equal(t, "never", got, "never must be untouched")
 }
 
+// An interactive run (not --yes) that ACCEPTS the prompt writes the recommended
+// interval — the one path that actually mutates settings.json.
+func TestConfigureAskTimeout_InteractiveAcceptWrites(t *testing.T) {
+	tempHome(t)
+
+	var out string
+	withStdin(t, "y\n", func() {
+		out = captureStdout(t, func() {
+			configureAskUserQuestionTimeout(&Params{Yes: false})
+		})
+	})
+	assert.Contains(t, out, `set to "5m"`, "the accepted write is confirmed")
+
+	got, ok := readAskTimeoutFromDisk(t)
+	require.True(t, ok, "accepting the prompt must write the key")
+	assert.Equal(t, "5m", got, "the recommended interval is written")
+}
+
+// Declining the interactive prompt leaves settings.json untouched — no key is
+// written and the step reports it was skipped.
+func TestConfigureAskTimeout_InteractiveDeclineSkips(t *testing.T) {
+	tempHome(t)
+
+	var out string
+	withStdin(t, "n\n", func() {
+		out = captureStdout(t, func() {
+			configureAskUserQuestionTimeout(&Params{Yes: false})
+		})
+	})
+	assert.Contains(t, out, "Skipped", "declining is reported")
+
+	_, ok := readAskTimeoutFromDisk(t)
+	assert.False(t, ok, "declining must not write the key")
+}
+
+// A corrupt settings.json is never rewritten: it also carries hooks,
+// permissions and sandbox config, so the configure step warns and leaves the
+// file byte-for-byte as it found it.
+func TestConfigureAskTimeout_CorruptSettingsLeftUntouched(t *testing.T) {
+	tempHome(t)
+	const corrupt = `{ this is not valid json `
+	seedSettings(t, corrupt)
+
+	out := captureStdout(t, func() {
+		configureAskUserQuestionTimeout(&Params{Yes: true})
+	})
+	assert.Contains(t, out, "Could not read", "a corrupt file is reported, not clobbered")
+
+	data, err := os.ReadFile(session.ClaudeSettingsPath())
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, string(data), "the corrupt file must be left untouched")
+}
+
+// checkAskUserQuestionTimeout is the read-only `--check` reporter. It classifies
+// each on-disk state through the shared detectAskTimeoutStatus and prints a
+// distinct line per state; it never writes.
+func TestCheckAskUserQuestionTimeout_ReportsStates(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		tempHome(t)
+		out := captureStdout(t, checkAskUserQuestionTimeout)
+		assert.Contains(t, out, "not set", "an absent key is flagged")
+	})
+
+	t.Run("interval", func(t *testing.T) {
+		tempHome(t)
+		seedSettings(t, `{"askUserQuestionTimeout":"5m"}`)
+		out := captureStdout(t, checkAskUserQuestionTimeout)
+		assert.Contains(t, out, `set to "5m"`, "an interval is reported")
+		assert.Contains(t, out, "auto-continue", "with the agentic hint")
+	})
+
+	t.Run("never", func(t *testing.T) {
+		tempHome(t)
+		seedSettings(t, `{"askUserQuestionTimeout":"never"}`)
+		out := captureStdout(t, checkAskUserQuestionTimeout)
+		assert.Contains(t, out, `is "never"`, "a deliberate never is reported")
+	})
+
+	t.Run("corrupt", func(t *testing.T) {
+		tempHome(t)
+		seedSettings(t, `{ not json `)
+		out := captureStdout(t, checkAskUserQuestionTimeout)
+		assert.Contains(t, out, "Could not read settings.json", "a corrupt file is reported")
+	})
+}
+
 // The writer sets the key while preserving every other key and the file's
 // (private 0600) permission mode — the same care as enableFullscreenTUI.
 func TestWriteClaudeAskTimeout_PreservesOthersAndMode(t *testing.T) {
