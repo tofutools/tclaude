@@ -16,6 +16,13 @@ import {
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, toast, openCleanupModal, openDeleteRetiredPreview, bindBackdropDiscard } from './refresh.js';
+// Party profile picker (JOH-356): the create-group dialog can start from a
+// template / summoning circle. The circle readback + roster preview reuse the
+// shared template helpers, and the "⧉ manage circles…" affordance opens the
+// same templates manager the Groups cog does. wizWord swaps the vocabulary for
+// 🧙 wizard mode in the JS-rendered spots (dropdown options, toasts).
+import { openTemplatesManageModal, templateReadbackBadges, templateRosterRowsHTML } from './modal-templates.js';
+import { wizWord } from './slop.js';
 
 
 // --- one-shot message modal -----------------------------------------
@@ -535,15 +542,114 @@ function bindPermEditModal() {
 }
 
 // ---- Group create modal -------------------------------------------------
+//
+// The dialog creates an EMPTY group by default ("(blank party)"), but can also
+// start from a template / summoning circle (JOH-356): pick a circle and the
+// group's own editable copy of descr / startup context is prefilled, a roster
+// readback appears, the per-instantiation Task field is surfaced, and submit
+// routes through the template instantiate path (spawns the whole roster) instead
+// of the empty-group create. Agent : spawn-profile :: party : template.
 
-function openGroupCreateModal() {
+// gcTemplateCache holds a freshly-fetched template list for the picker, or null
+// to fall back to the live snapshot. It exists because opening "⧉ manage
+// circles…" stacks the templates manager over this (refresh-suspending) modal,
+// so lastSnapshot.templates goes stale while a circle is created/edited there —
+// on the manager's close we fetch /api/templates directly and hold the result
+// here so a just-created circle is not only visible in the dropdown but also
+// resolvable (selectable + submittable) by every reader below.
+let gcTemplateCache = null;
+
+// groupCreateTemplates returns the templates the picker should offer — the
+// freshly-fetched list when we have one (after managing circles), else the live
+// snapshot.
+function groupCreateTemplates() {
+  if (gcTemplateCache) return gcTemplateCache;
+  return (lastSnapshot && lastSnapshot.templates) || [];
+}
+
+// selectedGroupCreateTemplate resolves the party-profile dropdown's current
+// value to its full template object, or null for "(blank party)".
+function selectedGroupCreateTemplate() {
+  const name = $('#group-create-template').value;
+  if (!name) return null;
+  return groupCreateTemplates().find(t => t.name === name) || null;
+}
+
+// populateGroupCreateTemplates fills the party-profile dropdown with a blank
+// default + every template. preset preselects a named circle (the redirected
+// "from template" cog shortcut); a preset that no longer exists falls back to
+// blank. Preserves nothing else — callers re-apply the selection's effects.
+function populateGroupCreateTemplates(preset) {
+  const sel = $('#group-create-template');
+  const templates = groupCreateTemplates();
+  const opts = [`<option value="">${wizWord('(blank party)', '(no circle — a blank party)')}</option>`];
+  for (const t of templates) opts.push(`<option value="${esc(t.name)}">${esc(t.name)}</option>`);
+  sel.innerHTML = opts.join('');
+  if (preset && templates.some(t => t.name === preset)) sel.value = preset;
+}
+
+// applyGroupCreateTemplate reacts to a party-profile selection: prefill the
+// group's OWN editable copy of descr / startup context from the picked circle
+// (or clear them back for "(blank party)"), toggle the Task field + roster
+// preview + Max-members visibility, and re-flavour the submit button. The
+// prefill OVERWRITES those template-derived fields — they are the circle's
+// suggested starting point, edited freely before submit; the stored template is
+// never touched. Name, cwd and max-members are user fields and are not prefilled
+// (a template carries no name or cwd; max-members is not honoured by the
+// instantiate path, so its row is hidden while a circle is picked).
+function applyGroupCreateTemplate() {
+  const t = selectedGroupCreateTemplate();
+  const taskRow = $('#group-create-task-row');
+  const previewRow = $('#group-create-template-preview-row');
+  const maxRow = $('#group-create-max-members-row');
+  const submitBtn = $('#group-create-submit');
+  if (!t) {
+    $('#group-create-descr').value = '';
+    $('#group-create-context').value = '';
+    $('#group-create-task').value = '';
+    taskRow.style.display = 'none';
+    previewRow.style.display = 'none';
+    maxRow.style.display = '';
+    submitBtn.textContent = 'Create';
+    return;
+  }
+  $('#group-create-descr').value = t.descr || '';
+  $('#group-create-context').value = t.default_context || '';
+  taskRow.style.display = '';
+  previewRow.style.display = '';
+  maxRow.style.display = 'none';
+  submitBtn.textContent = 'Create & spawn';
+  renderGroupCreateTemplatePreview();
+}
+
+// renderGroupCreateTemplatePreview paints the picked circle's readback badges +
+// the roster's final agent names under the typed group name — reusing the same
+// helpers the instantiate / deploy previews use, so all three read identically.
+function renderGroupCreateTemplatePreview() {
+  const t = selectedGroupCreateTemplate();
+  const host = $('#group-create-template-preview');
+  if (!t) { host.innerHTML = ''; return; }
+  host.innerHTML =
+    `<div class="tp-badges">${templateReadbackBadges(t)}</div>`
+    + templateRosterRowsHTML(t, $('#group-create-name').value);
+}
+
+function openGroupCreateModal(presetTemplate) {
+  // Start from the live snapshot each open; a stale manage-fetch cache from a
+  // prior session must not shadow it.
+  gcTemplateCache = null;
   $('#group-create-name').value = '';
   $('#group-create-descr').value = '';
   $('#group-create-cwd').value = '';
   $('#group-create-context').value = '';
+  $('#group-create-task').value = '';
   $('#group-create-max-members').value = '';
   $('#group-create-error').textContent = '';
+  populateGroupCreateTemplates(presetTemplate);
+  applyGroupCreateTemplate();
   $('#group-create-modal').classList.add('show');
+  // With a circle preselected the roster preview is the point of interest, but
+  // the group name is still the first thing to type — focus it either way.
   setTimeout(() => $('#group-create-name').focus(), 0);
 }
 
@@ -552,6 +658,11 @@ function closeGroupCreateModal() {
 }
 
 async function submitGroupCreate() {
+  // A picked party profile routes through the template instantiate path; the
+  // blank default keeps the original empty-group create verbatim.
+  const tmpl = selectedGroupCreateTemplate();
+  if (tmpl) { await submitGroupCreateFromTemplate(tmpl); return; }
+
   const name = $('#group-create-name').value.trim();
   const descr = $('#group-create-descr').value.trim();
   const cwd = $('#group-create-cwd').value.trim();
@@ -598,6 +709,60 @@ async function submitGroupCreate() {
   }
 }
 
+// submitGroupCreateFromTemplate deploys the picked circle: create the group and
+// spawn its whole roster via the template instantiate endpoint, sending the
+// group's edited copy of descr / startup context (context_override) + the Task.
+// Respects the endpoint's 409-on-existing-name. Mirrors the instantiate modal's
+// spawn-count / work-pattern toasts so the outcome reads the same wherever a
+// circle is cast.
+async function submitGroupCreateFromTemplate(tmpl) {
+  const name = $('#group-create-name').value.trim();
+  const descr = $('#group-create-descr').value.trim();
+  const cwd = $('#group-create-cwd').value.trim();
+  const context = $('#group-create-context').value;
+  const task = $('#group-create-task').value;
+  const errEl = $('#group-create-error');
+  errEl.textContent = '';
+  if (!name) {
+    errEl.textContent = 'name is required';
+    return;
+  }
+  const submitBtn = $('#group-create-submit');
+  submitBtn.disabled = true;
+  try {
+    const r = await fetch(`/api/templates/${encodeURIComponent(tmpl.name)}/instantiate`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_name: name, task, cwd, descr, context_override: context }),
+    });
+    const txt = await r.text();
+    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+    let resp = {};
+    try { resp = JSON.parse(txt); } catch (_) {}
+    closeGroupCreateModal();
+    const failed = resp.failed || 0;
+    toast(failed
+      ? `group ${name}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
+      : `group ${name}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
+      failed > 0);
+    // A silently-skipped kick-off briefing gets its own toast — it must not
+    // hide behind a happy spawn count.
+    const perrs = resp.pattern_errors || [];
+    if (perrs.length) {
+      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+    } else if (resp.pattern_delivered) {
+      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+    }
+    try { dashPrefs.setItem('tclaude.dash.group.' + name, '1'); } catch (_) {}
+    recordGroupInteraction(name);
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
 // Ask the daemon to open a native directory picker and drop the chosen
 // path into the Default cwd field. The browser can't pop an OS folder
 // chooser itself, so agentd — running on the human's desktop — does it
@@ -626,9 +791,62 @@ async function browseGroupCreateCwd() {
   }
 }
 
+// repopulateGroupCreateTemplatesIfOpen refreshes the party-profile dropdown
+// after the templates manager (opened from "⧉ manage circles…") closes, so a
+// circle created / renamed / deleted there shows up — but only while the
+// create-group dialog is still open behind it. Because that dialog is a
+// refresh-suspending modal-overlay, the live snapshot went stale while the
+// manager was stacked on top, so we fetch /api/templates DIRECTLY and hold it
+// in gcTemplateCache (a failed fetch falls back to the snapshot). If the
+// selection survived, the human's edited copy of descr / context / task is left
+// intact (no re-prefill over their edits); if it vanished (deleted in the
+// manager), the dependent fields are reconciled back to the blank state.
+async function repopulateGroupCreateTemplatesIfOpen() {
+  if (!$('#group-create-modal').classList.contains('show')) return;
+  const cur = $('#group-create-template').value;
+  try {
+    const r = await fetch('/api/templates', { credentials: 'same-origin' });
+    if (r.ok) {
+      const list = await r.json();
+      if (Array.isArray(list)) gcTemplateCache = list;
+    }
+  } catch (_) { /* keep the snapshot fallback */ }
+  populateGroupCreateTemplates(cur);
+  if ($('#group-create-template').value !== cur) applyGroupCreateTemplate();
+  else renderGroupCreateTemplatePreview();
+}
+
 function bindGroupCreateModal() {
-  $('#group-create-open').addEventListener('click', openGroupCreateModal);
+  $('#group-create-open').addEventListener('click', () => openGroupCreateModal());
   $('#group-create-cwd-browse').addEventListener('click', browseGroupCreateCwd);
+  // Party profile picker (JOH-356): selecting a circle prefills + reveals the
+  // template-only fields; typing the group name re-flows the roster preview's
+  // "<group>-<agent>" names.
+  $('#group-create-template').addEventListener('change', applyGroupCreateTemplate);
+  $('#group-create-name').addEventListener('input', renderGroupCreateTemplatePreview);
+  // "⧉ manage circles…" opens the same templates manager the Groups cog does
+  // (the JOH-350 "⧉ manage…" idiom); its create/edit/delete is picked up when
+  // it closes (both close paths — Close button and backdrop).
+  $('#group-create-manage-templates').addEventListener('click', () => openTemplatesManageModal());
+  $('#templates-manage-close').addEventListener('click', repopulateGroupCreateTemplatesIfOpen);
+  $('#templates-manage-modal').addEventListener('click', (e) => {
+    if (e.target === $('#templates-manage-modal')) repopulateGroupCreateTemplatesIfOpen();
+  });
+  // The Groups cog's standalone "⎘ from template" shortcut now opens THIS dialog
+  // with the first circle preselected (JOH-356 — one obvious create-a-group
+  // surface) instead of the separate instantiate modal.
+  $('#group-from-template-open').addEventListener('click', () => {
+    // Read the live snapshot (not gcTemplateCache) — openGroupCreateModal resets
+    // the cache, so the preselected circle must exist in the current snapshot.
+    const templates = (lastSnapshot && lastSnapshot.templates) || [];
+    if (!templates.length) {
+      toast(wizWord(
+        'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
+        'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
+      return;
+    }
+    openGroupCreateModal(templates[0].name);
+  });
   // 🧹 cleanup: the Groups tab's "clean up" button opens the rich
   // multi-category cleanup modal — bulk unjoin / retire / delete /
   // reinstate spanning active agents, retired agents and plain

@@ -1639,6 +1639,16 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		Task      string `json:"task,omitempty"`
 		Cwd       string `json:"cwd,omitempty"`
 		Descr     string `json:"descr,omitempty"`
+		// ContextOverride, when non-nil, replaces the template's own
+		// default_context as the base the group's startup context is composed
+		// from (JOH-356) — the group gets its OWN edited copy of the shared
+		// context (the "Form a party" picker prefills this field from the
+		// template, then the human edits it before submit; the stored template
+		// is untouched). A pointer distinguishes "not supplied — use the
+		// template's context" (nil) from "supplied, possibly cleared to empty"
+		// (non-nil ""). Existing callers (the instantiate/deploy modals) omit
+		// it and keep the template's context verbatim.
+		ContextOverride *string `json:"context_override,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1673,14 +1683,15 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// still frame it as "from template X") but no mission — that is the
 	// deploy verb's addition.
 	runInstantiation(w, instantiateSpec{
-		tmpl:           tmpl,
-		caller:         caller,
-		groupName:      body.GroupName,
-		assignment:     body.Task,
-		contextHeader:  "Task",
-		cwd:            cwd,
-		descr:          descr,
-		sourceTemplate: tmpl.Name,
+		tmpl:            tmpl,
+		caller:          caller,
+		groupName:       body.GroupName,
+		assignment:      body.Task,
+		contextHeader:   "Task",
+		cwd:             cwd,
+		descr:           descr,
+		sourceTemplate:  tmpl.Name,
+		contextOverride: body.ContextOverride,
 	})
 }
 
@@ -1704,6 +1715,10 @@ type instantiateSpec struct {
 	mission        string // stored on the group row; "" for a plain instantiate
 	sourceTemplate string // stored on the group row
 	deployed       bool   // frames the response (adds mission + deployed)
+	// contextOverride, when non-nil, replaces tmpl.DefaultContext as the base
+	// the group context is composed from (JOH-356 — the "Form a party" picker's
+	// editable copy of the shared context). nil = use the template's context.
+	contextOverride *string
 }
 
 // runInstantiation is the shared core behind both `templates instantiate`
@@ -1717,7 +1732,14 @@ type instantiateSpec struct {
 // differ, all carried on spec.
 func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	tmpl := spec.tmpl
-	groupContext, err := normalizeGroupContext(composeInstantiationContext(tmpl.DefaultContext, spec.assignment, spec.contextHeader))
+	// The base context is the template's default_context unless the caller
+	// supplied its own edited copy (JOH-356) — the group's context is its own,
+	// the stored template is never mutated.
+	baseContext := tmpl.DefaultContext
+	if spec.contextOverride != nil {
+		baseContext = *spec.contextOverride
+	}
+	groupContext, err := normalizeGroupContext(composeInstantiationContext(baseContext, spec.assignment, spec.contextHeader))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return

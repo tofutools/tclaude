@@ -131,6 +131,80 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 	}
 }
 
+// Scenario (JOH-356): the "Form a party" dialog lets the human edit the
+// template's shared context into the group's OWN copy before submitting. The
+// instantiate endpoint accepts a context_override that REPLACES the template's
+// default_context as the base the group context is composed from — the task is
+// still folded in under ## Task, and the stored template is left untouched.
+//
+// Real-surface assertions: the created group's DefaultContext (what every
+// member's briefing is composed from) reflects the edited copy, NOT the
+// template boilerplate; the task is still present; and re-reading the template
+// shows its stored context unchanged.
+func TestGroupTemplate_InstantiateContextOverride(t *testing.T) {
+	f := newFlow(t)
+
+	const boilerplate = "STORED-TEMPLATE-CONTEXT: the reusable circle lore."
+	createBody := map[string]any{
+		"name":            "party-circle",
+		"descr":           "a lead and a hand",
+		"default_context": boilerplate,
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", InitialMessage: "Lead the party.", IsOwner: true},
+			{Name: "hand", Role: "hand", InitialMessage: "Assist the lead."},
+		},
+	}
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
+		"create template")
+
+	// The human edited the prefilled context into the group's own copy and
+	// typed a task — exactly what the Form-a-party picker submits.
+	const edited = "EDITED-GROUP-CONTEXT: this party's own tweaked brief."
+	const task = "Chart the northern caves."
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/party-circle/instantiate",
+		map[string]any{
+			"group_name":       "expedition",
+			"task":             task,
+			"context_override": edited,
+		})
+	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 2, res.Spawned, "both agents spawned")
+	assert.Equal(t, 0, res.Failed, "no spawn failures")
+
+	agentd.WaitForBackgroundForTest()
+
+	// The group's composed context carries the EDITED copy + the task, and NOT
+	// the stored template boilerplate the override replaced.
+	g, err := db.GetAgentGroupByName("expedition")
+	require.NoError(t, err)
+	require.NotNil(t, g, "group expedition created")
+	assert.Contains(t, g.DefaultContext, edited, "group context uses the edited override")
+	assert.Contains(t, g.DefaultContext, task, "group context still carries the task")
+	assert.NotContains(t, g.DefaultContext, boilerplate,
+		"the override replaced the template boilerplate, not appended to it")
+
+	// The stored template is untouched — the group got its OWN copy.
+	tmpl, err := db.GetGroupTemplate("party-circle")
+	require.NoError(t, err)
+	require.NotNil(t, tmpl)
+	assert.Equal(t, boilerplate, tmpl.DefaultContext,
+		"the stored template context is unchanged by the override")
+
+	// A member's briefing is composed from the edited copy, not the boilerplate.
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	msgs, err := db.ListAgentMessagesForConv(members[0].ConvID, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, msgs, "member has an inbox briefing")
+	assert.Contains(t, msgs[0].Body, edited, "member briefing carries the edited context")
+	assert.NotContains(t, msgs[0].Body, boilerplate, "member briefing drops the replaced boilerplate")
+}
+
 // Scenario: a human snapshots a live group into a template. The
 // template must carry the group's context plus one agent per member,
 // with the owner flag set on the member that owns the group.
