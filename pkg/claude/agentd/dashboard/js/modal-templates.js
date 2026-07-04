@@ -4,7 +4,7 @@
 // from-group modals, the group-import modal, and the group-context
 // modal. Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, makeModalResizable } from './helpers.js';
+import { $, $$, esc, makeModalResizable, pickDirectory } from './helpers.js';
 import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -1477,6 +1477,35 @@ function cssEscape(s) {
   return String(s).replace(/["\\]/g, '\\$&');
 }
 
+// wireTemplateCwdBrowse wires a "Browse…" button beside a cwd input to the
+// daemon's native directory picker — the same idiom the group-create and
+// agent-spawn dialogs use. The browser can't pop an OS folder chooser itself,
+// so agentd (on the human's desktop) does it and reports the path back; the
+// fetch stays pending while the dialog is open, and a cancel leaves the field
+// untouched.
+function wireTemplateCwdBrowse(btnId, inputId, errId, title) {
+  const btn = $('#' + btnId);
+  const input = $('#' + inputId);
+  const errEl = $('#' + errId);
+  if (!btn || !input) return;
+  btn.addEventListener('click', async () => {
+    if (errEl) errEl.textContent = '';
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+    try {
+      const res = await pickDirectory({ startDir: input.value.trim(), title });
+      if (res.error) { if (errEl) errEl.textContent = res.error; return; }
+      if (res.canceled) return; // dialog dismissed — leave the field as-is
+      input.value = res.path;
+      input.focus();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prev;
+    }
+  });
+}
+
 function bindTemplatesUI() {
   // Entry points: the Groups cog's "⧉ templates…" management overlay, its
   // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
@@ -1693,6 +1722,7 @@ function bindTemplatesUI() {
   // Instantiate modal.
   $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
   $('#template-instantiate-submit').addEventListener('click', submitInstantiate);
+  wireTemplateCwdBrowse('template-instantiate-cwd-browse', 'template-instantiate-cwd', 'template-instantiate-error', 'Select the working directory for the new group');
   $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
   $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
   bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
@@ -1702,6 +1732,7 @@ function bindTemplatesUI() {
   // prefill and the preview.
   $('#template-deploy-cancel').addEventListener('click', closeDeployModal);
   $('#template-deploy-submit').addEventListener('click', submitDeploy);
+  wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
   $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
   $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
