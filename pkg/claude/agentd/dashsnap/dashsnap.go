@@ -186,18 +186,23 @@ func Capture(cfg Config) ([]Shot, error) {
 		return nil, fmt.Errorf("create out dir: %w", err)
 	}
 
-	controlURL, err := launcher.New().
+	l := launcher.New().
 		Bin(chromeBin).
 		Headless(true).
 		NoSandbox(true).
 		Leakless(false).
 		Set("disable-gpu").
 		Set("hide-scrollbars").
-		Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height)).
-		Launch()
+		Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height))
+	controlURL, err := l.Launch()
 	if err != nil {
 		return nil, fmt.Errorf("launch chrome (%s): %w", chromeBin, err)
 	}
+	// Leakless(false) disables rod's reaper watchdog, so if we bail before (or
+	// after) the browser owns the process we must kill it ourselves or orphan a
+	// headless Chrome. Registered before browser.Close's defer so it runs LAST
+	// (LIFO): a graceful Close on the happy path, then this reaps whatever's left.
+	defer l.Kill()
 
 	browser := rod.New().ControlURL(controlURL)
 	if err := browser.Connect(); err != nil {
@@ -207,9 +212,16 @@ func Capture(cfg Config) ([]Shot, error) {
 
 	// One reused page (navigated per state) — creating/closing a target per state
 	// was the bulk of the wall-clock. A full navigation reloads the document, so
-	// residual body classes / DOM from the previous state are cleared.
-	page := browser.MustPage("")
-	page.MustSetViewport(cfg.Width, cfg.Height, 1, false)
+	// residual body classes / DOM from the previous state are cleared. Wrapped in
+	// rod.Try so a page-create failure returns an error (matching this function's
+	// contract) rather than panicking out.
+	var page *rod.Page
+	if err := rod.Try(func() {
+		page = browser.MustPage("")
+		page.MustSetViewport(cfg.Width, cfg.Height, 1, false)
+	}); err != nil {
+		return nil, fmt.Errorf("open page: %w", err)
+	}
 
 	shots := make([]Shot, 0, len(cfg.States))
 	for _, st := range cfg.States {
@@ -249,6 +261,7 @@ func Capture(cfg Config) ([]Shot, error) {
 func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) {
 	err = rod.Try(func() {
 		sp := page.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+		defer sp.CancelTimeout() // release the per-state timeout's timer
 
 		url := cfg.BaseURL
 		if st.Wizard {
@@ -278,7 +291,9 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 	return png, err
 }
 
-// sleep pauses using the page's own clock via rod's Sleep helper equivalent.
+// sleep pauses for ms by awaiting a setTimeout promise IN the page (Page.Eval
+// enables AwaitPromise), so the wait runs on the browser's clock and the JS
+// stays ordered — not a host-side time.Sleep.
 func sleep(page *rod.Page, ms int) {
 	if ms <= 0 {
 		return

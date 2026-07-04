@@ -54,7 +54,8 @@ func TestDashSnap(t *testing.T) {
 	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 	defer srv.Close()
 
-	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405"))
+	// Millisecond granularity so two runs in the same second don't overwrite.
+	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000"))
 	shots, err := dashsnap.Capture(dashsnap.Config{
 		BaseURL: srv.URL,
 		OutDir:  outDir,
@@ -113,23 +114,23 @@ func dashSnapOutRoot(t *testing.T) string {
 // ---------------------------------------------------------------------------
 
 const (
-	tfTemplate  = "frontend-squad" // the template whose card the summon states drag
-	otherGroup  = "infra-crew"
-	linearTask  = "https://linear.app/tofutools/issue/JOH-386"
+	tfTemplate   = "frontend-squad" // the template whose card the summon states drag
+	otherGroup   = "infra-crew"
+	linearTask   = "https://linear.app/tofutools/issue/JOH-386"
 	otherTaskURL = "https://github.com/tofutools/tclaude/pull/386"
 )
 
 // dashMemberSpec is one seeded member.
 type dashMemberSpec struct {
-	convID string
-	label  string // TCLAUDE_SESSION_ID / session row id
-	tmux   string
-	title  string
-	role   string
-	status string // "" leaves the SaveSession default ("running"); else SetSessionStatus
-	online bool   // false → HaveAliveSession then MarkOffline
-	owner  bool
-	tags   []string
+	convID             string
+	label              string // TCLAUDE_SESSION_ID / session row id
+	tmux               string
+	title              string
+	role               string
+	status             string // "" leaves the SaveSession default ("running"); else SetSessionStatus
+	online             bool   // false → HaveAliveSession then MarkOffline
+	owner              bool
+	tags               []string
 	taskURL, taskLabel string
 }
 
