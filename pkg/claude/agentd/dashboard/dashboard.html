@@ -2072,6 +2072,27 @@
     </div>
   </div>
 </div>
+<!-- Generic "clone a preset under a new name" dialog for the palette dock's
+     card ⚙ → Clone menu item (profiles + roles). Title / blurb / submit copy are
+     JS-driven (modal-clone.js openCloneModal via wizWord) so one dialog serves
+     both kinds; the CHROME re-skins for wizard via the body.wizard #clone-modal
+     CSS block. Templates keep their own richer #template-duplicate-modal. -->
+<div class="modal-overlay" id="clone-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="clone-modal-title">
+    <h3 id="clone-modal-title"></h3>
+    <div class="modal-meta" id="clone-modal-blurb"></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">New name</span>
+      <input id="clone-modal-name" type="text" placeholder="kebab-or-snake-case label for the copy" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-error" id="clone-modal-error"></div>
+    <div class="modal-buttons">
+      <button id="clone-modal-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="clone-modal-submit" class="primary" type="button">Create copy</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="group-import-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-import-title">
     <h3 id="group-import-title"><span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span></h3>

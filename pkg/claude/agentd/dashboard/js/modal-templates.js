@@ -2492,6 +2492,11 @@ export {
   // standalone (it does not need the manage modal open behind it), so the dock
   // can call it directly.
   openTemplateEditor,
+  // The template duplicate dialog — the dock card ⚙ → Clone menu item reuses
+  // this richer name dialog for templates (profiles + roles use the generic
+  // modal-clone.js dialog); a template clone carries a whole roster, so its
+  // bespoke blurb stays worthwhile. Both are just "enter a new name" dialogs.
+  openDuplicateModal,
 };
 // openSummonForDrop is exported via its `export function` declaration above
 // (dock-dnd.js imports it for the template-drop flow).

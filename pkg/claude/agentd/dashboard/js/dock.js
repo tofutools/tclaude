@@ -34,7 +34,7 @@
 // open state is a body class so CSS can reflow <main> to reclaim the space
 // when collapsed rather than overlaying dead area.
 
-import { $, esc } from './helpers.js';
+import { $, $$, esc } from './helpers.js';
 import { morphInto } from './morph.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
@@ -45,11 +45,14 @@ import { syncFullBleedBars } from './hscroll.js';
 // each from the module that actually exports it — a bad named import would
 // abort the whole ES-module graph at link time (node --check can't catch that,
 // it's single-file only).
-import { profileSummary } from './profiles.js';
+import { profileSummary, createProfile } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
-import { roleSummary } from './roles.js';
+import { roleSummary, createRole } from './roles.js';
 import { openRoleEditor, openRolesManageModal } from './modal-roles.js';
-import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor } from './modal-templates.js';
+import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal } from './modal-templates.js';
+// The generic "clone under a new name" dialog (profiles + roles). Templates
+// reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
+import { openCloneModal } from './modal-clone.js';
 
 // The persisted open/collapsed flag. dash-namespaced like every other
 // server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
@@ -85,7 +88,8 @@ function summaryChips(summary, max = 4) {
 //   name(item)  the card's display name
 //   chips(item) the card's chip HTML (already escaped)
 //   drag        true → cards are drag SOURCES (draggable, wired by dock-dnd.js)
-//   onManageItem(item)  jump to that item's editor / manager overlay
+//   onManageItem(item)  jump to that item's editor / manager overlay (⚙ → Edit)
+//   onCloneItem(item)   open the "clone under a new name" dialog (⚙ → Clone)
 //   onManageAll()       jump to the whole-kind manager overlay
 //
 // `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
@@ -106,6 +110,9 @@ const SECTIONS = [
     chips: (p) => summaryChips(profileSummary(p)),
     drag: true,
     onManageItem: (p) => openProfileEditor(p),
+    // Clone → the generic name dialog; the copy is the source profile re-POSTed
+    // under the new name via createProfile (modal-clone.js does the name swap).
+    onCloneItem: (p) => openCloneModal({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
     onManageAll: () => openProfilesManageModal(),
   },
   {
@@ -124,6 +131,10 @@ const SECTIONS = [
     // matching the profiles/roles cards — it used to fall back to the whole-kind
     // manager, which ignored the item.
     onManageItem: (t) => openTemplateEditor(t),
+    // Clone → templates reuse their OWN richer duplicate dialog (a template
+    // carries a whole roster, so its bespoke blurb is worth keeping) rather than
+    // the generic modal-clone.js one profiles/roles use. Both are name dialogs.
+    onCloneItem: (t) => openDuplicateModal(t.name),
     onManageAll: () => openTemplatesManageModal(),
   },
   {
@@ -136,6 +147,8 @@ const SECTIONS = [
     chips: (rl) => summaryChips(roleSummary(rl)),
     drag: true,
     onManageItem: (rl) => openRoleEditor(rl),
+    // Clone → the generic name dialog, cloning via createRole (see profiles).
+    onCloneItem: (rl) => openCloneModal({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
     onManageAll: () => openRolesManageModal(),
   },
 ];
@@ -147,12 +160,21 @@ function sectionByKey(key) {
 }
 
 // cardHTML renders one card: a grip handle, the leading icon, the name, a
-// compact chip row, and a ⚙ manage affordance that jumps to the item's editor.
-// The card carries data-dock-kind / data-dock-name — dock-dnd.js reads them off
-// dragstart. A section flagged `drag` makes its cards drag SOURCES
+// compact chip row, and a ⚙ affordance that opens a small actions menu (Edit /
+// Clone). The card carries data-dock-kind / data-dock-name — dock-dnd.js reads
+// them off dragstart. A section flagged `drag` makes its cards drag SOURCES
 // (draggable="true"); a future non-drag section (an editor / work-graph node)
 // would leave `drag` unset and fall back to the "(coming soon)" grip hint. All
 // three current kinds — profiles, templates, roles — are drag sources.
+//
+// The ⚙ used to deep-link straight to the item's editor; it now toggles a
+// sibling .dock-card-menu whose two items dispatch Edit (onManageItem) and Clone
+// (onCloneItem). Cog + menu are wrapped in a position:relative .dock-card-actions
+// so the absolutely-positioned menu anchors to the cog. The menu is a distinct
+// class (NOT the shared .action-menu bus) so it stays fully owned by dock.js's
+// own delegated handler — no coupling to row-actions.js's cog machinery, which
+// would race to close it (see bindDock). Clone re-letters to "Mirror" in wizard
+// mode, echoing the templates manager's 🪞 duplicate wording.
 function cardHTML(section, item) {
   const name = section.name(item);
   const chips = section.chips(item) || '';
@@ -160,6 +182,7 @@ function cardHTML(section, item) {
   const gripTitle = section.drag
     ? wizWord('drag onto a group to spawn', 'drag onto a party to summon')
     : wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)');
+  const kindName = `data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}"`;
   return `<div class="dock-card" draggable="${draggable}" data-key="${esc(name)}" data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}" title="${esc(name)}">
     <span class="dock-grip" aria-hidden="true" title="${gripTitle}">⠿</span>
     <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
@@ -167,7 +190,13 @@ function cardHTML(section, item) {
       <span class="dock-card-name">${esc(name)}</span>
       ${chips ? `<span class="dock-chips">${chips}</span>` : ''}
     </span>
-    <button type="button" class="dock-card-manage" data-dock-act="manage-item" data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}" title="${wizWord('Edit this item', 'Edit this item')}" aria-label="${wizWord('Edit', 'Edit')} ${esc(name)}">⚙</button>
+    <span class="dock-card-actions">
+      <button type="button" class="dock-card-manage" data-dock-act="card-menu" ${kindName} aria-haspopup="menu" aria-expanded="false" title="${wizWord('More actions', 'More actions')}" aria-label="${wizWord('Actions for', 'Actions for')} ${esc(name)}">⚙</button>
+      <div class="dock-card-menu" role="menu" aria-label="${esc(name)}">
+        <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" ${kindName}>${wizWord('Edit', 'Edit')}</button>
+        <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="clone-item" ${kindName}>${wizWord('Clone', 'Mirror')}</button>
+      </div>
+    </span>
   </div>`;
 }
 
@@ -439,6 +468,16 @@ export function bindDock() {
   // it would ALSO toggle the <details>; preventDefault here cancels that native
   // fold (the delegated listener runs in the bubble phase, before the default
   // action) so the manager opens without collapsing the section.
+  //
+  // A card's ⚙ (card-menu) toggles the sibling .dock-card-menu; its two items
+  // (edit-item / clone-item) dispatch to the section's editor / clone opener.
+  // The menu open/close lives entirely here — no shared .action-menu bus — so
+  // it can't race with row-actions.js. resolveItem re-reads the LIVE snapshot so
+  // a card that vanished between paint and click (a concurrent delete on another
+  // tab) falls back to the whole-kind manager instead of dispatching on a stale
+  // object.
+  const resolveItem = (section, name) =>
+    section.items(lastSnapshot).find(it => section.name(it) === name) || null;
   $('#dock-body')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-dock-act]');
     if (!btn) return;
@@ -450,16 +489,86 @@ export function bindDock() {
       section.onManageAll();
       return;
     }
-    if (act === 'manage-item') {
-      const name = btn.getAttribute('data-dock-name');
-      const item = section.items(lastSnapshot).find(it => section.name(it) === name);
-      // Fall back to the whole-kind manager if the item vanished between
-      // paint and click (a concurrent delete on another tab).
-      if (item) section.onManageItem(item);
-      else section.onManageAll();
+    if (act === 'card-menu') {
+      toggleCardMenu(btn);
+      return;
     }
+    if (act === 'edit-item' || act === 'clone-item') {
+      closeDockMenus();
+      const item = resolveItem(section, btn.getAttribute('data-dock-name'));
+      if (!item) { section.onManageAll(); return; }
+      if (act === 'edit-item') section.onManageItem(item);
+      else section.onCloneItem(item);
+    }
+  });
+
+  // Dismiss an open card menu on any click outside a card's action cluster
+  // (a click on the cog / a menu item is handled above and stays inside
+  // .dock-card-actions, so it never trips this). Bound to the document so it
+  // catches clicks anywhere on the page, not just within the dock.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.dock-card-actions')) closeDockMenus();
+  });
+  // Escape closes an open card menu — parity with the shared ⚙ options menu and
+  // the dialogs. Only acts when one is actually open so it never swallows Escape
+  // from a modal / inline edit stacked elsewhere.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!document.querySelector('.dock-card-menu.open')) return;
+    e.preventDefault();
+    closeDockMenus();
   });
 
   // First paint now so the dock isn't blank until the first poll lands.
   renderDock();
+}
+
+// closeDockMenus collapses every open card menu, resetting each owning cog's
+// aria-expanded. Called on outside-click, Escape, and before opening another
+// menu. Dropping the .open class also lifts the poll suspension refreshSuspended
+// keys on (.dock-card-menu.open), so the dock resumes morphing once no menu is
+// open. When focus sat inside a menu about to be display:none'd (a keyboard user
+// Tabbed onto Edit/Clone then pressed Escape / clicked away), hand it back to
+// that menu's cog so it doesn't fall to <body> and get lost — parity with
+// row-actions.js's closeAllActionMenus.
+function closeDockMenus() {
+  for (const menu of $$('.dock-card-menu.open')) {
+    const focusInside = menu.contains(document.activeElement);
+    menu.classList.remove('open', 'opens-up');
+    const cog = menu.parentElement && menu.parentElement.querySelector('.dock-card-manage');
+    if (cog) {
+      cog.setAttribute('aria-expanded', 'false');
+      if (focusInside) cog.focus();
+    }
+  }
+}
+
+// toggleCardMenu opens the menu belonging to a clicked ⚙ (closing any other
+// first), or closes it if it was already open. On open it flips the menu ABOVE
+// the cog when a downward drop would spill past the visible bottom but fits in
+// the space above — so a card near the dock's foot still shows its whole menu.
+// Crucially the clip boundary is #dock-body (overflow-y:auto), NOT the viewport:
+// the dock is its own scroll container whose bottom sits a footer's-height above
+// window.innerHeight, so measuring the viewport (as the shared .action-menu does
+// from its document-scrolled table) would miss a menu that clips under the dock's
+// fold while still above the viewport bottom. Fall back to the viewport only if
+// #dock-body isn't found. Opening one menu suspends the 2s poll (refreshSuspended
+// sees .dock-card-menu.open) so a re-render can't rebuild the card and drop the
+// menu mid-use.
+function toggleCardMenu(cog) {
+  const menu = cog.parentElement && cog.parentElement.querySelector('.dock-card-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  closeDockMenus();
+  if (!willOpen) return;
+  menu.classList.remove('opens-up');
+  menu.classList.add('open');
+  cog.setAttribute('aria-expanded', 'true');
+  const body = $('#dock-body');
+  const clip = body ? body.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+  const mr = menu.getBoundingClientRect();
+  const cogTop = cog.getBoundingClientRect().top;
+  if (mr.bottom > clip.bottom && mr.height < cogTop - clip.top) {
+    menu.classList.add('opens-up');
+  }
 }
