@@ -48,26 +48,33 @@ function syncFullBleedBars() {
   const doc = document.documentElement;
   const pad = document.getElementById('dock-hscroll-pad');
 
-  // Reset first so our own sizing can't pollute the overflow measurement,
-  // then read scrollWidth (this forces one reflow — fine at rAF cadence). The
-  // dock clearance spacer is reset with the bars so the "natural" measurement
-  // is the real content width, not last frame's padded width.
+  // Reset the bars first so their own widening can't pollute the overflow
+  // measurement, then read scrollWidth (this forces one reflow — fine at rAF
+  // cadence). The spacer is NOT reset: its width doesn't feed the measurement
+  // (it's parked off the content edge below, not doc.scrollWidth), and resetting
+  // it would shrink doc.scrollWidth and yank a max-scrolled view left every poll.
   for (const bar of bars) bar.style.minWidth = '';
   for (const inner of inners) inner.style.width = '';
-  if (pad) pad.classList.remove('on');
 
-  const naturalWidth = doc.scrollWidth;
-
-  // Park the horizontal-scroll clearance spacer (JOH-388 req 3): when the dock
-  // is open AND the content genuinely overflows the viewport, place --dock-w of
-  // extra scrollable width just past the content's right edge, so a wide table
-  // can be scrolled fully clear of the fixed dock. Gated on real overflow so it
-  // never spuriously scrolls content that already fits (dock closed, or content
-  // narrower than the viewport → no spacer, no gutter). This runs at the same
-  // rAF cadence as the bar-fit below and shares its single reflow.
-  if (pad && document.body.classList.contains('dock-open') && naturalWidth > doc.clientWidth) {
-    pad.style.left = naturalWidth + 'px';
+  // Park the horizontal-scroll clearance spacer (JOH-388 req 3) at the widest
+  // content's right edge whenever the dock is open, sized --dock-w (via .on).
+  // The GEOMETRY self-gates: if the content fits within viewport-minus-dock the
+  // spacer sits inside the viewport and adds no overflow (fully-fitting pages
+  // stay scroll-free), and only when content intrudes into the dock strip does
+  // it push the document wider, giving the scroll room to clear the tail.
+  // Measured off <main> (the tab content container): main.scrollWidth reports
+  // its widest descendant's overflow even though main itself doesn't scroll, so
+  // it catches the sub-viewport "band" (content wider than viewport-minus-dock
+  // but narrower than the viewport) that doc.scrollWidth — floored at the
+  // viewport — would miss. mainLeft folds in the current scroll so the parked
+  // position is in stable document coordinates.
+  const main = document.querySelector('main');
+  if (pad && main && document.body.classList.contains('dock-open')) {
+    const mainLeft = main.getBoundingClientRect().left + window.scrollX;
+    pad.style.left = (mainLeft + main.scrollWidth) + 'px';
     pad.classList.add('on');
+  } else if (pad) {
+    pad.classList.remove('on');
   }
 
   // Now measure the FINAL scroll width (content + any spacer gutter) — that's

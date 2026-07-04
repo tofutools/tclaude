@@ -9182,12 +9182,13 @@ body.dock-anim #agent-dock { transition: transform .2s ease; }
    h-scrollbar stays viewport-pinned and no <main> sticky is disturbed. */
 body.dock-open { padding-right: var(--dock-w); }
 /* The horizontal-scroll clearance spacer (JOH-388 req 3). Absolute, a direct
-   child of <body>, invisible + inert. hscroll.js measures the widest content
-   (documentElement.scrollWidth with this reset to 0), then — only when the dock
-   is open AND the content actually overflows the viewport — parks it at that
-   right edge with a --dock-w width via .on, extending the document's scrollable
-   width by exactly the dock's width. That gutter is what lets wide content
-   scroll fully clear of the fixed dock instead of hiding underneath it. */
+   child of <body>, invisible + inert. hscroll.js parks it (left + .on) --dock-w
+   past the widest content's right edge (measured off <main>) whenever the dock
+   is open. The geometry self-gates: content that fits within viewport-minus-dock
+   leaves the spacer inside the viewport (no overflow, no scroll), while content
+   that intrudes into the dock strip pushes the document --dock-w wider — the
+   gutter that lets wide content scroll fully clear of the fixed dock instead of
+   hiding underneath it. Width 0 at rest keeps it inert when the dock is closed. */
 #dock-hscroll-pad { position: absolute; top: 0; height: 1px; width: 0; pointer-events: none; }
 #dock-hscroll-pad.on { width: var(--dock-w); }
 body.dock-open footer { right: var(--dock-w); }
