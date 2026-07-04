@@ -160,16 +160,19 @@ func TestTaskForceDeploy_DerivedNameCollisionUniquifies(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 }
 
-// Scenario: a bare-URL mission (a Linear link, no readable words) has nothing
-// to slug, so the derived group name falls back to the template name. The URL
-// is still stored verbatim as the mission (no title pull — out of scope).
+// Scenario: a bare-URL mission with NO recognizable issue key (a Linear
+// workspace root, no readable words and no JOH-123-style key) has nothing to
+// slug, so the derived group name falls back to the template name. The URL is
+// still stored verbatim as the mission (no title pull — out of scope). A bare
+// URL that DOES carry an issue key is named after the key instead — see
+// TestGroupTemplate_DeployBareIssueURL_NamesGroupFromKey (JOH-344 #3).
 func TestTaskForceDeploy_BareURLMissionFallsBackToTemplateName(t *testing.T) {
 	f := newFlow(t)
 
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
 		map[string]any{"name": "quest-party", "agents": []templateAgentSpec{{Name: "lead"}}}).Code, "create template")
 
-	const url = "https://linear.app/tofutools/issue/JOH-245"
+	const url = "https://linear.app/tofutools"
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/quest-party/deploy",
 		map[string]any{"mission": url})
 	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())

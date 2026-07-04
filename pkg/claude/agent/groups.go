@@ -887,7 +887,7 @@ func groupsRebriefCmd() *cobra.Command {
 		Long: "Re-briefs a task force deployed from a template: re-delivers the source template's CURRENT work pattern " +
 			"to the force's live members, with the group's recorded mission interpolated ({{mission}}/{{task}}). Useful " +
 			"when the roster has drifted or the original briefing has scrolled out of context. Gated: the human always, " +
-			"group owners of the group, otherwise the templates.use permission. Degrades clearly: a group with no source " +
+			"group owners of the group, otherwise the templates.instantiate permission. Degrades clearly: a group with no source " +
 			"template, a deleted template, or a template with no work pattern is a 4xx (nothing is sent).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRebriefParams, _ *cobra.Command) error {

@@ -157,6 +157,15 @@ func TestGroupTemplate_FromGroupSnapshot(t *testing.T) {
 		map[string]any{"group": "src", "template_name": "src-tmpl"})
 	require.Equal(t, http.StatusCreated, rec.Code, "from-group: %s", rec.Body.String())
 
+	// JOH-344 #4: the response carries a blank_briefs count so the CLI/dashboard
+	// can warn honestly. A from-group snapshot recovers no per-agent briefs, so
+	// every snapshotted agent is blank.
+	var res struct {
+		BlankBriefs int `json:"blank_briefs"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 2, res.BlankBriefs, "both snapshotted agents come through with blank briefs")
+
 	tmpl, err := db.GetGroupTemplate("src-tmpl")
 	require.NoError(t, err)
 	require.NotNil(t, tmpl, "template created")
@@ -265,11 +274,12 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "update from-group: %s", rec.Body.String())
 
 	var res struct {
-		Name       string   `json:"name"`
-		Updated    bool     `json:"updated"`
-		BriefsKept []string `json:"briefs_kept"`
-		Added      []string `json:"added"`
-		Removed    []string `json:"removed"`
+		Name        string   `json:"name"`
+		Updated     bool     `json:"updated"`
+		BriefsKept  []string `json:"briefs_kept"`
+		Added       []string `json:"added"`
+		Removed     []string `json:"removed"`
+		BlankBriefs int      `json:"blank_briefs"`
 	}
 	testharness.DecodeJSON(t, rec, &res)
 	assert.Equal(t, "crew", res.Name)
@@ -278,6 +288,8 @@ func TestGroupTemplate_FromGroupUpdateResnapshot(t *testing.T) {
 		"curated briefs survive for round-tripped agents")
 	require.Len(t, res.Added, 1, "the post-instantiate joiner is reported as added")
 	assert.Empty(t, res.Removed, "nobody left the group")
+	// JOH-344 #4: lead + dev1 kept their briefs; only the joiner is blank.
+	assert.Equal(t, 1, res.BlankBriefs, "only the newly-added joiner has a blank brief")
 
 	// Real surface: the stored template after the update.
 	tmpl, err := db.GetGroupTemplate("crew")
@@ -376,6 +388,38 @@ func TestGroupTemplate_FromGroupUpdateCreatesWhenMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tmpl, "template created")
 	assert.Len(t, tmpl.Agents, 1)
+}
+
+// Scenario (JOH-344 #3): deploying against a bare Linear-issue URL with no
+// --group names the force after the issue KEY, not the template — so three
+// deploys of one template against three issues are distinguishable, instead of
+// dev-squad / dev-squad-2 / dev-squad-3.
+func TestGroupTemplate_DeployBareIssueURL_NamesGroupFromKey(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name": "dev-squad",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", IsOwner: true},
+		},
+	}
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/dev-squad/deploy",
+		map[string]any{"mission": "https://linear.app/acme/issue/JOH-245/some-title"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	var res struct {
+		Group string `json:"group"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, "joh-245", res.Group, "group named after the issue key, not the template")
+
+	g, err := db.GetAgentGroupByName("joh-245")
+	require.NoError(t, err)
+	assert.NotNil(t, g, "the force's group is discoverable under the issue-key name")
 }
 
 // Scenario (JOH-336): a template with a work pattern — an ordered list

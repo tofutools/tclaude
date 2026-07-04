@@ -878,14 +878,22 @@ async function submitFromGroup() {
     let tmpl = null;
     try { tmpl = JSON.parse(txt); } catch (_) {}
     closeFromGroupModal();
+    // A from-group snapshot can't recover per-agent briefs from a live group,
+    // so blank_briefs counts how many agents this template would deploy with
+    // nothing to do — surfaced honestly so the human edits before deploying
+    // (JOH-344).
+    const blank = (tmpl && tmpl.blank_briefs) || 0;
+    const blankNote = blank > 0
+      ? ` — ⚠ ${blank} agent brief(s) blank; edit the template before deploying`
+      : '';
     if (tmpl && tmpl.updated) {
       const kept = (tmpl.briefs_kept || []).length;
       const added = (tmpl.added || []).length;
       const removed = (tmpl.removed || []).length;
       toast(`template updated from ${group}: ${name}`
-        + ` (briefs kept: ${kept}, added: ${added}, removed: ${removed})`);
+        + ` (briefs kept: ${kept}, added: ${added}, removed: ${removed})${blankNote}`);
     } else {
-      toast(`template created from ${group}: ${name}`);
+      toast(`template created from ${group}: ${name}${blankNote}`);
     }
     refresh();
     // Open the editor on the fresh template so the human can fill in
