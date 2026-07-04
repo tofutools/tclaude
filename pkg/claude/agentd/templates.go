@@ -1531,6 +1531,14 @@ type permOverride struct {
 // fetched again for launch fields in resolveTemplateAgentLaunch. The two
 // resolutions are kept separate for clarity — a vanished profile is reported
 // the same typed failure by both. A nil role contributes nothing.
+//
+// Scope note: only the ROLE's default grant list (role.Permissions) feeds access
+// here — a role's OWN referenced spawn profile (role.SpawnProfile) contributes
+// launch fields (resolveTemplateAgentLaunch) but NOT owner/permission overrides.
+// That matches the pre-JOH-350 contract (a role only ever contributed grants,
+// never denies or ownership) and keeps the access seam a single, obvious
+// profile: the one the AGENT picks. Widening it to role profiles would let a
+// role silently deny/own through an indirection, which is deliberately not done.
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
 	eff := map[string]string{}

@@ -110,6 +110,51 @@ func TestGroupTemplate_InlineGrantWinsOverProfileDeny(t *testing.T) {
 		"the agent's inline grant overrides the profile's deny")
 }
 
+// Scenario: composition precedence, the other direction. A ROLE grants a slug
+// (its default), the agent's profile DENIES it, and there is no inline grant.
+// The profile override is a higher tier than the role default, so the spawned
+// conv ends up DENIED — the behaviour-changing path of the new tri-state
+// composition (pre-cutover a role grant could never be turned into a deny).
+func TestGroupTemplate_ProfileDenyOverridesRoleGrant(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name":        "spawner",
+		"permissions": []string{agentd.PermGroupsSpawn},
+	}).Code, "create role")
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "no-spawn",
+		"permission_overrides": map[string]any{
+			agentd.PermGroupsSpawn: "deny",
+		},
+	}).Code, "create profile")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "team",
+		"agents": []map[string]any{
+			// role_ref grants groups.spawn, profile denies it, no inline override.
+			{"name": "lead", "role_ref": "spawner", "spawn_profile": "no-spawn"},
+		},
+	}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/instantiate",
+		map[string]any{"group_name": "g1"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Equal(t, 0, res.Failed, "no spawn failures: %+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	overrides, err := db.ListAgentPermissionOverridesForConv(res.Agents[0].ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "deny", overrides[agentd.PermGroupsSpawn],
+		"the profile's deny overrides the role's default grant")
+	// And the deny is not reported as a grant on the per-agent result.
+	assert.NotContains(t, res.Agents[0].Granted, agentd.PermGroupsSpawn,
+		"a denied slug is not listed as granted")
+}
+
 // Scenario: LEGACY compatibility (no migration). A template authored before the
 // profile-picker cutover carries inline permissions + is_owner and NO profile.
 // Those must still apply at deploy — the backend honours the inline fields so a
