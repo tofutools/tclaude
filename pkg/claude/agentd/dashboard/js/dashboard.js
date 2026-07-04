@@ -36,6 +36,7 @@ applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
+import { bindDockDnd } from './dock-dnd.js';
 import { bindCronModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
@@ -140,6 +141,17 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindRowActions();
   bindDnd();
   bindGroupReorder();
+  // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
+  // (JOH-375). Its own dockDragActive flag suspends auto-refresh mid-drag, and
+  // its document-level listeners coexist with dnd.js / group-reorder.js via a
+  // distinct custom MIME + a self-gating active flag (see dock-dnd.js).
+  //
+  // Order matters: keep this AFTER bindDnd() (as bindGroupReorder already is).
+  // dnd.js's dragend is NOT flag-gated — it calls refresh() on EVERY drag-end,
+  // dock drags included. Registered after bindDnd, dnd.js's dragend fires while
+  // dockDragActive is still true (our dragend runs later), so refreshSuspended()
+  // parks that refresh instead of re-rendering under the just-ended gesture.
+  bindDockDnd();
   bindFilter('groups');
   bindFilter('templates');
   bindFilter('jobs');

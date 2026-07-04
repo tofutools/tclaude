@@ -69,9 +69,10 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must(`key: 'profiles'`, "the profiles section exists")
 	must(`key: 'templates'`, "the templates section exists")
 	must(`key: 'roles'`, "the roles section exists")
-	// Cards advertise themselves as future drag sources carrying their payload.
-	must(`data-dock-kind="`, "cards carry their kind for the follow-up DnD tickets")
-	must(`data-dock-name="`, "cards carry their name for the follow-up DnD tickets")
+	// Cards carry their payload for the drag wiring (dock-dnd.js reads these off
+	// dragstart; see TestDashboardHTML_DockDnd for the 2/4 drag behaviour).
+	must(`data-dock-kind="`, "cards carry their kind for the DnD wiring")
+	must(`data-dock-name="`, "cards carry their name for the DnD wiring")
 
 	// The dock reads its data off the live snapshot (the profile + role
 	// registries now ride the poll, templates already did) — see
