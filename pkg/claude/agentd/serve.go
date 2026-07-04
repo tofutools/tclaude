@@ -608,6 +608,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/import", handleTemplateImport)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
 	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
+	mux.HandleFunc("POST /v1/templates/{name}/reinforce", handleTemplateReinforce)
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix
