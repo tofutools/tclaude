@@ -1290,6 +1290,52 @@ func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardCleanupModal pins the wizard re-skin of the bulk
+// cleanup dialog (#cleanup-modal — openCleanupModal in refresh.js), the
+// multi-category tool the global filter-bar cog's "🧹 clean up" item opens.
+// Like the #window-modal skin it shares the .cleanup-modal shell, so the
+// re-skin is a modal-scoped surface + gilded-primary lever repaint (the
+// title/hint copy is JS-set honest prose and left legible, matching the
+// terminal-picker re-skin). String-search the embedded source.
+func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The whole dialog surface is re-skinned arcane, scoped to #cleanup-modal.
+	must("body.wizard #cleanup-modal .cleanup-modal {", "the cleanup dialog surface is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-modal h3", "the dialog title is re-skinned")
+	// The cleanup-modal-unique controls: the category-filter row, the tier
+	// selector panel, and the sticky per-category list sub-header.
+	must("body.wizard #cleanup-modal .cleanup-cats", "the category-filter row is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-tier {", "the tier selector panel is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-cat-head {", "the sticky category sub-header repaints violet")
+	must("body.wizard #cleanup-modal .cleanup-list {", "the candidate list is re-skinned")
+	// The submit becomes a gilded lever; the delete tier keeps a danger-ember
+	// variant so the irreversible action still signals danger.
+	must("body.wizard #cleanup-modal #cleanup-submit {", "the submit button gets the gilded lever chrome")
+	must("body.wizard #cleanup-modal #cleanup-submit.danger {", "the delete-tier submit keeps a danger-ember lever")
+	// Cancel gets the tarnished-gold secondary treatment (scoped off the submit).
+	must("body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit)", "Cancel gets the secondary arcane skin")
+}
+
+// TestDashboardCSS_WizardCleanupModalScoped guards that the wizard bulk-cleanup
+// re-skin stays scoped to #cleanup-modal. Like #window-modal it is a
+// .cleanup-modal shared with the worktree-cleanup / retire-preview /
+// delete-retired dialogs, so an unscoped `body.wizard .cleanup-modal { … }`
+// would repaint all of them.
+func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #cleanup-modal .cleanup-modal") {
+		t.Error("wizard cleanup re-skin missing its #cleanup-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
+		t.Error("wizard cleanup re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-retired dialogs too")
+	}
+}
+
 // TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
 // "Group templates" management overlay — in 🧙 mode a template is a
 // SUMMONING CIRCLE (chalk a new one, trace a party into one, cast one to
