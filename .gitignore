@@ -20,6 +20,10 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# Visual smoke-harness output (dashsnap, JOH-386): timestamped PNGs +
+# the index.html contact sheet. Regenerated on demand, never committed.
+/dashsnap-out/
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
