@@ -277,6 +277,37 @@ tclaude agent templates import --file feature-team.task-force.json --as ft2  # i
 tclaude agent templates import --file feature-team.task-force.json --update  # overwrite in place
 ```
 
+#### Starter task forces
+
+tclaude ships a small library of **curated, ready-to-run starters** so you can
+deploy a working team without writing a template first. The templates overlay's
+**⭐ starters** button lists them and installs one on click; each starter is a
+worked example of the whole feature set — role references, per-agent launch
+tuning, a process, staged-spawn waves, a seeded rhythm, and a routed work
+pattern.
+
+| Starter | Team | Flow |
+|---|---|---|
+| `dev-squad` | lead · designer · dev · reviewer · tester | design → implement → review → test → ship (lead on `opus`, tester on `haiku`, reviewer reviews cold) |
+| `research-pod` | coordinator · 3 researchers · critic | scope → research → adversarial verify → synthesize |
+| `review-crew` | lead · 3 diverse-lens reviewers · synthesizer | scope → review (correctness / security / simplicity) → synthesize |
+
+Installing a starter stores it as an ordinary local template you can then
+deploy, instantiate, or edit. Install is **idempotent and never clobbers**: if a
+template of that name already exists, the install is skipped (your edited copy is
+sacred) — pass a different name to install a fresh copy. Starters work on a fresh
+empty install.
+
+From the CLI:
+
+```bash
+tclaude agent templates starters ls                     # list the bundled starters
+tclaude agent templates starters show dev-squad         # inspect one in full
+tclaude agent templates starters install dev-squad      # install it as a local template
+tclaude agent templates starters install dev-squad --as my-squad  # install a fresh copy
+tclaude agent task-force deploy dev-squad --mission "…"  # then deploy it against a mission
+```
+
 ### Cron
 
 The scheduled-job table — name, owner, target, interval, last run, status pill,

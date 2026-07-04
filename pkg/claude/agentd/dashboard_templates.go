@@ -38,6 +38,11 @@ func registerDashboardTemplateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/templates/{name}/deploy", dashboardTemplatesRoute(handleTemplateDeploy))
 	mux.HandleFunc("GET /api/templates/{name}/export", dashboardTemplatesRoute(handleTemplateExport))
 	mux.HandleFunc("/api/templates/{name}", dashboardTemplatesRoute(handleTemplateByName))
+	// Bundled starter task forces (JOH-246) — loopback twins of /v1/starters,
+	// so the dashboard's templates overlay can offer "install a starter" too.
+	mux.HandleFunc("GET /api/starters", dashboardTemplatesRoute(handleStarters))
+	mux.HandleFunc("GET /api/starters/{name}", dashboardTemplatesRoute(handleStarterByName))
+	mux.HandleFunc("POST /api/starters/{name}/install", dashboardTemplatesRoute(handleStarterInstall))
 }
 
 // dashboardTemplatesRoute adapts a shared /v1 template handler into a

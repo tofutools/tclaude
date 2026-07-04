@@ -30,8 +30,8 @@ import (
 
 func templatesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:         "templates",
-		Short:       "Manage group templates (reusable team blueprints)",
+		Use:   "templates",
+		Short: "Manage group templates (reusable team blueprints)",
 		Long: "List, inspect, create, edit and delete group templates, instantiate a working group from one, " +
 			"or snapshot an existing group into a new template. A template is a blueprint — a name, a shared " +
 			"context, and an ordered list of agent specs (role, descr, task brief, owner flag, permission slugs); " +
@@ -48,6 +48,7 @@ func templatesCmd() *cobra.Command {
 			templatesFromGroupCmd(),
 			templatesExportCmd(),
 			templatesImportCmd(),
+			templatesStartersCmd(),
 		},
 	}.ToCobra()
 }
@@ -239,6 +240,15 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
+	renderTemplateHuman(stdout, t)
+	return rcOK
+}
+
+// renderTemplateHuman prints a template's human-readable view — its context,
+// per-agent specs, work pattern, process, and rhythms. Shared by `templates
+// show` and `templates starters show` so a starter renders identically to a
+// stored template (JOH-246).
+func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 	fmt.Fprintf(stdout, "Template: %s\n", t.Name)
 	if t.Descr != "" {
 		fmt.Fprintf(stdout, "  descr:   %s\n", t.Descr)
@@ -351,7 +361,6 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 	if t.WaveMaxWait > 0 {
 		fmt.Fprintf(stdout, "  wave_max_wait: %ds\n", t.WaveMaxWait)
 	}
-	return rcOK
 }
 
 // ---- create / edit ----
@@ -840,4 +849,180 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// ---- starters (JOH-246) ----
+//
+// Bundled starter task forces: curated, ready-to-run templates tclaude ships in
+// the binary. These verbs are thin clients over the daemon's /v1/starters
+// surface (agentd/starters.go): `ls` and `show` are open reads; `install`
+// stores a starter as a local template through the shared import path
+// (templates.manage). Install never overwrites an existing template of the same
+// name — a user's edited copy is sacred; `--as` installs a fresh copy.
+
+// starterSummaryJSON mirrors the daemon's starter list shape (agentd/starters.go).
+type starterSummaryJSON struct {
+	Name        string `json:"name"`
+	Descr       string `json:"descr,omitempty"`
+	Agents      int    `json:"agents"`
+	Waves       int    `json:"waves"`
+	Rhythms     int    `json:"rhythms"`
+	Process     int    `json:"process"`
+	WorkPattern int    `json:"work_pattern"`
+}
+
+// starterInstallResultJSON mirrors the daemon's install response.
+type starterInstallResultJSON struct {
+	Name      string   `json:"name"`
+	Installed bool     `json:"installed"`
+	Skipped   bool     `json:"skipped"`
+	Message   string   `json:"message"`
+	Warnings  []string `json:"warnings"`
+}
+
+func templatesStartersCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:   "starters",
+		Short: "Browse and install bundled starter task forces",
+		Long: "tclaude ships a small library of curated, ready-to-run task-force templates — a dev squad, a research " +
+			"pod, and a review crew. Each is a worked example of the whole feature set (role references, per-agent " +
+			"launch tuning, a process, staged-spawn waves, seeded rhythms, and a routed work pattern). List them with " +
+			"'ls', inspect one with 'show', and 'install' it as a local template you can then deploy or edit. Install " +
+			"never overwrites an existing template of the same name — your edited copy is sacred.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds: []*cobra.Command{
+			templatesStartersLsCmd(),
+			templatesStartersShowCmd(),
+			templatesStartersInstallCmd(),
+		},
+	}.ToCobra()
+}
+
+func templatesStartersLsCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "ls",
+		Short:       "List the bundled starter task forces",
+		Long:        "Lists every starter tclaude ships, with its agent count and a one-line description. Install one with 'templates starters install <name>'.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersLs(os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersLs(stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var starters []starterSummaryJSON
+	if err := DaemonRequest(http.MethodGet, "/v1/starters", nil, &starters, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(starters) == 0 {
+		fmt.Fprintln(stdout, "(no starters bundled)")
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%-16s  %-7s  %s\n", "NAME", "AGENTS", "DESCR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 80))
+	for _, s := range starters {
+		fmt.Fprintf(stdout, "%-16s  %-7d  %s\n", s.Name, s.Agents, truncate(s.Descr, 52))
+	}
+	fmt.Fprintln(stdout, "\nInstall one with: tclaude agent templates starters install <name>")
+	return rcOK
+}
+
+type templatesStartersShowParams struct {
+	Name string `pos:"true" help:"Starter name (from 'tclaude agent templates starters ls')."`
+	JSON bool   `long:"json" optional:"true" help:"Emit the starter's raw template JSON instead of the human-readable view."`
+}
+
+func templatesStartersShowCmd() *cobra.Command {
+	return boa.CmdT[templatesStartersShowParams]{
+		Use:         "show <name>",
+		Short:       "Show one bundled starter in detail",
+		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesStartersShowParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersShow(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersShow(p *templatesStartersShowParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a starter name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var t templateJSON
+	if err := DaemonRequest(http.MethodGet, "/v1/starters/"+url.PathEscape(name), nil, &t, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(t); err != nil {
+			fmt.Fprintf(stderr, "Error: encoding template JSON: %v\n", err)
+			return rcIOFailure
+		}
+		return rcOK
+	}
+	renderTemplateHuman(stdout, t)
+	return rcOK
+}
+
+type templatesStartersInstallParams struct {
+	Name string `pos:"true" help:"Starter to install (from 'tclaude agent templates starters ls')."`
+	As   string `long:"as" optional:"true" help:"Install under this name instead of the starter's own name — installs a fresh copy, or sidesteps a name collision with an existing template."`
+}
+
+func templatesStartersInstallCmd() *cobra.Command {
+	return boa.CmdT[templatesStartersInstallParams]{
+		Use:   "install <name>",
+		Short: "Install a bundled starter as a local template",
+		Long: "Installs a starter as a local group template you can then deploy, instantiate, or edit. Idempotent and " +
+			"never clobbers: if a template of the target name already exists, the install is SKIPPED (your edited copy " +
+			"is sacred) — pass --as <name> to install a fresh copy under a different name. Works on a fresh empty DB.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesStartersInstallParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersInstall(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersInstall(p *templatesStartersInstallParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a starter name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/starters/" + url.PathEscape(name) + "/install"
+	if as := strings.TrimSpace(p.As); as != "" {
+		q := url.Values{}
+		q.Set("as", as)
+		path += "?" + q.Encode()
+	}
+	var res starterInstallResultJSON
+	if err := DaemonRequest(http.MethodPost, path, nil, &res, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if res.Skipped {
+		fmt.Fprintf(stdout, "Skipped %q — %s\n", res.Name, res.Message)
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "Installed starter as template %q\n", res.Name)
+	for _, wmsg := range res.Warnings {
+		fmt.Fprintf(stdout, "  ⚠ %s\n", wmsg)
+	}
+	fmt.Fprintf(stdout, "Deploy it with: tclaude agent task-force deploy %s --mission \"…\"\n", res.Name)
+	return rcOK
 }

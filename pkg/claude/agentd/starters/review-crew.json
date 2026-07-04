@@ -1,0 +1,88 @@
+{
+  "format": "tclaude-task-force",
+  "format_version": 1,
+  "template": {
+    "name": "review-crew",
+    "descr": "Diverse-lens reviewers + a synthesizer, to audit a change set.",
+    "default_context": "You are part of a review crew auditing a change set. Each reviewer works cold and independent through a single lens; overlap is fine, collusion is not. Findings need a file/line and a severity, and nits are marked as nits. The synthesizer merges the lenses into one triaged report; the lead owns the final verdict.",
+    "agents": [
+      {
+        "name": "lead",
+        "role": "lead",
+        "role_ref": "lead",
+        "descr": "Crew lead — scopes the audit and owns the verdict.",
+        "initial_message": "You lead the audit. Pin down exactly what's under review — the diff, the change set, the risk areas — and assign each reviewer a lens. Stay out of their way while they work cold, then own the final verdict once the synthesizer has merged the findings.",
+        "is_owner": true,
+        "permissions": ["groups.spawn"],
+        "wave": 0
+      },
+      {
+        "name": "reviewer-correctness",
+        "role": "reviewer",
+        "role_ref": "reviewer",
+        "descr": "Correctness lens — bugs and missing cases.",
+        "initial_message": "Your lens is correctness. Audit the change set cold for logic bugs, missing cases, broken invariants, and mishandled errors. Report specific findings with file/line and severity; separate real defects from nits and say which is which.",
+        "wave": 1
+      },
+      {
+        "name": "reviewer-security",
+        "role": "reviewer",
+        "role_ref": "reviewer",
+        "descr": "Security lens — holes and abuse paths.",
+        "initial_message": "Your lens is security. Audit the change set cold for injection sinks, missing authz checks, unsafe input handling, secret leakage, and abuse paths. Report specific findings with file/line and severity; separate real defects from nits.",
+        "wave": 1
+      },
+      {
+        "name": "reviewer-simplicity",
+        "role": "reviewer",
+        "role_ref": "reviewer",
+        "descr": "Simplicity lens — reuse and maintainability.",
+        "initial_message": "Your lens is simplicity and maintainability. Audit the change set cold for duplication, needless complexity, missed reuse, and things that will be hard to change later. Report specific findings with file/line and severity; separate real defects from nits.",
+        "wave": 1
+      },
+      {
+        "name": "synthesizer",
+        "role": "synthesizer",
+        "descr": "Synthesizer — merges the lenses into one report.",
+        "initial_message": "You merge the crew's lenses. Wait for the reviewers, then dedupe overlapping findings, drop the ones that don't survive scrutiny, and rank what's left by severity. Deliver one triaged report the human can act on — real defects first, nits last.",
+        "wave": 2
+      }
+    ],
+    "work_pattern": [
+      {
+        "send_to": "lead",
+        "value": "The crew is assembled. Scope the audit and assign lenses. Under review: {{mission}}"
+      },
+      {
+        "send_to": "all",
+        "value": "Review crew is live. Work cold and independent — correctness, security, and simplicity lenses in parallel, then the synthesizer merges. Findings need file/line + severity; nits marked as nits."
+      }
+    ],
+    "process": [
+      {
+        "name": "scope",
+        "roles": ["lead"],
+        "criteria": "Pin down exactly what's under audit — the diff, the change set, the risk areas — and assign each reviewer a lens. Exit when every reviewer knows their lens and the boundaries."
+      },
+      {
+        "name": "review",
+        "roles": ["reviewer"],
+        "criteria": "Audit the change set through YOUR lens only, cold and independent. Report specific findings with file/line and severity. Exit when your lens is covered."
+      },
+      {
+        "name": "synthesize",
+        "roles": ["synthesizer", "lead"],
+        "criteria": "Merge the lenses: dedupe overlapping findings, drop what doesn't survive scrutiny, rank the rest by severity. Exit when there is one triaged report the human can act on."
+      }
+    ],
+    "rhythms": [
+      {
+        "name": "findings-roundup",
+        "interval": "30m",
+        "subject": "Findings roundup",
+        "body": "Roundup: post your findings so far (file/line + severity), and flag anything you want a second pair of eyes on. Nits marked as nits."
+      }
+    ],
+    "wave_max_wait": 300
+  }
+}
