@@ -22,12 +22,31 @@ func TestNormalizeAgentTag(t *testing.T) {
 	_, err = NormalizeAgentTag("ctrl\x07tag")
 	assert.Error(t, err, "control char rejected")
 
+	_, err = NormalizeAgentTag("a,b")
+	assert.Error(t, err, "comma rejected (dashboard separator)")
+
 	_, err = NormalizeAgentTag(strings.Repeat("x", MaxAgentTagLen+1))
 	assert.Error(t, err, "over-length rejected")
 
 	ok, err = NormalizeAgentTag(strings.Repeat("x", MaxAgentTagLen))
 	require.NoError(t, err, "exactly max is allowed")
 	assert.Len(t, ok, MaxAgentTagLen)
+}
+
+func TestTaskForceTag(t *testing.T) {
+	assert.Equal(t, "", TaskForceTag("  "), "blank name yields no tag")
+	assert.Equal(t, "tf:squad", TaskForceTag("squad"), "short name kept verbatim")
+	// Comma + control chars are stripped so the auto-stamp always validates.
+	assert.Equal(t, "tf:ab", TaskForceTag("a,b"), "comma stripped")
+	assert.Equal(t, "tf:ab", TaskForceTag("a\nb"), "newline stripped")
+	// A long name is truncated so tf:<name> always fits the length cap, and
+	// the result is a VALID tag (NormalizeAgentTag accepts it).
+	long := TaskForceTag(strings.Repeat("x", MaxAgentTagLen*2))
+	assert.LessOrEqual(t, len([]rune(long)), MaxAgentTagLen, "truncated to the cap")
+	assert.Equal(t, TaskForceTagPrefix, long[:3], "prefix preserved")
+	norm, err := NormalizeAgentTag(long)
+	require.NoError(t, err, "the truncated auto-stamp is a valid tag")
+	assert.Equal(t, long, norm)
 }
 
 func TestAgentTags_AddReplaceRemoveList(t *testing.T) {

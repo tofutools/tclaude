@@ -35,8 +35,13 @@ const (
 // NormalizeAgentTag trims a tag and reports the cleaned value. It is the
 // single place the tag charset/length policy lives, shared by the write
 // ops and the boundary validators. A tag must be non-empty after trim,
-// within MaxAgentTagLen, and carry no control characters (newlines
-// included) — the last keeps a tag to a single readable chip.
+// within MaxAgentTagLen, carry no control characters (newlines included),
+// and contain no comma. The comma rule keeps the CLI and the dashboard
+// agreeing on the tag grammar: the dashboard's Tags field is
+// comma-separated, so a tag containing a comma would round-trip lossily
+// (one chip "a,b" would split back into two tags "a"/"b" on the next
+// dashboard edit). Forbidding it up front makes the two surfaces speak
+// the same language.
 func NormalizeAgentTag(tag string) (string, error) {
 	t := strings.TrimSpace(tag)
 	if t == "" {
@@ -46,12 +51,50 @@ func NormalizeAgentTag(tag string) (string, error) {
 	if n := len([]rune(t)); n > MaxAgentTagLen {
 		return "", fmt.Errorf("tag is too long (%d > %d chars)", n, MaxAgentTagLen)
 	}
+	if strings.ContainsRune(t, ',') {
+		return "", errors.New("tag must not contain a comma (the dashboard tag separator)")
+	}
 	for _, r := range t {
 		if r == '\n' || r == '\r' || unicode.IsControl(r) {
 			return "", errors.New("tag contains a control character")
 		}
 	}
 	return t, nil
+}
+
+// TaskForceTagPrefix marks a tag as the auto-stamped task-force / template
+// marker (`tf:<template-name>`), distinguishing it from a free-form
+// operator tag. The dashboard colours it distinctly.
+const TaskForceTagPrefix = "tf:"
+
+// TaskForceTag builds the auto-stamp tag for a template deployment. The
+// template name is operator-chosen and effectively UNBOUNDED (group /
+// template names carry no length cap and may contain commas), so this
+// GUARANTEES a storable, valid tag rather than letting a long or
+// comma-bearing name make the auto-stamp silently fail validation: it
+// strips characters a tag may not hold (comma, control chars) and
+// truncates `tf:<name>` to MaxAgentTagLen on a rune boundary. Truncation
+// can in principle collide two very long names onto one tag — the same
+// class as "the same template deployed twice shares a tag", which is an
+// accepted non-goal (instance disambiguation is out of scope). Returns ""
+// for a blank name so the caller can skip the stamp.
+func TaskForceTag(templateName string) string {
+	name := strings.TrimSpace(templateName)
+	if name == "" {
+		return ""
+	}
+	// Drop tag-invalid characters so the result always passes NormalizeAgentTag.
+	cleaned := strings.Map(func(r rune) rune {
+		if r == ',' || r == '\n' || r == '\r' || unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	tag := TaskForceTagPrefix + cleaned
+	if runes := []rune(tag); len(runes) > MaxAgentTagLen {
+		tag = string(runes[:MaxAgentTagLen])
+	}
+	return tag
 }
 
 // normalizeAgentTagSet cleans, validates, de-duplicates and sorts a slice

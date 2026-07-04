@@ -144,6 +144,7 @@ func isTagValidationError(err error) bool {
 		"tag is empty",
 		"tag is too long",
 		"tag contains a control character",
+		"tag must not contain a comma",
 		"too many tags",
 	} {
 		if strings.Contains(msg, needle) {

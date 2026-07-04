@@ -230,9 +230,18 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 // logging — never failing — since the agent is already spawned. It runs
 // for BOTH the synchronous wave-0 spawn and the background choreography
 // waves, so every template-deployed member carries the marker.
+//
+// db.TaskForceTag guarantees a storable tag (it strips tag-invalid chars
+// and length-truncates), so the only remaining way the stamp can be
+// refused is the per-agent tag COUNT cap — an agent already carrying
+// MaxAgentTags free-form tags keeps them and the system marker degrades
+// to the logged warning below. That is an accepted residual: it needs an
+// operator to have manually filled all 16 tag slots, and the marker is
+// still recoverable (re-deploy after trimming a tag), so we don't special-
+// case the cap here.
 func stampTaskForceTag(conv, templateName string) {
-	templateName = strings.TrimSpace(templateName)
-	if templateName == "" || conv == "" {
+	tag := db.TaskForceTag(templateName)
+	if tag == "" || conv == "" {
 		return
 	}
 	agentID, err := db.AgentIDForConv(conv)
@@ -246,9 +255,9 @@ func stampTaskForceTag(conv, templateName string) {
 			"conv", conv, "template", templateName)
 		return
 	}
-	if err := db.AddAgentTags(agentID, "tf:"+templateName); err != nil {
+	if err := db.AddAgentTags(agentID, tag); err != nil {
 		slog.Warn("wave spawn: stamp task-force tag failed",
-			"agent", agentID, "template", templateName, "error", err)
+			"agent", agentID, "template", templateName, "tag", tag, "error", err)
 	}
 }
 
