@@ -70,6 +70,24 @@ func startPopupServer(port int) (*http.Server, string, error) {
 	return srv, fmt.Sprintf("http://127.0.0.1:%d", addr.Port), nil
 }
 
+// approvalOutcome is the human's decision on a pending approval. It widens
+// the old approve/deny boolean with a third choice — "always allow for this
+// agent" — which approves the pending request AND persists an allow
+// override so future calls skip the popup (JOH-367). Only slugs flagged
+// AutoGrantable can produce outcomeApproveAlways; the popup gates both the
+// button and its server-side handler on that.
+type approvalOutcome int
+
+const (
+	outcomeDeny          approvalOutcome = iota // deny this request
+	outcomeApprove                              // approve this one request only
+	outcomeApproveAlways                        // approve AND persist an allow override for the agent
+)
+
+// approved reports whether the outcome lets the pending request proceed
+// (approve or approve-always). Only outcomeDeny blocks it.
+func (o approvalOutcome) approved() bool { return o != outcomeDeny }
+
 // ApprovalRequest is what the popup UI shows the human. Fields are
 // embedded into the HTML page; all values must be HTML-escaped before
 // rendering.
@@ -86,10 +104,11 @@ type approvalRequest struct {
 	targetGroup     string // populated for actions on a specific group
 	targetConvID    string // populated for actions on a specific other conv
 	targetConvTitle string // resolved display title for targetConvID
+	autoGrantable   bool   // slug is eligible for the "always allow" button (JOH-367)
 	createdAt       time.Time
 	timeout         time.Duration
-	decision        chan bool          // approve=true, deny=false
-	extend          chan time.Duration // +N seconds — bounded extension so an unattended popup still eventually times out
+	decision        chan approvalOutcome // the human's choice: deny / approve / approve-always
+	extend          chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
 
 	// sessionToken is minted when a valid init token is exchanged at
 	// the GET handler, and is required on all POSTs (approve/deny/
@@ -203,8 +222,7 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	for {
 		select {
 		case d := <-req.decision:
-			recordApprovalDecision(req, d)
-			return d
+			return applyApprovalOutcome(req, d)
 		case d := <-req.extend:
 			if !timer.Stop() {
 				select {
@@ -320,13 +338,30 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 		switch decision {
 		case "approve":
 			select {
-			case req.decision <- true:
+			case req.decision <- outcomeApprove:
+			default:
+			}
+			renderApprovalDoneCallback(w, true)
+		case "always":
+			// "Always allow for this agent" — approve AND persist an allow
+			// override. Server-side gate: only slugs the registry flags
+			// AutoGrantable may be persisted this way, so a scraped popup URL
+			// can't self-grant an ineligible (e.g. destructive) slug even if
+			// the button was never rendered. The persist itself happens in the
+			// waiter (applyApprovalOutcome), keeping the "exactly the decision
+			// that took effect, exactly once" guarantee.
+			if !req.autoGrantable {
+				http.Error(w, "this permission is not eligible for \"always allow\"", http.StatusForbidden)
+				return
+			}
+			select {
+			case req.decision <- outcomeApproveAlways:
 			default:
 			}
 			renderApprovalDoneCallback(w, true)
 		case "deny":
 			select {
-			case req.decision <- false:
+			case req.decision <- outcomeDeny:
 			default:
 			}
 			renderApprovalDoneCallback(w, false)
@@ -360,25 +395,71 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// recordApprovalDecision writes an audit row for a human approve/deny of a
+// applyApprovalOutcome runs the side-effects of a consumed decision and
+// reports whether the pending request may proceed. It audits the decision
+// and, for outcomeApproveAlways, persists the allow override. Called from
+// the approval WAITER at the moment it consumes the decision off
+// req.decision — so the side-effects run for exactly the decision that took
+// effect, exactly once (a double-submitted POST whose send is dropped never
+// reaches here). Both the real waiter and the test stub route through this,
+// so the stub exercises the same audit + persist path as production.
+func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
+	recordApprovalDecision(req, outcome)
+	if outcome == outcomeApproveAlways {
+		persistAlwaysAllowGrant(req)
+	}
+	return outcome.approved()
+}
+
+// persistAlwaysAllowGrant writes the popup-origin allow override for the
+// deciding agent (JOH-367). The override is keyed on the agent's stable
+// identity (db.SetAgentPermissionOverride resolves conv → agent_id), so it
+// follows the agent through /clear conv-rotation and reincarnation — the
+// operator's "always allow for THIS agent" intent, not "this one conv".
+//
+// Defense in depth: re-checks IsAutoGrantableSlug even though the POST
+// handler already gated on req.autoGrantable, so a malformed caller can
+// never persist an ineligible slug. Best-effort — a DB failure is logged
+// but does NOT fail the approval the human just granted (the one-off action
+// still proceeds; only the persistence was lost).
+func persistAlwaysAllowGrant(req *approvalRequest) {
+	if !IsAutoGrantableSlug(req.perm) {
+		slog.Warn("popup: refusing to persist always-allow for ineligible slug",
+			"perm", req.perm, "conv", req.convID)
+		return
+	}
+	if req.convID == "" {
+		return
+	}
+	if err := db.SetAgentPermissionOverride(req.convID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
+		slog.Warn("popup: failed to persist always-allow grant",
+			"perm", req.perm, "conv", req.convID, "err", err)
+	}
+}
+
+// recordApprovalDecision writes an audit row for a human decision on a
 // pending permission request. The popup server isn't under /v1 or /api, so
 // the auditRequests middleware never matches it — and the approval context
 // (which agent, which permission) lives in the in-memory request, not the
 // HTTP body — so we record here directly. It is called from the approval
-// WAITER at the moment it consumes the decision off req.decision, so it
-// records exactly the decision that took effect, exactly once: a double-
-// submitted POST whose send is dropped (the receiver already returned) never
-// reaches this path. Best-effort: a logging failure is warned and swallowed
-// so it can never affect the decision the human just made.
+// WAITER (via applyApprovalOutcome) at the moment it consumes the decision
+// off req.decision, so it records exactly the decision that took effect,
+// exactly once. Best-effort: a logging failure is warned and swallowed so
+// it can never affect the decision the human just made.
 //
 // The popup is human-only (loopback + single-use init token + per-approval
 // session cookie), so the actor is always the operator; the target is the
 // agent whose request was decided. A timeout auto-deny and `extend` are not
 // human decisions and are intentionally not recorded.
-func recordApprovalDecision(req *approvalRequest, approved bool) {
+func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 	verb, word := "approval.deny", "deny"
-	if approved {
+	switch outcome {
+	case outcomeApprove:
 		verb, word = "approval.approve", "approve"
+	case outcomeApproveAlways:
+		verb, word = "approval.approve-always", "always"
+	case outcomeDeny:
+		// keep the deny defaults
 	}
 	detail := strings.TrimSpace(req.perm)
 	if action := strings.TrimSpace(req.method + " " + req.path); action != "" {
@@ -428,6 +509,7 @@ const approvalPageTemplate = `<!doctype html>
   form { display: inline; }
   button { font-size: 1.1em; padding: 0.6em 1.4em; margin-right: 0.4em; cursor: pointer; }
   .approve { background: #2c7a39; color: white; border: 1px solid #1f5c2a; }
+  .always  { background: #7a5c2c; color: white; border: 1px solid #5c4520; }
   .deny    { background: #b03a2e; color: white; border: 1px solid #862c22; }
   .extend  { background: #4d6fb3; color: white; border: 1px solid #345088; }
   .extend:disabled { background: #aaa; border-color: #888; cursor: default; }
@@ -446,14 +528,14 @@ const approvalPageTemplate = `<!doctype html>
 </dl>
 <form action="/approve/%s/approve" method="post">
   <button class="approve" autofocus>Approve</button>
-</form>
+</form>%s
 <form action="/approve/%s/deny" method="post">
   <button class="deny">Deny</button>
 </form>
 <button id="extend-btn" class="extend" type="button" data-id="%s">+5min</button>
 <p class="hint">This popup was opened by <code>tclaude agentd</code>
 on this machine. If you didn't expect it, click Deny. Use <strong>+5min</strong>
-to push the auto-deny back if you need more time to read.</p>
+to push the auto-deny back if you need more time to read.%s</p>
 <script>
 (function() {
   const id = document.getElementById('extend-btn').dataset.id;
@@ -536,6 +618,17 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 			html.EscapeString(req.bodyPreview) + "</pre></dd>"
 	}
 
+	// The "Always allow for this agent" button + its hint render ONLY when
+	// the requested slug is auto-grantable (JOH-367). req.id is a random hex
+	// token; escaped for consistency with the other req.id embeds.
+	alwaysBtn, alwaysHint := "", ""
+	if req.autoGrantable {
+		alwaysBtn = "\n<form action=\"/approve/" + html.EscapeString(req.id) + "/always\" method=\"post\">\n" +
+			"  <button class=\"always\">Always allow for this agent</button>\n</form>"
+		alwaysHint = " <strong>Always allow for this agent</strong> approves this " +
+			"and remembers the permission for this agent, so it won't ask again."
+	}
+
 	fmt.Fprintf(w, approvalPageTemplate,
 		html.EscapeString(req.perm),
 		html.EscapeString(requesterTitle),
@@ -547,9 +640,11 @@ func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
 		queryRow,
 		bodyRow,
 		int(req.timeout.Seconds()),
-		html.EscapeString(req.id),
-		html.EscapeString(req.id),
-		html.EscapeString(req.id),
+		html.EscapeString(req.id), // approve form
+		alwaysBtn,                 // conditional "always" form
+		html.EscapeString(req.id), // deny form
+		html.EscapeString(req.id), // extend button
+		alwaysHint,                // conditional hint clause
 	)
 }
 

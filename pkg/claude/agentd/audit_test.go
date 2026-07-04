@@ -234,7 +234,7 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 		path:        "/v1/messages",
 		targetGroup: "crew",
 	}
-	recordApprovalDecision(req, true)
+	recordApprovalDecision(req, outcomeApprove)
 
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve"})
 	if err != nil {
@@ -261,7 +261,7 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	}
 
 	// A deny writes the mirror verb.
-	recordApprovalDecision(req, false)
+	recordApprovalDecision(req, outcomeDeny)
 	denies, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.deny"})
 	if err != nil {
 		t.Fatalf("list deny rows: %v", err)

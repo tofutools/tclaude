@@ -314,7 +314,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		bodyPreview: preview,
 		createdAt:   now,
 		timeout:     policy.PopupTimeout,
-		decision:    make(chan bool, 1),
+		decision:    make(chan approvalOutcome, 1),
 		extend:      make(chan time.Duration, 1),
 	}
 	if popupBaseURL == "" {
