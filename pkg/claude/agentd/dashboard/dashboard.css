@@ -1186,6 +1186,40 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding: 0 6px; font-size: 11px;
 }
 .role-edit:hover .role-add { color: #adbac7; border-color: #58a6ff; text-decoration: none; }
+
+/* Agent tags — compact pill chips in the Description column, the same
+   visual idiom as the status pills / owner badge (JOH-380). They ride
+   AFTER the description text; .agent-tags is an inline-flex wrap so a row
+   with several tags stays on the line and wraps rather than stretching
+   the column. The tf:<template> task-force marker (.agent-tag-tf) gets a
+   distinct blue so it reads apart from a free-form operator tag. */
+.descr-cell { color: #8b949e; }
+.descr-text { color: #8b949e; }
+.agent-tags {
+  display: inline-flex; flex-wrap: wrap; gap: 3px;
+  vertical-align: middle; margin-left: 6px;
+}
+.descr-cell .agent-tags:first-child { margin-left: 0; }
+.agent-tag {
+  display: inline-block; padding: 0 6px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; line-height: 16px; white-space: nowrap;
+  background: #21262d; color: #adbac7; border: 1px solid #2a3340;
+  font-family: ui-monospace, monospace;
+}
+.agent-tag-tf { background: #10243a; color: #6cb6ff; border-color: #1f3d5c; }
+/* The Description cell is click-to-edit in a real group (like the role
+   cell) — the whole cell is the target, so it gets the pointer +
+   hover-underline affordance. An empty descr + no tags shows the discrete
+   dashed "+ descr / tags" hint instead of a blank cell. */
+.descr-edit { cursor: pointer; }
+.descr-edit:hover .descr-text { text-decoration: underline; }
+.descr-add {
+  display: inline-block; white-space: nowrap;
+  color: #6e7681; border: 1px dashed #3a3f46; border-radius: 4px;
+  padding: 0 6px; font-size: 11px;
+}
+.descr-edit:hover .descr-add { color: #adbac7; border-color: #58a6ff; text-decoration: none; }
+
 #status { font-size: 11px; color: #7d8590; }
 /* Leading ● — pseudo-element so its colour can swap with the
    live/error class without us round-tripping HTML through
@@ -4935,6 +4969,16 @@ body.wizard .state-working   { border-color: #a97bd6; }
 body.wizard .state-idle      { border-color: #6ee7b7; }
 body.wizard .state-awaiting  { border-color: #d9b45a; }
 body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.5); }
+
+/* Agent tags in the wizard skin — the chips become enchanted sigils: a
+   violet fill with a gold edge, the task-force marker a brighter arcane
+   blue. Scoped to .agent-tag so it never widens beyond the chip (the
+   styling-sweep anti-pin test forbids an unscoped body.wizard rule). */
+body.wizard .agent-tag {
+  background: #241a40; color: #e7d9f5; border-color: #d9b45a;
+}
+body.wizard .agent-tag-tf { background: #14233f; color: #8cc7ff; border-color: #4a6ea8; }
+body.wizard .descr-edit:hover .descr-add { color: #e7d9f5; border-color: #d9b45a; }
 
 /* ─── Mana meter — the wizard twin of the context-window gauge ─────────
    The context window IS the agent's mana reserve; the vertical gauge shows

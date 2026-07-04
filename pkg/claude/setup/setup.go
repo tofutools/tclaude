@@ -41,6 +41,7 @@ var selfPermsForBundledSkills = []string{
 	"self.schedule",
 	"self.remote-control",
 	"self.task",
+	"self.tags",
 }
 
 // Protocol version - bump this when the handler needs to be re-registered
