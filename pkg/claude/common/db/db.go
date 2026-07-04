@@ -77,9 +77,11 @@ func Open() (*sql.DB, error) {
 	// read->write upgrade fails instantly with SQLITE_BUSY — busy_timeout
 	// deliberately does not retry that case (the snapshot is stale; waiting
 	// can't fix it). With IMMEDIATE the write lock is taken at BEGIN, where
-	// busy_timeout(5000) applies, so concurrent writers queue instead of
-	// erroring (JOH-348). Every Begin() call site here is a write tx, so
-	// this costs reads nothing (plain Query/Exec don't use transactions).
+	// busy_timeout(5000) applies, so concurrent writers queue (up to the
+	// timeout) instead of erroring (JOH-348). Every Begin() call site here is
+	// a write tx, so this costs reads nothing (plain Query/Exec don't use
+	// transactions); should a read-only multi-statement tx ever be needed,
+	// BeginTx with TxOptions{ReadOnly: true} bypasses the immediate mode.
 	dsn := dbPath + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	globalDB, initErr = sql.Open("sqlite", dsn)
 	if initErr != nil {
