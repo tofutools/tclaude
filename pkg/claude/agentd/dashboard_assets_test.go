@@ -483,6 +483,39 @@ func TestDashboardAssets_ShowAgentHideButtonWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ShowGroupDescriptionWired guards the group-description
+// chip's default-hidden toggle (config dashboard.show_group_description), the
+// deprecation of the display-only group-description feature. Its pieces span
+// several files that must stay in lockstep — there's no JS render test, so we
+// assert on the embedded concatenation at `go test ./...`. The Go resolver +
+// round-trip is covered separately by config.TestShowGroupDescription. A rename
+// in any one file silently breaks the toggle only in the browser:
+//   - refresh.js toggles body.show-group-description off the snapshot flag;
+//   - dashboard.css hides the .group-descr chip by default and restores it
+//     under body.show-group-description;
+//   - config.js + dashboard.html expose the Config-tab checkbox.
+//
+// The chip itself (render.js) still always renders .group-descr; visibility is
+// purely the CSS class, so nothing here touches the render path.
+func TestDashboardAssets_ShowGroupDescriptionWired(t *testing.T) {
+	for _, needle := range []string{
+		// refresh.js — drives the body class off the snapshot flag.
+		"'show-group-description', !!data.show_group_description",
+		// dashboard.css — hide by default, restore under the body class.
+		`.group-descr { display: none; }`,
+		`body.show-group-description .group-descr { display: inline; }`,
+		// config.js — load + gather the Config-tab checkbox.
+		"#cfg-dashboard-show-group-description",
+		"dashboard.show_group_description = true",
+		// dashboard.html — the Config-tab control.
+		`id="cfg-dashboard-show-group-description"`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — group-description toggle broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_TUIColorSchemeWired guards the interactive-TUI color
 // scheme selector (config tui.color_scheme), whose Config-tab pieces span
 // dashboard.html + config.js and must stay in lockstep — there's no JS render

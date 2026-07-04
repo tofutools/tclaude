@@ -966,6 +966,28 @@ func TestShowAgentHideButton(t *testing.T) {
 	assert.True(t, loaded.ShowAgentHideButton(), "true survives round-trip")
 }
 
+func TestShowGroupDescription(t *testing.T) {
+	// Default is false (chip hidden) for every "unset" shape.
+	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")
+	assert.False(t, (&Config{}).ShowGroupDescription(), "no block → hidden")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).ShowGroupDescription(), "absent key → hidden")
+
+	// Only an explicit true shows the chip.
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{ShowGroupDescription: true}}).ShowGroupDescription(), "explicit true → shown")
+
+	// A fresh (all-default) config serializes no dashboard block / key.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "show_group_description")
+
+	// Explicit true survives Save/Load — the non-default is persisted.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{ShowGroupDescription: true}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.ShowGroupDescription(), "true survives round-trip")
+}
+
 // TestMatchSudoOverride_Keying covers the C2 (JOH-324) addition: a sudo
 // override may be keyed on the stable `agt_` agent_id (exact or short
 // prefix), surviving conv rotation — alongside the pre-existing conv-id

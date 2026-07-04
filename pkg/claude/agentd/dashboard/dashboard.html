@@ -470,6 +470,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-show-agent-hide-btn" /> show the per-agent "hide window" button next to "focus"</label>
         <span class="cfg-hint">Each agent row opens with two eye icons: <strong>focus</strong> (👁, raise the agent's terminal window) and <strong>hide</strong> (the slashed-eye, detach the window — the agent keeps running). Hiding a window is far less used than focusing it, so the dashboard drops the hide icon <em>by default</em> to keep the quick-control cluster tight — only <strong>focus</strong> shows. <strong>Checked</strong> brings the <strong>hide</strong> icon back for anyone who wants the row shortcut. Detaching is always possible from the terminal itself; this is only the per-row button. Off by default. Stored as <code>dashboard.show_agent_hide_button</code> (the default is omitted; checked writes <code>true</code>).</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Group descriptions</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-show-group-description" /> show the 📝 description chip in each group header</label>
+        <span class="cfg-hint">Every group can carry a short <strong>description</strong> — the 📝 chip beside the group name, click-to-edit. It's a <em>display-only</em> label: nothing in tclaude reads it, so it's a <strong>deprecated</strong> feature that mostly just clutters the header. The dashboard hides the chip <em>by default</em>; existing descriptions are kept in the database but not shown. <strong>Checked</strong> brings the chip back (and with it the only way to view or edit a group's description). Off by default. Stored as <code>dashboard.show_group_description</code> (the default is omitted; checked writes <code>true</code>).</span>
+      </div>
     </div>
 
     <div class="cfg-section">

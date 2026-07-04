@@ -651,6 +651,13 @@ type snapshotPayload struct {
 	// off this each poll; CSS drops the button unless the class is present.
 	// See Config.ShowAgentHideButton.
 	ShowAgentHideButton bool `json:"show_agent_hide_button"`
+	// ShowGroupDescription mirrors config dashboard.show_group_description —
+	// whether each group header's 📝 description chip is shown. Off by default:
+	// group descriptions are a deprecated, display-only feature, so the chip is
+	// hidden to keep headers tight. refresh.js toggles body.show-group-description
+	// off this each poll; CSS drops the chip unless the class is present. See
+	// Config.ShowGroupDescription.
+	ShowGroupDescription bool `json:"show_group_description"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1456,10 +1463,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slop:    cfg.ActivityBotsSlop(),
 			Wizard:  cfg.ActivityBotsWizard(),
 		},
-		HScrollFollow:       cfg.HScrollFollow(),
-		GroupQuickOptions:   cfg.GroupQuickOptions(),
-		DefaultTerminal:     cfg.DefaultTerminal(),
-		ShowAgentHideButton: cfg.ShowAgentHideButton(),
+		HScrollFollow:        cfg.HScrollFollow(),
+		GroupQuickOptions:    cfg.GroupQuickOptions(),
+		DefaultTerminal:      cfg.DefaultTerminal(),
+		ShowAgentHideButton:  cfg.ShowAgentHideButton(),
+		ShowGroupDescription: cfg.ShowGroupDescription(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},
