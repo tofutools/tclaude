@@ -16,7 +16,7 @@ import (
 // /v1/groups/{name}/rebrief endpoint with the tmux/spawn simulators and assert
 // at real surfaces: the force's live members receive the RE-delivered
 // work-pattern steps (a second copy, mission interpolated), the gating (human /
-// owner pass, plain member refused unless granted templates.use), and the clear
+// owner pass, plain member refused unless granted templates.instantiate), and the clear
 // 4xx degradations (not-a-force, source-template-deleted).
 
 // countInboxContains returns how many of conv's inbox messages carry needle in
@@ -116,9 +116,9 @@ func TestRebrief_RedeliversWorkPatternToLiveMembers(t *testing.T) {
 	assert.Equal(t, 2, countInboxContains(t, devConv, step), "dev got a second copy after rebrief")
 }
 
-// Scenario: re-brief gating mirrors process-advance but on templates.use. A
+// Scenario: re-brief gating mirrors process-advance but on templates.instantiate. A
 // plain member without the slug is refused; the group owner passes structurally;
-// a member explicitly granted templates.use passes; the human always passes.
+// a member explicitly granted templates.instantiate passes; the human always passes.
 func TestRebrief_Gating(t *testing.T) {
 	f := newFlow(t)
 
@@ -128,11 +128,11 @@ func TestRebrief_Gating(t *testing.T) {
 	require.NotEmpty(t, leadConv)
 	require.NotEmpty(t, devConv)
 
-	// A plain member without templates.use is refused.
+	// A plain member without templates.instantiate is refused.
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/raid/rebrief", nil), devConv))
 	assert.Equalf(t, http.StatusForbidden, rec.Code,
-		"non-owner without templates.use should be 403; body=%s", rec.Body.String())
+		"non-owner without templates.instantiate should be 403; body=%s", rec.Body.String())
 
 	// The owner (the lead) passes via the structural owner bypass.
 	rec = testharness.Serve(f.Mux,
@@ -140,7 +140,7 @@ func TestRebrief_Gating(t *testing.T) {
 	require.Equalf(t, http.StatusOK, rec.Code, "owner rebrief should pass; body=%s", rec.Body.String())
 	agentd.WaitForBackgroundForTest()
 
-	// A plain member explicitly granted templates.use passes.
+	// A plain member explicitly granted templates.instantiate passes.
 	require.NoError(t, db.GrantAgentPermission(devConv, agentd.PermTemplatesUse, "test"), "grant slug")
 	rec = testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/raid/rebrief", nil), devConv))
