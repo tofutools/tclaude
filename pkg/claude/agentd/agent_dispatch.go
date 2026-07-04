@@ -186,10 +186,15 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			bodyPreview:     bodyPreview,
 			targetConvID:    targetConv,
 			targetConvTitle: targetTitle,
-			createdAt:       time.Now(),
-			timeout:         timeout,
-			decision:        make(chan bool, 1),
-			extend:          make(chan time.Duration, 1),
+			// autoGrantable stays false on the cross-agent path: "always
+			// allow" persists the slug on the CALLER, which for a cross-agent
+			// capability would grant it against ALL targets — broader than the
+			// one-off, one-target approval the human gave. "Always allow" is
+			// intentionally scoped to the self / human-surface popup path.
+			createdAt: time.Now(),
+			timeout:   timeout,
+			decision:  make(chan approvalOutcome, 1),
+			extend:    make(chan time.Duration, 1),
 		}
 		if requestHumanApproval(req, popupBaseURL) {
 			return p.ConvID, true

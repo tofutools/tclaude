@@ -29,10 +29,23 @@ import (
 // this flag to show owner-conferred slugs as effectively held for owners.
 // The set is kept in lockstep with the bypassing call sites by
 // TestPermissionRegistry_OwnerImpliedSet.
+// AutoGrantable marks a slug the approval popup may persist from its
+// "Always allow for this agent" button — a one-click write of an allow
+// override alongside approving the pending request, so future calls skip
+// the popup. It is a deliberately SMALL allowlist: only low-blast-radius,
+// human-machine-surface slugs qualify (the clipboard / notify channels).
+// Destructive or fleet-affecting slugs (agent.delete, groups.rm, the
+// permissions.* meta-slugs) are NOT auto-grantable — persisting those from
+// a single popup click is too sharp an edge; the human sets them
+// deliberately via the permission editor / config. Rendered button
+// visibility AND the popup's server-side persist both gate on this flag,
+// so a scraped popup URL can't self-grant an ineligible slug. Kept in
+// lockstep with the popup by TestPermissionRegistry_AutoGrantableSet.
 type PermSlug struct {
-	Slug         string `json:"slug"`
-	Description  string `json:"description"`
-	OwnerImplied bool   `json:"owner_implied,omitempty"`
+	Slug          string `json:"slug"`
+	Description   string `json:"description"`
+	OwnerImplied  bool   `json:"owner_implied,omitempty"`
+	AutoGrantable bool   `json:"auto_grantable,omitempty"`
 }
 
 // permissionRegistry is the single source of truth for known slugs. It's
@@ -226,13 +239,15 @@ var permissionRegistry = []PermSlug{
 		Description:  "Advance a group's advisory process to the next (or a named) phase — records the transition and nudges the entering roles (JOH-242). The process is advisory (nothing is enforced). Group owners can advance their own group's process without this slug; other agents need it. Reads (the current phase) are open.",
 	},
 	{
-		Slug:         PermHumanNotify,
-		OwnerImplied: true,
-		Description:  "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
+		Slug:          PermHumanNotify,
+		OwnerImplied:  true,
+		AutoGrantable: true,
+		Description:   "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
 	},
 	{
-		Slug:        PermHumanClipboard,
-		Description: "Copy text to the human's system clipboard via `tclaude agent clipboard` — the daemon runs the platform copy tool (wl-copy/xclip/xsel, pbcopy, clip.exe). An agent→human-machine surface like human.notify, but NOT default-granted and NOT owner-implied: it writes to the operator's real clipboard, so it needs an explicit grant or a per-call --ask-human popup approval.",
+		Slug:          PermHumanClipboard,
+		AutoGrantable: true,
+		Description:   "Copy text to the human's system clipboard via `tclaude agent clipboard` — the daemon runs the platform copy tool (wl-copy/xclip/xsel, pbcopy, clip.exe). An agent→human-machine surface like human.notify, but NOT default-granted and NOT owner-implied: it writes to the operator's real clipboard, so it needs an explicit grant or a per-call --ask-human popup approval.",
 	},
 	{
 		Slug:        PermSettingsDefaultModel,
@@ -279,6 +294,34 @@ func OwnerImpliedSlugs() []string {
 	var out []string
 	for _, p := range permissionRegistry {
 		if p.OwnerImplied {
+			out = append(out, p.Slug)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsAutoGrantableSlug reports whether the approval popup may persist slug
+// from its "Always allow for this agent" button (see PermSlug.AutoGrantable).
+// The popup gates BOTH the button's visibility and its server-side persist
+// on this, so an unknown or ineligible slug can never be self-granted from
+// a scraped popup URL.
+func IsAutoGrantableSlug(slug string) bool {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return p.AutoGrantable
+		}
+	}
+	return false
+}
+
+// AutoGrantableSlugs returns the sorted set of slugs eligible for the
+// popup's "always allow" persist (PermSlug.AutoGrantable). Stable order so
+// callers (tests) get deterministic output.
+func AutoGrantableSlugs() []string {
+	var out []string
+	for _, p := range permissionRegistry {
+		if p.AutoGrantable {
 			out = append(out, p.Slug)
 		}
 	}

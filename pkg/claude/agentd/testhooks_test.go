@@ -244,6 +244,21 @@ func StubApprovalForTest(decision bool) func() {
 	return func() { RequestHumanApprovalImpl = prev }
 }
 
+// StubAlwaysAllowApprovalForTest swaps the popup with a stub that drives
+// the "Always allow for this agent" outcome (JOH-367): it routes through
+// the REAL applyApprovalOutcome, so it audits AND persists the allow
+// override exactly as the production waiter would when the human clicks
+// that button. Lets a flow test assert that an always-allow decision both
+// lets the pending request through and grants the agent going forward.
+// Returns a restore function for t.Cleanup.
+func StubAlwaysAllowApprovalForTest() func() {
+	prev := RequestHumanApprovalImpl
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		return applyApprovalOutcome(req, outcomeApproveAlways)
+	}
+	return func() { RequestHumanApprovalImpl = prev }
+}
+
 // BuildDashboardHandlerForTest exposes the dashboard mux (the
 // loopback-port mux that hosts `/`, `/api/snapshot`,
 // `/api/groups/...` mutation endpoints, and the popup `/approve/...`
@@ -452,13 +467,23 @@ func RegisterPopupRoutesForTest(mux *http.ServeMux) {
 // decision channel is buffered, so a POST approve/deny records without
 // a blocked reader. Returns a cleanup that removes the entry.
 func SeedPendingApprovalForTest(id string) func() {
+	return SeedApprovalForTest(id, "self.rename", false)
+}
+
+// SeedApprovalForTest is SeedPendingApprovalForTest with control over the
+// perm slug and the autoGrantable flag, so a flow test can drive the
+// popup's "always" decision path (JOH-367) and assert its server-side
+// eligibility gate for both an eligible and an ineligible slug. Returns a
+// cleanup that removes the entry.
+func SeedApprovalForTest(id, perm string, autoGrantable bool) func() {
 	req := &approvalRequest{
-		id:        id,
-		perm:      "self.rename",
-		decision:  make(chan bool, 1),
-		extend:    make(chan time.Duration, 1),
-		createdAt: time.Now(),
-		timeout:   60 * time.Second,
+		id:            id,
+		perm:          perm,
+		autoGrantable: autoGrantable,
+		decision:      make(chan approvalOutcome, 1),
+		extend:        make(chan time.Duration, 1),
+		createdAt:     time.Now(),
+		timeout:       60 * time.Second,
 	}
 	approvals.mu.Lock()
 	approvals.pending[id] = req
