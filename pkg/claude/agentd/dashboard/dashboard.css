@@ -6166,6 +6166,86 @@ body.wizard #window-modal #window-submit:hover {
 }
 body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
 
+/* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
+   The which-dir picker that pops before a terminal window is opened for a
+   single agent (termDirModal in refresh.js): pick Current / Worktree / Launch
+   dir, or Cancel. A terminal onto a familiar is a *scrying portal* in the
+   palette's voice — the Terminals tab reads "🔮 Scrying", the bulk #window-modal
+   above conjures "a scrying portal for each chosen familiar" — so the 🧙 theme
+   re-skins this single-agent picker to match that scrying-portal twin.
+
+   #term-modal is a generic .modal (like the retire / edit-member dialogs), so
+   every rule is scoped to #term-modal — an unscoped body.wizard-.modal rule
+   would repaint every sibling confirm dialog (the same discipline the retire /
+   edit-member / confirm re-skins follow, guarded by
+   TestDashboardCSS_WizardRetireModalScoped). */
+
+/* Title copy — a pure-CSS span swap, "Open a terminal" → "🔮 Open a scrying
+   portal". The h3 is the dialog's aria-labelledby, and display:none drops the
+   hidden twin from the a11y tree, so only the active title is announced. */
+.term-title-wizard { display: none; }
+body.wizard #term-title .term-title-regular { display: none; }
+body.wizard #term-title .term-title-wizard { display: inline; }
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the same palette as the Summon / Banish dialogs. Chrome is
+   recolored; the dir-picker copy stays honest and legible. */
+body.wizard #term-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #term-modal .modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #term-modal .modal p { color: #e7d9f5; }
+body.wizard #term-modal .modal p strong { color: #f3e6c0; }
+/* The resolved-path meta line — the violet inset the retire / spawn dialogs
+   give their .modal-meta. */
+body.wizard #term-modal .modal-meta {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+
+/* Buttons: Cancel + the two non-default dir choices (Launch / Worktree) take
+   the tarnished-gold secondary skin; the default Current dir — the focused
+   primary the picker opens on — becomes a gilded lever, Summon / Banish's
+   sibling. Minus the font-size:0 label swap, so its honest "Current dir" text
+   stays visible (like #confirm-ok). */
+body.wizard #term-modal .modal-buttons button:not(#term-current) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #term-modal .modal-buttons button:not(#term-current):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #term-modal #term-current {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  transition: transform 0.08s ease;
+}
+body.wizard #term-modal #term-current:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #d9b45a;
+  color: #f3e6c0;
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #term-modal #term-current:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+
 /* ─── Wizard profile editor — "Inscribe a summoning recipe" ─────────
    The 🧙 re-skin of the spawn-profile editor (Groups cog → ⧉ profiles… →
    edit / + new profile, and the spawn dialog's "Save as profile"). A spawn
