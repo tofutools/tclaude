@@ -310,10 +310,15 @@ tclaude agent templates import --file feature-team.task-force.json --update  # o
 
 tclaude ships a small library of **curated, ready-to-run starters** so you can
 deploy a working team without writing a template first. The templates overlay's
-**⭐ starters** button lists them and installs one on click; each starter is a
-worked example of the whole feature set — role references, per-agent launch
-tuning, a process, staged-spawn waves, a seeded rhythm, and a routed work
-pattern.
+**⭐ starters** button opens a dialog listing them; each starter is a worked
+example of the whole feature set — role references, per-agent launch tuning, a
+process, staged-spawn waves, a seeded rhythm, and a routed work pattern.
+
+Each row's **⤓ copy to my templates** button (**⭐ copy into my circles** in
+wizard mode) **copies that starter into your own templates list** — it does
+**not** spawn a team. Once copied it is an ordinary template you deploy or edit
+from the list like any other. (This is a deliberate two-step: a starter is a
+static, editable *blueprint* to adopt, not a one-click launch.)
 
 | Starter | Team | Flow |
 |---|---|---|
@@ -321,11 +326,9 @@ pattern.
 | `research-pod` | coordinator · 3 researchers · critic | scope → research → adversarial verify → synthesize |
 | `review-crew` | lead · 3 diverse-lens reviewers · synthesizer | scope → review (correctness / security / simplicity) → synthesize |
 
-Installing a starter stores it as an ordinary local template you can then
-deploy, instantiate, or edit. Install is **idempotent and never clobbers**: if a
-template of that name already exists, the install is skipped (your edited copy is
-sacred) — pass a different name to install a fresh copy. Starters work on a fresh
-empty install.
+Copying a starter is **idempotent and never clobbers**: if a template of that
+name already exists, the copy is skipped (your edited copy is sacred) — pass a
+different name to copy in a fresh one. Starters work on a fresh empty install.
 
 From the CLI:
 

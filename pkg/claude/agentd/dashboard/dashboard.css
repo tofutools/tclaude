@@ -6751,6 +6751,48 @@ body.wizard #template-from-group-modal #template-from-group-submit:disabled::bef
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit::before { content: "🕯 Re-trace it!"; }
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:disabled::before { content: "🕯 Re-tracing…"; }
 
+/* ─── Wizard preset-parties dialog — "⭐ Preset parties" (JOH-353) ─────
+   The bundled-starters modal, the one obvious path to copy a ready-made
+   party into your own circles. Scoped to #starters-modal, matching the
+   sibling template dialogs' arcane look: midnight-violet void, gilt title,
+   violet meta, and starter rows framed like slim summoning circles. The
+   copy button keeps its honest tpl-word text (copy-not-cast is the whole
+   point), so it gets the tarnished-gold secondary treatment, not a lever. */
+body.wizard #starters-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #starters-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #starters-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+/* Starter rows: violet-framed void, gilt name, violet descr + meta chips —
+   the same treatment the circle cards get in the templates overlay. */
+body.wizard #starters-modal .starter-row {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #starters-modal .starter-row .tc-name { color: #f3e6c0; }
+body.wizard #starters-modal .starter-row .tc-descr,
+body.wizard #starters-modal .starter-row .tc-count { color: #b39ddb; }
+/* The "⭐ copy into my circles" button + Close: tarnished-gold secondary. */
+body.wizard #starters-modal .starter-actions button,
+body.wizard #starters-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #starters-modal .starter-actions button:hover,
+body.wizard #starters-modal .modal-buttons button:hover { background: #3a2a63; }
+body.wizard #starters-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #starters-modal .template-empty { color: #b39ddb; }
+
 /* ─── Wizard unseal dialog — "⤒ Unseal a party archive" ──────────────
    Group import. Scoped to #group-import-modal. Unlike the sibling levers
    the Import button keeps its honest JS-set text ("Import" /

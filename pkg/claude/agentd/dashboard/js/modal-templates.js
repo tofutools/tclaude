@@ -71,8 +71,8 @@ function renderTemplatesTab() {
     morphInto(host, `<div class="template-empty">${all.length
       ? wizWord('No templates match the filter.', 'No circles match the filter.')
       : wizWord(
-        'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.',
-        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, or <b>⤓ trace a party</b> to copy an existing party’s shape.')}</div>`);
+        'No templates yet — press <b>+ new template</b> to define one, <b>⤓ from a group</b> to snapshot an existing group, or <b>⭐ starters</b> above to copy in a ready-made team.',
+        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, <b>⤓ trace a party</b> to copy an existing party’s shape, or <b>⭐ conjure a preset party</b> above to copy in a ready-made party.')}</div>`);
     return;
   }
   morphInto(host, list.map(templateCardHTML).join(''));
@@ -1074,7 +1074,7 @@ function renderStartersList(list) {
     </div>
     <div class="starter-meta">${starterBadges(s)}</div>
     <div class="starter-actions">
-      <button class="tool" data-sact="install" data-starter="${esc(s.name)}" title="${wizWord('Install this starter as a local template', 'Conjure this preset into a circle')}">${wizWord('⤓ install', '⭐ conjure')}</button>
+      <button class="tool" data-sact="install" data-starter="${esc(s.name)}" title="${wizWord('Copy this starter into your templates list — this does NOT spawn a team; deploy or edit it from the list afterwards', 'Copy this preset into your circles — this summons NO party; cast or redraw it from your circles afterwards')}">${wizWord('⤓ copy to my templates', '⭐ copy into my circles')}</button>
     </div>
   </div>`).join('');
 }
@@ -1098,10 +1098,19 @@ async function installStarter(name) {
     let res = null;
     try { res = JSON.parse(txt); } catch (_) {}
     if (res && res.skipped) {
-      toast(res.message || `starter already installed: ${name}`);
+      // The daemon's skip message already spells out "a template named X
+      // already exists — skipped (your copy is left untouched) …"; surface it
+      // verbatim, with a terse fallback if it's somehow absent.
+      toast(res.message || wizWord(
+        `${name} is already in your templates — nothing copied`,
+        `${name} is already in your circles — nothing copied`));
     } else {
+      const finalName = (res && res.name) || name;
       const warnings = (res && res.warnings) || [];
-      let msg = `starter installed: ${(res && res.name) || name}`;
+      // Say WHERE it landed and that nothing spawned — the copy-not-cast point.
+      let msg = wizWord(
+        `added to your templates: ${finalName} — deploy or edit it from the list (nothing spawned yet)`,
+        `copied into your circles: ${finalName} — cast or redraw it from your circles (no party summoned yet)`);
       if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
       toast(msg);
     }
