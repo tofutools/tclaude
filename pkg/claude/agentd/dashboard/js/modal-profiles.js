@@ -521,4 +521,8 @@ function bindProfilesUI() {
   bindBackdropDiscard('profile-editor-modal', closeProfileEditor);
 }
 
-export { bindProfilesUI, openProfileEditor, openProfilesManageModal };
+// removeProfile is exported so the palette dock's card ⚙ → Delete menu item can
+// reuse the exact confirm + delete + toast the manager's delete button uses (the
+// dock adds a dashboard refresh after, since reloadProfilesList only repaints the
+// closed manager overlay).
+export { bindProfilesUI, openProfileEditor, openProfilesManageModal, removeProfile };

@@ -45,11 +45,12 @@ import { syncFullBleedBars } from './hscroll.js';
 // each from the module that actually exports it — a bad named import would
 // abort the whole ES-module graph at link time (node --check can't catch that,
 // it's single-file only).
+import { refresh } from './refresh.js';
 import { profileSummary, createProfile } from './profiles.js';
-import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
+import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
-import { openRoleEditor, openRolesManageModal } from './modal-roles.js';
-import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal } from './modal-templates.js';
+import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.js';
+import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openCloneModal } from './modal-clone.js';
@@ -90,6 +91,7 @@ function summaryChips(summary, max = 4) {
 //   drag        true → cards are drag SOURCES (draggable, wired by dock-dnd.js)
 //   onManageItem(item)  jump to that item's editor / manager overlay (⚙ → Edit)
 //   onCloneItem(item)   open the "clone under a new name" dialog (⚙ → Clone)
+//   onDeleteItem(item)  confirm + delete the item (⚙ → Delete), then refresh
 //   onManageAll()       jump to the whole-kind manager overlay
 //
 // `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
@@ -113,6 +115,10 @@ const SECTIONS = [
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
     // under the new name via createProfile (modal-clone.js does the name swap).
     onCloneItem: (p) => openCloneModal({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
+    // Delete → the manager's confirm + delete + toast (removeProfile), then a
+    // dashboard refresh so the dock card leaves at once (removeProfile only
+    // repaints the closed manager overlay).
+    onDeleteItem: (p) => removeProfile(p.name).then(() => refresh({ force: true })),
     onManageAll: () => openProfilesManageModal(),
   },
   {
@@ -135,6 +141,9 @@ const SECTIONS = [
     // carries a whole roster, so its bespoke blurb is worth keeping) rather than
     // the generic modal-clone.js one profiles/roles use. Both are name dialogs.
     onCloneItem: (t) => openDuplicateModal(t.name),
+    // Delete → deleteTemplate already runs the confirm + DELETE + force-refresh,
+    // so the dock calls it directly (no extra refresh needed here).
+    onDeleteItem: (t) => deleteTemplate(t.name),
     onManageAll: () => openTemplatesManageModal(),
   },
   {
@@ -149,6 +158,9 @@ const SECTIONS = [
     onManageItem: (rl) => openRoleEditor(rl),
     // Clone → the generic name dialog, cloning via createRole (see profiles).
     onCloneItem: (rl) => openCloneModal({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
+    // Delete → removeRole's confirm + delete + toast (incl. the 409 role_in_use
+    // surfacing), then a dashboard refresh so the dock card leaves at once.
+    onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh({ force: true })),
     onManageAll: () => openRolesManageModal(),
   },
 ];
@@ -195,6 +207,7 @@ function cardHTML(section, item) {
       <div class="dock-card-menu" role="menu" aria-label="${esc(name)}">
         <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="edit-item" ${kindName}>${wizWord('Edit', 'Edit')}</button>
         <button type="button" role="menuitem" class="dock-card-menu-item" data-dock-act="clone-item" ${kindName}>${wizWord('Clone', 'Mirror')}</button>
+        <button type="button" role="menuitem" class="dock-card-menu-item danger" data-dock-act="delete-item" ${kindName}>${wizWord('Delete', 'Dispel')}</button>
       </div>
     </span>
   </div>`;
@@ -505,12 +518,13 @@ export function bindDock() {
       toggleCardMenu(btn);
       return;
     }
-    if (act === 'edit-item' || act === 'clone-item') {
+    if (act === 'edit-item' || act === 'clone-item' || act === 'delete-item') {
       closeDockMenus();
       const item = resolveItem(section, btn.getAttribute('data-dock-name'));
       if (!item) { section.onManageAll(); return; }
       if (act === 'edit-item') section.onManageItem(item);
-      else section.onCloneItem(item);
+      else if (act === 'clone-item') section.onCloneItem(item);
+      else section.onDeleteItem(item);
     }
   });
 

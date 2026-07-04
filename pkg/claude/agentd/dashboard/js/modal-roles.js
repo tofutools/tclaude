@@ -367,4 +367,7 @@ function bindRolesUI() {
   bindBackdropDiscard('role-editor-modal', closeRoleEditor);
 }
 
-export { bindRolesUI, openRoleEditor, openRolesManageModal };
+// removeRole is exported so the palette dock's card ⚙ → Delete menu item can
+// reuse the manager's confirm + delete + toast (incl. the 409 role_in_use
+// surfacing); the dock adds a dashboard refresh after.
+export { bindRolesUI, openRoleEditor, openRolesManageModal, removeRole };
