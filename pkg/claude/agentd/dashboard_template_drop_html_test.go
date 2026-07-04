@@ -75,10 +75,12 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must("body.wizard #template-deploy-modal .deploy-mode {", "the wizard chooser skin is scoped to the summon modal")
 	must("#template-deploy-group.locked {", "the locked group field is visibly muted")
 
-	// The [hidden] overrides are load-bearing: the author `display:flex` on
-	// .deploy-mode / .cron-create-row beats the UA `[hidden]{display:none}`, so
-	// without these the chooser + copy-only rows show on a NORMAL open (the
-	// normal-open invariant). String tests can't see the cascade, so pin the rules.
-	must(".deploy-mode[hidden] { display: none; }", "the chooser's hidden attr actually hides (author display beats UA [hidden])")
-	must(".cron-create-row[hidden] { display: none; }", "the copy-only + worktree rows' hidden attr actually hides")
+	// The chooser + copy-only rows must actually hide when marked `hidden` on a
+	// NORMAL open (the normal-open invariant). Their author `display:flex` beats
+	// the UA `[hidden]{display:none}`, so JOH-383 added ONE global author-origin
+	// `[hidden] { display: none !important }` rule that makes the attribute win
+	// over any author display for every element at once — retiring the per-class
+	// .deploy-mode[hidden] / .cron-create-row[hidden] overrides this used to pin.
+	// String tests can't see the cascade, so pin the global rule that enforces it.
+	must("[hidden] { display: none !important; }", "the global rule makes the `hidden` attribute win over any author display, so the chooser + copy-only rows hide on a normal open (JOH-383)")
 }
