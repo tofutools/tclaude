@@ -3744,18 +3744,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
    shout. The bare <button> default skin is far too bright next to the dark
    chrome, so these explicit rules keep them quiet — and identical. */
 #command-palette-btn,
-#window-all-btn,
-#dock-toggle-top {
+#window-all-btn {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
   font-family: inherit; white-space: nowrap;
 }
 #command-palette-btn:hover,
-#window-all-btn:hover,
-#dock-toggle-top:hover { border-color: #58a6ff; color: #d4d4d4; }
-/* When the dock is open the top-bar toggle reads as "on" — a lit accent border
-   + tint, so the show/hide control's state is obvious at a glance (req 2). */
-#dock-toggle-top[aria-expanded="true"] { border-color: #388bfd; background: #1c2b44; color: #d4d4d4; }
+#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* (The top-bar #dock-toggle-top and its aria-expanded "on" accent were removed
+   in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
+   in-dock collapse are the remaining show/hide controls.) */
 /* === Config tab — visual editor for ~/.tclaude/config.json ========== */
 #tab-config { max-width: 780px; }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
@@ -9207,7 +9205,18 @@ body.dock-open { padding-right: var(--dock-w); }
    hiding underneath it. Width 0 at rest keeps it inert when the dock is closed. */
 #dock-hscroll-pad { position: absolute; top: 0; height: 1px; width: 0; pointer-events: none; }
 #dock-hscroll-pad.on { width: var(--dock-w); }
-body.dock-open footer { right: var(--dock-w); }
+/* The footer spans the FULL viewport width even with the dock open (JOH-390
+   item 1) — note there is deliberately NO dock-open right-inset rule on it. The
+   dock's bottom edge is pinned at `bottom: var(--footer-h)` — the SAME variable
+   as the footer's height — so the dock provably never occupies the footer's
+   bottom band; the two are flush, never overlapping. The pre-r2 rework inset the
+   footer by --dock-w for a collision that can't happen, which cramped the
+   base-URL/heartbeat line — on a narrow window (or a long remote URL) it wrapped
+   to a second line the fixed 29px height then clipped, reading as "the right
+   panel covers the bottom panel". Full-width restores the footer its room; it
+   sits cleanly BELOW the dock. (The slop lever, in contrast, is a tall
+   right-edge overlay that DOES ride up alongside the dock, so it still dodges
+   it.) */
 body.dock-open #slop-lever { right: var(--dock-w); }
 /* The full-bleed top bars sit ABOVE the dock now (the dock starts below the
    nav, req 1), so they must span the FULL viewport width — otherwise body's
@@ -9258,15 +9267,49 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-/* Slim dock header (JOH-388 req 6: the "Palette" title row was dropped — the
-   section headings carry the meaning). All that remains is a thin bar with the
-   in-dock collapse control right-aligned. */
+/* Dock header (JOH-388 req 6 dropped the "Palette" title). It stacks two rows
+   (JOH-390 item 4): row 1 holds the re-homed "+ new group" + ⚙ cog on the left
+   and the in-dock collapse control on the right; row 2 holds the re-homed 🧠
+   default-profile chip. When the dock is collapsed those controls live back in
+   the toolbar, so the containers are empty — :empty collapses row 2 and the
+   header is just the collapse control (its original slim look). */
 .dock-head {
   flex: 0 0 auto;
-  display: flex; justify-content: flex-end; align-items: center;
-  padding: 4px 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px;
   border-bottom: 1px solid #2a3340;
 }
+.dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The re-homed primary cluster ("+ new group" + ⚙ cog) fills the row (flex:1),
+   with the "+ new group" primary GROWING to absorb the slack so the cog lands at
+   a fixed offset from the right — just left of the collapse control — in BOTH
+   skins (the wider wizard "⚔ Form a party" label doesn't shove the cog around).
+   That fixed cog position keeps its right-aligned .action-menu inside the dock:
+   the menu anchors to .filter-bar-cog (position:relative rides along) and opens
+   DOWNWARD into the dock's tall body, staying within #agent-dock's box so
+   .dock-inner's overflow never clips it. min-width:0 lets the label ellipsize
+   rather than force an overflow. */
+.dock-actions { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dock-actions #group-create-open { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dock-actions .filter-bar-cog { flex: 0 0 auto; }
+/* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
+   the toolbar it normally sits in), so once re-homed into the dock the button
+   would fall back to the bare browser-white default. Mirror the toolbar recipe
+   here for the dock context. (Wizard mode is already covered: its skin is on the
+   id-scoped `body.wizard #group-create-open.primary`, which rides along wherever
+   the button lives.) */
+.dock-actions button.primary {
+  background: #1f6feb; border: 1px solid #1f6feb; color: white;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.dock-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
+/* Row 2: the 🧠 default-profile chip on its own line. :empty (dock collapsed →
+   chip is back in the toolbar) removes the row so the header doesn't keep a bare
+   gap. */
+.dock-actions-profile { display: flex; min-width: 0; }
+.dock-actions-profile:empty { display: none; }
+.dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
    it reads as a deliberate control, not chrome. */
 .dock-collapse {
@@ -9384,7 +9427,6 @@ body.wizard #agent-dock .dock-section-manage,
 body.wizard #agent-dock .dock-card-manage { color: #9a86c9; }
 body.wizard #agent-dock .dock-section-manage:hover,
 body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
-/* The top-bar dock toggle's "on" accent in arcane purple instead of blue — a
-   single header control, themed like the sibling wizard header buttons (this
-   targets one id, it is not a global body.wizard widening). */
-body.wizard #dock-toggle-top[aria-expanded="true"] { border-color: #7c5cc4; background: #241a3a; color: #e6dcff; }
+/* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
+   itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
+   #agent-dock is gone; the dock's arcane skin stays scoped under #agent-dock.) */

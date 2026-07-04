@@ -49,7 +49,7 @@ import { profileSummary } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
 import { roleSummary } from './roles.js';
 import { openRoleEditor, openRolesManageModal } from './modal-roles.js';
-import { templateReadbackBadges, openTemplatesManageModal } from './modal-templates.js';
+import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor } from './modal-templates.js';
 
 // The persisted open/collapsed flag. dash-namespaced like every other
 // server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
@@ -96,7 +96,11 @@ const SECTIONS = [
   {
     key: 'profiles',
     icon: '⚙',
-    title: () => wizWord('Profiles', 'Patterns'),
+    // Full section name (JOH-390 item 5): the operator wants the profiles
+    // heading spelled out — "Agent profiles" / "Familiar patterns" — rather
+    // than the bare "Profiles" / "Patterns". Templates + Roles keep their
+    // short headings (he named only this one).
+    title: () => wizWord('Agent profiles', 'Familiar patterns'),
     empty: () => wizWord('no profiles yet', 'no patterns yet'),
     items: (snap) => (snap && snap.profiles) || [],
     name: (p) => p.name,
@@ -114,7 +118,10 @@ const SECTIONS = [
     name: (t) => t.name,
     chips: (t) => templateReadbackBadges(t),
     drag: true,
-    onManageItem: () => openTemplatesManageModal(),
+    // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
+    // matching the profiles/roles cards — it used to fall back to the whole-kind
+    // manager, which ignored the item.
+    onManageItem: (t) => openTemplateEditor(t),
     onManageAll: () => openTemplatesManageModal(),
   },
   {
@@ -221,11 +228,11 @@ function isDockOpen() {
 }
 
 // applyDockOpen reflects the open state onto the body class (CSS reflows the
-// page to reclaim the space when collapsed) and keeps every show/hide control
-// in sync: the edge tab, the top-bar toggle (req 2) and the in-dock collapse
-// button all mirror one state, so whichever the operator finds first reads
-// correctly. The dock top-inset is re-synced too, since the reserved space
-// changes with the open state.
+// page to reclaim the space when collapsed) and keeps the two show/hide controls
+// in sync: the edge tab and the in-dock collapse button both mirror one state
+// (JOH-390 item 7 removed the third, top-bar, toggle). It also re-homes the
+// groups-toolbar globals (item 4) and re-syncs the dock top-inset, since the
+// reserved space changes with the open state.
 function applyDockOpen(open) {
   document.body.classList.toggle('dock-open', open);
   const edge = $('#dock-toggle');
@@ -235,14 +242,69 @@ function applyDockOpen(open) {
       ? wizWord('Collapse the palette', 'Furl the grimoire')
       : wizWord('Expand the palette', 'Unfurl the grimoire');
   }
-  const top = $('#dock-toggle-top');
-  if (top) top.setAttribute('aria-expanded', open ? 'true' : 'false');
+  // Re-home the groups-toolbar globals into the open dock's head (JOH-390 item 4)
+  // / return them to the toolbar when collapsed. Done here so it tracks EVERY
+  // open-state change (boot, toggle) in lockstep with the body class.
+  syncDockActions(open);
   syncDockTop();
   // Toggling the dock changes the reserved width and whether the horizontal
   // clearance spacer should be parked (req 3), but mutates no <main> child — so
   // hscroll's MutationObserver won't fire. Nudge it directly so the spacer +
   // full-bleed bars re-fit in the same frame.
   syncFullBleedBars();
+}
+
+// The groups-toolbar globals re-homed into the open dock's head (JOH-390 item 4):
+// the "+ new group" primary, the ⚙ more-actions cog (+ its .action-menu) and the
+// 🧠 dashboard-default-profile chip. While the dock is OPEN they live in the dock
+// head (row 1 = new-group + cog; row 2 = the profile chip); collapsed, they go
+// back to their exact toolbar slots so the filter bar renders as before.
+//
+// We MOVE the live DOM nodes (not clones), so every listener rides along:
+// id-bound ones (#group-create-open's click) stay attached to the element across
+// the move; the cog + chip run off document-level delegated handlers (data-act /
+// the .action-menu cog bus) that don't care where the node lives. The toolbar
+// filter bar + the dock head are both STATIC markup (the poll only morphs
+// #dock-body / #groups-list), so nothing re-creates or clobbers the moved nodes.
+//
+// The cog's .action-menu still anchors to .filter-bar-cog (position:relative
+// rides along) and opens downward INTO the dock body; at the header's top it
+// stays within #agent-dock's box, so .dock-inner's overflow:hidden never clips it.
+const DOCK_ACTION_SPECS = [
+  { sel: '#group-create-open', dock: '#dock-actions-primary' },
+  { sel: '.filter-bar-cog', dock: '#dock-actions-primary' },
+  { sel: '#dashboard-default-profile', dock: '#dock-actions-profile' },
+];
+let dockActionHomes = null;
+let lastDockActionsOpen = null;
+function syncDockActions(open) {
+  // Only act when the dock-open bit actually FLIPPED — the class observer below
+  // fires on every body-class mutation (hscroll flags, dock-anim, wizard, …), so
+  // this guard keeps those to a cheap no-op and prevents a redundant re-append
+  // that could reorder the primary row.
+  if (open === lastDockActionsOpen) return;
+  lastDockActionsOpen = open;
+  // Capture each control's ORIGINAL toolbar slot once, before the first move.
+  // The nextSibling anchors are the inter-control whitespace text nodes, which
+  // never move — so insertBefore restores the exact slot regardless of the order
+  // we process the controls in.
+  if (!dockActionHomes) {
+    dockActionHomes = DOCK_ACTION_SPECS.map((s) => {
+      const el = $(s.sel);
+      if (!el) return null;
+      return { el, dock: $(s.dock), home: el.parentNode, next: el.nextSibling };
+    });
+  }
+  for (const h of dockActionHomes) {
+    if (!h || !h.el) continue;
+    if (open) {
+      // Append in spec order → primary row becomes [+ new group][⚙ cog]. Guarded
+      // so a repeat call (idempotent re-apply) doesn't re-append and reorder.
+      if (h.dock && h.el.parentNode !== h.dock) h.dock.appendChild(h.el);
+    } else if (h.home && h.el.parentNode !== h.home) {
+      h.home.insertBefore(h.el, h.next);
+    }
+  }
 }
 
 // syncDockTop keeps the fixed dock rail spanning ONLY the content area —
@@ -274,22 +336,31 @@ function syncDockTop() {
 // every poll (renderDock only touches #dock-body's inner sections).
 export function bindDock() {
   if (!$('#agent-dock')) return;
+  // Re-home the toolbar globals off ANY change to body.dock-open, not only the
+  // applyDockOpen path (JOH-390 item 4). The production toggle always routes
+  // through applyDockOpen, but this keeps the controls correctly placed if the
+  // class is flipped directly (e.g. the dashsnap visual harness sets it), so the
+  // move can never desync from the visible open state. The change-guard in
+  // syncDockActions makes the extra body-class mutations a no-op.
+  new MutationObserver(() => syncDockActions(document.body.classList.contains('dock-open')))
+    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
   applyDockOpen(isDockOpen());
   // Enable the slide transition only AFTER the initial state is painted, so a
   // default-open dock doesn't flash-slide in on load (the CSS resting state is
   // collapsed). A rAF lands after the first paint of the applied state.
   requestAnimationFrame(() => document.body.classList.add('dock-anim'));
 
-  // One toggler drives the three show/hide controls (req 2) — the edge tab,
-  // the top-bar button and the in-dock collapse — all flipping the same
-  // dashPrefs-backed state.
+  // One toggler drives both show/hide controls — the edge tab and the in-dock
+  // collapse — flipping the same dashPrefs-backed state (JOH-390 item 7 removed
+  // the third, top-bar, control).
   const toggleDock = () => {
     const next = !isDockOpen();
     dashPrefs.setItem(DOCK_OPEN_KEY, next ? '1' : '0');
     applyDockOpen(next);
   };
+  // Two show/hide controls now (JOH-390 item 7 removed the top-bar toggle): the
+  // edge chevron tab and the in-dock "Hide ›/Furl ›" collapse.
   $('#dock-toggle')?.addEventListener('click', toggleDock);
-  $('#dock-toggle-top')?.addEventListener('click', toggleDock);
   $('#dock-collapse')?.addEventListener('click', toggleDock);
 
   // Keep the content-area top-inset (req 1) fresh as the page scrolls the

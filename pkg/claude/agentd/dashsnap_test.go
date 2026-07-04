@@ -300,15 +300,21 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + `document.body.classList.add('dock-open');`,
 		},
 		{
-			Key:     "dock-open",
-			Title:   "Palette dock open",
-			Caption: "Palette dock expanded (groups collapsed) — profiles / roles / templates cards.",
+			Key:   "dock-open",
+			Title: "Palette dock open",
+			// JOH-390 items 4/5/7: the dock head hosts the re-homed groups-toolbar
+			// globals ("+ new group" + ⚙ cog on row 1, the 🧠 default-profile chip
+			// on row 2); the profiles heading is spelled out ("Agent profiles" /
+			// "Familiar patterns"); the top-bar Palette toggle is gone.
+			Caption: "Palette dock expanded (groups collapsed): re-homed + new group / ⚙ cog / 🧠 default-profile in the head, full 'Agent profiles' heading, no top-bar toggle.",
 			JS:      showGroups + collapseGroups + `document.body.classList.add('dock-open');`,
 		},
 		{
-			Key:     "dock-collapsed",
-			Title:   "Palette dock collapsed",
-			Caption: "Palette dock collapsed, members expanded — main list reclaims the width.",
+			Key:   "dock-collapsed",
+			Title: "Palette dock collapsed",
+			// JOH-390 item 4: collapsed, the re-homed controls render back in the
+			// toolbar exactly as before (the only reopen affordance is the edge tab).
+			Caption: "Palette dock collapsed, members expanded — main list reclaims the width; + new group / ⚙ cog / 🧠 default-profile are back in the toolbar.",
 			JS:      showGroups + expandGroups + `document.body.classList.remove('dock-open');`,
 		},
 		{
@@ -343,6 +349,19 @@ func baseStates() []dashsnap.State {
 			Title:   "Palette dock — one category collapsed",
 			Caption: "Req 5: the Templates category collapsed to its header (chevron flipped right); Profiles + Roles stay expanded.",
 			JS:      showGroups + `document.body.classList.add('dock-open');` + `var __s = document.querySelector('.dock-section[data-key="templates"]'); if (__s) __s.open = false;`,
+		},
+		{
+			// JOH-390 item 4 — the re-homed ⚙ cog's action-menu must open fully
+			// INSIDE the dock (the dock's .dock-inner is overflow:hidden, so a menu
+			// that overflowed the dock's edges would be clipped). Self-checking (see
+			// cogMenuClearJS): rejects if the open menu spills past #agent-dock's
+			// bounds, so a regression fails the run instead of passing as a silent
+			// "ok". Also visually shows the re-homed controls in the dock head.
+			Key:      "dock-controls-menu",
+			Title:    "Palette dock — re-homed cog menu open",
+			Caption:  "Item 4 (self-checked): + new group / ⚙ cog re-homed into the dock head, the cog's menu opened — it stays fully within the dock (throws if it clips past the dock edges).",
+			JS:       cogMenuClearJS(),
+			SettleMS: 350,
 		},
 		{
 			Key:      "summon-normal",
@@ -404,6 +423,39 @@ return new Promise(function(resolve, reject){
   }, 200);
 });
 `, blockWidth, label, blockWidth, label, label)
+}
+
+// cogMenuClearJS builds a self-checking JOH-390 item-4 state: on the groups tab
+// with the dock open, the re-homed ⚙ cog is in the dock head; click it to open
+// its .action-menu and assert the menu's rendered box stays fully within
+// #agent-dock (the dock's .dock-inner is overflow:hidden, so an overflowing menu
+// would be clipped). The returned JS ends in a Promise that REJECTS when the menu
+// spills past any dock edge, so dashsnap's awaited Eval fails the state — a
+// re-home/positioning regression can't slip through as a captured "ok".
+func cogMenuClearJS() string {
+	return `document.querySelector('nav button[data-tab="groups"]').click();
+document.body.classList.add('dock-open');
+return new Promise(function(resolve, reject){
+  // Let the class observer re-home the controls + the head lay out, THEN open the
+  // menu and measure.
+  setTimeout(function(){
+    var cog = document.querySelector('#dock-actions-primary .cog-btn');
+    if (!cog) { reject(new Error('item4 FAIL: re-homed cog not in the dock head')); return; }
+    cog.click();
+    var menu = document.querySelector('#dock-actions-primary .action-menu.open');
+    if (!menu) { reject(new Error('item4 FAIL: cog menu did not open')); return; }
+    var m = menu.getBoundingClientRect();
+    var d = document.querySelector('#agent-dock').getBoundingClientRect();
+    var inside = m.left >= d.left - 2 && m.right <= d.right + 2 && m.bottom <= d.bottom + 2;
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+    o.textContent = 'item4 menu[' + m.left.toFixed(0) + ',' + m.right.toFixed(0) + '] dock[' + d.left.toFixed(0) + ',' + d.right.toFixed(0) + '] INSIDE=' + (inside ? 'YES' : 'NO');
+    document.body.appendChild(o);
+    if (inside) resolve();
+    else reject(new Error('item4 FAIL: cog menu (' + m.left.toFixed(0) + '..' + m.right.toFixed(0) + ') clips past the dock (' + d.left.toFixed(0) + '..' + d.right.toFixed(0) + ')'));
+  }, 200);
+});
+`
 }
 
 // summonJS opens the unified summon dialog by SYNTHESIZING the dock drag-and-drop
