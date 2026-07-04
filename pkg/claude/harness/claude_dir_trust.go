@@ -28,15 +28,22 @@ import (
 //	  }
 //	}
 //
-// The trust dialog fires for a cwd whose projects[cwd].hasTrustDialogAccepted
-// is not true (absent entry OR false). Empirically Claude Code only actually
-// prompts for *sensitive* dirs (the home directory is the case that bit the
-// operator — its entry sat at hasTrustDialogAccepted=false); ordinary project
-// dirs sit at false without re-prompting. So moving the scribe out of $HOME is
-// the load-bearing fix and this pre-seed is belt-and-braces toward zero
-// prompts — hence it is deliberately best-effort: a seed FAILURE (unreadable /
-// malformed / wrong-shape config) logs and the summon proceeds, worst case a
-// single one-time dialog the human clears via the pane's focus button.
+// Claude Code trusts a cwd when that dir OR ANY ANCESTOR carries
+// hasTrustDialogAccepted=true — it walks up the path, not just the exact
+// entry. That reconciles the config we observed: ordinary project dirs sit at
+// false yet never re-prompt because a trusted ANCESTOR covers them (a
+// hand-accepted ~/git=true covers every ~/git/* worktree beneath it). $HOME
+// (the case that bit the operator) is false AND has no trusted ancestor, so it
+// prompts — and ~/.tclaude/scribe is the same shape: false/absent with no
+// trusted ancestor above it (~/.tclaude and / are not project entries and
+// $HOME is false). So moving out of $HOME does NOT by itself dodge the dialog
+// — the new dir is equally untrusted — which makes seeding the scribe dir's
+// OWN entry the load-bearing step here. (Moving still matters for the other
+// reasons the ticket cites: out of $HOME's broad reach, a stable cwd, a
+// minimal surface.) The seed is best-effort only as a DEGRADATION strategy: a
+// failure (unreadable / malformed / wrong-shape config) logs and the summon
+// proceeds, worst case a single one-time dialog the human clears via the
+// pane's focus button.
 //
 // Unlike the surgical line-splice the Codex TOML editor uses, ~/.claude.json
 // is a large JSON state file Claude Code owns and rewrites wholesale on nearly
