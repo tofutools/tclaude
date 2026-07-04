@@ -14,6 +14,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -144,13 +145,22 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no groups)")
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "MEMBERS", Width: 9, Align: table.AlignRight},
-		table.Column{Header: "ONLINE", Width: 6, Align: table.AlignRight},
-		table.Column{Header: "PROFILE", MinWidth: 7, Weight: 0.4, Truncate: true},
-		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.4, Truncate: true},
-	)
+	// Group descriptions are a deprecated, display-only feature — the DESCR
+	// column is hidden unless the operator opts in via config
+	// dashboard.show_group_description (the same knob the dashboard 📝 chip
+	// reads). --json is unaffected: it always carries the raw descr field.
+	cfg, _ := config.Load()
+	showDescr := cfg.ShowGroupDescription()
+	cols := []table.Column{
+		{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+		{Header: "MEMBERS", Width: 9, Align: table.AlignRight},
+		{Header: "ONLINE", Width: 6, Align: table.AlignRight},
+		{Header: "PROFILE", MinWidth: 7, Weight: 0.4, Truncate: true},
+	}
+	if showDescr {
+		cols = append(cols, table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.4, Truncate: true})
+	}
+	tbl := table.New(cols...)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, g := range groups {
 		name := g.Name
@@ -168,13 +178,16 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 		if g.MaxMembers > 0 {
 			members = fmt.Sprintf("%d/%d", g.Members, g.MaxMembers)
 		}
-		tbl.AddRow(table.Row{Cells: []string{
+		cells := []string{
 			name,
 			members,
 			fmt.Sprintf("%d", g.Online),
 			g.DefaultProfile,
-			g.Descr,
-		}})
+		}
+		if showDescr {
+			cells = append(cells, g.Descr)
+		}
+		tbl.AddRow(table.Row{Cells: cells})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK

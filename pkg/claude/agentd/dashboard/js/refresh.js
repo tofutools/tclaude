@@ -546,6 +546,11 @@ export async function refresh(opts = {}) {
     // cluster tight; CSS drops it unless body.show-agent-hide-btn is present.
     // A plain class toggle, like group-quick-fold above.
     document.body.classList.toggle('show-agent-hide-btn', !!data.show_agent_hide_button);
+    // Group description chip visibility (config dashboard.show_group_description,
+    // default off). Group descriptions are a deprecated, display-only feature —
+    // the 📝 chip in each group header is hidden unless body.show-group-description
+    // is present, brought back only by an explicit opt-in. Plain class toggle.
+    document.body.classList.toggle('show-group-description', !!data.show_group_description);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

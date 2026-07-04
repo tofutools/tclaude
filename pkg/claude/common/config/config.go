@@ -308,6 +308,15 @@ type DashboardConfig struct {
 	// dashboard reads the resolved value off the snapshot each poll and
 	// toggles body.show-agent-hide-btn. See (*Config).ShowAgentHideButton.
 	ShowAgentHideButton bool `json:"show_agent_hide_button,omitempty"`
+	// ShowGroupDescription keeps each group header's 📝 description chip — the
+	// click-to-edit blurb beside the group name — visible. The feature is
+	// deprecated: group descriptions are display-only, never surfaced anywhere
+	// that drives behaviour, so the chip is hidden by default to keep the
+	// header uncluttered. Flip this on to bring the chip back (and with it the
+	// only way to view/edit a group's description). Default false (hidden). The
+	// dashboard reads the resolved value off the snapshot each poll and toggles
+	// body.show-group-description. See (*Config).ShowGroupDescription.
+	ShowGroupDescription bool `json:"show_group_description,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -938,6 +947,15 @@ func (c *Config) ShowPluginsTabAlways() bool {
 // true brings it back. Nil-safe on the receiver.
 func (c *Config) ShowAgentHideButton() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.ShowAgentHideButton
+}
+
+// ShowGroupDescription reports whether each group header's 📝 description chip
+// should be shown — config dashboard.show_group_description. Default false: the
+// group-description feature is deprecated (display-only, drives nothing), so
+// the chip is hidden to keep headers tight; only an explicit true brings it
+// back. Nil-safe on the receiver.
+func (c *Config) ShowGroupDescription() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.ShowGroupDescription
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

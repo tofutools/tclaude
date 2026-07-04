@@ -1714,6 +1714,12 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
   color: #d4d4d4; padding: 1px 6px; font: inherit; font-weight: bold;
   min-width: 8em;
 }
+/* The per-group 📝 description chip is a deprecated, display-only feature
+   (nothing reads a group's description), so it's hidden by default to keep the
+   header tight. Config dashboard.show_group_description → body.show-group-description
+   brings it back (refresh.js toggles the class off the snapshot each poll). */
+.group-descr { display: none; }
+body.show-group-description .group-descr { display: inline; }
 .group-descr {
   font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
