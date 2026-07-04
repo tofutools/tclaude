@@ -436,6 +436,16 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	c.GatingConvs = wr.SpawnedOrder
 	c.Activated = []string{}
 	c.WaveDeadline = time.Now().Add(waveMaxWaitDuration(c.MaxWaitSeconds))
+	// A group delete can land during the spawn above (delete cancels the
+	// choreography in its own tx). Re-check before persisting so a raced delete
+	// isn't undone by re-inserting (upserting) the row we just deleted — a
+	// resurrected row for a dead group. If the group is gone, drop the
+	// choreography instead of resurrecting it (self-healing).
+	if still, err := db.GetAgentGroupByID(c.GroupID); err == nil && still == nil {
+		slog.Info("wave runner: group deleted mid-spawn; dropping choreography", "group", c.GroupName)
+		_ = db.DeleteWaveChoreography(c.GroupID)
+		return
+	}
 	if err := db.UpsertWaveChoreography(c); err != nil {
 		slog.Warn("wave runner: persist advance failed", "group", c.GroupName, "error", err)
 	}
