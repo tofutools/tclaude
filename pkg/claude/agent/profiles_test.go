@@ -277,16 +277,35 @@ func TestLoadProfileFile_Stdin(t *testing.T) {
 	assert.Equal(t, "from-stdin", prof.Name)
 }
 
-// A missing --file and malformed JSON both fail fast, before any daemon call.
+// A missing --file, an unreadable path, and malformed / wrong-shape JSON all
+// fail fast before any daemon call.
 func TestLoadProfileFile_Errors(t *testing.T) {
 	_, rc := loadProfileFile("", nil, new(bytes.Buffer))
 	assert.Equal(t, rcInvalidArg, rc, "missing --file")
 
-	path := filepath.Join(t.TempDir(), "bad.json")
-	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
+	// A path that does not exist surfaces as an IO failure, naming the file.
+	missing := filepath.Join(t.TempDir(), "nope.json")
 	stderr := new(bytes.Buffer)
-	_, rc = loadProfileFile(path, nil, stderr)
+	_, rc = loadProfileFile(missing, nil, stderr)
+	assert.Equal(t, rcIOFailure, rc, "unreadable file")
+	assert.Contains(t, stderr.String(), missing)
+
+	// Malformed JSON.
+	badPath := filepath.Join(t.TempDir(), "bad.json")
+	require.NoError(t, os.WriteFile(badPath, []byte("{not json"), 0o600))
+	stderr = new(bytes.Buffer)
+	_, rc = loadProfileFile(badPath, nil, stderr)
 	assert.Equal(t, rcInvalidArg, rc, "malformed JSON")
+	assert.Contains(t, stderr.String(), "not valid profile JSON")
+
+	// Valid JSON of the wrong shape — e.g. the ARRAY that `profiles ls --json`
+	// would emit — is not a single profile object and is rejected, not silently
+	// coerced into an empty profile.
+	arrPath := filepath.Join(t.TempDir(), "arr.json")
+	require.NoError(t, os.WriteFile(arrPath, []byte(`[{"name":"a"}]`), 0o600))
+	stderr = new(bytes.Buffer)
+	_, rc = loadProfileFile(arrPath, nil, stderr)
+	assert.Equal(t, rcInvalidArg, rc, "array instead of object")
 	assert.Contains(t, stderr.String(), "not valid profile JSON")
 }
 

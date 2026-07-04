@@ -15,14 +15,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// `tclaude agent profiles` — the spawn-profile library, read side (JOH-210).
+// `tclaude agent profiles` — manage the spawn-profile library (JOH-210).
 //
 // A spawn profile is a named, reusable bundle of (most of) the spawn-agent
 // dialog's fields — launch shape (harness/model/effort/sandbox/approval + the
 // auto-review/trust-dir/remote-control toggles), identity (name/role/descr/
 // initial message), and birth-time access (owner + permission overrides). The
 // dashboard's spawn modal pre-fills from a profile client-side; this is the CLI
-// twin for the read/introspect half, plus the source of the names you pass to
+// twin of its Profiles editor, plus the source of the names you pass to
 // `tclaude agent spawn --profile <name>`.
 //
 // Verbs: `ls`, `show`, `create`, `edit`, `rm` — the CLI twin of the dashboard's
