@@ -2631,6 +2631,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
    field. */
 .cron-create-row input[type=text],
 .cron-create-row input[type=number],
+.cron-create-row input[type=url],
 .cron-create-row select,
 .cron-create-row textarea {
   flex: 1;
@@ -2671,6 +2672,7 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .cron-create-row input[type=text]:focus,
 .cron-create-row input[type=number]:focus,
+.cron-create-row input[type=url]:focus,
 .cron-create-row select:focus,
 .cron-create-row textarea:focus { outline: none; border-color: #58a6ff; }
 .cron-create-row textarea {
@@ -5102,6 +5104,7 @@ body.wizard #agent-spawn-modal .spawn-perms-indicator,
 body.wizard #agent-spawn-modal .spawn-field-hint,
 body.wizard #agent-spawn-modal .spawn-attachments-hint { color: #b39ddb; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
+body.wizard #agent-spawn-modal .cron-create-row input[type=url],
 body.wizard #agent-spawn-modal .cron-create-row select,
 body.wizard #agent-spawn-modal .cron-create-row textarea {
   background: #140f28;
@@ -5109,6 +5112,7 @@ body.wizard #agent-spawn-modal .cron-create-row textarea {
   color: #f3e6c0;
 }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text]:focus,
+body.wizard #agent-spawn-modal .cron-create-row input[type=url]:focus,
 body.wizard #agent-spawn-modal .cron-create-row select:focus,
 body.wizard #agent-spawn-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
