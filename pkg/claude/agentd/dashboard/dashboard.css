@@ -3295,18 +3295,6 @@ details.group-virtual .group-name { color: #8aa0b8; }
   cursor: pointer; font-family: inherit;
 }
 .template-card .tc-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
-/* Plain-mode skin for the ⧉ duplicate card action (JOH-365). A base
-   `button.tool { … }` dark rule (JOH-364) gives every .tool button in this
-   row the dark secondary chrome; until that lands this scoped rule keeps
-   the new button from falling back to the browser's white UA chrome. Same
-   palette as the base rule, so it converges cleanly — drop it once JOH-364
-   is merged. */
-.template-card .tc-actions button[data-tact="duplicate"] {
-  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
-  border-radius: 4px; padding: 5px 12px; font-size: 12px;
-  cursor: pointer; font-family: inherit;
-}
-.template-card .tc-actions button[data-tact="duplicate"]:hover { background: #2d333b; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;

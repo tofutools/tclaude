@@ -48,11 +48,13 @@ func TestDashboardHTML_TemplateDuplicate(t *testing.T) {
 	must("delete payload.updated_at;", "duplicate drops the response-only updated_at before re-POSTing")
 	must("template duplicated:", "the success toast reports the new template")
 
-	// (e) Plain-mode skin for the new .tool card button (so it doesn't fall back
-	// to the browser's white chrome before/without JOH-364's base button.tool
-	// rule), and the wizard skin block for the dialog (a white-button regression
-	// can't be caught by strings, but the block's ABSENCE can).
-	must(`.template-card .tc-actions button[data-tact="duplicate"] {`, "the duplicate card button has a plain-mode dark skin")
+	// (e) Plain-mode chrome for the new card button comes from the shared base
+	// `button.tool { … }` rule (JOH-364) — the button carries the .tool class, so
+	// no bespoke skin is needed. Pin that it is a .tool button (rides the base
+	// rule) rather than pinning a now-removed scoped block. The dialog's wizard
+	// skin block is still bespoke (a white-button regression can't be caught by
+	// strings, but the block's ABSENCE can).
+	must(`class="tool" data-tact="duplicate"`, "the duplicate card button is a .tool button, so it rides the shared base button.tool skin")
 	must("body.wizard #template-duplicate-modal .cron-create-modal {", "the duplicate dialog has a wizard skin block")
 	must(`content: "🪞 Mirror it!";`, "the wizard submit lever reads 🪞 Mirror it!")
 }
