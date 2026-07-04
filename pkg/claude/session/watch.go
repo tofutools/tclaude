@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 var (
@@ -57,36 +58,48 @@ var filterOptions = []struct {
 }
 
 type model struct {
-	allSessions    []*SessionState // all sessions before search filter
-	sessions       []*SessionState // sessions after search filter
-	cursor         int
-	width          int
-	height         int
-	viewportOffset int
-	viewportHeight int
-	shouldAttach   string // tmux session name to attach to after quitting
-	shouldAttachID string // session ID for inbox watcher
-	forceAttach    bool   // detach other clients when attaching
-	focusOnly      bool   // just focus, don't attach (session already attached elsewhere)
-	createNew      bool   // create a new session after quitting
-	includeAll     bool
-	sort           table.SortState
-	statusFilter   []string        // which statuses to show (empty = all)
-	hideFilter     []string        // which statuses to hide
-	confirmMode    confirmMode     // current confirmation dialog
-	confirmTarget  *SessionState   // the session a selection dialog was opened FOR — pinned at open time, because the 500ms tick re-sorts rows under the cursor while the dialog is up (acting on m.sessions[m.cursor] could kill/detach whatever drifted onto that row)
-	filterMenu     bool            // showing filter menu
-	filterCursor   int             // cursor position in filter menu
-	filterChecked  map[string]bool // checked items in filter menu
-	helpView       bool            // showing help view
-	searchInput    textinput.Model // search query input
-	searchFocused  bool            // whether search box is focused
-	lastUpdatedAt  time.Time       // tracks DB changes for polling
-	newSessionMode bool            // showing the "new session" directory prompt
-	newSessionDir  string          // chosen directory for the new session (set on confirm)
-	dirInput       textinput.Model // directory input for the new session prompt
-	dirSuggestions []string        // ambiguous tab-completion candidates for dirInput
+	allSessions       []*SessionState // all sessions before search filter
+	sessions          []*SessionState // sessions after search filter
+	cursor            int
+	width             int
+	height            int
+	viewportOffset    int
+	viewportHeight    int
+	shouldAttach      string // tmux session name to attach to after quitting
+	shouldAttachID    string // session ID for inbox watcher
+	forceAttach       bool   // detach other clients when attaching
+	focusOnly         bool   // just focus, don't attach (session already attached elsewhere)
+	createNew         bool   // create a new session after quitting
+	includeAll        bool
+	sort              table.SortState
+	statusFilter      []string        // which statuses to show (empty = all)
+	hideFilter        []string        // which statuses to hide
+	confirmMode       confirmMode     // current confirmation dialog
+	confirmTarget     *SessionState   // the session a selection dialog was opened FOR — pinned at open time, because the 500ms tick re-sorts rows under the cursor while the dialog is up (acting on m.sessions[m.cursor] could kill/detach whatever drifted onto that row)
+	filterMenu        bool            // showing filter menu
+	filterCursor      int             // cursor position in filter menu
+	filterChecked     map[string]bool // checked items in filter menu
+	helpView          bool            // showing help view
+	searchInput       textinput.Model // search query input
+	searchFocused     bool            // whether search box is focused
+	lastUpdatedAt     time.Time       // tracks DB changes for polling
+	newSessionMode    bool            // showing the "new session" prompt
+	newSessionDir     string          // chosen directory for the new session (set on confirm)
+	newSessionLabel   string          // chosen label for the new session (set on confirm)
+	newSessionName    string          // chosen display name for the new session (set on confirm)
+	newSessionHarness string          // chosen harness for the new session (set on confirm)
+	newSessionField   int             // focused field in the new-session prompt: 0=dir, 1=label, 2=name, 3=harness
+	dirInput          textinput.Model // directory input for the new session prompt
+	dirSuggestions    []string        // ambiguous tab-completion candidates for dirInput
+	labelInput        textinput.Model // label input for the new session prompt
+	nameInput         textinput.Model // display-name input for the new session prompt
+	harnessOptions    []string        // spawnable harness names, cycled by the harness field
+	harnessIdx        int             // index into harnessOptions currently selected
 }
+
+// numNewSessionFields is the count of fields the new-session prompt cycles
+// through with up/down/tab (directory, label, name, harness).
+const numNewSessionFields = 4
 
 func newSessionSearchInput() textinput.Model {
 	ti := textinput.New()
@@ -109,6 +122,39 @@ func newDirInput() textinput.Model {
 	}
 	ti.SetWidth(80)
 	return ti
+}
+
+// newLabelInput builds the text input used by the "new session" label
+// prompt. Empty by default — an unset label falls back to runNew's own
+// synthetic/resumed-conv id.
+func newLabelInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = "  Label:     "
+	ti.SetWidth(80)
+	return ti
+}
+
+// newNameInput builds the text input used by the "new session" display-name
+// prompt (claude --name; becomes the session's conversation title). Empty
+// by default — an unset name omits the flag entirely.
+func newNameInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = "  Name:      "
+	ti.SetWidth(80)
+	return ti
+}
+
+// spawnableHarnessNames returns the registered harness names that can
+// actually launch a session (have a Spawner), sorted, for the "new session"
+// prompt's harness field to cycle through.
+func spawnableHarnessNames() []string {
+	var out []string
+	for _, name := range harness.Names() {
+		if h, ok := harness.Get(name); ok && h.Spawn != nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // expandHomePrefix expands a leading "~" or "~/" in p to the user's home
@@ -379,6 +425,54 @@ func (m model) triggerKill() model {
 	return m
 }
 
+// moveNewSessionField shifts focus among the new-session prompt's fields
+// (directory/label/name/harness), wrapping around, and moves the
+// text-input focus to match — only the dir/label/name fields are real
+// textinput.Models; the harness field has no cursor, so all three blur.
+func (m model) moveNewSessionField(delta int) model {
+	m.newSessionField = ((m.newSessionField+delta)%numNewSessionFields + numNewSessionFields) % numNewSessionFields
+	m.dirInput.Blur()
+	m.labelInput.Blur()
+	m.nameInput.Blur()
+	switch m.newSessionField {
+	case 0:
+		m.dirInput.Focus()
+	case 1:
+		m.labelInput.Focus()
+	case 2:
+		m.nameInput.Focus()
+	}
+	return m
+}
+
+// cycleHarness steps the harness field's selection by delta, wrapping
+// around harnessOptions.
+func (m model) cycleHarness(delta int) model {
+	n := len(m.harnessOptions)
+	if n == 0 {
+		return m
+	}
+	m.harnessIdx = ((m.harnessIdx+delta)%n + n) % n
+	return m
+}
+
+// updateFocusedNewSessionInput forwards msg to whichever of dirInput/
+// labelInput/nameInput currently has focus in the new-session prompt (the
+// harness field has no textinput.Model backing it, so callers only reach
+// here for fields 0/1/2).
+func (m model) updateFocusedNewSessionInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch m.newSessionField {
+	case 1:
+		m.labelInput, cmd = m.labelInput.Update(msg)
+	case 2:
+		m.nameInput, cmd = m.nameInput.Update(msg)
+	default:
+		m.dirInput, cmd = m.dirInput.Update(msg)
+	}
+	return m, cmd
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -478,28 +572,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Handle new-session directory prompt
+		// Handle new-session prompt (directory / label / name / harness fields)
 		if m.newSessionMode {
+			const harnessField = 3
 			switch msg.String() {
 			case "esc", "ctrl+c":
 				m.newSessionMode = false
 				m.dirInput.Blur()
+				m.labelInput.Blur()
+				m.nameInput.Blur()
 			case "enter":
 				m.newSessionMode = false
 				m.dirInput.Blur()
+				m.labelInput.Blur()
+				m.nameInput.Blur()
 				m.newSessionDir = expandHomePrefix(strings.TrimSpace(m.dirInput.Value()))
+				m.newSessionLabel = strings.TrimSpace(m.labelInput.Value())
+				m.newSessionName = strings.TrimSpace(m.nameInput.Value())
+				if len(m.harnessOptions) > 0 {
+					m.newSessionHarness = m.harnessOptions[m.harnessIdx]
+				}
 				m.createNew = true
 				return m, tea.Quit
+			case "up":
+				m = m.moveNewSessionField(-1)
+			case "down":
+				m = m.moveNewSessionField(1)
+			case "shift+tab":
+				m = m.moveNewSessionField(-1)
 			case "tab":
-				completed, candidates := completeDirPath(m.dirInput.Value())
-				m.dirInput.SetValue(completed)
-				m.dirInput.CursorEnd()
-				m.dirSuggestions = candidates
+				if m.newSessionField == 0 {
+					completed, candidates := completeDirPath(m.dirInput.Value())
+					m.dirInput.SetValue(completed)
+					m.dirInput.CursorEnd()
+					m.dirSuggestions = candidates
+				} else {
+					m = m.moveNewSessionField(1)
+				}
+			case "left":
+				if m.newSessionField == harnessField {
+					m = m.cycleHarness(-1)
+				} else {
+					return m.updateFocusedNewSessionInput(msg)
+				}
+			case "right":
+				if m.newSessionField == harnessField {
+					m = m.cycleHarness(1)
+				} else {
+					return m.updateFocusedNewSessionInput(msg)
+				}
+			case " ":
+				if m.newSessionField == harnessField {
+					m = m.cycleHarness(1)
+				} else {
+					return m.updateFocusedNewSessionInput(msg)
+				}
 			default:
 				m.dirSuggestions = nil
-				var cmd tea.Cmd
-				m.dirInput, cmd = m.dirInput.Update(msg)
-				return m, cmd
+				if m.newSessionField != harnessField {
+					return m.updateFocusedNewSessionInput(msg)
+				}
 			}
 			return m, nil
 		}
@@ -630,10 +762,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Force refresh
 			m = m.refreshSessions()
 		case "n", "N":
-			// Prompt for the directory to start the new session in
+			// Prompt for the directory/label/name/harness to start the new session with
 			m.dirInput = newDirInput()
 			m.dirInput.Focus()
 			m.dirSuggestions = nil
+			m.labelInput = newLabelInput()
+			m.nameInput = newNameInput()
+			m.harnessOptions = spawnableHarnessNames()
+			m.harnessIdx = 0
+			for i, name := range m.harnessOptions {
+				if name == harness.DefaultName {
+					m.harnessIdx = i
+					break
+				}
+			}
+			m.newSessionField = 0
 			m.newSessionMode = true
 		default:
 			if m.sort.HandleSortKey(m.columns(), msg.String()) {
@@ -861,13 +1004,42 @@ func (m model) renderNewSessionPrompt() string {
 	b.WriteString("\n")
 	b.WriteString(menuStyle.Render("  New session"))
 	b.WriteString("\n\n")
+
 	b.WriteString(m.dirInput.View())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	// Always emit this line, blank or not, so the suggestion list appearing/
+	// disappearing doesn't shift the fields below it up and down.
 	if len(m.dirSuggestions) > 0 {
 		b.WriteString("  " + strings.Join(m.dirSuggestions, "  "))
-		b.WriteString("\n\n")
 	}
-	b.WriteString(helpStyle.Render("  enter start • tab complete • esc cancel"))
+	b.WriteString("\n")
+
+	b.WriteString(m.labelInput.View())
+	b.WriteString("\n")
+
+	b.WriteString(m.nameInput.View())
+	b.WriteString("\n")
+
+	harnessLine := "  Harness:   "
+	if len(m.harnessOptions) == 0 {
+		harnessLine += "(none available)"
+	} else {
+		harnessLine += "< " + m.harnessOptions[m.harnessIdx] + " >"
+	}
+	if m.newSessionField == 3 {
+		// menuStyle (foreground-only) rather than selectedStyle (background
+		// fill): selectedStyle relies on the terminal's default foreground
+		// contrasting with its dark-gray background, which holds for a
+		// dark-themed terminal but reads as low-contrast dark-on-dark on a
+		// light/white background. A foreground-only accent stays legible
+		// either way.
+		b.WriteString(menuStyle.Render(harnessLine))
+	} else {
+		b.WriteString(harnessLine)
+	}
+	b.WriteString("\n\n")
+
+	b.WriteString(helpStyle.Render("  enter start • ↑/↓/tab next field • tab complete dir • ←/→ change harness • esc cancel"))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -895,7 +1067,7 @@ func (m model) renderHelpView() string {
 
 	b.WriteString(headerStyle.Render("  Actions"))
 	b.WriteString("\n")
-	b.WriteString("    n         New session (prompts for directory, default: current)\n")
+	b.WriteString("    n         New session (prompts for directory/label/name/harness, default: current dir)\n")
 	b.WriteString("    del/x     Kill selected session (with confirmation)\n")
 	b.WriteString("    r         Refresh session list\n")
 	b.WriteString("\n")
@@ -953,12 +1125,15 @@ type WatchState struct {
 
 // AttachResult holds the result of selecting a session to attach
 type AttachResult struct {
-	TmuxSession   string
-	SessionID     string // session ID for inbox watcher
-	ForceAttach   bool   // true if we should detach other clients
-	CreateNew     bool   // true if user wants to create a new session
-	NewSessionDir string // directory to start the new session in (with CreateNew)
-	FocusOnly     bool   // true if we should just focus (session already attached)
+	TmuxSession       string
+	SessionID         string // session ID for inbox watcher
+	ForceAttach       bool   // true if we should detach other clients
+	CreateNew         bool   // true if user wants to create a new session
+	NewSessionDir     string // directory to start the new session in (with CreateNew)
+	NewSessionLabel   string // label for the new session (with CreateNew)
+	NewSessionName    string // display name for the new session (with CreateNew)
+	NewSessionHarness string // harness for the new session (with CreateNew)
+	FocusOnly         bool   // true if we should just focus (session already attached)
 }
 
 // RunInteractive starts the interactive session viewer
@@ -983,12 +1158,15 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 
 	fm := finalModel.(model)
 	result := AttachResult{
-		TmuxSession:   fm.shouldAttach,
-		SessionID:     fm.shouldAttachID,
-		ForceAttach:   fm.forceAttach,
-		CreateNew:     fm.createNew,
-		NewSessionDir: fm.newSessionDir,
-		FocusOnly:     fm.focusOnly,
+		TmuxSession:       fm.shouldAttach,
+		SessionID:         fm.shouldAttachID,
+		ForceAttach:       fm.forceAttach,
+		CreateNew:         fm.createNew,
+		NewSessionDir:     fm.newSessionDir,
+		NewSessionLabel:   fm.newSessionLabel,
+		NewSessionName:    fm.newSessionName,
+		NewSessionHarness: fm.newSessionHarness,
+		FocusOnly:         fm.focusOnly,
 	}
 	newState := WatchState{
 		Sort:         fm.sort,
@@ -1018,7 +1196,13 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 		// Handle creating a new session
 		if result.CreateNew {
 			// Create session detached, then attach as subprocess so we return here
-			params := &NewParams{Detached: true, Dir: result.NewSessionDir}
+			params := &NewParams{
+				Detached: true,
+				Dir:      result.NewSessionDir,
+				Label:    result.NewSessionLabel,
+				Name:     result.NewSessionName,
+				Harness:  result.NewSessionHarness,
+			}
 			if err := runNew(params); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
 				continue
