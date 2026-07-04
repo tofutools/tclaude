@@ -1040,6 +1040,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("`Furl coven: ${g.name}`", "group collapse presents as Furl in wizard mode")
 	must("`Prune stray branches in ${g.name}`", "worktree cleanup presents as Prune in wizard mode")
 	must("'Edit familiar patterns…'", "the profiles manager presents as Edit familiar patterns in wizard mode")
+	must("'Unfurl the grimoire'", "show-dock presents as Unfurl the grimoire in wizard mode (matching the dock edge-toggle title)")
+	must("'Furl the grimoire'", "hide-dock presents as Furl the grimoire in wizard mode (matching the dock edge-toggle title)")
 
 	// The arcane vocabulary rides in the keywords (always, both themes) so a
 	// wizard-minded search finds a plain-labelled command too — spot-check a

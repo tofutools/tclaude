@@ -55,6 +55,7 @@ import { openGroupCreateModal } from './modal-message.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
+import { isDockOpen, setDockOpen } from './dock.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 
 const MODAL_ID = 'command-palette-modal';
@@ -448,6 +449,40 @@ function buildCommands() {
     keywords: 'toggle switch theme wizard magic arcane dnd dungeon fantasy mode appearance'
       + ' robes tower doff leave depart spellbook',
     run: () => toggleWizard(),
+  });
+
+  // 3b) Show / hide the right-side PALETTE DOCK (JOH-374) — the retractable
+  //     right-edge panel of drag-to-spawn profiles / templates / roles. A
+  //     persisted dashboard-chrome toggle, like the theme switches above; it
+  //     owns no state of its own but flips the exact dashPrefs-backed open flag
+  //     the dock's edge tab + in-dock collapse button flip (setDockOpen in
+  //     dock.js). Offered as a directional PAIR (like the group collapse/expand
+  //     commands) rather than one state-gated toggle, so both verbs are always
+  //     listed and findable by either word; running the redundant direction is
+  //     a harmless idempotent re-apply. Named "right panel" (not "palette") in
+  //     the label to avoid colliding with THIS command palette's own name — the
+  //     dock's internal/UI vocabulary rides in the keywords + hint. The dock is
+  //     Groups-tab-only, so SHOW switches to the Groups tab first (matching the
+  //     group-fold commands) so the panel is actually visible; HIDE just flips
+  //     the pref (nothing to reveal). In 🧙 mode the dock is the grimoire — Furl
+  //     / Unfurl — matching its edge-toggle titles.
+  cmds.push({
+    icon: wiz('◨', '📖'), label: wiz('Show right panel', 'Unfurl the grimoire'),
+    hint: wiz('reveal the right-side dock of profiles, templates & roles',
+      'unfurl the grimoire of patterns, circles & classes'),
+    keywords: 'show open reveal expand right panel dock sidebar drawer palette rail'
+      + ' profiles templates roles'
+      + ' unfurl reveal grimoire tome scroll',
+    run: () => { gotoGroupsTab(); setDockOpen(true); },
+  });
+  cmds.push({
+    icon: wiz('▭', '📕'), label: wiz('Hide right panel', 'Furl the grimoire'),
+    hint: wiz('collapse the right-side dock of profiles, templates & roles',
+      'roll up the grimoire of patterns, circles & classes'),
+    keywords: 'hide close collapse fold right panel dock sidebar drawer palette rail'
+      + ' profiles templates roles'
+      + ' furl conceal grimoire tome scroll',
+    run: () => setDockOpen(false),
   });
 
   // 4) Navigation — one command per VISIBLE nav button, reusing its own

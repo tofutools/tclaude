@@ -225,8 +225,25 @@ export function renderDock() {
 
 // isDockOpen reads the persisted flag, defaulting to OPEN when unset (the
 // dock is a new, discovery-worthy surface). Only an explicit '0' collapses.
-function isDockOpen() {
+// Exported so the Ctrl/Cmd-K command palette can read the live state to
+// present its "Show / Hide right panel" command (js/palette.js).
+export function isDockOpen() {
   return dashPrefs.getItem(DOCK_OPEN_KEY) !== '0';
+}
+
+// setDockOpen persists the open/collapsed pref and reflects it — the ONE
+// mutation point behind every show/hide control: the edge tab and the in-dock
+// collapse button (both via toggleDock in bindDock) and the Ctrl/Cmd-K command
+// palette's "Show / Hide right panel" command (js/palette.js imports it).
+// Writing the pref and applying it stay together so no caller can persist one
+// state and paint another. Idempotent — re-setting the current state just
+// re-applies. NB the dock is Groups-tab-only, so setting it open off the Groups
+// tab persists the intent but paints nothing until the tab is active (applyDock
+// Open folds isDockTab into the effective open state); the palette's show
+// command switches to the Groups tab first so the panel is actually visible.
+export function setDockOpen(open) {
+  dashPrefs.setItem(DOCK_OPEN_KEY, open ? '1' : '0');
+  applyDockOpen(open);
 }
 
 // isDockTab reports whether the Groups tab is the active one. The dock is
@@ -392,12 +409,9 @@ export function bindDock() {
 
   // One toggler drives both show/hide controls — the edge tab and the in-dock
   // collapse — flipping the same dashPrefs-backed state (JOH-390 item 7 removed
-  // the third, top-bar, control).
-  const toggleDock = () => {
-    const next = !isDockOpen();
-    dashPrefs.setItem(DOCK_OPEN_KEY, next ? '1' : '0');
-    applyDockOpen(next);
-  };
+  // the third, top-bar, control). The command palette's show/hide commands flip
+  // the same state through the shared setDockOpen.
+  const toggleDock = () => setDockOpen(!isDockOpen());
   // Two show/hide controls now (JOH-390 item 7 removed the top-bar toggle): the
   // edge chevron tab and the in-dock "Hide ›/Furl ›" collapse.
   $('#dock-toggle')?.addEventListener('click', toggleDock);

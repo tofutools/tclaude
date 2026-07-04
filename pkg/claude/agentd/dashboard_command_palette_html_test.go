@@ -119,6 +119,28 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("function setGroupOpen(", "per-group collapse/expand toggles the group's <details>")
 	must("data-group-key=", "fold targets the group's <details data-group-key>")
 
+	// Show / hide the right-side palette dock (js/dock.js, JOH-374): a
+	// directional PAIR of commands that flip the SAME dashPrefs-backed open flag
+	// the dock's edge tab + in-dock collapse button flip, reusing setDockOpen
+	// (exported from dock.js for this). The show command switches to the Groups
+	// tab first (the dock is Groups-tab-only) so the panel is actually visible;
+	// hide just flips the pref. Labelled "right panel" (not "palette") to avoid
+	// colliding with the command palette's own name. Pinned by the wiz(plain,
+	// arcane) labels + the reused opener; the arcane twins are covered by
+	// TestDashboardHTML_WizardCommandPaletteSynonyms.
+	must("import { isDockOpen, setDockOpen } from './dock.js'",
+		"the palette imports the dock's shared open-state ops")
+	must("export function setDockOpen(",
+		"dock.js exports the shared open/collapse mutation for the palette")
+	must("wiz('Show right panel', 'Unfurl the grimoire')",
+		"the palette offers a show-dock command (plain + arcane label)")
+	must("wiz('Hide right panel', 'Furl the grimoire')",
+		"the palette offers a hide-dock command (plain + arcane label)")
+	must("run: () => { gotoGroupsTab(); setDockOpen(true); }",
+		"show-dock switches to the Groups tab (dock is Groups-tab-only) then opens it via the shared setDockOpen")
+	must("run: () => setDockOpen(false)",
+		"hide-dock flips the shared dock pref, no new behaviour")
+
 	// Consistent presentation: every detach command reads "Hide", every
 	// raise command reads "Focus" (no stray "Unfocus" in a label). In 🧙 mode
 	// the presented label re-skins to "Veil all familiars" via the wiz() helper

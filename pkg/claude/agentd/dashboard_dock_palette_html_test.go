@@ -86,6 +86,13 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("export function renderDock(", "dock.js exports its poll renderer")
 	must("bindDock();", "dashboard.js boot wires the dock")
 	must("renderDock();", "refresh.js paints the dock each poll")
+	// The open-state helpers are exported so the Ctrl/Cmd-K command palette can
+	// read + flip the dock through the same one source of truth the edge tab and
+	// in-dock collapse button use (see TestDashboardHTML_CommandPalette for the
+	// palette-side wiring). Both show/hide controls now route through setDockOpen.
+	must("export function isDockOpen(", "dock.js exports the live open-state read for the palette")
+	must("export function setDockOpen(", "dock.js exports the shared open/collapse mutation for the palette")
+	must("const toggleDock = () => setDockOpen(", "the edge tab + in-dock collapse route through the shared setDockOpen")
 	// The open/collapsed state persists server-side via dashPrefs, NOT
 	// localStorage (the random per-start port would reset it).
 	must("tclaude.dash.dock.open", "the open state persists via a dashPrefs key")
