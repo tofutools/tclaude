@@ -13,7 +13,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -45,6 +47,11 @@ func runInboxWatch(p *inboxWatchParams, _, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	// Apply the configured TUI color scheme before building the program so the
+	// styles are set once, up front (Load is nil-safe on error → default).
+	cfg, _ := config.Load()
+	applyTUIColorScheme(cfg.TUIColorScheme())
+
 	m := newInboxWatchModel(p)
 	prog := tea.NewProgram(m)
 	if _, err := prog.Run(); err != nil {
@@ -554,13 +561,41 @@ func removeEntryByID(entries []inboxEntry, id int64) []inboxEntry {
 
 // --- View ---
 
+// Inbox-view styles. Their colors come from the active TUI color scheme
+// (config tui.color_scheme) resolved through tuistyle: init() seeds the
+// default scheme and runInboxWatch re-applies the configured one before the
+// program starts. See applyTUIColorScheme.
 var (
-	inboxHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
-	inboxHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	inboxReadingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	inboxSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255"))
-	inboxErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))
+	inboxHeaderStyle   lipgloss.Style
+	inboxHelpStyle     lipgloss.Style
+	inboxReadingStyle  lipgloss.Style
+	inboxSelectedStyle lipgloss.Style
+	inboxErrorStyle    lipgloss.Style
 )
+
+func init() { applyTUIColorScheme(config.TUIColorSchemeDefault) }
+
+// applyTUIColorScheme (re)builds the inbox-view styles from the palette for
+// the given color scheme (config tui.color_scheme). It is called at package
+// init with the default scheme, then again from runInboxWatch with the
+// configured scheme before the bubbletea program starts. The inbox view is a
+// per-process singleton, so mutating these package-level styles once at
+// startup is safe.
+func applyTUIColorScheme(scheme string) {
+	p := tuistyle.Resolve(scheme)
+	inboxHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Header))
+	inboxHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Help))
+	inboxReadingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Info))
+	// Selected row: bold on a dark-gray background. The default scheme paints
+	// its foreground white; the high-contrast scheme leaves the row's own
+	// color (empty SelectedFg) as it did before #738.
+	sel := lipgloss.NewStyle().Bold(true).Background(lipgloss.Color(p.SelectedBg))
+	if p.SelectedFg != "" {
+		sel = sel.Foreground(lipgloss.Color(p.SelectedFg))
+	}
+	inboxSelectedStyle = sel
+	inboxErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Danger))
+}
 
 func (m *inboxWatchModel) View() tea.View {
 	if m.readingID != 0 {
