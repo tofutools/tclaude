@@ -151,6 +151,8 @@ func harnessLabel(harness string) string {
 	switch harness {
 	case "codex": // session.SessionState.Harness for OpenAI Codex CLI
 		return "Codex"
+	case "shell": // session.ShellHarnessName for a plain interactive shell
+		return "Shell"
 	default:
 		return "Claude"
 	}

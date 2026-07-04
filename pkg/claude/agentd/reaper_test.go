@@ -12,6 +12,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// reaperFallbackExitReason must only stamp "unexpected" on harnesses that
+// have a graceful-exit hook whose absence is genuinely suspicious. Claude
+// Code does; Codex and a plain shell do not, so a deliberate exit in either
+// must stay reasonless (no spurious "Exited" banner).
+func TestReaperFallbackExitReason(t *testing.T) {
+	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason("claude"))
+	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason(""), "unknown harness is treated like Claude")
+	assert.Equal(t, "", reaperFallbackExitReason("codex"))
+	assert.Equal(t, "", reaperFallbackExitReason(session.ShellHarnessName), "clean shell exit is normal, not unexpected")
+}
+
 // Codex sessions have no SessionEnd hook, so their alive→dead transition
 // is detected by the reaper (tmux has-session → PID liveness), not the
 // event switch. This drives the production reaper over a harness=codex

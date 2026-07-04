@@ -209,9 +209,12 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // means an abnormal death. Codex does not have an equivalent reliable
 // end hook, and a user closing the pane is indistinguishable from a
 // plain terminal exit here, so leave it reasonless unless another path
-// recorded a reason first.
+// recorded a reason first. A plain shell session has no hook at all —
+// a clean exit (Ctrl-D, `exit`) is the normal way to end it — so it
+// gets the same reasonless treatment; stamping "unexpected" would turn
+// every deliberate shell exit into a spurious "Exited" banner.
 func reaperFallbackExitReason(h string) string {
-	if h == harness.CodexName {
+	if h == harness.CodexName || h == session.ShellHarnessName {
 		return ""
 	}
 	return unexpectedExitReason
