@@ -393,6 +393,23 @@ func liveSessionOwningID(sessionID string) *SessionState {
 	return nil
 }
 
+// liveOwnerConflict runs the PK-collision guard both launch paths share
+// (runNew / runNewShell). It returns the byte-identical "choose a different
+// --label" error when a reused --label collides with a *live* session's PK.
+// When a non-label PK collides it returns that owner (nil error) so the caller
+// can craft its context-specific message (a resumed conversation vs a plain
+// shell), and returns (nil, nil) when the PK is free. See JOH-248/JOH-332.
+func liveOwnerConflict(sessionID, label string) (*SessionState, error) {
+	owner := liveSessionOwningID(sessionID)
+	if owner == nil {
+		return nil, nil
+	}
+	if label != "" {
+		return nil, fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)
+	}
+	return owner, nil
+}
+
 // LiveSessionForConv returns an existing, *live* session row for the given
 // conversation id, or nil. It keys on conv_id — the conversation's stable
 // identity — so it finds a live session regardless of that session's PK shape:

@@ -512,10 +512,11 @@ func runNew(params *NewParams) error {
 	// the names diverge. A row owned only by a DEAD session is fine to reuse.
 	// (This PK guard primarily backstops a reused --label; the resumed-conv
 	// case is covered by the conv_id guard above. See JOH-332.)
-	if owner := liveSessionOwningID(sessionID); owner != nil {
-		if params.Label != "" {
-			return fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)
-		}
+	owner, err := liveOwnerConflict(sessionID, params.Label)
+	if err != nil {
+		return err
+	}
+	if owner != nil {
 		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
 	}
 
@@ -599,7 +600,7 @@ func runNew(params *NewParams) error {
 		rowConvID = params.SessionID
 	}
 
-	claudeCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports:        envExports,
 		ResumeID:          fullConvID,
 		SessionID:         params.SessionID,
@@ -615,34 +616,12 @@ func runNew(params *NewParams) error {
 		InitialPrompt:     params.InitialPrompt,
 	})
 
-	// Create tmux session with claude
-	// Use tmux new-session -d to create detached
-	// We use sh -c to set the environment variable
-	tmuxArgs := []string{
-		"new-session",
-		"-d",              // detached
-		"-s", tmuxSession, // session name
-		"-c", cwd, // working directory
-		"sh", "-c", claudeCmd,
+	// Create the detached tmux session running the harness command.
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
+		return err
 	}
 
-	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
-	tmuxCmd.Stdout = os.Stdout
-	tmuxCmd.Stderr = os.Stderr
-
-	if err := tmuxCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
-	}
-
-	// Configure tmux to set window title with our session ID
-	// This ensures the title persists and is visible for window focus.
-	// Gated on config focus.window_title (default on): an explicit false
-	// leaves the terminal's own title alone, at the cost of title-based
-	// window focus/tiling on WSL + native-Linux/X11.
-	if windowTitleEnabledFn() {
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
-	}
+	applyTmuxWindowTitle(tmuxSession, sessionID)
 
 	// Enable tmux mouse-wheel scrollback for this session when the harness
 	// relies on tmux for history (Codex CLI). Scoped to this session only so
@@ -694,16 +673,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	fmt.Printf("Created session %s\n", tmuxSession)
-	fmt.Printf("  Directory: %s\n", cwd)
-
-	if params.Detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
-		return nil
-	}
-
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
-	return AttachToSession(sessionID, tmuxSession, false)
+	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
 // The CC launch-command builder lives behind the harness seam now —
@@ -729,6 +699,52 @@ func resolveSessionDir(dir string) (string, error) {
 		cwd = filepath.Join(wd, cwd)
 	}
 	return cwd, nil
+}
+
+// launchDetachedTmuxSession creates the detached tmux session that hosts a
+// launch — `tmux new-session -d -s <name> -c <cwd> sh -c <cmd>` — wiring the
+// child's stdout/stderr through. cmd is the harness command (claudeSpawner's
+// BuildCommand output) or the plain shell's exec line. Shared by runNew and
+// runNewShell.
+func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
+	// Use tmux new-session -d to create detached; sh -c carries the env exports.
+	tmuxCmd := clcommon.TmuxCommand("new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", "-c", cmd)
+	tmuxCmd.Stdout = os.Stdout
+	tmuxCmd.Stderr = os.Stderr
+	if err := tmuxCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create tmux session: %w", err)
+	}
+	return nil
+}
+
+// applyTmuxWindowTitle sets this session's tmux window title to
+// `tclaude:<sessionID>` when config focus.window_title is enabled (default on),
+// so the title persists and drives title-based window focus/tiling. An explicit
+// false leaves the terminal's own title alone. Best-effort. Shared by both
+// launch paths.
+func applyTmuxWindowTitle(tmuxSession, sessionID string) {
+	if !windowTitleEnabledFn() {
+		return
+	}
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+}
+
+// announceAndAttach prints the created-session summary and then either reports
+// the detach hint (detached launches) or attaches to the pane. createdLine is
+// the harness-specific "Created …" headline (a coding session vs a shell
+// session). Shared launch tail of runNew and runNewShell.
+func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
+	fmt.Println(createdLine)
+	fmt.Printf("  Directory: %s\n", cwd)
+
+	if detached {
+		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
+		return nil
+	}
+
+	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	return AttachToSession(sessionID, tmuxSession, false)
 }
 
 // resolveResumeConv resolves a --resume id prefix to a full conversation

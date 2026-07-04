@@ -57,10 +57,11 @@ func runNewShell(params *NewParams) error {
 	// identity each launch, so it must not collide with a different live
 	// session's PK (SaveSessionState's ON CONFLICT(id) would otherwise
 	// silently overwrite it). See JOH-248/JOH-332 (liveSessionOwningID).
-	if owner := liveSessionOwningID(sessionID); owner != nil {
-		if params.Label != "" {
-			return fmt.Errorf("a live session already uses label %q (tmux %q); choose a different --label", sessionID, owner.TmuxSession)
-		}
+	owner, err := liveOwnerConflict(sessionID, params.Label)
+	if err != nil {
+		return err
+	}
+	if owner != nil {
 		return fmt.Errorf("session %s already exists; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
 	}
 
@@ -83,24 +84,11 @@ func runNewShell(params *NewParams) error {
 	// wrapper's own process image with shellBin — same PID, one process.
 	shellCmd := envExports + "exec " + clcommon.ShellQuoteArg(shellBin)
 
-	tmuxArgs := []string{
-		"new-session",
-		"-d",
-		"-s", tmuxSession,
-		"-c", cwd,
-		"sh", "-c", shellCmd,
-	}
-	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
-	tmuxCmd.Stdout = os.Stdout
-	tmuxCmd.Stderr = os.Stderr
-	if err := tmuxCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, shellCmd); err != nil {
+		return err
 	}
 
-	if windowTitleEnabledFn() {
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
-		_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
-	}
+	applyTmuxWindowTitle(tmuxSession, sessionID)
 
 	// A plain shell has no self-managed scrollback (unlike Claude Code's
 	// TUI), so always enable tmux mouse mode for it — unconditionally,
@@ -125,16 +113,7 @@ func runNewShell(params *NewParams) error {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
 
-	fmt.Printf("Created shell session %s\n", tmuxSession)
-	fmt.Printf("  Directory: %s\n", cwd)
-
-	if params.Detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
-		return nil
-	}
-
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
-	return AttachToSession(sessionID, tmuxSession, false)
+	return announceAndAttach(fmt.Sprintf("Created shell session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
 // shellBinary picks the interactive shell to launch: $SHELL, falling back
