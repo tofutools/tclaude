@@ -2415,6 +2415,15 @@ details[data-group-key].group-drop-before {
 details[data-group-key].group-drop-after {
   box-shadow: 0 3px 0 0 #58a6ff;
 }
+/* Nest target: dropping in the header's MIDDLE band nests the dragged group
+   INTO this one (n-level groups-in-groups, JOH-392). A ring + tint around the
+   whole target box reads as "into this container", distinct from the thin
+   before/after insertion line of a sibling reorder. */
+details[data-group-key].group-drop-into {
+  box-shadow: inset 0 0 0 2px #58a6ff;
+  background: rgba(88, 166, 255, 0.08);
+  border-radius: 6px;
+}
 .dnd-mod-pill {
   position: fixed;
   top: 0; left: 0;

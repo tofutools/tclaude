@@ -739,7 +739,17 @@ function renderGroups(groups) {
       : '';
     return renderRealGroup(g, childrenHTML);
   };
-  return roots.map(renderNode).join('');
+  let html = roots.map(renderNode).join('');
+  // Orphan rescue: a group reachable only through a cycle (e.g. corrupt data
+  // where A.parent=B and B.parent=A) is in nobody's root set and would never be
+  // visited above. The server rejects cycles, so this is corruption-only — but
+  // rather than let such groups silently vanish, draw any real group the tree
+  // walk missed as a top-level node. renderNode's `rendered` guard keeps this
+  // from double-drawing anything already shown.
+  for (const g of groups) {
+    if (!g.virtual && !rendered.has(g.name)) html += renderNode(g);
+  }
+  return html;
 }
 
 // renderRealGroup renders one non-virtual group's <details> block.
