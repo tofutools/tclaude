@@ -560,7 +560,10 @@ table th, table td {
   text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3340;
   vertical-align: top;
 }
-table th { color: #7d8590; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+/* Column titles never wrap: a narrow column (e.g. "Task link") must keep
+   its header on one line rather than stacking into two rows — the header
+   text sets a hard floor on the column width instead. */
+table th { color: #7d8590; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
 table th.sortable { cursor: pointer; user-select: none; }
 table th.sortable:hover { color: #c9d1d9; }
 table th.sort-active { color: #58a6ff; }
