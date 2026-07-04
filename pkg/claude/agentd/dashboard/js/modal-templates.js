@@ -1174,7 +1174,9 @@ async function submitDuplicate() {
     if (!r.ok) { errEl.textContent = (await r.text()) || `HTTP ${r.status}`; return; }
     closeDuplicateModal();
     toast(`template duplicated: ${name}`);
-    refresh();
+    // force keeps every circle-list mutation's refresh uniform: harmless here
+    // (the dialog is already closed), but immune to a modal left open above it.
+    refresh({ force: true });
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
