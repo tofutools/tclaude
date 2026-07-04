@@ -949,6 +949,21 @@ export function confirmModal({title, body, meta, okLabel, cancelLabel}) {
   });
 }
 
+// confirmDiscard pops the shared "Discard input?" confirmation used
+// whenever a dirty form is about to be dismissed by an ACCIDENTAL
+// gesture (Escape / backdrop click). Resolves true when the human
+// accepts the discard, false to keep editing. Extracted from
+// bindBackdropDiscard so a per-open Promise-based modal that can't use
+// the startup binding (e.g. editMemberModal) reuses the exact same copy
+// and confirm behavior instead of hand-rolling a second discard prompt.
+export function confirmDiscard() {
+  return confirmModal({
+    title: 'Discard input?',
+    body: 'Closing the form will discard any unsaved input. Continue?',
+    okLabel: 'Discard',
+  });
+}
+
 // bindBackdropDiscard wires the dismissal handlers that protect a
 // data-entry modal from accidental close — both the backdrop click
 // and the Escape key route through the same dirty-check + confirm
@@ -1026,14 +1041,7 @@ export function bindBackdropDiscard(modalId, closeFn) {
   // pop the confirm overlay first; otherwise (or once the user accepts
   // the discard) call closeFn.
   const tryDismiss = async () => {
-    if (dirty) {
-      const ok = await confirmModal({
-        title: 'Discard input?',
-        body: 'Closing the form will discard any unsaved input. Continue?',
-        okLabel: 'Discard',
-      });
-      if (!ok) return;
-    }
+    if (dirty && !(await confirmDiscard())) return;
     closeFn();
   };
 
@@ -3043,15 +3051,34 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     // ambiguous (the rename modal this folded in did the same).
     const onAuto = () => { titleEl.disabled = autoEl.checked; };
     const onPerms = () => { if (openPerms) openPerms(); };
+    // Dirty tracking (mirrors bindBackdropDiscard): the fields above are
+    // pre-populated programmatically, which fires neither input nor change,
+    // so opening then immediately Escaping an untouched panel stays
+    // friction-free. Any real edit — typing a title/description, toggling
+    // auto/owner, changing the role — bubbles up to the overlay and marks
+    // the form dirty, so an accidental Escape / backdrop click then asks
+    // before throwing the edits away.
+    let dirty = false;
+    const markDirty = () => { dirty = true; };
     const cleanup = (result) => {
       overlay.classList.remove('show');
       saveBtn.removeEventListener('click', onSave);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlay);
+      overlay.removeEventListener('input', markDirty);
+      overlay.removeEventListener('change', markDirty);
       autoEl.removeEventListener('change', onAuto);
       permsBtn.removeEventListener('click', onPerms);
       document.removeEventListener('keydown', onKey, true);
       resolve(result);
+    };
+    // tryDismiss is the ACCIDENTAL-close path (Escape / backdrop click):
+    // confirm before discarding a dirty form, otherwise close. The explicit
+    // Cancel button stays an instant unconditional dismiss (onCancel), same
+    // split bindBackdropDiscard draws for the other data-entry modals.
+    const tryDismiss = async () => {
+      if (dirty && !(await confirmDiscard())) return;
+      cleanup(null);
     };
     const onSave = () => {
       errEl.textContent = '';
@@ -3085,7 +3112,7 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       cleanup(Object.keys(out).length === 0 ? 'noop' : out);
     };
     const onCancel = () => cleanup(null);
-    const onOverlay = (e) => { if (e.target === overlay) cleanup(null); };
+    const onOverlay = (e) => { if (e.target === overlay) tryDismiss(); };
     const onKey = (e) => {
       // While the Permissions editor is stacked on top (it opens from
       // this modal's Permissions… button), it owns the keyboard — let
@@ -3097,7 +3124,13 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
       // read the true "is it stacked?" state rather than a state the
       // perm dismiss has already torn down one handler earlier.
       if ($('#perm-edit-modal').classList.contains('show')) return;
-      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      // A discard confirm we popped is on top — let confirmModal's own
+      // capture handler take the Escape (it cancels the confirm and stops
+      // the event) instead of racing to pop a second confirm underneath.
+      // This capture listener was registered before confirmModal's, so it
+      // fires first; without this bail it would re-enter tryDismiss.
+      if ($('#confirm-modal').classList.contains('show')) return;
+      if (e.key === 'Escape') { e.preventDefault(); tryDismiss(); }
       // Ctrl/Cmd+Enter saves from anywhere in the modal so power
       // users don't have to mouse over to the Save button.
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -3107,6 +3140,8 @@ function editMemberModal({label, title, role, descr, owner, focusRole, openPerms
     saveBtn.addEventListener('click', onSave);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlay);
+    overlay.addEventListener('input', markDirty);
+    overlay.addEventListener('change', markDirty);
     autoEl.addEventListener('change', onAuto);
     permsBtn.addEventListener('click', onPerms);
     // Capture phase (see onKey) so the stacked-perm-editor guard reads
