@@ -157,6 +157,8 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 	switch {
 	case params.Resume != "":
 		return fmt.Errorf(notApplicable, "--resume", ShellHarnessName, "it is ephemeral and has no conversation to resume")
+	case params.Global:
+		return fmt.Errorf(notApplicable, "--global/-g", ShellHarnessName, "it only widens --resume's conversation lookup, and a shell session has no conversation to resume")
 	case params.Model != "":
 		return fmt.Errorf(notApplicable, "--model", ShellHarnessName, "a shell session has no model")
 	case params.Effort != "":
@@ -179,6 +181,10 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--join-group", ShellHarnessName, "it has no conversation to enroll in an agent group")
 	case params.Name != "":
 		return fmt.Errorf(notApplicable, "--name", ShellHarnessName, "it has no conversation title; use --label to name the tmux handle")
+	case params.Role != "":
+		return fmt.Errorf(notApplicable, "--role", ShellHarnessName, "it only tags a member joining an agent group, and a shell session has no conversation to enroll")
+	case params.Descr != "":
+		return fmt.Errorf(notApplicable, "--descr", ShellHarnessName, "it only describes a member joining an agent group, and a shell session has no conversation to enroll")
 	case params.InitialPrompt != "":
 		return fmt.Errorf(notApplicable, "--initial-prompt", ShellHarnessName, "it has no first-turn prompt")
 	case params.SessionID != "":

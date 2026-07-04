@@ -16,6 +16,7 @@ func TestRunNewShell_RejectsCodingHarnessFlags(t *testing.T) {
 		want   string
 	}{
 		{"resume", NewParams{Resume: "abc123"}, "--resume"},
+		{"global", NewParams{Global: true}, "--global"},
 		{"model", NewParams{Model: "opus"}, "--model"},
 		{"effort", NewParams{Effort: "high"}, "--effort"},
 		{"sandbox", NewParams{Sandbox: "workspace-write"}, "--sandbox"},
@@ -27,6 +28,8 @@ func TestRunNewShell_RejectsCodingHarnessFlags(t *testing.T) {
 		{"wait-for-rate-limit", NewParams{WaitForRateLimit: true}, "--wait-for-rate-limit"},
 		{"join-group", NewParams{JoinGroup: "mygroup"}, "--join-group"},
 		{"name", NewParams{Name: "my session"}, "--name"},
+		{"role", NewParams{Role: "tech-lead"}, "--role"},
+		{"descr", NewParams{Descr: "does the thing"}, "--descr"},
 		{"initial-prompt", NewParams{InitialPrompt: "hi"}, "--initial-prompt"},
 		{"session-id", NewParams{SessionID: "550e8400-e29b-41d4-a716-446655440000"}, "--session-id"},
 	}
