@@ -7,10 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV91toV92_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v92 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v91).
-func TestMigrateV91toV92_FreshSchema(t *testing.T) {
+// TestMigrateV91toV92_ProcessSurvivesChain builds a fresh DB through the full
+// migrate() chain and asserts it lands at currentVersion. The literal
+// currentVersion tripwire moved forward to the v93 test (head); this keeps the
+// full-chain smoke check without re-pinning the head number.
+func TestMigrateV91toV92_ProcessSurvivesChain(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "Open")
@@ -18,7 +19,6 @@ func TestMigrateV91toV92_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 92, currentVersion, "tripwire: bump this and add a v92→v93 test when you add a migration")
 }
 
 // TestMigrateV91toV92_AddsProcess drives the real v91→v92 migration over a

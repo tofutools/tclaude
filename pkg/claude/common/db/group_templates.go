@@ -49,6 +49,15 @@ type GroupTemplate struct {
 	// group instantiated from the template snapshots this into its runtime
 	// process state. Empty = no process (the feature is off for the group).
 	Process []ProcessPhase
+	// Rhythms is the template's recurring-nudge declarations (JOH-244): the
+	// party's "drumbeats". At deploy each is materialized as a normal cron job
+	// targeting the instantiated group, role-filtered at fire time. Empty = no
+	// rhythms (today's behaviour).
+	Rhythms []Rhythm
+	// WaveMaxWait caps (in seconds) how long a staged-spawn wave gate waits for
+	// the prior wave to go idle before the next wave spawns anyway (JOH-244). 0
+	// = use the built-in default. A crashed lead can't wedge the force forever.
+	WaveMaxWait int
 }
 
 // WorkPatternEntry is one routed briefing message in a template's work
@@ -135,6 +144,13 @@ type GroupTemplateAgent struct {
 	Effort       string
 	Sandbox      string
 	Approval     string
+
+	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
+	// in ascending order: wave N+1 starts only once wave N's agents are up and
+	// have gone idle (or a per-template max-wait cap fires). A template whose
+	// every agent is wave 0 spawns in a single synchronous pass — today's exact
+	// behaviour.
+	Wave int
 }
 
 // permsToJSON marshals a permission-slug list for the
@@ -181,9 +197,10 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
-		`INSERT INTO group_templates (name, descr, default_context, work_pattern, process, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process), now, now)
+		`INSERT INTO group_templates (name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
+		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrGroupTemplateNameTaken
@@ -220,10 +237,10 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
-		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, process = ?, updated_at = ?
+		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, updated_at = ?
 		 WHERE id = ?`,
 		t.Name, t.Descr, t.DefaultContext, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
-		time.Now().Format(time.RFC3339Nano), t.ID)
+		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, time.Now().Format(time.RFC3339Nano), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupTemplateNameTaken
@@ -258,11 +275,11 @@ func insertTemplateAgents(tx *sql.Tx, templateID int64, agents []GroupTemplateAg
 		if _, err := tx.Exec(
 			`INSERT INTO group_template_agents
 			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-			    role_ref, spawn_profile, harness, model, effort, sandbox, approval)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			templateID, a.Ordinal, a.Name, a.Role, a.Descr, a.InitialMessage,
 			owner, permsToJSON(a.Permissions),
-			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval); err != nil {
+			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval, a.Wave); err != nil {
 			return err
 		}
 	}
@@ -277,7 +294,7 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, work_pattern, process, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -299,7 +316,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, name, descr, default_context, work_pattern, process, created_at, updated_at
+		`SELECT id, name, descr, default_context, work_pattern, process, rhythms, wave_max_wait, created_at, updated_at
 		 FROM group_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -323,7 +340,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 	// an N+1 query when the editor list is rendered.
 	agentRows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave
 		 FROM group_template_agents ORDER BY template_id, ordinal, id`)
 	if err != nil {
 		return nil, err
@@ -363,7 +380,7 @@ func DeleteGroupTemplate(name string) (int64, error) {
 func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, error) {
 	rows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave
 		 FROM group_template_agents WHERE template_id = ? ORDER BY ordinal, id`, templateID)
 	if err != nil {
 		return nil, err
@@ -382,8 +399,8 @@ func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, erro
 
 func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
-	var createdAt, updatedAt, workPattern, process string
-	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &process, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, workPattern, process, rhythms string
+	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &workPattern, &process, &rhythms, &t.WaveMaxWait, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	t.CreatedAt = parseTimeOrZero(createdAt)
@@ -391,6 +408,7 @@ func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	t.Agents = []GroupTemplateAgent{}
 	t.WorkPattern = workPatternFromJSON(workPattern)
 	t.Process = processFromJSON(process)
+	t.Rhythms = rhythmsFromJSON(rhythms)
 	return &t, nil
 }
 
@@ -400,7 +418,7 @@ func scanGroupTemplateAgent(s rowScanner) (*GroupTemplateAgent, error) {
 	var perms string
 	if err := s.Scan(&a.ID, &a.TemplateID, &a.Ordinal, &a.Name, &a.Role,
 		&a.Descr, &a.InitialMessage, &owner, &perms,
-		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval); err != nil {
+		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval, &a.Wave); err != nil {
 		return nil, err
 	}
 	a.IsOwner = owner != 0
