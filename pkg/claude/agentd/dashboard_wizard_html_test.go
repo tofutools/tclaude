@@ -1433,9 +1433,13 @@ func TestDashboardHTML_WizardTemplateDeploy(t *testing.T) {
 	must("body.wizard #template-deploy-modal #template-deploy-submit", "the submit re-skin is scoped to the summon modal")
 	must("body.wizard #template-deploy-modal .template-preview", "the final-names preview is re-skinned")
 
-	// The folded-in cast dialog's wizard skin is fully gone (JOH-373).
-	if strings.Contains(dashboardAssets, "#template-instantiate-modal") {
-		t.Error("dashboard still contains a #template-instantiate-modal rule — the cast dialog was folded into the unified summon dialog (JOH-373); remove its dead wizard skin + :is() list entries")
+	// The folded-in cast dialog is fully gone (JOH-373). Match the bare id
+	// substring (not the "#"-prefixed selector) so this trips on ANY
+	// re-introduction — an HTML `id="template-instantiate-modal"`, a CSS
+	// `#template-instantiate-modal` rule, or a JS `'#template-instantiate-modal'`
+	// reference alike.
+	if strings.Contains(dashboardAssets, "template-instantiate-modal") {
+		t.Error("dashboard still references template-instantiate-modal — the cast dialog was folded into the unified summon dialog (JOH-373); remove its dead HTML/JS/CSS + :is() list entries")
 	}
 }
 
