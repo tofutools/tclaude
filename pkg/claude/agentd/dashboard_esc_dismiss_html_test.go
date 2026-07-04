@@ -67,8 +67,15 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	// distinguish a child form modal ABOVE (yield to it) from a plain modal
 	// BENEATH — e.g. the templates panel opened over the "Form a party" dialog
 	// via "⧉ manage circles…" (JOH-356) — so it swallowed the Escape and left
-	// the front-most panel un-closable. Pin the fix so it can't regress.
-	must("if (!isTopmostOverlay(el)) return;", "the manage overlay yields Escape only to a truly topmost child")
+	// the front-most panel un-closable. Pin the fix so it can't regress: the
+	// topmost guard must now appear in BOTH Escape paths — bindBackdropDiscard
+	// (form modals) AND bindManageOverlayDismiss (listing overlays). A bare
+	// Contains would be satisfied by bindBackdropDiscard's copy alone even if
+	// the manage-overlay guard were dropped, so assert the count instead: a
+	// dropped manage guard takes it back to 1 and fails here.
+	if n := strings.Count(dashboardAssets, "if (!isTopmostOverlay(el)) return;"); n < 2 {
+		t.Errorf("expected the topmost-overlay Escape guard in both bindBackdropDiscard and bindManageOverlayDismiss, found %d occurrence(s)", n)
+	}
 	mustNot("if (document.querySelector('.modal-overlay.show')) return;", "the naive any-modal-shown Escape guard is gone from the manage overlays")
 
 	// modal-term.js: the live-terminal modal DELIBERATELY does not bind
