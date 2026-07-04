@@ -916,7 +916,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// gate the injection on the harness actually understanding those
 		// commands, or a Codex pane would be typed a hint it can't act on.
 		// Harness-aware nudging is future work (Codex Lifecycle).
-		handleContextNudge(input, envSessionID)
+		handleContextNudge(envSessionID)
 	}
 
 	state.Updated = time.Now()
@@ -1589,7 +1589,7 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-func handleContextNudge(input HookCallbackInput, sessionID string) {
+func handleContextNudge(sessionID string) {
 	if sessionID == "" {
 		return
 	}
