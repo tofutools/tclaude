@@ -445,6 +445,30 @@ func TestDashboardAssets_ShowAgentHideButtonWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_TUIColorSchemeWired guards the interactive-TUI color
+// scheme selector (config tui.color_scheme), whose Config-tab pieces span
+// dashboard.html + config.js and must stay in lockstep — there's no JS render
+// test, so we assert on the embedded concatenation at `go test ./...`. The Go
+// resolver + round-trip is covered separately by config.TestTUIColorScheme. A
+// rename in either file silently breaks the selector only in the browser:
+//   - dashboard.html — the Config-tab <select> and both option values;
+//   - config.js — load (fill) + gather (save) the scheme.
+func TestDashboardAssets_TUIColorSchemeWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.html — the Config-tab control + both option values.
+		`id="cfg-tui-color-scheme"`,
+		`value="dark-high-contrast"`,
+		// config.js — load + gather the scheme (the non-default value that
+		// actually writes the key).
+		"#cfg-tui-color-scheme",
+		"tui.color_scheme = scheme",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — TUI color-scheme selector broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever
