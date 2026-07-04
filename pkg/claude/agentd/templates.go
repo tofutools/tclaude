@@ -1239,83 +1239,106 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid task-force JSON: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(env.Format) != templateExportFormat {
-		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
-			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat))
+	asName := strings.TrimSpace(r.URL.Query().Get("as"))
+	update := r.URL.Query().Get("update") == "true"
+
+	res, existed, fail := importTemplateEnvelope(env, asName, update)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	// A collision without update is a 409 here — the import verb never
+	// clobbers silently (the starter-install path turns the same collision
+	// into a friendly skip instead; see handleStarterInstall).
+	if existed && !update {
+		writeError(w, http.StatusConflict, "exists", fmt.Sprintf(
+			"a template named %q already exists — re-import with update to overwrite it, or as=<new-name> to import under a different name",
+			res.Imported))
+		return
+	}
+	status := http.StatusCreated
+	if res.Updated {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, res)
+}
+
+// importTemplateEnvelope is the shared portable-import pipeline: it version-
+// gates one task-force envelope, re-creates any embedded role that is MISSING
+// locally (never overwriting an existing one — sacred edits), sanitizes the
+// machine-local references that don't resolve here (spawn profiles, unknown
+// slugs, dangling role refs — each warned), validates + builds the template,
+// then creates it (or, when update is set, replaces it in place). asName, when
+// non-empty, renames the template on import.
+//
+// It returns the result, whether a same-named template already EXISTED, and a
+// failure. When a template already exists and update is false, it does NOT
+// write — the caller decides what the collision means: /v1/templates/import
+// reports a 409, a starter install reports a friendly skip. This is the single
+// importer both paths share (JOH-246) — there is no second import path.
+func importTemplateEnvelope(env templateExportEnvelope, asName string, update bool) (templateImportResult, bool, *spawnFailure) {
+	if strings.TrimSpace(env.Format) != templateExportFormat {
+		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+			"not a tclaude task-force export (format=%q, expected %q)", env.Format, templateExportFormat)}
 	}
 	if env.FormatVersion < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_format",
-			"missing or invalid format_version — not a valid task-force export")
-		return
+		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "invalid_format",
+			"missing or invalid format_version — not a valid task-force export"}
 	}
 	if env.FormatVersion > templateExportVersion {
-		writeError(w, http.StatusBadRequest, "version_too_new", fmt.Sprintf(
+		return templateImportResult{}, false, &spawnFailure{http.StatusBadRequest, "version_too_new", fmt.Sprintf(
 			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
-			env.FormatVersion, templateExportVersion))
-		return
+			env.FormatVersion, templateExportVersion)}
 	}
 
 	body := env.Template
-	if as := strings.TrimSpace(r.URL.Query().Get("as")); as != "" {
-		body.Name = as
+	if asName != "" {
+		body.Name = asName
 	}
-	update := r.URL.Query().Get("update") == "true"
 
 	// Re-create any embedded role that is MISSING locally, BEFORE the sanitize
 	// pass checks role references — an existing role of the same name is never
 	// overwritten (sacred edits). Warnings report what was created / skipped.
 	roleWarnings, rfail := recreateMissingRoles(env.Roles)
 	if rfail != nil {
-		writeError(w, rfail.Status, rfail.Kind, rfail.Msg)
-		return
+		return templateImportResult{}, false, rfail
 	}
 
 	cleaned, warnings := sanitizeImportedTemplate(body)
 	warnings = append(roleWarnings, warnings...)
 	t, fail := buildTemplateFromJSON(cleaned)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
-		return
+		return templateImportResult{}, false, fail
 	}
 
 	existing, err := db.GetGroupTemplate(t.Name)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+		return templateImportResult{}, false, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
 	if existing != nil {
 		if !update {
-			writeError(w, http.StatusConflict, "exists", fmt.Sprintf(
-				"a template named %q already exists — re-import with update to overwrite it, or as=<new-name> to import under a different name",
-				t.Name))
-			return
+			// Collision — leave the stored template untouched; the caller decides
+			// (409 for import, skip for starter install).
+			return templateImportResult{Imported: t.Name, Warnings: warnings}, true, nil
 		}
-		// Overwrite in place: the envelope carries the full desired state,
-		// so this is a wholesale replace (the PATCH contract), reusing the
-		// existing row's id.
+		// Overwrite in place: the envelope carries the full desired state, so this
+		// is a wholesale replace (the PATCH contract), reusing the existing row's id.
 		t.ID = existing.ID
 		if err := db.UpdateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
-			writeError(w, http.StatusConflict, "exists", err.Error())
-			return
+			return templateImportResult{}, true, &spawnFailure{http.StatusConflict, "exists", err.Error()}
 		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
+			return templateImportResult{}, true, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 		}
-		writeJSON(w, http.StatusOK, templateImportResult{Imported: t.Name, Updated: true, Warnings: warnings})
-		return
+		return templateImportResult{Imported: t.Name, Updated: true, Warnings: warnings}, true, nil
 	}
 
 	if _, err := db.CreateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
-		// Lost a create race with a concurrent writer — surface as a plain
-		// 409 (the human can retry with update).
-		writeError(w, http.StatusConflict, "exists", err.Error())
-		return
+		// Lost a create race with a concurrent writer — surface as a plain 409.
+		return templateImportResult{}, false, &spawnFailure{http.StatusConflict, "exists", err.Error()}
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+		return templateImportResult{}, false, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
 	}
-	writeJSON(w, http.StatusCreated, templateImportResult{Imported: t.Name, Updated: false, Warnings: warnings})
+	return templateImportResult{Imported: t.Name, Warnings: warnings}, false, nil
 }
 
 // composeInstantiationContext folds the per-instantiation assignment

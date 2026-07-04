@@ -541,6 +541,13 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
+	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix
+	// (not under /v1/templates/) sidesteps a ServeMux pattern conflict with the
+	// /v1/templates/{name}/{export,instantiate,deploy} routes. Reads open;
+	// install writes a template through the shared import path (templates.manage).
+	mux.HandleFunc("GET /v1/starters", handleStarters)
+	mux.HandleFunc("GET /v1/starters/{name}", handleStarterByName)
+	mux.HandleFunc("POST /v1/starters/{name}/install", handleStarterInstall)
 	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
