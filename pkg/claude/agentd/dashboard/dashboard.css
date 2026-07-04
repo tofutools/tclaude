@@ -3224,6 +3224,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-card .tc-descr { color: #7d8590; font-size: 12px; }
 .template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+/* Plain-mode skin for the ⧉ duplicate card action (JOH-365). A base
+   `button.tool { … }` dark rule (JOH-364) gives every .tool button in this
+   row the dark secondary chrome; until that lands this scoped rule keeps
+   the new button from falling back to the browser's white UA chrome. Same
+   palette as the base rule, so it converges cleanly — drop it once JOH-364
+   is merged. */
+.template-card .tc-actions button[data-tact="duplicate"] {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.template-card .tc-actions button[data-tact="duplicate"]:hover { background: #2d333b; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -7026,6 +7038,72 @@ body.wizard #template-from-group-modal #template-from-group-submit:disabled::bef
    the base ::before rules above, so no ordering dependence. */
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit::before { content: "🕯 Re-trace it!"; }
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:disabled::before { content: "🕯 Re-tracing…"; }
+
+/* ─── Wizard mirror dialog — "🪞 Mirror the circle" ──────────────────
+   Duplicate-a-template: chalk an identical twin of a circle under a new
+   name (JOH-365). Scoped to #template-duplicate-modal — the same
+   positive-per-#id scoping the trace dialog above follows. */
+body.wizard #template-duplicate-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-duplicate-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-duplicate-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #template-duplicate-modal .cron-create-row input[type=text] {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-duplicate-modal .cron-create-row input[type=text]:focus {
+  border-color: #a97bd6;
+}
+body.wizard #template-duplicate-modal button:not(#template-duplicate-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-duplicate-modal button:not(#template-duplicate-submit):hover { background: #3a2a63; }
+body.wizard #template-duplicate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Duplicate template = 🪞 Mirror it! — gilded lever; the disabled
+   in-flight beat reads "🪞 Mirroring…". */
+body.wizard #template-duplicate-modal #template-duplicate-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit::before {
+  content: "🪞 Mirror it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opacity: 0.7; }
+body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
 
 /* ─── Wizard preset-parties dialog — "⭐ Preset parties" (JOH-353) ─────
    The bundled-starters modal, the one obvious path to copy a ready-made
