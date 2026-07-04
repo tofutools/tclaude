@@ -22,8 +22,15 @@ const currentVersion = 95
 const DefaultHarness = "claude"
 
 func migrate(db *sql.DB) error {
+	r := migrationReporter
 	ver := schemaVersion(db)
 	if ver == currentVersion {
+		// Already at head — the overwhelmingly common restart. No migration
+		// runs, but announce the no-op so an operator watching agentd start
+		// can tell "nothing to migrate" apart from "migrated" or "failed
+		// before reporting". The reporter is nil for every CLI command, so
+		// this stays agentd-startup-only (see MigrationReporter).
+		r.reportAlreadyCurrent(ver)
 		return nil
 	}
 	// The DB's true starting version, reported to the caller before any work
@@ -40,12 +47,12 @@ func migrate(db *sql.DB) error {
 		ver = 1 // createSchema sets version to 1
 	}
 
-	// Only report — and only walk the chain announcing progress — when there
-	// is actually forward work to do. A DB at (or, pathologically, past) head
-	// stays silent; the reporter is nil for every CLI command anyway, so this
-	// output is agentd-startup-only (see MigrationReporter).
-	r := migrationReporter
+	// Only walk the chain announcing progress when there is actually forward
+	// work to do. A DB pathologically PAST head — its schema written by a newer
+	// binary — applies nothing either; report it as a no-op too (with the DB's
+	// actual version) rather than returning wordlessly.
 	if ver >= currentVersion {
+		r.reportAlreadyCurrent(ver)
 		return nil
 	}
 	r.reportBegin(from, currentVersion)

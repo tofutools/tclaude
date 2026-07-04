@@ -393,13 +393,18 @@ func runServe(p *serveParams) error {
 // listener, dashboard, or goroutine comes up (see the call site).
 //
 // The reporter prints to stdout — the same channel as the rest of the startup
-// banner — and mirrors the summary bookends (begin/done/failure) into
-// output.log via slog so the Logs tab keeps a durable record. Nothing prints
-// when the DB is already at head: a normal restart with no pending migration
-// stays quiet. It is set only here, before the first Open(), so no CLI command
-// ever inherits it.
+// banner — and mirrors the summary bookends (begin/done/failure/already-current)
+// into output.log via slog so the Logs tab keeps a durable record. A restart
+// with no pending migration prints a single "already up to date" line (via
+// AlreadyCurrent) rather than staying silent, so the operator can always tell a
+// clean no-op apart from a migration that failed before reporting. It is set
+// only here, before the first Open(), so no CLI command ever inherits it.
 func openDatabaseReportingMigrations() error {
 	db.SetMigrationReporter(&db.MigrationReporter{
+		AlreadyCurrent: func(version int) {
+			fmt.Printf("database schema already up to date (v%d); no migrations needed\n", version)
+			slog.Info("db: schema already up to date; no migrations applied", "version", version)
+		},
 		Begin: func(from, to int) {
 			slog.Info("db: applying schema migrations", "from", from, "to", to)
 			fmt.Printf("migrating database schema v%d → v%d…\n", from, to)

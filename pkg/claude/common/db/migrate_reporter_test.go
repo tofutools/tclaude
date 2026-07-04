@@ -44,20 +44,24 @@ func TestMigrationStepsAreContiguous(t *testing.T) {
 
 // TestMigrate_ReporterFiresForFreshDB runs the full chain against a brand-new
 // DB and asserts the reporter sees begin(0 → head), an Applying+Applied pair
-// for every version 2..head in order, and a single Done(head). A second
-// migrate() on the now-current DB must fire nothing — a normal restart stays
-// silent.
+// for every version 2..head in order, and a single Done(head) — with
+// AlreadyCurrent staying silent because there was real work. A second migrate()
+// on the now-current DB fires ONLY AlreadyCurrent(head) and none of the
+// begin/apply/done bookends — a no-op restart announces itself but migrates
+// nothing.
 func TestMigrate_ReporterFiresForFreshDB(t *testing.T) {
 	d := openRawMigrationDB(t)
 
 	var applying, applied []int
 	var beginFrom, beginTo, doneTo, beginCalls, doneCalls, failedCalls int
+	var alreadyVer, alreadyCalls int
 	SetMigrationReporter(&MigrationReporter{
-		Begin:    func(from, to int) { beginFrom, beginTo = from, to; beginCalls++ },
-		Applying: func(v int) { applying = append(applying, v) },
-		Applied:  func(v int) { applied = append(applied, v) },
-		Failed:   func(int, error) { failedCalls++ },
-		Done:     func(to int) { doneTo = to; doneCalls++ },
+		AlreadyCurrent: func(v int) { alreadyVer = v; alreadyCalls++ },
+		Begin:          func(from, to int) { beginFrom, beginTo = from, to; beginCalls++ },
+		Applying:       func(v int) { applying = append(applying, v) },
+		Applied:        func(v int) { applied = append(applied, v) },
+		Failed:         func(int, error) { failedCalls++ },
+		Done:           func(to int) { doneTo = to; doneCalls++ },
 	})
 	t.Cleanup(func() { SetMigrationReporter(nil) })
 
@@ -73,18 +77,22 @@ func TestMigrate_ReporterFiresForFreshDB(t *testing.T) {
 	assert.Equal(t, 1, beginCalls, "Begin fires once")
 	assert.Equal(t, 1, doneCalls, "Done fires once")
 	assert.Equal(t, 0, failedCalls, "no Failed on a clean run")
+	assert.Equal(t, 0, alreadyCalls, "AlreadyCurrent stays silent when there is real work")
 	assert.Equal(t, want, applying, "Applying fires per version, in order")
 	assert.Equal(t, want, applied, "Applied fires per version, in order")
 
-	// Second pass: DB is at head, so migrate() returns before touching the
-	// reporter. Nothing new should be reported.
+	// Second pass: DB is at head, so migrate() applies nothing and fires ONLY
+	// AlreadyCurrent(head) — the no-op-restart signal — with every bookend
+	// staying quiet.
 	applying, applied = nil, nil
-	beginCalls, doneCalls = 0, 0
+	beginCalls, doneCalls, alreadyCalls, alreadyVer = 0, 0, 0, 0
 	require.NoError(t, migrate(d))
 	assert.Empty(t, applying, "no migrations applied on a current DB")
 	assert.Empty(t, applied)
 	assert.Equal(t, 0, beginCalls, "Begin does not fire when there is no work")
 	assert.Equal(t, 0, doneCalls, "Done does not fire when there is no work")
+	assert.Equal(t, 1, alreadyCalls, "AlreadyCurrent fires once on a no-op restart")
+	assert.Equal(t, currentVersion, alreadyVer, "AlreadyCurrent reports the DB's head version")
 
 	// Sanity: the DB really did reach head.
 	assert.Equal(t, currentVersion, schemaVersion(d))

@@ -123,10 +123,19 @@ var migrationSteps = []migrationStep{
 // commands never install a reporter, so they migrate silently: this output is
 // agentd-startup-only.
 //
-// A nil callback field is skipped, and none of them fire when the DB is
-// already at head (migrate() returns before touching the reporter), so a
-// normal restart with nothing to migrate produces no output at all.
+// A nil callback field is skipped. When the DB is already at head (or, rarely,
+// past it) migrate() applies nothing and fires ONLY AlreadyCurrent — none of
+// the Begin/Applying/Applied/Done bookends run — so a normal restart still
+// emits a single "nothing to migrate" line instead of the earlier silence
+// (which left an operator unable to tell a no-op restart from a migration that
+// failed before it could report anything).
 type MigrationReporter struct {
+	// AlreadyCurrent fires once, INSTEAD of the whole Begin…Done sequence, when
+	// migrate() finds no forward work: the DB is already at head (version ==
+	// currentVersion) or, pathologically, past it (a newer binary wrote the
+	// schema). version is the DB's actual schema version. This is the only
+	// callback that fires on a no-op restart.
+	AlreadyCurrent func(version int)
 	// Begin fires once before the first migration runs, when there is work to
 	// do. from is the DB's current schema version (0 for a brand-new DB), to
 	// the head version being migrated to.
@@ -163,6 +172,12 @@ func SetMigrationReporter(r *MigrationReporter) {
 // The report* helpers are nil-receiver- AND nil-field-safe so migrate() can
 // call them unconditionally: a nil reporter (the CLI default) or an unset
 // field is simply a no-op.
+
+func (r *MigrationReporter) reportAlreadyCurrent(version int) {
+	if r != nil && r.AlreadyCurrent != nil {
+		r.AlreadyCurrent(version)
+	}
+}
 
 func (r *MigrationReporter) reportBegin(from, to int) {
 	if r != nil && r.Begin != nil {
