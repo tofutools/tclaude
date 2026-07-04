@@ -22,6 +22,14 @@ import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDis
 // the roles.js data layer. loadRoles fills the cache on editor open; cachedRoles
 // feeds the synchronous row render.
 import { loadRoles, cachedRoles } from './roles.js';
+// Spawn profiles (JOH-350): a template agent's launch config is now "pick a
+// stored spawn profile" instead of a bespoke inline field set. The profile
+// picker reads the same profiles.js data layer the spawn dialog and profiles
+// manager use; the "＋ new" / "⧉ manage…" / "Extract to profile…" affordances
+// open the REAL profiles editor/overlay (modal-profiles.js) so there is one
+// editing surface for launch config + birth-time permissions, everywhere.
+import { loadProfiles, cachedProfiles, profileSummary } from './profiles.js';
+import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -215,14 +223,16 @@ function openTemplateEditor(tmpl) {
   renderEditorPattern();
   renderEditorProcess();
   renderEditorRhythms();
-  // Fill the role-library cache so the per-agent role dropdown has options, then
-  // re-render the rows (the first render used whatever was already cached). A
-  // load failure just leaves the dropdowns with the "(none)" option.
-  loadRoles().then(() => {
+  // Fill the role-library AND spawn-profile caches so the per-agent role and
+  // launch-profile dropdowns have options, then re-render the rows (the first
+  // render used whatever was already cached). A load failure just leaves the
+  // dropdowns with the "(none)" option. Both fetches are independent, so a
+  // Promise.allSettled re-renders once when both settle.
+  Promise.allSettled([loadRoles(), loadProfiles()]).then(() => {
     if (!$('#template-editor-modal').classList.contains('show')) return;
     scrapeEditorAgents(); // preserve anything typed while the fetch was in flight
     renderEditorAgents();
-  }).catch(() => {});
+  });
   $('#template-editor-modal').classList.add('show');
   setTimeout(() => $('#template-editor-name').focus(), 0);
 }
@@ -230,9 +240,63 @@ function openTemplateEditor(tmpl) {
 function closeTemplateEditor() { $('#template-editor-modal').classList.remove('show'); }
 
 function renderEditorAgents() {
-  const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
   $('#template-editor-agents').innerHTML =
-    templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i, slugs)).join('');
+    templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i)).join('');
+}
+
+// profileRefOptionsHTML builds the <option> list for an agent's launch-profile
+// dropdown from the cached spawn profiles (blank = "(none)"). A referenced
+// profile that is no longer in the library stays selectable — flagged
+// "⚠ missing" — so a dangling reference isn't silently cleared on the human
+// (the same graceful-degrade the role dropdown does).
+function profileRefOptionsHTML(current) {
+  const names = cachedProfiles().map(p => p.name);
+  const opts = [`<option value=""${current ? '' : ' selected'}>(none)</option>`];
+  for (const n of names) {
+    opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
+  }
+  if (current && !names.includes(current)) {
+    opts.push(`<option value="${esc(current)}" selected>⚠ ${esc(current)} (missing)</option>`);
+  }
+  return opts.join('');
+}
+
+// profileSummaryHTML renders the compact one-line summary of the picked
+// profile's set fields (harness/model/effort/… + owner/perms), reusing the
+// profiles.js summariser the manage cards use. Empty when no profile is picked;
+// a "not found here" note when the ref dangles.
+function profileSummaryHTML(current) {
+  if (!current) return '';
+  const p = cachedProfiles().find(x => x.name === current);
+  if (!p) return `<span class="ta-profile-summary-missing">⚠ no profile named “${esc(current)}” here — pick another or manage profiles</span>`;
+  const s = profileSummary(p);
+  return s ? esc(s) : '<span class="ta-profile-summary-empty">(profile sets no launch fields)</span>';
+}
+
+// agentLegacyInline reports the pre-cutover inline launch/permission fields a
+// template agent still carries (JOH-350). They are no longer editable inline —
+// they ride a profile now — but are honoured at deploy and preserved through a
+// re-save so nothing is silently dropped; "Extract to profile…" migrates them.
+function agentLegacyInline(a) {
+  const parts = [];
+  for (const k of ['harness', 'model', 'effort', 'sandbox', 'approval']) {
+    if (a[k]) parts.push(`${k} ${a[k]}`);
+  }
+  const np = (a.permissions || []).length;
+  if (np) parts.push(`${np} inline perm${np === 1 ? '' : 's'}`);
+  return parts;
+}
+
+// legacyInlineNoticeHTML renders the read-only "legacy inline settings" notice +
+// the Extract-to-profile button for an agent that still carries pre-cutover
+// inline fields; "" when it carries none.
+function legacyInlineNoticeHTML(a) {
+  const parts = agentLegacyInline(a);
+  if (!parts.length) return '';
+  return `<div class="ta-legacy-note" title="These inline launch/permission settings predate the profile picker (JOH-350). They still apply when you deploy this template and are preserved when you save, but can no longer be edited inline. Extract them into a reusable spawn profile to manage them going forward — the owner flag stays here (it is structural).">
+    <span class="ta-legacy-text">⚠ legacy inline: ${esc(parts.join(' · '))}</span>
+    <button type="button" class="tool ta-extract-profile">Extract to profile…</button>
+  </div>`;
 }
 
 // roleRefOptionsHTML builds the <option> list for a roster agent's role-library
@@ -251,15 +315,17 @@ function roleRefOptionsHTML(current) {
   return opts.join('');
 }
 
-function editorAgentRowHTML(a, idx, slugs) {
-  const perms = new Set(a.permissions || []);
-  const checks = slugs.map(s =>
-    `<label title="${esc(s.description || '')}"><input type="checkbox" class="ta-perm" data-slug="${esc(s.slug)}"${perms.has(s.slug) ? ' checked' : ''} /> ${esc(s.slug)}</label>`
-  ).join('');
+function editorAgentRowHTML(a, idx) {
+  // Launch config + birth-time permissions ride the picked spawn profile
+  // (JOH-350 / JOH-354): no bespoke harness/model/effort/sandbox/approval field
+  // set and no inline permission-checkbox list live here anymore — they are all
+  // configured once, in the profile, editable via the real profiles dialog. The
+  // ★ owner box stays (structural: which member leads the group). Deploy unions
+  // this flag with the profile's own is_owner default.
   return `<div class="template-agent-row" data-idx="${idx}">
     <div class="template-agent-row-head">
       <span class="template-agent-num">${wizWord('Agent', 'Familiar')} ${idx + 1}</span>
-      <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners">
+      <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners. This is unioned with the picked profile's own owner default (either one makes the agent an owner).">
         <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
       </label>
       <button type="button" class="tool ta-remove" title="Remove this agent">✕</button>
@@ -269,27 +335,24 @@ function editorAgentRowHTML(a, idx, slugs) {
       <input type="text" class="ta-role" placeholder="role label (e.g. product-owner)" value="${esc(a.role)}" />
       <input type="number" class="ta-wave" min="0" title="Staged-spawn wave (JOH-244): wave 0 spawns first; higher waves spawn once the prior wave is up and idle. All wave 0 = one synchronous pass." placeholder="wave (0)" value="${a.wave || 0}" />
     </div>
-    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath its own fields below, which override. Blank = no role.">
+    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath the picked launch profile, which overrides. Blank = no role.">
       <span>Role library</span>
       <select class="ta-role-ref">${roleRefOptionsHTML(a.role_ref)}</select>
     </label>
     <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
     <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
-    <details class="ta-perms-details">
-      <summary>Permissions (<span class="ta-perms-count">${perms.size}</span>)</summary>
-      <div class="ta-perms-list">${checks}</div>
-    </details>
-    <details class="ta-launch-details">
-      <summary title="Per-role launch profile — overrides win over the referenced profile; blank inherits the group default at instantiate">Launch profile</summary>
-      <div class="ta-launch-grid">
-        <input type="text" class="ta-profile" placeholder="spawn profile name (optional)" value="${esc(a.spawn_profile || '')}" />
-        <input type="text" class="ta-harness" placeholder="harness (claude | codex)" value="${esc(a.harness || '')}" />
-        <input type="text" class="ta-model" placeholder="model (e.g. opus, sonnet)" value="${esc(a.model || '')}" />
-        <input type="text" class="ta-effort" placeholder="effort (low | medium | high | …)" value="${esc(a.effort || '')}" />
-        <input type="text" class="ta-sandbox" placeholder="sandbox (codex only)" value="${esc(a.sandbox || '')}" />
-        <input type="text" class="ta-approval" placeholder="approval (codex only)" value="${esc(a.approval || '')}" />
+    <div class="template-agent-launch">
+      <label class="template-agent-roleref ta-launch-pick" title="Launch profile (JOH-350): the agent's harness, model, effort, sandbox/approval AND its birth-time permissions all come from the picked spawn profile. Manage profiles to create/edit one — a profile is the unit of launch config.">
+        <span>Launch profile</span>
+        <select class="ta-profile-select">${profileRefOptionsHTML(a.spawn_profile)}</select>
+      </label>
+      <div class="ta-launch-actions">
+        <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
+        <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
       </div>
-    </details>
+      <div class="ta-profile-summary">${profileSummaryHTML(a.spawn_profile)}</div>
+      ${legacyInlineNoticeHTML(a)}
+    </div>
   </div>`;
 }
 
@@ -390,22 +453,107 @@ function scrapeEditorProcess() {
 // — called before any add/remove (which re-renders the container) and
 // before submit, so typed-but-uncommitted values are never lost.
 function scrapeEditorAgents() {
-  templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => ({
-    name: $('.ta-name', row).value.trim(),
-    role: $('.ta-role', row).value.trim(),
-    descr: $('.ta-descr', row).value.trim(),
-    initial_message: $('.ta-initmsg', row).value,
-    is_owner: $('.ta-owner', row).checked,
-    permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
-    role_ref: $('.ta-role-ref', row).value.trim(),
-    spawn_profile: $('.ta-profile', row).value.trim(),
-    harness: $('.ta-harness', row).value.trim(),
-    model: $('.ta-model', row).value.trim(),
-    effort: $('.ta-effort', row).value.trim(),
-    sandbox: $('.ta-sandbox', row).value.trim(),
-    approval: $('.ta-approval', row).value.trim(),
-    wave: parseInt($('.ta-wave', row).value, 10) || 0,
-  }));
+  templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => {
+    // Legacy inline launch/permission fields (harness/model/effort/sandbox/
+    // approval + the inline permission list) are no longer editable inline
+    // (JOH-350) — they ride the picked profile now. Carry any a pre-cutover
+    // template still holds forward from the in-memory model (keyed by the row's
+    // render-time index) so a re-save never silently drops them; "Extract to
+    // profile…" is the migration path that clears them into a profile.
+    const prev = templateEditorAgents[parseInt(row.dataset.idx, 10)] || {};
+    return {
+      name: $('.ta-name', row).value.trim(),
+      role: $('.ta-role', row).value.trim(),
+      descr: $('.ta-descr', row).value.trim(),
+      initial_message: $('.ta-initmsg', row).value,
+      is_owner: $('.ta-owner', row).checked,
+      role_ref: $('.ta-role-ref', row).value.trim(),
+      spawn_profile: $('.ta-profile-select', row).value.trim(),
+      harness: prev.harness || '',
+      model: prev.model || '',
+      effort: prev.effort || '',
+      sandbox: prev.sandbox || '',
+      approval: prev.approval || '',
+      permissions: (prev.permissions || []).slice(),
+      wave: parseInt($('.ta-wave', row).value, 10) || 0,
+    };
+  });
+}
+
+// ---- Launch-profile picker actions (JOH-350) --------------------------
+//
+// The three affordances on each agent's launch-profile row, all routing to the
+// REAL profiles editor/overlay (modal-profiles.js) so profiles are created and
+// edited in exactly one place. "＋ new" and "Extract to profile…" auto-select
+// the resulting profile for that agent; "⧉ manage…" opens the manager overlay
+// (its edits are picked up when it closes — see bindTemplatesUI).
+
+// reloadProfilesAndRender re-fetches the profile list (after a create/edit
+// through the real editor) and re-renders the agent rows so the dropdowns +
+// summaries reflect it. It does NOT scrape — callers that mutate the in-memory
+// model (selecting the just-created profile) must have scraped already, so a
+// second scrape here would clobber that change with the stale DOM value.
+function reloadProfilesAndRender() {
+  if (!$('#template-editor-modal').classList.contains('show')) return;
+  const render = () => {
+    if ($('#template-editor-modal').classList.contains('show')) renderEditorAgents();
+  };
+  loadProfiles(true).then(render).catch(render);
+}
+
+// onManageProfilesClosed picks up profiles the "⧉ manage…" overlay created or
+// edited: scrape first (preserve anything typed in the editor behind it), then
+// reload + re-render. Distinct from reloadProfilesAndRender because here there
+// is no pending in-memory selection to protect — the DOM is the source of truth.
+function onManageProfilesClosed() {
+  if (!$('#template-editor-modal').classList.contains('show')) return;
+  scrapeEditorAgents();
+  reloadProfilesAndRender();
+}
+
+// newProfileForAgent opens a blank profile editor; on save the fresh profile is
+// selected for the agent at `idx`.
+function newProfileForAgent(idx) {
+  scrapeEditorAgents();
+  openProfileEditor(null, {
+    editExisting: false,
+    onSaved: (name) => {
+      scrapeEditorAgents();
+      if (templateEditorAgents[idx]) templateEditorAgents[idx].spawn_profile = name;
+      reloadProfilesAndRender();
+    },
+  });
+}
+
+// extractAgentToProfile materializes the agent's legacy inline launch fields +
+// inline permission grants into a new spawn profile (the self-heal migration
+// path for pre-cutover templates), then points the agent at it and clears the
+// inline fields. The owner flag stays on the template agent (it is structural),
+// so it is NOT folded into the profile.
+function extractAgentToProfile(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a) return;
+  const permission_overrides = {};
+  for (const s of (a.permissions || [])) { if (s) permission_overrides[s] = 'grant'; }
+  const seed = {
+    harness: a.harness || '', model: a.model || '', effort: a.effort || '',
+    sandbox: a.sandbox || '', approval: a.approval || '',
+    permission_overrides,
+  };
+  openProfileEditor(seed, {
+    editExisting: false,
+    onSaved: (name) => {
+      scrapeEditorAgents();
+      const cur = templateEditorAgents[idx];
+      if (cur) {
+        cur.spawn_profile = name;
+        cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
+        cur.permissions = [];
+      }
+      reloadProfilesAndRender();
+    },
+  });
 }
 
 // ---- Rhythm rows (JOH-244) --------------------------------------------
@@ -1157,32 +1305,52 @@ function bindTemplatesUI() {
     // The roster changed — refresh the pattern rows' send-to options.
     renderEditorPattern();
   });
-  // Delegated handlers on the (re-rendered) agent container.
+  // Delegated handlers on the (re-rendered) agent container: remove an agent, or
+  // one of the launch-profile picker actions (JOH-350).
   $('#template-editor-agents').addEventListener('click', e => {
-    const rm = e.target.closest('.ta-remove');
-    if (!rm) return;
-    const row = rm.closest('.template-agent-row');
-    scrapeEditorAgents();
-    scrapeEditorPattern();
-    templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
-    renderEditorAgents();
-    renderEditorPattern();
+    const row = e.target.closest('.template-agent-row');
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (e.target.closest('.ta-remove')) {
+      scrapeEditorAgents();
+      scrapeEditorPattern();
+      templateEditorAgents.splice(idx, 1);
+      renderEditorAgents();
+      renderEditorPattern();
+    } else if (e.target.closest('.ta-profile-new')) {
+      newProfileForAgent(idx);
+    } else if (e.target.closest('.ta-profile-manage')) {
+      // Preserve typed values before the overlay steals focus; its edits are
+      // picked up when it closes (bindProfilesOverlayRefresh below).
+      scrapeEditorAgents();
+      openProfilesManageModal();
+    } else if (e.target.closest('.ta-extract-profile')) {
+      extractAgentToProfile(idx);
+    }
   });
-  // Keep each agent row's permission count in sync as boxes toggle.
-  // Owner is a plain per-agent checkbox — a group can have several
-  // owners, so there is no single-select enforcement.
-  // A committed agent-name edit (change fires on blur) also refreshes
-  // the work-pattern rows' send-to options to the new roster names.
+  // Owner is a plain per-agent checkbox — a group can have several owners, so
+  // there is no single-select enforcement. A committed agent-name edit (change
+  // fires on blur) refreshes the work-pattern rows' send-to options to the new
+  // roster names; a launch-profile pick re-renders the row so its summary +
+  // legacy-notice track the selection.
   $('#template-editor-agents').addEventListener('change', e => {
-    if (e.target.classList.contains('ta-perm')) {
-      const row = e.target.closest('.template-agent-row');
-      $('.ta-perms-count', row).textContent =
-        $$('.ta-perm', row).filter(c => c.checked).length;
-    } else if (e.target.classList.contains('ta-name')) {
+    if (e.target.classList.contains('ta-name')) {
       scrapeEditorAgents();
       scrapeEditorPattern();
       renderEditorPattern();
+    } else if (e.target.classList.contains('ta-profile-select')) {
+      scrapeEditorAgents();
+      renderEditorAgents();
     }
+  });
+  // When the spawn-profiles manager (opened from an agent's "⧉ manage…") closes,
+  // pick up any profile it created/edited by re-fetching + re-rendering the
+  // template editor's launch-profile dropdowns — but only while that editor is
+  // still open behind it (onManageProfilesClosed guards on that). Covers both
+  // close paths: the Close button and a backdrop click.
+  $('#profiles-manage-close').addEventListener('click', onManageProfilesClosed);
+  $('#profiles-manage-modal').addEventListener('click', (e) => {
+    if (e.target === $('#profiles-manage-modal')) onManageProfilesClosed();
   });
   // Work-pattern rows: add / remove / reorder (delegated — the container
   // re-renders on every mutation).

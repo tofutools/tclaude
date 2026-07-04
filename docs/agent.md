@@ -622,10 +622,14 @@ owners, per-agent permission grants, context); per-agent task briefs come
 through blank (a live group stores none), so fill them in with `edit`. With
 `--update` it re-snapshots into an existing template in place, keeping the
 curated briefs of agents that round-trip by name. `export` / `import` share a
-task-force blueprint between machines — a name collision on import is an error
-unless you pass `--as <name>` (store under a new name) or `--update` (overwrite
-in place); unknown spawn-profile references and permission slugs degrade to a
-warning rather than failing the import. See
+task-force blueprint between machines — the export **embeds the full definition
+of every role and spawn profile the template references**, and import
+materializes those only if they are missing locally (an existing role/profile of
+the same name is kept, never overwritten). A name collision on the *template*
+itself is an error unless you pass `--as <name>` (store under a new name) or
+`--update` (overwrite in place); a spawn-profile reference that still can't be
+resolved, and any unknown permission slug, degrade to a warning rather than
+failing the import. See
 [Sharing task forces](dashboard.md#sharing-task-forces-as-a-file).
 
 **Starters** are the bundled, ready-to-run templates (a dev squad, a research
