@@ -221,3 +221,57 @@ func TestClipboard_OversizedTextRejected(t *testing.T) {
 	assert.Contains(t, resp.Body.String(), "too long")
 	assert.Empty(t, rec.texts)
 }
+
+// Scenario (regression): a payload LARGER than the popup preview cap
+// (64 KiB) approved via --ask-human is still copied IN FULL. The popup's
+// body snapshot used to restore only 64 KiB, so a big clipboard copy
+// decoded from a truncated body and 400'd *after* the human approved — an
+// approve-then-fail. The snapshot now preserves the whole body, so the
+// approved copy lands intact.
+func TestClipboard_AskHumanLargePayloadCopiesInFull(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.StubApprovalForTest(true))
+
+	f := newFlow(t)
+	var rec clipRecorder
+	rec.install(t)
+
+	const conv = "clp8-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "worker")
+
+	// 100 KiB — comfortably over the 64 KiB preview cap, under the 256 KiB
+	// decoded cap.
+	payload := strings.Repeat("z", 100*1024)
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/clipboard",
+		map[string]any{"text": payload})
+	r.Header.Set("X-Tclaude-Ask-Human", "30s")
+	r = agentd.AsAgentPeer(r, conv)
+	resp := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusOK, resp.Code,
+		"a large approved copy must not fail post-approval; body=%s", resp.Body.String())
+	require.Len(t, rec.texts, 1)
+	assert.Equal(t, len(payload), len(rec.texts[0]), "the FULL payload must reach the writer, not a 64 KiB prefix")
+	assert.Equal(t, payload, rec.texts[0])
+}
+
+// Scenario: a body past the wire cap is rejected before the decoded-length
+// check — the pre-decode MaxBytesReader guard (mirrors notify-human's
+// oversized-request test). Nothing is copied.
+func TestClipboard_OversizedWireRequestRejected(t *testing.T) {
+	f := newFlow(t)
+	var rec clipRecorder
+	rec.install(t)
+
+	const conv = "clp9-1111-2222-3333-4444"
+	f.HaveConvWithTitle(conv, "worker")
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermHumanClipboard, "test"))
+
+	// Far past the ~1.5 MiB wire cap — MaxBytesReader trips mid-decode.
+	huge := strings.Repeat("y", 2*1024*1024)
+	r := testharness.JSONRequest(t, http.MethodPost, "/v1/clipboard",
+		map[string]any{"text": huge})
+	r = agentd.AsAgentPeer(r, conv)
+	resp := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, resp.Code, "body=%s", resp.Body.String())
+	assert.Empty(t, rec.texts)
+}

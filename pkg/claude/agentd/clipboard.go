@@ -19,13 +19,22 @@ import (
 // the daemon into the platform copy tool.
 const maxClipboardBytes = 256 * 1024
 
-// maxClipboardRequestBytes bounds the raw POST body the daemon buffers,
-// enforced by http.MaxBytesReader *before* the JSON decode — the same
-// wire-vs-decoded split as maxNotifyHumanRequestBytes. JSON escaping
-// inflates content (control / HTML-significant chars expand to a 6-byte
-// \uXXXX), so the wire cap is the decoded cap times 6 plus envelope
-// headroom: loose enough that no legitimate body is rejected pre-decode,
-// yet far below the range where buffering it is a memory-DoS.
+// maxClipboardRequestBytes bounds the raw POST body, enforced by
+// http.MaxBytesReader *before* the JSON decode — the same wire-vs-decoded
+// split as maxNotifyHumanRequestBytes. JSON escaping inflates content
+// (control / HTML-significant chars expand to a 6-byte \uXXXX), so the wire
+// cap is the decoded cap times 6 plus envelope headroom: loose enough that
+// no legitimate body is rejected pre-decode, yet still bounding the wire
+// size we accept for a single copy.
+//
+// Note this is a request-size *limit* (an over-cap body 400s), not a
+// standalone memory-DoS bound: the audit middleware (auditRequests →
+// bufferAuditBody) reads the body in full for the describer before this
+// handler runs, so the body is already buffered by the time MaxBytesReader
+// re-reads it. That uncapped audit buffering is a pre-existing systemic
+// property shared by every audited route (notify-human included), not
+// something this endpoint introduces; capping it belongs in the audit
+// layer, not here.
 const maxClipboardRequestBytes = 6*maxClipboardBytes + 1024
 
 // clipboardWrite is the platform clipboard-write seam. Production points

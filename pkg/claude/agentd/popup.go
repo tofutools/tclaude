@@ -611,44 +611,59 @@ func checkPopupAuth(w http.ResponseWriter, r *http.Request, req *approvalRequest
 	return true
 }
 
-// snapshotRequestBody reads the request body (up to maxBodyPreview
-// bytes), JSON-prettifies it when it parses, and replaces r.Body with
-// a fresh reader so the downstream handler still receives the same
-// bytes. Returns the preview string ("" if no body).
+// snapshotRequestBody reads the request body, builds a bounded preview
+// string for the popup (JSON-prettified when it parses), and replaces
+// r.Body with a fresh reader holding the SAME bytes so the downstream
+// handler still receives its full request. Returns the preview ("" if no
+// body).
 //
-// Bodies above the cap are truncated and marked. The handler will
-// also see the truncated bytes — fine for our use, since the agent
-// CLI never sends >64KiB to mutating endpoints today.
+// The preview is capped at maxBodyPreview and marked "…[truncated]" when
+// it overflows — that only affects what the human is shown. The RESTORED
+// body is preserved up to maxRestoreBody (well above the largest legit
+// mutating body — a 256 KiB clipboard payload is ≈1.5 MiB on the wire),
+// so the popup never silently shortens what the handler decodes. A body
+// past maxRestoreBody is restored truncated, but the handler's own
+// MaxBytesReader then rejects it with the same 400 it would return with no
+// popup — never a silent mis-decode. (Restoring only the 64 KiB preview,
+// as this did before, truncated a large clipboard body AFTER the human had
+// approved it: an approve-then-fail.)
 func snapshotRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	const maxBodyPreview = 64 * 1024
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBodyPreview+1))
+	const (
+		maxBodyPreview = 64 * 1024       // rendered in the popup
+		maxRestoreBody = 2 * 1024 * 1024 // preserved for the handler
+	)
+	buf, err := io.ReadAll(io.LimitReader(r.Body, maxRestoreBody))
 	_ = r.Body.Close()
 	if err != nil {
 		r.Body = io.NopCloser(bytes.NewReader(nil))
 		return ""
 	}
-	truncated := false
-	if len(buf) > maxBodyPreview {
-		buf = buf[:maxBodyPreview]
-		truncated = true
-	}
+	// Restore the full body we read, so the handler decodes exactly what the
+	// client sent (up to the restore bound).
 	r.Body = io.NopCloser(bytes.NewReader(buf))
 	if len(buf) == 0 {
 		return ""
 	}
+	// Build the preview from the leading bytes only.
+	preview := buf
+	truncated := false
+	if len(preview) > maxBodyPreview {
+		preview = preview[:maxBodyPreview]
+		truncated = true
+	}
 	// Prettify JSON if it parses; otherwise show raw.
 	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, buf, "", "  "); err == nil {
+	if err := json.Indent(&pretty, preview, "", "  "); err == nil {
 		out := pretty.String()
 		if truncated {
 			out += "\n…[truncated]"
 		}
 		return out
 	}
-	out := string(buf)
+	out := string(preview)
 	if truncated {
 		out += "\n…[truncated]"
 	}
