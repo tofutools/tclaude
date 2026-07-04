@@ -312,6 +312,39 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + `document.body.classList.remove('dock-open');`,
 		},
 		{
+			// JOH-388 req 3 — the WIDE case: a block far wider than the viewport
+			// must scroll fully CLEAR of the fixed dock. Self-checking (see
+			// scrollClearJS): rejects if the tail stays hidden, so a regression
+			// fails the run rather than passing as a silent "ok".
+			Key:      "dock-wide-scroll",
+			Title:    "Palette dock + wide content, scrolled right",
+			Caption:  "Req 3 (self-checked): dock open, a 3000px block scrolled to max-right — its green END marker lands at the dock's left edge; the state throws if the tail stays hidden.",
+			JS:       scrollClearJS(3000, "wide"),
+			SettleMS: 400,
+		},
+		{
+			// JOH-388 req 3 — the BAND case: a block whose right edge falls in the
+			// narrow strip between viewport-minus-dock and the viewport width. Here
+			// doc.scrollWidth floors at the viewport, so an overflow-gated spacer
+			// would MISS it; the shipped spacer parks off <main>'s measured content
+			// edge instead, so the band clears too. Pinned here so that stays true.
+			Key:      "dock-band-scroll",
+			Title:    "Palette dock + band-width content, scrolled right",
+			Caption:  "Req 3 band case (self-checked): a 1500px block (right edge inside the viewport but past the dock's left edge) still scrolls fully clear of the dock.",
+			JS:       scrollClearJS(1500, "band"),
+			SettleMS: 400,
+		},
+		{
+			// JOH-388 req 5: each category folds on its own. Collapse Templates
+			// to its header (chevron flips); Profiles + Roles stay expanded. The
+			// fold is set on the live <details>, and morph preserves it across the
+			// 2s tick (open is live-owned), matching the persisted-prefs path.
+			Key:     "dock-section-collapsed",
+			Title:   "Palette dock — one category collapsed",
+			Caption: "Req 5: the Templates category collapsed to its header (chevron flipped right); Profiles + Roles stay expanded.",
+			JS:      showGroups + `document.body.classList.add('dock-open');` + `var __s = document.querySelector('.dock-section[data-key="templates"]'); if (__s) __s.open = false;`,
+		},
+		{
 			Key:      "summon-normal",
 			Title:    "Summon dialog (normal)",
 			Caption:  "Template dropped on empty space → plain summon, no mode chooser.",
@@ -333,6 +366,44 @@ func baseStates() []dashsnap.State {
 			SettleMS: 800,
 		},
 	}
+}
+
+// scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab
+// with the dock open, inject a block of the given width (ending in a bright
+// green END marker), let hscroll park its clearance spacer, scroll the viewport
+// to max, and assert the block's right edge clears the dock's left edge. The
+// returned JS ends in a Promise that REJECTS when the tail is still hidden, so
+// dashsnap's awaited Eval fails the state — a req-3 regression can't slip
+// through as a captured "ok". `label` distinguishes the two cases (wide/band) in
+// the readout + error. Note the doubled %% for the literal `height:100%` CSS.
+func scrollClearJS(blockWidth int, label string) string {
+	return `document.querySelector('nav button[data-tab="groups"]').click();
+document.body.classList.add('dock-open');` + fmt.Sprintf(`
+var __wide = document.createElement('div');
+__wide.style.cssText = 'position:relative;width:%dpx;height:120px;margin-top:12px;box-sizing:border-box;padding:8px;color:#fff;font:14px monospace;background:linear-gradient(90deg,#1b3a5b,#2d6da8);';
+__wide.textContent = '%s %dpx — scroll right to reveal the end →';
+var __end = document.createElement('div');
+__end.style.cssText = 'position:absolute;top:0;right:0;width:60px;height:100%%;background:#3fb950;color:#000;font:bold 12px monospace;padding:6px;box-sizing:border-box;';
+__end.textContent = 'END';
+__wide.appendChild(__end);
+document.querySelector('#tab-groups').prepend(__wide);
+return new Promise(function(resolve, reject){
+  // hscroll parks the clearance spacer on the injection mutation (rAF-coalesced);
+  // give it a beat, THEN scroll the viewport to max and assert clearance.
+  setTimeout(function(){
+    document.documentElement.scrollLeft = 999999;
+    var r = __wide.getBoundingClientRect().right;
+    var d = document.querySelector('#agent-dock').getBoundingClientRect().left;
+    var cleared = r <= d + 2;
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+    o.textContent = 'req3 %s wide.right=' + r.toFixed(0) + ' dock.left=' + d.toFixed(0) + ' CLEARS=' + (cleared ? 'YES' : 'NO');
+    document.body.appendChild(o);
+    if (cleared) resolve();
+    else reject(new Error('req3 %s FAIL: tail (' + r.toFixed(0) + ') still under the dock (left ' + d.toFixed(0) + ')'));
+  }, 200);
+});
+`, blockWidth, label, blockWidth, label, label)
 }
 
 // summonJS opens the unified summon dialog by SYNTHESIZING the dock drag-and-drop

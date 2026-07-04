@@ -39,6 +39,7 @@ import { morphInto } from './morph.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
+import { syncFullBleedBars } from './hscroll.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
 // each from the module that actually exports it — a bad named import would
@@ -161,23 +162,44 @@ function cardHTML(section, item) {
   </div>`;
 }
 
+// The per-section collapse flag lives under this dashPrefs prefix (req 5),
+// server-backed like the open/collapsed dock flag itself — NOT localStorage,
+// which the random per-start port would reset. Default EXPANDED (see
+// isSectionOpen): a collapsed '0' is the only stored value, mirroring the
+// groups' per-group fold key idiom.
+const DOCK_SECTION_KEY = 'tclaude.dash.dock.section.';
+
+// isSectionOpen reads a section's persisted collapse flag, defaulting to OPEN
+// (only an explicit '0' collapses) — the three kinds stay discoverable by
+// default, and a deliberate collapse survives restarts.
+function isSectionOpen(key) {
+  return dashPrefs.getItem(DOCK_SECTION_KEY + key) !== '0';
+}
+
 // sectionHTML renders one whole section: a heading with a ⧉ manage… jump,
 // then the keyed card list (or a quiet empty line — sections never hide, so
 // the three kinds are always discoverable).
+//
+// A <details>, NOT a plain <div> (req 5): each category collapses/expands on
+// its own, and native <details> gives us keyboard + a11y for free. The `open`
+// attribute is seeded from the persisted flag; the morph reconciler treats
+// <details open> as LIVE-owned (js/morph.js) so a fold survives every 2s tick,
+// and bindDock's toggle listener writes the flag back — live and fresh always
+// agree. (It's a <details>, not a <section>, so the dashboard's global
+// `section { display:none }` tab-pane rule can't hide it.)
 function sectionHTML(section, snap) {
   const items = section.items(snap);
   const body = items.length
     ? items.map(it => cardHTML(section, it)).join('')
     : `<div class="dock-empty">(${esc(section.empty())})</div>`;
-  // A <div>, NOT a <section>: the dashboard's global `section { display:none }`
-  // rule (only tab panes with .active show) would otherwise hide the whole dock.
-  return `<div class="dock-section" data-key="${esc(section.key)}">
-    <div class="dock-section-head">
-      <span class="dock-section-title"><span class="dock-section-icon" aria-hidden="true">${section.icon}</span> ${esc(section.title())} <span class="dock-section-count">${items.length}</span></span>
+  const open = isSectionOpen(section.key) ? ' open' : '';
+  return `<details class="dock-section" data-key="${esc(section.key)}"${open}>
+    <summary class="dock-section-head">
+      <span class="dock-section-title"><span class="dock-section-chevron" aria-hidden="true">▸</span><span class="dock-section-icon" aria-hidden="true">${section.icon}</span> ${esc(section.title())} <span class="dock-section-count">${items.length}</span></span>
       <button type="button" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="${esc(section.key)}" title="${wizWord('Open the manager for this kind', 'Open the manager for this kind')}">⧉</button>
-    </div>
+    </summary>
     <div class="dock-section-items">${body}</div>
-  </div>`;
+  </details>`;
 }
 
 // renderDock repaints #dock-body from the live snapshot through morphInto —
@@ -198,17 +220,52 @@ function isDockOpen() {
   return dashPrefs.getItem(DOCK_OPEN_KEY) !== '0';
 }
 
-// applyDockOpen reflects the open state onto the body class (CSS reflows
-// <main> to reclaim the space when collapsed) and the toggle's ARIA/label.
+// applyDockOpen reflects the open state onto the body class (CSS reflows the
+// page to reclaim the space when collapsed) and keeps every show/hide control
+// in sync: the edge tab, the top-bar toggle (req 2) and the in-dock collapse
+// button all mirror one state, so whichever the operator finds first reads
+// correctly. The dock top-inset is re-synced too, since the reserved space
+// changes with the open state.
 function applyDockOpen(open) {
   document.body.classList.toggle('dock-open', open);
-  const toggle = $('#dock-toggle');
-  if (toggle) {
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    toggle.title = open
+  const edge = $('#dock-toggle');
+  if (edge) {
+    edge.setAttribute('aria-expanded', open ? 'true' : 'false');
+    edge.title = open
       ? wizWord('Collapse the palette', 'Furl the grimoire')
       : wizWord('Expand the palette', 'Unfurl the grimoire');
   }
+  const top = $('#dock-toggle-top');
+  if (top) top.setAttribute('aria-expanded', open ? 'true' : 'false');
+  syncDockTop();
+  // Toggling the dock changes the reserved width and whether the horizontal
+  // clearance spacer should be parked (req 3), but mutates no <main> child — so
+  // hscroll's MutationObserver won't fire. Nudge it directly so the spacer +
+  // full-bleed bars re-fit in the same frame.
+  syncFullBleedBars();
+}
+
+// syncDockTop keeps the fixed dock rail spanning ONLY the content area —
+// below the top bar (header + marquee + nav) and above the fixed footer
+// (req 1) — rather than covering the header's right-side controls as the
+// old top:0 rail did. The chrome scrolls away with the page (it isn't
+// sticky — making it sticky would spin up a stacking context that re-scopes
+// the header popovers, a documented no-go), so we can't pin the top to a
+// constant: instead --dock-top tracks nav's live viewport-bottom, clamped at
+// 0. At rest it sits just under the nav; as the page scrolls down and the
+// chrome leaves, it rises to fill the full height (where the content is now
+// full-height too). Cheap: one getBoundingClientRect, rAF-coalesced. The
+// bottom is pinned in CSS to the footer bar.
+let dockTopScheduled = false;
+function syncDockTop() {
+  if (dockTopScheduled) return;
+  dockTopScheduled = true;
+  requestAnimationFrame(() => {
+    dockTopScheduled = false;
+    const nav = document.querySelector('nav');
+    const navBottom = nav ? nav.getBoundingClientRect().bottom : 0;
+    document.documentElement.style.setProperty('--dock-top', Math.max(0, navBottom) + 'px');
+  });
 }
 
 // bindDock wires the edge toggle + seeds the open state from dashPrefs. Must
@@ -223,18 +280,60 @@ export function bindDock() {
   // collapsed). A rAF lands after the first paint of the applied state.
   requestAnimationFrame(() => document.body.classList.add('dock-anim'));
 
-  $('#dock-toggle')?.addEventListener('click', () => {
+  // One toggler drives the three show/hide controls (req 2) — the edge tab,
+  // the top-bar button and the in-dock collapse — all flipping the same
+  // dashPrefs-backed state.
+  const toggleDock = () => {
     const next = !isDockOpen();
     dashPrefs.setItem(DOCK_OPEN_KEY, next ? '1' : '0');
     applyDockOpen(next);
-  });
+  };
+  $('#dock-toggle')?.addEventListener('click', toggleDock);
+  $('#dock-toggle-top')?.addEventListener('click', toggleDock);
+  $('#dock-collapse')?.addEventListener('click', toggleDock);
 
-  // One delegated handler for every card / section manage affordance.
+  // Keep the content-area top-inset (req 1) fresh as the page scrolls the
+  // chrome away and as the chrome's own height changes (slop marquee showing/
+  // hiding, wrapping controls or tab strip, window resize). syncDockTop is
+  // rAF-coalesced, so these can fire freely. Passive scroll listener — we never
+  // preventDefault. Observe EVERY chrome bar, not just the header: --dock-top
+  // tracks nav's bottom, which also moves when the marquee toggles between
+  // header and nav or the nav strip wraps — neither resizes the header.
+  window.addEventListener('scroll', syncDockTop, { passive: true });
+  window.addEventListener('resize', syncDockTop);
+  if ('ResizeObserver' in window) {
+    const ro = new ResizeObserver(syncDockTop);
+    for (const sel of ['header', '#slop-marquee', 'nav']) {
+      const el = document.querySelector(sel);
+      if (el) ro.observe(el);
+    }
+  }
+
+  // Persist each section's collapse/expand (req 5). <details> only fires
+  // `toggle` on itself (no bubbling), so a document-level capturing listener
+  // catches every section without re-binding per render — the same idiom the
+  // group <details> use (bindDetailsPersistence in refresh.js). Default is
+  // EXPANDED, so we store only the '0' collapse and clear it on re-open.
+  document.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (!(d instanceof HTMLDetailsElement) || !d.classList.contains('dock-section')) return;
+    const key = d.getAttribute('data-key');
+    if (!key) return;
+    if (d.open) dashPrefs.removeItem(DOCK_SECTION_KEY + key);
+    else dashPrefs.setItem(DOCK_SECTION_KEY + key, '0');
+  }, true);
+
+  // One delegated handler for every card / section manage affordance. The
+  // section manage (⧉) button lives inside the <summary>, so a plain click on
+  // it would ALSO toggle the <details>; preventDefault here cancels that native
+  // fold (the delegated listener runs in the bubble phase, before the default
+  // action) so the manager opens without collapsing the section.
   $('#dock-body')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-dock-act]');
     if (!btn) return;
     const section = sectionByKey(btn.getAttribute('data-dock-kind'));
     if (!section) return;
+    e.preventDefault();
     const act = btn.getAttribute('data-dock-act');
     if (act === 'manage-all') {
       section.onManageAll();
