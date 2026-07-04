@@ -19,6 +19,12 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
 		}
 	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets still contain %q (%s)", needle, why)
+		}
+	}
 
 	// refresh.js: the shared "Discard input?" confirm is a single helper so
 	// every dirty-form dismiss path shows identical copy. bindBackdropDiscard
@@ -55,6 +61,15 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("bindManageOverlayDismiss('roles-manage-modal', closeRolesManageModal);", "the roles browser closes cleanly")
 	must("bindManageOverlayDismiss('profiles-manage-modal', closeProfilesManageModal);", "the profiles browser closes cleanly")
 	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
+
+	// A manage overlay's Escape must key on the z-index/DOM-order topmost test,
+	// NOT a bare "any .modal-overlay is shown" guard. The naive guard couldn't
+	// distinguish a child form modal ABOVE (yield to it) from a plain modal
+	// BENEATH — e.g. the templates panel opened over the "Form a party" dialog
+	// via "⧉ manage circles…" (JOH-356) — so it swallowed the Escape and left
+	// the front-most panel un-closable. Pin the fix so it can't regress.
+	must("if (!isTopmostOverlay(el)) return;", "the manage overlay yields Escape only to a truly topmost child")
+	mustNot("if (document.querySelector('.modal-overlay.show')) return;", "the naive any-modal-shown Escape guard is gone from the manage overlays")
 
 	// modal-term.js: the live-terminal modal DELIBERATELY does not bind
 	// Escape (ESC is a control char the terminal itself needs). Pin the
