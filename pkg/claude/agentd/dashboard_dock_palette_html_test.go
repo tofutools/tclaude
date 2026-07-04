@@ -48,6 +48,8 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 		"an open dock reflows the page to reclaim its width")
 	must("body:not(.dock-open) #agent-dock { transform: translateX(100%); }",
 		"a collapsed dock slides off-screen")
+	must("body.dock-anim #agent-dock { transition: transform", "the slide is gated behind .dock-anim (no flash-in on load)")
+	must("classList.add('dock-anim')", "dock.js enables the slide only after the initial paint")
 	must("body.wizard #agent-dock .dock-card {", "the wizard skin is scoped under #agent-dock")
 
 	// JS: the module is defined, its two entry points exported, and both are

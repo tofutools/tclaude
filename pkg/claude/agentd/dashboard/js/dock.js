@@ -36,10 +36,15 @@ import { morphInto } from './morph.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
-import {
-  profileSummary, openProfileEditor, openProfilesManageModal,
-} from './modal-profiles.js';
-import { roleSummary, openRoleEditor, openRolesManageModal } from './modal-roles.js';
+// The compact one-line summaries live in the DATA modules (profiles.js /
+// roles.js); the editor/manager openers live in the MODAL modules. Importing
+// each from the module that actually exports it — a bad named import would
+// abort the whole ES-module graph at link time (node --check can't catch that,
+// it's single-file only).
+import { profileSummary } from './profiles.js';
+import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
+import { roleSummary } from './roles.js';
+import { openRoleEditor, openRolesManageModal } from './modal-roles.js';
 import { templateReadbackBadges, openTemplatesManageModal } from './modal-templates.js';
 
 // The persisted open/collapsed flag. dash-namespaced like every other
@@ -196,6 +201,10 @@ function applyDockOpen(open) {
 export function bindDock() {
   if (!$('#agent-dock')) return;
   applyDockOpen(isDockOpen());
+  // Enable the slide transition only AFTER the initial state is painted, so a
+  // default-open dock doesn't flash-slide in on load (the CSS resting state is
+  // collapsed). A rAF lands after the first paint of the applied state.
+  requestAnimationFrame(() => document.body.classList.add('dock-anim'));
 
   $('#dock-toggle')?.addEventListener('click', () => {
     const next = !isDockOpen();

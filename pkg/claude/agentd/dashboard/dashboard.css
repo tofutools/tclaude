@@ -8911,9 +8911,13 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
   top: 0; right: 0; bottom: var(--footer-h);
   width: var(--dock-w);
   z-index: 45;
-  transition: transform .2s ease;
 }
 body:not(.dock-open) #agent-dock { transform: translateX(100%); }
+/* Only animate the slide AFTER boot has applied the initial (persisted) state
+   — otherwise a default-open dock would flash-slide in on every page load,
+   since the CSS default (no .dock-open) is the translated-off state. dock.js
+   adds .dock-anim on the frame after the first applyDockOpen. */
+body.dock-anim #agent-dock { transition: transform .2s ease; }
 
 /* When open, reserve the dock's width so <main> reflows and no content hides
    behind it (the "reclaim the space, don't overlay dead area" rule). The
