@@ -1,5 +1,17 @@
 
 * { box-sizing: border-box; }
+/* The `hidden` attribute must ALWAYS win. The UA sheet's `[hidden] { display: none }`
+   lives in the user-agent origin, which any author `display: flex/grid/inline-block/…`
+   rule beats (author origin > UA origin, regardless of specificity or order) — so the
+   attribute silently goes inert on every element that sets its own display, and the
+   element leaks while marked hidden. This has bitten the dashboard repeatedly
+   (.tab-badge, .mail-pager, .deploy-mode, .cron-create-row, …). One global author-origin
+   rule with !important outranks every author `display` declaration (and inline
+   `style="display:…"`) universally, so `hidden` hides no matter what a class sets. The
+   contract this creates: to SHOW an element, remove the `hidden` attribute — never race
+   it with `style.display`. This obsoletes the per-class `[hidden]` overrides that used
+   to patch each incident site one at a time. (JOH-383) */
+[hidden] { display: none !important; }
 /* Always reserve the document scrollbar gutter so switching tabs never
    reflows the page sideways. Every tab except Messages scrolls the page,
    so a tall tab shows the ~15px vertical scrollbar; the Messages tab pins
@@ -101,12 +113,9 @@ nav button:hover { color: #d4d4d4; }
   font-size: 11px; line-height: 16px; text-align: center;
   background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
 }
-/* renderMessagesBadge() sets the `hidden` attribute at 0 unread. The
-   `display: inline-block` above is a class rule, so it outranks the UA
-   `[hidden] { display: none }` rule — without this the badge would
-   never hide and a bright-red `0` would always show. This restores
-   hide-at-0; the red badge then appears only when unread > 0. */
-.tab-badge[hidden] { display: none; }
+/* renderMessagesBadge() sets the `hidden` attribute at 0 unread; the global
+   `[hidden] { display: none !important }` rule at the top hides the badge then
+   (the `display: inline-block` above would otherwise leak a bright-red `0`). */
 /* The Terminals badge reuses .tab-badge, but its number is just a live count of
    open panes — informational, not an unread (Messages, red) or a needs-attention
    (Plugins, amber, see .warn below). .count tones it to a quiet neutral chip so
@@ -283,11 +292,10 @@ button.tool:hover { border-color: #58a6ff; }
   background: #161b22; border: 1px solid #2a3340; border-radius: 5px;
   padding: 5px 8px; font-size: 12px; color: #8b949e;
 }
-/* These bars (and the pager below) set display:flex, which overrides the
-   browser's built-in [hidden]{display:none} — so without this they leak an
-   empty bordered box when toggled off (an unselected wipe bar, an
-   empty-folder pager). Same workaround as .tab-badge[hidden] above. */
-.mail-bulk-bar[hidden], .mail-pager[hidden] { display: none; }
+/* These bars (and the pager below) set display:flex; the global
+   `[hidden] { display: none !important }` rule at the top hides them when
+   toggled off, so they no longer leak an empty bordered box (an unselected
+   wipe bar, an empty-folder pager). */
 .mail-bulk-bar .grow { flex: 1 1 auto; }
 .mail-bulk-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 /* Match the dark chrome the pager / row-action buttons use. Without an
@@ -1104,7 +1112,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: flex; align-items: center; gap: 6px;
   margin-top: 8px; padding: 6px 4px; font-size: 12px; color: #7d8590;
 }
-.audit-pager[hidden] { display: none; }
 .audit-pager .grow { flex: 1 1 auto; }
 .audit-pager-pos { white-space: nowrap; padding: 0 4px; }
 .audit-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -2889,12 +2896,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row {
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
-/* The author `display: flex` above beats the UA `[hidden] { display: none }`
-   (author origin wins over UA), so the `hidden` attribute is inert on a
-   .cron-create-row without this — the same gotcha documented for .tab-badge /
-   .mail-pager elsewhere. JOH-377 toggles the copy-only + worktree rows via
-   .hidden, so make `hidden` actually hide. */
-.cron-create-row[hidden] { display: none; }
+/* .cron-create-row sets `display: flex`; JOH-377 toggles the copy-only +
+   worktree rows via the `hidden` attribute, and the global
+   `[hidden] { display: none !important }` rule at the top makes it actually
+   hide (the flex would otherwise leave the rows showing on a normal open). */
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
@@ -3686,11 +3691,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
   background: #161b22; margin: 6px 0;
 }
-/* Author `display: flex` beats the UA `[hidden]` rule, so the chooser's `hidden`
-   attribute needs this to actually hide on a normal open (see .cron-create-row
-   [hidden] above for the same gotcha). Without it the mode chooser shows on the
-   plain 🚀 deploy, breaking the normal-open invariant. */
-.deploy-mode[hidden] { display: none; }
+/* .deploy-mode sets `display: flex`; the chooser is shown only when a template
+   is dragged onto a group, hidden (via the `hidden` attribute) on a plain 🚀
+   deploy. The global `[hidden] { display: none !important }` rule at the top
+   enforces that normal-open invariant (the flex would otherwise leak it). */
 .deploy-mode label {
   display: flex; gap: 6px; align-items: baseline; cursor: pointer;
   font-size: 12px; color: #c9d1d9;
@@ -3736,10 +3740,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
 .cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
 /* Config-tab live section filter. The bar itself reuses .filter-bar; these
-   add the muted reassurance note and the no-match line. Filtered-out
-   sections use the [hidden] attribute (browser default display:none) —
-   .cfg-section / details.cfg-advanced set no display of their own, so no
-   override rule is needed. */
+   add the muted reassurance note and the no-match line. Filtered-out sections
+   use the [hidden] attribute — .cfg-section / details.cfg-advanced set no
+   display of their own, so the browser default already hid them; the global
+   `[hidden] { display: none !important }` rule at the top now backs that too. */
 .cfg-filter-note { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .cfg-filter-empty {
   font-size: 12px; color: #7d8590; font-style: italic;
