@@ -715,6 +715,50 @@ func TestDashboardCSS_WizardEditMemberModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardTermPickerModal pins the wizard re-skin of the
+// "Open a terminal" which-dir picker (#term-modal — termDirModal in refresh.js),
+// the dialog that pops before a single agent's terminal window opens. Like the
+// retire / edit-member re-skins it is a pure-CSS title span swap plus a
+// modal-scoped surface + gilded-primary re-skin, so we string-search the
+// embedded source.
+func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Open a terminal" → "🔮 Open a scrying
+	// portal" (the palette's scrying-portal voice, matching the Terminals tab).
+	must(`<span class="term-title-regular">Open a terminal</span>`, "the default terminal-picker title span")
+	must(`<span class="term-title-wizard">🔮 Open a scrying portal</span>`, "the wizard terminal-picker title span")
+	must("body.wizard #term-title .term-title-regular", "wizard hides the default title")
+	must("body.wizard #term-title .term-title-wizard", "wizard shows the scrying-portal title")
+
+	// The whole dialog surface is re-skinned arcane, and the default Current dir
+	// button becomes a gilded lever (Summon / Banish's sibling), both scoped to
+	// #term-modal.
+	must("body.wizard #term-modal .modal {", "the terminal-picker dialog surface is re-skinned")
+	must("body.wizard #term-modal #term-current {", "Current dir becomes the gilded primary lever, scoped to the term modal")
+	must("body.wizard #term-modal .modal-buttons button:not(#term-current) {", "Cancel / Launch / Worktree get the tarnished-gold secondary treatment")
+}
+
+// TestDashboardCSS_WizardTermPickerModalScoped guards that the wizard
+// terminal-picker re-skin stays scoped to #term-modal. #term-modal is a generic
+// .modal (like the retire modal), so an unscoped `body.wizard .modal { … }` would
+// repaint every sibling confirm dialog. The shared retire-scope test already
+// rejects that literal; this asserts the positive — the re-skin is present and
+// carries the #term-modal scope prefix.
+func TestDashboardCSS_WizardTermPickerModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #term-modal .modal") {
+		t.Error("wizard terminal-picker re-skin missing its #term-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .modal {") {
+		t.Error("wizard terminal-picker re-skin is unscoped — will repaint sibling confirm dialogs too")
+	}
+}
+
 // TestDashboardHTML_WizardSummonButton pins the wizard re-skin of the
 // group-header spawn button (the blue .spawn-btn that opens the dialog): the
 // per-theme label swap "spawn" → "🔮 Summon" and the arcane chrome hooks.
