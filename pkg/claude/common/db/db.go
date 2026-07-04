@@ -69,7 +69,18 @@ func Open() (*sql.DB, error) {
 	// `foreign_keys` in particular is per-connection in SQLite, so a
 	// one-shot db.Exec wouldn't survive when the pool opens new
 	// connections under load.
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	//
+	// `_txlock=immediate` makes every sql.Tx a write transaction from BEGIN.
+	// Without it, Begin() starts DEFERRED: a tx that reads first (e.g.
+	// DeleteAgentGroup's SELECT before its UPDATEs) pins a WAL read snapshot,
+	// and if any other connection commits before the tx's first write, the
+	// read->write upgrade fails instantly with SQLITE_BUSY — busy_timeout
+	// deliberately does not retry that case (the snapshot is stale; waiting
+	// can't fix it). With IMMEDIATE the write lock is taken at BEGIN, where
+	// busy_timeout(5000) applies, so concurrent writers queue instead of
+	// erroring (JOH-348). Every Begin() call site here is a write tx, so
+	// this costs reads nothing (plain Query/Exec don't use transactions).
+	dsn := dbPath + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	globalDB, initErr = sql.Open("sqlite", dsn)
 	if initErr != nil {
 		return globalDB, initErr
