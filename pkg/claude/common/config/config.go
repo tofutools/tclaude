@@ -238,6 +238,15 @@ type DashboardConfig struct {
 	// web buttons and the native-window bulk "windows…" modal are unaffected.
 	// See (*Config).DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal,omitempty"`
+	// ShowAgentHideButton keeps the per-agent "hide window" button — the
+	// slashed-eye icon beside "focus" in each agent row's quick-control
+	// cluster — visible. That button detaches the agent's terminal window;
+	// it's far less used than its "focus" (show-window) twin, so by default
+	// the dashboard drops it to keep the row tight, leaving just "focus". Flip
+	// this on to bring the hide button back. Default false (hidden). The
+	// dashboard reads the resolved value off the snapshot each poll and
+	// toggles body.show-agent-hide-btn. See (*Config).ShowAgentHideButton.
+	ShowAgentHideButton bool `json:"show_agent_hide_button,omitempty"`
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -811,6 +820,15 @@ func (c *Config) ActivityBotsWizard() string {
 // the installed set is empty). Nil-safe on the receiver.
 func (c *Config) ShowPluginsTabAlways() bool {
 	return c != nil && c.Dashboard != nil && c.Dashboard.AlwaysShowPluginsTab
+}
+
+// ShowAgentHideButton reports whether each agent row's "hide window" button
+// (the slashed-eye beside "focus") should be shown — config
+// dashboard.show_agent_hide_button. Default false: the button is hidden to
+// keep the quick-control cluster tight ("focus" stays); only an explicit
+// true brings it back. Nil-safe on the receiver.
+func (c *Config) ShowAgentHideButton() bool {
+	return c != nil && c.Dashboard != nil && c.Dashboard.ShowAgentHideButton
 }
 
 // HScrollFollow reports whether the dashboard's full-bleed chrome bars

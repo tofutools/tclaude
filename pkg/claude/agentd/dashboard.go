@@ -635,6 +635,14 @@ type snapshotPayload struct {
 	// "web term" / "web window" buttons ignore it (always web). See
 	// Config.DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal"`
+	// ShowAgentHideButton mirrors config dashboard.show_agent_hide_button —
+	// whether each agent row's "hide window" button (the slashed-eye beside
+	// "focus", data-act="hide") is shown. Off by default: the button detaches
+	// the agent's terminal window and is far less used than "focus", so the
+	// row hides it to stay tight. refresh.js toggles body.show-agent-hide-btn
+	// off this each poll; CSS drops the button unless the class is present.
+	// See Config.ShowAgentHideButton.
+	ShowAgentHideButton bool `json:"show_agent_hide_button"`
 	// CostTabVisible drives the Costs tab's auto-hide: true when there is
 	// real pay-per-token spend to show OR a subscription account has opted
 	// into the WHAT-IF view (config cost.show_on_subscription). When false
@@ -1389,9 +1397,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slop:    cfg.ActivityBotsSlop(),
 			Wizard:  cfg.ActivityBotsWizard(),
 		},
-		HScrollFollow:     cfg.HScrollFollow(),
-		GroupQuickOptions: cfg.GroupQuickOptions(),
-		DefaultTerminal:   cfg.DefaultTerminal(),
+		HScrollFollow:       cfg.HScrollFollow(),
+		GroupQuickOptions:   cfg.GroupQuickOptions(),
+		DefaultTerminal:     cfg.DefaultTerminal(),
+		ShowAgentHideButton: cfg.ShowAgentHideButton(),
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},

@@ -452,6 +452,11 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-default-web-terminal" /> open focus / windows / terminals as web terminals in the dashboard</label>
         <span class="cfg-hint">The per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — normally pop a <em>native</em> OS terminal window. <strong>Checked</strong> routes them all to an <em>in-browser</em> terminal pane in the dashboard's <strong>Terminals</strong> tab instead — the same surface the dedicated "web term" / "web window" buttons always use — so you never leave the browser. The dedicated web buttons (already always web) and the native-window bulk 🪟 <em>windows…</em> modal are unaffected. Off by default. Stored as <code>dashboard.default_terminal</code> (the default <code>native</code> is omitted; checked writes <code>web</code>).</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Agent hide button</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-dashboard-show-agent-hide-btn" /> show the per-agent "hide window" button next to "focus"</label>
+        <span class="cfg-hint">Each agent row opens with two eye icons: <strong>focus</strong> (👁, raise the agent's terminal window) and <strong>hide</strong> (the slashed-eye, detach the window — the agent keeps running). Hiding a window is far less used than focusing it, so the dashboard drops the hide icon <em>by default</em> to keep the quick-control cluster tight — only <strong>focus</strong> shows. <strong>Checked</strong> brings the <strong>hide</strong> icon back for anyone who wants the row shortcut. Detaching is always possible from the terminal itself; this is only the per-row button. Off by default. Stored as <code>dashboard.show_agent_hide_button</code> (the default is omitted; checked writes <code>true</code>).</span>
+      </div>
     </div>
 
     <div class="cfg-section">
