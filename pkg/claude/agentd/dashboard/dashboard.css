@@ -9282,25 +9282,31 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    and the in-dock collapse control on the right; row 2 holds the re-homed 🧠
    default-profile chip. When the dock is collapsed those controls live back in
    the toolbar, so the containers are empty — :empty collapses row 2 and the
-   header is just the collapse control (its original slim look). */
+   header is just the collapse control (its original slim look).
+   The 16px TOP padding (vs 6px on the sides/bottom) matches <main>'s 16px
+   content inset: the dock's fixed top sits at nav's bottom (--dock-top) exactly
+   like <main>'s border-box, so an equal top inset lands the re-homed "+ new
+   group" primary at the SAME height it shows at in the floating toolbar when the
+   dock is collapsed — no vertical jump as the panel opens/closes. */
 .dock-head {
   flex: 0 0 auto;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 6px;
+  padding: 16px 6px 6px;
   border-bottom: 1px solid #2a3340;
 }
 .dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
-/* The re-homed primary cluster ("+ new group" + ⚙ cog) fills the row (flex:1),
-   with the "+ new group" primary GROWING to absorb the slack so the cog lands at
-   a fixed offset from the right — just left of the collapse control — in BOTH
-   skins (the wider wizard "⚔ Form a party" label doesn't shove the cog around).
-   That fixed cog position keeps its right-aligned .action-menu inside the dock:
-   the menu anchors to .filter-bar-cog (position:relative rides along) and opens
-   DOWNWARD into the dock's tall body, staying within #agent-dock's box so
-   .dock-inner's overflow never clips it. min-width:0 lets the label ellipsize
-   rather than force an overflow. */
+/* The re-homed primary cluster ("+ new group" + ⚙ cog) is kept at its NATURAL
+   size — the same compact chips as the floating toolbar — rather than stretched
+   to fill the dock, so the pair looks identical whether the dock is open or
+   collapsed. margin-left:auto on the "+ new group" primary right-aligns the pair
+   within the row, so the ⚙ cog still lands at a fixed offset from the right —
+   just left of the collapse control — in BOTH skins (the wider wizard "⚔ Form a
+   party" label doesn't shove it around). That fixed cog position keeps its
+   right-aligned .action-menu inside the dock: the menu anchors to .filter-bar-cog
+   (position:relative rides along) and opens DOWNWARD into the dock's tall body,
+   staying within #agent-dock's box so .dock-inner's overflow never clips it. */
 .dock-actions { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.dock-actions #group-create-open { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dock-actions #group-create-open { flex: 0 0 auto; margin-left: auto; }
 .dock-actions .filter-bar-cog { flex: 0 0 auto; }
 /* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
    the toolbar it normally sits in), so once re-homed into the dock the button
