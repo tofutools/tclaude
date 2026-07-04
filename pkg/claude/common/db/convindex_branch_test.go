@@ -66,3 +66,35 @@ func TestConvIndex_GitBranchStartupRoundtrip(t *testing.T) {
 	require.NotNil(t, found, "conv missing from ListAllConvIndex")
 	assert.Equal(t, "main", found.GitBranchStartup, "ListAllConvIndex carries git_branch_startup")
 }
+
+func TestConvIndexBranchSnapshotSeedsCreatedOnce(t *testing.T) {
+	setupTestDB(t)
+
+	convID := "33333333-aaaa-bbbb-cccc-333333333333"
+	first := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, UpsertConvIndexBranchSnapshot(&ConvIndexRow{
+		ConvID:     convID,
+		ProjectDir: "/tmp/proj",
+		GitBranch:  "main",
+		IndexedAt:  first,
+	}), "branch snapshot should insert")
+
+	row, err := GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, first.Format(time.RFC3339), row.Created, "branch-only snapshot seeds created for dashboard Age")
+
+	later := first.Add(time.Hour)
+	require.NoError(t, UpsertConvIndexBranchSnapshot(&ConvIndexRow{
+		ConvID:     convID,
+		ProjectDir: "/tmp/proj",
+		GitBranch:  "feature-x",
+		IndexedAt:  later,
+	}), "branch snapshot update should not clobber created")
+
+	row, err = GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, first.Format(time.RFC3339), row.Created, "created remains first-seen")
+	assert.Equal(t, "feature-x", row.GitBranch, "branch still updates")
+}
