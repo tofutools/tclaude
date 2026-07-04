@@ -229,25 +229,51 @@ function isDockOpen() {
   return dashPrefs.getItem(DOCK_OPEN_KEY) !== '0';
 }
 
+// isDockTab reports whether the Groups tab is the active one. The dock is
+// offered ONLY there: its cards drag onto GROUP rows (dock-dnd.js), so the
+// palette is meaningless on Jobs / Access / Config / Costs / … . We read the
+// pane's `.active` class — the same source of truth every tab-switch site
+// writes (bindTabs, the costs/plugins auto-hide redirects, showAccessTab, the
+// command palette, keyboard cycling) — so a single observer over it (bindDock)
+// catches every path without hooking each one. When Groups isn't active,
+// applyDockOpen forces the effective open state off (no reserved page space)
+// and CSS (body:not(.dock-tab)) hides the whole shell, edge toggle included.
+function isDockTab() {
+  return !!document.getElementById('tab-groups')?.classList.contains('active');
+}
+
 // applyDockOpen reflects the open state onto the body class (CSS reflows the
 // page to reclaim the space when collapsed) and keeps the two show/hide controls
 // in sync: the edge tab and the in-dock collapse button both mirror one state
 // (JOH-390 item 7 removed the third, top-bar, toggle). It also re-homes the
 // groups-toolbar globals (item 4) and re-syncs the dock top-inset, since the
 // reserved space changes with the open state.
+//
+// The dock is Groups-tab-only: the tab availability rides a `dock-tab` body
+// class (CSS hides the whole shell — panel + edge toggle — off the Groups tab)
+// and folds into the EFFECTIVE open state, so no page space is reserved while
+// the dock is hidden. `open` here is still the persisted PREF (isDockOpen),
+// left untouched, so returning to Groups restores whatever open/collapsed state
+// the human last chose. Called on boot, on the toggle, and on every tab switch
+// (bindDock's Groups-pane observer) so the gate re-evaluates each time.
 function applyDockOpen(open) {
-  document.body.classList.toggle('dock-open', open);
+  const onTab = isDockTab();
+  document.body.classList.toggle('dock-tab', onTab);
+  const eff = open && onTab;
+  document.body.classList.toggle('dock-open', eff);
   const edge = $('#dock-toggle');
   if (edge) {
-    edge.setAttribute('aria-expanded', open ? 'true' : 'false');
-    edge.title = open
+    edge.setAttribute('aria-expanded', eff ? 'true' : 'false');
+    edge.title = eff
       ? wizWord('Collapse the palette', 'Furl the grimoire')
       : wizWord('Expand the palette', 'Unfurl the grimoire');
   }
   // Re-home the groups-toolbar globals into the open dock's head (JOH-390 item 4)
-  // / return them to the toolbar when collapsed. Done here so it tracks EVERY
-  // open-state change (boot, toggle) in lockstep with the body class.
-  syncDockActions(open);
+  // / return them to the toolbar when collapsed OR off the Groups tab. Done here
+  // so it tracks EVERY effective-open change (boot, toggle, tab switch) in
+  // lockstep with the body class. Off-tab both homes are hidden (the toolbar
+  // lives in the inactive #tab-groups pane), so the move is invisible churn.
+  syncDockActions(eff);
   syncDockTop();
   // Toggling the dock changes the reserved width and whether the horizontal
   // clearance spacer should be parked (req 3), but mutates no <main> child — so
@@ -346,6 +372,18 @@ export function bindDock() {
   // syncDockActions makes the extra body-class mutations a no-op.
   new MutationObserver(() => syncDockActions(document.body.classList.contains('dock-open')))
     .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // The dock is Groups-tab-only (req): re-evaluate the gate on every tab switch.
+  // Every tab-switch site toggles the `active` class on the <section> panes, so
+  // one observer over the Groups pane's class catches them all — present and
+  // future — without hooking each site. applyDockOpen re-reads isDockTab, so it
+  // hides/shows the shell and drops/reserves the page space to match. (This
+  // observes the Groups PANE, not body, so applyDockOpen's own body-class writes
+  // can't retrigger it — no feedback loop with the observer above.)
+  const groupsPane = document.getElementById('tab-groups');
+  if (groupsPane) {
+    new MutationObserver(() => applyDockOpen(isDockOpen()))
+      .observe(groupsPane, { attributes: true, attributeFilter: ['class'] });
+  }
   applyDockOpen(isDockOpen());
   // Enable the slide transition only AFTER the initial state is painted, so a
   // default-open dock doesn't flash-slide in on load (the CSS resting state is

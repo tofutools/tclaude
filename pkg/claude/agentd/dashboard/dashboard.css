@@ -9172,6 +9172,16 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
   z-index: 45;
 }
 body:not(.dock-open) #agent-dock { transform: translateX(100%); }
+/* The dock is offered ONLY on the Groups tab — its cards drag onto group rows,
+   so it's meaningless on Jobs / Access / Config / Costs / … . js/dock.js sets
+   body.dock-tab while Groups is the active tab (and forces dock-open OFF
+   otherwise, so none of the dock-open reservation rules below apply and no page
+   space is held). Off the Groups tab the WHOLE shell is removed — the panel and
+   its edge toggle (a child of #agent-dock, so display:none takes both). Unlike
+   the translate above (which only slides the panel off but keeps the edge tab
+   reachable so a collapsed dock can be reopened), display:none makes the dock
+   entirely unavailable — the correct state for a tab where it doesn't belong. */
+body:not(.dock-tab) #agent-dock { display: none; }
 /* Only animate the slide AFTER boot has applied the initial (persisted) state
    — otherwise a default-open dock would flash-slide in on every page load,
    since the CSS default (no .dock-open) is the translated-off state. dock.js
