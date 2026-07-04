@@ -1594,6 +1594,64 @@ details[open] > summary .group-actions { opacity: 1; }
   color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
   font-family: inherit;
 }
+/* The group ⚙ cog now living in the SUMMARY header (JOH-392: nested subgroups
+   push the body action cluster down, so the most-used control rides up top,
+   right after the activity indicators and before the quick-option chips). It
+   reuses the .group-actions skin; these rules tune its header placement + dim.
+   opacity:1 base OVERRIDES the .group-actions 0.4 fade so the header-dim below
+   is the single, consistent opacity controller for the cog (the .group-actions
+   fade only tracks native :hover/[open], not the .quick-hover / pinned / fold
+   states the chips use). */
+/* Align + space the cog like the header's other inline items (esp. its
+   immediate neighbour .group-activity, which uses the same recipe): the
+   inline-flex box defaults to baseline and rides ~high, so vertical-align:
+   middle + line-height:1 centre it on the row, and margin: 0 6px matches the
+   activity-bot spacing so the cog sits in the header's rhythm. */
+.group-header-cog {
+  /* A touch more room on the LEFT so the cog doesn't crowd the activity
+     indicators; right margin stays 6px to keep the rhythm with the chips. */
+  margin: 0 6px 0 12px; opacity: 1; vertical-align: middle; line-height: 1;
+  transition: opacity 0.15s ease;
+}
+/* The cog sits near the LEFT of the row now, so its dropdown opens rightward
+   (left:0) instead of the right-anchored .group-actions default — otherwise a
+   right:0 menu would hang off the left of a narrow cog span. */
+.group-header-cog .action-menu { left: 0; right: auto; }
+/* Collapsed-header dim: on a collapsed, un-hovered, un-pinned group in fold
+   mode, the group's option affordances — the quick-option chips (descr / cwd /
+   cap / profile / links) AND the ⚙ cog — fade together to 0.4, brightening to
+   full on hover / the JS-stamped .quick-hover / while the cog's own menu is
+   open. This keeps the whole options row one consistent quiet cluster (the
+   group name and the activity bots stay full — name for readability, bots for
+   at-a-glance status), moving in lockstep with the .qo-text text fold. The cog
+   no longer AUTO-HIDES when collapsed — it just dims like the rest.
+   Inside @media (hover: hover) like the fold: touch devices keep everything
+   full. */
+@media (hover: hover) {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-header-cog {
+    opacity: 0.4;
+  }
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-descr,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-default-cwd,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-max-members,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-link-chips,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-header-cog,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-descr,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-cwd,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-max-members,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-model,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-link-chips,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-header-cog,
+  details[data-group-key] > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
+    opacity: 1;
+  }
+}
 .group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 .group-actions button.warn:hover { color: #d29922; border-color: #d29922; }
@@ -1929,6 +1987,27 @@ body.wizard .force-mission-label-wizard { display: inline; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
     transition: none;
   }
+}
+
+/* Don't spread the header chips out when the group is EXPANDED (operator
+   request): the collapsed cluster is tight (1px margin, halved padding) but on
+   open the chips jumped back to the loose 8px base — that gap read as extra
+   space. Reuse the tight spacing for [open] too so an open header stays as
+   compact as a folded one, with no 1px→8px jump on toggle. Not gated on fold
+   mode or hover — an open header is tight everywhere. */
+details[data-group-key][open] > summary .group-descr,
+details[data-group-key][open] > summary .group-default-cwd,
+details[data-group-key][open] > summary .group-max-members,
+details[data-group-key][open] > summary .group-default-model,
+details[data-group-key][open] > summary .group-link-chips {
+  margin-left: 1px;
+}
+details[data-group-key][open] > summary .group-descr,
+details[data-group-key][open] > summary .group-default-cwd,
+details[data-group-key][open] > summary .group-max-members,
+details[data-group-key][open] > summary .group-default-model {
+  padding-left: 3px;
+  padding-right: 3px;
 }
 
 /* 🔔/🔕 top-bar master notification bell — a chrome-free button like
