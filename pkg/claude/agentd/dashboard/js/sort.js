@@ -121,7 +121,7 @@ const MEMBER_COLS = [
   { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },
   { key: 'branch', label: 'Branch',      col: 'branch', hideable: true },
   { key: 'role',   label: 'Role',        col: 'role',   hideable: true },
-  { key: 'task',   label: 'Task',        col: 'task',   hideable: true },
+  { key: 'task',   label: 'Task link',   col: 'task',   hideable: true },
   { key: 'descr',  label: 'Description', col: 'descr',  hideable: true },
 ];
 const MEMBER_ACCESSORS = {
