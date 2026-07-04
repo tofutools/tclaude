@@ -53,7 +53,19 @@ import { noteConnected, noteDisconnected } from './connection.js';
 // uniform — every modal, present and future, shares .modal-overlay,
 // so all of them suspend auto-refresh while open without each having
 // to remember to toggle a flag.
-function refreshSuspended() {
+//
+// ignoreModals bypasses ONLY the open-modal suspension (not the drag /
+// rename / reorder / open-menu / slop-pull guards). A handful of
+// template/circle mutations fire refresh from INSIDE a modal that stays
+// open — installing a starter (the picker stays up to copy several),
+// snapshot-a-group (it reopens the editor on the fresh circle) — so a
+// plain, modal-suspended refresh would drop their tick and leave the
+// circle list stale until the human closed and reopened it. Those callers
+// pass force so the list behind the modal repaints immediately; the truly
+// destructive gestures still suspend, because re-rendering under an active
+// drag/rename/menu breaks it (that is the wedge class of bug this predicate
+// was written to avoid — see TestDashboardHTML_RefreshGuardCannotWedge).
+function refreshSuspended({ ignoreModals = false } = {}) {
   // An inline rename <input> is open — re-rendering would destroy it
   // mid-keystroke.
   if (renameEditing) return true;
@@ -66,8 +78,9 @@ function refreshSuspended() {
   // re-rendering the Groups tab would detach the dragged grip mid-drag and
   // lose the drag's own dragend cleanup (group-reorder.js).
   if (groupReorderActive) return true;
-  // Any modal overlay is open.
-  if (document.querySelector('.modal-overlay.show')) return true;
+  // Any modal overlay is open (unless a force-refresh opted out — see the
+  // ignoreModals note above).
+  if (!ignoreModals && document.querySelector('.modal-overlay.show')) return true;
   // A ⚙ options menu is open — re-rendering the Groups tab would
   // rebuild the row/group and collapse the menu out from under the
   // pointer. Closing the menu drops the .open class, lifting this.
@@ -347,8 +360,16 @@ function groupsTabActive() {
 // mail.js, which wraps its own async mail repaint the same way. refresh()
 // spreads capture and restore apart by hand below because they straddle
 // the non-render snapshot bookkeeping; a single-call wrapper wouldn't fit.
-export async function refresh() {
-  if (refreshSuspended()) {
+export async function refresh(opts = {}) {
+  // force: proceed even while a .modal-overlay is open. Passed by the
+  // template/circle mutation handlers that fire from inside (or immediately
+  // reopen) a modal, so the list behind it repaints without the human having
+  // to close and reopen the view. opts may also be an Event object when
+  // refresh is used bare as a callback — .force is simply undefined there, so
+  // it reads as a normal (non-forced) refresh. See refreshSuspended's
+  // ignoreModals note.
+  const force = !!(opts && opts.force);
+  if (refreshSuspended({ ignoreModals: force })) {
     // An inline-edit input, a modal, or a drag is in progress;
     // re-rendering now would blow the input away mid-keystroke,
     // disrupt the modal, or detach the dragged row. Skip this tick —
@@ -414,7 +435,7 @@ export async function refresh() {
     // The suspend guard was sampled BEFORE the fetch; a drag/modal may have
     // opened since. Re-check before touching the DOM (this preserves any
     // optimistic drag mutation on the old snapshot; its teardown re-runs us).
-    if (refreshSuspended()) return;
+    if (refreshSuspended({ ignoreModals: force })) return;
     // Stitch each windowed list onto the snapshot so the downstream renderers
     // keep reading data.retired / .conversations / .replaced unchanged.
     // data.paging carries each list's {offset,limit,total,total_unfiltered} for
@@ -431,7 +452,7 @@ export async function refresh() {
     // (a newer refresh may have started) AND the suspend guard (a drag/modal may
     // have opened) before mutating shared offset state and the DOM.
     if (seq !== refreshSeq) return;
-    if (refreshSuspended()) return;
+    if (refreshSuspended({ ignoreModals: force })) return;
     // Reconcile each list's stored offset with the server's CLAMPED served
     // offset — done HERE, after the seq guard, so a stale refresh can never
     // write it (the pager-clobber bug). No-op when the offset didn't move.
