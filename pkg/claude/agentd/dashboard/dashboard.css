@@ -1892,6 +1892,54 @@ body.wizard .force-mission-label-wizard { display: inline; }
 }
 .modal-overlay.show { display: flex; }
 
+/* Disconnected overlay — connection.js adds .show when the 2s poll can't
+   reach agentd for FAIL_THRESHOLD consecutive ticks, and removes it the moment
+   a poll succeeds again. Deliberately NOT .modal-overlay: the auto-refresh
+   must keep polling beneath it to notice the reconnect, so it stays off the
+   refreshSuspended() selector. z-index sits above every modal/palette/toast
+   (ceiling 10001) so nothing can paint over the "you are disconnected"
+   message. */
+.disconnect-overlay {
+  position: fixed; inset: 0; z-index: 10050;
+  display: none; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.disconnect-overlay.show { display: flex; }
+.disconnect-card {
+  width: min(480px, calc(100vw - 48px));
+  text-align: center;
+  background: #21262d;
+  border: 2px solid #f85149;
+  border-radius: 12px;
+  padding: 32px 28px;
+  color: #c9d1d9;
+  box-shadow: 0 0 0 4px rgba(248,81,73,0.22), 0 18px 60px rgba(0,0,0,0.7);
+  animation: disconnect-pulse 1.6s ease-in-out infinite;
+}
+@keyframes disconnect-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(248,81,73,0.18), 0 18px 60px rgba(0,0,0,0.7); }
+  50%      { box-shadow: 0 0 0 9px rgba(248,81,73,0.40), 0 18px 60px rgba(0,0,0,0.7); }
+}
+.disconnect-icon { font-size: 56px; line-height: 1; margin-bottom: 12px; }
+.disconnect-title { margin: 0 0 10px; font-size: 24px; font-weight: 700; color: #f85149; }
+.disconnect-body { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: #adbac7; }
+.disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
+.disconnect-status::before {
+  content: ''; display: inline-block;
+  width: 8px; height: 8px; margin-right: 7px;
+  border-radius: 50%; background: #f85149; vertical-align: middle;
+  animation: disconnect-blink 1s steps(2, start) infinite;
+}
+@keyframes disconnect-blink { 50% { opacity: 0.25; } }
+/* Respect reduced-motion: keep the banner, drop the pulse/blink. */
+@media (prefers-reduced-motion: reduce) {
+  .disconnect-card { animation: none; }
+  .disconnect-status::before { animation: none; }
+}
+
 /* Command palette ("spotlight") — palette.js. It rides on .modal-overlay
    for the shared backdrop and the auto-refresh suspend, but anchors near
    the top like a launcher rather than vertically centred. */
