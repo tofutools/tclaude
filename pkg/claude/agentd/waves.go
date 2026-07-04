@@ -93,8 +93,16 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // has its owner. A would-be owner is recorded with OwnerDropped instead of
 // AddAgentGroupOwner. Permission grants still apply; only ownership is dropped.
 // false for the create-new path (a fresh group's template owner IS its owner).
+//
+// templateName drives the auto-stamped task-force tag (JOH-380): every agent
+// this wave spawns gets the `tf:<templateName>` tag, so a group holding members
+// from several template deployments (instantiate + reinforce) can tell them
+// apart. Additive (a set — a re-deploy of the same template re-stamps the same
+// tag, an INSERT OR IGNORE no-op) and best-effort (a failed stamp only logs;
+// the agent is already spawned). Empty templateName skips the stamp — the seam
+// stays inert for any non-template caller of this path.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, cwd, caller, granter string, existing map[string]string, suppressOwner bool) waveSpawnResult {
+	groupContext, cwd, caller, granter, templateName string, existing map[string]string, suppressOwner bool) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -107,6 +115,11 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// attempt at this wave — reuse its conv instead of spawning a duplicate.
 		if conv, ok := existing[finalName]; ok && conv != "" {
 			res.ConvID = conv
+			// Re-stamp on the restart-reuse path too: a crash between the prior
+			// attempt's spawn and its tag stamp would otherwise lose the tag.
+			// Idempotent (INSERT OR IGNORE), so re-stamping an already-tagged
+			// reused conv is a no-op.
+			stampTaskForceTag(conv, templateName)
 			wr.Spawned++
 			wr.SpawnedConvs[a.Name] = conv
 			wr.SpawnedOrder = append(wr.SpawnedOrder, conv)
@@ -164,6 +177,11 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.SpawnedConvs[a.Name] = outcome.ConvID
 		wr.SpawnedOrder = append(wr.SpawnedOrder, outcome.ConvID)
 
+		// Auto-stamp the task-force tag (JOH-380). The synchronous template
+		// spawn has already run enrollSpawnedConv (inside executeSpawn), so the
+		// actor's agent_id exists and resolves here.
+		stampTaskForceTag(outcome.ConvID, templateName)
+
 		// Birth-time access controls (JOH-350 / JOH-354): owner + permission
 		// overrides now RIDE the agent's referenced spawn profile, composed with
 		// the role's default grants and any legacy inline grants. A vanished
@@ -203,6 +221,44 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+// stampTaskForceTag stamps the auto task-force tag `tf:<templateName>` on
+// the actor behind conv (JOH-380). A blank templateName or conv is a
+// no-op. Best-effort: it resolves the conv to its stable agent_id and
+// unions the tag onto the agent's set (db.AddAgentTags, INSERT OR IGNORE),
+// logging — never failing — since the agent is already spawned. It runs
+// for BOTH the synchronous wave-0 spawn and the background choreography
+// waves, so every template-deployed member carries the marker.
+//
+// db.TaskForceTag guarantees a storable tag (it strips tag-invalid chars
+// and length-truncates), so the only remaining way the stamp can be
+// refused is the per-agent tag COUNT cap — an agent already carrying
+// MaxAgentTags free-form tags keeps them and the system marker degrades
+// to the logged warning below. That is an accepted residual: it needs an
+// operator to have manually filled all 16 tag slots, and the marker is
+// still recoverable (re-deploy after trimming a tag), so we don't special-
+// case the cap here.
+func stampTaskForceTag(conv, templateName string) {
+	tag := db.TaskForceTag(templateName)
+	if tag == "" || conv == "" {
+		return
+	}
+	agentID, err := db.AgentIDForConv(conv)
+	if err != nil {
+		slog.Warn("wave spawn: resolve agent for task-force tag failed",
+			"conv", conv, "template", templateName, "error", err)
+		return
+	}
+	if agentID == "" {
+		slog.Warn("wave spawn: no actor to stamp task-force tag",
+			"conv", conv, "template", templateName)
+		return
+	}
+	if err := db.AddAgentTags(agentID, tag); err != nil {
+		slog.Warn("wave spawn: stamp task-force tag failed",
+			"agent", agentID, "template", templateName, "tag", tag, "error", err)
+	}
 }
 
 // groupMemberNames maps a group's live members by their effective name
@@ -475,7 +531,7 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
 	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd, c.Caller, c.Granter,
-		groupMemberNames(g), c.SuppressOwner)
+		c.TemplateName, groupMemberNames(g), c.SuppressOwner)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
