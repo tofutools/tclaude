@@ -620,7 +620,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/starters/{name}", handleStarterByName)
 	mux.HandleFunc("POST /v1/starters/{name}/install", handleStarterInstall)
 	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
+	// from-agent (JOH-393) is a manage-gated capture: it reads a live agent's
+	// launch config into an unsaved seed. Register the literal segment before the
+	// {name} wildcard so it isn't read as a profile named "from-agent".
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
+	mux.HandleFunc("POST /v1/spawn-profiles/from-agent", handleSpawnProfileFromAgent)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
 	// Role library (JOH-240). Reads open, writes gated on roles.manage.
 	mux.HandleFunc("/v1/roles", handleRoles)
