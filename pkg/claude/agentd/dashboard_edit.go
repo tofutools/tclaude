@@ -646,6 +646,14 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups/{name}/rebrief", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupRebrief(w, asDashboardHumanPeer(r), g)
 	}))
+	// Stand down a task force (JOH-345): retire the roster + sweep the
+	// deploy-seeded rhythms and pending waves, keeping the group row.
+	// asDashboardHumanPeer so the shared, permission-checked handler sees the
+	// cookie-authed dashboard caller as the human (stand-down is
+	// groups.retire-gated on the /v1 path).
+	mux.HandleFunc("POST /api/groups/{name}/stand-down", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupStandDown(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("POST /api/groups/{name}/links", groupRoute(dashboardAddLink))
 	mux.HandleFunc("PATCH /api/groups/{name}/links/{id}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardUpdateLink(w, r, g, r.PathValue("id"))
@@ -975,6 +983,9 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// If this retire left the group with no live members, disable its
+	// template-seeded rhythms so they stop firing to nobody (JOH-345).
+	out.RhythmsDisabled = disableGroupRhythmsIfEmptied(g)
 	writeJSON(w, http.StatusOK, out)
 }
 

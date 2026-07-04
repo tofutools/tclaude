@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV92toV93_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v93 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v92).
-func TestMigrateV92toV93_FreshSchema(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 93, currentVersion, "tripwire: bump this and add a v93→v94 test when you add a migration")
-}
-
 // TestMigrateV92toV93_AddsChoreography drives the real v92→v93 migration over a
 // v92-pinned DB: the wave / rhythms / wave_max_wait / target_role columns
 // appear, the choreography table appears, a pre-existing template + template

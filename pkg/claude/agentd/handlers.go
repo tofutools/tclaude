@@ -2818,6 +2818,12 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	// Gated on templates.instantiate + owner-pass (see handleGroupRebrief).
 	mux.HandleFunc("POST /v1/groups/{name}/rebrief", v1GroupRoute(handleGroupRebrief))
 
+	// Stand down a task force (JOH-345): retire the roster + sweep the
+	// deploy-seeded rhythms and pending waves, keeping the group as a dormant
+	// record. The mirror of `task-force deploy`. Gated on groups.retire +
+	// owner-pass (see handleGroupStandDown).
+	mux.HandleFunc("POST /v1/groups/{name}/stand-down", v1GroupRoute(handleGroupStandDown))
+
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
 	mux.HandleFunc("PATCH /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {

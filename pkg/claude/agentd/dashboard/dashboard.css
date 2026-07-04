@@ -1658,11 +1658,14 @@ body.wizard .spawn-btn .spawn-ico { display: none; }
   border: 1px solid #5a3a1d; border-radius: 4px; background: #2b1d0e;
 }
 .force-controls { display: flex; gap: 6px; }
-.force-rebrief-btn {
+.force-rebrief-btn, .force-standdown-btn {
   font-size: 11px; padding: 2px 10px; border-radius: 4px;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9; cursor: pointer;
 }
 .force-rebrief-btn:hover { background: #2d333b; border-color: #58a6ff; }
+/* Stand-down is the destructive wind-down control, so its hover warms to a
+   caution border rather than the re-brief blue. */
+.force-standdown-btn:hover { background: #2d333b; border-color: #f0883e; }
 /* The mission label span-swaps regular → wizard, the same "always emit, CSS
    picks" trick the spawn button + activity bots use. */
 .force-mission-label-wizard { display: none; }

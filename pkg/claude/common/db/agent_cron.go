@@ -24,6 +24,20 @@ const (
 	CronTargetGroup = "group"
 )
 
+// Cron disabled_reason markers (schema v94). The value distinguishes a job
+// tclaude auto-disabled from one the human paused by hand, so re-enabling on a
+// group resume touches only the ones tclaude paused (JOH-345).
+const (
+	// CronDisabledReasonNone — '' — the normal state: whatever the enabled
+	// flag says is a human-managed choice. A job the human disabled by hand
+	// carries this (enabled=0, reason='') and is never auto-re-enabled.
+	CronDisabledReasonNone = ""
+	// CronDisabledReasonGroupRetired — a group-target job auto-disabled because
+	// retiring the group's members left it with no live recipients. A later
+	// `groups resume` re-enables exactly the jobs carrying this marker.
+	CronDisabledReasonGroupRetired = "group-retired"
+)
+
 // AgentCronJob is a row in agent_cron_jobs. Recurring scheduled
 // task that the agentd scheduler fires on a wall-clock interval.
 type AgentCronJob struct {
@@ -49,6 +63,12 @@ type AgentCronJob struct {
 	Subject         string
 	Body            string
 	Enabled         bool
+	// DisabledReason marks WHY a job is disabled (schema v94): '' for a normal,
+	// human-managed enable/disable, or CronDisabledReasonGroupRetired for a
+	// group-target job tclaude auto-paused when a retire emptied its group. A
+	// group resume re-enables only the auto-paused ones. Unset (and ignored)
+	// for an enabled job.
+	DisabledReason  string
 	CreatedAt       time.Time
 	LastRunAt       time.Time // zero → interval jobs: "never run, due immediately"; expr jobs: due at first match after CreatedAt
 	LastRunStatus   string
@@ -101,7 +121,8 @@ func cronConvToAgent(convID string) (string, error) {
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
-	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role
+	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role,
+	j.disabled_reason
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -245,14 +266,91 @@ func UpdateAgentCronJobLastRun(id int64, when time.Time, status string) error {
 // SetAgentCronJobEnabled flips the enabled flag without touching
 // the last_run_at timestamp (so re-enabling a paused job doesn't
 // immediately fire if it ran recently).
+//
+// It also clears any auto-disabled marker (disabled_reason → ''): an explicit
+// enable/disable is a human-managed decision, so the job stops being a
+// candidate for the group-resume auto-re-enable (JOH-345). A job the human
+// manually re-enabled after an emptying retire therefore won't be silently
+// re-touched, and one the human manually paused stays paused across a resume.
 func SetAgentCronJobEnabled(id int64, enabled bool) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE agent_cron_jobs SET enabled = ? WHERE id = ?`,
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET enabled = ?, disabled_reason = '' WHERE id = ?`,
 		boolToInt(enabled), id)
 	return err
+}
+
+// DisableGroupTargetCronJobsForRetire disables every currently-ENABLED
+// group-target cron job aimed at groupID, stamping disabled_reason =
+// CronDisabledReasonGroupRetired. Called when a retire leaves the group with no
+// live members: its template-seeded rhythms would otherwise fire forever with
+// nobody to receive them. Returns the number of jobs disabled.
+//
+// The `enabled = 1` guard is the crux: a job the human already disabled by hand
+// (enabled=0, disabled_reason='') is left untouched, so a later resume does not
+// silently re-enable it. Only jobs this call paused carry the marker.
+func DisableGroupTargetCronJobsForRetire(groupID int64) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ?
+		 WHERE target_kind = ? AND group_id = ? AND enabled = 1`,
+		CronDisabledReasonGroupRetired, CronTargetGroup, groupID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// ReenableGroupRetiredCronJobs re-enables every group-target cron job for
+// groupID that tclaude auto-disabled on an emptying retire (disabled_reason =
+// CronDisabledReasonGroupRetired), clearing the marker back to ''. Called when a
+// group is resumed. Returns the number of jobs re-enabled.
+//
+// The disabled_reason match is the crux: only jobs THIS mechanism paused are
+// touched — a job the human disabled by hand (disabled_reason='') stays
+// disabled. last_run_at is deliberately left alone (like SetAgentCronJobEnabled),
+// so re-enabling after a long pause does not fire a flood of catch-ups.
+func ReenableGroupRetiredCronJobs(groupID int64) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`UPDATE agent_cron_jobs SET enabled = 1, disabled_reason = ''
+		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?`,
+		CronTargetGroup, groupID, CronDisabledReasonGroupRetired)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// DeleteGroupTargetCronJobs removes every group-target cron job aimed at
+// groupID (including template-seeded rhythms). Used by the task-force
+// stand-down sweep, which — unlike a plain retire — deletes the rhythms rather
+// than disabling them (the group is being wound down, not paused). Conv-target
+// jobs merely routed THROUGH the group are left alone. agent_cron_runs cascade-
+// clean via their job FK. Returns the number of jobs removed. Idempotent.
+func DeleteGroupTargetCronJobs(groupID int64) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`DELETE FROM agent_cron_jobs WHERE target_kind = ? AND group_id = ?`,
+		CronTargetGroup, groupID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // UpdateCronPatch is the partial-update shape for UpdateAgentCronJobFields.
@@ -429,7 +527,8 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
-		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole)
+		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
+		&j.DisabledReason)
 	if err != nil {
 		return nil, err
 	}

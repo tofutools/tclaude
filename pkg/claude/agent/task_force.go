@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -37,6 +38,7 @@ func taskForceCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskForceDeployCmd(),
+			taskForceStandDownCmd(),
 		},
 	}.ToCobra()
 }
@@ -204,6 +206,120 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 		fmt.Fprintf(stderr, "Error: %d of %d agent(s) failed to spawn — see above\n",
 			resp.Failed, resp.Failed+resp.Spawned)
 		return rcIOFailure
+	}
+	return rcOK
+}
+
+// ---- stand-down ----
+
+type taskForceStandDownParams struct {
+	Name       string `pos:"true" help:"Group to stand down (a deployed task force, or any group)."`
+	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default stand-down also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
+	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the force is being stood down (recorded in the audit trail)."`
+	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func taskForceStandDownCmd() *cobra.Command {
+	return boa.CmdT[taskForceStandDownParams]{
+		Use:   "stand-down <group>",
+		Short: "Wind a task force down: retire the roster + sweep its rhythms and pending waves",
+		Long: "The mirror of `deploy`. Retires every member of the group (the bulk parallel of `tclaude agent retire`) " +
+			"and sweeps the deploy-seeded runtime — the template rhythm cron jobs and any pending startup waves — while " +
+			"KEEPING the group row as a dormant record, so the mission, provenance, and process history survive. " +
+			"Deliberately NOT a group delete (`tclaude agent groups rm` does that). By default each member's running pane " +
+			"is soft-exited (sends /exit); pass --no-shutdown to leave them running. The caller's own conversation is " +
+			"always skipped. Standing down a plain group (no template) simply retires its members — there is nothing to " +
+			"sweep. Gated: the human always, group owners of the group, otherwise the `groups.retire` permission.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskForceStandDownParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *taskForceStandDownParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTaskForceStandDown(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.Name) == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	// Spell shutdown out explicitly so the CLI default is independent of the
+	// server-side default (mirrors `groups retire`).
+	q := url.Values{}
+	if p.NoShutdown {
+		q.Set("shutdown", "0")
+	} else {
+		q.Set("shutdown", "1")
+	}
+	if reason := strings.TrimSpace(p.Reason); reason != "" {
+		q.Set("reason", reason)
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/stand-down?" + q.Encode()
+
+	var resp struct {
+		Group   string `json:"group"`
+		Action  string `json:"action"`
+		Members []struct {
+			AgentID string `json:"agent_id,omitempty"`
+			ConvID  string `json:"conv_id"`
+			Title   string `json:"title,omitempty"`
+			Action  string `json:"action"`
+			Detail  string `json:"detail,omitempty"`
+		} `json:"members"`
+		RhythmsRemoved int      `json:"rhythms_removed"`
+		WavesCancelled int      `json:"waves_cancelled"`
+		Warnings       []string `json:"warnings,omitempty"`
+	}
+	opts := DaemonOpts{AskHuman: ask}
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+
+	fmt.Fprintf(stdout, "Task force %q stood down:\n", resp.Group)
+	if len(resp.Members) == 0 {
+		fmt.Fprintf(stdout, "  (no members to retire)\n")
+	} else {
+		tbl := table.New(
+			table.Column{Header: "ID", Width: 12},
+			table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+			table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
+			table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
+		)
+		tbl.SetTerminalWidth(table.GetTerminalWidth())
+		for _, m := range resp.Members {
+			name := m.Title
+			if name == "" {
+				name = "(unnamed)"
+			}
+			tbl.AddRow(table.Row{Cells: []string{
+				shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
+			}})
+		}
+		fmt.Fprintln(stdout, tbl.Render())
+	}
+	fmt.Fprintf(stdout, "Swept: %d rhythm job%s removed, %d pending wave%s cancelled.\n",
+		resp.RhythmsRemoved, plural(resp.RhythmsRemoved),
+		resp.WavesCancelled, plural(resp.WavesCancelled))
+	fmt.Fprintf(stdout, "The group is kept as a dormant record (mission + history preserved). "+
+		"Use `tclaude agent groups rm %s` to delete it entirely.\n", resp.Group)
+	for _, warn := range resp.Warnings {
+		fmt.Fprintf(stdout, "⚠ %s\n", warn)
 	}
 	return rcOK
 }
