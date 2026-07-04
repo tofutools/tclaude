@@ -2,10 +2,11 @@
 //
 // A vertical dock pinned to the right edge of the dashboard listing what
 // you can drop onto a group: your spawn PROFILES, your group TEMPLATES
-// (summoning circles) and your ROLES (classes). This ticket is the panel
-// SHELL only — the cards render as future drag SOURCES (a grip glyph + a
-// grab cursor + data-dock-kind/name hooks) but drag itself lands in the
-// follow-up tickets (2/4 profile-drag, 4/4 template-drag).
+// (summoning circles) and your ROLES (classes). The panel SHELL + card
+// rendering live here; the DRAG behaviour (dragstart/dragover/drop) lives in
+// dock-dnd.js. Profile + role cards are drag sources now (JOH-375 2/4) —
+// drop one onto a group to open the spawn dialog prefilled; template drag
+// lands in 4/4, so those cards stay non-draggable.
 //
 // NB the name: js/palette.js is already taken (the Ctrl/Cmd-K command
 // palette), so this module + its CSS/ids live under the `dock` namespace
@@ -80,8 +81,14 @@ function summaryChips(summary, max = 4) {
 //   items(snap) the item array off the live snapshot
 //   name(item)  the card's display name
 //   chips(item) the card's chip HTML (already escaped)
+//   drag        true → cards are drag SOURCES (draggable, wired by dock-dnd.js)
 //   onManageItem(item)  jump to that item's editor / manager overlay
 //   onManageAll()       jump to the whole-kind manager overlay
+//
+// `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
+// data-dock-kind): profiles + roles drop onto a group to open the spawn dialog
+// prefilled (JOH-375 2/4); templates drop lands in 4/4, so their cards stay
+// non-draggable for now.
 const SECTIONS = [
   {
     key: 'profiles',
@@ -91,6 +98,7 @@ const SECTIONS = [
     items: (snap) => (snap && snap.profiles) || [],
     name: (p) => p.name,
     chips: (p) => summaryChips(profileSummary(p)),
+    drag: true,
     onManageItem: (p) => openProfileEditor(p),
     onManageAll: () => openProfilesManageModal(),
   },
@@ -113,6 +121,7 @@ const SECTIONS = [
     items: (snap) => (snap && snap.roles) || [],
     name: (rl) => rl.name,
     chips: (rl) => summaryChips(roleSummary(rl)),
+    drag: true,
     onManageItem: (rl) => openRoleEditor(rl),
     onManageAll: () => openRolesManageModal(),
   },
@@ -124,17 +133,20 @@ function sectionByKey(key) {
   return SECTIONS.find(s => s.key === key) || null;
 }
 
-// cardHTML renders one draggable-source card: a grip handle, the leading
-// icon, the name, a compact chip row, and a ⚙ manage affordance that jumps
-// to the item's editor. The card carries data-dock-kind / data-dock-name so
-// the follow-up DnD tickets can wire dragstart off these without re-touching
-// this module. draggable is deliberately NOT set yet — this is the panel
-// shell; drag lands in 2/4 and 4/4.
+// cardHTML renders one card: a grip handle, the leading icon, the name, a
+// compact chip row, and a ⚙ manage affordance that jumps to the item's editor.
+// The card carries data-dock-kind / data-dock-name — dock-dnd.js reads them off
+// dragstart. A section flagged `drag` makes its cards drag SOURCES
+// (draggable="true"); the others stay non-draggable (templates land in 4/4).
 function cardHTML(section, item) {
   const name = section.name(item);
   const chips = section.chips(item) || '';
-  return `<div class="dock-card" data-key="${esc(name)}" data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}" title="${esc(name)}">
-    <span class="dock-grip" aria-hidden="true" title="${wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)')}">⠿</span>
+  const draggable = section.drag ? 'true' : 'false';
+  const gripTitle = section.drag
+    ? wizWord('drag onto a group to spawn', 'drag onto a party to summon')
+    : wizWord('drag onto a group (coming soon)', 'drag onto a party (coming soon)');
+  return `<div class="dock-card" draggable="${draggable}" data-key="${esc(name)}" data-dock-kind="${esc(section.key)}" data-dock-name="${esc(name)}" title="${esc(name)}">
+    <span class="dock-grip" aria-hidden="true" title="${gripTitle}">⠿</span>
     <span class="dock-card-icon" aria-hidden="true">${section.icon}</span>
     <span class="dock-card-body">
       <span class="dock-card-name">${esc(name)}</span>
