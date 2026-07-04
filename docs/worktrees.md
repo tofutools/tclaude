@@ -190,7 +190,7 @@ tclaude worktree rm feat/my-feature --delete-branch
 
 ## Interactive Mode
 
-The conversation watch mode (`tclaude conv ls -w`) supports creating worktrees directly:
+The conversation watch mode (`tclaude conv ls -w` or `tclaude conv watch`) supports creating worktrees directly:
 
 | Key | Action                                     |
 |-----|--------------------------------------------|

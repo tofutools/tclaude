@@ -633,6 +633,17 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .pr-link.pr-state-merged  { color: #a371f7; }
 .pr-link.pr-state-closed  { color: #f85149; }
 .pr-link.pr-state-unknown { color: #8b949e; }
+/* Task column: the agent's task-reference link (Linear/GitHub/ticket).
+   Same restrained blue-on-hover treatment as .branch-link. The
+   inert .task-ref (non-http(s), rendered as a span) keeps the label
+   colour without the link affordance. */
+.task-ref {
+  display: inline-block; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
+}
+a.task-link { text-decoration: none; }
+a.task-link:hover { color: #58a6ff; text-decoration: underline; }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */
@@ -6510,16 +6521,25 @@ body.wizard #template-editor-modal .cron-create-modal h3 {
 }
 body.wizard #template-editor-modal .cron-create-label,
 body.wizard #template-editor-modal .template-agents-head { color: #b39ddb; }
-/* Every text input / textarea — the top rows AND the per-familiar rows —
-   goes violet-void. The id out-specifies the .template-agent-row rules. */
+/* Every text/number input + textarea — the top rows AND the per-familiar rows
+   — goes violet-void. input[type=number] carries the per-agent wave field
+   (.ta-wave) and the wave-max-wait field, which the plain skin leaves
+   browser-default; folding it in here keeps them consistent with the text
+   inputs. The id out-specifies the .template-agent-row rules. */
 body.wizard #template-editor-modal input[type=text],
+body.wizard #template-editor-modal input[type=number],
 body.wizard #template-editor-modal textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
 body.wizard #template-editor-modal input[type=text]:focus,
+body.wizard #template-editor-modal input[type=number]:focus,
 body.wizard #template-editor-modal textarea:focus { border-color: #a97bd6; }
+/* Checkboxes (the per-familiar ★ owner box): accent-color is the one lever
+   that recolors a native checkbox cross-browser — arcane purple to match the
+   family's focus accent. */
+body.wizard #template-editor-modal input[type=checkbox] { accent-color: #a97bd6; }
 /* Familiar rows: violet-framed panels; the row number goes arcane purple,
    the owner / permission labels parchment. */
 body.wizard #template-editor-modal .template-agent-row {
@@ -6538,6 +6558,59 @@ body.wizard #template-editor-modal select.tw-sendto {
 }
 body.wizard #template-editor-modal select.tw-sendto:focus { border-color: #a97bd6; }
 body.wizard #template-editor-modal select.tw-sendto option { color: #1a1330; background: #e7d9f5; }
+/* The per-familiar library-reference selects — the role-library dropdown
+   (JOH-351) and the launch-profile picker (JOH-350) — share the send-to
+   select's arcane coat. Their labelled row wrappers (.template-agent-roleref)
+   already read parchment-muted, so only the control itself needs skinning.
+   Options render on the OS layer: dark ink on parchment for legibility, same
+   as tw-sendto. */
+body.wizard #template-editor-modal select.ta-role-ref,
+body.wizard #template-editor-modal select.ta-profile-select {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #template-editor-modal select.ta-role-ref:focus,
+body.wizard #template-editor-modal select.ta-profile-select:focus { border-color: #a97bd6; }
+body.wizard #template-editor-modal select.ta-role-ref option,
+body.wizard #template-editor-modal select.ta-profile-select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #template-editor-modal .template-agent-roleref,
+body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb; }
+/* Launch-profile summary + the pre-cutover legacy-inline notice. The summary
+   variants read muted-parchment (missing = gilt-warning); the legacy notice
+   keeps its amber warning voice but on the violet-panel background so it sits
+   inside the editor rather than on a stray slate card. */
+body.wizard #template-editor-modal .ta-profile-summary { color: #b39ddb; }
+body.wizard #template-editor-modal .ta-profile-summary-missing { color: #d9b45a; }
+body.wizard #template-editor-modal .ta-profile-summary-empty { color: #9d86c9; }
+body.wizard #template-editor-modal .ta-legacy-note {
+  background: #241b3d; border-color: #d9b45a; color: #f0d9a0;
+}
+/* Role-inspect panel (JOH-351, deferred to this sweep): the "what does this
+   role carry?" preview under the role dropdown. Keep its structure; recolor
+   the void, chips, permission slugs, brief and footer to read arcane inside
+   the violet editor. The slugs drop their green library palette for a gilt-on-
+   violet coat so they don't clash with the family. */
+body.wizard #template-editor-modal .role-inspect {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #template-editor-modal .role-inspect-missing { color: #d9b45a; }
+body.wizard #template-editor-modal .role-inspect-descr { color: #c9b6e6; }
+body.wizard #template-editor-modal .role-inspect-key { color: #b39ddb; }
+body.wizard #template-editor-modal .role-inspect-muted { color: #9d86c9; }
+body.wizard #template-editor-modal .role-inspect-chip {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #template-editor-modal .role-inspect-chip b { color: #b39ddb; }
+body.wizard #template-editor-modal .role-inspect-slug {
+  background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
+}
+body.wizard #template-editor-modal .role-inspect-brief > summary { color: #c9b6e6; }
+body.wizard #template-editor-modal .role-inspect-brief > summary:hover { color: #f3e6c0; }
+body.wizard #template-editor-modal .role-inspect-brieftext {
+  background: #1b1338; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #template-editor-modal .role-inspect-foot {
+  color: #9d86c9; border-top-color: rgba(122, 93, 176, 0.4);
+}
 /* Secondary + inline buttons (+ add familiar / ✕ remove / Cancel): the
    tarnished-gold treatment; :not(#template-editor-submit) keeps the Seal
    lever below out of this rule's reach. */
@@ -6941,6 +7014,193 @@ body.wizard #group-import-modal #group-import-submit:hover:not(:disabled) {
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 body.wizard #group-import-modal #group-import-submit:disabled { opacity: 0.55; }
+
+/* ─── Wizard template-import dialog — "📜 Read a scroll into a circle" ───
+   The templates-family import dialog (JOH-349 sweep): a .cron-create-modal
+   sibling of group-import that carried the wizard word-swaps but no skin, so
+   in wizard mode it read wizard vocab on plain dark chrome. Mirrors the
+   group-import block — file picker + text + paste textarea + the overwrite
+   checkbox — scoped to #template-import-modal. */
+body.wizard #template-import-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-import-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-import-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-import-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+/* All inputs — the file picker, the "import as" text field and the paste
+   textarea — go violet-void. */
+body.wizard #template-import-modal .cron-create-row input,
+body.wizard #template-import-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-import-modal .cron-create-row input:focus,
+body.wizard #template-import-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+/* The overwrite checkbox: arcane-purple accent to match the family. */
+body.wizard #template-import-modal .cron-create-row input[type=checkbox] { accent-color: #a97bd6; }
+/* The file picker's Choose-file chip is a pseudo-element with its own chrome. */
+body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-import-modal .cron-create-row input[type=file]::file-selector-button:hover { background: #3a2a63; }
+body.wizard #template-import-modal button:not(#template-import-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-import-modal button:not(#template-import-submit):hover { background: #3a2a63; }
+body.wizard #template-import-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* The gilded lever chrome, honest "Import" label kept. */
+body.wizard #template-import-modal #template-import-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+body.wizard #template-import-modal #template-import-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-import-modal #template-import-submit:disabled { opacity: 0.55; }
+
+/* ─── Wizard role library overlay — "Class library" ────────────────────
+   The roles-manage overlay (JOH-349 sweep): a .manage-overlay / .manage-modal
+   twin of the templates-manage overlay that carried the roles-word swaps but
+   never got a skin, so wizard mode rendered "Class library" vocab on plain
+   dark chrome. Mirrors the templates-manage block, scoped to
+   #roles-manage-modal; role cards are .template-card.role-card so they inherit
+   the card chrome, with .tc-sub (the role's descr line) folded in. */
+body.wizard #roles-manage-modal .manage-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #roles-manage-modal .manage-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #roles-manage-modal .manage-intro { color: #b39ddb; }
+body.wizard #roles-manage-modal .filter-bar input {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #roles-manage-modal .filter-bar input:focus { border-color: #a97bd6; }
+body.wizard #roles-manage-modal .filter-bar .filter-count { color: #b39ddb; }
+body.wizard #roles-manage-modal .filter-bar button.clear-filter { color: #b39ddb; }
+body.wizard #roles-manage-modal .filter-bar button.clear-filter:hover { color: #f3e6c0; }
+/* "+ new class": the gilded-arcane primary — the profiles/templates overlay's
+   "+ new" twin. */
+body.wizard #roles-manage-modal #role-create-open.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
+  box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
+}
+body.wizard #roles-manage-modal #role-create-open.primary:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #f3e6c0;
+  box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
+}
+/* Class cards: violet-framed void, gilt name, violet meta + descr. */
+body.wizard #roles-manage-modal .template-card {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #roles-manage-modal .template-card .tc-name { color: #f3e6c0; }
+body.wizard #roles-manage-modal .template-card .tc-descr,
+body.wizard #roles-manage-modal .template-card .tc-sub { color: #b39ddb; }
+body.wizard #roles-manage-modal .template-card .tc-actions button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #roles-manage-modal .template-card .tc-actions button:hover { background: #3a2a63; }
+body.wizard #roles-manage-modal .template-empty { color: #b39ddb; }
+/* Close (and any other non-primary footer button): tarnished-gold secondary. */
+body.wizard #roles-manage-modal .modal-buttons button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #roles-manage-modal .modal-buttons button:hover { background: #3a2a63; }
+
+/* ─── Wizard role editor — "Chalk a new class" ─────────────────────────
+   The role-editor dialog (JOH-349 sweep). Its inner div carries the
+   .template-editor-modal CLASS (not the id), so the editor re-skin above never
+   reaches it — this block scopes to #role-editor-modal by id, the same
+   id-only discipline the profile editor follows. The .ta-perms-list is the
+   shared permission-checkbox list JOH-350 deliberately kept for modal-roles;
+   it is skinned here via body.wizard scoping only — the plain-mode base rules
+   are untouched. All of Name / Descr / model-codex are text inputs; Harness /
+   Model / Effort / Sandbox / Permission-mode / Spawn-profile are selects. */
+body.wizard #role-editor-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #role-editor-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #role-editor-modal .cron-create-label { color: #b39ddb; }
+body.wizard #role-editor-modal .cron-create-row input[type=text],
+body.wizard #role-editor-modal .cron-create-row select,
+body.wizard #role-editor-modal .cron-create-row textarea {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #role-editor-modal .cron-create-row input[type=text]:focus,
+body.wizard #role-editor-modal .cron-create-row select:focus,
+body.wizard #role-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
+/* Open <select> options render on the OS layer — dark ink on parchment. */
+body.wizard #role-editor-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
+/* The shared permission-checkbox list (.ta-perms-list): parchment labels,
+   arcane-purple checkbox accents — skinned via body.wizard scope, plain-mode
+   base rules left intact. */
+body.wizard #role-editor-modal .ta-perms-list label { color: #e7d9f5; }
+body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }
+/* Secondary + inline buttons (Cancel): tarnished-gold; the exclusion keeps the
+   Save lever below out of reach. */
+body.wizard #role-editor-modal button:not(#role-editor-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #role-editor-modal button:not(#role-editor-submit):hover { background: #3a2a63; }
+body.wizard #role-editor-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Save role = the gilded conjuring lever, honest "Save role" label kept. */
+body.wizard #role-editor-modal #role-editor-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+body.wizard #role-editor-modal #role-editor-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
 
 /* ─── Wizard standing-orders dialog — "📜 The party's standing orders" ──
    The group startup-context editor: the shared guidance every familiar

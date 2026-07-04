@@ -58,19 +58,6 @@ func serveCmd() *cobra.Command {
 var popupBaseURL string
 
 func runServe(p *serveParams) error {
-	// Open (and, if needed, migrate) the SQLite DB up front — before the
-	// socket, the dashboard/approval-popup listener, the auto-launched
-	// browser, and every background goroutine. The daemon owns the DB and
-	// every one of those depends on it, so a failed schema migration must
-	// fail the whole startup here, loudly, rather than after we have brought
-	// listeners up on a half-migrated store. Migrations run lazily inside the
-	// first Open(); installing a reporter first surfaces their progress (and
-	// which one failed) on the operator's terminal. CLI commands install no
-	// reporter, so they migrate silently — this output is agentd-only.
-	if err := openDatabaseReportingMigrations(); err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-
 	sockPath := p.Socket
 	if sockPath == "" {
 		sockPath = SocketPath()
@@ -96,6 +83,20 @@ func runServe(p *serveParams) error {
 		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove stale socket: %w", err)
 		}
+	}
+
+	// Open (and, if needed, migrate) the SQLite DB now — AFTER rejecting an
+	// already-running daemon above (so a second `agentd serve` never migrates a
+	// DB the live daemon is using, then aborts), but BEFORE net.Listen and
+	// every listener/dashboard/goroutine below. The daemon owns the DB and all
+	// of those depend on it, so a failed schema migration must fail startup
+	// here, loudly, before anything comes up on a half-migrated store.
+	// Migrations run lazily inside the first Open(); installing a reporter
+	// first surfaces their progress (and which one failed) on the operator's
+	// terminal. CLI commands install no reporter, so they migrate silently —
+	// this output is agentd-only.
+	if err := openDatabaseReportingMigrations(); err != nil {
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	ln, err := net.Listen("unix", sockPath)
@@ -560,6 +561,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
 	mux.HandleFunc("/v1/whoami/dir", handleWhoamiDir)
+	mux.HandleFunc("/v1/whoami/task", handleWhoamiTask)
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)

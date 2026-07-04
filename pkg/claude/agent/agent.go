@@ -18,6 +18,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			whoamiCmd(),
 			renameCmd(),
+			taskCmd(),
 			compactCmd(),
 			remoteControlCmd(),
 			reincarnateCmd(),

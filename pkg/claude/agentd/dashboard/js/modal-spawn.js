@@ -633,6 +633,7 @@ function clearSpawnProfileFields() {
   $('#agent-spawn-name').value = '';
   $('#agent-spawn-role').value = '';
   $('#agent-spawn-descr').value = '';
+  $('#agent-spawn-task').value = '';
   $('#agent-spawn-init-msg').value = '';
   $('#agent-spawn-model').value = '';
   $('#agent-spawn-model-codex').value = '';
@@ -1031,6 +1032,7 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-name').value = '';
   $('#agent-spawn-role').value = '';
   $('#agent-spawn-descr').value = '';
+  $('#agent-spawn-task').value = '';
   $('#agent-spawn-init-msg').value = '';
   $('#agent-spawn-model').value = '';
   $('#agent-spawn-model-codex').value = '';
@@ -1243,6 +1245,10 @@ async function submitAgentSpawn() {
     if (attachmentPaths.length) body.attachments = attachmentPaths;
     if (effort) body.effort = effort;
     if (model) body.model = model;
+    // Optional task-reference link (Task column). Sent only when set; the
+    // daemon scheme-validates it (http(s)) and 400s a bad URL.
+    const taskURL = $('#agent-spawn-task').value.trim();
+    if (taskURL) body.task_ref_url = taskURL;
     // Send the harness only when it's not the default (Claude Code), so a
     // plain CC spawn body is unchanged; the daemon treats an omitted
     // harness as the default. Send the sandbox only for a harness that

@@ -96,6 +96,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentDir(w, r, convID)
 	case "context":
 		handleAgentContext(w, r, convID)
+	case "task":
+		handleAgentTask(w, r, convID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

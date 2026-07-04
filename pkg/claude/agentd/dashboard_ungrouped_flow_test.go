@@ -103,6 +103,8 @@ type dashMember struct {
 	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
 	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
 	BranchPRState   string    `json:"branch_pr_state,omitempty"`
+	TaskURL         string    `json:"task_ref_url,omitempty"`
+	TaskLabel       string    `json:"task_ref_label,omitempty"`
 	Online          bool      `json:"online"`
 	Notify          string    `json:"notify,omitempty"`
 	NotifyEffective bool      `json:"notify_effective"`
