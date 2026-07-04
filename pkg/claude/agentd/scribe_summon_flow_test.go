@@ -273,6 +273,34 @@ func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
 	assert.Equal(t, wantCwd, sessions2[0].Cwd, "reuse keeps the same stable workdir")
 }
 
+// Scenario: trust-seeding is best-effort. A malformed ~/.claude.json (which
+// makes the CC trust editor refuse) must NOT fail the summon — the scribe
+// still spawns (worst case it sees a one-time trust dialog), and the daemon
+// leaves the broken config untouched rather than corrupting it further.
+func TestScribeSummon_ProceedsWhenClaudeConfigMalformed(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+	const garbage = "{ this is not valid json ][" // parse fails → editor refuses
+	require.NoError(t, os.WriteFile(claudeJSON, []byte(garbage), 0o600))
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name":  "circle-scribe",
+			"slugs": []string{agentd.PermTemplatesManage},
+			"brief": "Edit summoning circles.",
+		})))
+	require.Equalf(t, http.StatusOK, rec.Code, "summon must succeed despite a malformed CC config; body=%s", rec.Body.String())
+	resp := decodeScribeResp(t, rec)
+	require.NotEmpty(t, resp.ConvID, "the scribe still spawned")
+
+	// The daemon did not touch the broken file (best-effort skip, not a rewrite).
+	after, err := os.ReadFile(claudeJSON)
+	require.NoError(t, err)
+	assert.Equal(t, garbage, string(after), "a malformed CC config is left untouched, not corrupted further")
+}
+
 // claudeDirTrusted reports whether ~/.claude.json marks dir as
 // hasTrustDialogAccepted=true — the surface Claude Code reads at startup.
 func claudeDirTrusted(t *testing.T, claudeJSONPath, dir string) bool {

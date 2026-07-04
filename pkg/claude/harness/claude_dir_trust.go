@@ -34,9 +34,9 @@ import (
 // operator — its entry sat at hasTrustDialogAccepted=false); ordinary project
 // dirs sit at false without re-prompting. So moving the scribe out of $HOME is
 // the load-bearing fix and this pre-seed is belt-and-braces toward zero
-// prompts — hence it is deliberately best-effort (a failure logs and the
-// summon proceeds; the worst case is a single one-time dialog the human can
-// clear via the pane's focus button).
+// prompts — hence it is deliberately best-effort: a seed FAILURE (unreadable /
+// malformed / wrong-shape config) logs and the summon proceeds, worst case a
+// single one-time dialog the human clears via the pane's focus button.
 //
 // Unlike the surgical line-splice the Codex TOML editor uses, ~/.claude.json
 // is a large JSON state file Claude Code owns and rewrites wholesale on nearly
@@ -55,10 +55,14 @@ import (
 //     rewritten.
 //   - Atomic: temp file in the same dir, fsync'd, renamed over the original
 //     (shared atomicWriteFile), so a reader (or a crash mid-write) never sees
-//     a partial config. A concurrent Claude Code write remains a last-writer-
-//     wins race (inherent to any external editor of this Claude-owned file);
-//     acceptable for a rare human-initiated summon and, being best-effort,
-//     degrades to at most one trust dialog.
+//     a partial config. On the rare summon that actually WRITES, the edit is
+//     last-writer-wins against any concurrent Claude Code write in the
+//     read→marshal→rename window: our rename would revert whatever CC wrote in
+//     that window (a tip flag, a history entry — CC-owned churn, never our
+//     trust bit). Bounded and accepted: the idempotent no-op means a dir stays
+//     write-free after its first-ever seed, so this is a one-time event on a
+//     rare human action, and CC exposes no lock to coordinate on. Inherent to
+//     any external editor of this Claude-owned file.
 //   - Fail-safe: a config whose `projects` (or the target entry) is bound to a
 //     non-object is refused rather than corrupted.
 

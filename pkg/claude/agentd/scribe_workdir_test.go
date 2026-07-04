@@ -79,3 +79,20 @@ func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {
 	assert.Contains(t, string(codexData), `[projects."`+scribeDir+`"]`)
 	assert.Contains(t, string(codexData), `trust_level = "trusted"`)
 }
+
+// An unrecognized harness (or one added later without a seeding path) must
+// touch NEITHER harness's trust store — it logs and skips.
+func TestSeedScribeDirTrust_UnknownHarnessSeedsNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	scribeDir := filepath.Join(home, ".tclaude", "scribe")
+	require.NoError(t, os.MkdirAll(scribeDir, 0o700))
+
+	seedScribeDirTrust("some-future-harness", scribeDir)
+
+	_, err := os.Stat(filepath.Join(home, ".claude.json"))
+	assert.True(t, os.IsNotExist(err), "unknown harness must not create the claude trust store")
+	_, err = os.Stat(filepath.Join(home, ".codex", "config.toml"))
+	assert.True(t, os.IsNotExist(err), "unknown harness must not create the codex trust store")
+}
