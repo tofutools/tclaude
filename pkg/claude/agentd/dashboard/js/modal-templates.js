@@ -1515,6 +1515,21 @@ function bindTemplatesUI() {
   $('#template-duplicate-cancel').addEventListener('click', closeDuplicateModal);
   $('#template-duplicate-submit').addEventListener('click', submitDuplicate);
   bindBackdropDiscard('template-duplicate-modal', closeDuplicateModal);
+  // Keyboard submit: Ctrl/Cmd+Enter from anywhere in the dialog, and plain
+  // Enter while the name input is focused — it is a single-line field with no
+  // newlines possible, so Enter is unambiguously "submit" (like a browser
+  // prompt). A modal-scoped listener fires only while focus is inside, so no
+  // document-level capture / stacking handling is needed. Guard on the submit
+  // button's disabled state so a held/repeated Enter can't fire a second POST
+  // while the first is in flight (a double-create would 409 and confusingly
+  // read as "name taken").
+  $('#template-duplicate-modal').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if ($('#template-duplicate-submit').disabled) return;
+    const modifier = e.ctrlKey || e.metaKey;
+    const onNameInput = e.target === $('#template-duplicate-name');
+    if (modifier || onNameInput) { e.preventDefault(); submitDuplicate(); }
+  });
 
   // Import modal (⤒ import in the toolbar).
   $('#template-import-open').addEventListener('click', openTemplateImportModal);
