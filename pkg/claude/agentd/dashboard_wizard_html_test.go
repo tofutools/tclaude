@@ -1412,9 +1412,13 @@ func TestDashboardHTML_WizardTemplateEditor(t *testing.T) {
 	must("body.wizard #template-editor-modal #template-editor-submit", "the submit re-skin is scoped to the editor modal")
 }
 
-// TestDashboardHTML_WizardTemplateInstantiate pins the wizard re-skin of the
-// instantiate-from-template dialog ("🕯 Cast a summoning circle").
-func TestDashboardHTML_WizardTemplateInstantiate(t *testing.T) {
+// TestDashboardHTML_WizardTemplateDeploy pins the wizard re-skin of the unified
+// summon/deploy dialog ("🧙 Summon a hero party"). JOH-373 folded the retired
+// cast/instantiate dialog into this one, so this is the sole activation dialog —
+// and the ANTI-pin below guards that the cast dialog's wizard skin was fully
+// removed with it (a stray #template-instantiate-modal re-skin rule would be
+// dead CSS scoping a modal that no longer exists).
+func TestDashboardHTML_WizardTemplateDeploy(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -1422,12 +1426,17 @@ func TestDashboardHTML_WizardTemplateInstantiate(t *testing.T) {
 		}
 	}
 
-	must("body.wizard #template-instantiate-modal .cron-create-modal", "the cast dialog surface is re-skinned")
-	must(`<span class="tpl-word-regular">New group from template</span><span class="tpl-word-wizard">🕯 Cast a summoning circle</span>`, "the title ships both voices")
-	must(`content: "🕯 Cast it!"`, "the submit lever reads Cast it in wizard mode")
-	must(`content: "🕯 Casting…"`, "the busy submit reads Casting in wizard mode")
-	must("body.wizard #template-instantiate-modal #template-instantiate-submit", "the submit re-skin is scoped to the instantiate modal")
-	must("body.wizard #template-instantiate-modal .template-preview", "the final-names preview is re-skinned")
+	must("body.wizard #template-deploy-modal .cron-create-modal", "the summon dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">Deploy a task force</span><span class="tpl-word-wizard">🧙 Summon a hero party</span>`, "the title ships both voices")
+	must(`content: "🧙 Summon the hero party!"`, "the submit lever reads Summon in wizard mode")
+	must(`content: "🧙 Summoning…"`, "the busy submit reads Summoning in wizard mode")
+	must("body.wizard #template-deploy-modal #template-deploy-submit", "the submit re-skin is scoped to the summon modal")
+	must("body.wizard #template-deploy-modal .template-preview", "the final-names preview is re-skinned")
+
+	// The folded-in cast dialog's wizard skin is fully gone (JOH-373).
+	if strings.Contains(dashboardAssets, "#template-instantiate-modal") {
+		t.Error("dashboard still contains a #template-instantiate-modal rule — the cast dialog was folded into the unified summon dialog (JOH-373); remove its dead wizard skin + :is() list entries")
+	}
 }
 
 // TestDashboardHTML_WizardTemplateFromGroup pins the wizard re-skin of the

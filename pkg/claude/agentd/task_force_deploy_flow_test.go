@@ -205,19 +205,52 @@ func TestTaskForceDeploy_ExplicitTakenGroupNameConflicts(t *testing.T) {
 	assert.Equalf(t, http.StatusConflict, rec.Code, "explicit taken name should 409; body=%s", rec.Body.String())
 }
 
-// Scenario: deploy with no mission is a 400 — the mission is the whole point.
-func TestTaskForceDeploy_MissingMissionRejected(t *testing.T) {
+// Scenario: deploy with NEITHER a mission nor a group_name is a 400 — a blank
+// mission is allowed (a mission-less "cast", JOH-373), but then there is
+// nothing to name the group after, so one of the two is required.
+func TestTaskForceDeploy_MissingMissionAndGroupRejected(t *testing.T) {
 	f := newFlow(t)
 
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
 		map[string]any{"name": "crew", "agents": []templateAgentSpec{{Name: "lead"}}}).Code, "create template")
 
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/deploy",
-		map[string]any{"group_name": "g1"})
-	assert.Equalf(t, http.StatusBadRequest, rec.Code, "missing mission should 400; body=%s", rec.Body.String())
+		map[string]any{})
+	assert.Equalf(t, http.StatusBadRequest, rec.Code, "missing mission AND group should 400; body=%s", rec.Body.String())
+}
 
-	// Nothing was created.
-	g, err := db.GetAgentGroupByName("g1")
+// Scenario: deploy with a group_name but a BLANK mission is a valid mission-less
+// "cast" (JOH-373 folded the retired instantiate/cast dialog into deploy): the
+// group is created and the team spawns, but no mission is stored, the response
+// is NOT framed as a deployed force, and no "## Mission" block is composed.
+func TestTaskForceDeploy_MissionlessCastCreatesGroup(t *testing.T) {
+	f := newFlow(t)
+
+	const boilerplate = "HOUSE-RULES: worktrees + PRs."
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name":            "crew",
+			"default_context": boilerplate,
+			"agents":          []templateAgentSpec{{Name: "lead"}},
+		}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/deploy",
+		map[string]any{"group_name": "just-a-team"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "mission-less cast should 201; body=%s", rec.Body.String())
+
+	var res deployResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, "just-a-team", res.Group)
+	assert.False(t, res.Deployed, "a mission-less cast is NOT framed as a deployed force")
+	assert.Empty(t, res.Mission, "no mission echoed back")
+	assert.Equal(t, 1, res.Spawned, "the team still spawns")
+	agentd.WaitForBackgroundForTest()
+
+	g, err := db.GetAgentGroupByName("just-a-team")
 	require.NoError(t, err)
-	assert.Nil(t, g, "no group created for a rejected deploy")
+	require.NotNil(t, g, "the group is created for a mission-less cast")
+	assert.Empty(t, g.Mission, "no mission stored on the group row")
+	assert.Equal(t, "crew", g.SourceTemplate, "source template is still recorded")
+	assert.NotContains(t, g.DefaultContext, "## Mission", "no mission block with a blank mission")
+	assert.Equal(t, boilerplate, g.DefaultContext, "context is just the template boilerplate")
 }

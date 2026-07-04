@@ -1959,7 +1959,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 // handleTemplateDeploy is the first-class "deploy a task force against a
 // mission" verb (JOH-245): a thin wrapper over the shared runInstantiation
 // core. Gated on templates.instantiate (deploy IS instantiate). Body:
-// { mission, group_name?, cwd?, descr? }.
+// { mission?, group_name?, cwd?, descr? }.
 //
 // mission is the team's assignment — free text or a Linear epic/issue link
 // — and renders into the composed context under "## Mission" (instantiate's
@@ -1968,6 +1968,16 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 // validated and 409s on a taken name, exactly like instantiate. The chosen
 // mission + source template are recorded on the group row so the dashboard
 // can show the group as a deployed force.
+//
+// Mission is OPTIONAL (JOH-373). The unified summon dialog folded the retired
+// "instantiate/cast" verb — which created a mission-less group from a name +
+// optional task — into this one endpoint, so a blank mission is now a valid
+// "just create the team" deploy: no mission is stored, the group is NOT framed
+// as a deployed force (deployed=false), and no "## Mission" block is composed
+// (composeInstantiationContext drops an empty assignment). A group name can't
+// be derived from a blank mission, so one of {mission, group_name} is required.
+// Existing callers always send a mission and are unaffected; the /instantiate
+// wire endpoint is kept untouched for CLI/back-compat.
 //
 // Scope-out (stated in the PR): tclaude carries no Linear credentials, so a
 // Linear-link mission is stored/rendered verbatim — no title pull. The
@@ -2000,16 +2010,18 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mission := strings.TrimSpace(body.Mission)
-	if mission == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "mission is required (the topic / problem / epic to deploy against)")
+	groupName := strings.TrimSpace(body.GroupName)
+	// A blank mission is a mission-less "cast" (JOH-373) — allowed, but then
+	// there is nothing to derive a group name from, so require an explicit one.
+	if mission == "" && groupName == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "provide a mission or a group name (a mission-less deploy needs a group name to create the team under)")
 		return
 	}
 
-	groupName := strings.TrimSpace(body.GroupName)
 	if groupName == "" {
-		// Derive a sensible group name from the mission, uniquified against
-		// existing groups. deriveGroupNameFromMission returns an already-valid,
-		// already-free name.
+		// Derive a sensible group name from the (non-empty) mission, uniquified
+		// against existing groups. deriveGroupNameFromMission returns an
+		// already-valid, already-free name.
 		groupName = deriveGroupNameFromMission(mission, tmpl.Name)
 	} else {
 		if err := validateGroupName(groupName); err != nil {
@@ -2037,7 +2049,13 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
-		descr = "Task force deployed from template " + tmpl.Name
+		// A mission-less cast reads as "instantiated", a real deploy as
+		// "deployed" — mirror the wording each retired verb used.
+		if mission == "" {
+			descr = "Instantiated from template " + tmpl.Name
+		} else {
+			descr = "Task force deployed from template " + tmpl.Name
+		}
 	}
 	runInstantiation(w, instantiateSpec{
 		tmpl:           tmpl,
@@ -2049,7 +2067,9 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		descr:          descr,
 		mission:        mission,
 		sourceTemplate: tmpl.Name,
-		deployed:       true,
+		// Only frame as a deployed force when there IS a mission; a mission-less
+		// cast records source_template but no mission and no "deployed" response.
+		deployed: mission != "",
 	})
 }
 

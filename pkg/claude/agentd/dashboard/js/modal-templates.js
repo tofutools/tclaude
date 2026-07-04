@@ -244,8 +244,7 @@ function templateCardHTML(t) {
       ${(t.rhythms || []).length ? `<span class="tc-count" title="${wizWord('rhythms — recurring nudges materialized as group cron jobs at deploy', 'drumbeats — recurring nudges cast as group cron jobs when the party is summoned')}">🥁 ${(t.rhythms || []).length} ${wizWord('rhythm', 'drumbeat')}${(t.rhythms || []).length === 1 ? '' : 's'}</span>` : ''}
       ${templateWaveCount(t) > 1 ? `<span class="tc-count" title="${wizWord('staged spawn — agents span multiple waves; higher waves spawn once the prior wave settles', 'marching order — the party musters in waves, each after the last has drawn breath')}">🌊 ${templateWaveCount(t)} ${wizWord('waves', 'ranks')}</span>` : ''}
       <span class="tc-actions">
-        <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
-        <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
+        <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Summon a team from this template — state a mission to deploy against, or leave it blank to just create the group', 'Summon a hero party from this circle — name a quest to send them on, or leave it blank to just gather the party')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
         <button class="tool" data-tact="duplicate" data-template="${esc(t.name)}" title="${wizWord('Make a full copy of this template under a new name', 'Mirror this circle — chalk an identical copy under a new name')}">${wizWord('⧉ duplicate', '🪞 mirror')}</button>
         <button class="tool" data-tact="export" data-template="${esc(t.name)}" title="${wizWord('Download this template as a portable .task-force.json file to share or re-import', 'Inscribe this circle onto a scroll — a portable .task-force.json to carry or copy')}">${wizWord('⇪ export', '📜 inscribe')}</button>
@@ -832,106 +831,18 @@ async function deleteTemplate(name) {
   }
 }
 
-// ---- Instantiate-from-template modal ----------------------------------
-
-function openInstantiateModal(presetName) {
-  const templates = (lastSnapshot && lastSnapshot.templates) || [];
-  if (!templates.length) {
-    toast(wizWord(
-      'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
-      'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
-    return;
-  }
-  const sel = $('#template-instantiate-template');
-  sel.innerHTML = templates.map(t =>
-    `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
-  if (presetName && templates.some(t => t.name === presetName)) sel.value = presetName;
-  $('#template-instantiate-group').value = '';
-  $('#template-instantiate-task').value = '';
-  $('#template-instantiate-cwd').value = '';
-  $('#template-instantiate-error').textContent = '';
-  renderInstantiatePreview();
-  $('#template-instantiate-modal').classList.add('show');
-  setTimeout(() => $('#template-instantiate-group').focus(), 0);
-}
-
-function closeInstantiateModal() { $('#template-instantiate-modal').classList.remove('show'); }
-
-// renderInstantiatePreview paints the live "final agent names" list as
-// the human types the group name — agent "PO" shows as "<group>-PO".
-function renderInstantiatePreview() {
-  const t = templatesByName()[$('#template-instantiate-template').value];
-  $('#template-instantiate-preview').innerHTML =
-    templateRosterRowsHTML(t, $('#template-instantiate-group').value);
-}
-
-async function submitInstantiate() {
-  const tmplName = $('#template-instantiate-template').value;
-  const groupName = $('#template-instantiate-group').value.trim();
-  const errEl = $('#template-instantiate-error');
-  errEl.textContent = '';
-  if (!tmplName) { errEl.textContent = 'pick a template'; return; }
-  if (!groupName) { errEl.textContent = 'group name is required'; return; }
-  const payload = {
-    group_name: groupName,
-    task: $('#template-instantiate-task').value,
-    cwd: $('#template-instantiate-cwd').value.trim(),
-  };
-  const btn = $('#template-instantiate-submit');
-  btn.disabled = true;
-  btn.textContent = 'Spawning…';
-  try {
-    const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const txt = await r.text();
-    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
-    let resp = {};
-    try { resp = JSON.parse(txt); } catch (_) {}
-    closeInstantiateModal();
-    // Instantiate can be launched from inside the Templates… overlay (a
-    // card's ⎘ instantiate) — close it too so the Groups tab we jump to
-    // below isn't hidden behind the panel. No-op when launched from the
-    // cog's standalone "from template" shortcut.
-    closeTemplatesManageModal();
-    const failed = resp.failed || 0;
-    toast(failed
-      ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
-      : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
-      failed > 0);
-    // Work-pattern outcome gets its own toast — a silently-skipped
-    // kick-off briefing must not hide behind a happy spawn count.
-    const perrs = resp.pattern_errors || [];
-    if (perrs.length) {
-      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
-    } else if (resp.pattern_delivered) {
-      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
-    }
-    try { dashPrefs.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
-    recordGroupInteraction(groupName);
-    // Jump to the Groups tab so the freshly-spawned group is visible.
-    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
-    if (gbtn) gbtn.click();
-    refresh();
-  } catch (err) {
-    errEl.textContent = (err && err.message) || String(err);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Create & spawn';
-  }
-}
-
-// ---- Deploy-a-task-force modal (JOH-245) ------------------------------
+// ---- Unified summon / deploy modal (JOH-245, JOH-373) -----------------
 //
-// Deploy is instantiate's mission-framed twin: pick a template, state the
-// mission (free text or a Linear link), optionally name the group / pick a
-// cwd / land the force in a worktree. The group name is prefilled with a
-// slug of the mission (matching the server's derivation) until the human
-// edits it. Worktree resolution reuses POST /api/worktrees (the spawn
-// modal's endpoint), turning a branch + cwd into a worktree path that
-// becomes the deploy cwd.
+// The single activation dialog for a template card: pick a template, optionally
+// state a mission (free text or a Linear link), optionally name the group / pick
+// a cwd / land the force in a worktree. It folds in the retired "instantiate /
+// cast" dialog (JOH-373) — a mission-less summon (blank mission + a group name)
+// just creates the team, exactly as cast did — so the mission is OPTIONAL; the
+// server (POST …/deploy) accepts an empty mission and only frames the group as a
+// deployed force when a mission was given. The group name is prefilled with a
+// slug of the mission (matching the server's derivation) until the human edits
+// it. Worktree resolution reuses POST /api/worktrees (the spawn modal's
+// endpoint), turning a branch + cwd into a worktree path that becomes the cwd.
 
 // deployGroupEdited tracks whether the human has typed in the group field —
 // once they have, the mission→group-name auto-prefill stops overwriting it.
@@ -1030,7 +941,12 @@ async function submitDeploy() {
   const errEl = $('#template-deploy-error');
   errEl.textContent = '';
   if (!tmplName) { errEl.textContent = 'pick a template'; return; }
-  if (!mission) { errEl.textContent = 'a mission is required'; return; }
+  // Mission is optional now (JOH-373): a blank mission is a plain "cast" that
+  // just creates the team. But then there is nothing to derive a group name
+  // from, so require one of the two. In practice the group field auto-prefills
+  // from the mission (or the template name), so this only trips when the human
+  // clears both by hand.
+  if (!mission && !groupName) { errEl.textContent = 'enter a mission, or a group name to summon the team under'; return; }
   const btn = $('#template-deploy-submit');
   btn.disabled = true;
   btn.textContent = 'Deploying…';
@@ -1057,14 +973,19 @@ async function submitDeploy() {
     closeTemplatesManageModal();
     const failed = resp.failed || 0;
     // Plain mode: "task force … deployed against <mission>"; wizard mode: the
-    // hero party is summoned against its quest.
+    // hero party is summoned against its quest. A mission-less cast has no quest
+    // to name, so it reads like the retired instantiate toast (JOH-373).
     toast(failed
       ? wizWord(
         `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`,
         `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`)
-      : wizWord(
-        `task force ${finalGroup} deployed against “${oneLineMission(mission)}” — ${resp.spawned || 0} spawned`,
-        `🧙 hero party ${finalGroup} summoned against its quest — ${resp.spawned || 0} familiars answer the call`),
+      : mission
+        ? wizWord(
+          `task force ${finalGroup} deployed against “${oneLineMission(mission)}” — ${resp.spawned || 0} spawned`,
+          `🧙 hero party ${finalGroup} summoned against its quest — ${resp.spawned || 0} familiars answer the call`)
+        : wizWord(
+          `group ${finalGroup}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
+          `🧙 hero party ${finalGroup} summoned — ${resp.spawned || 0} familiars answer the call`),
       failed > 0);
     const perrs = resp.pattern_errors || [];
     if (perrs.length) {
@@ -1509,7 +1430,7 @@ function wireTemplateCwdBrowse(btnId, inputId, errId, title) {
 function bindTemplatesUI() {
   // Entry points: the Groups cog's "⧉ templates…" management overlay, its
   // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
-  // "⎘ from template" instantiate shortcut.
+  // "⎘ from template" shortcut (which opens the Form-a-party dialog, see below).
   $('#templates-manage-open').addEventListener('click', openTemplatesManageModal);
   $('#templates-manage-close').addEventListener('click', closeTemplatesManageModal);
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
@@ -1521,8 +1442,9 @@ function bindTemplatesUI() {
   // The cog's standalone "⎘ from template" shortcut now opens the "Form a party"
   // dialog with the circle preselected (JOH-356 — one obvious create-a-group
   // surface), so it is bound in bindGroupCreateModal (modal-message.js), not
-  // here. The template-card "⎘ instantiate / 🕯 cast" action below still opens
-  // the in-overlay instantiate dialog.
+  // here. The template card's single "🚀 deploy / 🧙 summon" action below opens
+  // the unified summon/deploy dialog (JOH-373 folded the old instantiate/cast
+  // button into it).
 
   // Template-card actions (delegated — the list re-renders every poll).
   // data-tact (not data-act) keeps these off the global row-action bus.
@@ -1531,7 +1453,6 @@ function bindTemplatesUI() {
     if (!btn) return;
     const name = btn.dataset.template;
     if (btn.dataset.tact === 'deploy') openDeployModal(name);
-    else if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
     else if (btn.dataset.tact === 'edit') {
       const t = templatesByName()[name];
       if (t) openTemplateEditor(t);
@@ -1719,17 +1640,10 @@ function bindTemplatesUI() {
   // dashboard.css supplies the resize + the fixed min-height floor.
   makeModalResizable($('#templates-manage-modal .manage-modal'), 'tclaude.dash.modalSize.templates-manage', { fitContent: false });
 
-  // Instantiate modal.
-  $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
-  $('#template-instantiate-submit').addEventListener('click', submitInstantiate);
-  wireTemplateCwdBrowse('template-instantiate-cwd-browse', 'template-instantiate-cwd', 'template-instantiate-error', 'Select the working directory for the new group');
-  $('#template-instantiate-template').addEventListener('change', renderInstantiatePreview);
-  $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
-  bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
-
-  // Deploy modal (JOH-245). The mission drives the group-name prefill until
-  // the human edits the group field; the template select refreshes both the
-  // prefill and the preview.
+  // Unified summon / deploy modal (JOH-245, JOH-373). The mission drives the
+  // group-name prefill until the human edits the group field; the template
+  // select refreshes both the prefill and the preview. The instantiate/cast
+  // dialog was folded into this one (JOH-373), so its bindings are gone.
   $('#template-deploy-cancel').addEventListener('click', closeDeployModal);
   $('#template-deploy-submit').addEventListener('click', submitDeploy);
   wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
@@ -1737,6 +1651,18 @@ function bindTemplatesUI() {
   $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
   $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
   bindBackdropDiscard('template-deploy-modal', closeDeployModal);
+  // Ctrl/Cmd+Enter submits from anywhere in the dialog (JOH-373, matching the
+  // mirror dialog #817). Plain Enter is deliberately NOT bound: the mission is a
+  // multi-line textarea where Enter must insert a newline. A modal-scoped
+  // listener fires only while focus is inside, and the disabled-guard stops a
+  // held/repeated Enter from firing a second POST while the first is in flight.
+  $('#template-deploy-modal').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if ($('#template-deploy-submit').disabled) return;
+    e.preventDefault();
+    submitDeploy();
+  });
 
   // From-group modal. Typing the name live-flips the dialog between its
   // create and update-in-place modes.

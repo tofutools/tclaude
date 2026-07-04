@@ -1927,11 +1927,11 @@
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label"><span class="tpl-word-regular">Mission</span><span class="tpl-word-wizard">Quest</span></span>
-      <textarea id="template-deploy-mission" class="modal-context-textarea" rows="4" placeholder="the topic / problem / epic to deploy against — free text or a Linear link; folded into the group context under ## Mission" spellcheck="false"></textarea>
+      <textarea id="template-deploy-mission" class="modal-context-textarea" rows="4" placeholder="optional — the mission / task to summon against (free text or a Linear link); folded into the group context under ## Mission. Leave blank to just create the team." spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label"><span class="tpl-word-regular">Group name</span><span class="tpl-word-wizard">Party name</span></span>
-      <input id="template-deploy-group" type="text" placeholder="optional — derived from the mission if blank; also the prefix for every spawned agent" autocomplete="off" spellcheck="false" />
+      <input id="template-deploy-group" type="text" placeholder="derived from the mission if blank — required when the mission is empty; also the prefix for every spawned agent" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Default cwd</span>
@@ -1951,38 +1951,6 @@
       <button id="template-deploy-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="template-deploy-submit" class="primary" type="button">Deploy task force</button>
-    </div>
-  </div>
-</div>
-<div class="modal-overlay" id="template-instantiate-modal">
-  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-instantiate-title">
-    <h3 id="template-instantiate-title"><span class="tpl-word-regular">New group from template</span><span class="tpl-word-wizard">🕯 Cast a summoning circle</span></h3>
-    <label class="cron-create-row">
-      <span class="cron-create-label"><span class="tpl-word-regular">Template</span><span class="tpl-word-wizard">Circle</span></span>
-      <select id="template-instantiate-template"></select>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label"><span class="tpl-word-regular">Group name</span><span class="tpl-word-wizard">Party name</span></span>
-      <input id="template-instantiate-group" type="text" placeholder="kebab-or-snake-case — also the name prefix for every spawned agent" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Task / project</span>
-      <textarea id="template-instantiate-task" class="modal-context-textarea" rows="5" placeholder="the assignment for this group — multi-line OK; folded into the group context every spawned agent sees" spellcheck="false"></textarea>
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Default cwd</span>
-      <input id="template-instantiate-cwd" type="text" placeholder="optional — absolute path (~ OK) the agents spawn in" autocomplete="off" spellcheck="false" />
-      <button id="template-instantiate-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
-    </label>
-    <div class="cron-create-row">
-      <span class="cron-create-label">Preview</span>
-      <div id="template-instantiate-preview" class="template-preview"></div>
-    </div>
-    <div class="cron-create-error" id="template-instantiate-error"></div>
-    <div class="modal-buttons">
-      <button id="template-instantiate-cancel" type="button">Cancel</button>
-      <span class="spacer"></span>
-      <button id="template-instantiate-submit" class="primary" type="button">Create &amp; spawn</button>
     </div>
   </div>
 </div>
