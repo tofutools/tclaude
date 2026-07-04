@@ -526,6 +526,19 @@ function groupProcessChip(g) {
   return `<span class="group-process-chip" title="${esc(title)}">${esc(chipText)}</span>` + advanceBtn;
 }
 
+// groupWavesChip renders a group's staged-spawn status (JOH-244) as a compact
+// "🌊 wave 1/3 pending" chip while later waves are still deferred. Returns ''
+// once the choreography completes (or for a single-wave deploy — no chip).
+function groupWavesChip(g) {
+  const wv = g.waves;
+  if (!wv || !wv.pending_waves) return '';
+  const titleParts = [
+    `Staged spawn — ${wv.pending_agents} agent(s) in ${wv.pending_waves} more wave(s) will spawn as each wave settles`,
+  ];
+  if (wv.deadline_at) titleParts.push(`next wave by ${wv.deadline_at} at the latest`);
+  return `<span class="group-waves-chip" title="${esc(titleParts.join('\n'))}">🌊 wave ${wv.current_wave}/${wv.total_waves} pending</span>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     // The button label the hint names swaps per theme too (the same
@@ -593,6 +606,7 @@ function renderGroups(groups) {
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
         ${groupActivityChip(members)}
         ${groupProcessChip(g)}
+        ${groupWavesChip(g)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>

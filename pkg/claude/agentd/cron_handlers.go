@@ -673,6 +673,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		Body     *string `json:"body,omitempty"`
 		Enabled  *bool   `json:"enabled,omitempty"`
 		GroupID  *int64  `json:"group_id,omitempty"`
+		Role     *string `json:"role,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -686,6 +687,15 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		Body:    body.Body,
 		Enabled: body.Enabled,
 		GroupID: body.GroupID,
+	}
+	// Role filter (JOH-244): normalize "all" → "" (whole group) so the stored
+	// value drives the fan-out's empty-filter path.
+	if body.Role != nil {
+		role := strings.TrimSpace(*body.Role)
+		if strings.EqualFold(role, "all") {
+			role = ""
+		}
+		patch.TargetRole = &role
 	}
 	if body.Name != nil {
 		if err := validateCronName(*body.Name); err != nil {

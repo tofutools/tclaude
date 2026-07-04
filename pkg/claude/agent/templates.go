@@ -76,6 +76,23 @@ type templateAgentJSON struct {
 	Effort       string `json:"effort,omitempty"`
 	Sandbox      string `json:"sandbox,omitempty"`
 	Approval     string `json:"approval,omitempty"`
+
+	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
+	// in ascending order; all-wave-0 = one synchronous pass (today's behaviour).
+	Wave int `json:"wave,omitempty"`
+}
+
+// rhythmJSON mirrors the daemon's wire shape for one template rhythm (JOH-244):
+// a recurring nudge materialized at deploy as a group cron job. Exactly one of
+// interval / cron_expr; target_role filters to matching members ("" / "all" =
+// whole group).
+type rhythmJSON struct {
+	Name       string `json:"name"`
+	TargetRole string `json:"target_role,omitempty"`
+	Interval   string `json:"interval,omitempty"`
+	CronExpr   string `json:"cron_expr,omitempty"`
+	Subject    string `json:"subject,omitempty"`
+	Body       string `json:"body"`
 }
 
 // workPatternEntryJSON mirrors the daemon's wire shape for one
@@ -105,9 +122,15 @@ type templateJSON struct {
 	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
 	// Process is the template's declarative process spec (JOH-242): an ordered
 	// list of phases. Empty/absent = no process.
-	Process   []processPhaseJSON `json:"process,omitempty"`
-	CreatedAt string             `json:"created_at,omitempty"`
-	UpdatedAt string             `json:"updated_at,omitempty"`
+	Process []processPhaseJSON `json:"process,omitempty"`
+	// Rhythms is the template's recurring-nudge declarations (JOH-244),
+	// materialized as group cron jobs at deploy. Empty/absent = no rhythms.
+	Rhythms []rhythmJSON `json:"rhythms,omitempty"`
+	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
+	// prior wave to go idle before the next spawns anyway (JOH-244). 0 = default.
+	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 // templateExportEnvelope mirrors the daemon's portable export shape
@@ -261,6 +284,9 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		if a.Approval != "" {
 			tags = append(tags, "approval="+a.Approval)
 		}
+		if a.Wave > 0 {
+			tags = append(tags, fmt.Sprintf("wave=%d", a.Wave))
+		}
 		suffix := ""
 		if len(tags) > 0 {
 			suffix = "  [" + strings.Join(tags, " · ") + "]"
@@ -300,6 +326,30 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 				}
 			}
 		}
+	}
+	if len(t.Rhythms) > 0 {
+		fmt.Fprintf(stdout, "  rhythms (%d recurring nudge%s, materialized as group cron jobs at deploy):\n",
+			len(t.Rhythms), plural(len(t.Rhythms)))
+		for i, rh := range t.Rhythms {
+			sched := rh.CronExpr
+			if sched == "" {
+				sched = "every " + rh.Interval
+			}
+			role := rh.TargetRole
+			if role == "" {
+				role = "all"
+			}
+			fmt.Fprintf(stdout, "    %d. %s  [%s · role: %s]\n", i+1, rh.Name, sched, role)
+			if rh.Subject != "" {
+				fmt.Fprintf(stdout, "       subject: %s\n", rh.Subject)
+			}
+			for _, line := range strings.Split(rh.Body, "\n") {
+				fmt.Fprintf(stdout, "       │ %s\n", line)
+			}
+		}
+	}
+	if t.WaveMaxWait > 0 {
+		fmt.Fprintf(stdout, "  wave_max_wait: %ds\n", t.WaveMaxWait)
 	}
 	return rcOK
 }

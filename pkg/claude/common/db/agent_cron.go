@@ -264,6 +264,7 @@ type UpdateCronPatch struct {
 	TargetKind      *string
 	TargetConv      *string
 	GroupID         *int64
+	TargetRole      *string
 	IntervalSeconds *int64
 	CronExpr        *string
 	Subject         *string
@@ -316,6 +317,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.GroupID != nil {
 		sets = append(sets, "group_id = ?")
 		args = append(args, *p.GroupID)
+	}
+	if p.TargetRole != nil {
+		sets = append(sets, "target_role = ?")
+		args = append(args, *p.TargetRole)
 	}
 	if p.IntervalSeconds != nil {
 		sets = append(sets, "interval_seconds = ?")

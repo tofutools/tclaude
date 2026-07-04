@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -258,6 +259,72 @@ func waveMaxWaitDuration(seconds int) time.Duration {
 		return defaultWaveMaxWait
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+// waveStatusJSON is the lean wire shape of a group's staged-spawn status
+// (JOH-244): the current wave (1-based) + total, and how many waves/agents are
+// still pending. Surfaced in the group GET + the dashboard snapshot; absent
+// once the choreography completes.
+type waveStatusJSON struct {
+	// CurrentWave is the highest wave spawned so far (1-based).
+	CurrentWave int `json:"current_wave"`
+	// TotalWaves is the total number of waves in this deploy.
+	TotalWaves int `json:"total_waves"`
+	// PendingWaves / PendingAgents are what is still to come.
+	PendingWaves  int `json:"pending_waves"`
+	PendingAgents int `json:"pending_agents"`
+	// DeadlineAt is when the current gate's max-wait fires (RFC3339); the next
+	// wave spawns then regardless of idle state.
+	DeadlineAt string `json:"deadline_at,omitempty"`
+}
+
+// waveStatusToJSON projects a choreography row onto the lean status shape.
+func waveStatusToJSON(c *db.WaveChoreography) waveStatusJSON {
+	out := waveStatusJSON{
+		CurrentWave:   c.NextWave, // NextWave is the next to spawn; the already-spawned count == NextWave (1-based current)
+		TotalWaves:    len(c.Waves),
+		PendingWaves:  c.PendingWaves(),
+		PendingAgents: pendingAgentCount(c),
+	}
+	if !c.WaveDeadline.IsZero() {
+		out.DeadlineAt = c.WaveDeadline.Format(time.RFC3339)
+	}
+	return out
+}
+
+// loadWaveStatus returns a group's staged-spawn status, or nil when the group
+// has no pending choreography (single-wave deploy, or the deploy has completed).
+func loadWaveStatus(groupID int64) *waveStatusJSON {
+	c, err := db.GetWaveChoreography(groupID)
+	if err != nil {
+		slog.Warn("wave status: load failed", "group_id", groupID, "error", err)
+		return nil
+	}
+	if c == nil {
+		return nil
+	}
+	v := waveStatusToJSON(c)
+	return &v
+}
+
+// handleGroupWavesGet serves GET /v1/groups/{name}/waves: the group's pending
+// staged-spawn status, or 404 when the group has no pending choreography. Open
+// + read-only, like the process GET.
+func handleGroupWavesGet(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+		return
+	}
+	c, err := db.GetWaveChoreography(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if c == nil {
+		writeError(w, http.StatusNotFound, "no_waves", "this group has no pending staged-spawn waves")
+		return
+	}
+	writeJSON(w, http.StatusOK, waveStatusToJSON(c))
 }
 
 // startWaveChoreographyRunner runs the staged-spawn background runner in its

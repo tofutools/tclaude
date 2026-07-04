@@ -49,6 +49,7 @@ type cronJobJSON struct {
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
+	TargetRole      string `json:"target_role,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	CronExpr        string `json:"cron_expr,omitempty"`
 	Subject         string `json:"subject,omitempty"`
@@ -132,10 +133,15 @@ func cronScheduleLabel(j cronJobJSON) string {
 // the conv-id prefix for a target that isn't an enrolled agent).
 func cronTargetLabel(j cronJobJSON) string {
 	if j.TargetKind == "group" {
-		if j.GroupName != "" {
-			return "group:" + j.GroupName
+		label := "group:" + j.GroupName
+		if j.GroupName == "" {
+			label = "group:#" + strconv.FormatInt(j.GroupID, 10)
 		}
-		return "group:#" + strconv.FormatInt(j.GroupID, 10)
+		// A role filter (JOH-244) narrows the fan-out to matching members.
+		if j.TargetRole != "" {
+			label += " (role: " + j.TargetRole + ")"
+		}
+		return label
 	}
 	return shortAgentID(j.TargetAgent, j.TargetConv)
 }
@@ -150,6 +156,7 @@ type cronAddParams struct {
 	File     string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
 	Subject  string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
 	Name     string `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
+	Role     string `long:"role" optional:"true" help:"For a group:NAME target only: deliver only to members whose role matches (resolved at fire time). 'all' or empty = whole group."`
 }
 
 func cronAddCmd() *cobra.Command {
@@ -210,6 +217,9 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 	if p.Name != "" {
 		body["name"] = p.Name
+	}
+	if role := strings.TrimSpace(p.Role); role != "" {
+		body["role"] = role
 	}
 	var resp cronJobJSON
 	if err := DaemonRequest(http.MethodPost, "/v1/cron", body, &resp, DaemonOpts{}); err != nil {
