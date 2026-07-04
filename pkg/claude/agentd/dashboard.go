@@ -941,6 +941,12 @@ type dashboardGroup struct {
 	// choreography is complete (or for a single-wave deploy) — the "wave N/M
 	// pending" chip renders only while set.
 	Waves   *waveStatusJSON  `json:"waves,omitempty"`
+	// Scribe marks the group as a daemon-created scribe's eponymous system
+	// group (descr == scribeGroupDescr — the circle-scribe machinery, JOH-361).
+	// The Groups tab hides these by default, surfacing them only when the
+	// human ticks "show circle-scribe" in the view popover; the flag is the
+	// discriminator that gate keys off, so it need not string-match a name.
+	Scribe  bool              `json:"scribe,omitempty"`
 	Members []dashboardMember `json:"members"`
 	Online  int               `json:"online"`
 }
@@ -1492,7 +1498,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupNameByID[g.ID] = g.Name
 	}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

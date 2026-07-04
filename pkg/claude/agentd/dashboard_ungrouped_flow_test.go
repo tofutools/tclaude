@@ -87,6 +87,7 @@ type dashGroup struct {
 	Descr         string       `json:"descr"`
 	MaxMembers    int          `json:"max_members"`
 	NotifyEnabled bool         `json:"notify_enabled"`
+	Scribe        bool         `json:"scribe,omitempty"`
 	Members       []dashMember `json:"members"`
 }
 
