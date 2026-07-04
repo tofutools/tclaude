@@ -282,10 +282,7 @@ func uniqueCloneTitle(origTitle string) string {
 		prefix = base + "-c-"
 	}
 	used := scanCloneSuffixes(prefix)
-	start := prevN + 1
-	if start < 1 {
-		start = 1
-	}
+	start := max(prevN+1, 1)
 	for n := start; ; n++ {
 		if !used[n] {
 			return prefix + strconv.Itoa(n)
