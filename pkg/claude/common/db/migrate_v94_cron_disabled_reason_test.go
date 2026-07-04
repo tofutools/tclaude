@@ -7,19 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV93toV94_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v94 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v93).
-func TestMigrateV93toV94_FreshSchema(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 94, currentVersion, "tripwire: bump this and add a v94→v95 test when you add a migration")
-}
+// The FreshSchema + currentVersion-tripwire test moved forward to the head
+// migration's file (migrate_v95_agent_task_ref_test.go), per convention.
 
 // TestMigrateV93toV94_AddsDisabledReason drives the real v93→v94 migration over
 // a v93-pinned DB: the disabled_reason column appears, a pre-existing job reads

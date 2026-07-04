@@ -13,7 +13,7 @@ import (
 //   - requireGroupPermission     → groups.{stop,resume,retire,spawn}
 //   - groups_links owner bypass  → groups.link.{add,rm}
 //   - requireCrossAgentPermission/requireGroupContextAccess →
-//       agent.{reincarnate,compact,rename,clone,context-info,schedule,
+//       agent.{reincarnate,compact,rename,clone,context-info,task,schedule,
 //              stop,resume,delete,promote,retire}
 //   - requireNotifyHumanPermission → human.notify
 //
@@ -29,6 +29,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentRename,
 		PermAgentClone,
 		PermAgentContextInfo,
+		PermAgentTask,
 		PermAgentSchedule,
 		PermAgentStop,
 		PermAgentResume,

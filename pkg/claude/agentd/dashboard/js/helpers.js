@@ -1356,6 +1356,28 @@ function branchCell(m) {
   return stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
 }
 
+// taskCell renders the Task column: the agent's task-reference link
+// (a Linear issue, GitHub issue/PR, ticket, …). `m.task_ref_url` is the
+// raw URL; `m.task_ref_label` is the display label the daemon already
+// derived (Linear→JOH-xxx, GitHub→#nnn, else host) or the human's
+// explicit override. Empty renders an em dash so the column stays
+// aligned.
+//
+// Defence in depth: the daemon only ever stores an http(s) task URL (the
+// write path scheme-validates it), but an href is a stored-XSS sink, so
+// this NEVER puts a non-http(s) value in one — a `javascript:`/`data:`
+// URL survives HTML-escaping. Anything that isn't http(s) renders as
+// inert text instead of a link.
+function taskCell(m) {
+  const url = (m.task_ref_url || '').trim();
+  if (!url) return '<span class="muted">—</span>';
+  const label = m.task_ref_label || url;
+  if (!/^https?:\/\//i.test(url)) {
+    return `<span class="task-ref muted" title="${esc(url)}">🔗 ${esc(label)}</span>`;
+  }
+  return `<a class="task-ref task-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open task reference — ${esc(url)}">🔗 ${esc(label)}</a>`;
+}
+
 // offlineDefault returns the tab-wide "show offline" checkbox state
 // for the 'groups' tab. Defaults to true (show everything) when
 // the checkbox isn't in the DOM yet / the user hasn't touched it.
@@ -1613,7 +1635,7 @@ export {
   $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
-  cwdCell, branchCell, offlineDefault, groupOfflineOverride, groupShowOffline,
+  cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
   // Focus preservation across innerHTML re-renders — refresh.js wraps its
   // 2s render block with captureFocus/restoreFocus; mail.js wraps its mail

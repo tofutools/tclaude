@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 94
+const currentVersion = 95
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -591,6 +591,12 @@ func migrate(db *sql.DB) error {
 
 	if ver < 94 {
 		if err := migrateV93toV94(db); err != nil {
+			return err
+		}
+	}
+
+	if ver < 95 {
+		if err := migrateV94toV95(db); err != nil {
 			return err
 		}
 	}

@@ -8,7 +8,7 @@ import {
   $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
-  cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
+  cwdCell, branchCell, taskCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
 import {
   sortHead, applySort, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
@@ -104,6 +104,7 @@ function memberRowHTML(m, ctx) {
     cwd:    `<td>${cwdCell(m)}</td>`,
     branch: `<td>${branchCell(m)}</td>`,
     role:   `<td>${roleCell(m, ctx.group)}</td>`,
+    task:   `<td class="task-cell">${taskCell(m)}</td>`,
     descr:  `<td class="descr-cell muted">${esc(m.descr || '')}</td>`,
   };
   // A visible column with no cell here falls back to an EMPTY <td>, not ''.
