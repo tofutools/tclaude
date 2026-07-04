@@ -7611,6 +7611,63 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:active {
 body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opacity: 0.7; }
 body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
 
+/* ─── Wizard clone dialog — the dock card ⚙ → Clone for profiles + roles ──
+   The generic name-selector dialog (#clone-modal, modal-clone.js). Its title /
+   submit copy re-letter to "Mirror" in JS via wizWord; this block gives the
+   dialog the same midnight-violet grimoire chrome as its sibling template-mirror
+   dialog above, scoped per-#id like every other modal's wizard skin (an
+   unstyled dialog would fall back to the plain dark + a browser-white submit).
+   The submit keeps its JS text (no font-size:0 / ::before swap) — just gilded. */
+body.wizard #clone-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #clone-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #clone-modal .cron-create-label { color: #b39ddb; }
+body.wizard #clone-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #clone-modal .cron-create-row input[type=text] {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #clone-modal .cron-create-row input[type=text]:focus { border-color: #a97bd6; }
+body.wizard #clone-modal button:not(#clone-modal-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #clone-modal button:not(#clone-modal-submit):hover { background: #3a2a63; }
+body.wizard #clone-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #clone-modal #clone-modal-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  transition: transform 0.08s ease;
+}
+body.wizard #clone-modal #clone-modal-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #clone-modal #clone-modal-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #clone-modal #clone-modal-submit:disabled { opacity: 0.7; }
+
 /* ─── Wizard preset-parties dialog — "⭐ Preset parties" (JOH-353) ─────
    The bundled-starters modal, the one obvious path to copy a ready-made
    party into your own circles. Scoped to #starters-modal, matching the
@@ -9423,6 +9480,38 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-card:hover .dock-card-manage, .dock-card-manage:focus-visible { opacity: 1; }
 .dock-card-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 
+/* The card's ⚙ opens a small actions menu (Edit / Clone) rather than jumping
+   straight to the editor. Cog + menu are wrapped in a position:relative
+   .dock-card-actions so the absolutely-positioned menu anchors to the cog and
+   escapes the flex row. It is right-aligned under the cog (which sits at the
+   card's right edge) so it opens leftward+down and stays within the card's
+   width — no horizontal overflow past #dock-body's clip. A DISTINCT class (not
+   the shared .action-menu) keeps it wholly owned by dock.js's handler, never
+   racing with row-actions.js's cog bus. */
+.dock-card-actions { position: relative; flex: 0 0 auto; display: inline-flex; }
+/* Keep the ⚙ visible while its menu is open even after the pointer leaves the
+   card (the cog otherwise fades to opacity:0 with the card-hover reveal). */
+.dock-card:has(.dock-card-menu.open) .dock-card-manage { opacity: 1; }
+.dock-card-menu {
+  display: none; position: absolute; top: 100%; right: 0; z-index: 60;
+  margin-top: 4px; min-width: 132px; flex-direction: column; gap: 3px;
+  padding: 5px; background: #0d1117; border: 1px solid #2a3340;
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+}
+.dock-card-menu.open { display: flex; }
+/* Flip above the cog when a downward drop would run off the viewport bottom —
+   dock.js measures the menu and sets .opens-up (a card near the dock's foot). */
+.dock-card-menu.opens-up { top: auto; bottom: 100%; margin: 0 0 4px; }
+/* Menu items get an explicit dark skin — a bare <button> renders browser-white
+   (the documented dashboard gotcha), which would glare in the dock. */
+.dock-card-menu-item {
+  width: 100%; text-align: left;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; font-family: inherit; font-size: 12px;
+  padding: 4px 9px;
+}
+.dock-card-menu-item:hover { color: #d4d4d4; border-color: #58a6ff; background: #1a2029; }
+
 /* Wizard skin (JOH-388 req 4) — the palette becomes a shelf in The Wizard's
    Tower: a deep arcane-purple re-skin (backgrounds, borders AND accents, not
    just a couple of tints), reading unmistakably as part of body.wizard's
@@ -9457,6 +9546,20 @@ body.wizard #agent-dock .dock-section-manage,
 body.wizard #agent-dock .dock-card-manage { color: #9a86c9; }
 body.wizard #agent-dock .dock-section-manage:hover,
 body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+/* The card ⚙'s Edit / Clone menu, arcane-skinned like the rest of the dock's
+   grimoire chrome — kept scoped under #agent-dock (the anti-pin invariant).
+   Clone reads "Mirror" here (dock.js wizWord), echoing the templates manager. */
+body.wizard #agent-dock .dock-card-menu {
+  background: linear-gradient(180deg, #191225 0%, #140e1e 100%);
+  border-color: #4a3d6b;
+  box-shadow: 0 8px 28px rgba(20, 14, 30, 0.9);
+}
+body.wizard #agent-dock .dock-card-menu-item {
+  background: #241a3a; border-color: #3a2f57; color: #d7c9ff;
+}
+body.wizard #agent-dock .dock-card-menu-item:hover {
+  border-color: #7c5cc4; background: #2d2148; color: #efe6ff;
+}
 /* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
    itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
    #agent-dock is gone; the dock's arcane skin stays scoped under #agent-dock.) */

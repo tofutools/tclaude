@@ -91,7 +91,10 @@ function refreshSuspended({ ignoreModals = false } = {}) {
   // A ⚙ options menu is open — re-rendering the Groups tab would
   // rebuild the row/group and collapse the menu out from under the
   // pointer. Closing the menu drops the .open class, lifting this.
-  if (document.querySelector('.action-menu.open')) return true;
+  // .dock-card-menu.open is the palette dock's own per-card actions menu
+  // (Edit / Clone); the dock morphs its cards on the poll, so an open one
+  // must pause the reconcile the same way (dock.js closeDockMenus lifts it).
+  if (document.querySelector('.action-menu.open, .dock-card-menu.open')) return true;
   // A slop-mode slot machine is mid-pull. manualPull() in slop-fx.js
   // spins a row's .slop-machine for ~900ms, then holds the settled
   // combo for ~1.8s, tagging the cell with a sentinel data-status of

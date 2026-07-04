@@ -377,6 +377,31 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			// The right-side-panel preset-clone feature: a card's ⚙ opens an
+			// Edit / Clone actions menu instead of jumping straight to the editor.
+			// Self-checking (see cardMenuJS): rejects if the menu doesn't open or
+			// clips past the dock's horizontal bounds (a narrow menu inside a
+			// card, so it must fit) — a regression fails the run, not a silent ok.
+			// In wizard mode Clone reads "Mirror".
+			Key:      "dock-card-menu",
+			Title:    "Palette dock — card actions menu open",
+			Caption:  "A profile card's ⚙ opened → the Edit / Clone menu (self-checked: opens + stays inside the dock; Clone reads 'Mirror' in wizard mode).",
+			JS:       cardMenuJS(),
+			SettleMS: 250,
+		},
+		{
+			// Clone → the generic new-name dialog (#clone-modal), pre-filled
+			// "<name>-copy". Self-checking (see cardCloneJS): rejects if the
+			// dialog doesn't open or the name isn't pre-filled. Verifies the
+			// per-#id wizard chrome the operator flagged renders (an unstyled
+			// dialog would show plain-dark + a white submit here).
+			Key:      "dock-card-clone",
+			Title:    "Clone-a-preset dialog",
+			Caption:  "The profile card's ⚙ → Clone opens the new-name dialog, pre-filled '<name>-copy' (self-checked; wizard chrome under body.wizard #clone-modal).",
+			JS:       cardCloneJS(),
+			SettleMS: 350,
+		},
+		{
 			Key:      "summon-normal",
 			Title:    "Summon dialog (normal)",
 			Caption:  "Template dropped on empty space → plain summon, no mode chooser.",
@@ -505,6 +530,94 @@ return new Promise(function(resolve, reject){
     document.body.appendChild(o);
     if (inside) resolve();
     else reject(new Error('item4 FAIL: cog menu (' + m.left.toFixed(0) + '..' + m.right.toFixed(0) + ') clips past the dock (' + d.left.toFixed(0) + '..' + d.right.toFixed(0) + ')'));
+  }, 200);
+});
+`
+}
+
+// cardMenuJS builds a self-checking state for the right-side-panel preset-clone
+// feature. Two assertions, both rejecting on a miss so a regression fails the run
+// instead of passing as a silent captured "ok":
+//
+//   (a) Up-flip clip guard — the reason toggleCardMenu measures #dock-body and
+//       NOT the viewport. Force the dock body to overflow (short max-height),
+//       scroll the LAST card to its fold, open that card's menu, and assert it
+//       stays within #dock-body's bottom. A downward drop there spills under the
+//       body's overflow:auto fold, so it only clears if the menu flipped up —
+//       which the OLD viewport-measuring code would miss (the body bottom sits a
+//       footer-height ABOVE window.innerHeight, so the spill stayed "on screen").
+//   (b) Horizontal clip guard + the SCREENSHOT — restore the body, open the
+//       FIRST profile card's menu, assert it stays within #agent-dock's width (a
+//       narrow, right-anchored menu must fit), and leave it open for the capture.
+func cardMenuJS() string {
+	return `document.querySelector('nav button[data-tab="groups"]').click();
+document.body.classList.add('dock-open');
+return new Promise(function(resolve, reject){
+  setTimeout(function(){
+    var body = document.querySelector('#dock-body');
+    var dock = document.querySelector('#agent-dock');
+    if (!body || !dock) { reject(new Error('card-menu FAIL: dock shell missing')); return; }
+    // (a) Force overflow, drive the LAST card to the fold, open its menu up-flipped.
+    var prevMax = body.style.maxHeight;
+    body.style.maxHeight = '200px';
+    var cards = body.querySelectorAll('.dock-card');
+    var last = cards[cards.length - 1];
+    if (!last) { reject(new Error('card-menu FAIL: no cards')); return; }
+    last.scrollIntoView({block: 'end'});
+    var lastCog = last.querySelector('.dock-card-manage[data-dock-act="card-menu"]');
+    lastCog.click();
+    var lastMenu = last.querySelector('.dock-card-menu.open');
+    if (!lastMenu) { reject(new Error('card-menu FAIL: bottom card menu did not open')); return; }
+    var lm = lastMenu.getBoundingClientRect();
+    var bb = body.getBoundingClientRect();
+    var flipped = lastMenu.classList.contains('opens-up');
+    var vFit = lm.bottom <= bb.bottom + 2;
+    lastCog.click(); // close
+    body.style.maxHeight = prevMax;
+    body.scrollTop = 0;
+    if (!vFit) { reject(new Error('card-menu FAIL: bottom card menu bottom=' + lm.bottom.toFixed(0) + ' clips past #dock-body bottom=' + bb.bottom.toFixed(0) + ' (opens-up=' + flipped + ')')); return; }
+    // (b) Screenshot + horizontal guard on the first profile card.
+    var card = body.querySelector('.dock-card[data-dock-kind="profiles"]');
+    if (!card) { reject(new Error('card-menu FAIL: no profile card')); return; }
+    card.querySelector('.dock-card-manage[data-dock-act="card-menu"]').click();
+    var menu = card.querySelector('.dock-card-menu.open');
+    if (!menu) { reject(new Error('card-menu FAIL: menu did not open')); return; }
+    var m = menu.getBoundingClientRect();
+    var d = dock.getBoundingClientRect();
+    var hFit = m.left >= d.left - 2 && m.right <= d.right + 2;
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+    o.textContent = 'card-menu H-INSIDE=' + (hFit ? 'YES' : 'NO') + ' bottom-card V-FIT=' + (vFit ? 'YES' : 'NO') + ' (flip=' + (flipped ? 'up' : 'down') + ')';
+    document.body.appendChild(o);
+    if (hFit) resolve();
+    else reject(new Error('card-menu FAIL: menu (' + m.left.toFixed(0) + '..' + m.right.toFixed(0) + ') clips past the dock (' + d.left.toFixed(0) + '..' + d.right.toFixed(0) + ')'));
+  }, 200);
+});
+`
+}
+
+// cardCloneJS builds a self-checking state for the clone dialog: open a profile
+// card's ⚙ menu, click its Clone item, and assert the generic new-name dialog
+// (#clone-modal) opens with the name pre-filled. Rejects on a miss so a broken
+// clone wiring fails the run. The captured PNG also lets a human eyeball the
+// per-#id wizard chrome (which string pins can't see).
+func cardCloneJS() string {
+	return `document.querySelector('nav button[data-tab="groups"]').click();
+document.body.classList.add('dock-open');
+return new Promise(function(resolve, reject){
+  setTimeout(function(){
+    var card = document.querySelector('.dock-card[data-dock-kind="profiles"]');
+    if (!card) { reject(new Error('card-clone FAIL: no profile card')); return; }
+    var cog = card.querySelector('.dock-card-manage[data-dock-act="card-menu"]');
+    if (cog) cog.click();
+    var clone = card.querySelector('.dock-card-menu-item[data-dock-act="clone-item"]');
+    if (!clone) { reject(new Error('card-clone FAIL: no Clone menu item')); return; }
+    clone.click();
+    var modal = document.querySelector('#clone-modal.show');
+    if (!modal) { reject(new Error('card-clone FAIL: clone dialog did not open')); return; }
+    var name = document.querySelector('#clone-modal-name');
+    if (!name || !name.value) { reject(new Error('card-clone FAIL: name not pre-filled')); return; }
+    resolve();
   }, 200);
 });
 `
