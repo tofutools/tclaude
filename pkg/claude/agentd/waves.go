@@ -441,6 +441,13 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	}
 }
 
+// waveConvDead reports whether a session status means the member is done/dead
+// (a crashed, exited, or errored spawn) — which, for the wave gate, counts as
+// "done waiting": dead ≠ busy, so it never wedges the next wave.
+func waveConvDead(status string) bool {
+	return status == session.StatusExited || status == session.StatusError
+}
+
 // gateReleased reports whether the current wave's gate should release — i.e.
 // the next wave may spawn. It returns (released, changed): `changed` is true
 // when this check observed a new activation that the caller should persist.
@@ -476,6 +483,9 @@ func gateReleased(c *db.WaveChoreography) (bool, bool) {
 		}
 		if s == nil {
 			continue // dead / reaped → settled, does not block
+		}
+		if waveConvDead(s.Status) {
+			continue // exited / errored → dead ≠ busy, does not block
 		}
 		if s.Status == session.StatusWorking {
 			// Actively in a turn — mark it activated (it has had, or is having,

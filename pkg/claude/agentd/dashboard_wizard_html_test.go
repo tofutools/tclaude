@@ -1465,3 +1465,36 @@ func TestDashboardHTML_TemplateProcessEditor(t *testing.T) {
 	must(`data-act="advance-phase"`, "the group summary ships the advance control")
 	must(".group-process-advance", "the advance button has the dark-theme skin")
 }
+
+// TestDashboardHTML_TemplateWavesAndRhythms pins the JOH-244 staged-spawn +
+// rhythms editor wiring in the embedded dashboard source: the per-agent wave
+// field, the rhythms list editor (container + add button + renderer + submit
+// key), the wave_max_wait field, and the group-summary wave chip.
+func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Per-agent wave field.
+	must(`class="ta-wave"`, "the per-agent wave input ships")
+	must("wave: parseInt($('.ta-wave', row).value, 10) || 0", "the agent scraper reads the wave")
+
+	// Rhythms list editor.
+	must(`id="template-editor-rhythms"`, "the rhythm rows container ships")
+	must(`id="template-editor-add-rhythm"`, "the add-rhythm button ships")
+	must(`<span class="tpl-word-regular">Rhythms</span><span class="tpl-word-wizard">Drumbeats</span>`, "the section heading ships both voices")
+	must("function renderEditorRhythms()", "the rhythm renderer exists")
+	must("function scrapeEditorRhythms()", "the rhythm scraper exists")
+	must("rhythms: templateEditorRhythms", "submit sends the rhythms")
+	must(`id="template-editor-wave-max-wait"`, "the wave max-wait field ships")
+
+	// Cron modal role filter.
+	must(`id="cron-create-role"`, "the cron role-filter input ships")
+
+	// Group-summary wave chip.
+	must("function groupWavesChip(", "the wave chip renderer exists")
+	must(".group-waves-chip", "the wave chip has the dark-theme skin")
+}
