@@ -504,6 +504,13 @@ export async function refresh() {
     // set. body.hide-slop-lever drops the lever via CSS while leaving the
     // rest of slop mode intact; a plain class toggle (like hide-costs).
     document.body.classList.toggle('hide-slop-lever', !!data.hide_pull_lever);
+    // Per-agent "hide window" button visibility (config
+    // dashboard.show_agent_hide_button, default off). The slashed-eye "hide"
+    // icon beside "focus" detaches the agent's terminal window — far less used
+    // than focus — so it's hidden by default to keep the row's quick-control
+    // cluster tight; CSS drops it unless body.show-agent-hide-btn is present.
+    // A plain class toggle, like group-quick-fold above.
+    document.body.classList.toggle('show-agent-hide-btn', !!data.show_agent_hide_button);
     // The leading ● is rendered by CSS (#status::before) so it can
     // pick up the green "live" colour without us round-tripping HTML
     // through showStatus.

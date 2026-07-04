@@ -1462,6 +1462,15 @@ tr:hover .agent-harness { color: #c9d1d9; }
    the eyes, so it dims at rest and lights amber on hover via the shared
    `.row-actions button.warn:hover` rule above. */
 .trash-ico { display: block; }
+/* The per-agent "hide window" button (the slashed-eye beside "focus")
+   detaches the agent's terminal — far less used than "focus", so it's
+   hidden by default to keep the quick-control cluster tight. Config
+   dashboard.show_agent_hide_button → body.show-agent-hide-btn brings it
+   back (refresh.js toggles the class off the snapshot each poll). Scoped to
+   .row-actions so it only affects the agent-row shortcut, not any other
+   data-act="hide" surface. */
+.row-actions .icon-btn[data-act="hide"] { display: none; }
+body.show-agent-hide-btn .row-actions .icon-btn[data-act="hide"] { display: inline-flex; }
 .group-actions {
   display: inline-flex; gap: 4px; margin-left: 8px; position: relative;
   opacity: 0.4; transition: opacity 0.15s ease;

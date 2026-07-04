@@ -381,6 +381,42 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ShowAgentHideButtonWired guards the per-agent "hide
+// window" button's default-hidden toggle (config
+// dashboard.show_agent_hide_button), whose pieces span several files that must
+// stay in lockstep — there's no JS render test, so we assert on the embedded
+// concatenation at `go test ./...`. The Go resolver + round-trip is covered
+// separately by config.TestShowAgentHideButton. A rename in any one file
+// silently breaks the toggle only in the browser:
+//   - refresh.js toggles body.show-agent-hide-btn off the snapshot flag;
+//   - dashboard.css hides the row's data-act="hide" button by default and
+//     restores it under body.show-agent-hide-btn;
+//   - config.js + dashboard.html expose the Config-tab checkbox.
+//
+// The button itself (helpers.js focusHideButtons) still always renders
+// data-act="hide"; visibility is purely the CSS class, so nothing here
+// touches the render path.
+func TestDashboardAssets_ShowAgentHideButtonWired(t *testing.T) {
+	for _, needle := range []string{
+		// refresh.js — drives the body class off the snapshot flag.
+		"'show-agent-hide-btn', !!data.show_agent_hide_button",
+		// dashboard.css — hide by default, restore under the body class.
+		`.row-actions .icon-btn[data-act="hide"] { display: none; }`,
+		`body.show-agent-hide-btn .row-actions .icon-btn[data-act="hide"] { display: inline-flex; }`,
+		// helpers.js — the button still renders (hidden only via CSS).
+		`data-act="hide"`,
+		// config.js — load + gather the Config-tab checkbox.
+		"#cfg-dashboard-show-agent-hide-btn",
+		"dashboard.show_agent_hide_button = true",
+		// dashboard.html — the Config-tab control.
+		`id="cfg-dashboard-show-agent-hide-btn"`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — agent hide-button toggle broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

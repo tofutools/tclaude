@@ -944,6 +944,28 @@ func TestDefaultTerminal(t *testing.T) {
 	assert.Equal(t, DefaultTerminalWeb, loaded.DefaultTerminal(), "web survives round-trip")
 }
 
+func TestShowAgentHideButton(t *testing.T) {
+	// Default is false (button hidden) for every "unset" shape.
+	assert.False(t, (*Config)(nil).ShowAgentHideButton(), "nil → hidden")
+	assert.False(t, (&Config{}).ShowAgentHideButton(), "no block → hidden")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).ShowAgentHideButton(), "absent key → hidden")
+
+	// Only an explicit true shows the button.
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{ShowAgentHideButton: true}}).ShowAgentHideButton(), "explicit true → shown")
+
+	// A fresh (all-default) config serializes no dashboard block / key.
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "show_agent_hide_button")
+
+	// Explicit true survives Save/Load — the non-default is persisted.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{ShowAgentHideButton: true}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.ShowAgentHideButton(), "true survives round-trip")
+}
+
 // TestMatchSudoOverride_Keying covers the C2 (JOH-324) addition: a sudo
 // override may be keyed on the stable `agt_` agent_id (exact or short
 // prefix), surviving conv rotation — alongside the pre-existing conv-id

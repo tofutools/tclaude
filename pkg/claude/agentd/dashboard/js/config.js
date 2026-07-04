@@ -463,6 +463,11 @@ function populateConfigForm(cfg) {
   // explicit dashboard.default_terminal:"web" checks it.
   $('#cfg-dashboard-default-web-terminal').checked = !!(cfg.dashboard && cfg.dashboard.default_terminal === 'web');
 
+  // Per-agent "hide window" button — the slashed-eye beside "focus". Hidden
+  // by default (unchecked); only an explicit dashboard.show_agent_hide_button
+  // true checks it.
+  $('#cfg-dashboard-show-agent-hide-btn').checked = !!(cfg.dashboard && cfg.dashboard.show_agent_hide_button);
+
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
   // "Built-in default" (empty). populateAskProfileSelect is async (it fetches
@@ -642,6 +647,9 @@ function assembleConfig() {
   // "web" and drop the key otherwise — mirrors the Go omitempty + default-
   // native resolver.
   if ($('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'web'; else delete dashboard.default_terminal;
+  // show_agent_hide_button: false (hidden) is the default, so store only the
+  // NON-default true and drop the key otherwise — mirrors the Go omitempty.
+  if ($('#cfg-dashboard-show-agent-hide-btn').checked) dashboard.show_agent_hide_button = true; else delete dashboard.show_agent_hide_button;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
 
   // ask is an optional block. Clone the existing one so a future sub-field
