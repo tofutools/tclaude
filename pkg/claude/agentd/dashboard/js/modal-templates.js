@@ -338,9 +338,18 @@ function blankTemplateAgent() {
 
 // ---- Template editor modal --------------------------------------------
 
-function openTemplateEditor(tmpl) {
-  templateEditorEditing = tmpl ? tmpl.name : null;
-  $('#template-editor-title').textContent = tmpl
+// openTemplateEditor opens the editor. With no `tmpl` it's a blank create; with
+// a `tmpl` it EDITS that stored template in place (submit PATCHes tmpl.name).
+// The `asNew` option (JOH-393) is the third case: PRE-FILL every field from
+// `tmpl` but stay in CREATE mode — used by the drag-a-group-onto-the-dock
+// gesture, which hands in an UNSAVED server snapshot of a live group so the
+// human previews + edits the blueprint, then an explicit Save creates a fresh
+// template (submit POSTs, never PATCHes an existing one). The name field is
+// still seeded from the snapshot (the group's name) as a starting suggestion.
+function openTemplateEditor(tmpl, { asNew = false } = {}) {
+  const editing = tmpl && !asNew;
+  templateEditorEditing = editing ? tmpl.name : null;
+  $('#template-editor-title').textContent = editing
     ? wizWord(`Edit template: ${tmpl.name}`, `Redraw the circle: ${tmpl.name}`)
     : wizWord('New group template', 'Chalk a new summoning circle');
   $('#template-editor-name').value = tmpl ? tmpl.name : '';

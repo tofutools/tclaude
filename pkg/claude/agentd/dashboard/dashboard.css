@@ -2333,6 +2333,36 @@ body.wizard #groups-list.dock-drop-over {
   background: rgba(63, 45, 90, 0.42);
   outline-color: #a371f7;
 }
+/* REVERSE palette drag (dock-save-dnd.js, JOH-393): dragging a LIVE agent row /
+   group header ONTO the dock to capture it as a spawn profile / group template.
+   Here the DOCK is the drop target (the opposite direction to .dock-drop-over,
+   which lights a GROUP box). A SOLID green accent — vs the forward drag's dashed
+   blue — signals that opposite direction: config flowing INTO the palette. The
+   class lands on whichever dock element is under the cursor: the open panel
+   (glow its visible inner) or the edge tab (a collapsed dock still accepts the
+   save). Scoped under #agent-dock / #dock-toggle so it never widens globally. */
+#agent-dock.dock-save-over .dock-inner {
+  outline: 2px solid #3fb950;
+  outline-offset: -2px;
+  box-shadow: inset 0 0 24px rgba(63, 185, 80, 0.22);
+}
+#dock-toggle.dock-save-over {
+  border-color: #3fb950;
+  background: #17251b;
+  color: #3fb950;
+}
+/* Wizard skin: tint the capture highlight to the grimoire green. Scoped to this
+   feature's selectors (NOT an unscoped body.wizard rule) — the dock's anti-pin
+   invariant (see the #agent-dock CSS header). */
+body.wizard #agent-dock.dock-save-over .dock-inner {
+  outline-color: #56d364;
+  box-shadow: inset 0 0 24px rgba(86, 211, 100, 0.22);
+}
+body.wizard #dock-toggle.dock-save-over {
+  border-color: #56d364;
+  background: #1b2a1f;
+  color: #56d364;
+}
 /* Drag-to-reorder real groups (group-reorder.js). The group HEADER (its
    <summary>) is the reorder drag handle: press the bare header and drag to
    reorder the group. Its interactive children are NOT drag handles — a

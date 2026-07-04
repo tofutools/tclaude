@@ -37,6 +37,7 @@ import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
+import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindCronModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
@@ -153,6 +154,14 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // dockDragActive is still true (our dragend runs later), so refreshSuspended()
   // parks that refresh instead of re-rendering under the just-ended gesture.
   bindDockDnd();
+  // The REVERSE palette drag (JOH-393): drag a live agent row / group header
+  // ONTO the dock to capture it as a spawn profile / group template. Must be
+  // registered AFTER bindDnd() + bindGroupReorder() so its dragover runs LAST
+  // and wins the shared #dnd-pill over the dock — those two hide the pill when
+  // the cursor is off THEIR targets (the dock is off their targets). Self-gates
+  // on their active flags + a distinct .dock-save-over highlight (see
+  // dock-save-dnd.js), so it coexists with all three other DnD modules.
+  bindDockSaveDnd();
   bindFilter('groups');
   bindFilter('templates');
   bindFilter('jobs');

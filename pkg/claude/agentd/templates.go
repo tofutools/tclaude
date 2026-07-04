@@ -2572,6 +2572,12 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		Group        string `json:"group"`
 		TemplateName string `json:"template_name"`
 		Update       bool   `json:"update"`
+		// Preview (JOH-393): return the snapshot WITHOUT persisting, so the
+		// dashboard's drag-a-group-onto-the-dock gesture can open the template
+		// editor pre-filled but unsaved (the human previews + edits, then an
+		// explicit Save creates it). A preview never touches the DB — no existing
+		// lookup, no create/update — so Update is irrelevant here and ignored.
+		Preview bool `json:"preview"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2602,6 +2608,20 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		for _, o := range owners {
 			ownerSet[o.ConvID] = true
 		}
+	}
+
+	// Preview (JOH-393): trace the fresh snapshot and hand it back WITHOUT
+	// writing anything — the editor opens on this unsaved blueprint. existing=nil
+	// so it's always the create-shape snapshot (no in-place brief/ref merge,
+	// which only applies when re-snapshotting a stored template). Same response
+	// shape as a real create so the client reads it identically.
+	if body.Preview {
+		t := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
+		writeJSON(w, http.StatusOK, fromGroupCreateJSON{
+			templateJSON: templateToJSON(t),
+			BlankBriefs:  countBlankBriefs(t),
+		})
+		return
 	}
 
 	// Resolving `existing` and writing the template are separate DB

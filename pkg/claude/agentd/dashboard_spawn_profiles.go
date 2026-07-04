@@ -12,13 +12,17 @@ import "net/http"
 // registerDashboardSpawnProfileRoutes wires the cookie-authed
 // /api/spawn-profiles endpoints onto the loopback mux:
 //
-//	GET    /api/spawn-profiles          → list profiles
-//	POST   /api/spawn-profiles          → create a profile
-//	GET    /api/spawn-profiles/{name}   → fetch one profile
-//	PATCH  /api/spawn-profiles/{name}   → replace a profile
-//	DELETE /api/spawn-profiles/{name}   → delete a profile
+//	GET    /api/spawn-profiles              → list profiles
+//	POST   /api/spawn-profiles              → create a profile
+//	POST   /api/spawn-profiles/from-agent   → capture a live agent's config into an unsaved seed
+//	GET    /api/spawn-profiles/{name}       → fetch one profile
+//	PATCH  /api/spawn-profiles/{name}       → replace a profile
+//	DELETE /api/spawn-profiles/{name}       → delete a profile
 func registerDashboardSpawnProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-profiles", dashboardSpawnProfilesRoute(handleSpawnProfiles))
+	// The literal from-agent segment is more specific than {name}, so the mux
+	// picks it unambiguously (mirrors /api/templates/from-group).
+	mux.HandleFunc("POST /api/spawn-profiles/from-agent", dashboardSpawnProfilesRoute(handleSpawnProfileFromAgent))
 	mux.HandleFunc("/api/spawn-profiles/{name}", dashboardSpawnProfilesRoute(handleSpawnProfileByName))
 }
 

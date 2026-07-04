@@ -22,11 +22,12 @@ import (
 //
 // Wire surface (daemon Unix socket, SO_PEERCRED auth):
 //
-//	GET    /v1/spawn-profiles          → list profiles
-//	POST   /v1/spawn-profiles          → create a profile
-//	GET    /v1/spawn-profiles/{name}   → fetch one profile
-//	PATCH  /v1/spawn-profiles/{name}   → replace a profile (full state)
-//	DELETE /v1/spawn-profiles/{name}   → delete a profile
+//	GET    /v1/spawn-profiles              → list profiles
+//	POST   /v1/spawn-profiles              → create a profile
+//	POST   /v1/spawn-profiles/from-agent   → capture a live agent's config into an unsaved seed
+//	GET    /v1/spawn-profiles/{name}       → fetch one profile
+//	PATCH  /v1/spawn-profiles/{name}       → replace a profile (full state)
+//	DELETE /v1/spawn-profiles/{name}       → delete a profile
 //
 // Reads are open (introspection, like /v1/templates); mutations are gated on
 // profiles.manage (effectively human-only — a profile is shared spawn config).
@@ -300,6 +301,80 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}
+}
+
+// handleSpawnProfileFromAgent captures a LIVE agent's observable launch config
+// into an UNSAVED spawn-profile seed (JOH-393) — the reverse of the palette
+// dock's spawn-from-profile drag. It never persists: the dashboard's
+// drag-an-agent-onto-the-dock gesture opens the profile editor pre-filled with
+// this seed, and an explicit Save is what creates the profile (via POST
+// /v1/spawn-profiles). Gated on profiles.manage — a profile is shared spawn
+// config, and this reads a conv's launch fields + granted permissions, the same
+// human-level capture the group→template snapshot does per member.
+//
+// The {agent} selector resolves via agent.ResolveSelector (agent_id, conv-id,
+// title / prefix). This is the profile twin of handleTemplateFromGroup's
+// preview mode.
+func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		return
+	}
+	var body struct {
+		Agent string `json:"agent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	body.Agent = strings.TrimSpace(body.Agent)
+	if body.Agent == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "agent is required")
+		return
+	}
+	res, matches, err := agent.ResolveSelector(body.Agent)
+	if errors.Is(err, agent.ErrAmbiguous) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":      "selector matches multiple conversations",
+			"code":       "ambiguous",
+			"candidates": peerEntriesFromResolved(matches),
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, seedProfileFromConv(res.ConvID))
+}
+
+// seedProfileFromConv traces a live conv's observable launch config + granted
+// permissions into an UNSAVED spawn-profile seed. It reuses the exact per-agent
+// capture snapshotGroupTemplate applies to a group's roster — traceMemberLaunch
+// (harness/model/effort/sandbox, each blank when it matches the harness default)
+// plus ListAgentPermissionsForConv (granted slugs → "grant" overrides) —
+// projected onto the profile wire shape. Name is left blank: every field is a
+// pre-fill the editor lets the human review + name before saving, never a
+// stored profile.
+func seedProfileFromConv(convID string) spawnProfileJSON {
+	launch := traceMemberLaunch(convID)
+	seed := spawnProfileJSON{
+		Harness: launch.Harness,
+		Model:   launch.Model,
+		Effort:  launch.Effort,
+		Sandbox: launch.Sandbox,
+	}
+	if perms, _ := db.ListAgentPermissionsForConv(convID); len(perms) > 0 {
+		overrides := make(map[string]string, len(perms))
+		for _, s := range perms {
+			if s != "" {
+				overrides[s] = "grant"
+			}
+		}
+		if len(overrides) > 0 {
+			seed.PermissionOverrides = overrides
+		}
+	}
+	return seed
 }
 
 // handleSpawnProfileByName dispatches /v1/spawn-profiles/{name}: GET fetches one
