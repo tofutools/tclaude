@@ -42,6 +42,14 @@ type SessionRow struct {
 	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
 	// — never coalesced.
 	SandboxMode string
+	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
+	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under,
+	// recorded once at spawn by `session new` so a relaunch (resume / clone /
+	// reincarnate) can PRESERVE it — unlike sandbox/approval, which re-default
+	// on relaunch, the operator wants a per-agent timeout carried across the
+	// handoff (schema v97). "" for a pre-column row or a harness with no
+	// AskUserQuestion dialog; stored verbatim like SandboxMode.
+	AskUserQuestionTimeout string
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in remote access (Claude Code's /remote-control) is ON for this
 	// live session. CC exposes no programmatic readback, so tclaude tracks
@@ -56,7 +64,8 @@ type SessionRow struct {
 // SaveSession inserts or updates a session, setting updated_at to now.
 //
 // On an existing row this is an UPSERT that writes ONLY the columns
-// SaveSession owns (the state-tracking set: id … harness, sandbox_mode).
+// SaveSession owns (the state-tracking set: id … harness, sandbox_mode,
+// ask_user_question_timeout).
 // It deliberately does NOT touch the
 // context-window columns (context_pct, tokens_input, tokens_output,
 // context_window_size) or the nudge bookkeeping (nudged_pct). Those are
@@ -95,8 +104,8 @@ func SaveSession(s *SessionRow) error {
 	// value is non-empty, so a later status-update upsert (whose conv may not
 	// resolve) never wipes an agent already known for this session.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -112,10 +121,11 @@ func SaveSession(s *SessionRow) error {
 			last_hook = excluded.last_hook,
 			harness = excluded.harness,
 			sandbox_mode = excluded.sandbox_mode,
+			ask_user_question_timeout = excluded.ask_user_question_timeout,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.ConvID)
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, s.ConvID)
 	return err
 }
 
@@ -126,7 +136,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -147,7 +157,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +175,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -190,7 +200,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -248,7 +258,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, remote_control FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, remote_control FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -303,7 +313,7 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 	var autoReg, remoteCtl int
 	var createdStr, updatedStr, lastHookStr string
 	err := row.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
+		&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &remoteCtl)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +335,7 @@ func scanSessions(rows *sql.Rows) ([]*SessionRow, error) {
 		var autoReg, remoteCtl int
 		var createdStr, updatedStr, lastHookStr string
 		err := rows.Scan(&s.ID, &s.TmuxSession, &s.PID, &s.Cwd, &s.ConvID,
-			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &remoteCtl)
+			&s.Status, &s.StatusDetail, &s.SubagentCount, &s.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &s.Harness, &s.SandboxMode, &s.AskUserQuestionTimeout, &remoteCtl)
 		if err != nil {
 			return nil, fmt.Errorf("scanning session row: %w", err)
 		}
@@ -646,6 +656,20 @@ func RemoteControlForConv(convID string) (bool, error) {
 		return false, err
 	}
 	return s.RemoteControl, nil
+}
+
+// AskTimeoutForConv returns the resolved AskUserQuestion idle-timeout recorded
+// on a conv's most-recent session row (schema v97), or "" when none is stored
+// (a pre-column row, a non-Claude harness, or an un-chosen timeout). A relaunch
+// (resume / clone / reincarnate) reads it to PRESERVE the per-agent timeout —
+// the sibling of RemoteControlForConv (which preserves remote-access state), and
+// deliberately unlike sandboxForHarness / approvalForHarness, which re-default.
+func AskTimeoutForConv(convID string) (string, error) {
+	s, err := FindSessionByConvID(convID)
+	if err != nil || s == nil {
+		return "", err
+	}
+	return s.AskUserQuestionTimeout, nil
 }
 
 // UpdateSessionModel stores the LLM model display name ("Opus 4.8",

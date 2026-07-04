@@ -77,6 +77,14 @@ type SpawnArgs struct {
 	// daemon-owned Codex agent runs sandboxed by default (JOH-192/JOH-207).
 	Sandbox string
 
+	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
+	// idle-timeout override (never|60s|5m|10m), forwarded as `tclaude session
+	// new --ask-user-question-timeout <v>`; "" omits it. A Claude-Code-only
+	// settings.json override delivered via `--settings`; harnesses with no
+	// AskUserQuestion dialog (Codex) ignore it. Enabling auto-continue is an
+	// explicit per-agent / per-profile opt-in, so the daemon never defaults it.
+	AskUserQuestionTimeout string
+
 	// Approval is the launch-time approval policy for harnesses that take one
 	// (Codex's --ask-for-approval); "" omits it. The daemon resolves it to the
 	// harness's non-escalating default so a detached Codex agent never

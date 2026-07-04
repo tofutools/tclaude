@@ -84,6 +84,14 @@ type Harness struct {
 	// spawned (unattended) pane can't deadlock on an approval prompt no human
 	// can answer — see JOH-200.
 	Approval ApprovalCatalog
+	// AskTimeout names the per-session AskUserQuestion idle-timeout override
+	// this harness accepts (Claude Code's `askUserQuestionTimeout` settings.json
+	// key, delivered via `--settings`) and its default. nil for harnesses with
+	// no AskUserQuestion dialog (Codex), in which case the spawn path passes no
+	// timeout and rejects an explicit value. Enabling auto-continue is an
+	// explicit per-agent / per-profile opt-in — the default (inherit) adds no
+	// override, so an un-chosen spawn keeps the operator's settings.json value.
+	AskTimeout AskTimeoutCatalog
 
 	// TmuxScrollback marks a harness that relies on tmux for scroll-back
 	// history rather than rendering its own. The spawn path turns tmux mouse
@@ -291,6 +299,17 @@ func (h *Harness) SupportsSandbox() bool {
 // separate SupportsAutoReview axis. See JOH-200.
 func (h *Harness) SupportsApproval() bool {
 	return h != nil && h.Approval != nil
+}
+
+// SupportsAskTimeout reports whether the harness has a launch-time
+// AskUserQuestion idle-timeout catalog. Callers gate the timeout override on
+// this. Claude Code sets it (the `askUserQuestionTimeout` settings.json enum,
+// carried per-session via `--settings`); Codex leaves AskTimeout nil (no
+// AskUserQuestion dialog), so it rejects an explicit value and the dashboard
+// hides the selector. It is the UI-side + validation predicate, mirroring
+// SupportsSandbox.
+func (h *Harness) SupportsAskTimeout() bool {
+	return h != nil && h.AskTimeout != nil
 }
 
 // SupportsAutoReview reports whether the harness has a guardian/reviewer

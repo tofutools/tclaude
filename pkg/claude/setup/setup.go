@@ -218,6 +218,14 @@ func runSetup(params *Params) error {
 	fmt.Println("\n=== Fullscreen TUI ===")
 	configureFullscreenTUI(params)
 
+	// 2a′. AskUserQuestion idle-timeout. Claude Code no longer auto-continues a
+	// question dialog by default, so an unattended tclaude-spawned agent stalls
+	// on it. Recommend (and, interactively, offer to set) askUserQuestionTimeout
+	// in ~/.claude/settings.json — but never under --yes, since it is a global
+	// behaviour change; per-agent overrides live in the dashboard spawn dialog.
+	fmt.Println("\n=== AskUserQuestion Timeout ===")
+	configureAskUserQuestionTimeout(params)
+
 	// 2b. Codex CLI status line (when codex is installed). Codex has no
 	// command-backed status line (openai/codex#17827), so tclaude can't
 	// install its renderer there; instead it curates Codex's built-in
@@ -796,6 +804,10 @@ func checkStatus(harnessName string) error {
 	// Check fullscreen TUI
 	fmt.Println("\n=== Fullscreen TUI ===")
 	checkFullscreenTUI()
+
+	// Check AskUserQuestion idle-timeout
+	fmt.Println("\n=== AskUserQuestion Timeout ===")
+	checkAskUserQuestionTimeout()
 
 	// Check Codex status line
 	fmt.Println("\n=== Codex Status Bar ===")

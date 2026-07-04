@@ -8,9 +8,9 @@ import (
 )
 
 // TestMigrateV94toV95_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. The literal-currentVersion
-// tripwire moved forward to the v96 test (the new head); this one just checks
-// the fresh chain reaches head.
+// chain and asserts it lands at currentVersion. The literal currentVersion
+// tripwire has moved forward to the v98 test (migrate_v98_session_ask_timeout_test.go);
+// this one just checks the fresh chain reaches head.
 func TestMigrateV94toV95_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

@@ -97,13 +97,15 @@ func TestResolveSandboxMode(t *testing.T) {
 	if _, err := ResolveSandboxMode(codex, "nope"); err == nil {
 		t.Fatalf("ResolveSandboxMode(codex, nope) must error")
 	}
-	// Claude: unset → "" (omit; its sandbox is settings.json-driven).
-	if got, err := ResolveSandboxMode(claude, ""); err != nil || got != "" {
-		t.Fatalf("ResolveSandboxMode(claude, \"\") = %q,%v; want \"\",nil", got, err)
+	// Claude: unset → the inherit default, carried as the first-class "inherit"
+	// (it emits no override; its sandbox is settings.json-driven).
+	if got, err := ResolveSandboxMode(claude, ""); err != nil || got != "inherit" {
+		t.Fatalf("ResolveSandboxMode(claude, \"\") = %q,%v; want \"inherit\",nil", got, err)
 	}
-	// Claude: explicit mode → error (no launch sandbox flag).
+	// Claude: a Codex mode → error (workspace-write is not one of Claude's
+	// inherit/on/off values).
 	if _, err := ResolveSandboxMode(claude, SandboxWorkspaceWrite); err == nil {
-		t.Fatalf("ResolveSandboxMode(claude, workspace-write) must error — claude has no --sandbox")
+		t.Fatalf("ResolveSandboxMode(claude, workspace-write) must error — not a Claude sandbox mode")
 	}
 }
 

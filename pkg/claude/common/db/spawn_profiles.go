@@ -33,6 +33,11 @@ type SpawnProfile struct {
 	Effort   string
 	Sandbox  string
 	Approval string
+	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
+	// idle-timeout default (never|60s|5m|10m), delivered per-spawn via
+	// `--settings`; "" = unset (the agent uses the operator's settings.json). A
+	// Claude-Code-only launch field, validated against the profile's harness.
+	AskUserQuestionTimeout string
 	// AutoReview / TrustDir are launch toggles; nil = unset.
 	AutoReview *bool
 	TrustDir   *bool
@@ -98,13 +103,14 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := d.Exec(
 		`INSERT INTO spawn_profiles
-		   (name, harness, model, effort, sandbox, approval, auto_review, trust_dir,
+		   (name, harness, model, effort, sandbox, approval, ask_user_question_timeout,
+		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control,
 		    is_owner, permission_overrides,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -131,6 +137,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	res, err := d.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
+		   ask_user_question_timeout = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
@@ -138,6 +145,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
+		p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -216,6 +224,7 @@ func DeleteSpawnProfile(name string) (int64, error) {
 }
 
 const spawnProfileSelect = `SELECT id, name, harness, model, effort, sandbox, approval,
+	ask_user_question_timeout,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
 	sync_worktree, auto_focus, include_group_default_context, remote_control,
 	is_owner, permission_overrides, created_at, updated_at
@@ -226,6 +235,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, isOwner sql.NullInt64
 	var permOverrides, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
+		&p.AskUserQuestionTimeout,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl,
 		&isOwner, &permOverrides, &createdAt, &updatedAt); err != nil {

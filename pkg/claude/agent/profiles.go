@@ -40,13 +40,17 @@ type profileJSON struct {
 	Name string `json:"name"`
 
 	// Launch fields.
-	Harness    string `json:"harness,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Effort     string `json:"effort,omitempty"`
-	Sandbox    string `json:"sandbox,omitempty"`
-	Approval   string `json:"approval,omitempty"`
-	AutoReview *bool  `json:"auto_review,omitempty"`
-	TrustDir   *bool  `json:"trust_dir,omitempty"`
+	Harness  string `json:"harness,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	Sandbox  string `json:"sandbox,omitempty"`
+	Approval string `json:"approval,omitempty"`
+	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
+	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
+	// per-spawn via `--settings`. Claude-Code-only.
+	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
+	AutoReview             *bool  `json:"auto_review,omitempty"`
+	TrustDir               *bool  `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
 	// (tri-state). NOTE: `tclaude agent spawn --profile` does NOT inherit this —
 	// the CLI can't see the group's remote-control policy, which must win, so use
@@ -367,7 +371,8 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	launch := []string{}
 	for _, kv := range []struct{ k, v string }{
 		{"harness", p.Harness}, {"model", p.Model}, {"effort", p.Effort},
-		{"sandbox", p.Sandbox}, {"approval", p.Approval},
+		{"sandbox", p.Sandbox}, {"ask_user_question_timeout", p.AskUserQuestionTimeout},
+		{"approval", p.Approval},
 	} {
 		if kv.v != "" {
 			launch = append(launch, kv.k+"="+kv.v)

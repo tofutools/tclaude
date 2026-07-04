@@ -48,9 +48,12 @@ const tclaudeAgentdSocketTilde = "~/.tclaude/agentd.sock"
 type claudeSandbox struct{}
 
 // DefaultMode is `inherit` — the dropdown's recommended option (the dashboard
-// marks DefaultMode() "(recommended)"). It normalizes to "" through
-// ValidateMode, so resolving a blank request still ends at "omit", leaving an
-// un-chosen Claude spawn on the operator's own settings.json config.
+// marks DefaultMode() "(recommended)"). `inherit` is a FIRST-CLASS value
+// (ValidateMode returns it unchanged, NOT ""): it means "use the operator's own
+// settings.json sandbox config AND don't let a profile/group default override
+// that". It collapses to "no override" only at the final block emission (see
+// claudeSandboxBlock), so a spawn that explicitly chose inherit is not silently
+// re-filled by an overlay.
 func (claudeSandbox) DefaultMode() string { return ClaudeSandboxInherit }
 
 // Modes lists the selectable modes for spawn UIs: inherit (the default /
@@ -60,17 +63,27 @@ func (claudeSandbox) Modes() []string {
 	return []string{ClaudeSandboxInherit, ClaudeSandboxOn, ClaudeSandboxOff}
 }
 
-// ValidateMode normalizes and validates a requested mode. Both "" and the
-// `inherit` sentinel return "" — `inherit` is a recognized mode that means
-// "add no --settings override", so it collapses to the same omit the empty
-// string already means. This is what makes the default path behave exactly
-// like Claude Code before this feature: a blank or inherit choice threads no
-// sandbox value, emits no flag, and records no badge. `on` / `off` return
-// themselves; anything else is an error naming the valid set.
+// ValidateMode normalizes and validates a requested mode, preserving the
+// tri-state the overlay sites depend on:
+//
+//   - ""      → "" (OMITTED — a higher level, e.g. a group default profile, may
+//     fill it; if nothing does, the launch boundary applies the harness default).
+//   - inherit → "inherit" (ACTIVELY chosen — carried through as a first-class
+//     sentinel so an overlay treats it as "already set" and does NOT overwrite
+//     it; the final block emission collapses it to "no override").
+//   - on / off → themselves.
+//   - anything else → an error naming the valid set.
+//
+// The old behaviour collapsed inherit to "" here, which made an explicit inherit
+// indistinguishable from omitted so a profile/group default silently won;
+// keeping inherit distinct is the fix. `inherit` still emits no `--settings`
+// sandbox block and records no badge (see claudeSandboxBlock / sandboxBadge).
 func (claudeSandbox) ValidateMode(mode string) (string, error) {
 	switch strings.TrimSpace(mode) {
-	case "", ClaudeSandboxInherit:
+	case "":
 		return "", nil
+	case ClaudeSandboxInherit:
+		return ClaudeSandboxInherit, nil
 	case ClaudeSandboxOn:
 		return ClaudeSandboxOn, nil
 	case ClaudeSandboxOff:
@@ -143,19 +156,32 @@ func ClaudeSandboxOffBlock() map[string]any {
 	return map[string]any{"enabled": false}
 }
 
-// claudeSandboxSettingsJSON returns the compact `--settings` JSON payload for a
-// validated Claude sandbox mode, or "" when no override should be emitted
-// (inherit / unset / unrecognized — the spawner omits the flag). The result
-// wraps the on/off block under the top-level `sandbox` key Claude Code expects.
-// json.Marshal sorts map keys, so the output is deterministic (testable).
-func claudeSandboxSettingsJSON(mode string) string {
-	var block map[string]any
+// claudeSandboxBlock returns the value of the settings.json `sandbox` key for a
+// validated Claude sandbox mode, or nil when no override should be emitted
+// (inherit / unset / unrecognized). It is the shared block-builder the spawner's
+// merged `--settings` payload (claudeSettingsJSON) and the single-key
+// claudeSandboxSettingsJSON both draw from, so the two can never drift.
+func claudeSandboxBlock(mode string) map[string]any {
 	switch strings.TrimSpace(mode) {
 	case ClaudeSandboxOn:
-		block = ClaudeSandboxOnBlock()
+		return ClaudeSandboxOnBlock()
 	case ClaudeSandboxOff:
-		block = ClaudeSandboxOffBlock()
+		return ClaudeSandboxOffBlock()
 	default:
+		return nil
+	}
+}
+
+// claudeSandboxSettingsJSON returns the compact `--settings` JSON payload for a
+// validated Claude sandbox mode ALONE, or "" when no override should be emitted
+// (inherit / unset / unrecognized — the spawner omits the flag). The result
+// wraps the on/off block under the top-level `sandbox` key Claude Code expects.
+// json.Marshal sorts map keys, so the output is deterministic (testable). The
+// live spawn path uses the merged claudeSettingsJSON instead; this single-key
+// form is retained for the sandbox acceptance tests.
+func claudeSandboxSettingsJSON(mode string) string {
+	block := claudeSandboxBlock(mode)
+	if block == nil {
 		return ""
 	}
 	b, err := json.Marshal(map[string]any{"sandbox": block})

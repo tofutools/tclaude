@@ -72,11 +72,12 @@ func TestCodexSpawn_InvalidApprovalRejected(t *testing.T) {
 		"the refusal should name the approval validation; body=%s", resp.Raw)
 }
 
-// TestClaudeSpawn_HasNoApprovalFlag: Claude Code has no launch-time approval
-// flag (its approval handling is settings.json-driven), so a claude spawn must
-// thread an empty approval policy — never a Codex `never` leaking onto a
-// harness that can't parse `--ask-for-approval`.
-func TestClaudeSpawn_HasNoApprovalFlag(t *testing.T) {
+// TestClaudeSpawn_HasNoApprovalNever: a plain claude spawn resolves its approval
+// posture to the harness default, carried as the first-class `inherit` sentinel
+// — NOT a Codex `never` (which Claude can't parse) and not a real permission
+// mode. `inherit` collapses to "omit --permission-mode" at the spawner (see
+// claudeApprovalValue), so the agent stays on settings.json + the agentd popup.
+func TestClaudeSpawn_HasNoApprovalNever(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("cc-crew")
 
@@ -84,6 +85,6 @@ func TestClaudeSpawn_HasNoApprovalFlag(t *testing.T) {
 
 	got, ok := f.World.SpawnApproval(spawn.ConvID)
 	require.True(t, ok, "the claude spawn should have been observed by the sim spawner")
-	assert.Equal(t, "", got,
-		"a Claude Code spawn must omit the approval flag (no --ask-for-approval support)")
+	assert.Equal(t, "inherit", got,
+		"a Claude Code spawn resolves approval to the inherit sentinel, never a Codex policy")
 }

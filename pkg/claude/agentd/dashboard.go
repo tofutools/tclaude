@@ -747,6 +747,17 @@ type dashboardHarness struct {
 	// whether it is safe for a detached agent). {} (not null) when the harness
 	// surfaces no approval modes, so the JS lookup is always safe.
 	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
+	// AskTimeoutModes lists the Claude Code AskUserQuestion idle-timeout values
+	// this harness surfaces as a dropdown (inherit / never / 60s / 5m / 10m).
+	// Empty for a harness with no AskUserQuestion dialog (Codex), so the dialog
+	// hides the selector. The AskTimeoutCatalog parallel to SandboxModes.
+	AskTimeoutModes []string `json:"ask_timeout_modes"`
+	// DefaultAskTimeout is the recommended value the dialog pre-selects (Claude
+	// Code: inherit). "" when AskTimeoutModes is empty.
+	DefaultAskTimeout string `json:"default_ask_timeout"`
+	// AskTimeoutModeHelp maps each value to a one-line hint. {} (not null) when
+	// the harness surfaces no timeout, so the JS lookup is always safe.
+	AskTimeoutModeHelp map[string]string `json:"ask_timeout_mode_help"`
 	// CanRename / CanCompact mirror Harness.CanRename / CanCompact — the
 	// deliverable-action predicates the per-row controls gate on. Note
 	// CanRename is true for Codex (it renames via its ConvStore even
@@ -763,6 +774,10 @@ type dashboardHarness struct {
 	// modes yet — keeps the row hidden), mirroring how the sandbox row gates on
 	// can_sandbox && sandbox_modes.length.
 	CanApproval bool `json:"can_approval"`
+	// CanAskTimeout reports whether the harness has a launch AskUserQuestion
+	// idle-timeout catalog (Claude Code). The dialog's timeout row gates on this
+	// + a non-empty AskTimeoutModes, mirroring the sandbox row.
+	CanAskTimeout bool `json:"can_ask_timeout"`
 	// CanRemoteControl mirrors Harness.CanRemoteControl — true only for a
 	// harness with a built-in Remote Access toggle (Claude Code), false for
 	// one without it (Codex). The per-row remote-control toggle gates on
@@ -791,6 +806,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanCompact:       h.CanCompact(),
 			CanSandbox:       h.SupportsSandbox(),
 			CanApproval:      h.SupportsApproval(),
+			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
 		}
 		if dh.Models == nil {
@@ -820,6 +836,19 @@ func buildHarnessCatalog() []dashboardHarness {
 					dh.ApprovalModeHelp[m] = h.Approval.ModeHelp(m)
 				}
 			}
+		}
+		// AskUserQuestion idle-timeout modes mirror the sandbox block: a
+		// Claude-only catalog (never|60s|5m|10m + inherit), hidden for a harness
+		// with no AskUserQuestion dialog (Codex).
+		dh.AskTimeoutModeHelp = map[string]string{}
+		if h.SupportsAskTimeout() {
+			dh.AskTimeoutModes = h.AskTimeout.Modes()
+			dh.DefaultAskTimeout = h.AskTimeout.DefaultMode()
+			for _, m := range dh.AskTimeoutModes {
+				dh.AskTimeoutModeHelp[m] = h.AskTimeout.ModeHelp(m)
+			}
+		} else {
+			dh.AskTimeoutModes = []string{}
 		}
 		out = append(out, dh)
 	}

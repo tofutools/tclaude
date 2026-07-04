@@ -126,6 +126,18 @@ function applyProfileEditorHarness(harnessName) {
     apprSel.value = h.default_approval || h.approval_modes[0];
   }
 
+  // AskUserQuestion timeout — surfaced only for a harness with the dialog
+  // (Claude Code), mirroring the sandbox/approval rows.
+  const canAskTimeout = !!(h && h.can_ask_timeout && h.ask_timeout_modes && h.ask_timeout_modes.length);
+  $('#profile-editor-ask-timeout-row').style.display = canAskTimeout ? '' : 'none';
+  if (canAskTimeout) {
+    const atSel = $('#profile-editor-ask-timeout');
+    atSel.innerHTML = h.ask_timeout_modes
+      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_ask_timeout ? ' (recommended)' : ''}</option>`)
+      .join('');
+    atSel.value = h.default_ask_timeout || h.ask_timeout_modes[0];
+  }
+
   // trust-dir is Codex-only — it edits ~/.codex/config.toml, the same gating
   // the spawn dialog applies.
   const isCodex = !!(h && h.name === 'codex');
@@ -306,6 +318,7 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   setSelectIfPresent($('#profile-editor-effort'), seed ? seed.effort : '');
   setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
   setSelectIfPresent($('#profile-editor-approval'), seed ? seed.approval : '');
+  setSelectIfPresent($('#profile-editor-ask-timeout'), seed ? seed.ask_user_question_timeout : '');
 
   setTri($('#profile-editor-trust-dir'), seed ? seed.trust_dir : null);
   setTri($('#profile-editor-remote-control'), seed ? seed.remote_control : null);
@@ -367,6 +380,15 @@ function buildProfilePayload(name) {
     && hEntry.approval_modes && hEntry.approval_modes.length);
   if (surfacesApproval && $('#profile-editor-approval').value) {
     body.approval = $('#profile-editor-approval').value;
+  }
+  // AskUserQuestion timeout: Claude-Code-only, editable only for a harness that
+  // surfaces the dialog. Its dropdown is the source of truth. Never carried
+  // forward on a harness switch (the backend rejects it on a non-Claude
+  // profile), so a switch to Codex correctly drops it.
+  const surfacesAskTimeout = !!(hEntry && hEntry.can_ask_timeout
+    && hEntry.ask_timeout_modes && hEntry.ask_timeout_modes.length);
+  if (surfacesAskTimeout && $('#profile-editor-ask-timeout').value) {
+    body.ask_user_question_timeout = $('#profile-editor-ask-timeout').value;
   }
   // trust-dir: Codex-only (the backend rejects a true on any other harness).
   const trustDir = (harness === 'codex') ? readTri($('#profile-editor-trust-dir')) : null;

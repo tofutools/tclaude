@@ -8,8 +8,9 @@ import (
 
 // TestClaudeSandbox_Catalog pins the catalog the spawn dialog / profile editor
 // / CLI drive their Claude sandbox selector off: the inherit/on/off mode set,
-// the inherit default (the dropdown's recommended option), and the
-// normalization that makes inherit collapse to "" (no override).
+// the inherit default (the dropdown's recommended option), and the tri-state
+// normalization — "" stays "" (omitted), inherit stays "inherit" (a first-class
+// sentinel, collapsed to "no override" only at emission), on/off stay themselves.
 func TestClaudeSandbox_Catalog(t *testing.T) {
 	c := claudeSandbox{}
 
@@ -20,7 +21,7 @@ func TestClaudeSandbox_Catalog(t *testing.T) {
 		t.Fatalf("DefaultMode() = %q, want %q", got, ClaudeSandboxInherit)
 	}
 
-	// ValidateMode: both "" and inherit normalize to "" (omit the override);
+	// ValidateMode: "" stays "" (omitted); inherit stays "inherit" (first-class);
 	// on/off return themselves; anything else errors.
 	cases := []struct {
 		in      string
@@ -28,8 +29,8 @@ func TestClaudeSandbox_Catalog(t *testing.T) {
 		wantErr bool
 	}{
 		{"", "", false},
-		{"inherit", "", false},
-		{"  inherit  ", "", false}, // trimmed then normalized
+		{"inherit", "inherit", false},
+		{"  inherit  ", "inherit", false}, // trimmed, kept
 		{"on", "on", false},
 		{"off", "off", false},
 		{"workspace-write", "", true}, // a Codex mode is not a Claude mode
@@ -64,9 +65,10 @@ func TestClaudeSandbox_Catalog(t *testing.T) {
 
 // TestClaudeSandbox_HarnessResolution pins how the harness-level resolvers
 // treat Claude's sandbox: SupportsSandbox is true, an explicit on/off
-// validates, inherit/blank resolves to "" (omit), and an invalid mode errors —
-// the same entry points the daemon (ResolveSandboxMode) and the direct CLI
-// (ValidateSandboxMode) use.
+// validates, blank resolves to the inherit default (now the first-class
+// "inherit", which emits no override), an explicit inherit is preserved, and an
+// invalid mode errors — the same entry points the daemon (ResolveSandboxMode)
+// and the direct CLI (ValidateSandboxMode) use.
 func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 	h, err := Resolve(DefaultName)
 	if err != nil {
@@ -76,15 +78,22 @@ func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 		t.Fatal("claude must SupportsSandbox now (per-session --settings override)")
 	}
 
-	// Daemon path: blank resolves to the inherit default, which normalizes to ""
-	// — an un-chosen Claude spawn imposes no sandbox override.
-	if got, err := ResolveSandboxMode(h, ""); err != nil || got != "" {
-		t.Fatalf("ResolveSandboxMode(claude, \"\") = (%q, %v), want (\"\", nil)", got, err)
+	// Daemon path: blank resolves to the inherit default, carried as the
+	// first-class "inherit" (it emits no sandbox override — see the spawner test).
+	if got, err := ResolveSandboxMode(h, ""); err != nil || got != "inherit" {
+		t.Fatalf("ResolveSandboxMode(claude, \"\") = (%q, %v), want (inherit, nil)", got, err)
+	}
+	// An explicit inherit is preserved verbatim (not overwritten by an overlay).
+	if got, err := ResolveSandboxMode(h, "inherit"); err != nil || got != "inherit" {
+		t.Fatalf("ResolveSandboxMode(claude, inherit) = (%q, %v), want (inherit, nil)", got, err)
 	}
 	if got, err := ResolveSandboxMode(h, "on"); err != nil || got != "on" {
 		t.Fatalf("ResolveSandboxMode(claude, on) = (%q, %v), want (on, nil)", got, err)
 	}
-	// Direct CLI path: same validation, no defaulting.
+	// Direct CLI path: same validation, no defaulting — blank stays "" (omitted).
+	if got, err := ValidateSandboxMode(h, ""); err != nil || got != "" {
+		t.Fatalf("ValidateSandboxMode(claude, \"\") = (%q, %v), want (\"\", nil)", got, err)
+	}
 	if got, err := ValidateSandboxMode(h, "off"); err != nil || got != "off" {
 		t.Fatalf("ValidateSandboxMode(claude, off) = (%q, %v), want (off, nil)", got, err)
 	}

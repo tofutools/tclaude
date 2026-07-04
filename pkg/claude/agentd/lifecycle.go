@@ -422,14 +422,15 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:        convID,
-		Cwd:           cwd,
-		Effort:        effort,
-		Model:         model,
-		Harness:       harnessName,
-		Sandbox:       sandboxForHarness(harnessName),
-		Approval:      approvalForHarness(harnessName),
-		RemoteControl: remoteControl,
+		ConvID:                 convID,
+		Cwd:                    cwd,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                harnessName,
+		Sandbox:                sandboxForHarness(harnessName),
+		Approval:               approvalForHarness(harnessName),
+		AskUserQuestionTimeout: askTimeoutForRelaunch(convID),
+		RemoteControl:          remoteControl,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1444,6 +1445,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			if strings.TrimSpace(body.ApprovalPolicy) == "" {
 				body.ApprovalPolicy = prof.Approval
 			}
+			if strings.TrimSpace(body.AskUserQuestionTimeout) == "" {
+				body.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
+			}
 			if !body.AutoReview && prof.AutoReview != nil {
 				body.AutoReview = *prof.AutoReview
 			}
@@ -1544,6 +1548,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Resolve the AskUserQuestion idle-timeout for the chosen harness: a
+	// Claude-Code-only settings.json override (never|60s|5m|10m) delivered via
+	// `--settings`, so an explicit value for a harness with no AskUserQuestion
+	// dialog (Codex) is a 400 here rather than a flag silently dropped. There is
+	// no forced default (inherit/blank → "" = no override) — enabling
+	// auto-continue for an unattended agent is an explicit per-agent / profile
+	// opt-in, already overlaid from the group default profile above.
+	askTimeout, atErr := harness.ResolveAskTimeoutMode(h, body.AskUserQuestionTimeout)
+	if atErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_ask_user_question_timeout", atErr.Error())
+		return
+	}
+
 	// Gate the experimental auto-review (guardian) opt-in: it is allowed only
 	// for a harness with an approvals subsystem (Codex). Requesting it for a
 	// harness with no guardian (Claude Code) is a 400 here rather than a flag
@@ -1627,30 +1644,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
-		Name:                body.Name,
-		Role:                body.Role,
-		Descr:               body.Descr,
-		TaskURL:             strings.TrimSpace(body.TaskURL),
-		TaskLabel:           strings.TrimSpace(body.TaskLabel),
-		InitialMessage:      body.InitialMessage,
-		Attachments:         attachments,
-		Cwd:                 cwd,
-		WorktreePath:        worktreePath,
-		WorktreeBranch:      worktreeBranch,
-		AutoFocus:           body.AutoFocus,
-		Effort:              effort,
-		Model:               model,
-		Harness:             h.Name,
-		SandboxMode:         sandboxMode,
-		ApprovalPolicy:      approvalPolicy,
-		AutoReview:          autoReview,
-		TrustDir:            trustDir,
-		RemoteControl:       remoteControl,
-		ReplyToConv:         replyToConv,
-		SpawnedByConv:       spawnerConvID,
-		IsOwner:             body.IsOwner,
-		PermissionOverrides: permOverrides,
-		Timeout:             timeout,
+		Name:                   body.Name,
+		Role:                   body.Role,
+		Descr:                  body.Descr,
+		TaskURL:                strings.TrimSpace(body.TaskURL),
+		TaskLabel:              strings.TrimSpace(body.TaskLabel),
+		InitialMessage:         body.InitialMessage,
+		Attachments:            attachments,
+		Cwd:                    cwd,
+		WorktreePath:           worktreePath,
+		WorktreeBranch:         worktreeBranch,
+		AutoFocus:              body.AutoFocus,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                h.Name,
+		SandboxMode:            sandboxMode,
+		AskUserQuestionTimeout: askTimeout,
+		ApprovalPolicy:         approvalPolicy,
+		AutoReview:             autoReview,
+		TrustDir:               trustDir,
+		RemoteControl:          remoteControl,
+		ReplyToConv:            replyToConv,
+		SpawnedByConv:          spawnerConvID,
+		IsOwner:                body.IsOwner,
+		PermissionOverrides:    permOverrides,
+		Timeout:                timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -1786,6 +1804,14 @@ type spawnParams struct {
 	// also tags sessions.remote_control=1 once the row materialises, so the
 	// toggle direction logic + dashboard indicator start armed.
 	RemoteControl bool
+	// AskUserQuestionTimeout is the resolved per-session Claude Code
+	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
+	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
+	// A Claude-Code-only settings.json override (delivered via `--settings`);
+	// validated + harness-gated at the spawn boundary (handleGroupSpawn →
+	// harness.ResolveAskTimeoutMode). Never defaulted — enabling auto-continue
+	// is an explicit per-agent / per-profile / config opt-in.
+	AskUserQuestionTimeout string
 	// GroupContext is the shared startup context to fold into the
 	// briefing, or "" to omit it. The caller has already applied any
 	// opt-out, so executeSpawn injects it verbatim.
@@ -2011,6 +2037,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		if p.ApprovalPolicy == "" {
 			p.ApprovalPolicy = prof.Approval
 		}
+		if p.AskUserQuestionTimeout == "" {
+			p.AskUserQuestionTimeout = prof.AskUserQuestionTimeout
+		}
 		if !p.AutoReview && prof.AutoReview != nil {
 			p.AutoReview = *prof.AutoReview
 		}
@@ -2038,6 +2067,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	if p.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, p.ApprovalPolicy); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+	}
+	if p.AskUserQuestionTimeout, err = harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
 	}
 	if p.AutoReview, err = harness.ResolveAutoReview(h, p.AutoReview); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -2092,16 +2124,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	label := generateSpawnLabel()
 
 	spawnArgs := clcommon.SpawnArgs{
-		Label:         label,
-		Cwd:           p.Cwd,
-		Effort:        p.Effort,
-		Model:         p.Model,
-		Harness:       p.Harness,
-		Sandbox:       p.SandboxMode,
-		Approval:      p.ApprovalPolicy,
-		AutoReview:    p.AutoReview,
-		TrustDir:      p.TrustDir,
-		RemoteControl: p.RemoteControl,
+		Label:                  label,
+		Cwd:                    p.Cwd,
+		Effort:                 p.Effort,
+		Model:                  p.Model,
+		Harness:                p.Harness,
+		Sandbox:                p.SandboxMode,
+		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
+		Approval:               p.ApprovalPolicy,
+		AutoReview:             p.AutoReview,
+		TrustDir:               p.TrustDir,
+		RemoteControl:          p.RemoteControl,
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -3318,11 +3351,25 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendAskTimeoutFlag adds `--ask-user-question-timeout <v>` to a `tclaude
+// session new` argv when the spawn chose a Claude Code AskUserQuestion
+// idle-timeout override (never|60s|5m|10m). "" omits it. The forked `session
+// new` re-validates it against the harness (a non-Claude harness rejects it) and
+// the CC spawner folds it into its merged `--settings` payload alongside the
+// sandbox block.
+func appendAskTimeoutFlag(args []string, askTimeout string) []string {
+	if askTimeout != "" {
+		args = append(args, "--ask-user-question-timeout", askTimeout)
+	}
 	return args
 }
 
@@ -3358,6 +3405,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	// Re-arm Claude Code's built-in Remote Access on the relaunched pane when

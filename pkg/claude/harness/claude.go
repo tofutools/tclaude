@@ -41,6 +41,12 @@ func init() {
 		// nothing) through the harness-agnostic Approval field, translated by
 		// the spawner to `--permission-mode` — see claude_approval.go.
 		Approval: claudeApproval{},
+		// Claude Code's AskUserQuestion idle-timeout (never|60s|5m|10m) is a
+		// settings.json key with no launch flag; claudeAskTimeout carries the
+		// inherit/never/60s/5m/10m enum (inherit adds nothing) through the
+		// harness-agnostic AskTimeout field, delivered per-session as part of
+		// the merged `--settings` payload — see claude_ask_timeout.go.
+		AskTimeout: claudeAskTimeout{},
 		// Claude Code accepts a preset conv-id (--session-id), a launch-time
 		// display name (--name, written as a custom-title turn just like
 		// /rename), and a positional first-turn prompt — so the daemon can
@@ -95,25 +101,29 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 		// glob pattern.
 		cmd += " --model " + clcommon.ShellQuoteArg(spec.Model)
 	}
-	// Claude Code has no `--sandbox` flag; its OS sandbox is a settings.json
-	// block. The `on`/`off` launch-containment modes are delivered as a
-	// per-session `--settings '<json>'` override that merges over the user's
-	// settings (only managed/policy settings outrank it). The default mode
-	// (inherit) yields "" here, so an un-chosen spawn emits no flag and the
-	// agent stays on the operator's own settings.json config. The JSON is a
-	// static, machine-built payload (claudeSandboxSettingsJSON), but shell-
-	// quoted as one arg anyway since it's handed to `sh -c`.
-	if s := claudeSandboxSettingsJSON(spec.SandboxMode); s != "" {
+	// Claude Code has no launch flags for its OS sandbox or its AskUserQuestion
+	// idle-timeout; both are settings.json keys delivered per-session as a
+	// `--settings '<json>'` override that merges over the user's settings (only
+	// managed/policy settings outrank it). claudeSettingsJSON collects EVERY
+	// such override this spawn carries into ONE payload — the spawner emits
+	// `--settings` at most once, so multiple sources must share a single merged
+	// object. An un-chosen spawn (all defaults inherit/unset) yields "" here, so
+	// no flag is emitted and the agent stays on the operator's own settings.json.
+	// The JSON is a machine-built payload, shell-quoted as one arg anyway since
+	// it's handed to `sh -c`.
+	if s := claudeSettingsJSON(spec); s != "" {
 		cmd += " --settings " + clcommon.ShellQuoteArg(s)
 	}
 	// Claude Code's approval posture is its permission mode: the harness-
 	// agnostic ApprovalPolicy carries a `--permission-mode` value for Claude
-	// (validated by claudeApproval; inherit/blank already collapsed to "" so an
-	// un-chosen spawn omits the flag and keeps the agent on settings.json + the
-	// agentd approval popup). Quoted defensively even though it's a validated
+	// (validated by claudeApproval). claudeApprovalValue collapses the first-class
+	// `inherit` sentinel (and unset/unrecognized) to "" here — the last layer that
+	// sees it — so an inherit/un-chosen spawn omits the flag and keeps the agent
+	// on settings.json + the agentd approval popup, and a bogus `--permission-mode
+	// inherit` is never emitted. Quoted defensively even though it's a validated
 	// enum, since it's handed to `sh -c`.
-	if spec.ApprovalPolicy != "" {
-		cmd += " --permission-mode " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
+	if mode := claudeApprovalValue(spec.ApprovalPolicy); mode != "" {
+		cmd += " --permission-mode " + clcommon.ShellQuoteArg(mode)
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))
