@@ -1372,6 +1372,44 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
 }
 
+// TestDashboardHTML_WizardTemplateNativeControlSweep pins the JOH-349 sweep of
+// the native controls the earlier templates-family wizard work left
+// browser-default: the editor's number inputs, checkboxes, the role-library +
+// launch-profile selects and the role-inspect panel (JOH-351 deferred it), the
+// previously-unskinned template-import dialog, and the roles library overlay +
+// role editor (two whole modals that carried wizard vocab on plain chrome).
+// Native <input type=number/checkbox> and <select> render browser-default
+// unless explicitly themed, so these are the residue that slipped the round.
+func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Template editor residue: number/checkbox inputs + the two library selects.
+	must("body.wizard #template-editor-modal input[type=number]", "the wave / max-wait number inputs get the violet-void skin")
+	must("body.wizard #template-editor-modal input[type=checkbox] { accent-color: #a97bd6; }", "the ★ owner checkbox gets the arcane accent")
+	must("body.wizard #template-editor-modal select.ta-role-ref", "the role-library dropdown gets the arcane select skin")
+	must("body.wizard #template-editor-modal select.ta-profile-select", "the launch-profile picker gets the arcane select skin")
+	// Role-inspect panel (JOH-351 deferred): void + chips + slugs + footer.
+	must("body.wizard #template-editor-modal .role-inspect {", "the role-inspect panel void is re-skinned")
+	must("body.wizard #template-editor-modal .role-inspect-slug {", "the role-inspect permission slugs get the gilt-on-violet coat")
+
+	// Template import dialog (was entirely unskinned despite carrying wizard words).
+	must("body.wizard #template-import-modal .cron-create-modal", "the template-import surface is re-skinned")
+	must("body.wizard #template-import-modal .cron-create-row input[type=checkbox] { accent-color: #a97bd6; }", "the overwrite checkbox gets the arcane accent")
+	must("body.wizard #template-import-modal #template-import-submit", "the Import button gets the gilded chrome (label kept honest)")
+
+	// Roles library overlay + role editor (two whole modals, never themed).
+	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
+	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
+	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
+	must("body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }", "the shared perm-checkbox list gets the arcane accent via wizard scope")
+	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
+}
+
 // TestDashboardCSS_WizardTemplateDialogsScoped guards that the templates-
 // family re-skins stay scoped to their modal ids — they are all
 // .cron-create-modal dialogs like the spawn dialog and its siblings, so an
