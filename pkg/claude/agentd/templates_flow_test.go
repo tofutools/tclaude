@@ -30,6 +30,7 @@ type templateAgentSpec struct {
 	InitialMessage string   `json:"initial_message,omitempty"`
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions,omitempty"`
+	Wave           int      `json:"wave,omitempty"`
 }
 
 // instantiateResult mirrors the JSON the instantiate endpoint returns.

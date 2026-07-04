@@ -40,6 +40,7 @@ let templateEditorEditing = null;
 let templateEditorAgents = [];
 let templateEditorPattern = [];
 let templateEditorProcess = [];
+let templateEditorRhythms = [];
 
 function filterTemplates(list, q) {
   if (!q) return list;
@@ -89,6 +90,13 @@ function openTemplatesManageModal() {
 
 function closeTemplatesManageModal() { $('#templates-manage-modal').classList.remove('show'); }
 
+// templateWaveCount is the number of distinct staged-spawn waves a template's
+// agents span (JOH-244). 1 (or 0) = a single synchronous pass, no wave badge.
+function templateWaveCount(t) {
+  const waves = new Set((t.agents || []).map(a => a.wave || 0));
+  return waves.size;
+}
+
 function templateCardHTML(t) {
   const agents = (t.agents || []).map(a => {
     const owner = a.is_owner ? '<span class="tc-owner" title="group owner">★</span> ' : '';
@@ -120,6 +128,8 @@ function templateCardHTML(t) {
       <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
       ${(t.work_pattern || []).length ? `<span class="tc-count" title="${wizWord('work pattern — ordered briefing messages delivered after the team spawns', 'rite of command — ordered whispers delivered once the party stands')}">⇶ ${(t.work_pattern || []).length}-step ${wizWord('pattern', 'rite')}</span>` : ''}
       ${(t.process || []).length ? `<span class="tc-count" title="${wizWord('process — an ordered, advisory phase plan tracked at runtime', 'quest plan — an ordered, advisory chapter plan tracked as the party works')}">◆ ${(t.process || []).length}-${wizWord('phase', 'chapter')} ${wizWord('process', 'quest')}</span>` : ''}
+      ${(t.rhythms || []).length ? `<span class="tc-count" title="${wizWord('rhythms — recurring nudges materialized as group cron jobs at deploy', 'drumbeats — recurring nudges cast as group cron jobs when the party is summoned')}">🥁 ${(t.rhythms || []).length} ${wizWord('rhythm', 'drumbeat')}${(t.rhythms || []).length === 1 ? '' : 's'}</span>` : ''}
+      ${templateWaveCount(t) > 1 ? `<span class="tc-count" title="${wizWord('staged spawn — agents span multiple waves; higher waves spawn once the prior wave settles', 'marching order — the party musters in waves, each after the last has drawn breath')}">🌊 ${templateWaveCount(t)} ${wizWord('waves', 'ranks')}</span>` : ''}
       <span class="tc-actions">
         <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
         <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
@@ -161,6 +171,7 @@ function blankTemplateAgent() {
   return {
     name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
     role_ref: '', spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
+    wave: 0,
   };
 }
 
@@ -183,6 +194,7 @@ function openTemplateEditor(tmpl) {
         role_ref: a.role_ref || '',
         spawn_profile: a.spawn_profile || '', harness: a.harness || '',
         model: a.model || '', effort: a.effort || '', sandbox: a.sandbox || '', approval: a.approval || '',
+        wave: a.wave || 0,
       }))
     : [blankTemplateAgent()];
   templateEditorPattern = tmpl
@@ -191,9 +203,18 @@ function openTemplateEditor(tmpl) {
   templateEditorProcess = tmpl
     ? (tmpl.process || []).map(ph => ({ name: ph.name || '', roles: (ph.roles || []).slice(), criteria: ph.criteria || '' }))
     : [];
+  templateEditorRhythms = tmpl
+    ? (tmpl.rhythms || []).map(r => ({
+        name: r.name || '', target_role: r.target_role || '',
+        interval: r.interval || '', cron_expr: r.cron_expr || '',
+        subject: r.subject || '', body: r.body || '',
+      }))
+    : [];
+  $('#template-editor-wave-max-wait').value = tmpl && tmpl.wave_max_wait ? tmpl.wave_max_wait : '';
   renderEditorAgents();
   renderEditorPattern();
   renderEditorProcess();
+  renderEditorRhythms();
   // Fill the role-library cache so the per-agent role dropdown has options, then
   // re-render the rows (the first render used whatever was already cached). A
   // load failure just leaves the dropdowns with the "(none)" option.
@@ -246,6 +267,7 @@ function editorAgentRowHTML(a, idx, slugs) {
     <div class="template-agent-grid">
       <input type="text" class="ta-name" placeholder="name (e.g. PO, dev1)" value="${esc(a.name)}" />
       <input type="text" class="ta-role" placeholder="role label (e.g. product-owner)" value="${esc(a.role)}" />
+      <input type="number" class="ta-wave" min="0" title="Staged-spawn wave (JOH-244): wave 0 spawns first; higher waves spawn once the prior wave is up and idle. All wave 0 = one synchronous pass." placeholder="wave (0)" value="${a.wave || 0}" />
     </div>
     <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath its own fields below, which override. Blank = no role.">
       <span>Role library</span>
@@ -382,6 +404,54 @@ function scrapeEditorAgents() {
     effort: $('.ta-effort', row).value.trim(),
     sandbox: $('.ta-sandbox', row).value.trim(),
     approval: $('.ta-approval', row).value.trim(),
+    wave: parseInt($('.ta-wave', row).value, 10) || 0,
+  }));
+}
+
+// ---- Rhythm rows (JOH-244) --------------------------------------------
+//
+// The template's rhythms: recurring nudges (the party's drumbeats)
+// materialized as group cron jobs at deploy. Each carries a name, a
+// schedule (interval OR cron expression), an optional role filter, an
+// optional subject, and a body. The rows reuse the agent-row panel chrome
+// (.template-agent-row) so the wizard re-skin covers them for free.
+
+function renderEditorRhythms() {
+  $('#template-editor-rhythms').innerHTML =
+    templateEditorRhythms.map((r, i) => rhythmRowHTML(r, i)).join('');
+}
+
+function rhythmRowHTML(r, idx) {
+  return `<div class="template-agent-row template-rhythm-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Rhythm', 'Drumbeat')} ${idx + 1}</span>
+      <button type="button" class="tool trh-up" title="Move this rhythm up">↑</button>
+      <button type="button" class="tool trh-down" title="Move this rhythm down">↓</button>
+      <button type="button" class="tool trh-remove" title="Remove this rhythm">✕</button>
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="trh-name" placeholder="name (e.g. status-ping)" value="${esc(r.name || '')}" />
+      <input type="text" class="trh-role" placeholder="role filter (blank / 'all' = whole group)" value="${esc(r.target_role || '')}" />
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="trh-interval" placeholder="interval (e.g. 10m) — OR cron below" value="${esc(r.interval || '')}" />
+      <input type="text" class="trh-cron" placeholder="cron expr (e.g. '0 * * * *') — OR interval" value="${esc(r.cron_expr || '')}" />
+    </div>
+    <input type="text" class="trh-subject" placeholder="subject (optional)" value="${esc(r.subject || '')}" />
+    <textarea class="trh-body" rows="2" placeholder="message body the nudge sends each tick (newlines OK)">${esc(r.body || '')}</textarea>
+  </div>`;
+}
+
+// scrapeEditorRhythms reads the rhythm rows back into templateEditorRhythms
+// — same never-lose-typed-values contract as scrapeEditorProcess.
+function scrapeEditorRhythms() {
+  templateEditorRhythms = $$('#template-editor-rhythms .template-rhythm-row').map(row => ({
+    name: $('.trh-name', row).value.trim(),
+    target_role: $('.trh-role', row).value.trim(),
+    interval: $('.trh-interval', row).value.trim(),
+    cron_expr: $('.trh-cron', row).value.trim(),
+    subject: $('.trh-subject', row).value.trim(),
+    body: $('.trh-body', row).value,
   }));
 }
 
@@ -389,6 +459,7 @@ async function submitTemplateEditor() {
   scrapeEditorAgents();
   scrapeEditorPattern();
   scrapeEditorProcess();
+  scrapeEditorRhythms();
   const name = $('#template-editor-name').value.trim();
   const errEl = $('#template-editor-error');
   errEl.textContent = '';
@@ -400,6 +471,8 @@ async function submitTemplateEditor() {
     agents: templateEditorAgents,
     work_pattern: templateEditorPattern,
     process: templateEditorProcess,
+    rhythms: templateEditorRhythms,
+    wave_max_wait: parseInt($('#template-editor-wave-max-wait').value, 10) || 0,
   };
   const editing = templateEditorEditing;
   const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
@@ -1024,6 +1097,27 @@ function bindTemplatesUI() {
     else if (btn.classList.contains('tpp-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
     else if (btn.classList.contains('tpp-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
     renderEditorProcess();
+  });
+  // Rhythm rows: add / remove / reorder (JOH-244, delegated — the container
+  // re-renders on every mutation, so scrape all sibling editors first).
+  $('#template-editor-add-rhythm').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    scrapeEditorProcess();
+    scrapeEditorRhythms();
+    templateEditorRhythms.push({ name: '', target_role: '', interval: '', cron_expr: '', subject: '', body: '' });
+    renderEditorRhythms();
+  });
+  $('#template-editor-rhythms').addEventListener('click', e => {
+    const btn = e.target.closest('.trh-remove, .trh-up, .trh-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-rhythm-row').dataset.idx, 10);
+    scrapeEditorRhythms();
+    const arr = templateEditorRhythms;
+    if (btn.classList.contains('trh-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('trh-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('trh-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorRhythms();
   });
   bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
 

@@ -1300,6 +1300,10 @@
            targetPicker module (see bindTargetPicker('cron-create')). -->
       <div class="cron-create-target" id="cron-create-target-mount"></div>
     </label>
+    <label class="cron-create-row" id="cron-create-role-row" style="display:none">
+      <span class="cron-create-label" title="For a group target only: deliver only to members whose role matches (resolved at fire time). Blank / 'all' = the whole group.">Role filter</span>
+      <input id="cron-create-role" type="text" placeholder="optional — blank / all = whole group (e.g. dev)" autocomplete="off" spellcheck="false" />
+    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Schedule</span>
       <div class="cron-create-schedule">
@@ -1520,6 +1524,15 @@
       <button type="button" id="template-editor-add-phase" class="tool"><span class="tpl-word-regular">+ add phase</span><span class="tpl-word-wizard">+ add chapter</span></button>
     </div>
     <div id="template-editor-process"></div>
+    <div class="template-agents-head" title="Recurring nudges materialized as group cron jobs at deploy — the party's drumbeats. Each fires on an interval or cron expression and delivers a message to the whole group (or a role). Leave empty for no rhythms.">
+      <span><span class="tpl-word-regular">Rhythms</span><span class="tpl-word-wizard">Drumbeats</span></span>
+      <button type="button" id="template-editor-add-rhythm" class="tool"><span class="tpl-word-regular">+ add rhythm</span><span class="tpl-word-wizard">+ add drumbeat</span></button>
+    </div>
+    <div id="template-editor-rhythms"></div>
+    <label class="template-editor-field" title="Cap (seconds) on how long each staged-spawn wave waits for the prior wave to go idle before the next wave spawns anyway. 0 = built-in default (8 min).">
+      <span><span class="tpl-word-regular">Wave max-wait (s)</span><span class="tpl-word-wizard">Marching-order patience (s)</span></span>
+      <input type="number" id="template-editor-wave-max-wait" min="0" placeholder="0 = default" />
+    </label>
     <div class="cron-create-error" id="template-editor-error"></div>
     <div class="modal-buttons">
       <button id="template-editor-cancel" type="button">Cancel</button>

@@ -883,8 +883,13 @@ type dashboardGroup struct {
 	// phase, the ordered phase map, and the transition log. nil for a group
 	// with no process (the phase chip + advance control render only when set).
 	Process *processStateJSON `json:"process,omitempty"`
-	Members []dashboardMember  `json:"members"`
-	Online  int                `json:"online"`
+	// Waves is the group's staged-spawn choreography status (JOH-244): the
+	// current wave + how many waves/agents are still pending. nil once the
+	// choreography is complete (or for a single-wave deploy) — the "wave N/M
+	// pending" chip renders only while set.
+	Waves   *waveStatusJSON  `json:"waves,omitempty"`
+	Members []dashboardMember `json:"members"`
+	Online  int               `json:"online"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -1403,6 +1408,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
 			pv := processStateToJSON(st, trs)
 			dg.Process = &pv
+		}
+		// Staged-spawn choreography status (JOH-244): a "wave N/M pending" chip
+		// while later waves are still deferred. nil when the deploy is complete.
+		if wv := loadWaveStatus(g.ID); wv != nil {
+			dg.Waves = wv
 		}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also

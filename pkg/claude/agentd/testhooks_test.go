@@ -100,6 +100,13 @@ func SetBranchHistoryPREnrichmentForTest(enabled bool) func() {
 // milliseconds, not minutes.
 func WaitForBackgroundForTest() { bgWG.Wait() }
 
+// SweepWaveChoreographiesForTest runs one pass of the staged-spawn wave runner
+// (JOH-244) synchronously — the flow-test entry point that drives a
+// choreography forward one gate check without waiting on the production ticker.
+// Not a subprocess mock: it just ticks the sweeper the daemon otherwise runs on
+// a timer, so a test can assert wave-by-wave advancement deterministically.
+func SweepWaveChoreographiesForTest() { sweepWaveChoreographies() }
+
 // SetWaitTimingsForTest overrides reincarnateAliveTimeout +
 // reincarnateReadyDelay for the duration of a test. Returns a restore
 // closure intended for t.Cleanup. Flow tests call this at setup so the

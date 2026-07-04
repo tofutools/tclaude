@@ -642,6 +642,24 @@ func DeleteAgentGroup(name string) error {
 	if _, err := tx.Exec(`DELETE FROM group_process_transitions WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Staged-spawn choreography state (JOH-244) is keyed to the group by
+	// group_id, so cancel any pending waves in the same transaction (the v92
+	// process-state cleanup pattern). A wave runner that reads a now-missing
+	// row simply drops it — self-healing.
+	if _, err := tx.Exec(`DELETE FROM group_wave_choreography WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	// Group-target cron jobs (JOH-244) — including template-seeded rhythms —
+	// target THIS group and become meaningless once it is gone, so remove them
+	// here (agent_cron_runs cascade-clean via their job FK). Conv-target jobs
+	// merely routed THROUGH the group still deliver to their conv and are left
+	// alone. A fire against an already-deleted group also no-ops gracefully
+	// (fireCronGroupJob resolves the group to nil → "no_target"), so this is
+	// tidy-up, not correctness-critical.
+	if _, err := tx.Exec(
+		`DELETE FROM agent_cron_jobs WHERE target_kind = 'group' AND group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}

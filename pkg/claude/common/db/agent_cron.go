@@ -39,7 +39,12 @@ type AgentCronJob struct {
 	TargetKind      string // CronTargetConv | CronTargetGroup
 	TargetConv      string // recipient when TargetKind == CronTargetConv
 	GroupID         int64  // conv-kind: routing group (0 → solo send-keys). group-kind: the target group.
-	IntervalSeconds int64  // fixed-interval mode; 0 when CronExpr is set
+	// TargetRole filters a group-target job to the members whose role matches,
+	// resolved at fire time against the live roster (JOH-244). "" or "all" =
+	// the whole group. Unused for a conv-target job. A first-class cron
+	// primitive; template rhythms materialize onto it.
+	TargetRole      string
+	IntervalSeconds int64 // fixed-interval mode; 0 when CronExpr is set
 	CronExpr        string // cron-expression mode (cronexpr syntax); "" = interval mode
 	Subject         string
 	Body            string
@@ -90,13 +95,13 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 16 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 17 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
-	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr
+	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -122,10 +127,10 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 		kind = CronTargetConv
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_jobs
-		(name, owner_agent, target_kind, target_agent, group_id, interval_seconds,
+		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
 		 cron_expr, subject, body, enabled, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
-		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.IntervalSeconds,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
+		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
 		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), now)
 	if err != nil {
 		return 0, err
@@ -259,6 +264,7 @@ type UpdateCronPatch struct {
 	TargetKind      *string
 	TargetConv      *string
 	GroupID         *int64
+	TargetRole      *string
 	IntervalSeconds *int64
 	CronExpr        *string
 	Subject         *string
@@ -311,6 +317,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.GroupID != nil {
 		sets = append(sets, "group_id = ?")
 		args = append(args, *p.GroupID)
+	}
+	if p.TargetRole != nil {
+		sets = append(sets, "target_role = ?")
+		args = append(args, *p.TargetRole)
 	}
 	if p.IntervalSeconds != nil {
 		sets = append(sets, "interval_seconds = ?")
@@ -419,7 +429,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
-		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr)
+		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole)
 	if err != nil {
 		return nil, err
 	}

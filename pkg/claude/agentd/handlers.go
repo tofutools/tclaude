@@ -2809,6 +2809,10 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/groups/{name}/process", v1GroupRoute(handleGroupProcessGet))
 	mux.HandleFunc("POST /v1/groups/{name}/process/advance", v1GroupRoute(handleGroupProcessAdvance))
 
+	// Staged-spawn choreography status (JOH-244): read the group's pending
+	// waves (open, read-only). 404 when the deploy has no pending waves.
+	mux.HandleFunc("GET /v1/groups/{name}/waves", v1GroupRoute(handleGroupWavesGet))
+
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
 	mux.HandleFunc("PATCH /v1/groups/{name}/members/{conv}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
