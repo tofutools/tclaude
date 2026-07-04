@@ -109,6 +109,39 @@ function syncSelectTitle(sel) {
   sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
 }
 
+// setModelSelectValue sets a model id into a Model control, the way the spawn
+// dialog and profile editor seed one from a saved profile / captured live
+// agent. The curated Claude Model control is a <select> whose <option>s are a
+// fixed preset list of aliases (opus, sonnet[1m], …); assigning `.value` a
+// model that isn't one of those options is a silent no-op — the box just keeps
+// its prior pick — so a full model id captured from a running agent (e.g.
+// "claude-opus-4-8[1m]", which ValidateModel accepts but the alias list never
+// contains) would be dropped. To keep it, we inject the exact id as a
+// selectable option (flagged "(exact id)" so it reads as an out-of-catalog
+// value, not a curated preset) before selecting it — mirroring the
+// profileRef/roleRef "keep the current value selectable" pattern. A previously
+// injected option is removed on each call so re-opening the form with a
+// different model doesn't stack stale options. For a free-text <input> (Codex
+// has no fixed model list) any value is valid, so we set it directly.
+function setModelSelectValue(el, value) {
+  if (!el) return;
+  value = (value || '').trim();
+  if (el.tagName === 'SELECT') {
+    // Drop a stale injected option from a prior open so they never accumulate.
+    for (const o of [...el.options]) {
+      if (o.dataset.dynamicModel && o.value !== value) o.remove();
+    }
+    if (value && ![...el.options].some(o => o.value === value)) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = `${value} (exact id)`;
+      opt.dataset.dynamicModel = '1';
+      el.appendChild(opt);
+    }
+  }
+  el.value = value;
+}
+
 // refreshModalMinSize pins a resizable modal's minimum size to its natural
 // "at rest" size — the size it renders at with no user resize: the default
 // width and the content height (the latter already capped by max-height in
@@ -1732,7 +1765,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, setModelSelectValue, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,

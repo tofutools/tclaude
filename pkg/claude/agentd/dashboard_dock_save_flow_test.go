@@ -79,16 +79,30 @@ func TestSpawnProfile_FromAgentSeed(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(a.ConvID, "human.notify", "human"),
 		"grant a permission to the live agent")
 
+	// Put the agent on a NON-default, out-of-catalog full model id — the exact
+	// shape the operator hit ("claude-opus-4-8[1m]"): ValidateModel accepts it
+	// (fullModelIDRe), but it is NOT one of the curated alias presets. The sim's
+	// SpawnNew writes the SessionRow WITHOUT a model_id, so set it directly on
+	// the row the tracer reads (sessions.id == the spawn label). This exercises
+	// traceMemberLaunch → the seed's Model, guarding that a non-preset model is
+	// captured (the frontend then keeps it selectable — see setModelSelectValue).
+	const nonDefaultModel = "claude-opus-4-8[1m]"
+	require.NoError(t, db.UpdateSessionModelID(a.TmuxSession, nonDefaultModel),
+		"stamp the live agent's session row with a non-default model id")
+
 	rec := humanReq(t, f, http.MethodPost, "/v1/spawn-profiles/from-agent",
 		map[string]any{"agent": a.ConvID})
 	require.Equal(t, http.StatusOK, rec.Code, "from-agent: %s", rec.Body.String())
 
 	var seed struct {
 		Name                string            `json:"name"`
+		Model               string            `json:"model"`
 		PermissionOverrides map[string]string `json:"permission_overrides"`
 	}
 	testharness.DecodeJSON(t, rec, &seed)
 	assert.Empty(t, seed.Name, "a seed is unnamed — the editor makes the human name it")
+	assert.Equal(t, nonDefaultModel, seed.Model,
+		"the seed captures the agent's exact (non-preset) model id, not a blank")
 	assert.Equal(t, "grant", seed.PermissionOverrides["human.notify"],
 		"the seed captures the agent's granted permission as a grant override")
 
