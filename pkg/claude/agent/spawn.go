@@ -105,6 +105,16 @@ type SpawnRequest struct {
 	// JOH-192 / JOH-207.
 	SandboxMode string `json:"sandbox,omitempty"`
 
+	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
+	// override for the new agent (never|60s|5m|10m). Empty = inherit (no
+	// override — the agent uses the operator's own settings.json value). The
+	// explicit values make an UNATTENDED agent auto-continue a question with its
+	// default answer after the idle interval instead of stalling. Delivered
+	// per-spawn via `--settings` and forwarded to `tclaude session new
+	// --ask-user-question-timeout <v>`. Claude-Code-only: a value for a harness
+	// with no AskUserQuestion dialog (Codex) is a 400.
+	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
+
 	// ApprovalPolicy picks the launch-time approval policy for a harness that
 	// takes one (Codex's --ask-for-approval). Empty resolves to the harness's
 	// non-escalating default (Codex: never), so a daemon-owned Codex agent —
@@ -280,6 +290,11 @@ type SpawnParams struct {
 	// reason as the fields above.
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment for the new agent (per-harness modes). Codex: tclaude-agent (managed profile, keeps agentd reachable) | workspace-write | read-only | danger-full-access. Claude Code: inherit (use settings.json as-is) | on (force the OS sandbox on via --settings, agentd reachable) | off. Unset = the harness default (Codex: tclaude-agent; Claude: inherit)"`
 
+	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
+	// override for the new agent, delivered via `--settings`. Declared last (no
+	// explicit short) like the fields above. Unset = inherit (no override).
+	AskUserQuestionTimeout string `long:"ask-user-question-timeout" optional:"true" help:"Claude Code AskUserQuestion idle-timeout for the new agent: inherit (use settings.json as-is) | never (wait for a human) | 60s | 5m | 10m (auto-continue with the default answer after the interval — keeps an unattended agent moving). Unset = inherit. Not applicable to codex"`
+
 	// Approval is the launch-time approval/permission posture for the new
 	// agent. Codex takes an --ask-for-approval policy; Claude Code's approval
 	// posture is its --permission-mode, carried through this same field (the
@@ -345,11 +360,12 @@ func spawnCmd() *cobra.Command {
 // Pure data — RunSpawn validates these against the resolved harness and builds
 // the SpawnRequest from them.
 type resolvedSpawnFields struct {
-	Harness  string
-	Model    string
-	Effort   string
-	Sandbox  string
-	Approval string
+	Harness                string
+	Model                  string
+	Effort                 string
+	Sandbox                string
+	AskUserQuestionTimeout string
+	Approval               string
 
 	Name           string
 	Role           string
@@ -456,6 +472,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Model = pick(p.Model, prof.Model)
 		out.Effort = pick(p.Effort, prof.Effort)
 		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
+		out.AskUserQuestionTimeout = pick(p.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
 		out.Approval = pick(p.Approval, prof.Approval)
 		if !out.AutoReview && prof.AutoReview != nil {
 			out.AutoReview = *prof.AutoReview
@@ -468,6 +485,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Model = strings.TrimSpace(p.Model)
 		out.Effort = strings.TrimSpace(p.Effort)
 		out.Sandbox = strings.TrimSpace(p.Sandbox)
+		out.AskUserQuestionTimeout = strings.TrimSpace(p.AskUserQuestionTimeout)
 		out.Approval = strings.TrimSpace(p.Approval)
 	}
 
@@ -656,6 +674,15 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
+	// Resolve --ask-user-question-timeout: a Claude-Code-only settings.json
+	// override (never|60s|5m|10m), so a value for a harness with no
+	// AskUserQuestion dialog (Codex) fails fast here. inherit/blank → "" (no
+	// override). The daemon re-validates server-side.
+	askTimeout, err := harness.ResolveAskTimeoutMode(h, merged.AskUserQuestionTimeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
 	// Gate the experimental --auto-review opt-in: allowed only for a harness
 	// with an approvals subsystem (Codex); requesting it for claude fails fast
 	// here with a clear message. The daemon re-gates server-side.
@@ -689,25 +716,26 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
-		Name:                name,
-		Role:                merged.Role,
-		Descr:               merged.Descr,
-		TaskURL:             strings.TrimSpace(p.Task),
-		TaskLabel:           strings.TrimSpace(p.TaskLabel),
-		InitialMessage:      initialMessage,
-		ReplyTo:             strings.TrimSpace(p.ReplyTo),
-		Cwd:                 cwd,
-		TimeoutSeconds:      timeoutSeconds,
-		AutoFocus:           merged.AutoFocus,
-		Effort:              effort,
-		Model:               model,
-		Harness:             h.Name,
-		SandboxMode:         sandboxMode,
-		ApprovalPolicy:      approvalPolicy,
-		AutoReview:          autoReview,
-		TrustDir:            trustDir,
-		IsOwner:             merged.IsOwner,
-		PermissionOverrides: merged.PermissionOverrides,
+		Name:                   name,
+		Role:                   merged.Role,
+		Descr:                  merged.Descr,
+		TaskURL:                strings.TrimSpace(p.Task),
+		TaskLabel:              strings.TrimSpace(p.TaskLabel),
+		InitialMessage:         initialMessage,
+		ReplyTo:                strings.TrimSpace(p.ReplyTo),
+		Cwd:                    cwd,
+		TimeoutSeconds:         timeoutSeconds,
+		AutoFocus:              merged.AutoFocus,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                h.Name,
+		SandboxMode:            sandboxMode,
+		AskUserQuestionTimeout: askTimeout,
+		ApprovalPolicy:         approvalPolicy,
+		AutoReview:             autoReview,
+		TrustDir:               trustDir,
+		IsOwner:                merged.IsOwner,
+		PermissionOverrides:    merged.PermissionOverrides,
 	}
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile

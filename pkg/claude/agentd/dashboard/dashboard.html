@@ -1740,6 +1740,10 @@
       <span class="cron-create-label">Permission mode</span>
       <select id="profile-editor-approval"></select>
     </label>
+    <label class="cron-create-row" id="profile-editor-ask-timeout-row" style="display:none" title="AskUserQuestion idle-timeout the profile pre-fills into the spawn dialog (Claude Code). inherit (recommended) adds no override; never waits for a human; 60s / 5m / 10m auto-continue with the default answer after the interval, keeping an unattended agent moving. Delivered as a per-session --settings override.">
+      <span class="cron-create-label">Question timeout</span>
+      <select id="profile-editor-ask-timeout"></select>
+    </label>
     <label class="cron-create-row" id="profile-editor-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex (writes ~/.codex/config.toml). Default leaves it unset.">
       <span class="cron-create-label">Trust dir</span>
       <select id="profile-editor-trust-dir">
@@ -2459,6 +2463,16 @@
              applySpawnApprovalHint(). aria-live so a screen reader announces the
              ⚠ caveat when the selection changes. -->
         <div id="agent-spawn-approval-hint" class="spawn-field-hint" aria-live="polite"></div>
+      </div>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-ask-timeout-row" style="display:none" title="AskUserQuestion idle-timeout for the new agent (Claude Code). Claude Code no longer auto-continues a question dialog by default — it waits for a human. inherit (recommended) leaves your settings.json askUserQuestionTimeout as-is. never keeps it waiting for you. 60s / 5m / 10m auto-continue the dialog with its default answer after the interval — the agentic setting that keeps an unattended agent moving instead of stalling on a question. Delivered as a per-session --settings override; your global settings.json is untouched.">
+      <span class="cron-create-label">Question timeout</span>
+      <div class="cron-create-target">
+        <select id="agent-spawn-ask-timeout" aria-describedby="agent-spawn-ask-timeout-hint"></select>
+        <!-- Live help for the selected value, set from the harness catalog's
+             ask_timeout_mode_help by applySpawnAskTimeoutHint(). aria-live so a
+             screen reader announces the change. -->
+        <div id="agent-spawn-ask-timeout-hint" class="spawn-field-hint" aria-live="polite"></div>
       </div>
     </label>
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" style="display:none" title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's “do you trust this folder?” modal. This writes a trusted entry for this directory into your ~/.codex/config.toml — a persistent change to your Codex config — so it's off by default and strictly opt-in. Only shown for Codex.">

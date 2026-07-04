@@ -48,6 +48,7 @@ type World struct {
 	spawnModels        map[string]string
 	spawnSandboxes     map[string]string
 	spawnApprovals     map[string]string
+	spawnAskTimeouts   map[string]string
 	spawnAutoReview    map[string]bool
 	spawnTrustDir      map[string]bool
 	spawnRemoteControl map[string]bool
@@ -82,6 +83,7 @@ func New(t *testing.T) *World {
 		spawnModels:         map[string]string{},
 		spawnSandboxes:      map[string]string{},
 		spawnApprovals:      map[string]string{},
+		spawnAskTimeouts:    map[string]string{},
 		spawnAutoReview:     map[string]bool{},
 		spawnTrustDir:       map[string]bool{},
 		spawnRemoteControl:  map[string]bool{},
@@ -197,6 +199,25 @@ func (w *World) SpawnApproval(convID string) (string, bool) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()
 	a, ok := w.spawnApprovals[convID]
+	return a, ok
+}
+
+// RecordSpawnAskTimeout captures the AskUserQuestion idle-timeout a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert the --ask-user-question-timeout value the spawn path
+// threaded through. The unset case ("") is recorded too.
+func (w *World) RecordSpawnAskTimeout(convID, askTimeout string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnAskTimeouts[convID] = askTimeout
+}
+
+// SpawnAskTimeout returns the AskUserQuestion idle-timeout recorded for a
+// spawned conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnAskTimeout(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	a, ok := w.spawnAskTimeouts[convID]
 	return a, ok
 }
 

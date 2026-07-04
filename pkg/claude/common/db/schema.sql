@@ -340,7 +340,7 @@ CREATE TABLE spawn_profiles (
 			include_group_default_context INTEGER,
 			created_at                    TEXT NOT NULL,
 			updated_at                    TEXT NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '');
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE ask_threads (
 			term_key   TEXT NOT NULL,

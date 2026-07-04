@@ -212,6 +212,23 @@ function applySpawnHarness(harnessName) {
     applySpawnApprovalHint(null);
   }
 
+  // AskUserQuestion idle-timeout (Claude Code's askUserQuestionTimeout, delivered
+  // via --settings). Mirrors the sandbox row: a harness exposes timeout values
+  // via the catalog, and the row shows only when there are values to offer
+  // (Codex has no AskUserQuestion dialog → can_ask_timeout false → row hidden).
+  const canAskTimeout = !!(h && h.can_ask_timeout && h.ask_timeout_modes && h.ask_timeout_modes.length);
+  $('#agent-spawn-ask-timeout-row').style.display = canAskTimeout ? '' : 'none';
+  if (canAskTimeout) {
+    const atSel = $('#agent-spawn-ask-timeout');
+    atSel.innerHTML = h.ask_timeout_modes
+      .map(m => `<option value="${esc(m)}">${esc(m)}${m === h.default_ask_timeout ? ' (recommended)' : ''}</option>`)
+      .join('');
+    atSel.value = h.default_ask_timeout || h.ask_timeout_modes[0];
+    applySpawnAskTimeoutHint(h);
+  } else {
+    applySpawnAskTimeoutHint(null);
+  }
+
   // Codex-only: the opt-in "pre-trust this dir" checkbox (JOH-205). It edits
   // the user's ~/.codex/config.toml, so it is OFF by default and never
   // auto-checked; hiding it for a non-Codex harness also clears it so the
@@ -265,6 +282,18 @@ function applySpawnApprovalHint(h) {
   if (!hintEl) return;
   const help = (h && h.approval_mode_help) || {};
   const text = help[$('#agent-spawn-approval').value] || '';
+  hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
+  hintEl.classList.toggle('warn', text.includes('⚠'));
+}
+
+// applySpawnAskTimeoutHint sets the live help line under the Question-timeout
+// selector to the catalog's description of the selected value. Passing null (a
+// harness with no AskUserQuestion dialog) clears it. Mirrors applySpawnApprovalHint.
+function applySpawnAskTimeoutHint(h) {
+  const hintEl = $('#agent-spawn-ask-timeout-hint');
+  if (!hintEl) return;
+  const help = (h && h.ask_timeout_mode_help) || {};
+  const text = help[$('#agent-spawn-ask-timeout').value] || '';
   hintEl.innerHTML = esc(text).replace(/`([^`]+)`/g, '<code>$1</code>');
   hintEl.classList.toggle('warn', text.includes('⚠'));
 }
@@ -590,6 +619,13 @@ function applyProfileToSpawnForm(p) {
       applySpawnApprovalHint(spawnHarnessByName($('#agent-spawn-harness').value));
     }
   }
+  if (p.ask_user_question_timeout) {
+    const atSel = $('#agent-spawn-ask-timeout');
+    if ([...atSel.options].some(o => o.value === p.ask_user_question_timeout)) {
+      atSel.value = p.ask_user_question_timeout;
+      applySpawnAskTimeoutHint(spawnHarnessByName($('#agent-spawn-harness').value));
+    }
+  }
   // trust_dir is a *bool — apply only when the profile set it (null = unset).
   // The row is Codex-only and hidden otherwise; setting the checkbox while
   // hidden is harmless (submit reads it only for Codex).
@@ -766,6 +802,11 @@ function spawnFormAsProfileSeed() {
   // modeless harness would otherwise seed a blank approval).
   if (hEntry && hEntry.can_approval && hEntry.approval_modes && hEntry.approval_modes.length) {
     seed.approval = $('#agent-spawn-approval').value;
+  }
+  // Question-timeout is surfaced only for a harness with an AskUserQuestion
+  // dialog (Claude Code), so seed it only then — matching the row's visibility.
+  if (hEntry && hEntry.can_ask_timeout && hEntry.ask_timeout_modes && hEntry.ask_timeout_modes.length) {
+    seed.ask_user_question_timeout = $('#agent-spawn-ask-timeout').value;
   }
   if (harness === 'codex') seed.trust_dir = $('#agent-spawn-trust-dir').checked;
   return seed;
@@ -1144,6 +1185,11 @@ async function submitAgentSpawn() {
   const approval = (harnessEntry && harnessEntry.can_approval
     && harnessEntry.approval_modes && harnessEntry.approval_modes.length)
     ? $('#agent-spawn-approval').value : '';
+  // AskUserQuestion timeout is read only for a harness with the dialog (Claude
+  // Code); a harness without it (Codex) sends none.
+  const askTimeout = (harnessEntry && harnessEntry.can_ask_timeout
+    && harnessEntry.ask_timeout_modes && harnessEntry.ask_timeout_modes.length)
+    ? $('#agent-spawn-ask-timeout').value : '';
   const cwd = $('#agent-spawn-cwd').value.trim();
   const wtRepo = $('#agent-spawn-wt-repo').value.trim();
   const autoFocus = $('#agent-spawn-focus').checked;
@@ -1259,6 +1305,9 @@ async function submitAgentSpawn() {
     // Permission mode (Claude Code) — the daemon resolves a blank/inherit to no
     // override, so send it only when a concrete mode was chosen.
     if (approval) body.approval = approval;
+    // AskUserQuestion timeout (Claude Code) — inherit/blank normalizes to no
+    // override server-side, so send it only when a concrete value was chosen.
+    if (askTimeout) body.ask_user_question_timeout = askTimeout;
     // Opt-in dir-trust (Codex only): the daemon pre-trusts the cwd by editing
     // ~/.codex/config.toml, so it is sent ONLY when the human explicitly
     // ticked the checkbox — never defaulted.
@@ -1390,6 +1439,10 @@ function bindAgentSpawnModal() {
   // detached-agent safety caveat changes per mode).
   $('#agent-spawn-approval').addEventListener('change', () => {
     applySpawnApprovalHint(spawnHarnessByName($('#agent-spawn-harness').value));
+  });
+  // Picking a different question-timeout refreshes its live hint.
+  $('#agent-spawn-ask-timeout').addEventListener('change', () => {
+    applySpawnAskTimeoutHint(spawnHarnessByName($('#agent-spawn-harness').value));
   });
   // Switching the Model re-applies that model's remembered effort (or
   // resets to Default when it has none), so each model carries its own

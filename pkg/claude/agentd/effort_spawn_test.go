@@ -212,3 +212,40 @@ func TestSessionNewArgs_RemoteControl(t *testing.T) {
 		t.Fatalf("resume with remoteControl=true must carry --remote-control (JOH-261)")
 	}
 }
+
+// TestSessionNewArgs_AskTimeout: the Claude Code AskUserQuestion idle-timeout is
+// appended as `--ask-user-question-timeout <v>` only when set; "" omits it. The
+// forked `tclaude session new` re-validates + harness-gates it.
+//
+// The resume-side case pins the BUILDER's symmetry (given a value, sessionResumeArgs
+// appends it too), NOT a preservation guarantee: no production relaunch path
+// currently populates SpawnArgs.AskUserQuestionTimeout, so a resume/reincarnate/clone
+// reverts to inherit (no override) — the same fail-closed re-default the sandbox /
+// approval flags use on relaunch. The scaffolding is here so a future "preserve the
+// timeout across reincarnate" only has to populate the field, not touch the argv.
+func TestSessionNewArgs_AskTimeout(t *testing.T) {
+	flagValueAt := func(args []string, flag string) (string, bool) {
+		for i, a := range args {
+			if a == flag && i+1 < len(args) {
+				return args[i+1], true
+			}
+		}
+		return "", false
+	}
+
+	// Unset → no flag on either path.
+	if _, ok := flagValueAt(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x"}), "--ask-user-question-timeout"); ok {
+		t.Fatalf("unset timeout must omit --ask-user-question-timeout")
+	}
+	if _, ok := flagValueAt(sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x"}), "--ask-user-question-timeout"); ok {
+		t.Fatalf("unset timeout must omit --ask-user-question-timeout on resume")
+	}
+
+	// Set → the flag carries its value on both paths.
+	if v, ok := flagValueAt(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", AskUserQuestionTimeout: "5m"}), "--ask-user-question-timeout"); !ok || v != "5m" {
+		t.Fatalf("fresh spawn must append --ask-user-question-timeout 5m, got (%q, %v)", v, ok)
+	}
+	if v, ok := flagValueAt(sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x", AskUserQuestionTimeout: "10m"}), "--ask-user-question-timeout"); !ok || v != "10m" {
+		t.Fatalf("resume must append --ask-user-question-timeout 10m, got (%q, %v)", v, ok)
+	}
+}

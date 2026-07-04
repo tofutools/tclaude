@@ -143,19 +143,32 @@ func ClaudeSandboxOffBlock() map[string]any {
 	return map[string]any{"enabled": false}
 }
 
-// claudeSandboxSettingsJSON returns the compact `--settings` JSON payload for a
-// validated Claude sandbox mode, or "" when no override should be emitted
-// (inherit / unset / unrecognized — the spawner omits the flag). The result
-// wraps the on/off block under the top-level `sandbox` key Claude Code expects.
-// json.Marshal sorts map keys, so the output is deterministic (testable).
-func claudeSandboxSettingsJSON(mode string) string {
-	var block map[string]any
+// claudeSandboxBlock returns the value of the settings.json `sandbox` key for a
+// validated Claude sandbox mode, or nil when no override should be emitted
+// (inherit / unset / unrecognized). It is the shared block-builder the spawner's
+// merged `--settings` payload (claudeSettingsJSON) and the single-key
+// claudeSandboxSettingsJSON both draw from, so the two can never drift.
+func claudeSandboxBlock(mode string) map[string]any {
 	switch strings.TrimSpace(mode) {
 	case ClaudeSandboxOn:
-		block = ClaudeSandboxOnBlock()
+		return ClaudeSandboxOnBlock()
 	case ClaudeSandboxOff:
-		block = ClaudeSandboxOffBlock()
+		return ClaudeSandboxOffBlock()
 	default:
+		return nil
+	}
+}
+
+// claudeSandboxSettingsJSON returns the compact `--settings` JSON payload for a
+// validated Claude sandbox mode ALONE, or "" when no override should be emitted
+// (inherit / unset / unrecognized — the spawner omits the flag). The result
+// wraps the on/off block under the top-level `sandbox` key Claude Code expects.
+// json.Marshal sorts map keys, so the output is deterministic (testable). The
+// live spawn path uses the merged claudeSettingsJSON instead; this single-key
+// form is retained for the sandbox acceptance tests.
+func claudeSandboxSettingsJSON(mode string) string {
+	block := claudeSandboxBlock(mode)
+	if block == nil {
 		return ""
 	}
 	b, err := json.Marshal(map[string]any{"sandbox": block})

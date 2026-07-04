@@ -148,6 +148,17 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("body.harness = harness", "non-default harness is sent in the spawn body")
 	must("body.sandbox = sandbox", "the chosen sandbox is sent in the spawn body")
 
+	// AskUserQuestion idle-timeout (Claude-Code-only) — the row + selector exist,
+	// reshape per harness off the catalog's can_ask_timeout gate, and the chosen
+	// value is forwarded in the spawn body. Pins the JS/HTML so a JS-stale
+	// worktree (embedded assets) trips here rather than silently at integration.
+	must(`id="agent-spawn-ask-timeout"`, "spawn dialog has an AskUserQuestion-timeout selector")
+	must("h.can_ask_timeout && h.ask_timeout_modes", "the timeout row gates on the harness catalog's can_ask_timeout")
+	must("body.ask_user_question_timeout = askTimeout", "the chosen AskUserQuestion timeout is sent in the spawn body")
+	// modal-profiles.js: the profile editor edits + persists the same field.
+	must(`id="profile-editor-ask-timeout"`, "profile editor has an AskUserQuestion-timeout selector")
+	must("body.ask_user_question_timeout = $('#profile-editor-ask-timeout').value", "the profile editor persists the AskUserQuestion timeout")
+
 	// modal-spawn.js: the Effort menu is rebuilt per harness from the
 	// catalog's effort_levels (single source of truth — the static HTML
 	// options are only a pre-snapshot fallback), so a harness with its own

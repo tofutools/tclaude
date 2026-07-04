@@ -45,13 +45,18 @@ type spawnProfileJSON struct {
 	Name string `json:"name"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
-	Harness    string `json:"harness,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Effort     string `json:"effort,omitempty"`
-	Sandbox    string `json:"sandbox,omitempty"`
-	Approval   string `json:"approval,omitempty"`
-	AutoReview *bool  `json:"auto_review,omitempty"`
-	TrustDir   *bool  `json:"trust_dir,omitempty"`
+	Harness  string `json:"harness,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+	Sandbox  string `json:"sandbox,omitempty"`
+	Approval string `json:"approval,omitempty"`
+	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
+	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
+	// per-spawn via `--settings`. Claude-Code-only — a value on a Codex profile
+	// is a 400 (buildProfileFromJSON gates it on the profile's harness).
+	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
+	AutoReview             *bool  `json:"auto_review,omitempty"`
+	TrustDir               *bool  `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -87,6 +92,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Effort:                     p.Effort,
 		Sandbox:                    p.Sandbox,
 		Approval:                   p.Approval,
+		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
@@ -156,6 +162,13 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
 	}
+	// Validate (+ harness-gate) the AskUserQuestion timeout: a value on a
+	// non-Claude profile is a 400, and a bad enum is rejected; inherit/blank
+	// stays "" so the launch boundary adds no override at spawn time.
+	askTimeout, err := harness.ResolveAskTimeoutMode(h, body.AskUserQuestionTimeout)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
+	}
 	if body.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *body.AutoReview); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -212,6 +225,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Effort:                     effort,
 		Sandbox:                    sandbox,
 		Approval:                   approval,
+		AskUserQuestionTimeout:     askTimeout,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

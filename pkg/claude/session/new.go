@@ -72,6 +72,13 @@ type NewParams struct {
 	// JOH-192 / JOH-207.
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
+	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
+	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`
+	// alongside the sandbox block. inherit/unset omits it, so the agent uses the
+	// operator's own settings.json value. A Claude-Code-only knob; a value for a
+	// harness with no AskUserQuestion dialog (Codex) errors.
+	AskUserQuestionTimeout string `long:"ask-user-question-timeout" optional:"true" help:"Claude Code AskUserQuestion idle-timeout override: inherit (use settings.json as-is) | never (wait for a human) | 60s | 5m | 10m (auto-continue with the default answer after the interval — keeps an unattended agent moving). Unset = inherit. Not applicable to Codex"`
+
 	// PermissionProfile selects a tclaude-managed Codex permission profile to
 	// run under, emitted as `codex -p <name>`. It is how the daemon keeps a
 	// sandboxed Codex agent able to reach the agentd socket (JOH-207): the
@@ -392,6 +399,18 @@ func runNew(params *NewParams) error {
 	}
 	params.RemoteControl = remoteControl
 
+	// Validate --ask-user-question-timeout: a Claude-Code-only settings.json
+	// override (never|60s|5m|10m) delivered via `--settings`, so a value for a
+	// harness with no AskUserQuestion dialog (Codex) errors here. There is no
+	// forced default (inherit/blank normalizes to "" = no override — enabling
+	// auto-continue is an explicit opt-in), so one ResolveAskTimeoutMode serves
+	// both this direct path and the daemon path.
+	askTimeout, err := harness.ResolveAskTimeoutMode(h, params.AskUserQuestionTimeout)
+	if err != nil {
+		return err
+	}
+	params.AskUserQuestionTimeout = askTimeout
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -601,19 +620,20 @@ func runNew(params *NewParams) error {
 	}
 
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports:        envExports,
-		ResumeID:          fullConvID,
-		SessionID:         params.SessionID,
-		Name:              params.Name,
-		Effort:            effort,
-		Model:             model,
-		ExtraArgs:         extraArgs,
-		SandboxMode:       sandboxMode,
-		PermissionProfile: params.PermissionProfile,
-		ApprovalPolicy:    approvalPolicy,
-		AutoReview:        autoReview,
-		RemoteControl:     remoteControl,
-		InitialPrompt:     params.InitialPrompt,
+		EnvExports:             envExports,
+		ResumeID:               fullConvID,
+		SessionID:              params.SessionID,
+		Name:                   params.Name,
+		Effort:                 effort,
+		Model:                  model,
+		ExtraArgs:              extraArgs,
+		SandboxMode:            sandboxMode,
+		AskUserQuestionTimeout: askTimeout,
+		PermissionProfile:      params.PermissionProfile,
+		ApprovalPolicy:         approvalPolicy,
+		AutoReview:             autoReview,
+		RemoteControl:          remoteControl,
+		InitialPrompt:          params.InitialPrompt,
 	})
 
 	// Create the detached tmux session running the harness command.

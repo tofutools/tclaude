@@ -62,6 +62,17 @@ type SpawnSpec struct {
 	// settings.json-driven) ignore it. Validate via Harness.Sandbox /
 	// ResolveSandboxMode before building the spec. See JOH-192.
 	SandboxMode string
+	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
+	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
+	// `--settings` payload as SandboxMode (both are settings.json overrides, and
+	// the spawner emits `--settings` at most once — see claudeSettingsJSON). ""
+	// omits it, so the agent uses the operator's own settings.json value (Claude
+	// Code's default when the key is absent is "never" — wait for a human). The
+	// explicit values make an UNATTENDED agent auto-continue a question with its
+	// default answer after the idle interval instead of stalling. Validate via
+	// Harness.AskTimeout / ResolveAskTimeoutMode before building the spec.
+	// Harnesses with no AskUserQuestion dialog (Codex) ignore it.
+	AskUserQuestionTimeout string
 	// PermissionProfile names a tclaude-managed Codex permission profile to run
 	// under, realised as `codex -p <name>` (a layered config-profile file whose
 	// default_permissions activates the profile for this spawn only). It is the
