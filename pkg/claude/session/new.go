@@ -674,8 +674,13 @@ func runNew(params *NewParams) error {
 		// flag (Claude Code). Stored verbatim, never coalesced; this is the
 		// only write of the column, so it can't be re-derived later.
 		SandboxMode: sandboxDescr(sandboxMode, params.PermissionProfile),
-		Created:     time.Now(),
-		Updated:     time.Now(),
+		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
+		// clone / reincarnate) can PRESERVE it — inherit/5m/never carried across
+		// the handoff instead of reverting to global settings.json (schema v97).
+		// "" for an un-chosen ask-timeout or a non-Claude harness. Stored verbatim.
+		AskUserQuestionTimeout: askTimeout,
+		Created:                time.Now(),
+		Updated:                time.Now(),
 	}
 
 	if err := SaveSessionState(state); err != nil {

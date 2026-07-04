@@ -66,6 +66,10 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	// original is the operator-decided semantics — drive either from the phone.
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
+	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
+	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
+	// that recorded none (a non-Claude or pre-column source).
+	askTimeout := askTimeoutForRelaunch(sourceConv)
 	if noCopyConv {
 		label = generateSpawnLabel()
 		// A clone is a relaunch, not a fresh opt-in, so it never engages the
@@ -74,14 +78,15 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 		// fresh-spawn opt-in) — same rationale as approvalForHarness re-defaulting
 		// rather than carrying per-conv state.
 		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-			Label:         label,
-			Cwd:           cwd,
-			Effort:        effort,
-			Model:         model,
-			Harness:       srcHarness,
-			Sandbox:       sandboxForHarness(srcHarness),
-			Approval:      approvalForHarness(srcHarness),
-			RemoteControl: remoteControl,
+			Label:                  label,
+			Cwd:                    cwd,
+			Effort:                 effort,
+			Model:                  model,
+			Harness:                srcHarness,
+			Sandbox:                sandboxForHarness(srcHarness),
+			Approval:               approvalForHarness(srcHarness),
+			AskUserQuestionTimeout: askTimeout,
+			RemoteControl:          remoteControl,
 		}); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
@@ -123,14 +128,15 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model strin
 	}
 	newConv = copyResult.NewConvID
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:        newConv,
-		Cwd:           cwd,
-		Effort:        effort,
-		Model:         model,
-		Harness:       srcHarness,
-		Sandbox:       sandboxForHarness(srcHarness),
-		Approval:      approvalForHarness(srcHarness),
-		RemoteControl: remoteControl,
+		ConvID:                 newConv,
+		Cwd:                    cwd,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                srcHarness,
+		Sandbox:                sandboxForHarness(srcHarness),
+		Approval:               approvalForHarness(srcHarness),
+		AskUserQuestionTimeout: askTimeout,
+		RemoteControl:          remoteControl,
 	}); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",

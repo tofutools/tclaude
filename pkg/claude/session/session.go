@@ -57,6 +57,13 @@ type SessionState struct {
 	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
 	SandboxMode string `json:"sandboxMode,omitempty"`
+	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
+	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under.
+	// Set once at spawn by `session new` and carried through toRow/fromRow so
+	// the hook callback's load→mutate→save round-trip preserves it; a relaunch
+	// (resume / clone / reincarnate) reads it back to keep a per-agent timeout
+	// across the handoff. "" for a pre-column row or a non-Claude harness.
+	AskUserQuestionTimeout string `json:"askUserQuestionTimeout,omitempty"`
 }
 
 // Status constants
@@ -153,40 +160,42 @@ func Cmd() *cobra.Command {
 // toRow converts a SessionState to a db.SessionRow.
 func toRow(s *SessionState) *db.SessionRow {
 	return &db.SessionRow{
-		ID:            s.ID,
-		TmuxSession:   s.TmuxSession,
-		PID:           s.PID,
-		Cwd:           s.Cwd,
-		ConvID:        s.ConvID,
-		Status:        s.Status,
-		StatusDetail:  s.StatusDetail,
-		SubagentCount: s.SubagentCount,
-		SubagentsJSON: s.Subagents.Encode(),
-		CreatedAt:     s.Created,
-		UpdatedAt:     s.Updated,
-		LastHook:      s.LastHook,
-		Harness:       s.Harness,
-		SandboxMode:   s.SandboxMode,
+		ID:                     s.ID,
+		TmuxSession:            s.TmuxSession,
+		PID:                    s.PID,
+		Cwd:                    s.Cwd,
+		ConvID:                 s.ConvID,
+		Status:                 s.Status,
+		StatusDetail:           s.StatusDetail,
+		SubagentCount:          s.SubagentCount,
+		SubagentsJSON:          s.Subagents.Encode(),
+		CreatedAt:              s.Created,
+		UpdatedAt:              s.Updated,
+		LastHook:               s.LastHook,
+		Harness:                s.Harness,
+		SandboxMode:            s.SandboxMode,
+		AskUserQuestionTimeout: s.AskUserQuestionTimeout,
 	}
 }
 
 // fromRow converts a db.SessionRow to a SessionState.
 func fromRow(r *db.SessionRow) *SessionState {
 	return &SessionState{
-		ID:            r.ID,
-		TmuxSession:   r.TmuxSession,
-		PID:           r.PID,
-		Cwd:           r.Cwd,
-		ConvID:        r.ConvID,
-		Status:        r.Status,
-		StatusDetail:  r.StatusDetail,
-		SubagentCount: r.SubagentCount,
-		Subagents:     db.ParseSubagentSet(r.SubagentsJSON),
-		Created:       r.CreatedAt,
-		Updated:       r.UpdatedAt,
-		LastHook:      r.LastHook,
-		Harness:       r.Harness,
-		SandboxMode:   r.SandboxMode,
+		ID:                     r.ID,
+		TmuxSession:            r.TmuxSession,
+		PID:                    r.PID,
+		Cwd:                    r.Cwd,
+		ConvID:                 r.ConvID,
+		Status:                 r.Status,
+		StatusDetail:           r.StatusDetail,
+		SubagentCount:          r.SubagentCount,
+		Subagents:              db.ParseSubagentSet(r.SubagentsJSON),
+		Created:                r.CreatedAt,
+		Updated:                r.UpdatedAt,
+		LastHook:               r.LastHook,
+		Harness:                r.Harness,
+		SandboxMode:            r.SandboxMode,
+		AskUserQuestionTimeout: r.AskUserQuestionTimeout,
 	}
 }
 

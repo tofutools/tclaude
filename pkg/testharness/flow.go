@@ -178,6 +178,10 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 			ConvID:      cc.ConvID,
 			Cwd:         cc.Cwd,
 			Status:      "running",
+			// Mirror production's session/new.go, which records the resolved
+			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
+			// preserve it (schema v97). "" for a Codex/omitted spawn.
+			AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		}); err != nil {
 			return err
 		}
@@ -224,6 +228,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		ConvID:      convID,
 		Cwd:         cc.Cwd,
 		Status:      "running",
+		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
+		// a subsequent relaunch keeps it too (production session/new.go does this).
+		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 	}); err != nil {
 		return err
 	}
@@ -285,6 +292,9 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		ConvID:      cx.ConvID,
 		Cwd:         cx.Cwd,
 		Status:      "running",
+		// "" for Codex (ask-timeout is Claude-only), but written uniformly to
+		// mirror production's row-write across harnesses.
+		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		// The tag the whole soft-stop / resume / identity path keys on:
 		// harnessForConv resolves this to the Codex harness so a stop
 		// injects `/quit`, and resume relaunches `--harness codex`.
@@ -321,12 +331,13 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
-		ID:          label,
-		TmuxSession: label,
-		ConvID:      convID,
-		Cwd:         cx.Cwd,
-		Status:      "running",
-		Harness:     codexHarnessName,
+		ID:                     label,
+		TmuxSession:            label,
+		ConvID:                 convID,
+		Cwd:                    cx.Cwd,
+		Status:                 "running",
+		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
+		Harness:                codexHarnessName,
 	}); err != nil {
 		return err
 	}

@@ -422,14 +422,15 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:        convID,
-		Cwd:           cwd,
-		Effort:        effort,
-		Model:         model,
-		Harness:       harnessName,
-		Sandbox:       sandboxForHarness(harnessName),
-		Approval:      approvalForHarness(harnessName),
-		RemoteControl: remoteControl,
+		ConvID:                 convID,
+		Cwd:                    cwd,
+		Effort:                 effort,
+		Model:                  model,
+		Harness:                harnessName,
+		Sandbox:                sandboxForHarness(harnessName),
+		Approval:               approvalForHarness(harnessName),
+		AskUserQuestionTimeout: askTimeoutForRelaunch(convID),
+		RemoteControl:          remoteControl,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()

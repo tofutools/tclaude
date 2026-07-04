@@ -91,12 +91,12 @@ func sandboxForHarness(name string) string {
 		return harness.SandboxManagedProfile
 	}
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsSandbox() {
-		// Validate the default before threading it, so a harness whose default
-		// is a normalize-to-omit sentinel (Claude Code's `inherit`, which
-		// ValidateMode collapses to "") relaunches with no sandbox override
-		// rather than a literal `inherit` — keeping an un-overridden Claude
-		// agent on the operator's own settings.json across clone/reincarnate.
-		// Codex's managed-profile default validates to itself, unchanged.
+		// Validate the harness default before threading it. Claude Code's default
+		// is the first-class `inherit` sentinel — carried verbatim now (the
+		// tri-state fix), it emits no `--settings` sandbox block at spawn (see
+		// claudeSandboxBlock) so an un-overridden Claude agent stays on the
+		// operator's own settings.json across clone/reincarnate. Codex's
+		// managed-profile default validates to itself, unchanged.
 		if mode, verr := h.Sandbox.ValidateMode(h.Sandbox.DefaultMode()); verr == nil {
 			return mode
 		}
@@ -115,11 +115,12 @@ func sandboxForHarness(name string) string {
 // See JOH-200.
 func approvalForHarness(name string) string {
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
-		// Validate the default before threading it, so Claude Code's `inherit`
-		// default (which ValidatePolicy collapses to "") relaunches with no
-		// `--permission-mode` override rather than a literal `inherit` — keeping
-		// an un-overridden Claude agent on its settings.json posture across
-		// clone/reincarnate. Codex's `never` default validates to itself.
+		// Validate the harness default before threading it. Claude Code's default
+		// is the first-class `inherit` sentinel — carried verbatim now (the
+		// tri-state fix), it emits no `--permission-mode` at spawn (see
+		// claudeApprovalValue) so an un-overridden Claude agent keeps its
+		// settings.json posture across clone/reincarnate. Codex's `never` default
+		// validates to itself.
 		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {
 			return pol
 		}
@@ -155,6 +156,32 @@ func remoteControlForRelaunch(sourceConv, harnessName string) bool {
 	}
 	h, _ := harness.Resolve(strings.TrimSpace(harnessName))
 	return h.CanRemoteControl()
+}
+
+// askTimeoutForRelaunch resolves the AskUserQuestion idle-timeout a relaunch
+// (resume / clone / reincarnate) threads onto the new pane, carried from the
+// SOURCE conversation's persisted value (schema v97). Unlike sandboxForHarness /
+// approvalForHarness — which re-DEFAULT their launch property on every relaunch
+// — the operator wants a per-agent timeout PRESERVED across the handoff: a
+// reincarnated agentic worker set to auto-continue at 5m must come back on 5m,
+// not revert to global settings.json. So this reads the source's actual recorded
+// value rather than a harness default (the same preserve semantics as
+// remoteControlForRelaunch).
+//
+// "" (omit the flag) when the source recorded no timeout — a pre-column row, an
+// un-chosen timeout, or a non-Claude source; a lookup error degrades to "" and
+// is logged, never fatal. A stale value can never mis-thread onto a harness that
+// would reject it: the forked `tclaude session new` re-validates it per-harness
+// (a Codex relaunch would 400 an ask-timeout), and a Codex source records "" by
+// construction (its spawn path rejects the flag), so this yields "" for Codex.
+func askTimeoutForRelaunch(sourceConv string) string {
+	v, err := db.AskTimeoutForConv(sourceConv)
+	if err != nil {
+		slog.Warn("relaunch: ask-timeout lookup failed; not preserving",
+			"conv", sourceConv, "error", err)
+		return ""
+	}
+	return v
 }
 
 // deliverRename renames a conversation the way its harness dictates and
