@@ -1515,6 +1515,53 @@
       <button type="button" id="template-editor-add-agent" class="tool"><span class="tpl-word-regular">+ add agent</span><span class="tpl-word-wizard">+ add familiar</span></button>
     </div>
     <div id="template-editor-agents"></div>
+    <!-- Concepts explainer (JOH-352): the one place that tells the work-pattern /
+         process / rhythms story TOGETHER — briefing happens once at deploy (the
+         pattern), the process gives a shared map of phases, the rhythms keep the
+         force moving between them. Two full body variants, plain + wizard, CSS-
+         swapped by body.wizard (the "always emit both, theme picks" trick) so it
+         re-flavours live on a theme toggle without a re-render. Facts stay
+         IDENTICAL across modes — only the vocabulary is flavored. Kept honest to
+         the semantics: pattern = one-shot (re-brief re-delivers the CURRENT
+         pattern), process = advisory (advance records a transition, blocks
+         nothing), rhythms = deploy-time cron SNAPSHOT (editing the template later
+         does not retune a deployed force). Placed right above the three sections
+         it explains; collapsed by default. -->
+    <details class="tpl-concepts" id="template-editor-concepts">
+      <summary><span class="tpl-word-regular">ⓘ How deploying works — pattern, process &amp; rhythms</span><span class="tpl-word-wizard">🔮 How a summoning works — rite, quest &amp; drumbeats</span></summary>
+      <div class="tpl-concepts-body tpl-concepts-plain">
+        <p>Three things shape a deployed force and they work <b>together</b>: the <b>work pattern</b> briefs it once, the <b>process</b> gives it a shared map of phases to advance through, and the <b>rhythms</b> keep it moving between them.</p>
+        <ul class="tpl-concepts-list">
+          <li><b>Work pattern — the briefing.</b> An ordered list of messages delivered <b>once</b>, after the whole team has spawned. Each step goes to one member (often the lead, who then fans the work out) or to everyone. It fires at deploy and does not repeat — but <b>Re-brief</b> re-delivers the template's <i>current</i> pattern to the live team on demand.</li>
+          <li><b>Process — the plan.</b> An ordered map of phases the team advances through. It is <b>advisory</b>: advancing records a transition and nudges the roles now active — nothing is blocked, no permissions change, nothing auto-advances. A shared sense of where the work is, not a gate.</li>
+          <li><b>Rhythms — the pulse.</b> Recurring nudges materialized as group cron jobs <b>when you deploy</b> — a snapshot taken then. Editing the template afterwards does <b>not</b> retune a force already in the field. Standing the force down deletes them; a retire that empties the group disables them (a later resume re-enables them).</li>
+        </ul>
+        <table class="tpl-concepts-table">
+          <thead><tr><th></th><th>Delivered</th><th>Repeats?</th><th>Enforced?</th><th>On stand-down</th></tr></thead>
+          <tbody>
+            <tr><th>Work pattern</th><td>once, after the team is up</td><td>no — re-brief re-sends on demand</td><td>no — it is a briefing</td><td>—</td></tr>
+            <tr><th>Process</th><td>snapshot at deploy</td><td>advance by hand</td><td>no — advisory</td><td>phase history kept</td></tr>
+            <tr><th>Rhythms</th><td>cron jobs at deploy</td><td>yes, on a schedule</td><td>no — nudges</td><td>cron jobs deleted</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tpl-concepts-body tpl-concepts-wizard">
+        <p>Three powers shape a summoned party, woven <b>together</b>: the <b>rite of command</b> briefs it once, the <b>quest plan</b> hands it a shared map of chapters, and the <b>drumbeats</b> keep it marching between them.</p>
+        <ul class="tpl-concepts-list">
+          <li><b>Rite of command — the opening whispers.</b> An ordered set of whispers spoken <b>once</b>, after the whole party has stood. Each verse reaches one familiar (often the lead, who parcels out the quest) or the whole party. It sounds once at the summoning and does not echo — though a <b>re-brief</b> speaks the circle's <i>current</i> rite to the living party again on command.</li>
+          <li><b>Quest plan — the chapters.</b> An ordered map of chapters the party moves through. It is a map, not a wall: turning to the next chapter marks the passage and rouses the heroes it calls for — nothing is barred, no wards shift, no page turns itself. A shared sense of where the tale stands, not a locked door.</li>
+          <li><b>Drumbeats — the pulse.</b> Recurring nudges struck as cron <b>the moment the party is summoned</b> — a cast taken then. Redrawing the circle later will <b>not</b> retune a party already afield. Standing the party down silences them for good; a retire that empties the ranks stills them (a later resume wakes them again).</li>
+        </ul>
+        <table class="tpl-concepts-table">
+          <thead><tr><th></th><th>Sounded</th><th>Echoes?</th><th>Barred?</th><th>On stand-down</th></tr></thead>
+          <tbody>
+            <tr><th>Rite of command</th><td>once, after the party stands</td><td>no — a re-brief re-speaks it</td><td>no — a briefing</td><td>—</td></tr>
+            <tr><th>Quest plan</th><td>cast at summoning</td><td>turned by hand</td><td>no — advisory</td><td>chapter history kept</td></tr>
+            <tr><th>Drumbeats</th><td>cron at summoning</td><td>yes, on a schedule</td><td>no — nudges</td><td>drums silenced</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
     <div class="template-agents-head" title="Ordered briefing messages delivered after the whole roster has spawned — each step to one agent (e.g. the lead, who then distributes the work) or to all members. {{task}} is replaced with the per-dispatch task. Leave empty for today's behaviour (per-agent briefs only).">
       <span><span class="tpl-word-regular">Work pattern</span><span class="tpl-word-wizard">Rite of command</span></span>
       <button type="button" id="template-editor-add-pattern" class="tool"><span class="tpl-word-regular">+ add step</span><span class="tpl-word-wizard">+ add verse</span></button>
