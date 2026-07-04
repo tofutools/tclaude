@@ -2989,6 +2989,19 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 2px 8px; color: #c9d1d9;
 }
 .template-card .tc-force .tc-force-mission { color: #7d8590; }
+/* Starter task forces (JOH-246): the bundled-starters modal's rows. Styled like
+   a slimmer template card so the section reads as part of the same family. */
+.starters-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
+.starter-row {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
+  padding: 8px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.starter-row .starter-head { display: flex; align-items: baseline; gap: 10px; }
+.starter-row .tc-name { font-size: 14px; font-weight: 600; color: #d4d4d4; }
+.starter-row .tc-descr { color: #7d8590; font-size: 12px; }
+.starter-row .starter-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.starter-row .tc-count { color: #6e7681; font-size: 11px; }
+.starter-row .starter-actions { display: flex; gap: 6px; margin-top: 2px; }
 .template-empty { color: #6e7681; padding: 14px; font-size: 13px; }
 /* Cleanup modal — the 🧹 bulk-cleanup overlay. Reuses the
    cron-create-modal outer shape and the add-member list look for the

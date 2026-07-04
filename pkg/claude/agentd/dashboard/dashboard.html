@@ -1485,6 +1485,7 @@
       <span class="spacer"></span>
       <button id="template-from-group-open" class="tool" title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"><span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span></button>
       <button id="template-import-open" class="tool" title="Import a template from a portable .task-force.json file (from ⇪ export) — share task forces between machines or with friends"><span class="tpl-word-regular">⤒ import</span><span class="tpl-word-wizard">📜 read a scroll</span></button>
+      <button id="starters-open" class="tool" title="Install a bundled starter task force — a curated, ready-to-run team you can deploy or edit"><span class="tpl-word-regular">⭐ starters</span><span class="tpl-word-wizard">⭐ conjure a preset party</span></button>
       <button id="template-create-open" class="primary" title="Define a new group template"><span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span></button>
     </div>
     <div id="templates-list"></div>
@@ -1926,6 +1927,18 @@
       <button id="template-import-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="template-import-submit" class="primary" type="button">Import</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="starters-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="starters-title">
+    <h3 id="starters-title"><span class="tpl-word-regular">Starter task forces</span><span class="tpl-word-wizard">⭐ Preset parties</span></h3>
+    <div class="modal-meta"><span class="tpl-word-regular">Curated, ready-to-run teams bundled with tclaude. Install one as a local template, then deploy or edit it. Installing never overwrites a template you already have of the same name.</span><span class="tpl-word-wizard">Preset parties bound into tclaude itself. Conjure one into a summoning circle, then cast or redraw it. Conjuring never overwrites a circle you already keep by the same name.</span></div>
+    <div id="starters-list" class="starters-list"></div>
+    <div class="cron-create-error" id="starters-error"></div>
+    <div class="modal-buttons">
+      <span class="spacer"></span>
+      <button id="starters-close" type="button">Close</button>
     </div>
   </div>
 </div>

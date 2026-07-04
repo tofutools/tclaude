@@ -988,6 +988,114 @@ async function submitTemplateImport() {
   }
 }
 
+// ---- Starter task forces (JOH-246) ----------------------------------
+//
+// A small starters section reachable from the templates overlay's ⭐ button.
+// It lists the bundled starters (fetched from /api/starters) and installs one
+// on click through the shared import path. Install never clobbers an existing
+// template of the same name — the daemon reports a skip, which we surface as-is.
+
+function openStartersModal() {
+  $('#starters-error').textContent = '';
+  $('#starters-list').innerHTML =
+    `<div class="template-empty">${wizWord('Loading starters…', 'Conjuring presets…')}</div>`;
+  $('#starters-modal').classList.add('show');
+  loadStarters();
+}
+
+function closeStartersModal() { $('#starters-modal').classList.remove('show'); }
+
+async function loadStarters() {
+  const errEl = $('#starters-error');
+  try {
+    const r = await fetch('/api/starters', { credentials: 'same-origin' });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      $('#starters-list').innerHTML = '';
+      return;
+    }
+    let list = [];
+    try { list = JSON.parse(txt) || []; } catch (_) {}
+    renderStartersList(list);
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+    $('#starters-list').innerHTML = '';
+  }
+}
+
+// starterBadges renders the compact "what it demonstrates" chips for a starter
+// row — agents, waves, process phases, rhythms, work-pattern steps.
+function starterBadges(s) {
+  const n = s.agents || 0;
+  const chips = [`<span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>`];
+  if ((s.waves || 0) > 1) chips.push(`<span class="tc-count" title="staged-spawn waves">🌊 ${s.waves} ${wizWord('waves', 'ranks')}</span>`);
+  if ((s.process || 0) > 0) chips.push(`<span class="tc-count" title="process phases">◆ ${s.process}-${wizWord('phase', 'chapter')}</span>`);
+  if ((s.rhythms || 0) > 0) chips.push(`<span class="tc-count" title="seeded rhythms">🥁 ${s.rhythms}</span>`);
+  if ((s.work_pattern || 0) > 0) chips.push(`<span class="tc-count" title="work-pattern steps">⇶ ${s.work_pattern}</span>`);
+  return chips.join(' ');
+}
+
+function renderStartersList(list) {
+  const host = $('#starters-list');
+  if (!list.length) {
+    host.innerHTML = `<div class="template-empty">${wizWord('No starters bundled.', 'No presets bound.')}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(s => `<div class="starter-row" data-starter="${esc(s.name)}">
+    <div class="starter-head">
+      <span class="tc-name">${esc(s.name)}</span>
+      ${s.descr ? `<span class="tc-descr">${esc(s.descr)}</span>` : ''}
+    </div>
+    <div class="starter-meta">${starterBadges(s)}</div>
+    <div class="starter-actions">
+      <button class="tool" data-sact="install" data-starter="${esc(s.name)}" title="${wizWord('Install this starter as a local template', 'Conjure this preset into a circle')}">${wizWord('⤓ install', '⭐ conjure')}</button>
+    </div>
+  </div>`).join('');
+}
+
+async function installStarter(name) {
+  const errEl = $('#starters-error');
+  errEl.textContent = '';
+  const btn = $(`.starter-row[data-starter="${cssEscape(name)}"] [data-sact="install"]`);
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/starters/${encodeURIComponent(name)}/install`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      return;
+    }
+    let res = null;
+    try { res = JSON.parse(txt); } catch (_) {}
+    if (res && res.skipped) {
+      toast(res.message || `starter already installed: ${name}`);
+    } else {
+      const warnings = (res && res.warnings) || [];
+      let msg = `starter installed: ${(res && res.name) || name}`;
+      if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
+      toast(msg);
+    }
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// cssEscape quotes a starter name for a CSS attribute selector — starter names
+// are kebab-case so this is belt-and-suspenders, but keeps the query robust.
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
 function bindTemplatesUI() {
   // Entry points: the Groups cog's "⧉ templates…" management overlay, its
   // "+ new template" / "⤓ from a group" buttons, and the cog's standalone
@@ -1019,6 +1127,16 @@ function bindTemplatesUI() {
   $('#template-import-cancel').addEventListener('click', closeTemplateImportModal);
   $('#template-import-submit').addEventListener('click', submitTemplateImport);
   bindBackdropDiscard('template-import-modal', closeTemplateImportModal);
+
+  // Starters modal (⭐ starters in the toolbar) — install a bundled starter.
+  $('#starters-open').addEventListener('click', openStartersModal);
+  $('#starters-close').addEventListener('click', closeStartersModal);
+  bindBackdropDiscard('starters-modal', closeStartersModal);
+  $('#starters-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-sact="install"]');
+    if (!btn) return;
+    installStarter(btn.dataset.starter);
+  });
 
   // Editor modal.
   $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
