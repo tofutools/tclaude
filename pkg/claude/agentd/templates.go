@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -70,6 +71,24 @@ type templateAgentJSON struct {
 	Effort       string `json:"effort,omitempty"`
 	Sandbox      string `json:"sandbox,omitempty"`
 	Approval     string `json:"approval,omitempty"`
+
+	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
+	// in ascending order; a template whose every agent is wave 0 spawns in one
+	// synchronous pass (today's behaviour). The party's marching order.
+	Wave int `json:"wave,omitempty"`
+}
+
+// rhythmJSON is the wire shape for one template rhythm (JOH-244): a recurring
+// nudge materialized at deploy as a cron job on the group. Exactly one of
+// interval / cron_expr sets the schedule; target_role filters to matching
+// members at fire time ("" / "all" = whole group). The party's drumbeats.
+type rhythmJSON struct {
+	Name       string `json:"name"`
+	TargetRole string `json:"target_role,omitempty"`
+	Interval   string `json:"interval,omitempty"`  // Go duration ("10m") — mutually exclusive with cron_expr
+	CronExpr   string `json:"cron_expr,omitempty"` // cronexpr expression — mutually exclusive with interval
+	Subject    string `json:"subject,omitempty"`
+	Body       string `json:"body"`
 }
 
 // workPatternEntryJSON is the wire shape for one work-pattern step —
@@ -103,9 +122,16 @@ type templateJSON struct {
 	WorkPattern    []workPatternEntryJSON `json:"work_pattern"`
 	// Process is the template's declarative process spec (JOH-242): an ordered
 	// list of phases. Empty/absent = no process (the feature is off).
-	Process   []processPhaseJSON `json:"process"`
-	CreatedAt string             `json:"created_at,omitempty"`
-	UpdatedAt string             `json:"updated_at,omitempty"`
+	Process []processPhaseJSON `json:"process"`
+	// Rhythms is the template's recurring-nudge declarations (JOH-244),
+	// materialized as group cron jobs at deploy. Empty/absent = no rhythms.
+	Rhythms []rhythmJSON `json:"rhythms"`
+	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
+	// prior wave to go idle before the next spawns anyway (JOH-244). 0 =
+	// built-in default.
+	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -118,6 +144,8 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		Agents:         []templateAgentJSON{},
 		WorkPattern:    []workPatternEntryJSON{},
 		Process:        []processPhaseJSON{},
+		Rhythms:        []rhythmJSON{},
+		WaveMaxWait:    t.WaveMaxWait,
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
@@ -128,6 +156,9 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			roles = []string{}
 		}
 		out.Process = append(out.Process, processPhaseJSON{Name: ph.Name, Roles: roles, Criteria: ph.Criteria})
+	}
+	for _, rh := range t.Rhythms {
+		out.Rhythms = append(out.Rhythms, rhythmToJSON(rh))
 	}
 	if !t.CreatedAt.IsZero() {
 		out.CreatedAt = t.CreatedAt.Format(time.RFC3339)
@@ -154,7 +185,26 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			Effort:         a.Effort,
 			Sandbox:        a.Sandbox,
 			Approval:       a.Approval,
+			Wave:           a.Wave,
 		})
+	}
+	return out
+}
+
+// rhythmToJSON / rhythmFromJSON convert one rhythm between the db and wire
+// shapes. The db stores the schedule as an interval-in-seconds or a cron expr;
+// the wire carries the interval as a Go-duration string (the shape the cron
+// modal + CLI already speak), so a stored interval renders back as "<n>s".
+func rhythmToJSON(rh db.Rhythm) rhythmJSON {
+	out := rhythmJSON{
+		Name:       rh.Name,
+		TargetRole: rh.TargetRole,
+		CronExpr:   rh.CronExpr,
+		Subject:    rh.Subject,
+		Body:       rh.Body,
+	}
+	if rh.CronExpr == "" && rh.IntervalSeconds > 0 {
+		out.Interval = (time.Duration(rh.IntervalSeconds) * time.Second).String()
 	}
 	return out
 }
@@ -286,6 +336,17 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			}
 		}
 
+		// Wave (JOH-244): the agent's staged-spawn wave. Non-negative; a sanity
+		// cap keeps a typo from scheduling an absurd number of deferred beats.
+		if a.Wave < 0 {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("agent %q: wave must be >= 0", an)}
+		}
+		if a.Wave > maxWaveNumber {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("agent %q: wave must be <= %d", an, maxWaveNumber)}
+		}
+
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
 			Ordinal:        i,
 			Name:           an,
@@ -301,6 +362,7 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			Effort:         launch.Effort,
 			Sandbox:        launch.Sandbox,
 			Approval:       launch.Approval,
+			Wave:           a.Wave,
 		})
 	}
 
@@ -349,6 +411,23 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		return nil, fail
 	}
 	t.Process = phases
+
+	// Wave max-wait (JOH-244): the per-template cap on how long a wave gate
+	// waits for the prior wave to settle. Non-negative; 0 = built-in default.
+	if body.WaveMaxWait < 0 {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "wave_max_wait must be >= 0 (seconds)"}
+	}
+	t.WaveMaxWait = body.WaveMaxWait
+
+	// Rhythms (JOH-244): recurring nudges materialized as group cron jobs at
+	// deploy. Validated to the same rules the cron add path enforces (name
+	// charset, exactly-one schedule mode, interval >= 30s, cron expr parse) so a
+	// template can't persist a rhythm that would be rejected at materialize.
+	rhythms, fail := buildRhythmsFromJSON(body.Rhythms)
+	if fail != nil {
+		return nil, fail
+	}
+	t.Rhythms = rhythms
 	return t, nil
 }
 
@@ -384,6 +463,104 @@ func buildProcessFromJSON(in []processPhaseJSON) ([]db.ProcessPhase, *spawnFailu
 			roles = append(roles, r)
 		}
 		out = append(out, db.ProcessPhase{Name: name, Roles: roles, Criteria: strings.TrimSpace(ph.Criteria)})
+	}
+	return out, nil
+}
+
+// maxWaveNumber is a sanity cap on a template agent's wave (JOH-244) — far
+// above any real staged deploy. It bounds how many deferred beats one deploy
+// can schedule, so a typo can't create an absurdly long choreography.
+const maxWaveNumber = 64
+
+// maxRhythms caps how many rhythms one template declares — a sanity bound, far
+// above any real drumbeat set.
+const maxRhythms = 32
+
+// rhythmRoleAll is the reserved rhythm/cron role token meaning "the whole
+// group", the same broadcast sense "all" carries as a work-pattern target and a
+// process phase role. Normalized to "" (no filter) at build time so the cron
+// fan-out — which reads "" as whole-group — needs no special case.
+const rhythmRoleAll = "all"
+
+// buildRhythmsFromJSON validates a wire-shape rhythm list and converts it to
+// the db shape (JOH-244). Empty/absent yields an empty slice (no rhythms). Each
+// rhythm is held to the SAME rules the cron add path enforces — name charset,
+// body required, exactly one of interval / cron_expr, interval >= 30s, cron
+// expr parses — so a saved rhythm can never be a materialize-time surprise.
+// Names must be unique within the template (they become the cron job's
+// "<group>-<name>" handle). target_role "all" (case-insensitive) or empty
+// normalizes to "" (whole group).
+func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
+	out := []db.Rhythm{}
+	if len(in) > maxRhythms {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("rhythms: at most %d", maxRhythms)}
+	}
+	seen := map[string]bool{}
+	for i, rh := range in {
+		name := strings.TrimSpace(rh.Name)
+		if name == "" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("rhythm #%d: name is required", i+1)}
+		}
+		if err := validateCronName(name); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("rhythm %q: %s", name, err.Error())}
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("duplicate rhythm name %q — rhythm names must be unique (case-insensitive)", name)}
+		}
+		seen[key] = true
+
+		body := strings.TrimSpace(rh.Body)
+		if body == "" {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("rhythm %q: body is required (the message the nudge sends)", name)}
+		}
+
+		cronSpec := strings.TrimSpace(rh.CronExpr)
+		intervalSpec := strings.TrimSpace(rh.Interval)
+		var intervalSeconds int64
+		switch {
+		case cronSpec != "" && intervalSpec != "":
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("rhythm %q: interval and cron_expr are mutually exclusive — pick one schedule mode", name)}
+		case cronSpec == "" && intervalSpec == "":
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("rhythm %q: one of interval / cron_expr is required", name)}
+		case cronSpec != "":
+			if err := cronexpr.Validate(cronSpec); err != nil {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("rhythm %q: %s", name, err.Error())}
+			}
+		default:
+			d, err := time.ParseDuration(intervalSpec)
+			if err != nil {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("rhythm %q: interval must be a Go duration like 10m / 1h / 30s; got %q", name, rh.Interval)}
+			}
+			if d < 30*time.Second {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("rhythm %q: interval must be >= 30s (the scheduler tick interval)", name)}
+			}
+			intervalSeconds = int64(d.Seconds())
+		}
+
+		role := strings.TrimSpace(rh.TargetRole)
+		if strings.EqualFold(role, rhythmRoleAll) {
+			role = ""
+		}
+
+		out = append(out, db.Rhythm{
+			Name:            name,
+			TargetRole:      role,
+			IntervalSeconds: intervalSeconds,
+			CronExpr:        cronSpec,
+			Subject:         strings.TrimSpace(rh.Subject),
+			Body:            body,
+		})
 	}
 	return out, nil
 }
@@ -1375,212 +1552,77 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		}
 	}
 
-	results := []instantiateAgentResult{}
-	spawned, failed := 0, 0
-	// Successful spawns by template-agent name (and in spawn order) —
-	// the routing table for the work-pattern deliveries below.
-	spawnedConvs := map[string]string{}
-	spawnedOrder := []string{}
-	for _, a := range tmpl.Agents {
-		finalName := spec.groupName + "-" + a.Name
-		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
-		// Resolve the role this agent references (JOH-240), if any. A role that
-		// vanished since save degrades gracefully — role stays nil and the agent
-		// falls through to its own overrides / harness defaults, same as a
-		// deleted spawn-profile reference is tolerated at the wire boundary.
-		var role *db.Role
-		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
-			if rl, rerr := db.GetRole(ref); rerr != nil {
-				slog.Warn("instantiate: role lookup failed", "role", ref, "error", rerr)
-			} else {
-				role = rl
-			}
-		}
-		// Resolve this agent's launch profile (JOH-239 + JOH-240): per-agent
-		// inline override → per-agent spawn profile → role defaults → harness
-		// secure default. A resolution failure (a referenced profile deleted
-		// since save, an invalid value, a Codex sandbox/cwd conflict) is recorded
-		// per-agent and skips just this spawn — same best-effort contract as an
-		// owner/permission grant failure below.
-		launch, lfail := resolveTemplateAgentLaunch(a, role, spec.cwd)
-		if lfail != nil {
-			res.Error = lfail.Msg
-			failed++
-			results = append(results, res)
-			continue
-		}
-		// Fold the role's canonical brief into THIS agent's startup context as a
-		// "## Role" block (JOH-240) — rendered only when the referenced role
-		// carries a nonempty brief. The shared group context is unchanged; the
-		// block is appended for this agent alone.
-		agentContext := groupContext
-		if role != nil {
-			agentContext = appendRoleBlock(groupContext, role.Brief)
-		}
-		// Fold the template's process spec into THIS agent's context as a
-		// "## Process" block (JOH-242), calling out which phases the agent's
-		// role is active in. A no-op when the template has no process.
-		agentContext = appendProcessBlock(agentContext, tmpl.Process, a.Role)
-		outcome, fail := executeSpawn(g, spawnParams{
-			Name:           finalName,
-			Role:           a.Role,
-			Descr:          a.Descr,
-			InitialMessage: a.InitialMessage,
-			Cwd:            spec.cwd,
-			Harness:        launch.Harness,
-			Model:          launch.Model,
-			Effort:         launch.Effort,
-			SandboxMode:    launch.Sandbox,
-			ApprovalPolicy: launch.Approval,
-			GroupContext:   agentContext,
-			ReplyToConv:    spec.caller,
-			SpawnedByConv:  spec.caller,
-		})
-		if fail != nil {
-			res.Error = fail.Msg
-			failed++
-			results = append(results, res)
-			continue
-		}
-		res.ConvID = outcome.ConvID
-		spawned++
-		spawnedConvs[a.Name] = outcome.ConvID
-		spawnedOrder = append(spawnedOrder, outcome.ConvID)
+	// Seeded rhythms (JOH-244): materialize the template's recurring nudges as
+	// normal group cron jobs on the fresh group before any spawn, so they are
+	// armed the moment the team comes up. Best-effort; owned by the deploying
+	// identity.
+	rhythmsCreated := materializeRhythms(g, tmpl.Rhythms, spec.caller)
 
-		// Ownership + permission grants — best-effort. The agent is
-		// already spawned and group-joined; a failed grant is logged and
-		// surfaced in the result note but does not fail the whole
-		// instantiation.
-		if a.IsOwner {
-			if err := db.AddAgentGroupOwner(gid, outcome.ConvID, granter); err != nil {
-				slog.Warn("instantiate: grant owner failed",
-					"group", spec.groupName, "conv", outcome.ConvID, "error", err)
-				res.Error = "spawned, but grant-owner failed: " + err.Error()
-			} else {
-				res.Owner = true
-			}
-		}
-		// The effective grant set is the role's default permissions UNION the
-		// agent's own (JOH-240): the role's slugs sit beneath the agent's, the
-		// agent's list extends them, and the union is deduped. A role that
-		// vanished contributes nothing.
-		for _, slug := range effectivePermissions(role, a.Permissions) {
-			if err := db.GrantAgentPermission(outcome.ConvID, slug, granter); err != nil {
-				slog.Warn("instantiate: grant permission failed",
-					"conv", outcome.ConvID, "slug", slug, "error", err)
-				continue
-			}
-			res.Granted = append(res.Granted, slug)
-		}
-		results = append(results, res)
-	}
-
-	// Work pattern (JOH-336): with the whole roster up, deliver the
-	// template's routed briefing messages IN ORDER — each step to one
-	// roster agent by name, or to every spawned member ("all"). {{task}}
-	// (and its {{mission}} alias) interpolate the per-run assignment.
-	// Distinct from the per-agent initial_message (that rode each agent's
-	// own spawn welcome): the pattern is the cross-cutting kick-off
-	// choreography — "brief the Lead with the leadership frame, then
-	// everyone with the house rules". Best-effort like the
-	// ownership/permission grants: a step whose target failed to spawn (or
-	// whose interpolated body breaks the inbox rule) is reported in
-	// pattern_errors, never aborts the rest.
-	patternDelivered := 0
-	patternErrors := []string{}
-	// The assignment is interpolated into inbox bodies, so it gets the same
-	// CRLF→LF fold the group context got via normalizeGroupContext — a
-	// CRLF-authored --task/--mission file must not flunk every step's
-	// charset re-gate below (isValidInitialMessage rejects '\r').
-	assignment := strings.TrimSpace(spec.assignment)
-	assignment = strings.ReplaceAll(assignment, "\r\n", "\n")
-	assignment = strings.ReplaceAll(assignment, "\r", "\n")
-	rosterNames := map[string]bool{}
-	for _, a := range tmpl.Agents {
-		rosterNames[a.Name] = true
-	}
-	for i, e := range tmpl.WorkPattern {
-		// {{task}} is the canonical token; {{mission}} is an alias so a
-		// deploy-oriented template reads naturally. Both fill with the same
-		// per-run assignment.
-		msg := strings.ReplaceAll(e.Value, "{{task}}", assignment)
-		msg = strings.ReplaceAll(msg, "{{mission}}", assignment)
-		if msg == "" {
-			// A bare "{{task}}" step with no assignment: save-time validation
-			// can't catch it, so report it instead of delivering an
-			// empty-bodied briefing.
-			patternErrors = append(patternErrors,
-				fmt.Sprintf("step %d/%d (to %s): interpolated to an empty message — not sent",
-					i+1, len(tmpl.WorkPattern), e.SendTo))
-			continue
-		}
-		if !isValidInitialMessage(msg) {
-			patternErrors = append(patternErrors,
-				fmt.Sprintf("step %d/%d (to %s): interpolated message breaks the inbox charset/length rule — not sent",
-					i+1, len(tmpl.WorkPattern), e.SendTo))
-			continue
-		}
-		var targets []string
-		switch e.SendTo {
-		case "all":
-			targets = spawnedOrder
-			if len(targets) == 0 {
-				patternErrors = append(patternErrors,
-					fmt.Sprintf("step %d/%d: no members spawned — not sent", i+1, len(tmpl.WorkPattern)))
-				continue
-			}
-		default:
-			conv, ok := spawnedConvs[e.SendTo]
-			if !ok {
-				// Distinguish a roster agent that failed to spawn from a
-				// target the roster no longer carries at all (a from-group
-				// re-snapshot keeps the curated pattern verbatim, so a step
-				// can go stale when its agent's name wasn't recovered).
-				if rosterNames[e.SendTo] {
-					patternErrors = append(patternErrors,
-						fmt.Sprintf("step %d/%d: target %q did not spawn — not sent", i+1, len(tmpl.WorkPattern), e.SendTo))
-				} else {
-					patternErrors = append(patternErrors,
-						fmt.Sprintf("step %d/%d: target %q is not in the roster (stale work-pattern step?) — not sent",
-							i+1, len(tmpl.WorkPattern), e.SendTo))
-				}
-				continue
-			}
-			targets = []string{conv}
-		}
-		subject := fmt.Sprintf("[work-pattern %d/%d] %s", i+1, len(tmpl.WorkPattern), tmpl.Name)
-		for _, conv := range targets {
-			if _, err := db.InsertAgentMessage(&db.AgentMessage{
-				GroupID:  gid,
-				FromConv: spec.caller,
-				ToConv:   conv,
-				Subject:  subject,
-				Body:     msg,
-				// The full audience on every row — like handleMultiRecipient —
-				// so `inbox read` renders an "all" step as one broadcast, not
-				// as N private notes.
-				ToRecipients: targets,
-			}); err != nil {
-				slog.Warn("instantiate: work-pattern insert failed",
-					"group", spec.groupName, "step", i+1, "conv", conv, "error", err)
-				patternErrors = append(patternErrors,
-					fmt.Sprintf("step %d/%d (to %s): %v", i+1, len(tmpl.WorkPattern), e.SendTo, err))
-				continue
-			}
-			patternDelivered++
-			enqueueDeliveryForConv(conv)
-		}
-	}
+	// Staged spawn — waves (JOH-244). Partition the roster by wave; spawn wave 0
+	// synchronously (so this HTTP call returns real per-agent outcomes), and —
+	// when higher waves exist — persist a choreography that the background
+	// runner advances as each wave settles. A single-wave template (every agent
+	// wave 0) is one synchronous pass, identical to pre-JOH-244 behaviour.
+	waves := partitionWaves(tmpl.Agents)
+	assignment := normalizeAssignment(spec.assignment)
+	wr := spawnWaveAgents(g, waves[0].Agents, tmpl.Process, groupContext, spec.cwd, spec.caller, granter)
 
 	resp := map[string]any{
-		"group":             spec.groupName,
-		"template":          tmpl.Name,
-		"agents":            results,
-		"spawned":           spawned,
-		"failed":            failed,
-		"pattern_delivered": patternDelivered,
-		"pattern_errors":    patternErrors,
+		"group":    spec.groupName,
+		"template": tmpl.Name,
+		"agents":   wr.Results,
+		"spawned":  wr.Spawned,
+		"failed":   wr.Failed,
 	}
+	if rhythmsCreated > 0 {
+		resp["rhythms_created"] = rhythmsCreated
+	}
+
+	if len(waves) == 1 {
+		// Single wave: the roster is already whole, so deliver the work pattern
+		// now — exactly the pre-JOH-244 path.
+		delivered, patErrs := deliverWorkPattern(g, tmpl.WorkPattern, tmpl.Name, assignment, spec.caller,
+			wr.SpawnedConvs, wr.SpawnedOrder, rosterNameSet(tmpl.Agents))
+		resp["pattern_delivered"] = delivered
+		resp["pattern_errors"] = patErrs
+	} else {
+		// Multiple waves: the roster is NOT whole yet, so defer the work pattern
+		// to the final wave and persist the choreography for the background
+		// runner. The response reports wave 0's outcomes plus what is deferred.
+		choreo := &db.WaveChoreography{
+			GroupID:        gid,
+			GroupName:      spec.groupName,
+			TemplateName:   tmpl.Name,
+			GroupContext:   groupContext,
+			Cwd:            spec.cwd,
+			Caller:         spec.caller,
+			Granter:        granter,
+			Assignment:     assignment,
+			Process:        tmpl.Process,
+			WorkPattern:    tmpl.WorkPattern,
+			Waves:          waves,
+			MaxWaitSeconds: tmpl.WaveMaxWait,
+			NextWave:       1,
+			GatingConvs:    wr.SpawnedOrder,
+			Activated:      []string{},
+			SpawnedConvs:   wr.SpawnedConvs,
+			SpawnedOrder:   wr.SpawnedOrder,
+			WaveDeadline:   time.Now().Add(waveMaxWaitDuration(tmpl.WaveMaxWait)),
+		}
+		if err := db.UpsertWaveChoreography(choreo); err != nil {
+			slog.Warn("instantiate: persist choreography failed", "group", spec.groupName, "error", err)
+		}
+		pendingAgents := pendingAgentCount(choreo)
+		resp["pattern_delivered"] = 0
+		resp["pattern_errors"] = []string{}
+		resp["waves_total"] = len(waves)
+		resp["pending_waves"] = len(waves) - 1
+		resp["pending_agents"] = pendingAgents
+		resp["choreography_note"] = fmt.Sprintf(
+			"wave 1/%d spawned; %d more agent(s) in %d more wave(s) will spawn as each wave settles (work pattern delivers once the roster is whole)",
+			len(waves), pendingAgents, len(waves)-1)
+	}
+
 	// Deploy framing (JOH-245): the mission the force was deployed against,
 	// so the CLI/dashboard can say "task force X deployed against <mission>".
 	if spec.deployed {

@@ -214,6 +214,13 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 
+	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
+	// choreography: spawns each deferred wave once the prior wave's agents are
+	// up and idle (or a per-template max-wait cap fires). Restart-safe — the
+	// durable group_wave_choreography table is the whole state, re-armed on the
+	// first sweep. Shares the daemon-wide stop channel. See waves.go.
+	startWaveChoreographyRunner(cronStop)
+
 	// agent_sudo_grants housekeeping. Hard-deletes expired rows
 	// older than sudoGrantsRetention so the table stays bounded.
 	// Shares the same stop channel — both sweeps shut down together
