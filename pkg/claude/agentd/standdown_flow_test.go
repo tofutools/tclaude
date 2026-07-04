@@ -222,9 +222,61 @@ func TestRetire_EmptiesGroup_AutoDisablesRhythms(t *testing.T) {
 	assert.Empty(t, hand.DisabledReason, "the human-paused job is NOT stamped auto-disabled")
 }
 
-// Scenario: after a retire auto-disabled the rhythms, a resume re-enables EXACTLY
-// the auto-disabled ones — never a job the human disabled by hand.
-func TestResume_ReenablesOnlyAutoDisabledRhythms(t *testing.T) {
+// resumeGroup fires POST /v1/groups/{group}/resume as the human and asserts 200.
+func resumeGroup(t *testing.T, f *testharness.Flow, group string) {
+	t.Helper()
+	rec := testharness.Serve(f.Mux,
+		agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/"+group+"/resume", nil)))
+	require.Equalf(t, http.StatusOK, rec.Code, "resume %s: %s", group, rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+}
+
+// Scenario: resume on a still-EMPTY dormant group does NOT re-enable the
+// auto-disabled rhythms — retire removed the membership, so a resume can't
+// repopulate the group, and re-enabling would just re-create the "firing to
+// nobody" leak the auto-disable prevents.
+func TestResume_EmptyGroup_LeavesRhythmsDisabled(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name": "still-crew",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", IsOwner: true},
+			{Name: "dev", Role: "dev"},
+		},
+		"rhythms": []map[string]any{
+			{"name": "standup", "target_role": "all", "interval": "30m", "body": "status?"},
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/still-crew/deploy",
+			map[string]any{"group_name": "quiet", "mission": "m"}).Code, "deploy")
+	agentd.WaitForBackgroundForTest()
+
+	// Retire empties the group and auto-disables the rhythm.
+	code, _ := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, "quiet", "")
+	require.Equalf(t, http.StatusOK, code, "retire")
+	agentd.WaitForBackgroundForTest()
+	require.Equal(t, 0, memberCount(t, "quiet"), "retire emptied the group")
+	require.False(t, cronJobByName(t, "quiet-standup").Enabled, "rhythm auto-disabled")
+
+	// Resume the (still empty) group — nobody to resume, so the rhythm stays
+	// disabled rather than firing to an empty group again.
+	resumeGroup(t, f, "quiet")
+
+	rhythm := cronJobByName(t, "quiet-standup")
+	require.NotNil(t, rhythm)
+	assert.False(t, rhythm.Enabled, "resume on an empty group leaves the rhythm disabled")
+	assert.Equal(t, db.CronDisabledReasonGroupRetired, rhythm.DisabledReason,
+		"the marker is preserved for a later repopulate")
+}
+
+// Scenario: once the force is back — a member re-spawned into the dormant group
+// before a resume — resume re-enables EXACTLY the auto-disabled rhythms, and
+// never a job the human disabled by hand.
+func TestResume_RepopulatedGroup_ReenablesOnlyAutoDisabledRhythms(t *testing.T) {
 	f := newFlow(t)
 
 	createBody := map[string]any{
@@ -265,16 +317,17 @@ func TestResume_ReenablesOnlyAutoDisabledRhythms(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 	require.False(t, cronJobByName(t, "cadence-standup").Enabled, "rhythm auto-disabled")
 
-	// Resume the group.
-	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/cadence/resume", nil))
-	rec := testharness.Serve(f.Mux, r)
-	require.Equalf(t, http.StatusOK, rec.Code, "resume: %s", rec.Body.String())
-	agentd.WaitForBackgroundForTest()
+	// Bring the force back: spawn a fresh live member into the dormant group.
+	f.Spawn("cadence", "reviver")
+	require.GreaterOrEqual(t, memberCount(t, "cadence"), 1, "the group has a live member again")
+
+	// Resume the now-repopulated group.
+	resumeGroup(t, f, "cadence")
 
 	// The rhythm is re-enabled and its marker cleared.
 	rhythm := cronJobByName(t, "cadence-standup")
 	require.NotNil(t, rhythm)
-	assert.True(t, rhythm.Enabled, "the auto-disabled rhythm was re-enabled")
+	assert.True(t, rhythm.Enabled, "the auto-disabled rhythm was re-enabled once the force returned")
 	assert.Empty(t, rhythm.DisabledReason, "the marker was cleared")
 
 	// The human-paused job stays disabled — resume never touches it.

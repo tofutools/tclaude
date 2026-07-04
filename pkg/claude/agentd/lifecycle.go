@@ -280,15 +280,24 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
-	// Resuming the group brings its recipients back, so re-enable exactly the
-	// rhythms a prior emptying retire auto-disabled (JOH-345). Best-effort
+	// Re-enable exactly the rhythms a prior emptying retire auto-disabled
+	// (JOH-345) — but ONLY once the group has live members again. Retire REMOVES
+	// membership, so a resume on a still-empty dormant group can't repopulate it;
+	// re-enabling there would just re-create the "firing to nobody" state the
+	// auto-disable existed to prevent. Gate on live members so the rhythms come
+	// back exactly when the force does (a member re-added / re-spawned before the
+	// resume), and stay disabled when the group is still empty. Best-effort
 	// tidy-up: a failure is logged and swallowed — the resume itself succeeded.
-	if n, err := db.ReenableGroupRetiredCronJobs(g.ID); err != nil {
-		slog.Warn("resume: could not re-enable group rhythms", "group", g.Name, "err", err)
-	} else {
-		out.RhythmsReenabled = n
-		if n > 0 {
-			slog.Info("resume re-enabled group rhythms", "group", g.Name, "reenabled", n)
+	if live, err := groupHasLiveMembers(g.ID); err != nil {
+		slog.Warn("resume: could not check group liveness for rhythm re-enable", "group", g.Name, "err", err)
+	} else if live {
+		if n, err := db.ReenableGroupRetiredCronJobs(g.ID); err != nil {
+			slog.Warn("resume: could not re-enable group rhythms", "group", g.Name, "err", err)
+		} else {
+			out.RhythmsReenabled = n
+			if n > 0 {
+				slog.Info("resume re-enabled group rhythms", "group", g.Name, "reenabled", n)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

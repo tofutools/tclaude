@@ -115,7 +115,7 @@ func cronConvToAgent(convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 17 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 18 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
