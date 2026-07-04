@@ -209,7 +209,7 @@ func TestGatherLogLines_TailCapDropsPartialLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	lines, truncated := gatherLogLines(path, false, info.Size()-10)
+	lines, _, truncated := gatherLogLines(path, false, info.Size()-10)
 	if !truncated {
 		t.Fatal("expected truncated=true when the byte cap cuts the file")
 	}
@@ -230,19 +230,39 @@ func TestGatherLogLines_IncludeRotated(t *testing.T) {
 	mustWrite(t, path+".1", jsonLine("2026-07-01T11:00:00.000Z", "INFO", "older")+"\n")
 	mustWrite(t, path, jsonLine("2026-07-01T12:00:00.000Z", "INFO", "newest")+"\n")
 
-	// Active only: just the newest line.
-	only, _ := gatherLogLines(path, false, maxLogReadBytes)
+	// Active only: just the newest line, and one source (the active log).
+	only, onlySrc, _ := gatherLogLines(path, false, maxLogReadBytes)
 	if len(only) != 1 || !strings.Contains(only[0], "newest") {
 		t.Fatalf("active-only should read 1 line, got %v", only)
 	}
+	if len(onlySrc) != 1 || onlySrc[0].Rotated || onlySrc[0].Lines != 1 {
+		t.Fatalf("active-only sources wrong: %+v", onlySrc)
+	}
 
 	// With rotated: chronological oldest → newest.
-	all, _ := gatherLogLines(path, true, maxLogReadBytes)
+	all, allSrc, _ := gatherLogLines(path, true, maxLogReadBytes)
 	if len(all) != 3 {
 		t.Fatalf("include_rotated should read 3 lines, got %d: %v", len(all), all)
 	}
 	if !strings.Contains(all[0], "oldest") || !strings.Contains(all[2], "newest") {
 		t.Fatalf("rotated files not stitched chronologically: %v", all)
+	}
+	// Sources are reported active-first, then rotated siblings; each read
+	// exactly one line here.
+	if len(allSrc) != 3 {
+		t.Fatalf("include_rotated should report 3 sources, got %+v", allSrc)
+	}
+	if allSrc[0].Rotated || allSrc[0].Name != "output.log" {
+		t.Fatalf("first source should be the active log, got %+v", allSrc[0])
+	}
+	if !allSrc[1].Rotated || allSrc[1].Name != "output.log.1" ||
+		!allSrc[2].Rotated || allSrc[2].Name != "output.log.2" {
+		t.Fatalf("rotated sources out of order: %+v", allSrc)
+	}
+	for _, s := range allSrc {
+		if s.Lines != 1 {
+			t.Fatalf("each source should read 1 line, got %+v", s)
+		}
 	}
 }
 
@@ -261,9 +281,14 @@ func TestGatherLogLines_TruncatingReadStopsRotatedWalk(t *testing.T) {
 	// Cap 10 bytes short of the active file so its read truncates. Because
 	// the cap is reached, the walk must NOT descend into the rotated
 	// sibling and read a mid-record sliver off it (LOW-1 regression).
-	lines, truncated := gatherLogLines(path, true, info.Size()-10)
+	lines, sources, truncated := gatherLogLines(path, true, info.Size()-10)
 	if !truncated {
 		t.Fatal("expected truncated=true")
+	}
+	// The truncating active read must stop the walk before the rotated
+	// sibling, so only the active log is reported as a source.
+	if len(sources) != 1 || sources[0].Rotated {
+		t.Fatalf("truncating read should report only the active source, got %+v", sources)
 	}
 	joined := strings.Join(lines, "\n")
 	if strings.Contains(joined, "rotated-should-not-appear") {
@@ -271,6 +296,71 @@ func TestGatherLogLines_TruncatingReadStopsRotatedWalk(t *testing.T) {
 	}
 	if !strings.Contains(joined, "active-newest") {
 		t.Fatalf("newest active line should survive: %v", lines)
+	}
+}
+
+func TestBuildLogsResponse_SourcesAndRotatedAvailable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.log")
+	mustWrite(t, path+".2", jsonLine("2026-07-01T10:00:00.000Z", "INFO", "oldest")+"\n")
+	mustWrite(t, path+".1", jsonLine("2026-07-01T11:00:00.000Z", "INFO", "older")+"\n")
+	mustWrite(t, path,
+		jsonLine("2026-07-01T12:00:00.000Z", "INFO", "newA")+"\n"+
+			jsonLine("2026-07-01T12:00:01.000Z", "INFO", "newB")+"\n")
+
+	// Rotated OFF: only the active log is a source, but the response still
+	// advertises that two rotated siblings exist so the tab can offer them.
+	off := buildLogsResponse(path, false, logFilter{}, "all", 1, 100)
+	if off.IncludeRotated {
+		t.Fatalf("IncludeRotated should be false, got %+v", off)
+	}
+	if off.RotatedAvailable != 2 {
+		t.Fatalf("RotatedAvailable = %d, want 2", off.RotatedAvailable)
+	}
+	if len(off.Sources) != 1 || off.Sources[0].Rotated || off.Sources[0].Name != "output.log" {
+		t.Fatalf("rotated-off sources wrong: %+v", off.Sources)
+	}
+	if off.Sources[0].Lines != 2 {
+		t.Fatalf("active source should report 2 lines, got %+v", off.Sources[0])
+	}
+
+	// Rotated ON: all three files are reported, active first.
+	on := buildLogsResponse(path, true, logFilter{}, "all", 1, 100)
+	if !on.IncludeRotated || on.RotatedAvailable != 2 {
+		t.Fatalf("rotated-on flags wrong: include=%v avail=%d", on.IncludeRotated, on.RotatedAvailable)
+	}
+	if len(on.Sources) != 3 {
+		t.Fatalf("rotated-on should report 3 sources, got %+v", on.Sources)
+	}
+	names := []string{on.Sources[0].Name, on.Sources[1].Name, on.Sources[2].Name}
+	want := []string{"output.log", "output.log.1", "output.log.2"}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("source %d = %q, want %q (%+v)", i, names[i], want[i], on.Sources)
+		}
+	}
+	if on.Sources[0].Rotated || !on.Sources[1].Rotated || !on.Sources[2].Rotated {
+		t.Fatalf("rotated flags wrong across sources: %+v", on.Sources)
+	}
+}
+
+func TestCountRotatedLogFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "output.log")
+	mustWrite(t, path, "active\n")
+
+	if n := countRotatedLogFiles(path); n != 0 {
+		t.Fatalf("no rotated siblings should count 0, got %d", n)
+	}
+	mustWrite(t, path+".1", "one\n")
+	mustWrite(t, path+".2", "two\n")
+	if n := countRotatedLogFiles(path); n != 2 {
+		t.Fatalf("two contiguous siblings should count 2, got %d", n)
+	}
+	// Slots are contiguous: a gap stops the count (a stray .5 is ignored).
+	mustWrite(t, path+".5", "five\n")
+	if n := countRotatedLogFiles(path); n != 2 {
+		t.Fatalf("a non-contiguous sibling must not be counted, got %d", n)
 	}
 }
 

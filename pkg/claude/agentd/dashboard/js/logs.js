@@ -153,11 +153,72 @@ function renderPager() {
     + `<label class="audit-pager-size" title="Rows per page"><select id="logs-page-size">${sizeOpts}</select> / page</label>`;
 }
 
+// fmtInt renders a line count with locale thousands separators
+// ("12,345") — exact, not the abbreviated "12k" a token meter would use,
+// because the operator is trying to reason about exactly which lines the
+// tab is presenting.
+function fmtInt(n) {
+  return (Number(n) || 0).toLocaleString();
+}
+
+// fmtBytes renders a byte count compactly (B/KB/MB) for the per-file
+// tooltip. A size-rotated log's size is the very reason it split across
+// siblings, so showing how much was read from each file is the natural
+// companion to its line count.
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+// renderStatus fills the muted status strip on the Logs filter bar with a
+// plain statement of WHAT is being shown: which file(s) were read and how
+// many lines from each (log rotation splits history across output.log,
+// .1, .2, …, so this is otherwise invisible), a click-to-include hint when
+// rotated siblings exist but the toggle is off, and the byte-cap warning.
 function renderStatus(data) {
   const el = $('#logs-status');
   if (!el) return;
+  const sources = data.sources || [];
   const bits = [];
-  if (data.path) bits.push(esc(data.path));
+
+  if (sources.length) {
+    // Sources arrive active-log-first, so [0] is the active log when it
+    // was read, otherwise the newest rotated sibling that was. Anchor the
+    // label on it and count the remaining files as "+ N rotated" so the
+    // label's file count always matches the tooltip breakdown — including
+    // the rare transient where the active log is momentarily missing but
+    // rotated siblings are being read.
+    const primary = sources[0];
+    const extra = sources.length - 1;
+    const totalLines = sources.reduce((n, s) => n + (s.lines || 0), 0);
+
+    // Per-file breakdown for the hover tooltip, e.g.
+    // "output.log — 1,234 lines · 2.1 MB".
+    const detail = `Reading ${sources.length} file${sources.length === 1 ? '' : 's'}:\n`
+      + sources.map(s => `  ${s.name} — ${fmtInt(s.lines)} line${s.lines === 1 ? '' : 's'}`
+        + (s.bytes ? ` · ${fmtBytes(s.bytes)}` : '')).join('\n');
+
+    let label = esc(primary.path);
+    if (extra > 0) {
+      label += ` <span class="muted">+ ${extra} rotated file${extra === 1 ? '' : 's'}</span>`;
+    }
+    label += ` <span class="muted">· ${fmtInt(totalLines)} line${totalLines === 1 ? '' : 's'}</span>`;
+    bits.push(`<span class="logs-sources" title="${esc(detail)}">${label}</span>`);
+  } else if (data.path) {
+    bits.push(esc(data.path));
+  }
+
+  // Rotated siblings exist on disk but weren't scanned this request —
+  // surface them and let a click tick the "rotated" toggle to include them.
+  const avail = data.rotated_available || 0;
+  if (avail && !data.include_rotated) {
+    const base = (data.path || 'output.log').split(/[\\/]/).pop();
+    const range = avail === 1 ? `${base}.1` : `${base}.1 … .${avail}`;
+    bits.push(`<a href="#" class="logs-rotated-hint" title="Also read the ${esc(range)} rotated log file${avail === 1 ? '' : 's'} for older history">+ ${avail} rotated file${avail === 1 ? '' : 's'} available</a>`);
+  }
+
   if (data.truncated) bits.push('<span class="logs-warn" title="Only the newest slice of the log was read; older lines were skipped. Narrow the time range or enable rotation to keep the file bounded.">newest slice only</span>');
   el.innerHTML = bits.join(' · ');
 }
@@ -257,6 +318,22 @@ function bindLogsTab() {
 
   const refresh = $('#logs-refresh');
   if (refresh) refresh.addEventListener('click', loadLogs);
+
+  // The status strip's "+ N rotated files available" hint ticks the
+  // rotated toggle (delegated — renderStatus rewrites this node each load).
+  const status = $('#logs-status');
+  if (status) {
+    status.addEventListener('click', e => {
+      const hint = e.target.closest('.logs-rotated-hint');
+      if (!hint) return;
+      e.preventDefault();
+      const cb = $('#logs-rotated');
+      if (cb && !cb.checked) {
+        cb.checked = true;
+        reloadFromFirstPage();
+      }
+    });
+  }
 
   const stream = $('#logs-stream');
   if (stream) {

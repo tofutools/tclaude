@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,6 +31,12 @@ import (
 // backstop against a rotation-disabled (unbounded) log, only the newest
 // maxLogReadBytes are ever read+parsed; older lines are dropped and the
 // response's `truncated` flag says so.
+//
+// Because rotation splits history across siblings (output.log, .1, .2, …),
+// each response also reports which files it actually read (`sources`, with
+// per-file line counts) and how many rotated siblings exist on disk
+// (`rotated_available`), so the tab can state plainly what it is showing
+// instead of leaving the operator to guess.
 
 const (
 	// defaultLogPageSize is what the dashboard requests when the operator
@@ -63,9 +70,23 @@ type logEntryView struct {
 	Raw    string         `json:"raw,omitempty"`
 }
 
+// logSource describes one physical log file that contributed lines to a
+// response. Reported so the Logs tab can show exactly which files — and
+// how many lines from each — it is presenting, rather than leaving the
+// operator to guess whether rotation split the history across siblings.
+type logSource struct {
+	Path    string `json:"path"`    // absolute path of the file read
+	Name    string `json:"name"`    // base name, for compact display
+	Lines   int    `json:"lines"`   // non-empty lines read from this file
+	Bytes   int64  `json:"bytes"`   // bytes read (may be a tail slice if the cap bit)
+	Rotated bool   `json:"rotated"` // false = the active log; true = a rotated sibling
+}
+
 // logsResponse is the Logs tab payload: one newest-first page of entries
-// plus the pager state and a couple of status hints (the source path,
-// and whether the byte cap dropped older lines).
+// plus the pager state and a few status hints — which files were read
+// (Sources), how many rotated siblings exist on disk (RotatedAvailable),
+// whether rotated files were included this request, and whether the byte
+// cap dropped older lines.
 type logsResponse struct {
 	Entries         []logEntryView `json:"entries"`
 	Page            int            `json:"page"`
@@ -75,6 +96,17 @@ type logsResponse struct {
 	Level           string         `json:"level"`            // normalized min-level echo ("all" when unset)
 	Truncated       bool           `json:"truncated"`        // the byte cap dropped older lines
 	Path            string         `json:"path"`             // the active log file
+	// Sources lists every file actually read this request, active log
+	// first then rotated siblings newest→oldest. Empty only when the
+	// active log is missing/unreadable.
+	Sources []logSource `json:"sources"`
+	// RotatedAvailable is how many rotated siblings (output.log.1, .2, …)
+	// exist on disk right now, whether or not they were scanned — lets the
+	// tab say "N rotated files available" when the toggle is off.
+	RotatedAvailable int `json:"rotated_available"`
+	// IncludeRotated echoes the request flag so the client renders the
+	// same picture the server acted on, race-free.
+	IncludeRotated bool `json:"include_rotated"`
 }
 
 // logFilter is the parsed, validated query for one logs request.
@@ -225,7 +257,11 @@ func readLogTail(path string, maxBytes int64) (data []byte, truncated bool, err 
 // first), reading only the newest maxBytes total. The active log is read
 // first; when includeRotated is set, its rotated siblings (.1, .2, …)
 // are also read, newest to oldest, until the byte budget is exhausted.
-func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []string, truncated bool) {
+//
+// It also returns one logSource per file it successfully read (active log
+// first, then each rotated sibling visited), so a caller can report which
+// files — and how many lines from each — make up the response.
+func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []string, sources []logSource, truncated bool) {
 	// Newest-first file order: the active log, then each rotated sibling.
 	files := []string{path}
 	if includeRotated {
@@ -256,6 +292,15 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 		// We iterate newest → oldest, so each file we visit is older than
 		// everything gathered so far: prepend to stay chronological.
 		lines = append(fileLines, lines...)
+		// Record the file in visit order (active first) — that is the
+		// natural order for a "which files did we read" display.
+		sources = append(sources, logSource{
+			Path:    f,
+			Name:    filepath.Base(f),
+			Lines:   len(fileLines),
+			Bytes:   int64(len(data)),
+			Rotated: f != path,
+		})
 		// A truncating read means the byte cap is reached — the dropped
 		// leading partial line leaves budget just above zero, so stop here
 		// rather than reading tiny mid-record slivers off older siblings.
@@ -263,7 +308,22 @@ func gatherLogLines(path string, includeRotated bool, maxBytes int64) (lines []s
 			break
 		}
 	}
-	return lines, truncated
+	return lines, sources, truncated
+}
+
+// countRotatedLogFiles reports how many contiguous rotated siblings
+// (output.log.1, .2, …) exist on disk right now, whether or not they are
+// scanned this request. Bounded by maxLogRotatedFiles like the walk, and
+// stops at the first gap since rotation keeps the slots contiguous.
+func countRotatedLogFiles(path string) int {
+	n := 0
+	for i := 1; i <= maxLogRotatedFiles; i++ {
+		if _, err := os.Stat(fmt.Sprintf("%s.%d", path, i)); err != nil {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // splitNonEmptyLines splits on '\n' and drops blank lines.
@@ -285,7 +345,7 @@ func splitNonEmptyLines(data []byte) []string {
 // HTTP handler so it is unit-testable against a temp log file without a
 // home dir or a live server.
 func buildLogsResponse(path string, includeRotated bool, filter logFilter, normLevel string, page, pageSize int) logsResponse {
-	lines, truncated := gatherLogLines(path, includeRotated, maxLogReadBytes)
+	lines, sources, truncated := gatherLogLines(path, includeRotated, maxLogReadBytes)
 	totalUnfiltered := len(lines)
 
 	filtered := make([]logEntryView, 0, len(lines))
@@ -310,14 +370,17 @@ func buildLogsResponse(path string, includeRotated bool, filter logFilter, normL
 	}
 
 	return logsResponse{
-		Entries:         entries,
-		Page:            servedPage,
-		PageSize:        pageSize,
-		Total:           total,
-		TotalUnfiltered: totalUnfiltered,
-		Level:           normLevel,
-		Truncated:       truncated,
-		Path:            path,
+		Entries:          entries,
+		Page:             servedPage,
+		PageSize:         pageSize,
+		Total:            total,
+		TotalUnfiltered:  totalUnfiltered,
+		Level:            normLevel,
+		Truncated:        truncated,
+		Path:             path,
+		Sources:          sources,
+		RotatedAvailable: countRotatedLogFiles(path),
+		IncludeRotated:   includeRotated,
 	}
 }
 
