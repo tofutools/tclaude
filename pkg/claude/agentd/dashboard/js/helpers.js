@@ -947,7 +947,7 @@ function roleCell(m, g) {
   const attrs = `data-act="edit-role" data-group="${esc(g.name)}"`
     + ` data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}"`
     + ` data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}"`
-    + ` data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}"`;
+    + ` data-descr="${esc(m.descr || '')}" data-tags="${esc(tagsAttr(m.tags))}" data-owner="${m.owner ? '1' : '0'}"`;
   const inner = hasRole
     ? `${esc(m.role)}${m.owner ? ' ' + ownerBadge : ''}`
     : (m.owner ? ownerBadge : '<span class="role-add">+ role</span>');
@@ -1255,7 +1255,7 @@ function actionCog(act, items) {
 // its group role and its group description. data-current carries the
 // title so the modal opens pre-filled.
 function editMemberButton(g, m) {
-  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
+  return `<button data-act="edit-member" data-group="${esc(g.name)}" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}" data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}" data-descr="${esc(m.descr || '')}" data-tags="${esc(tagsAttr(m.tags))}" data-owner="${m.owner ? '1' : '0'}" title="Edit this agent — title, role, description, ownership, permissions">edit</button>`;
 }
 function ownerToggleButton(g, m) {
   return m.owner
@@ -1422,6 +1422,60 @@ function taskCell(m) {
     return `<span class="task-ref muted" title="${esc(url)}">🔗 ${esc(label)}</span>`;
   }
   return `<a class="task-ref task-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="Open task reference — ${esc(url)}">🔗 ${esc(label)}</a>`;
+}
+
+// tagChips renders an agent's tags as compact pill chips (the same
+// visual idiom as the status pills / owner badge). Tags arrive from the
+// snapshot already sorted (alphabetical, server-side) so the chip order
+// is stable across the 2s poll — a keyed morph re-renders this cell in
+// place without reordering. Every tag is esc()'d — a tag is agent- or
+// operator-authored free text. Returns '' for no tags (the descr cell
+// then shows only its text / empty-state hint). The tf:<template>
+// task-force marker gets a distinct class so it reads apart from a
+// free-form operator tag.
+function tagChips(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return '';
+  const chip = (t) => {
+    const isTaskForce = t.slice(0, 3) === 'tf:';
+    const cls = isTaskForce ? 'agent-tag agent-tag-tf' : 'agent-tag';
+    const tip = isTaskForce ? `task force: ${t.slice(3)}` : `tag: ${t}`;
+    return `<span class="${cls}" title="${esc(tip)}">${esc(t)}</span>`;
+  };
+  return `<span class="agent-tags">${tags.map(chip).join('')}</span>`;
+}
+
+// descrCell renders the Description column for a member row: the
+// description text plus the agent's tag chips after it. It mirrors
+// roleCell — in a REAL group (g passed) the whole cell is a
+// click-to-edit affordance (data-act="edit-descr") that opens the same
+// edit-member modal, focused on the Description / Tags fields; an empty
+// descr + no tags renders a discrete "+ descr / tags" hint rather than a
+// blank cell so the affordance stays discoverable. In the virtual
+// Ungrouped group (no g) — and for a pure-owner row, which has no
+// membership row to PATCH — the cell is non-interactive and just shows
+// the text + chips.
+function descrCell(m, g) {
+  const text = (m.descr || '').trim();
+  const chips = tagChips(m.tags);
+  const pureOwner = m.owner && m.role === 'owner';
+  const inertBody = (text ? `<span class="descr-text">${esc(text)}</span>` : '') + chips;
+  if (!g || pureOwner) {
+    return inertBody || '<span class="muted">—</span>';
+  }
+  const attrs = `data-act="edit-descr" data-group="${esc(g.name)}"`
+    + ` data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-label="${esc(m.title || m.conv_id)}"`
+    + ` data-current="${esc(m.title || '')}" data-role="${esc(m.role || '')}"`
+    + ` data-descr="${esc(m.descr || '')}" data-tags="${esc(tagsAttr(m.tags))}" data-owner="${m.owner ? '1' : '0'}"`;
+  const inner = inertBody || '<span class="descr-add">+ descr / tags</span>';
+  return `<span class="descr-edit" ${attrs} title="Edit description and tags">${inner}</span>`;
+}
+
+// tagsAttr renders an agent's tag set as the comma-joined string the
+// edit-member modal's Tags field pre-fills from (and the CLI prints). It
+// is the round-trip form of the chip input — sorted already by the
+// server. Empty for no tags.
+function tagsAttr(tags) {
+  return Array.isArray(tags) ? tags.join(', ') : '';
 }
 
 // offlineDefault returns the tab-wide "show offline" checkbox state
@@ -1680,7 +1734,7 @@ export {
   syncWizardOrbit,
   $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
-  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
+  roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,
   groupOfflineToggleHTML,
   // Focus preservation across innerHTML re-renders — refresh.js wraps its

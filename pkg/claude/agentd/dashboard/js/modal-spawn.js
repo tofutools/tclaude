@@ -752,8 +752,17 @@ function populateSpawnProfileOptions(profiles, selected) {
 // profile, else the dashboard default. Runs async (the list is fetched), so it
 // guards against the modal being closed or its group switched out from under a
 // slow fetch before it touches the form.
-async function initSpawnProfileSelector(groupName) {
-  const prefill = groupDefaultProfileName(groupName) || getDashDefaultProfile();
+//
+// `override` (dock-dnd.js's profile/role drag) forces the pre-fill:
+//   - override.profileName: preselect + apply THIS profile instead of the
+//     group/dashboard default.
+//   - override.role: after any profile is applied, set the Role field to this
+//     role — applied last so a dropped role wins over an auto-applied profile's
+//     own role.
+async function initSpawnProfileSelector(groupName, override) {
+  const forceProfile = (override && override.profileName) || '';
+  const forceRole = (override && override.role) || '';
+  const prefill = forceProfile || groupDefaultProfileName(groupName) || getDashDefaultProfile();
   let profiles = [];
   try {
     profiles = await loadProfiles();
@@ -768,6 +777,9 @@ async function initSpawnProfileSelector(groupName) {
   if (prefill && profiles.some(p => p.name === prefill)) {
     applyProfileToSpawnForm(profiles.find(p => p.name === prefill));
   }
+  // A dropped role carries no profile field, so set it directly and last, after
+  // any profile above has populated (and possibly set) the Role field.
+  if (forceRole) $('#agent-spawn-role').value = forceRole;
 }
 
 // spawnFormAsProfileSeed snapshots the dialog's current field values into a
@@ -1143,7 +1155,15 @@ function openAgentSpawnModal(opts) {
   // profile. Runs after the modal is shown so its own stale-guard (which
   // checks the modal is still open) is satisfied; the fields above stand as
   // the blank baseline a profile then overlays.
-  initSpawnProfileSelector(select.value);
+  // A dock profile/role drag (dock-dnd.js) opens this dialog with an explicit
+  // profile to preselect (opts.profileName) or a role to preset (opts.role),
+  // overriding the group/dashboard auto-prefill. Thread both through the
+  // selector init so they apply after the async profile fetch settles (a role
+  // is applied last so it wins over any auto-applied profile's own role).
+  initSpawnProfileSelector(select.value, {
+    profileName: (opts && opts.profileName) || '',
+    role: (opts && opts.role) || '',
+  });
   // Always land on Name — the first thing you type when spawning. Even when no
   // group was pre-selected (the Group picker is the first field), the picker
   // already carries a sensible default, so jumping straight to Name matches the

@@ -4,7 +4,7 @@
 // from-group modals, the group-import modal, and the group-context
 // modal. Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc, makeModalResizable, pickDirectory } from './helpers.js';
+import { $, $$, esc, makeModalResizable, bindModalSubmitHotkey, pickDirectory } from './helpers.js';
 import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -848,6 +848,141 @@ async function deleteTemplate(name) {
 // once they have, the mission→group-name auto-prefill stops overwriting it.
 let deployGroupEdited = false;
 
+// JOH-377 4/4 — drag a template from the palette dock onto an existing group.
+// deployDropGroup is that drop-target group; '' for a NORMAL open (the
+// templates-manage 🚀 button or an empty-space drop), which behaves exactly as
+// before this ticket (no mode chooser, no extra fields). A non-empty value
+// turns the unified summon dialog into a two-mode drop dialog:
+//   reinforce — spawn the roster INTO the existing group (POST …/reinforce);
+//               the group keeps its own name / settings / context.
+//   copy      — create a NEW group inheriting the target's descr / cwd / context
+//               (no agents cloned) with the roster spawned in (POST …/instantiate
+//               carrying the JOH-356 context_override so the new group gets its
+//               OWN edited copy of the shared context, not the template's).
+let deployDropGroup = '';
+// The copy-mode prefills, computed once from the drop target's snapshot when the
+// dialog is opened onto a group, so toggling reinforce↔copy doesn't refetch and
+// the human's edits to the copied context survive a mode flip.
+let deployCopyDefaults = null;
+
+// openSummonForDrop opens the unified summon dialog for a template dragged from
+// the palette dock (dock-dnd.js). dropGroup '' → a plain open with the template
+// preselected (an empty-space drop / the "new party from circle" flow, identical
+// to the 🚀 button). A real dropGroup adds the mode chooser and prefills.
+export function openSummonForDrop(templateName, dropGroup) {
+  // Shared reset + template preselect (also clears any prior drop state).
+  openDeployModal(templateName);
+  const g = (dropGroup || '').trim();
+  if (!g) return; // empty-space drop == a normal open, nothing more to do
+  deployDropGroup = g;
+  const gs = groupSnapshot(g);
+  deployCopyDefaults = {
+    groupName: suggestCopyGroupName(g),
+    descr: (gs && gs.descr) || '',
+    context: (gs && gs.default_context) || '',
+    cwd: (gs && gs.default_cwd) || '',
+  };
+  // Seed the copy-only fields now so they carry the target's settings the moment
+  // the human switches to copy mode (and their edits persist across toggles).
+  $('#template-deploy-descr').value = deployCopyDefaults.descr;
+  $('#template-deploy-context').value = deployCopyDefaults.context;
+  // Default cwd to the target's when the field is still blank (a normal open
+  // leaves it empty; don't stomp a value the picker/prefill already set).
+  if (!$('#template-deploy-cwd').value) $('#template-deploy-cwd').value = deployCopyDefaults.cwd;
+  // Every open onto a group defaults to reinforce (the common "add helpers here").
+  const reinforce = $('input[name=template-deploy-mode][value=reinforce]');
+  if (reinforce) reinforce.checked = true;
+  applyDeployMode();
+}
+
+// suggestCopyGroupName proposes a free "<target>-<N>" (N≥2) for the copy mode —
+// a new party alongside the one it's modelled on. Uniquified against the current
+// snapshot; the server re-validates and 409s on a taken name, so a stale
+// snapshot only ever costs a clear error, never a silent collision.
+function suggestCopyGroupName(target) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const used = new Set(groups.map(g => g && g.name).filter(Boolean));
+  let n = 2;
+  while (used.has(`${target}-${n}`)) n++;
+  return `${target}-${n}`;
+}
+
+// deployMode reads the selected drop mode. Only meaningful when deployDropGroup
+// is set (a drop onto a group); defaults to reinforce.
+function deployMode() {
+  const checked = $('input[name=template-deploy-mode]:checked');
+  return (checked && checked.value) || 'reinforce';
+}
+
+// deploySubmitLabel is the PLAIN-skin submit-button text for the active mode
+// (wizard mode hides it behind a fixed ::before glyph — see dashboard.css).
+function deploySubmitLabel() {
+  if (!deployDropGroup) return 'Deploy task force';
+  return deployMode() === 'reinforce' ? 'Reinforce group' : 'Create group';
+}
+
+// applyDeployMode reflows the dialog for the current state: no chooser + today's
+// fields for a normal open; the chooser + per-mode field visibility for a drop
+// onto a group. Called on open and on every mode-radio change (no re-open).
+function applyDeployMode() {
+  const active = deployDropGroup !== '';
+  const chooser = $('#template-deploy-mode');
+  if (chooser) chooser.hidden = !active;
+  const mode = active ? deployMode() : '';
+
+  const groupInput = $('#template-deploy-group');
+  const note = $('#template-deploy-group-note');
+  const descrRow = $('#template-deploy-descr-row');
+  const ctxRow = $('#template-deploy-context-row');
+  const wtRow = $('#template-deploy-worktree').closest('.cron-create-row');
+
+  if (mode === 'reinforce') {
+    // The roster goes INTO the existing group: its name is fixed, and only the
+    // per-run task + an optional cwd apply. Lock the name and hide the
+    // create-new-only fields (descr / context / worktree) so nothing the human
+    // types there is silently ignored.
+    groupInput.value = deployDropGroup;
+    groupInput.readOnly = true;
+    groupInput.classList.add('locked');
+    if (note) {
+      note.hidden = false;
+      note.textContent = wizWord(
+        `reinforcing ${deployDropGroup} — its name, settings and context are kept`,
+        `reinforcing ${deployDropGroup} — its name, ways and lore are kept`);
+    }
+    if (descrRow) descrRow.hidden = true;
+    if (ctxRow) ctxRow.hidden = true;
+    if (wtRow) wtRow.hidden = true;
+  } else if (mode === 'copy') {
+    // A NEW group in the target's image: name editable (prefilled), and the
+    // copied settings (descr / context) + worktree are all in play.
+    groupInput.readOnly = false;
+    groupInput.classList.remove('locked');
+    groupInput.value = (deployCopyDefaults && deployCopyDefaults.groupName) || '';
+    deployGroupEdited = true; // the mission→group auto-derive must not clobber it
+    if (note) {
+      note.hidden = false;
+      note.textContent = wizWord(
+        `new group inheriting ${deployDropGroup}'s description, cwd and context (no agents copied)`,
+        `new party in ${deployDropGroup}'s image — its lore, lair and ways, but none of its familiars`);
+    }
+    if (descrRow) descrRow.hidden = false;
+    if (ctxRow) ctxRow.hidden = false;
+    if (wtRow) wtRow.hidden = false;
+  } else {
+    // Normal open — byte-identical to before JOH-377.
+    groupInput.readOnly = false;
+    groupInput.classList.remove('locked');
+    if (note) note.hidden = true;
+    if (descrRow) descrRow.hidden = true;
+    if (ctxRow) ctxRow.hidden = true;
+    if (wtRow) wtRow.hidden = false;
+  }
+  const submit = $('#template-deploy-submit');
+  if (submit) submit.textContent = deploySubmitLabel();
+  renderDeployPreview();
+}
+
 function openDeployModal(presetName) {
   const templates = (lastSnapshot && lastSnapshot.templates) || [];
   if (!templates.length) {
@@ -864,9 +999,17 @@ function openDeployModal(presetName) {
   $('#template-deploy-group').value = '';
   $('#template-deploy-cwd').value = '';
   $('#template-deploy-worktree').value = '';
+  $('#template-deploy-descr').value = '';
+  $('#template-deploy-context').value = '';
   $('#template-deploy-error').textContent = '';
   deployGroupEdited = false;
-  renderDeployPreview();
+  // Clear any prior drop state — a bare open is always the normal (no-chooser)
+  // flow; openSummonForDrop re-arms it afterwards for a drop onto a group.
+  deployDropGroup = '';
+  deployCopyDefaults = null;
+  const reinforceRadio = $('input[name=template-deploy-mode][value=reinforce]');
+  if (reinforceRadio) reinforceRadio.checked = true;
+  applyDeployMode();
   $('#template-deploy-modal').classList.add('show');
   setTimeout(() => $('#template-deploy-mission').focus(), 0);
 }
@@ -895,6 +1038,9 @@ function deployIsBareURL(s) {
 // syncDeployGroupPrefill fills the group-name field with the mission slug (or
 // the template name for a bare-URL mission) until the human takes it over.
 function syncDeployGroupPrefill() {
+  // A drop onto a group owns the group field (locked in reinforce, prefilled in
+  // copy) — the mission→group auto-derive must never touch it there.
+  if (deployDropGroup) return;
   if (deployGroupEdited) return;
   const mission = $('#template-deploy-mission').value;
   const tmplName = $('#template-deploy-template').value;
@@ -932,7 +1078,158 @@ async function resolveDeployWorktree(branch, cwd) {
   return resp.path;
 }
 
+// submitDeploy is the ONE submit handler, mode-dispatched (JOH-377): reinforce
+// and copy fork to their own POSTs; a normal open (or an empty-space drop) runs
+// the unchanged create-new path. The Deploy button + Ctrl/Cmd+Enter both land
+// here, so every mode gets the disabled-guard and the same entry point.
 async function submitDeploy() {
+  if (deployDropGroup && deployMode() === 'reinforce') return submitReinforce();
+  if (deployDropGroup && deployMode() === 'copy') return submitCopyGroup();
+  return submitDeployCreate();
+}
+
+// submitReinforce (mode 1) — deploy the template's roster INTO the existing drop
+// target via POST …/reinforce. The group keeps its own name / settings /
+// context; only the per-run task and an optional cwd apply. The endpoint's
+// up-front 409s (name_collision / group_full / staged_deploy_in_flight) carry
+// human-readable messages, rendered verbatim in the error line.
+async function submitReinforce() {
+  const tmplName = $('#template-deploy-template').value;
+  const group = deployDropGroup;
+  const task = $('#template-deploy-mission').value.trim();
+  const cwd = $('#template-deploy-cwd').value.trim();
+  const errEl = $('#template-deploy-error');
+  errEl.textContent = '';
+  if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+  if (!group) { errEl.textContent = 'no target group to reinforce'; return; }
+  const btn = $('#template-deploy-submit');
+  btn.disabled = true;
+  btn.textContent = 'Reinforcing…';
+  try {
+    const payload = { group_name: group };
+    if (task) payload.task = task;
+    if (cwd) payload.cwd = cwd;
+    const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/reinforce`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const txt = await r.text();
+    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+    let resp = {};
+    try { resp = JSON.parse(txt); } catch (_) {}
+    closeDeployModal();
+    closeTemplatesManageModal();
+    const spawned = resp.spawned || 0;
+    const failed = resp.failed || 0;
+    toast(failed
+      ? `${group} reinforced: ${spawned} spawned, ${failed} failed — check the group`
+      : `${group} reinforced: ${spawned} agent${spawned === 1 ? '' : 's'} added`,
+      failed > 0);
+    // Surface the owner-drop note (reinforce never transfers ownership) and the
+    // staged-deploy / work-pattern outcomes, exactly like the create-new path.
+    if (resp.owner_note) toast(resp.owner_note);
+    surfaceDeployPatternOutcome(resp);
+    if (resp.pending_waves) {
+      toast(`staged deploy: ${resp.pending_waves} more wave(s) will spawn as each settles`);
+    }
+    recordGroupInteraction(group);
+    try { dashPrefs.setItem('tclaude.dash.group.' + group, '1'); } catch (_) {}
+    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    if (gbtn) gbtn.click();
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = deploySubmitLabel();
+  }
+}
+
+// submitCopyGroup (mode 2) — create a NEW group in the drop target's image via
+// POST …/instantiate: it inherits the target's descr / cwd / context (no agents
+// copied) with the template's roster spawned in. context_override (JOH-356)
+// carries the group's OWN edited copy of the context, so the new group gets the
+// target's context, not the template's. instantiate is the existing create-new
+// path — no endpoint added.
+async function submitCopyGroup() {
+  const tmplName = $('#template-deploy-template').value;
+  const groupName = $('#template-deploy-group').value.trim();
+  const task = $('#template-deploy-mission').value.trim();
+  const descr = $('#template-deploy-descr').value.trim();
+  // Context preserved verbatim (it's a body of prose, not a token) — the copied,
+  // possibly-edited startup context for the new group.
+  const context = $('#template-deploy-context').value;
+  const branch = $('#template-deploy-worktree').value.trim();
+  let cwd = $('#template-deploy-cwd').value.trim();
+  const errEl = $('#template-deploy-error');
+  errEl.textContent = '';
+  if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+  if (!groupName) { errEl.textContent = 'enter a name for the new group'; return; }
+  const btn = $('#template-deploy-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  try {
+    if (branch) {
+      cwd = await resolveDeployWorktree(branch, cwd);
+    }
+    // context_override AND descr_override are sent ALWAYS (even when empty):
+    // mode 2's whole point is that the new group carries the TARGET's settings
+    // verbatim, never the template's, so we override unconditionally. An
+    // explicit "" clears the field — a faithful copy of a context-less /
+    // description-less group. (Sending a bare `descr` instead of descr_override
+    // would let the backend re-default an empty description to "Instantiated
+    // from template X", giving the copy a description its source never had —
+    // JOH-385.)
+    const payload = { group_name: groupName, context_override: context, descr_override: descr };
+    if (task) payload.task = task;
+    if (cwd) payload.cwd = cwd;
+    const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const txt = await r.text();
+    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+    let resp = {};
+    try { resp = JSON.parse(txt); } catch (_) {}
+    const finalGroup = resp.group || groupName;
+    closeDeployModal();
+    closeTemplatesManageModal();
+    const spawned = resp.spawned || 0;
+    const failed = resp.failed || 0;
+    toast(failed
+      ? `${finalGroup}: ${spawned} spawned, ${failed} failed — check the group`
+      : wizWord(
+        `group ${finalGroup} created in ${deployDropGroup}'s image — ${spawned} spawned`,
+        `🧙 party ${finalGroup} chalked in ${deployDropGroup}'s image — ${spawned} familiars answer the call`),
+      failed > 0);
+    surfaceDeployPatternOutcome(resp);
+    try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
+    recordGroupInteraction(finalGroup);
+    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    if (gbtn) gbtn.click();
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = deploySubmitLabel();
+  }
+}
+
+// surfaceDeployPatternOutcome toasts the shared work-pattern result carried by
+// every instantiate/deploy/reinforce response.
+function surfaceDeployPatternOutcome(resp) {
+  const perrs = (resp && resp.pattern_errors) || [];
+  if (perrs.length) {
+    toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+  } else if (resp && resp.pattern_delivered) {
+    toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+  }
+}
+
+async function submitDeployCreate() {
   const tmplName = $('#template-deploy-template').value;
   const mission = $('#template-deploy-mission').value.trim();
   const groupName = $('#template-deploy-group').value.trim();
@@ -1500,6 +1797,9 @@ function bindTemplatesUI() {
   // Editor modal.
   $('#template-editor-cancel').addEventListener('click', closeTemplateEditor);
   $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
+  // Ctrl/Cmd+Enter saves from anywhere in the editor — the shared modal
+  // submit-hotkey convention (spawn / clone / reincarnate / export dialogs).
+  bindModalSubmitHotkey($('#template-editor-modal'), $('#template-editor-submit'));
   $('#template-editor-add-agent').addEventListener('click', () => {
     scrapeEditorAgents();
     scrapeEditorPattern();
@@ -1649,7 +1949,19 @@ function bindTemplatesUI() {
   wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
   $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
-  $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
+  $('#template-deploy-group').addEventListener('input', () => {
+    deployGroupEdited = true;
+    // In copy mode the group field IS the new group's name — track edits on the
+    // copy defaults so a reinforce↔copy toggle restores what the human typed
+    // rather than resetting to the suggested <target>-N.
+    if (deployDropGroup && deployMode() === 'copy' && deployCopyDefaults) {
+      deployCopyDefaults.groupName = $('#template-deploy-group').value;
+    }
+    renderDeployPreview();
+  });
+  // The drop-mode chooser (JOH-377) reflows the dialog live — no re-open.
+  $$('input[name=template-deploy-mode]').forEach(rdo =>
+    rdo.addEventListener('change', applyDeployMode));
   bindBackdropDiscard('template-deploy-modal', closeDeployModal);
   // Ctrl/Cmd+Enter submits from anywhere in the dialog (JOH-373, matching the
   // mirror dialog #817). Plain Enter is deliberately NOT bound: the mission is a
@@ -2174,4 +2486,12 @@ export {
   openGroupContextModal, bindGroupContextModal, groupDefaultContext,
   openGroupCloneModal, bindGroupCloneModal, openFromGroupModal,
   openTemplatesManageModal,
+  // The per-template editor (JOH-390 item 6): the dock's template-card ⚙
+  // deep-links straight into a template's editor, like the profiles/roles
+  // cards already do. #template-editor-modal is a top-level modal that opens
+  // standalone (it does not need the manage modal open behind it), so the dock
+  // can call it directly.
+  openTemplateEditor,
 };
+// openSummonForDrop is exported via its `export function` declaration above
+// (dock-dnd.js imports it for the template-drop flow).

@@ -36,6 +36,7 @@ applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
+import { bindDockDnd } from './dock-dnd.js';
 import { bindCronModal } from './modal-cron.js';
 import { bindTermModal } from './modal-term.js';
 import { initTerminalsTab } from './terminals-tab.js';
@@ -65,6 +66,7 @@ import { initMail } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
+import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -126,6 +128,11 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // The Ctrl/Cmd-K command palette. After bindTabs() so its "Go to <tab>"
   // commands click nav buttons whose handlers are already wired.
   bindCommandPalette();
+  // The retractable right-side palette dock (JOH-374). After initDashPrefs
+  // (awaited above) so its open/collapsed state seeds from the persisted
+  // pref; the shell + edge toggle are static so this binds once and survives
+  // the poll (renderDock only reconciles #dock-body).
+  bindDock();
   bindAccessSubtabs();
   bindDetailsPersistence();
   bindGroupTitleToggle();
@@ -134,6 +141,17 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindRowActions();
   bindDnd();
   bindGroupReorder();
+  // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
+  // (JOH-375). Its own dockDragActive flag suspends auto-refresh mid-drag, and
+  // its document-level listeners coexist with dnd.js / group-reorder.js via a
+  // distinct custom MIME + a self-gating active flag (see dock-dnd.js).
+  //
+  // Order matters: keep this AFTER bindDnd() (as bindGroupReorder already is).
+  // dnd.js's dragend is NOT flag-gated — it calls refresh() on EVERY drag-end,
+  // dock drags included. Registered after bindDnd, dnd.js's dragend fires while
+  // dockDragActive is still true (our dragend runs later), so refreshSuspended()
+  // parks that refresh instead of re-rendering under the just-ended gesture.
+  bindDockDnd();
   bindFilter('groups');
   bindFilter('templates');
   bindFilter('jobs');

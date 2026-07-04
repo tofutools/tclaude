@@ -7,7 +7,7 @@
 import {
   $, esc, shortId, shortAgentId, idTooltip, onlineDot, agentStatusDot, harnessLine, sandboxBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
-  roleCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
+  roleCell, descrCell, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
 import {
@@ -105,7 +105,7 @@ function memberRowHTML(m, ctx) {
     branch: `<td>${branchCell(m)}</td>`,
     role:   `<td>${roleCell(m, ctx.group)}</td>`,
     task:   `<td class="task-cell">${taskCell(m)}</td>`,
-    descr:  `<td class="descr-cell muted">${esc(m.descr || '')}</td>`,
+    descr:  `<td class="descr-cell">${descrCell(m, ctx.group)}</td>`,
   };
   // A visible column with no cell here falls back to an EMPTY <td>, not ''.
   // That keeps the body's cell count equal to the header's th count, so a

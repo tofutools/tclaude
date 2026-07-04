@@ -511,3 +511,11 @@ CREATE TABLE group_wave_choreography (
 			updated_at TEXT NOT NULL
 		);
 
+CREATE TABLE agent_tags (
+			agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			tag      TEXT NOT NULL,
+			PRIMARY KEY (agent_id, tag)
+		);
+
+CREATE INDEX idx_agent_tags_tag ON agent_tags(tag);
+

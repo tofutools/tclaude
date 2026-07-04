@@ -98,6 +98,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentContext(w, r, convID)
 	case "task":
 		handleAgentTask(w, r, convID)
+	case "tags":
+		handleAgentTags(w, r, convID)
 	default:
 		writeError(w, http.StatusNotFound, "not_found",
 			"unknown verb "+verb+" for /v1/agent/{selector}/...")

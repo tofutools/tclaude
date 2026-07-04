@@ -115,6 +115,7 @@ var migrationSteps = []migrationStep{
 	{95, migrateV94toV95},
 	{96, migrateV95toV96},
 	{97, migrateV96toV97},
+	{98, migrateV97toV98},
 }
 
 // MigrationReporter carries optional callbacks that migrate() invokes as it

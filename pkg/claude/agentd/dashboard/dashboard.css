@@ -1,5 +1,17 @@
 
 * { box-sizing: border-box; }
+/* The `hidden` attribute must ALWAYS win. The UA sheet's `[hidden] { display: none }`
+   lives in the user-agent origin, which any author `display: flex/grid/inline-block/…`
+   rule beats (author origin > UA origin, regardless of specificity or order) — so the
+   attribute silently goes inert on every element that sets its own display, and the
+   element leaks while marked hidden. This has bitten the dashboard repeatedly
+   (.tab-badge, .mail-pager, .deploy-mode, .cron-create-row, …). One global author-origin
+   rule with !important outranks every author `display` declaration (and inline
+   `style="display:…"`) universally, so `hidden` hides no matter what a class sets. The
+   contract this creates: to SHOW an element, remove the `hidden` attribute — never race
+   it with `style.display`. This obsoletes the per-class `[hidden]` overrides that used
+   to patch each incident site one at a time. (JOH-383) */
+[hidden] { display: none !important; }
 /* Always reserve the document scrollbar gutter so switching tabs never
    reflows the page sideways. Every tab except Messages scrolls the page,
    so a tall tab shows the ~15px vertical scrollbar; the Messages tab pins
@@ -101,12 +113,9 @@ nav button:hover { color: #d4d4d4; }
   font-size: 11px; line-height: 16px; text-align: center;
   background: #f85149; color: #fff; border-radius: 8px; font-weight: 600;
 }
-/* renderMessagesBadge() sets the `hidden` attribute at 0 unread. The
-   `display: inline-block` above is a class rule, so it outranks the UA
-   `[hidden] { display: none }` rule — without this the badge would
-   never hide and a bright-red `0` would always show. This restores
-   hide-at-0; the red badge then appears only when unread > 0. */
-.tab-badge[hidden] { display: none; }
+/* renderMessagesBadge() sets the `hidden` attribute at 0 unread; the global
+   `[hidden] { display: none !important }` rule at the top hides the badge then
+   (the `display: inline-block` above would otherwise leak a bright-red `0`). */
 /* The Terminals badge reuses .tab-badge, but its number is just a live count of
    open panes — informational, not an unread (Messages, red) or a needs-attention
    (Plugins, amber, see .warn below). .count tones it to a quiet neutral chip so
@@ -283,11 +292,10 @@ button.tool:hover { border-color: #58a6ff; }
   background: #161b22; border: 1px solid #2a3340; border-radius: 5px;
   padding: 5px 8px; font-size: 12px; color: #8b949e;
 }
-/* These bars (and the pager below) set display:flex, which overrides the
-   browser's built-in [hidden]{display:none} — so without this they leak an
-   empty bordered box when toggled off (an unselected wipe bar, an
-   empty-folder pager). Same workaround as .tab-badge[hidden] above. */
-.mail-bulk-bar[hidden], .mail-pager[hidden] { display: none; }
+/* These bars (and the pager below) set display:flex; the global
+   `[hidden] { display: none !important }` rule at the top hides them when
+   toggled off, so they no longer leak an empty bordered box (an unselected
+   wipe bar, an empty-folder pager). */
 .mail-bulk-bar .grow { flex: 1 1 auto; }
 .mail-bulk-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
 /* Match the dark chrome the pager / row-action buttons use. Without an
@@ -689,11 +697,27 @@ a.task-link:hover { color: #58a6ff; text-decoration: underline; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
 .rowname { font-weight: 600; }
 /* Floor the NAME column at 14ch so short titles don't let it collapse
-   into the ID column on the left. Auto layout honours min-width on a
-   td as a column-width minimum. Same trick for the Description
-   column — 40ch so short descriptions don't squish it. */
+   into the ID column on the left. Auto layout honours min-width on a td
+   as a column-width minimum. The Description column gets a modest floor
+   (16ch) so a short descr / chip row doesn't squish — its old 40ch floor
+   forced the table wider than the dock-shrunk <main>, manufacturing a
+   horizontal-scroll gutter that read as giant right padding (JOH-391).
+   16ch lets normal pages fit, so #dock-hscroll-pad self-gates to zero. */
 .name-cell { min-width: 14ch; }
-.descr-cell { min-width: 40ch; }
+.descr-cell { min-width: 16ch; }
+/* Cap the Description width on the cell's INNER box, not the <td>: Blink
+   ignores max-width on an auto-layout table cell but honours it on a
+   non-table inline-block. .descr-edit wraps the whole interactive cell
+   (text + chips); .descr-text is the bare text in the non-interactive
+   Ungrouped / pure-owner rows. Capping them stops a long description
+   dominating the row; overflow-wrap:anywhere lets an unbroken token wrap
+   within the cap instead of spilling past it. The chips keep their own
+   white-space:nowrap, so the cap wraps the chip row without splitting a
+   chip mid-token. */
+.descr-cell > .descr-edit,
+.descr-cell > .descr-text {
+  display: inline-block; max-width: 36ch; overflow-wrap: anywhere;
+}
 /* The agent name is click-to-edit: the .rowname-text span swaps for a
    .rowname-input on click (the rename-name handler). The transparent
    border keeps the row height stable as it lights up on hover. */
@@ -1104,7 +1128,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: flex; align-items: center; gap: 6px;
   margin-top: 8px; padding: 6px 4px; font-size: 12px; color: #7d8590;
 }
-.audit-pager[hidden] { display: none; }
 .audit-pager .grow { flex: 1 1 auto; }
 .audit-pager-pos { white-space: nowrap; padding: 0 4px; }
 .audit-pager-size { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -1186,6 +1209,40 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding: 0 6px; font-size: 11px;
 }
 .role-edit:hover .role-add { color: #adbac7; border-color: #58a6ff; text-decoration: none; }
+
+/* Agent tags — compact pill chips in the Description column, the same
+   visual idiom as the status pills / owner badge (JOH-380). They ride
+   AFTER the description text; .agent-tags is an inline-flex wrap so a row
+   with several tags stays on the line and wraps rather than stretching
+   the column. The tf:<template> task-force marker (.agent-tag-tf) gets a
+   distinct blue so it reads apart from a free-form operator tag. */
+.descr-cell { color: #8b949e; }
+.descr-text { color: #8b949e; }
+.agent-tags {
+  display: inline-flex; flex-wrap: wrap; gap: 3px;
+  vertical-align: middle; margin-left: 6px;
+}
+.descr-cell .agent-tags:first-child { margin-left: 0; }
+.agent-tag {
+  display: inline-block; padding: 0 6px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; line-height: 16px; white-space: nowrap;
+  background: #21262d; color: #adbac7; border: 1px solid #2a3340;
+  font-family: ui-monospace, monospace;
+}
+.agent-tag-tf { background: #10243a; color: #6cb6ff; border-color: #1f3d5c; }
+/* The Description cell is click-to-edit in a real group (like the role
+   cell) — the whole cell is the target, so it gets the pointer +
+   hover-underline affordance. An empty descr + no tags shows the discrete
+   dashed "+ descr / tags" hint instead of a blank cell. */
+.descr-edit { cursor: pointer; }
+.descr-edit:hover .descr-text { text-decoration: underline; }
+.descr-add {
+  display: inline-block; white-space: nowrap;
+  color: #6e7681; border: 1px dashed #3a3f46; border-radius: 4px;
+  padding: 0 6px; font-size: 11px;
+}
+.descr-edit:hover .descr-add { color: #adbac7; border-color: #58a6ff; text-decoration: none; }
+
 #status { font-size: 11px; color: #7d8590; }
 /* Leading ● — pseudo-element so its colour can swap with the
    live/error class without us round-tripping HTML through
@@ -2250,6 +2307,32 @@ details.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
+/* Dock drag (dock-dnd.js): dragging a palette profile/role card onto a group
+   box — or the groups-list empty space — to open the spawn dialog prefilled.
+   A DISTINCT class from .dnd-drop-over so dnd.js's own dragleave/dragend (which
+   strip only .dnd-drop-over) never fight this highlight. The dashed accent
+   outline mirrors the member-drop highlight so the "drop lands on this whole
+   box" affordance reads the same across both drag features. */
+details[data-dnd-target-group].dock-drop-over,
+#groups-list.dock-drop-over {
+  background: rgba(31, 49, 72, 0.4);
+  outline: 2px dashed #58a6ff;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+/* The empty-space (groups-list) target uses an inset offset so its dashed frame
+   sits just inside the scroll container rather than under the scrollbar. */
+#groups-list.dock-drop-over { outline-offset: -4px; }
+/* The dragged card fades while in flight, like .dnd-source-row / .group-reorder-source. */
+.dock-card.dock-drag-source { opacity: 0.5; }
+/* Wizard skin: tint the drop highlight to the grimoire palette. Scoped to this
+   feature's selectors (NOT an unscoped body.wizard rule) — see the dock's
+   anti-pin invariant. */
+body.wizard details[data-dnd-target-group].dock-drop-over,
+body.wizard #groups-list.dock-drop-over {
+  background: rgba(63, 45, 90, 0.42);
+  outline-color: #a371f7;
+}
 /* Drag-to-reorder real groups (group-reorder.js). The group HEADER (its
    <summary>) is the reorder drag handle: press the bare header and drag to
    reorder the group. Its interactive children are NOT drag handles — a
@@ -2829,6 +2912,10 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row {
   display: flex; align-items: flex-start; gap: 10px; font-size: 12px;
 }
+/* .cron-create-row sets `display: flex`; JOH-377 toggles the copy-only +
+   worktree rows via the `hidden` attribute, and the global
+   `[hidden] { display: none !important }` rule at the top makes it actually
+   hide (the flex would otherwise leave the rows showing on a normal open). */
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
@@ -3612,6 +3699,31 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .reincarnate-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
 .reincarnate-mode .opt-note { font-size: 11px; color: #7d8590; }
+/* Summon dialog drop-mode chooser (JOH-377) — same vertical radio-list-with-
+   notes shape as .reincarnate-mode. Shown only when a template is dragged onto
+   an existing group. */
+.deploy-mode {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; margin: 6px 0;
+}
+/* .deploy-mode sets `display: flex`; the chooser is shown only when a template
+   is dragged onto a group, hidden (via the `hidden` attribute) on a plain 🚀
+   deploy. The global `[hidden] { display: none !important }` rule at the top
+   enforces that normal-open invariant (the flex would otherwise leak it). */
+.deploy-mode label {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.deploy-mode input[type=radio] { cursor: pointer; flex: 0 0 auto; }
+.deploy-mode .opt-note { font-size: 11px; color: #7d8590; }
+/* The per-mode note under the group field (locked / copied) + the locked group
+   input in reinforce mode (read-only, visibly muted so nothing is silently
+   ignored). */
+.deploy-group-note { font-size: 11px; color: #7d8590; margin: -2px 0 4px; }
+#template-deploy-group.locked {
+  background: #161b22; color: #8b949e; cursor: not-allowed; opacity: 0.85;
+}
 .window-roles, .window-groups {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 11px; color: #7d8590; min-height: 18px;
@@ -3639,15 +3751,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 #command-palette-btn:hover,
 #window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* (The top-bar #dock-toggle-top and its aria-expanded "on" accent were removed
+   in JOH-390 item 7 — see the dashboard.html note. The dock's own edge tab +
+   in-dock collapse are the remaining show/hide controls.) */
 /* === Config tab — visual editor for ~/.tclaude/config.json ========== */
 #tab-config { max-width: 780px; }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
 .cfg-intro code { background: #161b22; padding: 1px 5px; border-radius: 4px; color: #c9d1d9; }
 /* Config-tab live section filter. The bar itself reuses .filter-bar; these
-   add the muted reassurance note and the no-match line. Filtered-out
-   sections use the [hidden] attribute (browser default display:none) —
-   .cfg-section / details.cfg-advanced set no display of their own, so no
-   override rule is needed. */
+   add the muted reassurance note and the no-match line. Filtered-out sections
+   use the [hidden] attribute — .cfg-section / details.cfg-advanced set no
+   display of their own, so the browser default already hid them; the global
+   `[hidden] { display: none !important }` rule at the top now backs that too. */
 .cfg-filter-note { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .cfg-filter-empty {
   font-size: 12px; color: #7d8590; font-style: italic;
@@ -5003,6 +5118,16 @@ body.wizard .state-working   { border-color: #a97bd6; }
 body.wizard .state-idle      { border-color: #6ee7b7; }
 body.wizard .state-awaiting  { border-color: #d9b45a; }
 body.wizard .online          { color: #6ee7b7; text-shadow: 0 0 6px rgba(110, 231, 183, 0.5); }
+
+/* Agent tags in the wizard skin — the chips become enchanted sigils: a
+   violet fill with a gold edge, the task-force marker a brighter arcane
+   blue. Scoped to .agent-tag so it never widens beyond the chip (the
+   styling-sweep anti-pin test forbids an unscoped body.wizard rule). */
+body.wizard .agent-tag {
+  background: #241a40; color: #e7d9f5; border-color: #d9b45a;
+}
+body.wizard .agent-tag-tf { background: #14233f; color: #8cc7ff; border-color: #4a6ea8; }
+body.wizard .descr-edit:hover .descr-add { color: #e7d9f5; border-color: #d9b45a; }
 
 /* ─── Mana meter — the wizard twin of the context-window gauge ─────────
    The context window IS the agent's mana reserve; the vertical gauge shows
@@ -7332,6 +7457,17 @@ body.wizard #template-deploy-modal #template-deploy-submit:active {
 }
 body.wizard #template-deploy-modal #template-deploy-submit:disabled { opacity: 0.7; }
 body.wizard #template-deploy-modal #template-deploy-submit:disabled::before { content: "🧙 Summoning…"; }
+/* Drop-mode chooser + notes re-skinned to the parchment palette (JOH-377),
+   scoped under #template-deploy-modal so this feature never widens body.wizard. */
+body.wizard #template-deploy-modal .deploy-mode {
+  background: #241b3d; border-color: #d9b45a;
+}
+body.wizard #template-deploy-modal .deploy-mode label { color: #f3e6c0; }
+body.wizard #template-deploy-modal .deploy-mode .opt-note { color: #b39ddb; }
+body.wizard #template-deploy-modal .deploy-group-note { color: #b39ddb; }
+body.wizard #template-deploy-modal #template-deploy-group.locked {
+  background: #1a1430; color: #b39ddb;
+}
 
 /* ─── Wizard trace dialog — "🕯 Trace the party's circle" ────────────
    Save-a-group-as-a-template: copy a live party's shape into a fresh
@@ -9008,3 +9144,289 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
   }
   body.wizard-shake { animation: none; }
 }
+
+/* ============================================================
+   Retractable right-side PALETTE DOCK (JOH-374, js/dock.js).
+   Lists spawn profiles / group templates / roles as future drag
+   SOURCES (drag lands in the follow-up tickets). Namespaced `dock-*`
+   / #agent-dock — NOT .palette-* (that's the Ctrl/Cmd-K command
+   palette). The wizard skin below is deliberately scoped under
+   #agent-dock so it never widens body.wizard globally.
+   ============================================================ */
+:root { --dock-w: 264px; --dock-tab-w: 22px; --dock-top: 0px; }
+
+/* The dock is fixed to the right edge, spanning ONLY the content area — below
+   the top bar (header + marquee + nav) and above the fixed footer (JOH-388
+   req 1) — rather than the old top:0 rail that covered the header's right-side
+   controls. --dock-top is kept in sync by js/dock.js (syncDockTop): it tracks
+   nav's live viewport-bottom (clamped ≥ 0), so at rest the dock starts just
+   under the nav and, as the page scrolls the chrome away, it rises to fill the
+   full height. The bottom is pinned to the fixed footer bar. overflow is
+   visible so the edge toggle (negative-left, see below) isn't clipped; the
+   inner panel owns the scroll + chrome. z-index sits above the footer (40) but
+   below dropdowns (50+) and modals (100+) so a manager overlay covers it. */
+#agent-dock {
+  position: fixed;
+  top: var(--dock-top); right: 0; bottom: var(--footer-h);
+  width: var(--dock-w);
+  z-index: 45;
+}
+body:not(.dock-open) #agent-dock { transform: translateX(100%); }
+/* Only animate the slide AFTER boot has applied the initial (persisted) state
+   — otherwise a default-open dock would flash-slide in on every page load,
+   since the CSS default (no .dock-open) is the translated-off state. dock.js
+   adds .dock-anim on the frame after the first applyDockOpen. */
+body.dock-anim #agent-dock { transition: transform .2s ease; }
+
+/* When open, reserve the dock's width so in-flow content lays out clear of the
+   dock (the "reclaim the space, don't overlay dead area" rule): content that
+   fits within viewport-minus-dock never sits under the rail. Collapsed → the
+   padding drops and the space is reclaimed.
+   This alone does NOT solve horizontally-scrolling content (JOH-388 req 3): the
+   dock is a viewport-fixed rail and the page scrolls at the documentElement, so
+   a wide table overflows past body's padding-right and its tail slides UNDER the
+   dock with no scroll position that clears it. And padding-right can't become
+   that clearance — Chrome only adds a scroll container's padding-inline-end
+   after its DIRECT in-flow children's bounds (here <main>, one viewport wide),
+   not after a deep descendant's overflow, so a wide table nested inside main
+   gets no gutter from it. The reliable fix is #dock-hscroll-pad below: a
+   positioned scroll-content spacer that js/hscroll.js parks --dock-w past the
+   measured content edge, so max-scroll lands the content's right edge at the
+   dock's left edge. Keeping the viewport as the scroll container means the
+   h-scrollbar stays viewport-pinned and no <main> sticky is disturbed. */
+body.dock-open { padding-right: var(--dock-w); }
+/* The horizontal-scroll clearance spacer (JOH-388 req 3). Absolute, a direct
+   child of <body>, invisible + inert. hscroll.js parks it (left + .on) --dock-w
+   past the widest content's right edge (measured off <main>) whenever the dock
+   is open. The geometry self-gates: content that fits within viewport-minus-dock
+   leaves the spacer inside the viewport (no overflow, no scroll), while content
+   that intrudes into the dock strip pushes the document --dock-w wider — the
+   gutter that lets wide content scroll fully clear of the fixed dock instead of
+   hiding underneath it. Width 0 at rest keeps it inert when the dock is closed. */
+#dock-hscroll-pad { position: absolute; top: 0; height: 1px; width: 0; pointer-events: none; }
+#dock-hscroll-pad.on { width: var(--dock-w); }
+/* The footer spans the FULL viewport width even with the dock open (JOH-390
+   item 1) — note there is deliberately NO dock-open right-inset rule on it. The
+   dock's bottom edge is pinned at `bottom: var(--footer-h)` — the SAME variable
+   as the footer's height — so the dock provably never occupies the footer's
+   bottom band; the two are flush, never overlapping. The pre-r2 rework inset the
+   footer by --dock-w for a collision that can't happen, which cramped the
+   base-URL/heartbeat line — on a narrow window (or a long remote URL) it wrapped
+   to a second line the fixed 29px height then clipped, reading as "the right
+   panel covers the bottom panel". Full-width restores the footer its room; it
+   sits cleanly BELOW the dock. (The slop lever, in contrast, is a tall
+   right-edge overlay that DOES ride up alongside the dock, so it still dodges
+   it.) */
+body.dock-open #slop-lever { right: var(--dock-w); }
+/* The full-bleed top bars sit ABOVE the dock now (the dock starts below the
+   nav, req 1), so they must span the FULL viewport width — otherwise body's
+   dock-reservation padding would inset them and leave a bare --dock-w notch in
+   the top-right, where the old top:0 rail used to cover. A negative right
+   margin pulls each bar back out to the viewport edge (it reaches body's
+   border-box edge, so it adds no extra scroll width); only <main> keeps the
+   reservation so its content stays clear of the dock. */
+body.dock-open > header,
+body.dock-open > #slop-marquee,
+body.dock-open > nav { margin-right: calc(-1 * var(--dock-w)); }
+/* Main's drag-to-retire bin (#835/#838) is a viewport-fixed overlay at
+   right:22px; nudge it left of the open dock so a retire-drag target never
+   lands on top of (or behind) the palette. It only shows mid-drag, so this just
+   relocates a transient overlay — no layout impact. */
+body.dock-open #dnd-trash { right: calc(var(--dock-w) + 22px); }
+
+/* Edge toggle — a chevron tab riding the dock's left edge (negative left), so
+   it stays reachable in BOTH states: open it sits just left of the panel;
+   collapsed it rides the translate to the viewport's right edge. */
+.dock-toggle {
+  position: absolute;
+  left: calc(-1 * var(--dock-tab-w));
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--dock-tab-w);
+  height: 54px;
+  padding: 0;
+  border: 1px solid #2a3340;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  background: #161b22;
+  color: #c9d1d9;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dock-toggle:hover { background: #21262d; border-color: #58a6ff; color: #58a6ff; }
+.dock-toggle-chevron { font-size: 16px; line-height: 1; transition: transform .2s ease; }
+/* Open → chevron points right (the "collapse toward the edge" direction);
+   collapsed → flip it to point left (the "expand back in" direction). */
+body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
+
+.dock-inner {
+  height: 100%;
+  box-sizing: border-box;
+  background: #12171d;
+  border-left: 1px solid #2a3340;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* Dock header (JOH-388 req 6 dropped the "Palette" title). It stacks two rows
+   (JOH-390 item 4): row 1 holds the re-homed "+ new group" + ⚙ cog on the left
+   and the in-dock collapse control on the right; row 2 holds the re-homed 🧠
+   default-profile chip. When the dock is collapsed those controls live back in
+   the toolbar, so the containers are empty — :empty collapses row 2 and the
+   header is just the collapse control (its original slim look). */
+.dock-head {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid #2a3340;
+}
+.dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The re-homed primary cluster ("+ new group" + ⚙ cog) fills the row (flex:1),
+   with the "+ new group" primary GROWING to absorb the slack so the cog lands at
+   a fixed offset from the right — just left of the collapse control — in BOTH
+   skins (the wider wizard "⚔ Form a party" label doesn't shove the cog around).
+   That fixed cog position keeps its right-aligned .action-menu inside the dock:
+   the menu anchors to .filter-bar-cog (position:relative rides along) and opens
+   DOWNWARD into the dock's tall body, staying within #agent-dock's box so
+   .dock-inner's overflow never clips it. min-width:0 lets the label ellipsize
+   rather than force an overflow. */
+.dock-actions { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dock-actions #group-create-open { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dock-actions .filter-bar-cog { flex: 0 0 auto; }
+/* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
+   the toolbar it normally sits in), so once re-homed into the dock the button
+   would fall back to the bare browser-white default. Mirror the toolbar recipe
+   here for the dock context. (Wizard mode is already covered: its skin is on the
+   id-scoped `body.wizard #group-create-open.primary`, which rides along wherever
+   the button lives.) */
+.dock-actions button.primary {
+  background: #1f6feb; border: 1px solid #1f6feb; color: white;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.dock-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
+/* Row 2: the 🧠 default-profile chip on its own line. :empty (dock collapsed →
+   chip is back in the toolbar) removes the row so the header doesn't keep a bare
+   gap. */
+.dock-actions-profile { display: flex; min-width: 0; }
+.dock-actions-profile:empty { display: none; }
+.dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
+   it reads as a deliberate control, not chrome. */
+.dock-collapse {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  color: #7d8590; cursor: pointer;
+  font-size: 11px; font-weight: 500; line-height: 1; padding: 3px 8px;
+}
+.dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+.dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
+
+.dock-section { margin-bottom: 12px; }
+.dock-section:last-child { margin-bottom: 0; }
+/* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
+   Its <summary> is the heading; it sticks while its cards scroll under it (a
+   long profile list still tells you which kind you're looking at) and doubles
+   as the fold toggle. Strip the native disclosure marker — a rotating chevron
+   in the title carries the open/closed state instead. */
+.dock-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 4px 6px;
+  position: sticky; top: 0;
+  background: #12171d;
+  z-index: 1;
+  cursor: pointer;
+  list-style: none;
+}
+.dock-section-head::-webkit-details-marker { display: none; }
+.dock-section-head:hover .dock-section-title { color: #c9d1d9; }
+.dock-section-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: #adbac7; min-width: 0; }
+/* The disclosure chevron points down when the section is open, right when
+   collapsed — the [open] attribute on the parent <details> drives the flip. */
+.dock-section-chevron { flex: 0 0 auto; font-size: 9px; color: #6e7681; transition: transform .15s ease; }
+.dock-section[open] > .dock-section-head .dock-section-chevron { transform: rotate(90deg); }
+.dock-section-icon { font-size: 12px; }
+.dock-section-count { color: #6e7681; font-weight: 400; font-size: 11px; margin-left: 2px; }
+.dock-section-manage {
+  background: none; border: 1px solid transparent; color: #7d8590;
+  cursor: pointer; border-radius: 4px; font-size: 13px; line-height: 1; padding: 2px 6px;
+}
+.dock-section-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+
+.dock-empty { color: #6e7681; font-size: 11px; font-style: italic; padding: 2px 6px 4px; }
+
+/* A card is a future drag source: the grab cursor + grip glyph advertise it,
+   data-dock-kind/name on the element carry the payload the DnD tickets wire.
+   No draggable attr yet — this ticket is the shell. */
+.dock-card {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; margin-bottom: 4px;
+  background: #161b22;
+  border: 1px solid #2a3340;
+  border-radius: 6px;
+  cursor: grab;
+}
+.dock-card:hover { border-color: #3d444d; background: #1a2029; }
+.dock-card:active { cursor: grabbing; }
+.dock-grip { flex: 0 0 auto; color: #545d68; font-size: 12px; cursor: grab; user-select: none; }
+.dock-card-icon { flex: 0 0 auto; font-size: 13px; }
+.dock-card-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dock-card-name {
+  font-size: 12px; color: #d4d4d4; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dock-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.dock-chip {
+  font-size: 10px; color: #8b949e;
+  background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
+  padding: 0 4px; white-space: nowrap;
+}
+.dock-chip-more { color: #6e7681; }
+/* Templates render their roster-shape chips via templateReadbackBadges, whose
+   spans carry .tc-count — the base .tc-count rule is scoped to the template
+   cards, so re-skin it for the dock here. */
+#agent-dock .tc-count { color: #6e7681; font-size: 10px; }
+.dock-card-manage {
+  flex: 0 0 auto;
+  background: none; border: 1px solid transparent; color: #7d8590;
+  cursor: pointer; border-radius: 4px; font-size: 12px; line-height: 1; padding: 3px 5px;
+  opacity: 0; transition: opacity .1s ease;
+}
+.dock-card:hover .dock-card-manage, .dock-card-manage:focus-visible { opacity: 1; }
+.dock-card-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
+
+/* Wizard skin (JOH-388 req 4) — the palette becomes a shelf in The Wizard's
+   Tower: a deep arcane-purple re-skin (backgrounds, borders AND accents, not
+   just a couple of tints), reading unmistakably as part of body.wizard's
+   grimoire chrome. Kept STRICTLY scoped under #agent-dock so it never widens
+   body.wizard globally (the anti-pin invariant); the section headings + card
+   names already speak the arcane vocabulary via wizWord (Patterns / Summoning
+   circles / Classes). The one exception below is the top-bar toggle, a header
+   control themed like its sibling buttons, not part of the dock's inner skin. */
+body.wizard #agent-dock .dock-inner {
+  background: linear-gradient(180deg, #191225 0%, #140e1e 100%);
+  border-left-color: #4a3d6b;
+  box-shadow: inset 1px 0 0 rgba(139, 109, 214, 0.18);
+}
+body.wizard #agent-dock .dock-head { border-bottom-color: #3a2f57; }
+body.wizard #agent-dock .dock-collapse { color: #b39ddb; }
+body.wizard #agent-dock .dock-collapse:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+body.wizard #agent-dock .dock-section-head { background: #171021; }
+body.wizard #agent-dock .dock-section-head:hover .dock-section-title { color: #e6dcff; }
+body.wizard #agent-dock .dock-section-title { color: #c9b8f0; text-shadow: 0 0 6px rgba(139, 109, 214, 0.4); }
+body.wizard #agent-dock .dock-section-chevron { color: #8b6dd6; }
+body.wizard #agent-dock .dock-section-count { color: #9a86c9; }
+body.wizard #agent-dock .dock-empty { color: #7a6ba0; }
+body.wizard #agent-dock .dock-card { background: #1d1730; border-color: #3a2f57; }
+body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #241a3a; }
+body.wizard #agent-dock .dock-card-name { color: #e6dcff; }
+body.wizard #agent-dock .dock-grip { color: #6b5a94; }
+body.wizard #agent-dock .dock-chip { background: #241a3a; border-color: #3a2f57; color: #b39ddb; }
+body.wizard #agent-dock .tc-count { color: #b39ddb; }
+body.wizard #agent-dock .dock-toggle { background: #17131f; border-color: #4a3d6b; }
+body.wizard #agent-dock .dock-toggle:hover { border-color: #7c5cc4; color: #d7c9ff; }
+body.wizard #agent-dock .dock-section-manage,
+body.wizard #agent-dock .dock-card-manage { color: #9a86c9; }
+body.wizard #agent-dock .dock-section-manage:hover,
+body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+/* (The top-bar #dock-toggle-top wizard "on" accent was removed with the button
+   itself — JOH-390 item 7. The one sanctioned body.wizard exception outside
+   #agent-dock is gone; the dock's arcane skin stays scoped under #agent-dock.) */

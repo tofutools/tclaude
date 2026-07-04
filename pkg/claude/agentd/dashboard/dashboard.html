@@ -106,6 +106,11 @@
     </span>
   </span>
   <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
+  <!-- The top-bar Palette/Grimoire dock toggle (JOH-388 req 2) was REMOVED per
+       operator request (JOH-390 item 7): a duplicate reopen control next to the
+       panel's own on-dock collapse + edge tab. The remaining show/hide
+       affordances are the in-dock "Hide ›/Furl ›" collapse and the edge chevron
+       tab (dock.js drives both off the same body.dock-open state). -->
   <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
        .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
        see the wizard windows button/modal rules in dashboard.css), matching
@@ -1046,6 +1051,53 @@
     <div id="vegas-leaderboard" class="vegas-leaderboard"></div>
   </section>
 </main>
+<!-- Retractable right-side PALETTE DOCK (JOH-374). Lists the spawn PROFILES,
+     group TEMPLATES (summoning circles) and ROLES (classes) as future
+     drag SOURCES — this ticket is the panel shell; drag itself lands in the
+     follow-up tickets. The shell + edge toggle are STATIC so they survive
+     the 2s morph; js/dock.js only reconciles #dock-body's inner sections
+     (keyed morphInto). Open/collapse is body.dock-open, persisted via
+     dashPrefs (tclaude.dash.dock.open) so CSS reflows <main> to reclaim the
+     space when collapsed rather than overlaying dead area. NB: named `dock`,
+     not `palette`, because js/palette.js is the Ctrl/Cmd-K command palette. -->
+<aside id="agent-dock" class="dock" aria-label="Palette of profiles, templates and roles">
+  <!-- Edge toggle — a chevron tab on the dock's left edge, pinned to the
+       viewport so it stays reachable in both states. Its glyph is CSS-rotated
+       per open state; dock.js keeps its title/aria in sync. -->
+  <button id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
+    <span class="dock-toggle-chevron" aria-hidden="true">›</span>
+  </button>
+  <div class="dock-inner">
+    <!-- Dock header (JOH-388 req 6 dropped the decorative "Palette" title). It
+         now hosts, while the dock is OPEN, the groups-toolbar globals re-homed
+         off the floating filter bar (JOH-390 item 4): row 1 is the "+ new group"
+         primary + the ⚙ more-actions cog (moved into #dock-actions-primary),
+         with the in-dock collapse affordance ("Hide ›"/"Furl ›") right-aligned;
+         row 2 is the 🧠 dashboard-default-profile chip on its own line. dock.js's
+         syncDockActions() moves those nodes here on open and back to the toolbar
+         on collapse (the toolbar renders them exactly as before when the dock is
+         closed). The containers are STATIC (outside #dock-body) so the 2s morph
+         never clobbers them. -->
+    <div class="dock-head">
+      <div class="dock-head-main">
+        <span id="dock-actions-primary" class="dock-actions"></span>
+        <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+      </div>
+      <div id="dock-actions-profile" class="dock-actions-profile"></div>
+    </div>
+    <!-- dock.js renders the three keyed <details> sections here off the live
+         snapshot; their open/collapsed state (req 5) persists via dashPrefs and
+         survives the 2s morph (open is live-owned in js/morph.js). -->
+    <div id="dock-body" class="dock-body"></div>
+  </div>
+</aside>
+<!-- Horizontal-scroll clearance spacer (JOH-388 req 3). An invisible, inert
+     direct child of <body> that js/hscroll.js parks --dock-w past the widest
+     content when the dock is open, so wide tables can be scrolled fully clear of
+     the fixed dock instead of hiding underneath it. Sized 0 at rest; hscroll
+     places it (left + .on) only when content actually overflows the viewport.
+     See dashboard.css #dock-hscroll-pad. -->
+<div id="dock-hscroll-pad" aria-hidden="true"></div>
 <!-- Footer bar — the dashboard's base URL + last-refresh heartbeat (#meta),
      moved out of the header so they stop crowding the title row's prime
      horizontal space. It's position:fixed to the viewport bottom so the
@@ -1206,6 +1258,8 @@
     <div class="field">
       <label for="edit-member-descr">Description</label>
       <textarea id="edit-member-descr" rows="3" spellcheck="false"></textarea>
+      <label for="edit-member-tags">Tags</label>
+      <input id="edit-member-tags" type="text" autocomplete="off" spellcheck="false" placeholder="comma-separated, e.g. tf:squad, priority" title="Short labels rendered as chips in the Description column. Comma-separated; agent-level, so they follow this agent across groups." />
     </div>
     <div class="cron-create-error" id="edit-member-error"></div>
     <div class="modal-buttons">
@@ -1925,6 +1979,18 @@
 <div class="modal-overlay" id="template-deploy-modal">
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-deploy-title">
     <h3 id="template-deploy-title"><span class="tpl-word-regular">Deploy a task force</span><span class="tpl-word-wizard">🧙 Summon a hero party</span></h3>
+    <!-- Drop-mode chooser (JOH-377) — only shown when the dialog is opened by
+         dragging a template from the palette dock ONTO an existing group.
+         A normal open (the 🚀 button / an empty-space drop) leaves this hidden
+         and the dialog behaves exactly as before. -->
+    <div class="deploy-mode" id="template-deploy-mode" role="radiogroup" aria-label="Drop mode" hidden>
+      <label><input type="radio" name="template-deploy-mode" value="reinforce" checked />
+        <span><span class="tpl-word-regular">Reinforce this group</span><span class="tpl-word-wizard">Summon into this party</span></span>
+        <span class="opt-note"><span class="tpl-word-regular">— add this template's agents into the existing group; it keeps its own name, settings and context.</span><span class="tpl-word-wizard">— call this circle's familiars into the party as it stands; it keeps its name, ways and lore.</span></span></label>
+      <label><input type="radio" name="template-deploy-mode" value="copy" />
+        <span><span class="tpl-word-regular">New group copying this group's settings</span><span class="tpl-word-wizard">New party in this party's image</span></span>
+        <span class="opt-note"><span class="tpl-word-regular">— create a NEW group that inherits this group's description, cwd and context (no agents copied), with the template's roster spawned into it.</span><span class="tpl-word-wizard">— chalk a NEW party in this one's likeness (its lore, lair and ways, but none of its familiars), then summon this circle's roster into it.</span></span></label>
+    </div>
     <label class="cron-create-row">
       <span class="cron-create-label"><span class="tpl-word-regular">Template</span><span class="tpl-word-wizard">Circle</span></span>
       <select id="template-deploy-template"></select>
@@ -1937,6 +2003,13 @@
       <span class="cron-create-label"><span class="tpl-word-regular">Group name</span><span class="tpl-word-wizard">Party name</span></span>
       <input id="template-deploy-group" type="text" placeholder="derived from the mission if blank — required when the mission is empty; also the prefix for every spawned agent" autocomplete="off" spellcheck="false" />
     </label>
+    <!-- Drop-mode note (JOH-377): explains the locked/copied group in each mode; hidden on a normal open. -->
+    <div class="deploy-group-note" id="template-deploy-group-note" hidden></div>
+    <!-- Copy-mode-only (JOH-377): the new group inherits the target's description. -->
+    <label class="cron-create-row" id="template-deploy-descr-row" hidden>
+      <span class="cron-create-label"><span class="tpl-word-regular">Description</span><span class="tpl-word-wizard">Lore</span></span>
+      <input id="template-deploy-descr" type="text" placeholder="the new group's description (copied from the source group — edit freely)" autocomplete="off" spellcheck="false" />
+    </label>
     <label class="cron-create-row">
       <span class="cron-create-label">Default cwd</span>
       <input id="template-deploy-cwd" type="text" placeholder="optional — absolute path (~ OK) the force spawns in" autocomplete="off" spellcheck="false" />
@@ -1945,6 +2018,12 @@
     <label class="cron-create-row">
       <span class="cron-create-label">Worktree branch</span>
       <input id="template-deploy-worktree" type="text" placeholder="optional — land the whole force in a git worktree on this branch (needs a cwd inside a repo)" autocomplete="off" spellcheck="false" />
+    </label>
+    <!-- Copy-mode-only (JOH-377): the new group's startup context, prefilled from
+         the source group's (the JOH-356 context_override — the editable copy). -->
+    <label class="cron-create-row" id="template-deploy-context-row" hidden>
+      <span class="cron-create-label"><span class="tpl-word-regular">Startup context</span><span class="tpl-word-wizard">Party lore</span></span>
+      <textarea id="template-deploy-context" class="modal-context-textarea" rows="5" placeholder="the new group's shared startup context (copied from the source group — edit freely, or clear for none)" spellcheck="false"></textarea>
     </label>
     <div class="cron-create-row">
       <span class="cron-create-label">Preview</span>

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// migrateV95toV96 adds spawn_profiles.ask_user_question_timeout — a saved
+// migrateV96toV97 adds spawn_profiles.ask_user_question_timeout — a saved
 // profile's Claude Code AskUserQuestion idle-timeout default (never|60s|5m|10m,
 // "" = unset), which the spawn dialog pre-fills and the daemon delivers
 // per-spawn as a `--settings` override. TEXT NOT NULL DEFAULT '' so existing
@@ -17,35 +17,35 @@ import (
 // by a pragma_table_info probe so a half-applied run converges on re-run instead
 // of wedging on "duplicate column". Rides one transaction with the version bump;
 // no VACUUM snapshot — nothing is dropped or rewritten.
-func migrateV95toV96(db *sql.DB) error {
+func migrateV96toV97(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v95→v96: begin: %w", err)
+		return fmt.Errorf("migrate v96→v97: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	haveTable, err := txTableExists(tx, "spawn_profiles")
 	if err != nil {
-		return fmt.Errorf("migrate v95→v96 (probe spawn_profiles): %w", err)
+		return fmt.Errorf("migrate v96→v97 (probe spawn_profiles): %w", err)
 	}
 	if haveTable {
 		var have int
 		if err := tx.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('spawn_profiles') WHERE name = 'ask_user_question_timeout'`,
 		).Scan(&have); err != nil {
-			return fmt.Errorf("migrate v95→v96 (probe column): %w", err)
+			return fmt.Errorf("migrate v96→v97 (probe column): %w", err)
 		}
 		if have == 0 {
 			if _, err := tx.Exec(
 				`ALTER TABLE spawn_profiles ADD COLUMN ask_user_question_timeout TEXT NOT NULL DEFAULT ''`,
 			); err != nil {
-				return fmt.Errorf("migrate v95→v96 (add column): %w", err)
+				return fmt.Errorf("migrate v96→v97 (add column): %w", err)
 			}
 		}
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 96`); err != nil {
-		return fmt.Errorf("migrate v95→v96 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 97`); err != nil {
+		return fmt.Errorf("migrate v96→v97 (version): %w", err)
 	}
 	return tx.Commit()
 }

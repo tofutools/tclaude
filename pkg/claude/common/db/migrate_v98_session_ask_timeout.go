@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// migrateV96toV97 adds sessions.ask_user_question_timeout — the resolved Claude
+// migrateV97toV98 adds sessions.ask_user_question_timeout — the resolved Claude
 // Code AskUserQuestion idle-timeout (inherit|never|60s|5m|10m, "" = pre-column
 // row) a session was spawned under. Recorded once at spawn so a relaunch
 // (resume / clone / reincarnate) can PRESERVE it — a reincarnated agentic
@@ -21,35 +21,35 @@ import (
 // is guarded by a pragma_table_info probe so a half-applied run converges on
 // re-run instead of wedging on "duplicate column". Rides one transaction with
 // the version bump; no VACUUM snapshot — nothing is dropped or rewritten.
-func migrateV96toV97(db *sql.DB) error {
+func migrateV97toV98(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v96→v97: begin: %w", err)
+		return fmt.Errorf("migrate v97→v98: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	haveTable, err := txTableExists(tx, "sessions")
 	if err != nil {
-		return fmt.Errorf("migrate v96→v97 (probe sessions): %w", err)
+		return fmt.Errorf("migrate v97→v98 (probe sessions): %w", err)
 	}
 	if haveTable {
 		var have int
 		if err := tx.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'ask_user_question_timeout'`,
 		).Scan(&have); err != nil {
-			return fmt.Errorf("migrate v96→v97 (probe column): %w", err)
+			return fmt.Errorf("migrate v97→v98 (probe column): %w", err)
 		}
 		if have == 0 {
 			if _, err := tx.Exec(
 				`ALTER TABLE sessions ADD COLUMN ask_user_question_timeout TEXT NOT NULL DEFAULT ''`,
 			); err != nil {
-				return fmt.Errorf("migrate v96→v97 (add column): %w", err)
+				return fmt.Errorf("migrate v97→v98 (add column): %w", err)
 			}
 		}
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 97`); err != nil {
-		return fmt.Errorf("migrate v96→v97 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 98`); err != nil {
+		return fmt.Errorf("migrate v97→v98 (version): %w", err)
 	}
 	return tx.Commit()
 }

@@ -575,6 +575,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
 	mux.HandleFunc("/v1/whoami/dir", handleWhoamiDir)
 	mux.HandleFunc("/v1/whoami/task", handleWhoamiTask)
+	mux.HandleFunc("/v1/whoami/tags", handleWhoamiTags)
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)
@@ -608,6 +609,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/templates/import", handleTemplateImport)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
 	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
+	mux.HandleFunc("POST /v1/templates/{name}/reinforce", handleTemplateReinforce)
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
 	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix

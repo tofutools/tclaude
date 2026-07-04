@@ -802,24 +802,29 @@ function bindRowActions() {
           return;
         }
         case 'edit-role':
+        case 'edit-descr':
         case 'edit-member': {
           // The single per-agent edit panel: title (incl. the "auto"
-          // self-rename), group role, group description, the group-owner
-          // toggle, and a Permissions… button. The same panel backs two
-          // entry points: the ⚙ "edit" button (focuses Title) and the
-          // click-to-edit role cell (data-act="edit-role", focuses Role).
-          // The modal yields up to THREE independent edits — a rename
-          // (conv title, injected via tmux), a membership PATCH (role /
-          // descr), and an owner grant/revoke. They hit different
-          // endpoints, so apply each on its own: one failing must not
-          // silently swallow the others.
+          // self-rename), group role, group description, agent tags, the
+          // group-owner toggle, and a Permissions… button. The same panel
+          // backs three entry points: the ⚙ "edit" button (focuses Title),
+          // the click-to-edit role cell (data-act="edit-role", focuses
+          // Role), and the click-to-edit description cell
+          // (data-act="edit-descr", focuses Description). The modal yields
+          // up to FOUR independent edits — a rename (conv title, injected
+          // via tmux), a membership PATCH (role / descr), an agent-tags
+          // replace (agent-level, its own endpoint), and an owner
+          // grant/revoke. They hit different endpoints, so apply each on
+          // its own: one failing must not silently swallow the others.
           const result = await editMemberModal({
             label: `${label} → ${group}`,
             title: btn.getAttribute('data-current') || '',
             role: btn.getAttribute('data-role') || '',
             descr: btn.getAttribute('data-descr') || '',
+            tags: btn.getAttribute('data-tags') || '',
             owner: btn.getAttribute('data-owner') === '1',
             focusRole: act === 'edit-role',
+            focusDescr: act === 'edit-descr',
             // openPermEditModal pre-fills from the conv-keyed permissions
             // snapshot, so it keeps the conv-id (the agent-id keying of the
             // permissions surface is D3); the rename / membership / owner
@@ -861,6 +866,24 @@ function bindRowActions() {
               toast(`updated ${label}`);
             } else {
               toast(`edit failed: ${await r.text()}`, true);
+            }
+          }
+          if ('tags' in result) {
+            // Tags are AGENT-level (keyed on the stable agent-id), not a
+            // membership column — route the replace-set to the dedicated
+            // agent-tags endpoint, independent of the role/descr PATCH so
+            // a bad tag rejects only the tags write. result.tags is the
+            // already-parsed array (empty = clear).
+            const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/tags`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tags: result.tags }),
+            });
+            if (r.ok) {
+              anyOk = true;
+              toast(`tags updated: ${label}`);
+            } else {
+              toast(`tags update failed: ${await r.text()}`, true);
             }
           }
           if ('owner' in result) {
