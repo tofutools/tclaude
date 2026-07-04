@@ -170,6 +170,12 @@
           <label class="filter-toggle" title="Show the virtual &quot;Retired&quot; group — agents that were demoted back to plain conversations. Retired agents land here instead of vanishing off the tab; click reinstate to bring one back."><input id="filter-groups-retired" type="checkbox" checked /><span>show retired</span></label>
           <label class="filter-toggle" title="Show the virtual &quot;Conversations&quot; group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent."><input id="filter-groups-conversations" type="checkbox" /><span>show conversations</span></label>
           <label class="filter-toggle" title="Show the virtual &quot;Replaced generations&quot; group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected."><input id="filter-groups-replaced" type="checkbox" /><span>show replaced generations</span></label>
+          <div class="view-menu-sep" role="separator"></div>
+          <div class="view-menu-heading" title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name.">Columns</div>
+          <!-- One checkbox per hideable member column, generated from
+               MEMBER_COLS (sort.js) so this list never drifts from the table.
+               Populated + wired in refresh.js bindFilter's view-popover block. -->
+          <div id="filter-groups-cols" class="view-cols"></div>
         </div>
       </div>
       <button id="groups-cost-toggle" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">💲</button>

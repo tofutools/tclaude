@@ -51,4 +51,11 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 	// The level-pill rendering (colourises debug/info/warn/error + raw).
 	must("log-level", "the level pill class")
 	must("levelPill", "the level pill builder")
+
+	// The source-reporting strip: which files were read (with per-file
+	// counts) and the click-to-include-rotated hint.
+	must("data.sources", "logs.js reads the per-file sources list")
+	must("rotated_available", "logs.js reads the on-disk rotated-file count")
+	must("logs-sources", "the sources summary span (+ its tooltip breakdown)")
+	must("logs-rotated-hint", "the click-to-include-rotated hint")
 }

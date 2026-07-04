@@ -102,17 +102,26 @@ function applySort(tableKey, rows, accessors) {
 // plus the per-row action cluster (focus/hide + ⚙ cog) share one
 // label-less, non-sortable leading cell, so all of an agent's
 // controls sit together at the left of the row.
+//
+// MEMBER_COLS is the single source of truth for the members table's
+// columns. Every entry carries a stable `key`; the member-columns.js
+// show/hide store and memberRowHTML's cell map are both keyed on it, so
+// the header (sortHead) and the body stay aligned by construction and a
+// NEW column plugs in by adding one entry here (+ its cell + accessor).
+// `hideable: true` marks the columns the "▾ view" popover offers to hide;
+// the controls (ctl) and Name (title) columns are load-bearing identity
+// and always render. Default visibility is "shown" — hiding is opt-in.
 const MEMBER_COLS = [
-  { label: '' },
-  { label: 'ID', col: 'id' },
-  { label: 'Name', col: 'title' },
-  { label: 'State', col: 'state' },
-  { label: 'Last', col: 'last' },
-  { label: 'Age', col: 'age' },
-  { label: 'CWD', col: 'cwd' },
-  { label: 'Branch', col: 'branch' },
-  { label: 'Role', col: 'role' },
-  { label: 'Description', col: 'descr' },
+  { key: 'ctl',    label: '' },
+  { key: 'id',     label: 'ID',          col: 'id',     hideable: true },
+  { key: 'title',  label: 'Name',        col: 'title' },
+  { key: 'state',  label: 'State',       col: 'state',  hideable: true },
+  { key: 'last',   label: 'Last',        col: 'last',   hideable: true },
+  { key: 'age',    label: 'Age',         col: 'age',    hideable: true },
+  { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },
+  { key: 'branch', label: 'Branch',      col: 'branch', hideable: true },
+  { key: 'role',   label: 'Role',        col: 'role',   hideable: true },
+  { key: 'descr',  label: 'Description', col: 'descr',  hideable: true },
 ];
 const MEMBER_ACCESSORS = {
   // id sorts on the stable agent_id the column now displays (conv-id fallback).
