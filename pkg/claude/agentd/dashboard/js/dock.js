@@ -238,10 +238,10 @@ function applyDockOpen(open) {
   const top = $('#dock-toggle-top');
   if (top) top.setAttribute('aria-expanded', open ? 'true' : 'false');
   syncDockTop();
-  // Toggling the dock swaps the horizontal scroll container (page ↔ body) and
-  // changes the reserved width, but mutates no <main> child — so hscroll's
-  // MutationObserver won't fire. Nudge it directly so the full-bleed bars
-  // re-fit to the (now correct) scroll container in the same frame.
+  // Toggling the dock changes the reserved width and whether the horizontal
+  // clearance spacer should be parked (req 3), but mutates no <main> child — so
+  // hscroll's MutationObserver won't fire. Nudge it directly so the spacer +
+  // full-bleed bars re-fit in the same frame.
   syncFullBleedBars();
 }
 

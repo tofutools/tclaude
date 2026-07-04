@@ -51,14 +51,21 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// slide-off. The wizard skin must stay SCOPED under #agent-dock (the
 	// anti-pin invariant — no unscoped body.wizard widening from this feature).
 	must("#agent-dock {", "the dock shell has a CSS rule")
-	// JOH-388 req 3: an open dock reserves its width AND makes BODY the
-	// horizontal scroll container, so the padding-right becomes real scroll
-	// clearance and wide content can be scrolled clear of the fixed dock rather
-	// than sliding underneath it (padding-inline-end counts in a scroll
-	// container's scrollable overflow). This pin was swapped from the pre-rework
-	// bare `padding-right` rule when the overflow-x mechanism landed.
-	must("body.dock-open { padding-right: var(--dock-w); overflow-x: auto; }",
-		"an open dock reserves its width AND becomes the h-scroll container (content clears the dock)")
+	// An open dock reserves its width so in-flow content lays out clear of the
+	// rail (unchanged from the pre-rework rule — byte-identical).
+	must("body.dock-open { padding-right: var(--dock-w); }",
+		"an open dock reflows the page to reclaim its width")
+	// JOH-388 req 3: the reservation alone doesn't help horizontally-scrolling
+	// content (a wide table nested in <main> overflows past body's padding-right
+	// and slides under the fixed dock; Chrome adds a scroll container's
+	// padding-inline-end only after DIRECT children, not deep-descendant
+	// overflow). #dock-hscroll-pad is the fix — a scroll-content spacer that
+	// hscroll.js parks --dock-w past the widest content so it can be scrolled
+	// clear of the dock. Verified end-to-end by the dashsnap dock-wide-scroll
+	// state (self-checking: it throws if the tail doesn't clear).
+	must("#dock-hscroll-pad {", "the horizontal-scroll clearance spacer has a CSS rule")
+	must(`id="dock-hscroll-pad"`, "the clearance spacer exists in the markup")
+	must("pad.classList.add('on')", "hscroll.js parks the clearance spacer past the content when the dock overflows")
 	// JOH-388 req 1: the dock rail spans only the content area (top tracks the
 	// chrome via --dock-top, bottom pinned to the footer) instead of covering
 	// the header/nav controls at top:0.

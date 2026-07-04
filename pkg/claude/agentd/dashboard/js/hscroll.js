@@ -46,26 +46,39 @@ function syncFullBleedBars() {
   ].filter(Boolean);
   const inners = document.querySelectorAll('.bar-inner');
   const doc = document.documentElement;
+  const pad = document.getElementById('dock-hscroll-pad');
 
   // Reset first so our own sizing can't pollute the overflow measurement,
-  // then read scrollWidth (this forces one reflow — fine at rAF cadence).
+  // then read scrollWidth (this forces one reflow — fine at rAF cadence). The
+  // dock clearance spacer is reset with the bars so the "natural" measurement
+  // is the real content width, not last frame's padded width.
   for (const bar of bars) bar.style.minWidth = '';
   for (const inner of inners) inner.style.width = '';
+  if (pad) pad.classList.remove('on');
 
-  // Pick the live horizontal scroll container: when the palette dock is open,
-  // BODY scrolls sideways (dashboard.css body.dock-open{overflow-x:auto}, which
-  // is what lets wide content clear the fixed dock — JOH-388 req 3), so its
-  // scrollWidth is the content width the bars must fill. Dock closed, the page
-  // (documentElement) scrolls as usual. The visible width for the pinned
-  // .bar-inner is always the viewport (documentElement.clientWidth).
-  const scroller = document.body.classList.contains('dock-open') ? document.body : doc;
-  const overflow = scroller.scrollWidth > doc.clientWidth;
+  const naturalWidth = doc.scrollWidth;
+
+  // Park the horizontal-scroll clearance spacer (JOH-388 req 3): when the dock
+  // is open AND the content genuinely overflows the viewport, place --dock-w of
+  // extra scrollable width just past the content's right edge, so a wide table
+  // can be scrolled fully clear of the fixed dock. Gated on real overflow so it
+  // never spuriously scrolls content that already fits (dock closed, or content
+  // narrower than the viewport → no spacer, no gutter). This runs at the same
+  // rAF cadence as the bar-fit below and shares its single reflow.
+  if (pad && document.body.classList.contains('dock-open') && naturalWidth > doc.clientWidth) {
+    pad.style.left = naturalWidth + 'px';
+    pad.classList.add('on');
+  }
+
+  // Now measure the FINAL scroll width (content + any spacer gutter) — that's
+  // what the bars must fill so they aren't ragged across the whole scroll range.
+  const overflow = doc.scrollWidth > doc.clientWidth;
   document.body.classList.toggle('hscroll-overflow', overflow);
   if (!overflow) return;
 
   // Widen the bars to the full scrollable width; keep their content one
   // viewport wide so the right-aligned controls stay on-screen.
-  const contentWidth = scroller.scrollWidth + 'px';
+  const contentWidth = doc.scrollWidth + 'px';
   const viewportWidth = doc.clientWidth + 'px';
   for (const bar of bars) bar.style.minWidth = contentWidth;
   for (const inner of inners) inner.style.width = viewportWidth;

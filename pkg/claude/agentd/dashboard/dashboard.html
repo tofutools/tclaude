@@ -1087,6 +1087,13 @@
     <div id="dock-body" class="dock-body"></div>
   </div>
 </aside>
+<!-- Horizontal-scroll clearance spacer (JOH-388 req 3). An invisible, inert
+     direct child of <body> that js/hscroll.js parks --dock-w past the widest
+     content when the dock is open, so wide tables can be scrolled fully clear of
+     the fixed dock instead of hiding underneath it. Sized 0 at rest; hscroll
+     places it (left + .on) only when content actually overflows the viewport.
+     See dashboard.css #dock-hscroll-pad. -->
+<div id="dock-hscroll-pad" aria-hidden="true"></div>
 <!-- Footer bar — the dashboard's base URL + last-refresh heartbeat (#meta),
      moved out of the header so they stop crowding the title row's prime
      horizontal space. It's position:fixed to the viewport bottom so the

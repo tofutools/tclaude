@@ -9164,22 +9164,32 @@ body:not(.dock-open) #agent-dock { transform: translateX(100%); }
    adds .dock-anim on the frame after the first applyDockOpen. */
 body.dock-anim #agent-dock { transition: transform .2s ease; }
 
-/* When open, reserve the dock's width so the content reflows and no content
-   hides behind it (the "reclaim the space, don't overlay dead area" rule), and
-   make BODY the horizontal scroll container so that reservation actually holds
-   for horizontally-scrolling content (JOH-388 req 3). The subtlety: the dock is
-   a viewport-fixed rail, so with the page (documentElement) as the h-scroll
-   container, wide tables overflow PAST body's padding-right and slide underneath
-   the dock with no way to scroll them clear — a fixed overlay can't be escaped
-   by document scroll. Making body the scroll container fixes this exactly:
-   padding-inline-end of a scroll container IS counted in its scrollable
-   overflow, so padding-right becomes real scroll clearance and the content's
-   right edge lands at the dock's left edge at max scroll — everything reachable.
-   Scoped to .dock-open so the page keeps its normal viewport-level h-scroll
-   (and viewport-pinned scrollbar) whenever the dock is closed. The viewport-
-   fixed footer + slop lever + drag-to-retire bin are pushed clear of the dock
-   explicitly. Collapsed → padding + overflow drop and the space is reclaimed. */
-body.dock-open { padding-right: var(--dock-w); overflow-x: auto; }
+/* When open, reserve the dock's width so in-flow content lays out clear of the
+   dock (the "reclaim the space, don't overlay dead area" rule): content that
+   fits within viewport-minus-dock never sits under the rail. Collapsed → the
+   padding drops and the space is reclaimed.
+   This alone does NOT solve horizontally-scrolling content (JOH-388 req 3): the
+   dock is a viewport-fixed rail and the page scrolls at the documentElement, so
+   a wide table overflows past body's padding-right and its tail slides UNDER the
+   dock with no scroll position that clears it. And padding-right can't become
+   that clearance — Chrome only adds a scroll container's padding-inline-end
+   after its DIRECT in-flow children's bounds (here <main>, one viewport wide),
+   not after a deep descendant's overflow, so a wide table nested inside main
+   gets no gutter from it. The reliable fix is #dock-hscroll-pad below: a
+   positioned scroll-content spacer that js/hscroll.js parks --dock-w past the
+   measured content edge, so max-scroll lands the content's right edge at the
+   dock's left edge. Keeping the viewport as the scroll container means the
+   h-scrollbar stays viewport-pinned and no <main> sticky is disturbed. */
+body.dock-open { padding-right: var(--dock-w); }
+/* The horizontal-scroll clearance spacer (JOH-388 req 3). Absolute, a direct
+   child of <body>, invisible + inert. hscroll.js measures the widest content
+   (documentElement.scrollWidth with this reset to 0), then — only when the dock
+   is open AND the content actually overflows the viewport — parks it at that
+   right edge with a --dock-w width via .on, extending the document's scrollable
+   width by exactly the dock's width. That gutter is what lets wide content
+   scroll fully clear of the fixed dock instead of hiding underneath it. */
+#dock-hscroll-pad { position: absolute; top: 0; height: 1px; width: 0; pointer-events: none; }
+#dock-hscroll-pad.on { width: var(--dock-w); }
 body.dock-open footer { right: var(--dock-w); }
 body.dock-open #slop-lever { right: var(--dock-w); }
 /* The full-bleed top bars sit ABOVE the dock now (the dock starts below the

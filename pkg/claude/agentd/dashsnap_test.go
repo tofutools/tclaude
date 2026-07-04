@@ -314,24 +314,52 @@ func baseStates() []dashsnap.State {
 		{
 			// JOH-388 req 3: with the dock open, a wide content block must be
 			// scrollable fully CLEAR of the fixed dock (not slide underneath it).
-			// Inject a 3000px block with a bright right-edge marker, open the
-			// dock, and scroll body (the h-scroll container when dock-open) to the
-			// far right — the marker should land at the dock's left edge, proving
-			// nothing hides behind the palette.
+			// Inject a 3000px block ending in a bright green END marker, open the
+			// dock, let hscroll park its clearance spacer, then scroll the viewport
+			// to the far right — the marker must land at the dock's left edge.
+			// SELF-CHECKING: the promise REJECTS if the tail is still under the
+			// dock, so a req-3 regression fails the dashsnap run (not a silent
+			// "ok"). Also stamps a readout for the contact sheet.
 			Key:     "dock-wide-scroll",
 			Title:   "Palette dock + wide content, scrolled right",
-			Caption: "Req 3: dock open, a 3000px block scrolled to max-right — its right edge (green marker) lands at the dock's left edge, nothing hidden underneath.",
+			Caption: "Req 3 (self-checked): dock open, a 3000px block scrolled to max-right — its green END marker lands at the dock's left edge; the state throws if the tail stays hidden.",
 			JS: showGroups + `document.body.classList.add('dock-open');` + `
 var __wide = document.createElement('div');
 __wide.style.cssText = 'position:relative;width:3000px;height:120px;margin-top:12px;box-sizing:border-box;padding:8px;color:#fff;font:14px monospace;background:linear-gradient(90deg,#1b3a5b,#2d6da8);';
 __wide.textContent = 'WIDE 3000px — scroll right to reveal the end →';
 var __end = document.createElement('div');
-__end.style.cssText = 'position:absolute;top:0;right:0;width:10px;height:100%;background:#3fb950;';
+__end.style.cssText = 'position:absolute;top:0;right:0;width:60px;height:100%;background:#3fb950;color:#000;font:bold 12px monospace;padding:6px;box-sizing:border-box;';
+__end.textContent = 'END';
 __wide.appendChild(__end);
 document.querySelector('#tab-groups').prepend(__wide);
-document.body.scrollLeft = 999999;
+return new Promise(function(resolve, reject){
+  // hscroll parks the clearance spacer on the injection mutation (rAF-coalesced);
+  // give it a beat, THEN scroll the viewport to max and assert clearance.
+  setTimeout(function(){
+    document.documentElement.scrollLeft = 999999;
+    var r = __wide.getBoundingClientRect().right;
+    var d = document.querySelector('#agent-dock').getBoundingClientRect().left;
+    var cleared = r <= d + 2;
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;left:8px;bottom:36px;z-index:999;background:#000;color:#0f0;font:13px monospace;padding:6px;';
+    o.textContent = 'req3 wide.right=' + r.toFixed(0) + ' dock.left=' + d.toFixed(0) + ' CLEARS=' + (cleared ? 'YES' : 'NO');
+    document.body.appendChild(o);
+    if (cleared) resolve();
+    else reject(new Error('req3 FAIL: wide content tail (' + r.toFixed(0) + ') still under the dock (left ' + d.toFixed(0) + ')'));
+  }, 200);
+});
 `,
 			SettleMS: 400,
+		},
+		{
+			// JOH-388 req 5: each category folds on its own. Collapse Templates
+			// to its header (chevron flips); Profiles + Roles stay expanded. The
+			// fold is set on the live <details>, and morph preserves it across the
+			// 2s tick (open is live-owned), matching the persisted-prefs path.
+			Key:     "dock-section-collapsed",
+			Title:   "Palette dock — one category collapsed",
+			Caption: "Req 5: the Templates category collapsed to its header (chevron flipped right); Profiles + Roles stay expanded.",
+			JS:      showGroups + `document.body.classList.add('dock-open');` + `var __s = document.querySelector('.dock-section[data-key="templates"]'); if (__s) __s.open = false;`,
 		},
 		{
 			Key:      "summon-normal",
