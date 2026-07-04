@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -156,6 +157,11 @@ var auditRoutes = []auditRoute{
 
 	// Human notification channel.
 	{method: http.MethodPost, segs: []string{"notify-human"}, verb: "notify-human", describe: describeNotifyHuman},
+
+	// Human clipboard write. The detail records only the byte count, never
+	// the copied text — clipboard content is often sensitive (a secret, a
+	// password) and must not land in the audit log.
+	{method: http.MethodPost, segs: []string{"clipboard"}, verb: "clipboard", describe: describeClipboard},
 
 	// Group templates: instantiating one spawns a whole group of agents —
 	// a real coordination action — so it's audited (the CLI and dashboard
@@ -887,4 +893,16 @@ func describeNotifyHuman(c *auditCtx) {
 		}
 	}
 	c.fields.Detail = auditClip(detail, auditDetailMax)
+}
+
+// describeClipboard records a clipboard write as its byte count only. The
+// copied text itself is deliberately never logged — it is frequently
+// sensitive (a token, a password, a private snippet), so the audit trail
+// captures that a copy happened and how big it was, nothing more.
+func describeClipboard(c *auditCtx) {
+	var b struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	c.fields.Detail = fmt.Sprintf("%d bytes", len(b.Text))
 }

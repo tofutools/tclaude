@@ -231,6 +231,10 @@ var permissionRegistry = []PermSlug{
 		Description:  "Send the human a notification via `tclaude agent notify-human` — it lands in the dashboard Messages tab. Lets a coordinating agent (the PO) reach the human outside the terminal. Group owners get this by default (a trusted coordinating role), suppressible by a deny override; otherwise not in the global defaults, so plain workers cannot spam the channel without an explicit grant.",
 	},
 	{
+		Slug:        PermHumanClipboard,
+		Description: "Copy text to the human's system clipboard via `tclaude agent clipboard` — the daemon runs the platform copy tool (wl-copy/xclip/xsel, pbcopy, clip.exe). An agent→human-machine surface like human.notify, but NOT default-granted and NOT owner-implied: it writes to the operator's real clipboard, so it needs an explicit grant or a per-call --ask-human popup approval.",
+	},
+	{
 		Slug:        PermSettingsDefaultModel,
 		Description: "Set or clear the user-level default Claude model — the \"model\" key in ~/.claude/settings.json, which every claude launched without --model falls back to. Rewrites a config file in the human's home, so not default-granted (effectively human-only).",
 	},

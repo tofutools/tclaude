@@ -299,6 +299,7 @@ const (
 	PermRolesManage        = "roles.manage"
 	PermProcessAdvance     = "process.advance"
 	PermHumanNotify        = "human.notify"
+	PermHumanClipboard     = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
 	// model into ~/.claude/settings.json — a file in the human's home
 	// that also carries hooks and permission config, so not
@@ -452,6 +453,15 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 			// same bytes after we approve.
 			bodyPreview := snapshotRequestBody(r)
 			targetGroup, targetConvID, targetConvTitle := extractApprovalTargets(r, bodyPreview)
+			// For a clipboard write, show the human the exact text about to
+			// be copied under a clear label — the JSON envelope would render
+			// newlines as literal \n and read poorly for a snippet. The raw
+			// text is still HTML-escaped at render time (renderApprovalPage).
+			bodyLabel := ""
+			if raw, ok := clipboardApprovalPreview(perm, bodyPreview); ok {
+				bodyPreview = raw
+				bodyLabel = "Clipboard content"
+			}
 			req := &approvalRequest{
 				id:              newApprovalID(),
 				perm:            perm,
@@ -461,6 +471,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				path:            r.URL.Path,
 				rawQuery:        r.URL.RawQuery,
 				bodyPreview:     bodyPreview,
+				bodyLabel:       bodyLabel,
 				targetGroup:     targetGroup,
 				targetConvID:    targetConvID,
 				targetConvTitle: targetConvTitle,
@@ -532,6 +543,30 @@ func extractApprovalTargets(r *http.Request, bodyPreview string) (group, targetC
 		}
 	}
 	return group, targetConvID, targetConvTitle
+}
+
+// clipboardApprovalPreview extracts the raw text a clipboard write is
+// about to copy, so the approval popup can show the human the exact
+// content instead of the {"text":"…"} JSON envelope (whose escaped
+// newlines read poorly for a multi-line snippet). bodyPreview is the
+// already-buffered, JSON-prettified request body from snapshotRequestBody.
+//
+// Returns ok=false for any non-clipboard perm, and also when the body
+// can't be parsed as the clipboard envelope — e.g. a payload larger than
+// snapshotRequestBody's preview cap, which arrives truncated and no longer
+// valid JSON. In that case the caller keeps the generic JSON preview,
+// which is still shown and still escaped.
+func clipboardApprovalPreview(perm, bodyPreview string) (string, bool) {
+	if perm != PermHumanClipboard || bodyPreview == "" {
+		return "", false
+	}
+	var b struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(bodyPreview), &b); err != nil || b.Text == "" {
+		return "", false
+	}
+	return b.Text, true
 }
 
 // parseAskHumanHeader reads the X-Tclaude-Ask-Human header. Empty/absent

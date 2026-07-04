@@ -885,7 +885,7 @@ gate group, messaging, template, and permission administration.
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
-| `human.*`     | `human.notify` |
+| `human.*`     | `human.notify`, `human.clipboard` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.
@@ -950,6 +950,10 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 - **`human-notify`** — send the human a notification via
   `tclaude agent notify-human`; it lands in the dashboard
   [Messages tab](dashboard.md#messages).
+- **`human-clipboard`** — copy text to the human's system clipboard via
+  `tclaude agent clipboard`; the daemon runs the platform copy tool on
+  the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
+  popup; not owner-implied).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary
