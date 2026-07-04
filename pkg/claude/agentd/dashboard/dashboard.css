@@ -1100,6 +1100,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .log-row-error { background: rgba(218, 54, 51, 0.06); }
 .log-row-warn  { background: rgba(210, 153, 34, 0.05); }
 .logs-warn { color: #d29922; }
+/* Logs status strip — "which files are we reading" summary + the
+   click-to-include-rotated hint. The hint reads as an actionable link. */
+.logs-sources { cursor: help; }
+.logs-rotated-hint { color: #58a6ff; cursor: pointer; text-decoration: none; border-bottom: 1px dotted #58a6ff; }
+.logs-rotated-hint:hover { color: #79c0ff; border-bottom-color: #79c0ff; }
 /* Per-list pager footer inside the Retired / Conversations / Replaced virtual
    groups — mirrors the Audit/Messages pager chrome. Explicit dark theme: an
    unthemed inline <button> would render with the browser's white default. */
