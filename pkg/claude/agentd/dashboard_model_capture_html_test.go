@@ -39,8 +39,58 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 	}
 
 	// Spawn dialog applies a profile's model through the helper too — a profile
-	// carrying a non-default model must be selectable when spawning from it.
-	if !strings.Contains(dashboardAssets, "setModelSelectValue(activeSpawnModelEl(), p.model)") {
-		t.Error("applyProfileToSpawnForm: must apply the profile model via setModelSelectValue so a non-default model is selectable when spawning")
+	// carrying a non-default model must be selectable when spawning from it. It
+	// routes to the curated <select> explicitly (not activeSpawnModelEl, which
+	// may point at the "Custom…" free-text input) so a stale custom entry can't
+	// swallow the profile's model.
+	if !strings.Contains(dashboardAssets, "setModelSelectValue($('#agent-spawn-model'), p.model)") {
+		t.Error("applyProfileToSpawnForm: must apply the profile model to the curated <select> via setModelSelectValue so a non-default model is selectable when spawning")
+	}
+}
+
+// The curated Claude Model <select> can't be typed into, so a human who wants a
+// model the presets don't list (a brand-new alias, or a full id) had no way to
+// enter one by hand. Each editor's <select> now ends with a "Custom model id…"
+// sentinel <option> that reveals a free-text <input>; picking it routes submit
+// and seeding through that input. This pins the wiring across the three editors
+// (spawn dialog, profile editor, role editor) — HTML control, the shared helper,
+// the active-element resolver's sentinel branch, and the change listener.
+func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
+	// Shared helper + sentinel exist and are exported from helpers.js.
+	for _, needle := range []string{
+		"const MODEL_CUSTOM_VALUE = '__custom__';",
+		"function syncCustomModelRow(",
+		"MODEL_CUSTOM_VALUE,", // exported
+		"syncCustomModelRow,", // exported
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard JS missing %q — custom-model free-text helper broken", needle)
+		}
+	}
+
+	// Every curated Claude Model <select> ends with the sentinel option, and
+	// each editor carries the revealed free-text input + its row. Missing any
+	// leg silently breaks the feature in that one editor.
+	for _, base := range []string{"agent-spawn-model", "profile-editor-model", "role-editor-model"} {
+		for _, needle := range []string{
+			`id="` + base + `-custom"`,     // the free-text input
+			`id="` + base + `-custom-row"`, // its toggled row
+			// The select routes to the custom input on the sentinel (reads:
+			// submit + effort read the typed value).
+			"sel.value === '__custom__' ? $('#" + base + "-custom')",
+			// The harness reshape reconciles the row with the select.
+			"syncCustomModelRow('" + base + "')",
+			// Picking "Custom…" reveals + focuses the row.
+			"syncCustomModelRow('" + base + "', { focus: true })",
+		} {
+			if !strings.Contains(dashboardAssets, needle) {
+				t.Errorf("dashboard JS/HTML missing %q — custom-model wiring broken for %s", needle, base)
+			}
+		}
+	}
+
+	// The sentinel <option> must appear once per editor (3 curated selects).
+	if got := strings.Count(dashboardAssets, `<option value="__custom__">Custom model id…</option>`); got != 3 {
+		t.Errorf("expected 3 \"Custom model id…\" sentinel options (spawn/profile/role), got %d", got)
 	}
 }

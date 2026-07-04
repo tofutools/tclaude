@@ -17,7 +17,7 @@
 // wipe it, so submit carries those forward from the original (guarded on an
 // unchanged harness).
 
-import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue } from './helpers.js';
+import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue, syncCustomModelRow } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
@@ -61,12 +61,15 @@ function profileHarnessByName(name) {
 }
 
 // profileActiveModelEl returns the Model control in play for the selected
-// harness — the curated <select> for a harness with a model list, the
-// free-text <input> for one without (Codex). Mirrors activeSpawnModelEl.
+// harness — the curated <select> for a harness with a model list, its revealed
+// "Custom…" free-text input when the select sits on that sentinel, or the Codex
+// free-text <input> for a harness without a model list. Mirrors activeSpawnModelEl.
 function profileActiveModelEl() {
   const h = profileHarnessByName($('#profile-editor-harness').value);
   const codexStyle = h && (!h.models || h.models.length === 0);
-  return codexStyle ? $('#profile-editor-model-codex') : $('#profile-editor-model');
+  if (codexStyle) return $('#profile-editor-model-codex');
+  const sel = $('#profile-editor-model');
+  return sel.value === '__custom__' ? $('#profile-editor-model-custom') : sel;
 }
 
 function populateProfileHarnessSelect() {
@@ -102,6 +105,10 @@ function applyProfileEditorHarness(harnessName) {
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#profile-editor-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#profile-editor-model-codex-row').style.display = hasModelList ? 'none' : '';
+  // The free-text "Custom…" row belongs to the curated <select>; reconcile it
+  // with the select for Claude, hide it for a free-text harness (Codex).
+  if (hasModelList) syncCustomModelRow('profile-editor-model');
+  else $('#profile-editor-model-custom-row').style.display = 'none';
 
   const canSandbox = !!(h && h.can_sandbox && h.sandbox_modes && h.sandbox_modes.length);
   $('#profile-editor-sandbox-row').style.display = canSandbox ? '' : 'none';
@@ -319,6 +326,10 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   setModelSelectValue($('#profile-editor-model'), '');
   $('#profile-editor-model-codex').value = '';
   if (seed && seed.model) setModelSelectValue(profileActiveModelEl(), seed.model);
+  // Reconcile the "Custom…" free-text row: the reset above left the select on a
+  // concrete value (Default or the seeded model), so the row hides — a seed
+  // never lands the editor on a half-typed custom entry.
+  syncCustomModelRow('profile-editor-model');
   setSelectIfPresent($('#profile-editor-effort'), seed ? seed.effort : '');
   setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
   setSelectIfPresent($('#profile-editor-approval'), seed ? seed.approval : '');
@@ -521,6 +532,10 @@ function bindProfilesUI() {
   $('#profile-editor-perms').addEventListener('click', openProfilePermsEditor);
   $('#profile-editor-harness').addEventListener('change', (e) => {
     applyProfileEditorHarness(e.target.value);
+  });
+  // Picking "Custom model id…" reveals the free-text row and focuses it.
+  $('#profile-editor-model').addEventListener('change', () => {
+    syncCustomModelRow('profile-editor-model', { focus: true });
   });
   bindBackdropDiscard('profile-editor-modal', closeProfileEditor);
 }

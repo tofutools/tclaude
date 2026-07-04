@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -133,13 +133,16 @@ function populateSpawnHarnessSelect() {
 }
 
 // activeSpawnModelEl returns the Model control currently in play for the
-// selected harness — the curated <select> for a harness with a model list,
-// or the free-text <input> for one without (Codex). Used so submit + the
-// per-model effort memory read whichever control is visible.
+// selected harness — the curated <select> for a harness with a model list, its
+// revealed free-text "Custom…" input when the select sits on that sentinel, or
+// the Codex free-text <input> for a harness without a model list. Used so submit
+// + the per-model effort memory read whichever control actually holds the value.
 function activeSpawnModelEl() {
   const h = spawnHarnessByName($('#agent-spawn-harness').value);
   const codexStyle = h && (!h.models || h.models.length === 0);
-  return codexStyle ? $('#agent-spawn-model-codex') : $('#agent-spawn-model');
+  if (codexStyle) return $('#agent-spawn-model-codex');
+  const sel = $('#agent-spawn-model');
+  return sel.value === '__custom__' ? $('#agent-spawn-model-custom') : sel;
 }
 
 // populateSpawnEffortSelect rebuilds the Effort <select> options from the
@@ -176,6 +179,10 @@ function applySpawnHarness(harnessName) {
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#agent-spawn-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#agent-spawn-model-codex-row').style.display = hasModelList ? 'none' : '';
+  // The free-text "Custom…" row belongs to the curated <select>; reconcile it
+  // with the select for Claude, hide it for a free-text harness (Codex).
+  if (hasModelList) syncCustomModelRow('agent-spawn-model');
+  else $('#agent-spawn-model-custom-row').style.display = 'none';
 
   // Reshape the catalog-driven launch selectors — sandbox / permission-mode /
   // question-timeout — for this harness. Each shares one shape (capability flag +
@@ -609,12 +616,23 @@ function applyProfileToSpawnForm(p) {
   }
   applySpawnHarness($('#agent-spawn-harness').value);
 
-  // Model goes into whichever control the (now-applied) harness uses — the
-  // curated <select> for Claude, the free-text <input> for Codex. A profile can
-  // carry a non-preset full model id (e.g. "claude-opus-4-8[1m]" captured from
-  // a live agent); setModelSelectValue injects it as a selectable option so it
-  // isn't silently dropped on the <select>'s prior pick.
-  if (p.model) setModelSelectValue(activeSpawnModelEl(), p.model);
+  // Model goes into whichever control the (now-applied) harness uses. A profile
+  // can carry a non-preset full model id (e.g. "claude-opus-4-8[1m]" captured
+  // from a live agent); setModelSelectValue injects it as a selectable option on
+  // the curated <select> so it isn't dropped. Route to the control explicitly
+  // (not activeSpawnModelEl) and reconcile the "Custom…" row, so applying a
+  // profile always lands on a concrete model, never a stale half-typed custom
+  // entry left in the field from before.
+  if (p.model) {
+    const hEntry = spawnHarnessByName($('#agent-spawn-harness').value);
+    const codexStyle = hEntry && (!hEntry.models || !hEntry.models.length);
+    if (codexStyle) {
+      $('#agent-spawn-model-codex').value = p.model;
+    } else {
+      setModelSelectValue($('#agent-spawn-model'), p.model);
+      syncCustomModelRow('agent-spawn-model');
+    }
+  }
 
   // Effort: an explicit profile value wins (when the harness offers it);
   // otherwise fall back to the per-model effort memory for the model just set,
@@ -680,6 +698,7 @@ function clearSpawnProfileFields() {
   // setModelSelectValue('') also drops any out-of-catalog option a prior
   // profile-apply injected, so Clear leaves the curated list clean.
   setModelSelectValue($('#agent-spawn-model'), '');
+  syncCustomModelRow('agent-spawn-model');
   $('#agent-spawn-model-codex').value = '';
   populateSpawnHarnessSelect();
   applySpawnHarness($('#agent-spawn-harness').value);
@@ -1097,6 +1116,7 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-init-msg').value = '';
   // '' also drops any out-of-catalog option a prior open's profile-apply added.
   setModelSelectValue($('#agent-spawn-model'), '');
+  syncCustomModelRow('agent-spawn-model');
   $('#agent-spawn-model-codex').value = '';
   // Attachments are per-spawn (like cwd/worktree, not a profile field) — start
   // every open with an empty list and any prior preview URLs revoked.
@@ -1475,10 +1495,17 @@ function bindAgentSpawnModal() {
   });
   // Switching the Model re-applies that model's remembered effort (or
   // resets to Default when it has none), so each model carries its own
-  // effort default — see rememberModelEffort. Both Model controls (the
-  // curated <select> and the Codex free-text <input>) feed it.
+  // effort default — see rememberModelEffort. All three Model controls (the
+  // curated <select>, its "Custom…" free-text input, and the Codex free-text
+  // <input>) feed it. Picking "Custom…" also reveals the free-text row and
+  // focuses it (the sentinel has no remembered effort, so effort resets to
+  // Default until an id is typed).
   $('#agent-spawn-model').addEventListener('change', (e) => {
+    syncCustomModelRow('agent-spawn-model', { focus: true });
     applyRememberedEffort(e.target.value);
+  });
+  $('#agent-spawn-model-custom').addEventListener('input', (e) => {
+    applyRememberedEffort(e.target.value.trim());
   });
   $('#agent-spawn-model-codex').addEventListener('input', (e) => {
     applyRememberedEffort(e.target.value.trim());

@@ -109,6 +109,14 @@ function syncSelectTitle(sel) {
   sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
 }
 
+// MODEL_CUSTOM_VALUE is the sentinel <option> value the curated Claude Model
+// <select>s end with ("Custom model id…"). Picking it reveals a free-text input
+// (id `${base}-custom`) so a human can type ANY model id/alias, not just the
+// curated presets — the daemon validates it at spawn (ValidateModel). It is not
+// a real model, so submit/seed treat it specially (see the active-model-element
+// resolvers + syncCustomModelRow). Kept distinct from "" (Default/unset).
+const MODEL_CUSTOM_VALUE = '__custom__';
+
 // setModelSelectValue sets a model id into a Model control, the way the spawn
 // dialog and profile editor seed one from a saved profile / captured live
 // agent. The curated Claude Model control is a <select> whose <option>s are a
@@ -119,10 +127,12 @@ function syncSelectTitle(sel) {
 // contains) would be dropped. To keep it, we inject the exact id as a
 // selectable option (flagged "(exact id)" so it reads as an out-of-catalog
 // value, not a curated preset) before selecting it — mirroring the
-// profileRef/roleRef "keep the current value selectable" pattern. A previously
-// injected option is removed on each call so re-opening the form with a
-// different model doesn't stack stale options. For a free-text <input> (Codex
-// has no fixed model list) any value is valid, so we set it directly.
+// profileRef/roleRef "keep the current value selectable" pattern. The injected
+// option is placed before the trailing "Custom model id…" sentinel so that
+// stays last. A previously injected option is removed on each call so re-opening
+// the form with a different model doesn't stack stale options. For a free-text
+// <input> (Codex has no fixed model list) any value is valid, so we set it
+// directly.
 function setModelSelectValue(el, value) {
   if (!el) return;
   value = (value || '').trim();
@@ -136,10 +146,30 @@ function setModelSelectValue(el, value) {
       opt.value = value;
       opt.textContent = `${value} (exact id)`;
       opt.dataset.dynamicModel = '1';
-      el.appendChild(opt);
+      // Keep the "Custom model id…" sentinel last (insertBefore(…, null) just
+      // appends when the select carries no sentinel).
+      el.insertBefore(opt, el.querySelector(`option[value="${MODEL_CUSTOM_VALUE}"]`));
     }
   }
   el.value = value;
+}
+
+// syncCustomModelRow reconciles a Model field group's free-text "Custom…" row
+// with its curated <select>. The row (id `${base}-custom-row`) and its input
+// (id `${base}-custom`) are shown iff the select (id `${base}`) sits on the
+// MODEL_CUSTOM_VALUE sentinel; the input is cleared when hidden so a stale typed
+// id can't leak into a later read. Pass {focus:true} to move the caret into the
+// input the moment it appears (a human picking "Custom…"). Call after any change
+// to the select — a user pick, a programmatic seed, or a harness switch.
+function syncCustomModelRow(base, { focus = false } = {}) {
+  const sel = $('#' + base);
+  const row = $('#' + base + '-custom-row');
+  const input = $('#' + base + '-custom');
+  if (!sel || !row || !input) return;
+  const on = sel.value === MODEL_CUSTOM_VALUE;
+  row.style.display = on ? '' : 'none';
+  if (!on) input.value = '';
+  else if (focus) input.focus();
 }
 
 // refreshModalMinSize pins a resizable modal's minimum size to its natural
@@ -1765,7 +1795,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, setModelSelectValue, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,

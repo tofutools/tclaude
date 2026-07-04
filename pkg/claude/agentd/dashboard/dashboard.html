@@ -1769,7 +1769,15 @@
         <option value="sonnet[1m]">sonnet[1m]</option>
         <option value="haiku">haiku</option>
         <option value="opusplan">opusplan</option>
+        <option value="__custom__">Custom model id…</option>
       </select>
+    </label>
+    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
+         human type any Claude model id/alias the presets don't list. Validated
+         against the profile's harness at save. -->
+    <label class="cron-create-row" id="profile-editor-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the profile is saved.">
+      <span class="cron-create-label"></span>
+      <input id="profile-editor-model-custom" type="text" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" id="profile-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
       <span class="cron-create-label">Model</span>
@@ -1935,7 +1943,15 @@
         <option value="sonnet[1m]">sonnet[1m]</option>
         <option value="haiku">haiku</option>
         <option value="opusplan">opusplan</option>
+        <option value="__custom__">Custom model id…</option>
       </select>
+    </label>
+    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
+         human type any Claude model id/alias the presets don't list. Validated
+         against the role's harness at save. -->
+    <label class="cron-create-row" id="role-editor-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the role is saved.">
+      <span class="cron-create-label"></span>
+      <input id="role-editor-model-custom" type="text" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" id="role-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
       <span class="cron-create-label">Model</span>
@@ -2524,7 +2540,16 @@
         <option value="sonnet[1m]">sonnet[1m]</option>
         <option value="haiku">haiku</option>
         <option value="opusplan">opusplan</option>
+        <option value="__custom__">Custom model id…</option>
       </select>
+    </label>
+    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
+         human type any Claude model id/alias the presets don't list (a full id
+         like claude-opus-4-8[1m], or a new alias). The daemon validates it at
+         spawn. -->
+    <label class="cron-create-row" id="agent-spawn-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the agent spawns.">
+      <span class="cron-create-label"></span>
+      <input id="agent-spawn-model-custom" type="text" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
       <span class="cron-create-label">Model</span>
