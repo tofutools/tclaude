@@ -53,19 +53,50 @@ type claudeApproval struct{}
 
 func (claudeApproval) DefaultPolicy() string { return claudePermInherit }
 
-// ValidatePolicy normalizes and validates a requested permission mode. Both ""
-// and `inherit` return "" (no override — mirrors claudeSandbox.ValidateMode).
-// The six real modes return themselves; anything else errors naming the set.
+// ValidatePolicy normalizes and validates a requested permission mode,
+// preserving the tri-state the overlay sites depend on (mirrors
+// claudeSandbox.ValidateMode):
+//
+//   - ""      → "" (OMITTED — a higher level may fill it; if nothing does, the
+//     launch boundary applies the harness default).
+//   - inherit → "inherit" (ACTIVELY chosen — carried through as a first-class
+//     sentinel so an overlay does NOT overwrite it; collapses to "omit the
+//     --permission-mode flag" only at emission, see claudeApprovalValue).
+//   - the six real modes → themselves.
+//   - anything else → an error naming the set.
+//
+// The old behaviour collapsed inherit to "" here, making an explicit inherit
+// indistinguishable from omitted so a profile/group default silently won;
+// keeping inherit distinct is the fix.
 func (claudeApproval) ValidatePolicy(policy string) (string, error) {
-	switch strings.TrimSpace(policy) {
-	case "", claudePermInherit:
+	switch p := strings.TrimSpace(policy); p {
+	case "":
 		return "", nil
+	case claudePermInherit:
+		return claudePermInherit, nil
 	case claudePermDefault, claudePermPlan, claudePermAccept, claudePermAuto, claudePermDontAsk, claudePermBypass:
-		return strings.TrimSpace(policy), nil
+		return p, nil
 	default:
 		return "", fmt.Errorf("invalid claude permission mode %q (want %s|%s|%s|%s|%s|%s|%s)",
 			policy, claudePermInherit, claudePermDefault, claudePermPlan,
 			claudePermAccept, claudePermAuto, claudePermDontAsk, claudePermBypass)
+	}
+}
+
+// claudeApprovalValue returns the `--permission-mode` flag value the spawner
+// should emit for a validated policy, or "" when NO flag should be emitted
+// (inherit / unset / unrecognized). This is where the first-class `inherit`
+// sentinel collapses to "omit the flag", the LAST layer that sees it — the
+// approval-axis counterpart to claudeSandboxBlock (→ nil) and
+// claudeAskTimeoutValue (→ ""). Without this, an explicit-inherit spawn (now
+// carried as "inherit" rather than collapsed early) would emit a bogus
+// `--permission-mode inherit` Claude Code rejects.
+func claudeApprovalValue(policy string) string {
+	switch strings.TrimSpace(policy) {
+	case claudePermDefault, claudePermPlan, claudePermAccept, claudePermAuto, claudePermDontAsk, claudePermBypass:
+		return strings.TrimSpace(policy)
+	default:
+		return ""
 	}
 }
 

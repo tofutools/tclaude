@@ -404,12 +404,11 @@ func harnessEquivalent(a, b string) bool {
 // per field: explicit flag > profile > blank. The daemon then fills a still-
 // blank field from the group's default profile, then the harness default — so
 // the intended order is flag > --profile > group-default profile > harness
-// default. (Caveat: for the two fields a harness resolves a launch default for
-// client-side — Codex sandbox/approval, via ResolveSandboxMode/
-// ResolveApprovalPolicy below — a blank reaches the daemon already filled with
-// the harness default, so the group-default-profile layer applies in practice
-// only to harness/model/effort. This is pre-existing CLI behavior, unchanged by
-// --profile.)
+// default. This holds for sandbox/approval too: the CLI VALIDATES those without
+// applying the harness default (see RunSpawn), so an omitted flag reaches the
+// daemon still blank and the group-default-profile layer applies uniformly
+// across all launch fields, not just harness/model/effort. An explicit
+// `inherit` is carried through as a first-class value the daemon won't override.
 //
 // The launch fields (harness/model/effort/sandbox/approval/auto_review/
 // trust_dir) are inherited ONLY when the effective harness matches the
@@ -654,22 +653,28 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
-	// Resolve --sandbox to the harness's secure default (Codex:
-	// workspace-write) when unset, validate an explicit value, and reject a
-	// mode for a harness with no launch sandbox flag (claude). The daemon
-	// re-resolves + applies the cwd-safety guard server-side.
-	sandboxMode, err := harness.ResolveSandboxMode(h, merged.Sandbox)
+	// Validate --sandbox (an explicit value / an inherited profile value) but do
+	// NOT apply the harness default here: a blank stays blank so the daemon's
+	// group-default-profile overlay can still fill it before the daemon applies
+	// the secure default (harness.ResolveSandboxMode) + the cwd-safety guard
+	// server-side. Applying the default client-side would resolve an omitted
+	// --sandbox to a concrete mode and pre-empt that overlay, so an agent spawned
+	// into a group whose default profile sets a sandbox would silently ignore it.
+	// An explicit `inherit` is carried through verbatim (a first-class sentinel)
+	// so the daemon won't let a profile override it. A mode for a harness with no
+	// launch sandbox flag is still rejected fast here.
+	sandboxMode, err := harness.ValidateSandboxMode(h, merged.Sandbox)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
-	// Resolve --ask-for-approval to the harness's non-escalating default
-	// (Codex: never) when unset, validate an explicit value, and reject a
-	// policy for a harness with no launch approval flag (claude). The non-
-	// escalating default is what keeps the detached, unattended pane from
-	// deadlocking on an approval prompt (JOH-200). The daemon re-resolves it
-	// server-side.
-	approvalPolicy, err := harness.ResolveApprovalPolicy(h, merged.Approval)
+	// Validate --ask-for-approval the same way, and for the same reason: a blank
+	// defers to the daemon's group-default overlay + non-escalating default
+	// (Codex: never — what keeps the detached, unattended pane from deadlocking on
+	// an approval prompt, JOH-200), applied server-side by ResolveApprovalPolicy;
+	// an explicit `inherit` is preserved; a policy for a harness with no launch
+	// approval flag is rejected fast here.
+	approvalPolicy, err := harness.ValidateApprovalPolicy(h, merged.Approval)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg

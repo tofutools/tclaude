@@ -9,8 +9,10 @@ import (
 // TestClaudeAskTimeout_Catalog pins the catalog the spawn dialog / profile
 // editor / CLI drive their Claude AskUserQuestion-timeout selector off: the
 // inherit/never/60s/5m/10m value set, the inherit default (the dropdown's
-// recommended option), and the normalization that makes inherit collapse to ""
-// (no override).
+// recommended option), and the tri-state normalization — "" stays "" (omitted),
+// inherit stays "inherit" (a first-class sentinel, carried so an overlay won't
+// override it; it collapses to "no override" only at emission), reals stay
+// themselves.
 func TestClaudeAskTimeout_Catalog(t *testing.T) {
 	c := claudeAskTimeout{}
 
@@ -27,9 +29,9 @@ func TestClaudeAskTimeout_Catalog(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"", "", false},
-		{"inherit", "", false},
-		{"  inherit  ", "", false}, // trimmed then normalized
+		{"", "", false},                   // omitted stays omitted
+		{"inherit", "inherit", false},     // first-class sentinel, NOT collapsed here
+		{"  inherit  ", "inherit", false}, // trimmed, kept
 		{"never", "never", false},
 		{"60s", "60s", false},
 		{"  5m  ", "5m", false}, // trimmed, kept
@@ -63,9 +65,9 @@ func TestClaudeAskTimeout_Catalog(t *testing.T) {
 }
 
 // TestClaudeAskTimeout_HarnessResolution pins the harness-level resolver: Claude
-// SupportsAskTimeout, an explicit value validates, inherit/blank resolves to ""
-// (omit), and an invalid value errors — the entry point every spawn boundary
-// uses.
+// SupportsAskTimeout, an explicit value validates, blank resolves to "" (omitted)
+// while an explicit inherit is preserved as "inherit" (the tri-state), and an
+// invalid value errors — the entry point every spawn boundary uses.
 func TestClaudeAskTimeout_HarnessResolution(t *testing.T) {
 	h, err := Resolve(DefaultName)
 	if err != nil {
@@ -75,11 +77,15 @@ func TestClaudeAskTimeout_HarnessResolution(t *testing.T) {
 		t.Fatal("claude must SupportsAskTimeout (per-session --settings override)")
 	}
 
-	// Blank / inherit → "" (no override): enabling auto-continue is opt-in.
-	for _, in := range []string{"", "inherit"} {
-		if got, err := ResolveAskTimeoutMode(h, in); err != nil || got != "" {
-			t.Fatalf("ResolveAskTimeoutMode(claude, %q) = (%q, %v), want (\"\", nil)", in, got, err)
-		}
+	// Blank → "" (omitted: a higher level may fill it). ResolveAskTimeoutMode
+	// applies no default, so an un-chosen ask-timeout stays omit.
+	if got, err := ResolveAskTimeoutMode(h, ""); err != nil || got != "" {
+		t.Fatalf("ResolveAskTimeoutMode(claude, \"\") = (%q, %v), want (\"\", nil)", got, err)
+	}
+	// Explicit inherit → "inherit" (preserved, NOT collapsed): this is what keeps
+	// an actively-chosen inherit from being overwritten by a profile/group default.
+	if got, err := ResolveAskTimeoutMode(h, "inherit"); err != nil || got != "inherit" {
+		t.Fatalf("ResolveAskTimeoutMode(claude, inherit) = (%q, %v), want (inherit, nil)", got, err)
 	}
 	if got, err := ResolveAskTimeoutMode(h, "5m"); err != nil || got != "5m" {
 		t.Fatalf("ResolveAskTimeoutMode(claude, 5m) = (%q, %v), want (5m, nil)", got, err)

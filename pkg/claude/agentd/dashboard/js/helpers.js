@@ -572,15 +572,18 @@ function harnessLine(m) {
 
 // sandboxBadge renders the per-agent launch-sandbox chip — "🔒 workspace-
 // write" — from state.sandbox_mode (Codex's --sandbox, recorded on the
-// session row at spawn). Returns '' when no mode is set: a Claude Code
-// agent (sandbox configured out of band, not a launch flag) or a row from
-// before the column existed shows no badge. read-only / workspace-write
-// carry a lock; danger-full-access carries a warning glyph + a distinct
-// class so a sandbox-OFF agent stands out. The full mode rides in the
-// tooltip; the chip text is the bare mode.
+// session row at spawn). Returns '' when no override is in effect: a row
+// from before the column existed, or a Claude Code agent on 'inherit' (the
+// default — sandbox configured out of band via settings.json, no per-session
+// override), both show no badge. Note a Claude spawn now records the literal
+// 'inherit' rather than '' (the tri-state carry that keeps an explicit inherit
+// from being overridden), so 'inherit' is treated the same as unset here.
+// read-only / workspace-write carry a lock; danger-full-access carries a
+// warning glyph + a distinct class so a sandbox-OFF agent stands out. The full
+// mode rides in the tooltip; the chip text is the bare mode.
 function sandboxBadge(m) {
   const mode = (m && m.state && m.state.sandbox_mode) || '';
-  if (!mode) return '';
+  if (!mode || mode === 'inherit') return '';
   const danger = mode === 'danger-full-access';
   const glyph = danger ? '⚠' : '🔒';
   const cls = danger ? 'sandbox-badge sandbox-danger' : 'sandbox-badge';

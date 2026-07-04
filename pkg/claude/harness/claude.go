@@ -116,12 +116,14 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	}
 	// Claude Code's approval posture is its permission mode: the harness-
 	// agnostic ApprovalPolicy carries a `--permission-mode` value for Claude
-	// (validated by claudeApproval; inherit/blank already collapsed to "" so an
-	// un-chosen spawn omits the flag and keeps the agent on settings.json + the
-	// agentd approval popup). Quoted defensively even though it's a validated
+	// (validated by claudeApproval). claudeApprovalValue collapses the first-class
+	// `inherit` sentinel (and unset/unrecognized) to "" here — the last layer that
+	// sees it — so an inherit/un-chosen spawn omits the flag and keeps the agent
+	// on settings.json + the agentd approval popup, and a bogus `--permission-mode
+	// inherit` is never emitted. Quoted defensively even though it's a validated
 	// enum, since it's handed to `sh -c`.
-	if spec.ApprovalPolicy != "" {
-		cmd += " --permission-mode " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
+	if mode := claudeApprovalValue(spec.ApprovalPolicy); mode != "" {
+		cmd += " --permission-mode " + clcommon.ShellQuoteArg(mode)
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))

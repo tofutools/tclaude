@@ -125,7 +125,9 @@ function profileSummary(p) {
   if (p.harness && p.harness !== 'claude') parts.push(p.harness);
   if (p.model) parts.push(p.model);
   if (p.effort) parts.push(`effort ${p.effort}`);
-  if (p.sandbox) parts.push(`sandbox ${p.sandbox}`);
+  // 'inherit' is the recommended default (no per-session override), so — like an
+  // absent toggle — it isn't worth a chip; only a real override (on/off) shows.
+  if (p.sandbox && p.sandbox !== 'inherit') parts.push(`sandbox ${p.sandbox}`);
   if (p.agent_name) parts.push(`name ${p.agent_name}`);
   if (p.role) parts.push(p.role);
   // The *bool toggles read as on/off only when explicitly set (an absent
@@ -138,7 +140,8 @@ function profileSummary(p) {
     parts.push(`group-ctx ${p.include_group_default_context ? 'on' : 'off'}`);
   }
   if (p.auto_review != null) parts.push(`auto-review ${p.auto_review ? 'on' : 'off'}`);
-  if (p.approval) parts.push(`approval ${p.approval}`);
+  // Same as sandbox: 'inherit' is the default permission mode, not worth a chip.
+  if (p.approval && p.approval !== 'inherit') parts.push(`approval ${p.approval}`);
   // Birth-time access controls: a chip for the owner default and the
   // override count, when the profile carries them.
   if (p.is_owner != null) parts.push(`owner ${p.is_owner ? 'on' : 'off'}`);

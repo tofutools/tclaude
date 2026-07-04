@@ -48,9 +48,12 @@ const tclaudeAgentdSocketTilde = "~/.tclaude/agentd.sock"
 type claudeSandbox struct{}
 
 // DefaultMode is `inherit` — the dropdown's recommended option (the dashboard
-// marks DefaultMode() "(recommended)"). It normalizes to "" through
-// ValidateMode, so resolving a blank request still ends at "omit", leaving an
-// un-chosen Claude spawn on the operator's own settings.json config.
+// marks DefaultMode() "(recommended)"). `inherit` is a FIRST-CLASS value
+// (ValidateMode returns it unchanged, NOT ""): it means "use the operator's own
+// settings.json sandbox config AND don't let a profile/group default override
+// that". It collapses to "no override" only at the final block emission (see
+// claudeSandboxBlock), so a spawn that explicitly chose inherit is not silently
+// re-filled by an overlay.
 func (claudeSandbox) DefaultMode() string { return ClaudeSandboxInherit }
 
 // Modes lists the selectable modes for spawn UIs: inherit (the default /
@@ -60,17 +63,27 @@ func (claudeSandbox) Modes() []string {
 	return []string{ClaudeSandboxInherit, ClaudeSandboxOn, ClaudeSandboxOff}
 }
 
-// ValidateMode normalizes and validates a requested mode. Both "" and the
-// `inherit` sentinel return "" — `inherit` is a recognized mode that means
-// "add no --settings override", so it collapses to the same omit the empty
-// string already means. This is what makes the default path behave exactly
-// like Claude Code before this feature: a blank or inherit choice threads no
-// sandbox value, emits no flag, and records no badge. `on` / `off` return
-// themselves; anything else is an error naming the valid set.
+// ValidateMode normalizes and validates a requested mode, preserving the
+// tri-state the overlay sites depend on:
+//
+//   - ""      → "" (OMITTED — a higher level, e.g. a group default profile, may
+//     fill it; if nothing does, the launch boundary applies the harness default).
+//   - inherit → "inherit" (ACTIVELY chosen — carried through as a first-class
+//     sentinel so an overlay treats it as "already set" and does NOT overwrite
+//     it; the final block emission collapses it to "no override").
+//   - on / off → themselves.
+//   - anything else → an error naming the valid set.
+//
+// The old behaviour collapsed inherit to "" here, which made an explicit inherit
+// indistinguishable from omitted so a profile/group default silently won;
+// keeping inherit distinct is the fix. `inherit` still emits no `--settings`
+// sandbox block and records no badge (see claudeSandboxBlock / sandboxBadge).
 func (claudeSandbox) ValidateMode(mode string) (string, error) {
 	switch strings.TrimSpace(mode) {
-	case "", ClaudeSandboxInherit:
+	case "":
 		return "", nil
+	case ClaudeSandboxInherit:
+		return ClaudeSandboxInherit, nil
 	case ClaudeSandboxOn:
 		return ClaudeSandboxOn, nil
 	case ClaudeSandboxOff:
