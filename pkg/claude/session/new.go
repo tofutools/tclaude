@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -714,16 +715,18 @@ func runNew(params *NewParams) error {
 func resolveSessionDir(dir string) (string, error) {
 	cwd := dir
 	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
+		cwd, err := os.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("failed to get current directory: %w", err)
 		}
 		return cwd, nil
 	}
 	if cwd[0] != '/' {
-		wd, _ := os.Getwd()
-		cwd = wd + "/" + cwd
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		cwd = filepath.Join(wd, cwd)
 	}
 	return cwd, nil
 }
