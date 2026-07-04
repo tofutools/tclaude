@@ -204,6 +204,13 @@ func TestDashboardHTML_WizardSpawnModal(t *testing.T) {
 
 	// The whole dialog is re-skinned arcane.
 	must("body.wizard #agent-spawn-modal .cron-create-modal", "the spawn dialog surface is re-skinned")
+
+	// The Task field is a type="url" input (Linear/GitHub/ticket link) — the only
+	// url input in a .cron-create-row. The wizard field re-skin must cover it too
+	// or it falls back to the default-dark box against the violet (it was left
+	// unskinned once, both here and in the base theme). Pin the selector so a
+	// refactor that re-lists the skinned input types without url trips here.
+	must("body.wizard #agent-spawn-modal .cron-create-row input[type=url]", "the wizard field re-skin covers the Task url input")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire
