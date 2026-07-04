@@ -28,6 +28,15 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"function roleRefOptionsHTML(",
 		`<select class="ta-role-ref">`,
 		"role_ref: $('.ta-role-ref', row).value.trim(),",
+		// role-inspect.js — the shared transparency panel (JOH-351) + its wiring
+		// into the templates role dropdown. A rename in any file silently drops
+		// the inspect affordance in the browser only.
+		"function roleInspectHTML(",
+		"import { roleInspectHTML } from './role-inspect.js';",
+		"function roleInspectFor(",
+		`<div class="ta-role-inspect">`,
+		// dashboard.css — the inspect panel's dark-theme styling.
+		".role-inspect {",
 		// dashboard.html — the Groups-cog entry + the two modals.
 		`id="roles-manage-open"`,
 		`id="roles-manage-modal"`,

@@ -647,15 +647,24 @@ to install a fresh copy. See [Starter task forces](dashboard.md#starter-task-for
 Manage the [role library](dashboard.md#roles-library) — named, reusable agent
 defaults a template agent references via its `role_ref` field. `ls` / `show`
 are open; writes need `roles.manage` (effectively human-only). Like templates, a
-role carries a multi-line brief, so it is authored as JSON via `--file`:
+role carries a multi-line brief, so it is authored as JSON via `--file`. `show`
+without `--json` prints the role's brief, launch shape and permission slugs — so
+you can see at a glance what picking the role implies (the same transparency the
+dashboard role picker surfaces inline):
 
 ```bash
 tclaude agent roles ls
 tclaude agent roles show <name> [--json]
 tclaude agent roles create --file <path>          # {name, descr, brief, spawn_profile, harness, model, effort, sandbox, approval, permissions}
 tclaude agent roles edit <name> --file <path>     # full replace
-tclaude agent roles rm <name>                     # a deleted seed role reappears on the next daemon open
+tclaude agent roles rm <name>                     # refused while a template still references the role; a deleted seed reappears on the next daemon open
 ```
+
+Roles resolve at **deploy time**: editing a role changes what *future* deploys
+of a referencing template inherit; already-deployed agents are untouched. Because
+a live reference matters, `rm` is refused while any template still names the role
+(the error lists them) — edit those templates to drop or repoint the reference
+first.
 
 ### task-force deploy
 

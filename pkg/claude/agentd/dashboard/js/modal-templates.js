@@ -22,6 +22,9 @@ import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDis
 // the roles.js data layer. loadRoles fills the cache on editor open; cachedRoles
 // feeds the synchronous row render.
 import { loadRoles, cachedRoles } from './roles.js';
+// roleInspectHTML (JOH-351): the shared "what does this role carry?" panel, so
+// picking a role in the dropdown isn't blind. Reused verbatim by any role picker.
+import { roleInspectHTML } from './role-inspect.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -251,6 +254,17 @@ function roleRefOptionsHTML(current) {
   return opts.join('');
 }
 
+// roleInspectFor renders the inspect panel for a role name selected in a
+// dropdown: the role's definition when it's in the library, a dangling-reference
+// note for a "⚠ missing" ref, or '' (the panel collapses) for "(none)". Used to
+// (re)paint the per-agent role-inspect container on open and on every change.
+function roleInspectFor(name) {
+  if (!name) return '';
+  const rl = cachedRoles().find(r => r.name === name);
+  if (!rl) return roleInspectHTML(null, { missing: true });
+  return roleInspectHTML(rl);
+}
+
 function editorAgentRowHTML(a, idx, slugs) {
   const perms = new Set(a.permissions || []);
   const checks = slugs.map(s =>
@@ -269,10 +283,11 @@ function editorAgentRowHTML(a, idx, slugs) {
       <input type="text" class="ta-role" placeholder="role label (e.g. product-owner)" value="${esc(a.role)}" />
       <input type="number" class="ta-wave" min="0" title="Staged-spawn wave (JOH-244): wave 0 spawns first; higher waves spawn once the prior wave is up and idle. All wave 0 = one synchronous pass." placeholder="wave (0)" value="${a.wave || 0}" />
     </div>
-    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath its own fields below, which override. Blank = no role.">
+    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath its own fields below, which override. Blank = no role. Roles resolve at deploy time, so editing the role changes future deploys.">
       <span>Role library</span>
       <select class="ta-role-ref">${roleRefOptionsHTML(a.role_ref)}</select>
     </label>
+    <div class="ta-role-inspect">${roleInspectFor(a.role_ref)}</div>
     <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
     <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
     <details class="ta-perms-details">
@@ -1182,6 +1197,12 @@ function bindTemplatesUI() {
       scrapeEditorAgents();
       scrapeEditorPattern();
       renderEditorPattern();
+    } else if (e.target.classList.contains('ta-role-ref')) {
+      // Repaint the role-inspect panel for the newly-picked role so the pick is
+      // never blind (JOH-351). Scoped to this agent's row.
+      const row = e.target.closest('.template-agent-row');
+      const panel = $('.ta-role-inspect', row);
+      if (panel) panel.innerHTML = roleInspectFor(e.target.value.trim());
     }
   });
   // Work-pattern rows: add / remove / reorder (delegated — the container

@@ -150,9 +150,10 @@ func ListRoles() ([]*Role, error) {
 }
 
 // DeleteRole removes a role by name. Returns the rows affected — 0 means no
-// such role, so the caller can answer 404. A template agent referencing a
-// now-deleted role degrades gracefully (its role_ref resolves to nothing and
-// the agent falls through to its own overrides / harness defaults).
+// such role, so the caller can answer 404. The wire layer refuses a delete
+// while any template still references the role (see TemplatesReferencingRole);
+// this DB primitive itself is unconditional, so a caller that has already
+// cleared the references (or is the re-seed) can still delete.
 func DeleteRole(name string) (int64, error) {
 	d, err := Open()
 	if err != nil {
@@ -163,6 +164,39 @@ func DeleteRole(name string) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// TemplatesReferencingRole returns the names of the group templates that have
+// at least one roster agent whose role_ref points at the given role, sorted
+// and de-duplicated. Empty (non-nil) when nothing references it. The delete
+// guard reads this to refuse deleting a role a template still names (JOH-351),
+// so the human isn't surprised by a template silently losing its role at the
+// next deploy — roles resolve at DEPLOY time, so a live reference matters.
+func TemplatesReferencingRole(name string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(
+		`SELECT DISTINCT t.name
+		   FROM group_template_agents a
+		   JOIN group_templates t ON t.id = a.template_id
+		  WHERE a.role_ref = ?
+		  ORDER BY t.name`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 const roleSelect = `SELECT id, name, descr, brief, spawn_profile, harness, model, effort,

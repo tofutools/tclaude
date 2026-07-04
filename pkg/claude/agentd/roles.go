@@ -275,6 +275,25 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requirePermission(w, r, PermRolesManage); !ok {
 			return
 		}
+		// Refuse while a template still references the role (JOH-351): roles
+		// resolve at DEPLOY time, so deleting one a template names would silently
+		// change that template's next deploy. Refusal is predictable — clear the
+		// references (or repoint them) first. The check is a cheap indexed read.
+		refs, err := db.TemplatesReferencingRole(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if len(refs) > 0 {
+			plural := ""
+			if len(refs) != 1 {
+				plural = "s"
+			}
+			writeError(w, http.StatusConflict, "role_in_use",
+				fmt.Sprintf("role %q is still referenced by %d template%s (%s) — edit those templates to drop or repoint the reference before deleting the role",
+					name, len(refs), plural, strings.Join(refs, ", ")))
+			return
+		}
 		n, err := db.DeleteRole(name)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())

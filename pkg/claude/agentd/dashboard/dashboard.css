@@ -2967,6 +2967,45 @@ details.group-virtual .group-name { color: #8aa0b8; }
   padding: 5px 8px; box-sizing: border-box; min-width: 0;
 }
 .template-agent-roleref select:focus { outline: none; border-color: #58a6ff; }
+/* Role-inspect panel (JOH-351): the shared "what does this role carry?" preview
+   rendered under the role dropdown by role-inspect.js. Empty (no role picked) it
+   collapses to nothing. Deeper-inset than the row so it reads as a sub-panel. */
+.ta-role-inspect:empty { display: none; }
+.role-inspect {
+  background: #0b0f14; border: 1px solid #21262d; border-radius: 4px;
+  padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;
+  font-size: 11px; color: #c9d1d9;
+}
+.role-inspect-missing { color: #d29922; }
+.role-inspect-descr { color: #adbac7; font-style: italic; }
+.role-inspect-row { display: flex; gap: 8px; align-items: baseline; }
+.role-inspect-key {
+  flex: 0 0 46px; color: #7d8590; text-transform: uppercase;
+  font-size: 9px; letter-spacing: 0.04em; padding-top: 1px;
+}
+.role-inspect-vals { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.role-inspect-muted { color: #6e7681; }
+.role-inspect-chip {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 3px;
+  padding: 1px 6px; color: #c9d1d9;
+}
+.role-inspect-chip b { color: #7d8590; font-weight: 600; }
+.role-inspect-slug {
+  background: #12261a; border: 1px solid #1f5a37; border-radius: 3px;
+  padding: 1px 6px; color: #7ee2a8; font-family: ui-monospace, monospace; font-size: 10px;
+}
+.role-inspect-brief > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  display: flex; gap: 8px; align-items: baseline; color: #adbac7;
+}
+.role-inspect-brief > summary::-webkit-details-marker { display: none; }
+.role-inspect-brief > summary:hover { color: #c9d1d9; }
+.role-inspect-brieftext {
+  margin: 5px 0 0; padding: 6px 8px; background: #161b22;
+  border: 1px solid #2a3340; border-radius: 4px; color: #c9d1d9;
+  white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 11px;
+}
+.role-inspect-foot { color: #6e7681; font-size: 10px; border-top: 1px solid #21262d; padding-top: 5px; }
 /* Per-role launch profile (JOH-239): a 2-column grid of optional launch
    overrides, tucked under a <details> like the permissions list. */
 .ta-launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
