@@ -599,6 +599,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.harnessOptions) > 0 {
 					m.newSessionHarness = m.harnessOptions[m.harnessIdx]
 				}
+				// A shell session has no conversation, so the Name field (a
+				// conversation title) is not applicable — forwarding it would
+				// trip rejectShellUnsupportedFlags on a --name the wizard user
+				// never typed, and RunWatchMode would flash that error and
+				// silently create nothing. Fold a typed Name into Label (the
+				// tmux handle) when Label is blank so the keystrokes aren't
+				// wasted, then drop Name.
+				if m.newSessionHarness == ShellHarnessName {
+					if m.newSessionLabel == "" {
+						m.newSessionLabel = m.newSessionName
+					}
+					m.newSessionName = ""
+				}
 				m.createNew = true
 				return m, tea.Quit
 			case "up":
