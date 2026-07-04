@@ -19,6 +19,12 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
 		}
 	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets still contain %q (%s)", needle, why)
+		}
+	}
 
 	// refresh.js: the shared "Discard input?" confirm is a single helper so
 	// every dirty-form dismiss path shows identical copy. bindBackdropDiscard
@@ -55,6 +61,22 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("bindManageOverlayDismiss('roles-manage-modal', closeRolesManageModal);", "the roles browser closes cleanly")
 	must("bindManageOverlayDismiss('profiles-manage-modal', closeProfilesManageModal);", "the profiles browser closes cleanly")
 	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
+
+	// A manage overlay's Escape must key on the z-index/DOM-order topmost test,
+	// NOT a bare "any .modal-overlay is shown" guard. The naive guard couldn't
+	// distinguish a child form modal ABOVE (yield to it) from a plain modal
+	// BENEATH — e.g. the templates panel opened over the "Form a party" dialog
+	// via "⧉ manage circles…" (JOH-356) — so it swallowed the Escape and left
+	// the front-most panel un-closable. Pin the fix so it can't regress: the
+	// topmost guard must now appear in BOTH Escape paths — bindBackdropDiscard
+	// (form modals) AND bindManageOverlayDismiss (listing overlays). A bare
+	// Contains would be satisfied by bindBackdropDiscard's copy alone even if
+	// the manage-overlay guard were dropped, so assert the count instead: a
+	// dropped manage guard takes it back to 1 and fails here.
+	if n := strings.Count(dashboardAssets, "if (!isTopmostOverlay(el)) return;"); n < 2 {
+		t.Errorf("expected the topmost-overlay Escape guard in both bindBackdropDiscard and bindManageOverlayDismiss, found %d occurrence(s)", n)
+	}
+	mustNot("if (document.querySelector('.modal-overlay.show')) return;", "the naive any-modal-shown Escape guard is gone from the manage overlays")
 
 	// modal-term.js: the live-terminal modal DELIBERATELY does not bind
 	// Escape (ESC is a control char the terminal itself needs). Pin the

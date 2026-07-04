@@ -1114,10 +1114,9 @@ export function bindBackdropDiscard(modalId, closeFn) {
 // does NOT dirty-track: these panels are a live listing plus a filter
 // box, not an editable form, so closing them can never lose unsaved input
 // and should be friction-free (no "discard?" prompt for a typed filter).
-// Both paths no-op while any child .modal-overlay (the editor /
-// instantiate / link modals these panels launch) is open on top, so a
-// backdrop click or Escape dismisses the child first and only reaches the
-// panel once the child is gone.
+// A child .modal-overlay open ON TOP (the editor / instantiate / link modals
+// these panels launch) claims the Escape / backdrop click first, so the
+// child dismisses and only a subsequent gesture reaches the panel.
 export function bindManageOverlayDismiss(id, closeFn) {
   const el = $('#' + id);
   if (!el) return;
@@ -1131,9 +1130,21 @@ export function bindManageOverlayDismiss(id, closeFn) {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!el.classList.contains('show')) return;
-    // A child form modal sits on top — let its own handler take the Escape.
-    if (document.querySelector('.modal-overlay.show')) return;
+    // Only the front-most overlay responds to Escape. A child form modal open
+    // ON TOP (the editor / instantiate / link modals these panels launch) is
+    // topmost, so we yield and its own handler takes the Escape. Crucially,
+    // a plain .modal-overlay open BENEATH us must NOT block us — e.g. this
+    // templates panel opened over the "Form a party" group-create dialog via
+    // its "⧉ manage circles…" button (JOH-356), which stays shown underneath.
+    // A bare querySelector('.modal-overlay.show') guard couldn't tell "child
+    // above" from "parent below" and wrongly swallowed the Escape in that case,
+    // leaving the panel un-closable; the z-index/DOM-order topmost test can.
+    if (!isTopmostOverlay(el)) return;
     e.preventDefault();
+    // Claim the event so a later-registered sibling handler doesn't re-run for
+    // the same Escape once we synchronously drop our .show and an overlay
+    // beneath becomes topmost (mirrors bindBackdropDiscard's reasoning).
+    e.stopImmediatePropagation();
     closeFn();
   });
 }
