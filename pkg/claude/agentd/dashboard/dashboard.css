@@ -9296,18 +9296,27 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 }
 .dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
 /* The re-homed primary cluster ("+ new group" + ⚙ cog) is kept at its NATURAL
-   size — the same compact chips as the floating toolbar — rather than stretched
-   to fill the dock, so the pair looks identical whether the dock is open or
-   collapsed. margin-left:auto on the "+ new group" primary right-aligns the pair
-   within the row, so the ⚙ cog still lands at a fixed offset from the right —
-   just left of the collapse control — in BOTH skins (the wider wizard "⚔ Form a
-   party" label doesn't shove it around). That fixed cog position keeps its
-   right-aligned .action-menu inside the dock: the menu anchors to .filter-bar-cog
-   (position:relative rides along) and opens DOWNWARD into the dock's tall body,
-   staying within #agent-dock's box so .dock-inner's overflow never clips it. */
+   size — the same compact chips as the floating toolbar — and LEFT-mounted at
+   the start of the head row; the in-dock collapse control ("Hide ›") stays
+   mounted at the far right (.dock-actions is flex:1, so it fills the row and
+   pushes .dock-collapse to the edge). Left-packing reads better than the pair
+   floating centred across the wide row.
+   Left-mounting moves the ⚙ cog off the right edge, so its .action-menu can no
+   longer drop leftward (the .filter-bar-cog right:0 rule) without spilling past
+   the dock's LEFT edge. We centre the dock cog's menu under the cog instead (see
+   the rule below) so it clears .dock-inner's overflow:hidden in BOTH skins
+   regardless of the menu's content width — the left-mounted cog sits near the
+   dock's horizontal centre, so a centred drop stays clear of either edge. The
+   FLOATING filter-bar cog keeps its right:0 leftward drop: that rule is scoped by
+   .filter-bar-cog alone, and the override here only bites while the cog lives in
+   the dock. */
 .dock-actions { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.dock-actions #group-create-open { flex: 0 0 auto; margin-left: auto; }
+.dock-actions #group-create-open { flex: 0 0 auto; }
 .dock-actions .filter-bar-cog { flex: 0 0 auto; }
+/* Centre the cog's dropdown under the (now left-mounted) cog so it opens into the
+   dock body without clipping past either dock edge. Overrides the leftward
+   .filter-bar-cog right:0 anchor for the in-dock cog only. */
+.dock-actions .filter-bar-cog .action-menu { left: 50%; right: auto; transform: translateX(-50%); }
 /* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
    the toolbar it normally sits in), so once re-homed into the dock the button
    would fall back to the bare browser-white default. Mirror the toolbar recipe
