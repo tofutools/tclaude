@@ -157,6 +157,14 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		SpawnedByAgent: ps.SpawnedByAgent,
 		WorktreePath:   ps.WorktreePath,
 		WorktreeBranch: ps.WorktreeBranch,
+		// NOTE: the per-agent task-reference link (TaskURL/TaskLabel) is
+		// NOT carried here — the same treatment SpawnConfigJSON gets (it's
+		// not persisted on the pending row either). A spawn that reaches
+		// enrollment via this async sweeper (chiefly Codex, whose conv-id
+		// materialises late) therefore lands with no task link; the inline
+		// CC path — the common lead-spawns-worker case — persists it fine.
+		// Carrying it would mean two more pending_spawns columns; deferred
+		// until the async-spawn-at-task path actually needs it.
 		// Birth-time access controls: the sweeper applies the same
 		// owner grant + permission overrides the inline paths do, now that the
 		// conv-id exists. enrollSpawnedConv reads these off spawnParams.

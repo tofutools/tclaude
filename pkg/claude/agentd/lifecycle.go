@@ -1604,6 +1604,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		remoteControl = false
 	}
 
+	// Validate an explicit task-reference link at the spawn boundary so a
+	// bad URL fails the request with a clear 400, rather than being
+	// silently dropped when enrollSpawnedConv tries to persist it. Empty
+	// means "no link". The scheme check is the same http(s) guard the
+	// standalone task endpoints apply — keeps `javascript:`/`data:` URLs
+	// out of the dashboard's Task-column href.
+	if u := strings.TrimSpace(body.TaskURL); u != "" {
+		if err := validateTaskRefURL(u); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_task_url", err.Error())
+			return
+		}
+		if err := validateTaskRefLabel(strings.TrimSpace(body.TaskLabel)); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_task_label", err.Error())
+			return
+		}
+	}
+
 	// Hand the validated request to the shared spawn core. executeSpawn
 	// owns the label → subprocess → conv-id poll → membership →
 	// post-init sequence; the group-template instantiator drives the
@@ -1613,6 +1630,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Name:                body.Name,
 		Role:                body.Role,
 		Descr:               body.Descr,
+		TaskURL:             strings.TrimSpace(body.TaskURL),
+		TaskLabel:           strings.TrimSpace(body.TaskLabel),
 		InitialMessage:      body.InitialMessage,
 		Attachments:         attachments,
 		Cwd:                 cwd,
@@ -1697,6 +1716,12 @@ type spawnParams struct {
 	Name           string
 	Role           string
 	Descr          string
+	// TaskURL / TaskLabel are the optional per-agent task-reference link
+	// (the dashboard Task column). Validated at the spawn boundary
+	// (handleGroupSpawn) and persisted onto the new actor in
+	// enrollSpawnedConv. Empty on paths with no task link.
+	TaskURL        string
+	TaskLabel      string
 	InitialMessage string
 	// Attachments are absolute file paths (uploaded screenshots / files the
 	// dashboard wrote to a temp dir) to surface in the startup briefing as an
@@ -2486,6 +2511,18 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	if agentID != "" && p.SpawnConfigJSON != "" {
 		if err := db.SetAgentInitialSpawnConfig(agentID, p.SpawnConfigJSON); err != nil {
 			slog.Warn("spawn: failed to record initial spawn config",
+				"agent", agentID, "error", err)
+		}
+	}
+
+	// Record the per-agent task-reference link (dashboard Task column),
+	// when the spawn requested one. Best-effort like the spawn-config
+	// write above: the URL was already scheme-validated at the spawn
+	// boundary, so this only ever stores a good value or logs. Lets a
+	// lead point each spawned worker at its Linear issue up front.
+	if agentID != "" && p.TaskURL != "" {
+		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
+			slog.Warn("spawn: failed to record task-reference link",
 				"agent", agentID, "error", err)
 		}
 	}

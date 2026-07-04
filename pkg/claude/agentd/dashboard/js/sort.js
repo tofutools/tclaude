@@ -121,6 +121,7 @@ const MEMBER_COLS = [
   { key: 'cwd',    label: 'CWD',         col: 'cwd',    hideable: true },
   { key: 'branch', label: 'Branch',      col: 'branch', hideable: true },
   { key: 'role',   label: 'Role',        col: 'role',   hideable: true },
+  { key: 'task',   label: 'Task',        col: 'task',   hideable: true },
   { key: 'descr',  label: 'Description', col: 'descr',  hideable: true },
 ];
 const MEMBER_ACCESSORS = {
@@ -137,6 +138,9 @@ const MEMBER_ACCESSORS = {
   cwd:    m => m.current_dir || (m.state || {}).cwd,
   branch: m => m.branch,
   role:   m => m.role,
+  // sort on the display label (JOH-353 / #42 / host) so the column
+  // orders the way it reads; fall back to the raw URL.
+  task:   m => m.task_ref_label || m.task_ref_url,
   descr:  m => m.descr,
 };
 

@@ -633,6 +633,17 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .pr-link.pr-state-merged  { color: #a371f7; }
 .pr-link.pr-state-closed  { color: #f85149; }
 .pr-link.pr-state-unknown { color: #8b949e; }
+/* Task column: the agent's task-reference link (Linear/GitHub/ticket).
+   Same restrained blue-on-hover treatment as .branch-link. The
+   inert .task-ref (non-http(s), rendered as a span) keeps the label
+   colour without the link affordance. */
+.task-ref {
+  display: inline-block; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e;
+}
+a.task-link { text-decoration: none; }
+a.task-link:hover { color: #58a6ff; text-decoration: underline; }
 /* loc-pair stacks an init/now value pair in one CWD or Branch cell,
    shown only when the agent's launch location differs from where it
    is working now — keeps the column narrow instead of adding a 2nd. */

@@ -48,6 +48,14 @@ type SpawnRequest struct {
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
 	Descr string `json:"descr,omitempty"`
+	// TaskURL is an optional per-agent task-reference link (http(s)) —
+	// the work item the agent is on (a Linear issue, GitHub issue/PR,
+	// ticket, …), rendered as a clickable label in the dashboard's Task
+	// column. TaskLabel overrides the auto-derived display label.
+	// Stored on the agent (not the membership), so a lead spawning
+	// workers can point each at its Linear issue up front.
+	TaskURL   string `json:"task_ref_url,omitempty"`
+	TaskLabel string `json:"task_ref_label,omitempty"`
 	// InitialMessage, when set, is delivered to the new agent as its
 	// first task brief — placed in its inbox as an agent_messages row,
 	// not typed into its pane, so newlines survive verbatim. Split from
@@ -216,6 +224,8 @@ type SpawnParams struct {
 	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
+	Task           string `long:"task" optional:"true" help:"Task-reference link (http(s)) for the new agent — e.g. its Linear issue or GitHub PR. Rendered as a clickable label in the dashboard's Task column"`
+	TaskLabel      string `long:"task-label" optional:"true" help:"Optional display label overriding the auto-derived one for --task (Linear->JOH-xxx, GitHub->#nnn, else host)"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
 	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
 	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
@@ -460,6 +470,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Name:           name,
 		Role:           p.Role,
 		Descr:          p.Descr,
+		TaskURL:        strings.TrimSpace(p.Task),
+		TaskLabel:      strings.TrimSpace(p.TaskLabel),
 		InitialMessage: initialMessage,
 		ReplyTo:        strings.TrimSpace(p.ReplyTo),
 		Cwd:            cwd,
