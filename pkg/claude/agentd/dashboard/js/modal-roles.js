@@ -13,7 +13,7 @@
 // the chosen harness. Because the server's PATCH is a FULL replace, the editor
 // surfaces every stored field.
 
-import { $, $$, esc, bindSelectTitles } from './helpers.js';
+import { $, $$, esc, bindSelectTitles, setModelSelectValue, syncCustomModelRow } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { loadRoles, createRole, updateRole, deleteRole, roleSummary } from './roles.js';
@@ -41,12 +41,15 @@ function roleHarnessByName(name) {
 }
 
 // roleActiveModelEl returns the Model control in play for the selected harness —
-// the curated <select> for a harness with a model list, the free-text <input>
-// for one without (Codex). Mirrors profileActiveModelEl.
+// the curated <select> for a harness with a model list, its revealed "Custom…"
+// free-text input when the select sits on that sentinel, or the Codex free-text
+// <input> for a harness without a model list. Mirrors profileActiveModelEl.
 function roleActiveModelEl() {
   const h = roleHarnessByName($('#role-editor-harness').value);
   const codexStyle = h && (!h.models || h.models.length === 0);
-  return codexStyle ? $('#role-editor-model-codex') : $('#role-editor-model');
+  if (codexStyle) return $('#role-editor-model-codex');
+  const sel = $('#role-editor-model');
+  return sel.value === '__custom__' ? $('#role-editor-model-custom') : sel;
 }
 
 function populateRoleHarnessSelect() {
@@ -82,6 +85,10 @@ function applyRoleEditorHarness(harnessName) {
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#role-editor-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#role-editor-model-codex-row').style.display = hasModelList ? 'none' : '';
+  // The free-text "Custom…" row belongs to the curated <select>; reconcile it
+  // with the select for Claude, hide it for a free-text harness (Codex).
+  if (hasModelList) syncCustomModelRow('role-editor-model');
+  else $('#role-editor-model-custom-row').style.display = 'none';
 
   const canSandbox = !!(h && h.can_sandbox && h.sandbox_modes && h.sandbox_modes.length);
   $('#role-editor-sandbox-row').style.display = canSandbox ? '' : 'none';
@@ -243,9 +250,16 @@ function openRoleEditor(seed) {
   }
   applyRoleEditorHarness(hSel.value);
 
-  $('#role-editor-model').value = '';
+  // setModelSelectValue clears the curated <select> (dropping any injected
+  // option) and keeps an out-of-catalog seed model (a full id like
+  // "claude-opus-4-8[1m]") selectable rather than silently dropping it onto the
+  // <select>'s prior pick — the same fix the spawn/profile editors carry.
+  setModelSelectValue($('#role-editor-model'), '');
   $('#role-editor-model-codex').value = '';
-  if (seed && seed.model) roleActiveModelEl().value = seed.model;
+  if (seed && seed.model) setModelSelectValue(roleActiveModelEl(), seed.model);
+  // Reconcile the "Custom…" free-text row: the reset above left the select on a
+  // concrete value, so the row hides — a seed never lands on a half-typed entry.
+  syncCustomModelRow('role-editor-model');
   setSelectIfPresent($('#role-editor-effort'), seed ? seed.effort : '');
   setSelectIfPresent($('#role-editor-sandbox'), seed ? seed.sandbox : '');
   setSelectIfPresent($('#role-editor-approval'), seed ? seed.approval : '');
@@ -362,6 +376,10 @@ function bindRolesUI() {
   $('#role-editor-submit').addEventListener('click', submitRoleEditor);
   $('#role-editor-harness').addEventListener('change', (e) => {
     applyRoleEditorHarness(e.target.value);
+  });
+  // Picking "Custom model id…" reveals the free-text row and focuses it.
+  $('#role-editor-model').addEventListener('change', () => {
+    syncCustomModelRow('role-editor-model', { focus: true });
   });
   $('#role-editor-perms-list').addEventListener('change', updateRolePermsCount);
   bindBackdropDiscard('role-editor-modal', closeRoleEditor);
