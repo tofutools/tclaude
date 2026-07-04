@@ -692,10 +692,11 @@ func runWhoami(stdout, stderr io.Writer) int {
 
 func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	var resp struct {
-		IsHuman bool   `json:"is_human"`
-		AgentID string `json:"agent_id"`
-		ConvID  string `json:"conv_id"`
-		Title   string `json:"title"`
+		IsHuman bool     `json:"is_human"`
+		AgentID string   `json:"agent_id"`
+		ConvID  string   `json:"conv_id"`
+		Title   string   `json:"title"`
+		Phases  []string `json:"phases"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -716,6 +717,11 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 		id = resp.ConvID
 	}
 	fmt.Fprintf(stdout, "%s\t%s\n", id, title)
+	// Advisory process (JOH-242): one line per group with a process, showing
+	// its current phase.
+	for _, ph := range resp.Phases {
+		fmt.Fprintf(stdout, "  %s\n", ph)
+	}
 	return rcOK
 }
 

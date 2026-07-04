@@ -53,14 +53,22 @@ type jobJSON struct {
 	TargetConv      string `json:"target_conv"`
 	GroupID         int64  `json:"group_id,omitempty"`
 	GroupName       string `json:"group_name,omitempty"`
+	TargetRole      string `json:"target_role,omitempty"`
 	IntervalSeconds int64  `json:"interval_seconds"`
 	CronExpr        string `json:"cron_expr,omitempty"`
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	LastRunAt       string `json:"last_run_at,omitempty"`
-	LastRunStatus   string `json:"last_run_status,omitempty"`
+	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
+	// a normal human enable/disable, or "group-retired" when a retire that
+	// emptied the target group auto-paused it. Surfaced so a reader can tell a
+	// tclaude-paused rhythm from a hand-paused one — `task-force status`
+	// (JOH-346) renders it as "disabled (auto: group-retired)". omitempty:
+	// only the exceptional auto-disabled state serializes.
+	DisabledReason string `json:"disabled_reason,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	LastRunAt      string `json:"last_run_at,omitempty"`
+	LastRunStatus  string `json:"last_run_status,omitempty"`
 }
 
 func toJobJSON(j *db.AgentCronJob) jobJSON {
@@ -73,11 +81,13 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		TargetAgent:     j.TargetAgent,
 		TargetConv:      j.TargetConv,
 		GroupID:         j.GroupID,
+		TargetRole:      j.TargetRole,
 		IntervalSeconds: j.IntervalSeconds,
 		CronExpr:        j.CronExpr,
 		Subject:         j.Subject,
 		Body:            j.Body,
 		Enabled:         j.Enabled,
+		DisabledReason:  j.DisabledReason,
 		LastRunStatus:   j.LastRunStatus,
 	}
 	// For a group-target job, resolve the group's display name so the
@@ -330,6 +340,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		Body     string `json:"body"`
 		Enabled  *bool  `json:"enabled,omitempty"` // optional; defaults to true
 		GroupID  int64  `json:"group_id"`          // optional explicit override; auto-inferred from shared groups when 0
+		Role     string `json:"role,omitempty"`    // optional role filter for a group target ("" / "all" = whole group)
 	}
 	if r.ContentLength == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "missing request body")
@@ -386,6 +397,13 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
 		return
 	}
+	// A role filter only makes sense for a group target (it narrows the
+	// fan-out); reject it on a single-conv target rather than silently ignore.
+	if strings.TrimSpace(body.Role) != "" && ct.Kind != db.CronTargetGroup {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"role is only valid for a group: target (it filters group members)")
+		return
+	}
 
 	enabled := true
 	if body.Enabled != nil {
@@ -411,6 +429,15 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		job.TargetKind = db.CronTargetGroup
 		job.GroupID = ct.Group.ID
+		// Role filter (JOH-244): a group-target job may narrow to matching
+		// members, resolved against the live roster at fire time. "" or "all"
+		// (case-insensitive) = whole group; normalized to "" so the fan-out's
+		// empty-filter path handles it.
+		role := strings.TrimSpace(body.Role)
+		if strings.EqualFold(role, "all") {
+			role = ""
+		}
+		job.TargetRole = role
 		// OwnerConv is the message sender at fire time. An agent caller
 		// owns the job it scheduled; a human caller may attribute it to
 		// a specific conv via `owner`, else it stays "" — the dashboard
@@ -654,6 +681,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		Body     *string `json:"body,omitempty"`
 		Enabled  *bool   `json:"enabled,omitempty"`
 		GroupID  *int64  `json:"group_id,omitempty"`
+		Role     *string `json:"role,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -667,6 +695,15 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		Body:    body.Body,
 		Enabled: body.Enabled,
 		GroupID: body.GroupID,
+	}
+	// Role filter (JOH-244): normalize "all" → "" (whole group) so the stored
+	// value drives the fan-out's empty-filter path.
+	if body.Role != nil {
+		role := strings.TrimSpace(*body.Role)
+		if strings.EqualFold(role, "all") {
+			role = ""
+		}
+		patch.TargetRole = &role
 	}
 	if body.Name != nil {
 		if err := validateCronName(*body.Name); err != nil {

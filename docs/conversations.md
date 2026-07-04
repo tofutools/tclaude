@@ -39,6 +39,16 @@ tclaude conv ls --before 2024-01-01
 | `--since` | Show only after this time |
 | `--before` | Show only before this time |
 
+### conv watch
+
+Shortcut for `conv ls -w` — jumps straight into interactive watch mode. Takes the same
+`-g`, `--since`, and `--before` flags as `conv ls`.
+
+```bash
+tclaude conv watch
+tclaude conv watch -g
+```
+
 ### conv search
 
 Search conversation content.

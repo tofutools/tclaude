@@ -50,6 +50,7 @@ func Cmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			ListCmd(),
+			WatchCmd(),
 			SearchCmd(),
 			IndexEmbeddingsCmd(),
 			SearchEmbeddingsCmd(),

@@ -50,6 +50,7 @@ import {
 } from './refresh.js';
 import { openAgentSpawnModal } from './modal-spawn.js';
 import { openProfilesManageModal } from './modal-profiles.js';
+import { openRolesManageModal } from './modal-roles.js';
 import { openGroupCreateModal } from './modal-message.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { rankCommands } from './palette-score.js';
@@ -391,6 +392,19 @@ function buildCommands() {
     keywords: 'profiles profile edit manage spawn recipe recipes bundle preset presets defaults'
       + ' patterns pattern familiar weave inscribe grimoire loom blueprint',
     run: () => openProfilesManageModal(),
+  });
+  // 2c) Manage the role library — the named, reusable agent-role defaults a
+  //     template roster agent references (a canonical brief + a default launch
+  //     shape + a default permission set). Reuses the overlay the Groups cog's
+  //     "⧉ roles…" entry opens (openRolesManageModal). In 🧙 mode roles are the
+  //     party's "classes".
+  cmds.push({
+    icon: wiz('⧉', '🎭'), label: wiz('Edit roles…', 'Edit classes…'),
+    hint: wiz('open the role library — view, edit, or add reusable agent-role defaults',
+      'open the class library — inscribe, revise, or add familiar classes'),
+    keywords: 'roles role edit manage library brief defaults permission permissions class classes'
+      + ' reviewer tester lead dev designer po party',
+    run: () => openRolesManageModal(),
   });
   // One pinned spawn per group, so the operator can launch straight into a
   // named group without first picking it in the dialog.

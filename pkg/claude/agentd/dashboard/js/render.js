@@ -437,6 +437,7 @@ function groupActionsHTML(g, members) {
     + quickPinItem
     + `<button data-act="rename-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Rename this group">rename</button>`
     + `<button data-act="clone-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clone this group — copy every setting (directory, description, startup context, default profile, max-members, notify) and the owners into a new group. Optionally clone the member agents too.">⧉ clone…</button>`
+    + `<button data-act="template-from-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Save this group as a reusable template — snapshot its roles, owners, per-agent permissions and startup context into a blueprint you can instantiate as a fresh team">⧉ save as template…</button>`
     + `<button data-act="export-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Export this whole group — members, permissions, messages and every conversation — to a portable .zip archive">⤓ export</button>`
     + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
     + `<button data-act="cleanup-worktrees-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected.">🧹 cleanup worktrees…</button>`
@@ -516,6 +517,158 @@ function groupActivityChip(members) {
   return groupActivityHTML(members, st.regular, st.slop, st.wizard);
 }
 
+// groupProcessChip renders a group's advisory process state (JOH-242) as a
+// compact "◆ phase 2/5: review" chip plus an advance control, both in the
+// group summary. The chip's title tooltip carries the ordered phase map (the
+// current phase marked, with its roles) and the transition log. Returns '' for
+// a group with no process. The advance button is gated server-side
+// (process.advance / owner-pass); a non-permitted click just gets a 403 toast.
+function groupProcessChip(g) {
+  const p = g.process;
+  if (!p || !p.phases || !p.phases.length) return '';
+  const idx = typeof p.phase_index === 'number' ? p.phase_index : -1;
+  const chipText = idx >= 0
+    ? `◆ phase ${idx + 1}/${p.phase_count}: ${p.current_phase}`
+    : `◆ ${p.current_phase}`;
+  const mapLines = p.phases.map((ph, i) => {
+    const mark = ph.current ? '▸ ' : '  ';
+    const roles = (ph.roles && ph.roles.length) ? ph.roles.join(', ') : 'any';
+    return `${mark}${i + 1}. ${ph.name} [${roles}]`;
+  });
+  const trLines = (p.transitions || []).map(t => `${t.from || '(start)'} → ${t.to}`);
+  const titleParts = ['Advisory process — tracked, not enforced', '', ...mapLines];
+  if (trLines.length) titleParts.push('', 'transitions:', ...trLines);
+  const title = titleParts.join('\n');
+  // Only offer the advance button when there IS a next phase — at the last
+  // phase (or a drifted current phase) "advance to next" is a server 409, which
+  // would just surface as a confusing red toast. Correcting to a named phase is
+  // the CLI's `process advance --to <phase>` job.
+  const next = idx >= 0 && idx + 1 < p.phase_count ? p.phases[idx + 1].name : '';
+  const advanceBtn = next
+    ? `<button class="group-process-advance" data-act="advance-phase" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="${esc(`Advance to the next phase (${next})`)}">▸ advance</button>`
+    : '';
+  return `<span class="group-process-chip" title="${esc(title)}">${esc(chipText)}</span>` + advanceBtn;
+}
+
+// groupWavesChip renders a group's staged-spawn status (JOH-244) as a compact
+// "🌊 wave 1/3 pending" chip while later waves are still deferred. Returns ''
+// once the choreography completes (or for a single-wave deploy — no chip).
+function groupWavesChip(g) {
+  const wv = g.waves;
+  if (!wv || !wv.pending_waves) return '';
+  const titleParts = [
+    `Staged spawn — ${wv.pending_agents} agent(s) in ${wv.pending_waves} more wave(s) will spawn as each wave settles`,
+  ];
+  if (wv.deadline_at) titleParts.push(`next wave by ${wv.deadline_at} at the latest`);
+  return `<span class="group-waves-chip" title="${esc(titleParts.join('\n'))}">🌊 wave ${wv.current_wave}/${wv.total_waves} pending</span>`;
+}
+
+// isDeployedForce reports whether a group looks like a deployed task force
+// (JOH-247): it carries deployment provenance (a source template / mission) or
+// live process / wave machinery. Degrades gracefully — any one signal is
+// enough, so a plain-instantiated group (source template, no mission) still
+// gets the force block, and a hand-built group with none of these does not.
+function isDeployedForce(g) {
+  return !!(g.source_template || g.mission || (g.process && g.process.phases && g.process.phases.length) || g.waves);
+}
+
+// forceMemberLiveness classifies a member for the roles rollup + stalling
+// glance: an offline / exited member is 'dead'; an online member is 'idle' only
+// when its recorded status is literally idle, and 'working' for anything else in
+// flight (working / main_agent_idle / awaiting_* / error / an as-yet-unreported
+// online agent). The idle-vs-working split is deliberately conservative so the
+// stalling hint (all-live-idle) never fires while anything is mid-turn.
+function forceMemberLiveness(m) {
+  if (!m.online) return 'dead';
+  return ((m.state && m.state.status) || '') === 'idle' ? 'idle' : 'working';
+}
+
+// forceMemberPill renders one member in the roles rollup: a status glyph, its
+// name, and — when the snapshot already carries it — its context pressure
+// (e.g. 62%). No new data source: context_pct rides the same member.state the
+// members table reads.
+function forceMemberPill(m) {
+  const live = forceMemberLiveness(m);
+  const glyph = live === 'working' ? '●' : live === 'idle' ? '○' : '✕';
+  const pct = Math.round(Number((m.state && m.state.context_pct) || 0));
+  const name = m.title || (m.conv_id ? m.conv_id.slice(0, 8) : '(unnamed)');
+  const ctx = pct > 0 ? ` <span class="force-member-ctx">${pct}%</span>` : '';
+  const tip = `${name} — ${live}${pct > 0 ? ` · context ${pct}%` : ''}`;
+  return `<span class="force-member force-member-${live}" title="${esc(tip)}">${glyph} ${esc(name)}${ctx}</span>`;
+}
+
+// forceRolesRollup groups a force's members by role (first-seen order) and
+// renders a per-role line of member pills — the "who is working / idle / dead"
+// glance. Reuses the snapshot's existing per-member status; no new collection.
+function forceRolesRollup(members) {
+  const order = [];
+  const byRole = new Map();
+  members.forEach(m => {
+    const role = m.role || '(no role)';
+    if (!byRole.has(role)) { byRole.set(role, []); order.push(role); }
+    byRole.get(role).push(m);
+  });
+  return order.map(role => {
+    const pills = byRole.get(role).map(forceMemberPill).join('');
+    return `<div class="force-role-row"><span class="force-role-name">${esc(role)}</span><span class="force-role-members">${pills}</span></div>`;
+  }).join('');
+}
+
+// forceStalling reports whether every LIVE member is idle — a lean, derived
+// "nothing in flight" hint (presentation-only, no backend state). False when no
+// member is live (a fully-offline force is dormant, not stalling).
+function forceStalling(members) {
+  const live = members.filter(m => m.online);
+  return live.length > 0 && live.every(m => forceMemberLiveness(m) === 'idle');
+}
+
+// forcePhaseHistory renders a compact phase line + a transition-history affordance
+// for the force block. The summary already carries the phase chip; here the
+// transition log (already in the process payload) is one click/hover away via a
+// small "history (N)" element — the lean "access to the transition history" the
+// force view asks for. Returns '' for a force with no process.
+function forcePhaseHistory(g) {
+  const p = g.process;
+  if (!p || !p.phases || !p.phases.length) return '';
+  const idx = typeof p.phase_index === 'number' ? p.phase_index : -1;
+  const chip = idx >= 0 ? `phase ${idx + 1}/${p.phase_count}: ${p.current_phase}` : p.current_phase;
+  const trs = p.transitions || [];
+  const histTip = trs.length
+    ? trs.map(t => `${t.from || '(start)'} → ${t.to}${t.at ? '  ' + t.at : ''}`).join('\n')
+    : 'no transitions yet';
+  const hist = trs.length
+    ? `<span class="force-phase-history" title="${esc(histTip)}">history (${trs.length})</span>`
+    : '';
+  return `<div class="force-phase"><span class="force-phase-label">◆ ${esc(chip)}</span>${hist}</div>`;
+}
+
+// renderForceBlock builds the deployed-task-force glance for a group's expanded
+// body (JOH-247): mission (quest), phase + transition history, a per-role
+// live-status rollup, a stalling hint, and the re-brief control. Advance lives
+// in the summary chip and retire in the ⚙ cog (shutdown / delete) — not
+// duplicated here. Returns '' for a group that is not a deployed force. Renders
+// as ONE stable .group-force-block node so the 2s morph reconciles it in place
+// (its children are positional — no keys to collide).
+function renderForceBlock(g, members) {
+  if (!isDeployedForce(g)) return '';
+  const parts = [];
+  if (g.mission) {
+    const from = g.source_template ? ` <span class="force-from">from ${esc(g.source_template)}</span>` : '';
+    parts.push(`<div class="force-mission"><span class="force-mission-label-regular">🎯 Mission</span><span class="force-mission-label-wizard">🗺 Quest</span>: <span class="force-mission-text">${esc(g.mission)}</span>${from}</div>`);
+  } else if (g.source_template) {
+    parts.push(`<div class="force-mission force-mission-unset">Deployed from template <strong>${esc(g.source_template)}</strong> — no mission recorded</div>`);
+  }
+  parts.push(forcePhaseHistory(g));
+  if (members.length) {
+    const stalling = forceStalling(members)
+      ? `<span class="force-stalling" title="Every live member is idle — nothing appears to be in flight. The force may be waiting on a nudge, a decision, or the next phase.">⚠ stalling</span>`
+      : '';
+    parts.push(`<div class="force-roles"><div class="force-roles-head"><span class="force-roles-label">Roles</span>${stalling}</div>${forceRolesRollup(members)}</div>`);
+  }
+  parts.push(`<div class="force-controls"><button class="force-rebrief-btn" data-act="rebrief-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief</button><button class="force-standdown-btn" data-act="stand-down-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Stand down the force — the mirror of deploy. Retires every member and sweeps the deploy-seeded rhythms + pending waves, keeping the group as a dormant record (mission &amp; history preserved). Not a delete.">⏻ stand down</button></div>`);
+  return `<div class="group-force-block">${parts.filter(Boolean).join('')}</div>`;
+}
+
 function renderGroups(groups) {
   if (!groups || !groups.length) {
     // The button label the hint names swaps per theme too (the same
@@ -582,6 +735,8 @@ function renderGroups(groups) {
       <summary draggable="true" data-group-reorder="${esc(g.name)}" title="Drag this header to reorder the group">
         <strong class="group-name" data-group-name="${esc(g.name)}">${esc(g.name)}</strong>
         ${groupActivityChip(members)}
+        ${groupProcessChip(g)}
+        ${groupWavesChip(g)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
         <span class="${capChipClass}" data-act="set-group-max-members" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-max="${g.max_members || 0}" title="${esc(capChipTitle)}">👥 ${capChipText}</span>
@@ -590,6 +745,7 @@ function renderGroups(groups) {
       </summary>
       <div class="subtable">
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
+        ${renderForceBlock(g, members)}
         ${members.length === 0
           ? '<div class="muted">(no members yet)</div>'
           : visible.length === 0

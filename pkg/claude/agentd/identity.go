@@ -294,6 +294,8 @@ const (
 	PermTemplatesManage    = "templates.manage"
 	PermTemplatesUse       = "templates.instantiate"
 	PermProfilesManage     = "profiles.manage"
+	PermRolesManage        = "roles.manage"
+	PermProcessAdvance     = "process.advance"
 	PermHumanNotify        = "human.notify"
 	// PermSettingsDefaultModel gates writing the user-level default
 	// model into ~/.claude/settings.json — a file in the human's home

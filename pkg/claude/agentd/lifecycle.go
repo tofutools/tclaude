@@ -50,6 +50,10 @@ type groupOpResp struct {
 	Group   string           `json:"group"`
 	Action  string           `json:"action"`
 	Members []memberOpResult `json:"members"`
+	// RhythmsReenabled is the number of group-target cron jobs a resume
+	// re-enabled — exactly the rhythms a prior emptying retire auto-disabled
+	// (JOH-345). Omitted when zero / for a stop.
+	RhythmsReenabled int `json:"rhythms_reenabled,omitempty"`
 }
 
 const daemonSoftExitReason = "soft_exit"
@@ -276,6 +280,26 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
 	}
+	// Re-enable exactly the rhythms a prior emptying retire auto-disabled
+	// (JOH-345) — but ONLY once the group has live members again. Retire REMOVES
+	// membership, so a resume on a still-empty dormant group can't repopulate it;
+	// re-enabling there would just re-create the "firing to nobody" state the
+	// auto-disable existed to prevent. Gate on live members so the rhythms come
+	// back exactly when the force does (a member re-added / re-spawned before the
+	// resume), and stay disabled when the group is still empty. Best-effort
+	// tidy-up: a failure is logged and swallowed — the resume itself succeeded.
+	if live, err := groupHasLiveMembers(g.ID); err != nil {
+		slog.Warn("resume: could not check group liveness for rhythm re-enable", "group", g.Name, "err", err)
+	} else if live {
+		if n, err := db.ReenableGroupRetiredCronJobs(g.ID); err != nil {
+			slog.Warn("resume: could not re-enable group rhythms", "group", g.Name, "err", err)
+		} else {
+			out.RhythmsReenabled = n
+			if n > 0 {
+				slog.Info("resume re-enabled group rhythms", "group", g.Name, "reenabled", n)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -447,10 +471,70 @@ func resolveResumeConvFromHarnessStores(convID string) (*harness.ConvRef, bool) 
 // — retire can leave a group ownerless when it demotes an owner, and
 // the human needs to hear about that.
 type groupRetireResp struct {
-	Group    string           `json:"group"`
-	Action   string           `json:"action"`
-	Members  []memberOpResult `json:"members"`
-	Warnings []string         `json:"warnings,omitempty"`
+	Group   string           `json:"group"`
+	Action  string           `json:"action"`
+	Members []memberOpResult `json:"members"`
+	// RhythmsDisabled is the number of group-target cron jobs (template-seeded
+	// rhythms) auto-disabled because this retire left the group with no live
+	// members (JOH-345). Omitted when zero — a partial retire, or one that left
+	// live members behind, disables nothing.
+	RhythmsDisabled int      `json:"rhythms_disabled,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// groupHasLiveMembers reports whether groupID still has at least one member
+// backed by a live (current-generation, active) agent conv. Placeholder members
+// (no conv yet) and retired/superseded convs do not count. Used to decide
+// whether a retire has emptied the group of live recipients.
+func groupHasLiveMembers(groupID int64) (bool, error) {
+	members, err := db.ListAgentGroupMembers(groupID)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range members {
+		if m.ConvID == "" {
+			continue
+		}
+		live, err := db.IsLiveAgentConv(m.ConvID)
+		if err != nil {
+			return false, err
+		}
+		if live {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// disableGroupRhythmsIfEmptied disables the group's template-seeded rhythm cron
+// jobs when a retire has left it with no live members (JOH-345). Non-destructive
+// (the jobs stay visible + reversible in the Cron tab, marked 'group-retired'),
+// and a later `groups resume` re-enables exactly these. Returns the number
+// disabled (0 when live members remain). Best-effort tidy-up: a failure is
+// logged and swallowed — the retire itself already succeeded, and a stray rhythm
+// firing at a dormant group merely no-ops (fireCronGroupJob resolves an empty
+// roster gracefully).
+func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
+	live, err := groupHasLiveMembers(g.ID)
+	if err != nil {
+		slog.Warn("retire: could not check group liveness for rhythm cleanup",
+			"group", g.Name, "err", err)
+		return 0
+	}
+	if live {
+		return 0
+	}
+	n, err := db.DisableGroupTargetCronJobsForRetire(g.ID)
+	if err != nil {
+		slog.Warn("retire: could not disable group rhythms",
+			"group", g.Name, "err", err)
+		return 0
+	}
+	if n > 0 {
+		slog.Info("retire emptied group — disabled its rhythms",
+			"group", g.Name, "disabled", n)
+	}
+	return n
 }
 
 // handleGroupRetire retires the active-agent members of the group in
@@ -507,6 +591,9 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// If this retire left the group with no live members, disable its
+	// template-seeded rhythms so they stop firing to nobody (JOH-345).
+	out.RhythmsDisabled = disableGroupRhythmsIfEmptied(g)
 	writeJSON(w, http.StatusOK, out)
 }
 

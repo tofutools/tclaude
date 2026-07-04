@@ -122,6 +122,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			NewCmd(),
 			ListCmd(),
+			WatchCmd(),
 			AttachCmd(),
 			FocusCmd(),
 			GotoCmd(),

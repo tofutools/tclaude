@@ -41,6 +41,34 @@ func ListCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// WatchParams mirrors the subset of ListParams that watch mode consults
+// (see runList's Watch branch) — no JSON/Watch fields, since watch is implied.
+type WatchParams struct {
+	All  bool     `short:"a" long:"all" help:"Include exited sessions"`
+	Sort string   `short:"s" long:"sort" optional:"true" help:"Sort by column" alts:"id,directory,status,age,updated"`
+	Asc  bool     `long:"asc" help:"Sort ascending (default for id/directory/status)"`
+	Desc bool     `long:"desc" help:"Sort descending (default for updated)"`
+	Show []string `long:"show" optional:"true" help:"Only show these statuses" alts:"all,idle,working,awaiting_permission,awaiting_input,error,exited"`
+	Hide []string `long:"hide" optional:"true" help:"Hide these statuses" alts:"idle,working,awaiting_permission,awaiting_input,error,exited"`
+}
+
+func WatchCmd() *cobra.Command {
+	return boa.CmdT[WatchParams]{
+		Use:         "watch",
+		Short:       "Interactive watch mode for Claude Code sessions (alias for `session ls -w`)",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(params *WatchParams, cmd *cobra.Command, args []string) {
+			sortState := parseSortParams(params.Sort, params.Asc, params.Desc)
+			showFilter := normalizeStatusFilter(params.Show)
+			hideFilter := normalizeStatusFilter(params.Hide)
+			if err := RunWatchMode(params.All, sortState, showFilter, hideFilter); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}.ToCobra()
+}
+
 func runList(params *ListParams) error {
 	// Parse sort options
 	sortState := parseSortParams(params.Sort, params.Asc, params.Desc)

@@ -46,6 +46,11 @@ type whoamiResp struct {
 	ConvID  string   `json:"conv_id,omitempty"`  // live generation behind it (rotates)
 	Title   string   `json:"title,omitempty"`
 	Groups  []string `json:"groups,omitempty"`
+	// Phases lists the advisory process phase (JOH-242) of each group the
+	// caller is in that HAS a process — one "<group>: phase <n>/<m>: <name>"
+	// line per such group. Omitted when no group the caller is in has a
+	// process (absence = feature off, degrade everywhere).
+	Phases []string `json:"phases,omitempty"`
 }
 
 func handleWhoami(w http.ResponseWriter, r *http.Request) {
@@ -86,11 +91,17 @@ func handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	groups, _ := db.ListGroupsForConv(p.ConvID)
 	gs := make([]string, 0, len(groups))
+	var phases []string
 	for _, g := range groups {
 		gs = append(gs, g.Name)
+		// Advisory process (JOH-242): surface the group's current phase when it
+		// has a process. Best-effort — a lookup error just omits the line.
+		if st, err := db.GetGroupProcessState(g.ID); err == nil && st != nil {
+			phases = append(phases, g.Name+": "+phaseLabel(st))
+		}
 	}
 	agentID, _ := db.AgentIDForConv(p.ConvID)
-	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs})
+	writeJSON(w, http.StatusOK, whoamiResp{AgentID: agentID, ConvID: p.ConvID, Title: title, Groups: gs, Phases: phases})
 }
 
 // --- /v1/lookup ---
@@ -1071,8 +1082,10 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			continue
 		}
 		// Role filter: skip members whose role does not match. Roles are
-		// free-form human-set strings, so the match is case-insensitive.
-		if roleFilter != "" && !strings.EqualFold(strings.TrimSpace(m.Role), roleFilter) {
+		// free-form human-set strings, so the match is case-insensitive
+		// (roleLabelMatches — the shared rule the process phase-role matcher
+		// reuses).
+		if roleFilter != "" && !roleLabelMatches(m.Role, roleFilter) {
 			continue
 		}
 		// Defensive: membership migrations on reincarnate are atomic
@@ -2517,6 +2530,13 @@ type groupSummary struct {
 	// or "deny" (force it off). Always serialized (the canonical token) so a
 	// consumer never has to guess between "absent" and "inherit".
 	RemoteControlPolicy string `json:"remote_control_policy"`
+	// Mission and SourceTemplate are the deploy provenance (JOH-245) carried
+	// on the group row. They are what tells a plain group apart from a deployed
+	// task force: `tclaude agent task-force ls` (JOH-346) filters on a
+	// non-empty SourceTemplate and shows the truncated mission. omitempty — a
+	// hand-built group carries neither, and plain `groups ls` ignores them.
+	Mission        string `json:"mission,omitempty"`
+	SourceTemplate string `json:"source_template,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -2601,6 +2621,8 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Archived:            g.IsArchived(),
 				NotifyMuted:         !g.NotifyEnabled,
 				RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl),
+				Mission:             g.Mission,
+				SourceTemplate:      g.SourceTemplate,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -2790,6 +2812,26 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("GET /v1/groups/{name}/context", v1GroupRoute(handleGroupContext))
+
+	// Advisory process runtime (JOH-242): read the current phase (open),
+	// advance to the next / a named phase (gated on process.advance, owner-pass).
+	mux.HandleFunc("GET /v1/groups/{name}/process", v1GroupRoute(handleGroupProcessGet))
+	mux.HandleFunc("POST /v1/groups/{name}/process/advance", v1GroupRoute(handleGroupProcessAdvance))
+
+	// Staged-spawn choreography status (JOH-244): read the group's pending
+	// waves (open, read-only). 404 when the deploy has no pending waves.
+	mux.HandleFunc("GET /v1/groups/{name}/waves", v1GroupRoute(handleGroupWavesGet))
+
+	// Re-brief a deployed force (JOH-247): re-deliver the source template's
+	// work pattern to the live roster with the group's mission interpolated.
+	// Gated on templates.instantiate + owner-pass (see handleGroupRebrief).
+	mux.HandleFunc("POST /v1/groups/{name}/rebrief", v1GroupRoute(handleGroupRebrief))
+
+	// Stand down a task force (JOH-345): retire the roster + sweep the
+	// deploy-seeded rhythms and pending waves, keeping the group as a dormant
+	// record. The mirror of `task-force deploy`. Gated on groups.retire +
+	// owner-pass (see handleGroupStandDown).
+	mux.HandleFunc("POST /v1/groups/{name}/stand-down", v1GroupRoute(handleGroupStandDown))
 
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))
 	mux.HandleFunc("POST /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersAdd))
@@ -3272,11 +3314,18 @@ type groupContextEntry struct {
 	// AgentID is the member's stable actor key — the canonical ID the CLI
 	// leads with; ConvID is the live generation behind it (kept as the
 	// snapshot/hover). "" when the conv is not a known agent.
-	AgentID           string  `json:"agent_id,omitempty"`
-	ConvID            string  `json:"conv_id"`
-	Title             string  `json:"title"`
-	Role              string  `json:"role,omitempty"`
-	Online            bool    `json:"online"`
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Online  bool   `json:"online"`
+	// Status is the member's settled hook status (idle / working /
+	// awaiting_* / exited …) — the SAME value stateForConvIn feeds the
+	// dashboard, so a caller classifying force liveness (JOH-346's
+	// task-force status) agrees with the dashboard force block's rollup:
+	// offline → dead, online+idle → idle, anything else in flight →
+	// working. Empty when no session row exists for the conv.
+	Status            string  `json:"status,omitempty"`
 	HasSnapshot       bool    `json:"has_snapshot"`
 	ContextPct        float64 `json:"context_pct"`
 	TokensInput       int64   `json:"tokens_input"`
@@ -3311,23 +3360,27 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 	aliveSessions, _ := session.LiveTmuxSessions()
 	out := make([]groupContextEntry, 0, len(members))
 	for _, m := range members {
-		snap, _, hasSession := contextSnapshotForConvIn(m.ConvID, aliveSessions)
-		// A row that exists but whose statusline hook never fired reads
-		// as all-zero — same "unknown" state as no row at all. Either way
-		// there's no real context figure to show.
-		hasSnapshot := hasSession && snapshotPopulated(snap)
+		// One read per member through stateForConvIn — the SAME reader the
+		// dashboard snapshot uses, so this endpoint's context figures AND its
+		// settled status (idle / working / awaiting_* / exited, incl. the
+		// subagent-idle settle) agree with the dashboard force block that
+		// classifies liveness on them (JOH-346). A populated snapshot implies
+		// a session row, so has_snapshot collapses to "any real context figure"
+		// — the separate hasSession gate was redundant.
+		st := stateForConvIn(m.ConvID, aliveSessions)
 		out = append(out, groupContextEntry{
 			AgentID:           peerAgentID(m.ConvID),
 			ConvID:            m.ConvID,
 			Title:             agent.FreshTitle(m.ConvID),
 			Role:              m.Role,
 			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
-			HasSnapshot:       hasSnapshot,
-			ContextPct:        snap.ContextPct,
-			TokensInput:       snap.TokensInput,
-			TokensOutput:      snap.TokensOutput,
-			ContextWindowSize: snap.ContextWindowSize,
-			Model:             snap.Model,
+			Status:            st.Status,
+			HasSnapshot:       agentStateHasSnapshot(st),
+			ContextPct:        st.ContextPct,
+			TokensInput:       st.TokensInput,
+			TokensOutput:      st.TokensOutput,
+			ContextWindowSize: st.ContextWindowSize,
+			Model:             st.Model,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -3340,6 +3393,20 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // fired" separately from a genuine 0%.
 func snapshotPopulated(s db.ContextSnapshot) bool {
 	return s.ContextPct != 0 || s.TokensInput != 0 || s.TokensOutput != 0 || s.ContextWindowSize != 0
+}
+
+// agentStateHasSnapshot applies snapshotPopulated to the context figures an
+// stateForConvIn read carries — true once the statusline hook has reported at
+// least one real figure. A populated snapshot implies a live-or-past session
+// row, so this needs no separate hasSession gate. Delegates to snapshotPopulated
+// so the "is this real data" rule lives in exactly one place.
+func agentStateHasSnapshot(s agentState) bool {
+	return snapshotPopulated(db.ContextSnapshot{
+		ContextPct:        s.ContextPct,
+		TokensInput:       s.TokensInput,
+		TokensOutput:      s.TokensOutput,
+		ContextWindowSize: s.ContextWindowSize,
+	})
 }
 
 // requireGroupContextAccess gates the group-wide context read. The human

@@ -82,6 +82,15 @@ func Open() (*sql.DB, error) {
 		return globalDB, initErr
 	}
 
+	// Self-healing role-library seed (JOH-240): re-add any missing canonical
+	// seed role without overwriting a user's edits. Runs once per process (Open
+	// memoizes), so a deleted seed reappears on the next open while edits stay
+	// sacred. A seed failure must not brick the DB — the roles are a
+	// convenience, so log-and-continue rather than fail Open.
+	if err := ensureSeededRoles(globalDB); err != nil {
+		slog.Warn("db: seeding roles failed", "error", err)
+	}
+
 	// Test-only: capture the freshly-migrated empty schema so sibling
 	// tests in this process reuse it via the fast path above. No-op when
 	// we just seeded from the template or in production.

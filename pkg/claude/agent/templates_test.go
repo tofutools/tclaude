@@ -336,11 +336,133 @@ func TestRunTemplatesFromGroup_SendsBody(t *testing.T) {
 	require.True(t, ok, "body should be a map, got %T", calls[0].body)
 	assert.Equal(t, "src", body["group"])
 	assert.Equal(t, "src-tmpl", body["template_name"])
+	assert.Equal(t, false, body["update"], "plain from-group sends update:false")
 	assert.Contains(t, stdout.String(), "2 agents")
+}
+
+func TestRunTemplatesFromGroup_UpdateSendsFlagAndReportsDiff(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"lead","permissions":[]},{"name":"navigator","permissions":[]}],
+		"updated":true,"briefs_kept":["lead"],"added":["navigator"],"removed":["dev1"]}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl", Update: true,
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(map[string]any)
+	require.True(t, ok, "body should be a map, got %T", calls[0].body)
+	assert.Equal(t, true, body["update"], "--update lands in the request body")
+	out := stdout.String()
+	assert.Contains(t, out, `Updated template "src-tmpl" from group "src" — 2 agents`)
+	assert.Contains(t, out, "briefs kept: lead; added: navigator; removed: dev1")
+	assert.NotContains(t, out, "Created template", "update output replaces the create line")
 }
 
 func TestRunTemplatesFromGroup_MissingArgsRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := runTemplatesFromGroup(&templatesFromGroupParams{Group: "src", TemplateName: ""}, &stdout, &stderr)
 	assert.Equal(t, rcInvalidArg, rc)
+}
+
+// JOH-344 #4: a from-group create warns that the snapshot's agents come through
+// with blank briefs, using the daemon's blank_briefs count.
+func TestRunTemplatesFromGroup_WarnsOnBlankBriefs(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"lead","permissions":[]},{"name":"helper","permissions":[]}],
+		"blank_briefs":2}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, "⚠ 2 agent brief(s) are blank")
+	assert.Contains(t, out, "edit the template (initial_message) before deploying")
+	assert.Contains(t, out, "templates edit src-tmpl")
+}
+
+// A from-group that produced no blank briefs (an update that kept every brief)
+// prints no warning — zero-noise.
+func TestRunTemplatesFromGroup_NoWarnWhenFullyBriefed(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"lead","permissions":[]}],
+		"updated":true,"briefs_kept":["lead"],"added":[],"removed":[],"blank_briefs":0}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl", Update: true,
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.NotContains(t, stdout.String(), "brief(s) are blank")
+}
+
+// JOH-344 #1: printStagedSpawnAndRhythms surfaces the staged-spawn + rhythm
+// summary the "N spawned" headline hides, and stays silent for a simple
+// single-wave template with no rhythms.
+func TestPrintStagedSpawnAndRhythms(t *testing.T) {
+	t.Run("prints daemon note verbatim + rhythms", func(t *testing.T) {
+		var out bytes.Buffer
+		printStagedSpawnAndRhythms(&out, instantiateResponse{
+			PendingWaves:     1,
+			WavesTotal:       2,
+			PendingAgents:    4,
+			ChoreographyNote: "wave 1/2 spawned; 4 more agent(s) in 1 more wave(s) will spawn",
+			RhythmsCreated:   1,
+		})
+		s := out.String()
+		assert.Contains(t, s, "staged spawn: wave 1/2 spawned; 4 more agent(s) in 1 more wave(s) will spawn")
+		assert.Contains(t, s, "rhythms: 1 recurring nudge armed")
+	})
+
+	t.Run("falls back to a composed wave line when the note is absent", func(t *testing.T) {
+		var out bytes.Buffer
+		printStagedSpawnAndRhythms(&out, instantiateResponse{
+			PendingWaves:  2,
+			WavesTotal:    3,
+			PendingAgents: 5,
+		})
+		assert.Contains(t, out.String(), "staged spawn: wave 1/3 up — 5 more agent(s) will spawn as this wave settles")
+	})
+
+	t.Run("pluralizes rhythms", func(t *testing.T) {
+		var out bytes.Buffer
+		printStagedSpawnAndRhythms(&out, instantiateResponse{RhythmsCreated: 2})
+		assert.Contains(t, out.String(), "rhythms: 2 recurring nudges armed")
+	})
+
+	t.Run("silent for a simple single-wave template", func(t *testing.T) {
+		var out bytes.Buffer
+		printStagedSpawnAndRhythms(&out, instantiateResponse{Spawned: 2})
+		assert.Empty(t, out.String())
+	})
+}
+
+// JOH-344 #1: the deploy CLI decodes the daemon's staged-spawn fields (same
+// JSON tags) and prints them, so deploying a wave-using starter no longer reads
+// as "1 spawned" only.
+func TestRunTaskForceDeploy_PrintsStagedSpawn(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"group":"squad","template":"dev-squad",
+		"agents":[{"name":"lead","final_name":"squad-lead","conv_id":"c1"}],
+		"spawned":1,"failed":0,"pattern_delivered":0,"pattern_errors":[],
+		"deployed":true,"mission":"ship it",
+		"waves_total":2,"pending_waves":1,"pending_agents":4,"rhythms_created":1,
+		"choreography_note":"wave 1/2 spawned; 4 more agent(s) in 1 more wave(s) will spawn as each wave settles"}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTaskForceDeploy(&taskForceDeployParams{
+		Name: "dev-squad", Mission: "ship it",
+	}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, "1 spawned, 0 failed")
+	assert.Contains(t, out, "staged spawn: wave 1/2 spawned; 4 more agent(s)")
+	assert.Contains(t, out, "rhythms: 1 recurring nudge armed")
 }

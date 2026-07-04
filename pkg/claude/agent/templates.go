@@ -30,8 +30,8 @@ import (
 
 func templatesCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:         "templates",
-		Short:       "Manage group templates (reusable team blueprints)",
+		Use:   "templates",
+		Short: "Manage group templates (reusable team blueprints)",
 		Long: "List, inspect, create, edit and delete group templates, instantiate a working group from one, " +
 			"or snapshot an existing group into a new template. A template is a blueprint — a name, a shared " +
 			"context, and an ordered list of agent specs (role, descr, task brief, owner flag, permission slugs); " +
@@ -46,6 +46,9 @@ func templatesCmd() *cobra.Command {
 			templatesRmCmd(),
 			templatesInstantiateCmd(),
 			templatesFromGroupCmd(),
+			templatesExportCmd(),
+			templatesImportCmd(),
+			templatesStartersCmd(),
 		},
 	}.ToCobra()
 }
@@ -60,15 +63,88 @@ type templateAgentJSON struct {
 	InitialMessage string   `json:"initial_message,omitempty"`
 	IsOwner        bool     `json:"is_owner,omitempty"`
 	Permissions    []string `json:"permissions"`
+
+	// RoleRef references a role in the role library (JOH-240): the agent
+	// inherits that role's defaults beneath its own overrides. Empty = none.
+	RoleRef string `json:"role_ref,omitempty"`
+
+	// Per-role launch profile (JOH-239): a spawn-profile reference by name plus
+	// inline launch overrides (harness/model/effort/sandbox/approval) that win
+	// over it. All optional — absent = inherit the group default at instantiate.
+	SpawnProfile string `json:"spawn_profile,omitempty"`
+	Harness      string `json:"harness,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	Sandbox      string `json:"sandbox,omitempty"`
+	Approval     string `json:"approval,omitempty"`
+
+	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
+	// in ascending order; all-wave-0 = one synchronous pass (today's behaviour).
+	Wave int `json:"wave,omitempty"`
+}
+
+// rhythmJSON mirrors the daemon's wire shape for one template rhythm (JOH-244):
+// a recurring nudge materialized at deploy as a group cron job. Exactly one of
+// interval / cron_expr; target_role filters to matching members ("" / "all" =
+// whole group).
+type rhythmJSON struct {
+	Name       string `json:"name"`
+	TargetRole string `json:"target_role,omitempty"`
+	Interval   string `json:"interval,omitempty"`
+	CronExpr   string `json:"cron_expr,omitempty"`
+	Subject    string `json:"subject,omitempty"`
+	Body       string `json:"body"`
+}
+
+// workPatternEntryJSON mirrors the daemon's wire shape for one
+// work-pattern step: an ordered, routed briefing message delivered
+// after the whole roster has spawned. send_to is a template-agent name
+// or "all"; value may carry {{task}}.
+type workPatternEntryJSON struct {
+	SendTo string `json:"send_to"`
+	Value  string `json:"value"`
+}
+
+// processPhaseJSON mirrors the daemon's wire shape for one process phase
+// (JOH-242): an ordered chapter of the group's work. roles are matched
+// case-insensitively against a member's role ("all" = everyone); criteria is
+// free prose.
+type processPhaseJSON struct {
+	Name     string   `json:"name"`
+	Roles    []string `json:"roles"`
+	Criteria string   `json:"criteria,omitempty"`
 }
 
 type templateJSON struct {
-	Name           string              `json:"name"`
-	Descr          string              `json:"descr,omitempty"`
-	DefaultContext string              `json:"default_context,omitempty"`
-	Agents         []templateAgentJSON `json:"agents"`
-	CreatedAt      string              `json:"created_at,omitempty"`
-	UpdatedAt      string              `json:"updated_at,omitempty"`
+	Name           string                 `json:"name"`
+	Descr          string                 `json:"descr,omitempty"`
+	DefaultContext string                 `json:"default_context,omitempty"`
+	Agents         []templateAgentJSON    `json:"agents"`
+	WorkPattern    []workPatternEntryJSON `json:"work_pattern,omitempty"`
+	// Process is the template's declarative process spec (JOH-242): an ordered
+	// list of phases. Empty/absent = no process.
+	Process []processPhaseJSON `json:"process,omitempty"`
+	// Rhythms is the template's recurring-nudge declarations (JOH-244),
+	// materialized as group cron jobs at deploy. Empty/absent = no rhythms.
+	Rhythms []rhythmJSON `json:"rhythms,omitempty"`
+	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
+	// prior wave to go idle before the next spawns anyway (JOH-244). 0 = default.
+	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+// templateExportEnvelope mirrors the daemon's portable export shape
+// (see agentd/templates.go): a small versioned wrapper around the inner
+// template JSON. `export` writes it; `import` sends it back.
+type templateExportEnvelope struct {
+	Format        string       `json:"format"`
+	FormatVersion int          `json:"format_version"`
+	ExportedAt    string       `json:"exported_at,omitempty"`
+	Template      templateJSON `json:"template"`
+	// Roles embeds the referenced role definitions (JOH-240) so the export
+	// round-trips through the CLI; import re-creates any missing on the target.
+	Roles []roleJSON `json:"roles,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents.
@@ -164,6 +240,15 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
+	renderTemplateHuman(stdout, t)
+	return rcOK
+}
+
+// renderTemplateHuman prints a template's human-readable view — its context,
+// per-agent specs, work pattern, process, and rhythms. Shared by `templates
+// show` and `templates starters show` so a starter renders identically to a
+// stored template (JOH-246).
+func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 	fmt.Fprintf(stdout, "Template: %s\n", t.Name)
 	if t.Descr != "" {
 		fmt.Fprintf(stdout, "  descr:   %s\n", t.Descr)
@@ -183,8 +268,34 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 		if a.Role != "" {
 			tags = append(tags, "role="+a.Role)
 		}
+		if a.RoleRef != "" {
+			tags = append(tags, "role_ref="+a.RoleRef)
+		}
 		if len(a.Permissions) > 0 {
 			tags = append(tags, "perms="+strings.Join(a.Permissions, ","))
+		}
+		// Per-role launch profile (JOH-239): show the profile reference and any
+		// inline overrides so an edit loop sees what each role launches with.
+		if a.SpawnProfile != "" {
+			tags = append(tags, "profile="+a.SpawnProfile)
+		}
+		if a.Harness != "" {
+			tags = append(tags, "harness="+a.Harness)
+		}
+		if a.Model != "" {
+			tags = append(tags, "model="+a.Model)
+		}
+		if a.Effort != "" {
+			tags = append(tags, "effort="+a.Effort)
+		}
+		if a.Sandbox != "" {
+			tags = append(tags, "sandbox="+a.Sandbox)
+		}
+		if a.Approval != "" {
+			tags = append(tags, "approval="+a.Approval)
+		}
+		if a.Wave > 0 {
+			tags = append(tags, fmt.Sprintf("wave=%d", a.Wave))
 		}
 		suffix := ""
 		if len(tags) > 0 {
@@ -200,7 +311,56 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	return rcOK
+	if len(t.WorkPattern) > 0 {
+		fmt.Fprintf(stdout, "  work pattern (%d step%s, delivered in order after the roster spawns):\n",
+			len(t.WorkPattern), plural(len(t.WorkPattern)))
+		for i, e := range t.WorkPattern {
+			fmt.Fprintf(stdout, "    %d. → %s\n", i+1, e.SendTo)
+			for _, line := range strings.Split(e.Value, "\n") {
+				fmt.Fprintf(stdout, "       │ %s\n", line)
+			}
+		}
+	}
+	if len(t.Process) > 0 {
+		fmt.Fprintf(stdout, "  process (%d phase%s, advisory — tracked, not enforced):\n",
+			len(t.Process), plural(len(t.Process)))
+		for i, ph := range t.Process {
+			roles := "(any)"
+			if len(ph.Roles) > 0 {
+				roles = strings.Join(ph.Roles, ", ")
+			}
+			fmt.Fprintf(stdout, "    %d. %s  [roles: %s]\n", i+1, ph.Name, roles)
+			if crit := strings.TrimSpace(ph.Criteria); crit != "" {
+				for _, line := range strings.Split(ph.Criteria, "\n") {
+					fmt.Fprintf(stdout, "       │ %s\n", line)
+				}
+			}
+		}
+	}
+	if len(t.Rhythms) > 0 {
+		fmt.Fprintf(stdout, "  rhythms (%d recurring nudge%s, materialized as group cron jobs at deploy):\n",
+			len(t.Rhythms), plural(len(t.Rhythms)))
+		for i, rh := range t.Rhythms {
+			sched := rh.CronExpr
+			if sched == "" {
+				sched = "every " + rh.Interval
+			}
+			role := rh.TargetRole
+			if role == "" {
+				role = "all"
+			}
+			fmt.Fprintf(stdout, "    %d. %s  [%s · role: %s]\n", i+1, rh.Name, sched, role)
+			if rh.Subject != "" {
+				fmt.Fprintf(stdout, "       subject: %s\n", rh.Subject)
+			}
+			for _, line := range strings.Split(rh.Body, "\n") {
+				fmt.Fprintf(stdout, "       │ %s\n", line)
+			}
+		}
+	}
+	if t.WaveMaxWait > 0 {
+		fmt.Fprintf(stdout, "  wave_max_wait: %ds\n", t.WaveMaxWait)
+	}
 }
 
 // ---- create / edit ----
@@ -215,7 +375,8 @@ func templatesCreateCmd() *cobra.Command {
 		Short: "Create a group template from a JSON file",
 		Long: "Reads a template definition as JSON from --file (or --file - for stdin) and creates it. The JSON " +
 			"shape is what 'templates show <name> --json' emits: {name, descr, default_context, agents:[{name, " +
-			"role, descr, initial_message, is_owner, permissions}]}. A template is structured (nested agents with " +
+			"role, descr, initial_message, is_owner, permissions, spawn_profile, harness, model, effort, sandbox, " +
+			"approval}]}. A template is structured (nested agents with " +
 			"multi-line briefs), so it is supplied as a file rather than via flags. Bootstrap one with " +
 			"'templates from-group' or by editing another template's --json output.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -369,7 +530,8 @@ func templatesInstantiateCmd() *cobra.Command {
 			"The --task text is folded into the group's shared context, so every spawned agent's startup briefing " +
 			"carries it; give it inline with --task or, for long / multi-line text, with --task-file. The template's " +
 			"owner agent(s) are granted group ownership and each agent its permission slugs. Spawning a whole team " +
-			"can take some time; a per-agent failure is reported, not rolled back.",
+			"can take some time; a per-agent failure is reported, not rolled back. Prefer `task-force deploy` when " +
+			"working against a mission — it is the mission-framed twin of this verb.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesInstantiateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
@@ -393,11 +555,49 @@ type instantiateAgentResult struct {
 }
 
 type instantiateResponse struct {
-	Group    string                   `json:"group"`
-	Template string                   `json:"template"`
-	Agents   []instantiateAgentResult `json:"agents"`
-	Spawned  int                      `json:"spawned"`
-	Failed   int                      `json:"failed"`
+	Group            string                   `json:"group"`
+	Template         string                   `json:"template"`
+	Agents           []instantiateAgentResult `json:"agents"`
+	Spawned          int                      `json:"spawned"`
+	Failed           int                      `json:"failed"`
+	PatternDelivered int                      `json:"pattern_delivered"`
+	PatternErrors    []string                 `json:"pattern_errors"`
+
+	// Staged-spawn choreography + seeded rhythms (JOH-244): when a template
+	// spreads its roster across waves, the deploy/instantiate response reports
+	// only wave 0's spawns inline and defers the rest — so the headline
+	// "N spawned" undercounts the eventual team. These fields let the CLI say
+	// so honestly (JOH-344). All zero for a simple single-wave template.
+	RhythmsCreated   int    `json:"rhythms_created"`
+	WavesTotal       int    `json:"waves_total"`
+	PendingWaves     int    `json:"pending_waves"`
+	PendingAgents    int    `json:"pending_agents"`
+	ChoreographyNote string `json:"choreography_note"`
+}
+
+// printStagedSpawnAndRhythms prints the JOH-244 staged-spawn + seeded-rhythm
+// summary that the "N spawned, M failed" headline alone hides: when later waves
+// are deferred, the team is NOT whole yet, so a first-time deployer of a
+// wave-using template (e.g. the dev-squad starter: lead now, four more as the
+// wave settles) would otherwise read "1 spawned" as a failure. Nothing is
+// printed for a simple single-wave template with no rhythms (zero-noise).
+//
+// The wave line prints the daemon's choreography_note verbatim — the daemon is
+// the single source of truth for the wording — falling back to a locally
+// composed line only if the note is absent. The rhythms line is derived from
+// rhythms_created.
+func printStagedSpawnAndRhythms(w io.Writer, r instantiateResponse) {
+	if r.PendingWaves > 0 {
+		if note := strings.TrimSpace(r.ChoreographyNote); note != "" {
+			fmt.Fprintf(w, "  staged spawn: %s\n", note)
+		} else {
+			fmt.Fprintf(w, "  staged spawn: wave 1/%d up — %d more agent(s) will spawn as this wave settles\n",
+				r.WavesTotal, r.PendingAgents)
+		}
+	}
+	if r.RhythmsCreated > 0 {
+		fmt.Fprintf(w, "  rhythms: %d recurring nudge%s armed\n", r.RhythmsCreated, plural(r.RhythmsCreated))
+	}
 }
 
 func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -451,6 +651,14 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 		}
 		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
 	}
+	if resp.PatternDelivered > 0 {
+		fmt.Fprintf(stdout, "  work pattern: %d message%s delivered\n",
+			resp.PatternDelivered, plural(resp.PatternDelivered))
+	}
+	for _, e := range resp.PatternErrors {
+		fmt.Fprintf(stdout, "  ⚠ work pattern: %s\n", e)
+	}
+	printStagedSpawnAndRhythms(stdout, resp)
 	// A partial (or total) spawn failure is a non-zero exit so scripts
 	// notice — the group + any spawned agents still exist for the human
 	// to finish or retry by hand.
@@ -467,15 +675,19 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 type templatesFromGroupParams struct {
 	Group        string `pos:"true" help:"Existing group to snapshot."`
 	TemplateName string `pos:"true" help:"Name for the new template."`
+	Update       bool   `help:"Re-snapshot into an existing template of this name, in place: roster, owner flags, permissions and context are re-traced from the group; curated per-agent task briefs are kept for matching agent names. Creates the template if it doesn't exist."`
 }
 
 func templatesFromGroupCmd() *cobra.Command {
 	return boa.CmdT[templatesFromGroupParams]{
 		Use:   "from-group <group> <template-name>",
-		Short: "Snapshot an existing group into a new template",
+		Short: "Snapshot an existing group into a new (or existing, --update) template",
 		Long: "Captures a live group's structure — its context plus one agent per member (role, descr, owner flag, " +
 			"per-agent permission grants) — into a new template. Per-agent task briefs come through blank: a live " +
-			"group has no stored brief per member, so fill them in afterwards with 'templates edit'.",
+			"group has no stored brief per member, so fill them in afterwards with 'templates edit'.\n\n" +
+			"With --update, a template that already exists under this name is re-snapshotted IN PLACE from the " +
+			"group's current state; agents that round-trip by name (members titled \"<group>-<agent>\", as " +
+			"instantiate names them) keep their curated task briefs.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesFromGroupParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -497,16 +709,193 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	body := map[string]any{"group": group, "template_name": tmplName}
-	var t templateJSON
+	body := map[string]any{"group": group, "template_name": tmplName, "update": p.Update}
+	// The update-mode response embeds the template flat and adds a
+	// roster-diff report; the create response is the bare template, so
+	// the extra fields simply stay zero.
+	var t struct {
+		templateJSON
+		Updated    bool     `json:"updated"`
+		BriefsKept []string `json:"briefs_kept"`
+		Added      []string `json:"added"`
+		Removed    []string `json:"removed"`
+		// BlankBriefs: agents still left with a blank per-agent brief after the
+		// snapshot — a from-group snapshot can't recover briefs (JOH-344).
+		BlankBriefs int `json:"blank_briefs"`
+	}
 	if err := DaemonRequest(http.MethodPost, "/v1/templates/from-group", body, &t, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	if t.Updated {
+		fmt.Fprintf(stdout, "Updated template %q from group %q — %d agent%s\n",
+			t.Name, group, len(t.Agents), plural(len(t.Agents)))
+		fmt.Fprintf(stdout, "  briefs kept: %s; added: %s; removed: %s\n",
+			orNone(t.BriefsKept), orNone(t.Added), orNone(t.Removed))
+		printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
+		return rcOK
+	}
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",
 		t.Name, group, len(t.Agents), plural(len(t.Agents)))
-	fmt.Fprintln(stdout, "  Per-agent task briefs are blank — fill them in with `tclaude agent templates edit "+t.Name+" --file …`")
+	printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
 	return rcOK
+}
+
+// printBlankBriefWarning warns that n of a from-group snapshot's agents carry a
+// blank per-agent brief: a live group stores no brief per member, so a template
+// saved from a hand-built team would deploy agents told nothing until the briefs
+// are filled in (JOH-344). Nothing is printed when n is 0 (a fully-briefed
+// re-snapshot, or an empty roster).
+func printBlankBriefWarning(w io.Writer, n int, tmplName string) {
+	if n <= 0 {
+		return
+	}
+	fmt.Fprintf(w, "  ⚠ %d agent brief(s) are blank — edit the template (initial_message) before deploying\n", n)
+	fmt.Fprintf(w, "    fill them in with `tclaude agent templates edit %s --file …`\n", tmplName)
+}
+
+// ---- export / import (JOH-341) ----
+
+type templatesExportParams struct {
+	Name string `pos:"true" help:"Template to export (from 'tclaude agent templates ls')."`
+	File string `long:"file" short:"f" optional:"true" help:"Write the export to this file instead of stdout. By convention '<name>.task-force.json'."`
+}
+
+func templatesExportCmd() *cobra.Command {
+	return boa.CmdT[templatesExportParams]{
+		Use:   "export <name>",
+		Short: "Export a template as a portable task-force JSON file",
+		Long: "Emits the named template wrapped in a small versioned envelope — a portable blueprint you can share " +
+			"with a friend, a coworker, or your own other machine and re-import with 'templates import'. Writes to " +
+			"stdout by default, or to --file. The file carries no machine-local identity (no DB ids, no conv links); " +
+			"spawn-profile references and permission slugs travel by name and are validated on import.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *templatesExportParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
+			return nil
+		},
+		RunFunc: func(p *templatesExportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesExport(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesExport(p *templatesExportParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a template name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var env templateExportEnvelope
+	if err := DaemonRequest(http.MethodGet, "/v1/templates/"+url.PathEscape(name)+"/export", nil, &env, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	buf, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: encoding export JSON: %v\n", err)
+		return rcIOFailure
+	}
+	buf = append(buf, '\n')
+	if file := strings.TrimSpace(p.File); file != "" {
+		if err := os.WriteFile(file, buf, 0o644); err != nil {
+			fmt.Fprintf(stderr, "Error: writing %s: %v\n", file, err)
+			return rcIOFailure
+		}
+		fmt.Fprintf(stderr, "Exported template %q → %s (%d agent%s)\n",
+			name, file, len(env.Template.Agents), plural(len(env.Template.Agents)))
+		return rcOK
+	}
+	if _, err := stdout.Write(buf); err != nil {
+		fmt.Fprintf(stderr, "Error: writing export: %v\n", err)
+		return rcIOFailure
+	}
+	return rcOK
+}
+
+type templatesImportParams struct {
+	File   string `long:"file" short:"f" help:"Path to a task-force JSON file ('-' reads stdin) produced by 'templates export'."`
+	As     string `long:"as" optional:"true" help:"Import under this name instead of the name in the file (sidesteps a collision, or just renames)."`
+	Update bool   `long:"update" optional:"true" help:"Overwrite an existing template of the target name in place. Without it, a name collision is an error."`
+}
+
+func templatesImportCmd() *cobra.Command {
+	return boa.CmdT[templatesImportParams]{
+		Use:   "import --file <path>",
+		Short: "Import a template from a portable task-force JSON file",
+		Long: "Reads a task-force export (from 'templates export') via --file (or --file - for stdin) and stores it as " +
+			"a local template. A name collision is an error unless you pass --update (overwrite in place) or --as " +
+			"<new-name> (import under a different name). References that don't exist on this machine degrade rather " +
+			"than fail: an unknown spawn-profile reference is dropped (the agent falls back to the group/harness " +
+			"default) and unknown permission slugs are dropped — each reported as a warning. An export from a NEWER " +
+			"tclaude is rejected with an upgrade message.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesImportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesImport(p *templatesImportParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.File) == "" {
+		fmt.Fprintln(stderr, "Error: --file is required (path to a task-force JSON file, or - to read stdin)")
+		return rcInvalidArg
+	}
+	raw, rc := resolveBodyInput("", p.File, "--file", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	// Send the file's bytes verbatim so the daemon — the authority on the
+	// envelope format and version — does the parsing and version-gating. A
+	// local light syntax check gives a friendlier error than a raw 400.
+	if !json.Valid([]byte(raw)) {
+		fmt.Fprintln(stderr, "Error: --file is not valid JSON")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/templates/import"
+	q := url.Values{}
+	if as := strings.TrimSpace(p.As); as != "" {
+		q.Set("as", as)
+	}
+	if p.Update {
+		q.Set("update", "true")
+	}
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var res struct {
+		Imported string   `json:"imported"`
+		Updated  bool     `json:"updated"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := DaemonPostRaw(path, "application/json", []byte(raw), &res); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	verb := "Imported"
+	if res.Updated {
+		verb = "Updated (overwrote)"
+	}
+	fmt.Fprintf(stdout, "%s template %q\n", verb, res.Imported)
+	for _, wmsg := range res.Warnings {
+		fmt.Fprintf(stdout, "  ⚠ %s\n", wmsg)
+	}
+	return rcOK
+}
+
+// orNone renders a name list for the from-group change report — "none"
+// when empty.
+func orNone(names []string) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
 }
 
 // plural returns "s" unless n == 1 — for "1 agent" / "3 agents".
@@ -515,4 +904,180 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// ---- starters (JOH-246) ----
+//
+// Bundled starter task forces: curated, ready-to-run templates tclaude ships in
+// the binary. These verbs are thin clients over the daemon's /v1/starters
+// surface (agentd/starters.go): `ls` and `show` are open reads; `install`
+// stores a starter as a local template through the shared import path
+// (templates.manage). Install never overwrites an existing template of the same
+// name — a user's edited copy is sacred; `--as` installs a fresh copy.
+
+// starterSummaryJSON mirrors the daemon's starter list shape (agentd/starters.go).
+type starterSummaryJSON struct {
+	Name        string `json:"name"`
+	Descr       string `json:"descr,omitempty"`
+	Agents      int    `json:"agents"`
+	Waves       int    `json:"waves"`
+	Rhythms     int    `json:"rhythms"`
+	Process     int    `json:"process"`
+	WorkPattern int    `json:"work_pattern"`
+}
+
+// starterInstallResultJSON mirrors the daemon's install response.
+type starterInstallResultJSON struct {
+	Name      string   `json:"name"`
+	Installed bool     `json:"installed"`
+	Skipped   bool     `json:"skipped"`
+	Message   string   `json:"message"`
+	Warnings  []string `json:"warnings"`
+}
+
+func templatesStartersCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:   "starters",
+		Short: "Browse and install bundled starter task forces",
+		Long: "tclaude ships a small library of curated, ready-to-run task-force templates — a dev squad, a research " +
+			"pod, and a review crew. Each is a worked example of the whole feature set (role references, per-agent " +
+			"launch tuning, a process, staged-spawn waves, seeded rhythms, and a routed work pattern). List them with " +
+			"'ls', inspect one with 'show', and 'install' it as a local template you can then deploy or edit. Install " +
+			"never overwrites an existing template of the same name — your edited copy is sacred.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds: []*cobra.Command{
+			templatesStartersLsCmd(),
+			templatesStartersShowCmd(),
+			templatesStartersInstallCmd(),
+		},
+	}.ToCobra()
+}
+
+func templatesStartersLsCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "ls",
+		Short:       "List the bundled starter task forces",
+		Long:        "Lists every starter tclaude ships, with its agent count and a one-line description. Install one with 'templates starters install <name>'.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersLs(os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersLs(stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var starters []starterSummaryJSON
+	if err := DaemonRequest(http.MethodGet, "/v1/starters", nil, &starters, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(starters) == 0 {
+		fmt.Fprintln(stdout, "(no starters bundled)")
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%-16s  %-7s  %s\n", "NAME", "AGENTS", "DESCR")
+	fmt.Fprintln(stdout, strings.Repeat("─", 80))
+	for _, s := range starters {
+		fmt.Fprintf(stdout, "%-16s  %-7d  %s\n", s.Name, s.Agents, truncate(s.Descr, 52))
+	}
+	fmt.Fprintln(stdout, "\nInstall one with: tclaude agent templates starters install <name>")
+	return rcOK
+}
+
+type templatesStartersShowParams struct {
+	Name string `pos:"true" help:"Starter name (from 'tclaude agent templates starters ls')."`
+	JSON bool   `long:"json" optional:"true" help:"Emit the starter's raw template JSON instead of the human-readable view."`
+}
+
+func templatesStartersShowCmd() *cobra.Command {
+	return boa.CmdT[templatesStartersShowParams]{
+		Use:         "show <name>",
+		Short:       "Show one bundled starter in detail",
+		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesStartersShowParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersShow(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersShow(p *templatesStartersShowParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a starter name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	var t templateJSON
+	if err := DaemonRequest(http.MethodGet, "/v1/starters/"+url.PathEscape(name), nil, &t, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(t); err != nil {
+			fmt.Fprintf(stderr, "Error: encoding template JSON: %v\n", err)
+			return rcIOFailure
+		}
+		return rcOK
+	}
+	renderTemplateHuman(stdout, t)
+	return rcOK
+}
+
+type templatesStartersInstallParams struct {
+	Name string `pos:"true" help:"Starter to install (from 'tclaude agent templates starters ls')."`
+	As   string `long:"as" optional:"true" help:"Install under this name instead of the starter's own name — installs a fresh copy, or sidesteps a name collision with an existing template."`
+}
+
+func templatesStartersInstallCmd() *cobra.Command {
+	return boa.CmdT[templatesStartersInstallParams]{
+		Use:   "install <name>",
+		Short: "Install a bundled starter as a local template",
+		Long: "Installs a starter as a local group template you can then deploy, instantiate, or edit. Idempotent and " +
+			"never clobbers: if a template of the target name already exists, the install is SKIPPED (your edited copy " +
+			"is sacred) — pass --as <name> to install a fresh copy under a different name. Works on a fresh empty DB.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *templatesStartersInstallParams, _ *cobra.Command, _ []string) {
+			os.Exit(runTemplatesStartersInstall(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runTemplatesStartersInstall(p *templatesStartersInstallParams, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		fmt.Fprintln(stderr, "Error: a starter name is required")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	path := "/v1/starters/" + url.PathEscape(name) + "/install"
+	if as := strings.TrimSpace(p.As); as != "" {
+		q := url.Values{}
+		q.Set("as", as)
+		path += "?" + q.Encode()
+	}
+	var res starterInstallResultJSON
+	if err := DaemonRequest(http.MethodPost, path, nil, &res, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if res.Skipped {
+		fmt.Fprintf(stdout, "Skipped %q — %s\n", res.Name, res.Message)
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "Installed starter as template %q\n", res.Name)
+	for _, wmsg := range res.Warnings {
+		fmt.Fprintf(stdout, "  ⚠ %s\n", wmsg)
+	}
+	fmt.Fprintf(stdout, "Deploy it with: tclaude agent task-force deploy %s --mission \"…\"\n", res.Name)
+	return rcOK
 }
