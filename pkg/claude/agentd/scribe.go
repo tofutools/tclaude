@@ -316,10 +316,16 @@ func seedScribeDirTrust(harnessName, dir string) {
 		if err := harness.EnsureCodexDirTrusted(dir); err != nil {
 			slog.Warn("scribe: pre-trust codex workdir failed", "dir", dir, "error", err)
 		}
-	default: // claude (the default harness)
+	case harness.DefaultName: // "claude"
 		if err := harness.EnsureClaudeDirTrusted(dir); err != nil {
 			slog.Warn("scribe: pre-trust claude workdir failed", "dir", dir, "error", err)
 		}
+	default:
+		// A harness with no known trust store (or one added later without a
+		// seeding path wired here). Skip rather than guess — the pane may raise
+		// a one-time trust prompt the human clears via its focus button.
+		slog.Warn("scribe: no dir-trust seeding for harness; pane may prompt once",
+			"harness", harnessName, "dir", dir)
 	}
 }
 
