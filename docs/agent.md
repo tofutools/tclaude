@@ -281,8 +281,8 @@ tclaude agent groups archive <group>                      # soft-delete: freeze,
 tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
 tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session) every member
-tclaude agent groups resume <group>                        # spawn a session for every offline member
-tclaude agent groups retire <group> [--no-shutdown]        # retire (soft-delete) every OTHER member; bulk parallel of `agent retire`
+tclaude agent groups resume <group>                        # spawn a session for every offline member; re-enables rhythms an emptying retire auto-disabled
+tclaude agent groups retire <group> [--no-shutdown]        # retire (soft-delete) every OTHER member; if it empties the group, auto-disables its rhythms
 tclaude agent groups rebrief <group>                       # re-deliver a deployed force's work pattern + mission (see Task forces)
 tclaude agent groups export <group> [--out FILE]           # export the group (DB rows + members' .jsonl) to a portable .zip
 tclaude agent groups import <file.zip> --into <dir>        # recreate an exported group on this machine
@@ -675,6 +675,32 @@ once the roster is whole. With no `--group` the group name is derived from the
 mission (a bare-URL mission falls back to the template name). `--worktree` lands
 the whole force on its own branch in a git worktree, which becomes its working
 directory.
+
+### task-force stand-down
+
+Wind a force down — the **mirror of `deploy`**. It retires the whole roster and
+sweeps (deletes) the deploy-seeded runtime — the group-target rhythm cron jobs
+and any pending wave choreography — while **keeping the group row** as a dormant
+record (mission, provenance, and process history preserved). It is deliberately
+*not* a group delete (`groups rm` does that). Gated on the human, group owners,
+or `groups.retire`.
+
+```bash
+tclaude agent task-force stand-down <group> [--no-shutdown] [--reason "<why>"] [--ask-human <duration>]
+```
+
+By default each live member's running pane is soft-exited (sends `/exit`); pass
+`--no-shutdown` to leave the processes running. The caller's own conversation is
+always skipped (an agent never retires itself). Standing down a plain group (no
+template) simply retires its members — there is nothing to sweep. The command
+prints the per-member retire table plus a sweep summary (e.g. *"2 rhythm job(s)
+removed, 1 pending wave(s) cancelled"*).
+
+> A plain **`groups retire`** that leaves a group with no live members instead
+> **disables** (not deletes) its rhythms — reversible via `groups resume`. Use
+> `stand-down` when you want the deploy-seeded runtime *gone*, `groups retire`
+> when you may bring the force back. See
+> [Winding a force down](dashboard.md#winding-a-force-down).
 
 ### process show / advance
 

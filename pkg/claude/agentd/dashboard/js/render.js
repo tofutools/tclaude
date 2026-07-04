@@ -641,7 +641,7 @@ function renderForceBlock(g, members) {
       : '';
     parts.push(`<div class="force-roles"><div class="force-roles-head"><span class="force-roles-label">Roles</span>${stalling}</div>${forceRolesRollup(members)}</div>`);
   }
-  parts.push(`<div class="force-controls"><button class="force-rebrief-btn" data-act="rebrief-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief</button></div>`);
+  parts.push(`<div class="force-controls"><button class="force-rebrief-btn" data-act="rebrief-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief</button><button class="force-standdown-btn" data-act="stand-down-force" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Stand down the force — the mirror of deploy. Retires every member and sweeps the deploy-seeded rhythms + pending waves, keeping the group as a dormant record (mission &amp; history preserved). Not a delete.">⏻ stand down</button></div>`);
   return `<div class="group-force-block">${parts.filter(Boolean).join('')}</div>`;
 }
 
