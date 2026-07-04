@@ -58,6 +58,10 @@ func decodeScribeResp(t *testing.T, rec *httptest.ResponseRecorder) scribeSummon
 // one-member group, holding exactly the requested slug, and its window is
 // opened.
 func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
+	// The scribe=true wire assertion below fetches /api/snapshot, whose
+	// auth pins the Origin to popupBaseURL — set it so the test handler
+	// injects a matching Origin (same shim the group-descr snapshot tests use).
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	opens := stubScribeTerminal(t)
 
@@ -87,6 +91,11 @@ func TestScribeSummon_HumanCreatesGrantedScribe(t *testing.T) {
 	overrides, err := db.ListAgentPermissionOverridesForConv(resp.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, "grant", overrides[agentd.PermTemplatesManage], "templates.manage granted at birth")
+
+	// The snapshot flags the scribe's eponymous group as `scribe` — the wire
+	// bit the Groups tab keys off to hide it by default (only shown when the
+	// human ticks "show circle-scribe" in the view popover).
+	assert.True(t, dashGroupByName(t, "circle-scribe").Scribe, "snapshot marks the scribe group scribe=true")
 
 	// The scribe's window was opened.
 	assert.Equal(t, 1, *opens, "summon opened the scribe's terminal window")

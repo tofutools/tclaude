@@ -234,7 +234,21 @@ function bindFilter(tab) {
       rerender();
     });
   }
-  // Optional ▾ view popover (groups tab only) — collapses the five
+  // Optional "show circle-scribe" checkbox (groups tab only) — reveals the
+  // daemon-created scribe's system group (snapshot `scribe` flag). Defaults
+  // OFF (it's machinery, not a managed team) when the user has never touched
+  // it, so a summoned scribe stays out of the way until deliberately shown.
+  const scribe = $(`#filter-${tab}-scribe`);
+  if (scribe) {
+    const sckey = `tclaude.dash.scribe.${tab}`;
+    const saved = dashPrefs.getItem(sckey);
+    scribe.checked = saved === '1';
+    scribe.addEventListener('change', () => {
+      dashPrefs.setItem(sckey, scribe.checked ? '1' : '0');
+      rerender();
+    });
+  }
+  // Optional ▾ view popover (groups tab only) — collapses the six
   // "show X" checkboxes above behind a single button so the filter
   // bar stays compact. Restoration of each checkbox's state has
   // already happened above; this only wires the trigger + open/close
@@ -246,15 +260,17 @@ function bindFilter(tab) {
   const viewBadge = $(`#filter-${tab}-view-badge`);
   if (viewBtn && viewMenu && viewBadge) {
     // Defaults match the `checked` attributes in dashboard.html. The
-    // first three default ON (showing everything); 'conversations' and
-    // 'replaced' default OFF (each can grow large / is archival). Edit
-    // BOTH places together if the defaults ever change.
+    // first three default ON (showing everything); 'conversations',
+    // 'replaced' and 'scribe' default OFF (each can grow large / is
+    // archival / is machinery). Edit BOTH places together if the defaults
+    // ever change.
     const viewDefaults = {
       [`filter-${tab}-offline`]: true,
       [`filter-${tab}-ungrouped`]: true,
       [`filter-${tab}-retired`]: true,
       [`filter-${tab}-conversations`]: false,
       [`filter-${tab}-replaced`]: false,
+      [`filter-${tab}-scribe`]: false,
     };
     const updateViewBadge = () => {
       let n = 0;

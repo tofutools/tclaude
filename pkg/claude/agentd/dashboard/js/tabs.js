@@ -17,6 +17,7 @@ import {
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,
   virtualReplacedGroup, replacedVisible,
+  scribeVisible,
 } from './virtual-groups.js';
 import { renderGroups } from './render.js';
 import { sortGroupsByPref } from './group-reorder.js';
@@ -73,7 +74,11 @@ function filterGroups(groups, q) {
 function renderGroupsTab() {
   if (!lastSnapshot) return;
   const q = $('#filter-groups').value;
-  const realGroups = lastSnapshot.groups || [];
+  // The daemon-created scribe's system group (snapshot `scribe` flag) is
+  // hidden by default — it's machinery, not a team the operator manages —
+  // and surfaces only when the human ticks "show circle-scribe" in the view
+  // popover. Everything else renders as normal.
+  const realGroups = (lastSnapshot.groups || []).filter(g => scribeVisible() || !g.scribe);
   // Append the virtual "Ungrouped" group LAST so it always sorts to
   // the bottom of the listing. filterGroups preserves order, so the
   // text filter narrows it like any other group without moving it.

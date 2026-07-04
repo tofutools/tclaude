@@ -181,10 +181,22 @@ function replacedVisible() {
   return el ? el.checked : false;
 }
 
+// scribeVisible reports the "show circle-scribe" checkbox state. Unlike the
+// helpers above, circle-scribe is a REAL server-side system group (a
+// daemon-created scribe's eponymous group, flagged `scribe` in the snapshot),
+// not a client-side virtual group — but its show/hide toggle lives in the same
+// view popover, so its reader sits alongside them. Defaults to false: the
+// scribe is machinery, hidden until the human explicitly ticks it on.
+function scribeVisible() {
+  const el = $('#filter-groups-scribe');
+  return el ? el.checked : false;
+}
+
 export {
   virtualUngroupedGroup, ungroupedVisible,
   virtualConversationsGroup, conversationsVisible,
   virtualRetiredGroup, retiredVisible,
   virtualPendingGroup,
   virtualReplacedGroup, replacedVisible,
+  scribeVisible,
 };
