@@ -6,6 +6,7 @@
 
 import { $, $$, esc, shortId, relTime, captureFocus, restoreFocus } from './helpers.js';
 import { cycleSort } from './sort.js';
+import { hideableMemberCols, memberColHidden, setMemberColHidden, memberColDeviationCount } from './member-columns.js';
 import { dashPrefs } from './prefs.js';
 import { listParams, syncServedOffset, listPagerNav, setListPageSize, fetchListFull, resetListOffsets } from './list-paging.js';
 import { conversationsVisible, replacedVisible } from './virtual-groups.js';
@@ -237,6 +238,9 @@ function bindFilter(tab) {
         const el = document.getElementById(id);
         if (el && el.checked !== want) n++;
       }
+      // Each member column whose visibility differs from its default is one
+      // more deviation from the default view, so it adds to the same badge.
+      n += memberColDeviationCount();
       if (n === 0) {
         viewBadge.hidden = true;
         viewBadge.textContent = '';
@@ -245,10 +249,37 @@ function bindFilter(tab) {
         viewBadge.textContent = String(n);
       }
     };
+    // Populate the "Columns" section (groups tab only) — one checkbox per
+    // hideable member column, built from MEMBER_COLS so the menu can't drift
+    // from the table. Checked = shown. Toggling persists via
+    // setMemberColHidden (dashPrefs) and rerenders; the badge picks the
+    // change up through the bubbled `change` listener below.
+    const colsBox = $(`#filter-${tab}-cols`);
+    if (colsBox) {
+      colsBox.replaceChildren();
+      for (const c of hideableMemberCols()) {
+        const label = document.createElement('label');
+        label.className = 'filter-toggle';
+        label.title = `Show the "${c.label}" column`;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = `filter-${tab}-col-${c.key}`;
+        cb.checked = !memberColHidden(c.key);
+        cb.addEventListener('change', () => {
+          setMemberColHidden(c.key, !cb.checked);
+          rerender();
+        });
+        const span = document.createElement('span');
+        span.textContent = c.label;
+        label.append(cb, span);
+        colsBox.append(label);
+      }
+    }
     updateViewBadge();
     // change bubbles up from the contained inputs, so one listener on
-    // the popover covers all four. The per-checkbox handlers above
-    // already persist + rerender; this only refreshes the badge.
+    // the popover covers all the checkboxes (row + column toggles alike).
+    // The per-checkbox handlers already persist + rerender; this only
+    // refreshes the badge.
     viewMenu.addEventListener('change', updateViewBadge);
     const closeViewMenu = () => {
       viewMenu.classList.remove('open');

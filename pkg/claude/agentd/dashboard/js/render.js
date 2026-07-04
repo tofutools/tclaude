@@ -11,10 +11,11 @@ import {
   cwdCell, branchCell, offlineDefault, groupShowOffline, syncBotAnimations,
 } from './helpers.js';
 import {
-  sortHead, applySort, MEMBER_COLS, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
+  sortHead, applySort, MEMBER_ACCESSORS, REPLACED_COLS, REPLACED_ACCESSORS,
   RETIRED_COLS, RETIRED_ACCESSORS, CONVERSATIONS_COLS, CONVERSATIONS_ACCESSORS,
   PENDING_COLS, PENDING_ACCESSORS,
 } from './sort.js';
+import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import { groupActivityHTML, activitySummary, styledBotsHTML, styledWizardBotsHTML, aggregateActivity, themedSummaryText } from './group-activity.js';
 import { isWizardActive } from './slop.js';
 import { dashPrefs } from './prefs.js';
@@ -40,12 +41,20 @@ import { sudoByConv, hoveredGroupKey } from './refresh.js';
 // — never on Codex, which renames out-of-band. The click handler
 // (row-actions.js, data-act="rename-name") is wired only on the editable
 // variant, so a non-renameable agent's name simply does nothing on click.
-function renameNameCell(m, state) {
+// idPair is the optional "<agent_id> / <conv-id>" hover string, passed in
+// only when the ID column is hidden (see memberRowHTML) so the identifiers
+// stay reachable off the name; empty otherwise.
+function renameNameCell(m, state, idPair = '') {
   const name = esc(m.title || '(unnamed)');
+  // idPair (the "<agent_id> / <conv-id>" hover string) is folded into the
+  // name's title ONLY when the ID column is hidden — the ID cell's own
+  // idTooltip is gone in that view, so surfacing the pair here keeps both
+  // identifiers reachable/copyable off a hover (the brief's suggestion).
+  const idPrefix = idPair ? `${esc(idPair)} — ` : '';
   if (harnessCanRename(lastSnapshot, state.harness)) {
-    return `<span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="Click to rename this agent — Enter saves, Esc cancels">${name}</span>`;
+    return `<span class="rowname-text" data-act="rename-name" data-conv="${esc(m.conv_id)}" data-agent="${esc(m.agent_id || m.conv_id)}" data-current="${esc(m.title || '')}" data-label="${esc(m.title || m.conv_id)}" title="${idPrefix}Click to rename this agent — Enter saves, Esc cancels">${name}</span>`;
   }
-  return `<span class="rowname-text rowname-fixed" title="This agent's harness does not support renaming">${name}</span>`;
+  return `<span class="rowname-text rowname-fixed" title="${idPrefix}This agent's harness does not support renaming">${name}</span>`;
 }
 
 // memberRowHTML renders one draggable member <tr>. `ctx` selects the
@@ -69,30 +78,40 @@ function memberRowHTML(m, ctx) {
   // in scope — the same place renameNameCell reads harnessCanRename.
   const canRemote = harnessCanRemoteControl(lastSnapshot, state.harness);
   const actions = ctx.ungrouped ? ungroupedMemberActions(m, canRemote) : memberActions(ctx.group, m, canRemote);
-  return `
-              <tr class="dnd-draggable" draggable="true" data-key="${esc(m.conv_id)}" ${dndSource}
-                  data-dnd-conv="${esc(m.conv_id)}"
-                  data-dnd-agent="${esc(m.agent_id || m.conv_id)}"
-                  data-dnd-label="${esc(m.title || m.conv_id)}">
-                <td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>
-                <td class="id" title="${esc(idTooltip(m.agent_id, m.conv_id))}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>
-                <td class="name-cell">
-                  <div class="rowname">${renameNameCell(m, state)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
-                </td>
-                <td class="state-cell">
+  // When the ID column is hidden, fold the id pair into the name cell's
+  // hover so the identifiers aren't lost with the column.
+  const idHidden = memberColHidden('id');
+  const namePair = idHidden ? idTooltip(m.agent_id, m.conv_id) : '';
+  // One <td> per MEMBER_COLS key. Only the visible keys are emitted, in
+  // column order (visibleMemberCols) — the SAME filter sortHead uses for the
+  // header — so header and body can never drift. A new column plugs in by
+  // adding a MEMBER_COLS entry and a cell here under its key.
+  const cells = {
+    ctl:    `<td><div class="agent-ctl">${agentStatusDot(m)}${actions}</div>${harnessLine(m)}${sandboxBadge(m)}</td>`,
+    id:     `<td class="id" title="${esc(idTooltip(m.agent_id, m.conv_id))}">${esc(shortAgentId(m.agent_id, m.conv_id))}</td>`,
+    title:  `<td class="name-cell">
+                  <div class="rowname">${renameNameCell(m, state, namePair)}${sudoBadge(sudoByConv[m.conv_id], m.conv_id)}</div>
+                </td>`,
+    state:  `<td class="state-cell">
                   ${contextMeter(state)}
                   ${statePill(state, m.online)}
                   ${slopMachine(state, m.online, m.conv_id)}
                   ${wizardPill(state, m.online, m.conv_id)}
                   ${m.online ? activityBadges(state) : ''}
-                </td>
-                <td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>
-                <td><span class="last-hook" title="${esc(m.created_at || '')}">${esc(relTime(m.created_at))}</span></td>
-                <td>${cwdCell(m)}</td>
-                <td>${branchCell(m)}</td>
-                <td>${roleCell(m, ctx.group)}</td>
-                <td class="descr-cell muted">${esc(m.descr || '')}</td>
-              </tr>`;
+                </td>`,
+    last:   `<td><span class="last-hook">${esc(relTime(state.last_hook))}</span></td>`,
+    age:    `<td><span class="last-hook" title="${esc(m.created_at || '')}">${esc(relTime(m.created_at))}</span></td>`,
+    cwd:    `<td>${cwdCell(m)}</td>`,
+    branch: `<td>${branchCell(m)}</td>`,
+    role:   `<td>${roleCell(m, ctx.group)}</td>`,
+    descr:  `<td class="descr-cell muted">${esc(m.descr || '')}</td>`,
+  };
+  const body = visibleMemberCols().map((c) => cells[c.key] || '').join('');
+  return `
+              <tr class="dnd-draggable" draggable="true" data-key="${esc(m.conv_id)}" ${dndSource}
+                  data-dnd-conv="${esc(m.conv_id)}"
+                  data-dnd-agent="${esc(m.agent_id || m.conv_id)}"
+                  data-dnd-label="${esc(m.title || m.conv_id)}">${body}</tr>`;
 }
 
 // renderVirtualGroup renders the synthetic "Ungrouped" group. It is
@@ -121,7 +140,7 @@ function renderVirtualGroup(g) {
     ? `<div class="muted">(${hiddenOffline} offline agent${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
     : `
         <table>
-          ${sortHead('members', MEMBER_COLS)}
+          ${sortHead('members', visibleMemberCols())}
           <tbody>
             ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {ungrouped: true})).join('')}
           </tbody>
@@ -572,7 +591,7 @@ function renderGroups(groups) {
           ? `<div class="muted">(${hiddenOffline} offline member${hiddenOffline === 1 ? '' : 's'} hidden — toggle "show offline" to see ${hiddenOffline === 1 ? 'it' : 'them'})</div>`
           : `
         <table>
-          ${sortHead('members', MEMBER_COLS)}
+          ${sortHead('members', visibleMemberCols())}
           <tbody>
             ${applySort('members', visible, MEMBER_ACCESSORS).map(m => memberRowHTML(m, {group: g})).join('')}
           </tbody>
