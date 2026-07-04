@@ -44,20 +44,24 @@ func TestMigrationStepsAreContiguous(t *testing.T) {
 
 // TestMigrate_ReporterFiresForFreshDB runs the full chain against a brand-new
 // DB and asserts the reporter sees begin(0 → head), an Applying+Applied pair
-// for every version 2..head in order, and a single Done(head). A second
-// migrate() on the now-current DB must fire nothing — a normal restart stays
-// silent.
+// for every version 2..head in order, and a single Done(head) — with
+// AlreadyCurrent staying silent because there was real work. A second migrate()
+// on the now-current DB fires ONLY AlreadyCurrent(head) and none of the
+// begin/apply/done bookends — a no-op restart announces itself but migrates
+// nothing.
 func TestMigrate_ReporterFiresForFreshDB(t *testing.T) {
 	d := openRawMigrationDB(t)
 
 	var applying, applied []int
 	var beginFrom, beginTo, doneTo, beginCalls, doneCalls, failedCalls int
+	var alreadyVer, alreadyHead, alreadyCalls int
 	SetMigrationReporter(&MigrationReporter{
-		Begin:    func(from, to int) { beginFrom, beginTo = from, to; beginCalls++ },
-		Applying: func(v int) { applying = append(applying, v) },
-		Applied:  func(v int) { applied = append(applied, v) },
-		Failed:   func(int, error) { failedCalls++ },
-		Done:     func(to int) { doneTo = to; doneCalls++ },
+		AlreadyCurrent: func(v, head int) { alreadyVer, alreadyHead = v, head; alreadyCalls++ },
+		Begin:          func(from, to int) { beginFrom, beginTo = from, to; beginCalls++ },
+		Applying:       func(v int) { applying = append(applying, v) },
+		Applied:        func(v int) { applied = append(applied, v) },
+		Failed:         func(int, error) { failedCalls++ },
+		Done:           func(to int) { doneTo = to; doneCalls++ },
 	})
 	t.Cleanup(func() { SetMigrationReporter(nil) })
 
@@ -73,21 +77,61 @@ func TestMigrate_ReporterFiresForFreshDB(t *testing.T) {
 	assert.Equal(t, 1, beginCalls, "Begin fires once")
 	assert.Equal(t, 1, doneCalls, "Done fires once")
 	assert.Equal(t, 0, failedCalls, "no Failed on a clean run")
+	assert.Equal(t, 0, alreadyCalls, "AlreadyCurrent stays silent when there is real work")
 	assert.Equal(t, want, applying, "Applying fires per version, in order")
 	assert.Equal(t, want, applied, "Applied fires per version, in order")
 
-	// Second pass: DB is at head, so migrate() returns before touching the
-	// reporter. Nothing new should be reported.
+	// Second pass: DB is at head, so migrate() applies nothing and fires ONLY
+	// AlreadyCurrent(head) — the no-op-restart signal — with every bookend
+	// staying quiet.
 	applying, applied = nil, nil
-	beginCalls, doneCalls = 0, 0
+	beginCalls, doneCalls, alreadyCalls, alreadyVer, alreadyHead = 0, 0, 0, 0, 0
 	require.NoError(t, migrate(d))
 	assert.Empty(t, applying, "no migrations applied on a current DB")
 	assert.Empty(t, applied)
 	assert.Equal(t, 0, beginCalls, "Begin does not fire when there is no work")
 	assert.Equal(t, 0, doneCalls, "Done does not fire when there is no work")
+	assert.Equal(t, 1, alreadyCalls, "AlreadyCurrent fires once on a no-op restart")
+	assert.Equal(t, currentVersion, alreadyVer, "AlreadyCurrent reports the DB's actual version")
+	assert.Equal(t, currentVersion, alreadyHead, "AlreadyCurrent reports the binary's head version")
 
 	// Sanity: the DB really did reach head.
 	assert.Equal(t, currentVersion, schemaVersion(d))
+}
+
+// TestMigrate_ReporterAlreadyCurrentForPastHeadDB covers the pathological path
+// where the DB's schema is NEWER than this binary (a newer tclaude wrote it,
+// then an older one ran): migrate() applies nothing and fires AlreadyCurrent
+// once, reporting the DB's ACTUAL version (> head) alongside the binary's head
+// so the consumer can flag the anomaly instead of reassuring the operator.
+func TestMigrate_ReporterAlreadyCurrentForPastHeadDB(t *testing.T) {
+	d := openRawMigrationDB(t)
+	// Drive the DB to head first (a real, fully-migrated DB), then bump its
+	// recorded schema_version past what this binary knows.
+	require.NoError(t, migrate(d))
+	pastHead := currentVersion + 3
+	_, err := d.Exec(`UPDATE schema_version SET version = ?`, pastHead)
+	require.NoError(t, err)
+
+	var applying []int
+	var beginCalls, doneCalls, alreadyCalls, alreadyVer, alreadyHead int
+	SetMigrationReporter(&MigrationReporter{
+		AlreadyCurrent: func(v, head int) { alreadyVer, alreadyHead = v, head; alreadyCalls++ },
+		Begin:          func(int, int) { beginCalls++ },
+		Applying:       func(v int) { applying = append(applying, v) },
+		Done:           func(int) { doneCalls++ },
+	})
+	t.Cleanup(func() { SetMigrationReporter(nil) })
+
+	require.NoError(t, migrate(d), "a DB past head is a no-op, not an error")
+	assert.Empty(t, applying, "no migrations applied when the DB is past head")
+	assert.Equal(t, 0, beginCalls, "Begin does not fire for a past-head DB")
+	assert.Equal(t, 0, doneCalls, "Done does not fire for a past-head DB")
+	assert.Equal(t, 1, alreadyCalls, "AlreadyCurrent fires once for a past-head DB")
+	assert.Equal(t, pastHead, alreadyVer, "AlreadyCurrent reports the DB's actual (past-head) version")
+	assert.Equal(t, currentVersion, alreadyHead, "AlreadyCurrent reports the binary's head version")
+	// The migration must not have rewound the DB's version.
+	assert.Equal(t, pastHead, schemaVersion(d))
 }
 
 // TestMigrate_NilReporterIsSilentAndSucceeds guards the CLI default: with no
