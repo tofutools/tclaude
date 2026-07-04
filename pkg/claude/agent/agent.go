@@ -48,6 +48,7 @@ func Cmd() *cobra.Command {
 			cronCmd(),
 			templatesCmd(),
 			rolesCmd(),
+			profilesCmd(),
 			taskForceCmd(),
 			processCmd(),
 			dashboardCmd(),

@@ -230,6 +230,13 @@ type SpawnParams struct {
 	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
 	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
 
+	// Profile pre-fills the spawn fields from a saved spawn profile (JOH-210),
+	// the CLI twin of the dashboard's "Load from profile" picker. An explicit
+	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
+	// Precedence: explicit flags override the profile, which overrides the
+	// group / harness defaults (see mergeProfileIntoSpawn).
+	Profile string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides the group/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
 	WorktreeRepo string `long:"worktree-repo" optional:"true" help:"Repo to create the --worktree in when it differs from --cwd (the monorepo sub-repo case): the agent still launches in --cwd and the worktree path/branch ride into its welcome. Default: the repo containing --cwd, with the agent launched inside the worktree"`
@@ -320,6 +327,7 @@ func spawnCmd() *cobra.Command {
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.Profile).SetAlternativesFunc(completeSpawnProfileNames)
 			return nil
 		},
 		RunFunc: func(p *SpawnParams, _ *cobra.Command, _ []string) {
@@ -327,6 +335,162 @@ func spawnCmd() *cobra.Command {
 			os.Exit(rc)
 		},
 	}.ToCobra()
+}
+
+// resolvedSpawnFields holds the per-field spawn values after a --profile has
+// been folded under the CLI's explicit flags. It is the CLI-side twin of the
+// dashboard's applyProfileToSpawnForm: an explicit flag wins; a field the flag
+// left blank takes the profile's value; a field neither sets stays blank, for
+// the daemon to fill from the group default profile, then the harness default.
+// Pure data — RunSpawn validates these against the resolved harness and builds
+// the SpawnRequest from them.
+type resolvedSpawnFields struct {
+	Harness  string
+	Model    string
+	Effort   string
+	Sandbox  string
+	Approval string
+
+	Name           string
+	Role           string
+	Descr          string
+	InitialMessage string
+
+	AutoReview bool
+	TrustDir   bool
+	AutoFocus  bool
+
+	IsOwner             bool
+	PermissionOverrides map[string]string
+
+	// IncludeGroupContext is tri-state on the wire: nil = default (the daemon
+	// includes the group context), &false = exclude. --no-group-context forces
+	// &false; else the profile's value; else nil.
+	IncludeGroupContext *bool
+}
+
+// harnessEquivalent reports whether two (possibly blank) harness names refer to
+// the same harness, treating blank as the default (Claude Code) — so "" and
+// "claude" compare equal. The CLI-side mirror of agentd's harnessOrDefault
+// equality check.
+func harnessEquivalent(a, b string) bool {
+	norm := func(s string) string {
+		if s = strings.TrimSpace(s); s == "" {
+			return harness.DefaultName
+		}
+		return s
+	}
+	return norm(a) == norm(b)
+}
+
+// mergeProfileIntoSpawn folds a spawn profile's fields under the CLI's explicit
+// flags, mirroring the dashboard's client-side pre-fill (JOH-210). Precedence,
+// per field: explicit flag > profile > blank. The daemon then fills a still-
+// blank field from the group's default profile, then the harness default — so
+// the full order is flag > --profile > group-default profile > harness default.
+//
+// The launch fields (harness/model/effort/sandbox/approval/auto_review/
+// trust_dir) are inherited ONLY when the effective harness matches the
+// profile's — the same gate handleGroupSpawn applies to a group default
+// profile. A spawn that pins a *different* --harness brings its own launch
+// config (validated against that harness); copying the profile's foreign model/
+// sandbox over it would just 400 at validation. A blank --harness adopts the
+// profile's. Identity fields (name/role/descr/initial_message) and the harness-
+// agnostic toggles (auto_focus, include_group_context, is_owner,
+// permission_overrides) are inherited regardless of harness.
+//
+// remote_control is deliberately NOT inherited from the profile: the CLI can't
+// see the group's remote-control policy, which must win over a profile default
+// (JOH-262), and the wire carries RemoteControl as an authoritative *bool with
+// no "soft default" channel. Use the explicit --remote-control flag to arm it.
+//
+// explicitMessage is the already-resolved --initial-message / --file body (the
+// profile fills it only when the caller passed none). prof may be nil (no
+// --profile), making this a faithful pass-through of the flags.
+func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profileJSON) resolvedSpawnFields {
+	// pick returns the explicit flag when set, else the profile's value (only
+	// when a profile is present), else blank.
+	pick := func(flag, profile string) string {
+		if v := strings.TrimSpace(flag); v != "" {
+			return v
+		}
+		if prof != nil {
+			return strings.TrimSpace(profile)
+		}
+		return ""
+	}
+
+	out := resolvedSpawnFields{
+		AutoReview:     p.AutoReview,
+		AutoFocus:      p.AutoFocus,
+		InitialMessage: explicitMessage,
+	}
+
+	// Identity fields — harness-agnostic, always inherited (flag wins).
+	out.Name = pick(p.Name, profStr(prof, func(pf *profileJSON) string { return pf.AgentName }))
+	out.Role = pick(p.Role, profStr(prof, func(pf *profileJSON) string { return pf.Role }))
+	out.Descr = pick(p.Descr, profStr(prof, func(pf *profileJSON) string { return pf.Descr }))
+	if out.InitialMessage == "" && prof != nil {
+		out.InitialMessage = strings.TrimSpace(prof.InitialMessage)
+	}
+
+	// Launch fields — inherited only when the effective harness matches the
+	// profile's (or the caller pinned no --harness, adopting the profile's).
+	profLaunch := prof != nil && (strings.TrimSpace(p.Harness) == "" || harnessEquivalent(p.Harness, prof.Harness))
+	if profLaunch {
+		out.Harness = pick(p.Harness, prof.Harness)
+		out.Model = pick(p.Model, prof.Model)
+		out.Effort = pick(p.Effort, prof.Effort)
+		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
+		out.Approval = pick(p.Approval, prof.Approval)
+		if !out.AutoReview && prof.AutoReview != nil {
+			out.AutoReview = *prof.AutoReview
+		}
+		if prof.TrustDir != nil {
+			out.TrustDir = *prof.TrustDir
+		}
+	} else {
+		out.Harness = strings.TrimSpace(p.Harness)
+		out.Model = strings.TrimSpace(p.Model)
+		out.Effort = strings.TrimSpace(p.Effort)
+		out.Sandbox = strings.TrimSpace(p.Sandbox)
+		out.Approval = strings.TrimSpace(p.Approval)
+	}
+
+	// Harness-agnostic toggles / access — inherited from the profile regardless
+	// of harness (flag / presence wins).
+	if prof != nil {
+		if !out.AutoFocus && prof.AutoFocus != nil {
+			out.AutoFocus = *prof.AutoFocus
+		}
+		if prof.IsOwner != nil {
+			out.IsOwner = *prof.IsOwner
+		}
+		if len(prof.PermissionOverrides) > 0 {
+			out.PermissionOverrides = prof.PermissionOverrides
+		}
+	}
+
+	// Group context: --no-group-context forces exclude; else the profile's
+	// include/exclude default; else nil (the daemon includes by default).
+	switch {
+	case p.NoGroupContext:
+		no := false
+		out.IncludeGroupContext = &no
+	case prof != nil && prof.IncludeGroupDefaultContext != nil:
+		v := *prof.IncludeGroupDefaultContext
+		out.IncludeGroupContext = &v
+	}
+
+	return out
+}
+
+// profStr safely reads a string field from a possibly-nil profile.
+func profStr(prof *profileJSON, get func(*profileJSON) string) string {
+	if prof == nil {
+		return ""
+	}
+	return get(prof)
 }
 
 // RunSpawn drives `tclaude agent spawn`. Returns the daemon's response
@@ -356,34 +520,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if rc != rcOK {
 		return nil, rc
 	}
-	initialMessage := strings.TrimSpace(rawMessage)
-	if !isValidInitialMessage(initialMessage) {
+	// Cap-check the explicitly-provided brief up front (fail-fast, no daemon
+	// needed). A profile-sourced brief was validated at save; the merged result
+	// is re-checked below once the profile is folded in.
+	explicitMessage := strings.TrimSpace(rawMessage)
+	if !isValidInitialMessage(explicitMessage) {
 		fmt.Fprintf(stderr, "Error: REJECTED. --initial-message must be at most %d characters.\n", MaxInitialMessageBytes)
 		fmt.Fprintln(stderr, "Newlines and tabs are allowed (the brief is delivered to the agent's")
 		fmt.Fprintln(stderr, "inbox, not typed into its pane), but other control characters are not.")
-		return nil, rcInvalidArg
-	}
-	// Validate --name client-side so a bad name fails fast with a clear
-	// message instead of reaching the daemon. An empty name is fine (the
-	// agent gets an auto-generated label); a non-empty one must be a safe
-	// token. The daemon re-validates server-side (handleGroupSpawn).
-	//
-	// When config's agent.spawn_name_normalize is on (the default), coerce a
-	// bad name to the safe charset instead of rejecting it — so `tclaude
-	// agent spawn --name "code reviewer"` "just works" the same way the
-	// dashboard modal does. The daemon re-normalizes (idempotent) as the
-	// authoritative backstop. Disabled (explicit false) keeps the strict
-	// reject below.
-	name := strings.TrimSpace(p.Name)
-	if !isValidSpawnName(name) {
-		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
-			name = NormalizeSpawnName(name)
-		}
-	}
-	if !isValidSpawnName(name) {
-		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
-		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
-		fmt.Fprintln(stderr, "Pick a name that uses only the allowed characters.")
 		return nil, rcInvalidArg
 	}
 	timeoutSeconds := 30
@@ -403,6 +547,49 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return nil, rc
 	}
+
+	// Fetch the named --profile (reads are open on the daemon) so its saved
+	// fields can pre-fill any blank the flags left. Only when --profile is set.
+	var prof *profileJSON
+	if strings.TrimSpace(p.Profile) != "" {
+		var frc int
+		if prof, frc = fetchSpawnProfile(strings.TrimSpace(p.Profile), stderr); frc != rcOK {
+			return nil, frc
+		}
+	}
+	// Fold the profile under the explicit flags (flag > profile > blank). The
+	// daemon then fills any still-blank launch field from the group's default
+	// profile, then the harness default.
+	merged := mergeProfileIntoSpawn(p, explicitMessage, prof)
+
+	// Effective brief: an explicit one was cap-checked above; a profile one was
+	// validated at save. Re-check defends a future profile field that skips it.
+	initialMessage := merged.InitialMessage
+	if !isValidInitialMessage(initialMessage) {
+		fmt.Fprintf(stderr, "Error: REJECTED. the profile's initial message must be at most %d characters.\n", MaxInitialMessageBytes)
+		return nil, rcInvalidArg
+	}
+
+	// Validate the effective --name (the flag, else the profile's agent_name)
+	// client-side so a bad name fails fast with a clear message. An empty name
+	// is fine (the agent gets an auto-generated label); a non-empty one must be
+	// a safe token. When config's agent.spawn_name_normalize is on (the default)
+	// a bad name is coerced to the safe charset — the same way the dashboard
+	// modal does — else it is rejected. The daemon re-validates/normalizes
+	// server-side (handleGroupSpawn) as the authoritative backstop.
+	name := strings.TrimSpace(merged.Name)
+	if !isValidSpawnName(name) {
+		if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
+			name = NormalizeSpawnName(name)
+		}
+	}
+	if !isValidSpawnName(name) {
+		fmt.Fprintf(stderr, "Error: REJECTED. --name must be 1-%d characters from [A-Za-z0-9_-]\n", MaxSpawnNameLen)
+		fmt.Fprintln(stderr, "(letters, digits, underscore, dash) — no spaces, punctuation, or unicode.")
+		fmt.Fprintln(stderr, "Pick a name that uses only the allowed characters.")
+		return nil, rcInvalidArg
+	}
+
 	ask, err := ParseAskHuman(p.AskHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -412,7 +599,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// validated against the chosen harness's own rules — a Codex spawn
 	// accepts a Codex model and rejects a Claude Code slug, and vice
 	// versa. An unknown/not-spawnable harness fails fast here.
-	h, err := harness.ResolveSpawnable(strings.TrimSpace(p.Harness))
+	h, err := harness.ResolveSpawnable(strings.TrimSpace(merged.Harness))
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -421,13 +608,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// message instead of reaching the daemon (where an invalid level
 	// would otherwise surface only as a conv-id-poll timeout once the
 	// forked `tclaude session new --effort <bad>` exits non-zero).
-	effort, err := h.Models.ValidateEffort(p.Effort)
+	effort, err := h.Models.ValidateEffort(merged.Effort)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
 	}
 	// Same fail-fast treatment for --model.
-	model, err := h.Models.ValidateModel(p.Model)
+	model, err := h.Models.ValidateModel(merged.Model)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -436,7 +623,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// workspace-write) when unset, validate an explicit value, and reject a
 	// mode for a harness with no launch sandbox flag (claude). The daemon
 	// re-resolves + applies the cwd-safety guard server-side.
-	sandboxMode, err := harness.ResolveSandboxMode(h, p.Sandbox)
+	sandboxMode, err := harness.ResolveSandboxMode(h, merged.Sandbox)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -447,7 +634,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// escalating default is what keeps the detached, unattended pane from
 	// deadlocking on an approval prompt (JOH-200). The daemon re-resolves it
 	// server-side.
-	approvalPolicy, err := harness.ResolveApprovalPolicy(h, p.Approval)
+	approvalPolicy, err := harness.ResolveApprovalPolicy(h, merged.Approval)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -455,7 +642,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	// Gate the experimental --auto-review opt-in: allowed only for a harness
 	// with an approvals subsystem (Codex); requesting it for claude fails fast
 	// here with a clear message. The daemon re-gates server-side.
-	autoReview, err := harness.ResolveAutoReview(h, p.AutoReview)
+	autoReview, err := harness.ResolveAutoReview(h, merged.AutoReview)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
+	// Resolve the effective trust-dir (Codex-only; taken from a --profile's
+	// trust_dir, since the CLI has no dedicated flag). false for any harness is
+	// always fine; a true for a non-Codex harness fails fast here. The daemon
+	// re-gates server-side.
+	trustDir, err := harness.ResolveTrustDir(h, merged.TrustDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return nil, rcInvalidArg
@@ -476,38 +672,40 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 
 	req := SpawnRequest{
-		Name:           name,
-		Role:           p.Role,
-		Descr:          p.Descr,
-		TaskURL:        strings.TrimSpace(p.Task),
-		TaskLabel:      strings.TrimSpace(p.TaskLabel),
-		InitialMessage: initialMessage,
-		ReplyTo:        strings.TrimSpace(p.ReplyTo),
-		Cwd:            cwd,
-		TimeoutSeconds: timeoutSeconds,
-		AutoFocus:      p.AutoFocus,
-		Effort:         effort,
-		Model:          model,
-		Harness:        h.Name,
-		SandboxMode:    sandboxMode,
-		ApprovalPolicy: approvalPolicy,
-		AutoReview:     autoReview,
+		Name:                name,
+		Role:                merged.Role,
+		Descr:               merged.Descr,
+		TaskURL:             strings.TrimSpace(p.Task),
+		TaskLabel:           strings.TrimSpace(p.TaskLabel),
+		InitialMessage:      initialMessage,
+		ReplyTo:             strings.TrimSpace(p.ReplyTo),
+		Cwd:                 cwd,
+		TimeoutSeconds:      timeoutSeconds,
+		AutoFocus:           merged.AutoFocus,
+		Effort:              effort,
+		Model:               model,
+		Harness:             h.Name,
+		SandboxMode:         sandboxMode,
+		ApprovalPolicy:      approvalPolicy,
+		AutoReview:          autoReview,
+		TrustDir:            trustDir,
+		IsOwner:             merged.IsOwner,
+		PermissionOverrides: merged.PermissionOverrides,
 	}
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends
 	// an explicit false to override an inherited default). See SpawnRequest.RemoteControl.
+	// A --profile's remote_control is deliberately NOT applied here — the CLI can't
+	// see the group's remote-control policy, which must win (see mergeProfileIntoSpawn).
 	if remoteControl {
 		on := true
 		req.RemoteControl = &on
 	}
-	// --no-group-context maps to an explicit `false` on the wire; an
-	// omitted pointer means opt-in, so the default (no flag) lets the
-	// daemon include the group context as every other spawn path does.
-	if p.NoGroupContext {
-		no := false
-		req.IncludeGroupContext = &no
-	}
+	// Group context: --no-group-context forces exclude, else a --profile may set
+	// it; an omitted pointer means the daemon includes the group context by
+	// default (every other spawn path does). Resolved in mergeProfileIntoSpawn.
+	req.IncludeGroupContext = merged.IncludeGroupContext
 
 	// Worktree handling. The CLI resolves the worktree itself — creating
 	// it in-process, the same git operation the dashboard's worktree
