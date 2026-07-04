@@ -248,6 +248,26 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
   cursor: pointer; padding: 4px 6px; font-size: 12px; font-family: inherit;
 }
 .mail-list-filter button.clear-filter:hover { color: #d4d4d4; }
+/* JOH-364: global FALLBACK skin for `.tool` buttons. Most .tool buttons live in
+   a scoped toolbar (.filter-bar / .mail-list-filter / …) or another container
+   whose `container button` rule out- or ties-and-follows this one — but many do
+   NOT (template / profile / role cards, the starter list, the template-editor
+   rows, the group-create template picker) and had no rule at all, so they fell
+   back to the browser's white UA chrome in plain mode. Placed FIRST, before every
+   container button rule, so equal-specificity `container button` rules (e.g.
+   .modal-buttons button) always win the tie — this only styles .tool buttons that
+   nothing else matches. Mirrors .filter-bar button.tool; body.wizard modal rules
+   recolor per skin. */
+button.tool {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+/* Hover sets ONLY border-color: every scoped `.tool` hover (filter-bar /
+   mail-list-filter) and the tied .modal-buttons button:hover already set
+   border-color to this same value, so this fallback introduces no property they
+   don't — it can't leak a background/text change onto a do-not-touch button. */
+button.tool:hover { border-color: #58a6ff; }
 .mail-list-filter button.tool {
   flex: 0 0 auto;
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
@@ -484,6 +504,18 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 .mail-reader-body a { color: #58a6ff; text-decoration: none; overflow-wrap: anywhere; }
 .mail-reader-body a:hover { text-decoration: underline; }
 .mail-reader-actions { margin-top: 14px; display: flex; gap: 6px; }
+/* JOH-364: base chrome for the reading-pane action bar (reply / focus /
+   mark read|unread / delete). These are plain <button>s with no .tool class, so
+   nothing reached them in plain mode and they rendered white UA chrome. The
+   .danger:hover below and the wizard data-kind rules compose on top. Mirrors
+   .mail-bulk-bar button. */
+.mail-reader-actions button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; font-family: inherit;
+  font-size: 12px; padding: 3px 8px;
+}
+.mail-reader-actions button:hover:not(:disabled) { color: #d4d4d4; border-color: #58a6ff; }
+.mail-reader-actions button:disabled { opacity: .45; cursor: default; }
 .mail-reader-actions button.danger:hover { color: #f85149; border-color: #f85149; }
 
 main { padding: 16px 24px; }
@@ -2773,6 +2805,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .cron-create-row .dir-browse-btn:hover { background: #2d333b; }
 .cron-create-row .dir-browse-btn:disabled { opacity: 0.5; cursor: default; }
+/* JOH-364: the "⧉ manage templates…" tool button sits beside the template
+   <select> in a cron-create-row — exactly like a Browse… button beside a path
+   input — so it needs the same flex sizing to match the select's height instead
+   of collapsing to its intrinsic (~21px) height and top-aligning. Sizing only
+   (colors come from button.tool in plain / the #group-create-modal wizard rule);
+   applies in BOTH skins. Same align-self:stretch idiom as .dir-browse-btn above.
+   Only #group-create-manage-templates matches — the other cron-create-row
+   buttons are .dir-browse-btn, not .tool. */
+.cron-create-row > button.tool {
+  flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
+}
 /* Live per-option help under a spawn-dialog control (e.g. the Sandbox
    selector): a muted one-liner that updates with the selection. The "warn"
    variant flags an option with a caveat the operator should notice — for the
@@ -3177,7 +3220,14 @@ details.group-virtual .group-name { color: #8aa0b8; }
   cursor: pointer; flex: 0 0 calc(50% - 6px);
 }
 .ta-perms-list label input { margin: 0; }
+/* JOH-364: input[type=number] (the per-agent .ta-wave field) was missing from
+   this list, so in PLAIN mode it fell back to the browser's white UA field and
+   a content-width box — out of step with its .ta-name / .ta-role siblings in
+   the same flex grid. Folding it in gives it the same dark chrome and flex:1.
+   (The wizard twin already covers input[type=number] — see the JOH note at the
+   body.wizard #template-editor-modal rule.) */
 .template-agent-row input[type=text],
+.template-agent-row input[type=number],
 .template-agent-row textarea {
   flex: 1; background: #161b22; color: #c9d1d9; font-family: inherit;
   font-size: 12px; border: 1px solid #2a3340; border-radius: 4px;
@@ -3192,6 +3242,16 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-agent-row textarea { resize: vertical; flex: 0 0 auto; }
 .template-agent-row input:focus,
 .template-agent-row textarea:focus { outline: none; border-color: #58a6ff; }
+/* JOH-364: the standalone "Wave max-wait" number field lives in a
+   label.template-editor-field, outside both .template-agent-row and
+   .cron-create-row, so no plain-mode rule reached it — it rendered a white UA
+   field. Give it the same dark chrome; the wizard #template-editor-modal
+   input[type=number] rule recolors it per skin. */
+.template-editor-field input[type=number] {
+  background: #161b22; color: #c9d1d9; font-family: inherit; font-size: 12px;
+  border: 1px solid #2a3340; border-radius: 4px; padding: 5px 8px; width: 120px;
+}
+.template-editor-field input[type=number]:focus { outline: none; border-color: #58a6ff; }
 /* Work-pattern rows (JOH-336) share the agent-row panel chrome; the
    send-to select matches the row's text inputs. */
 .template-pattern-sendto {
@@ -3224,6 +3284,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-card .tc-descr { color: #7d8590; font-size: 12px; }
 .template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
+/* JOH-364: the deploy/summon action is a `.primary` button (the sibling
+   instantiate/duplicate/edit/export/delete are `.tool`, covered by the base
+   button.tool rule). Without this it rendered white UA chrome in plain mode;
+   the wizard .tc-actions button.primary rule recolors it per skin. Mirrors
+   .filter-bar button.primary. */
+.template-card .tc-actions button.primary {
+  background: #1f6feb; border: 1px solid #1f6feb; color: white;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.template-card .tc-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
 /* Plain-mode skin for the ⧉ duplicate card action (JOH-365). A base
    `button.tool { … }` dark rule (JOH-364) gives every .tool button in this
    row the dark secondary chrome; until that lands this scoped rule keeps
@@ -3514,10 +3585,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
   font-size: 12px; color: #c9d1d9; flex-wrap: wrap;
 }
 .cfg-field .cfg-label { flex: 0 0 168px; color: #c9d1d9; }
-.cfg-field input[type=text], .cfg-field input[type=number], .cfg-field select {
+/* JOH-364: input[type=password] (the remote-access .p12 / passphrase fields)
+   and the .ra-form-grid inputs (the first-time-setup grid, which sits outside
+   any .cfg-field) were missing here, so they rendered white UA fields in plain
+   mode. Folding them in matches the sibling text/number inputs; the wizard twin
+   (below) gains the same coverage so both skins stay consistent. */
+.cfg-field input[type=text], .cfg-field input[type=number], .cfg-field input[type=password],
+.cfg-field select, .ra-form-grid input {
   background: #010409; border: 1px solid #30363d; border-radius: 4px;
   color: #d4d4d4; padding: 4px 7px; font-family: inherit; font-size: 12px;
 }
+.ra-form-grid input:focus { outline: none; border-color: #58a6ff; }
 .cfg-field input[type=text] { min-width: 210px; }
 .cfg-field input[type=number] { width: 84px; }
 .cfg-field input:focus, .cfg-field select:focus { outline: none; border-color: #58a6ff; }
@@ -3614,6 +3692,17 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .ra-device-exp { color: #7d8590; font-size: 11px; flex: 1; }
 .ra-inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
 .ra-inline-form input { flex: 1 1 160px; min-width: 0; }
+/* JOH-364: the remote-access action buttons (Add host name(s) / Add device /
+   Generate material) had no rule — white UA chrome in BOTH skins (this Config
+   panel stays plain-dark in wizard). Mirrors .cfg-footer button. The .ra-link
+   text buttons live outside .ra-inline-form, so they keep their link styling. */
+.ra-inline-form button {
+  border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px;
+  padding: 6px 16px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+}
+.ra-inline-form button:not(:disabled):hover { border-color: #58a6ff; }
+.ra-inline-form button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.ra-inline-form button.primary:not(:disabled):hover { border-color: #58a6ff; }
 .ra-form-grid { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
 .ra-form-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #9aa3b2; }
 .ra-link {
@@ -4649,6 +4738,26 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
   padding: 8px 10px; margin: 8px 0;
 }
 .plugin-step-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+/* JOH-364: three action buttons that sit OUTSIDE a .row-actions wrapper, so no
+   rule reached them — white UA chrome in BOTH skins. (#plugin-modal and the
+   sudo/permissions table deliberately stay plain-dark in wizard, so no wizard
+   twin is needed.) All mirror .row-actions button:
+     • plugin step-editor "remove"   → .plugin-step-edit-head button
+     • catalog "+ install"           → .plugin-head > button.primary
+       (a DIRECT child; the installed-card .row-actions cluster is already fine)
+     • sudo-grants table "revoke"    → #sudo-list td > button  */
+.plugin-step-edit-head button,
+.plugin-head > button.primary,
+#sudo-list td > button {
+  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
+  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
+  font-family: inherit;
+}
+.plugin-step-edit-head button:hover,
+.plugin-head > button.primary:hover,
+#sudo-list td > button:hover { color: #d4d4d4; border-color: #58a6ff; }
+.plugin-step-edit-head button.danger:hover,
+#sudo-list td > button.danger:hover { color: #f85149; border-color: #f85149; }
 #plugin-modal .cron-create-modal { max-width: 720px; }
 #plugin-modal-steps { max-height: 50vh; overflow-y: auto; }
 
@@ -5230,10 +5339,14 @@ body.wizard #agent-spawn-modal .cron-create-row select option {
    specificity, is what protects the Summon button. The #agent-spawn-modal id
    already out-specifies the base .dir-browse-btn / #agent-spawn-perms rules,
    so those inline buttons re-theme too. */
-body.wizard #agent-spawn-modal button:not(#agent-spawn-submit) {
+/* JOH-364: exclude .att-remove — the attachment ✕ is a deliberate ghost button
+   (transparent/borderless via .spawn-attachments-list .att-remove). Without the
+   exclusion this blanket repainted it as a solid gilded box, which read as an
+   unintended chip. Excluding it lets the ghost design survive the wizard skin. */
+body.wizard #agent-spawn-modal button:not(#agent-spawn-submit):not(.att-remove) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #agent-spawn-modal button:not(#agent-spawn-submit):hover { background: #3a2a63; }
+body.wizard #agent-spawn-modal button:not(#agent-spawn-submit):not(.att-remove):hover { background: #3a2a63; }
 body.wizard #agent-spawn-modal .cron-create-sep { border-top-color: rgba(122, 93, 176, 0.4); }
 /* The Summon dialog's own scrollbar goes arcane too — see the shared wizard
    scrollbar block after the export-agent re-skin, which themes every
@@ -8580,15 +8693,23 @@ body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39d
    text, gold-violet on focus — the same legible-dark treatment the dialogs
    give their fields. Open <select> options stay dark-on-parchment so the OS
    layer keeps them readable. */
+/* JOH-364: mirror the plain-mode css:3505 extension — the password fields and
+   the .ra-form-grid setup inputs get the same violet-void skin so the
+   remote-access panel reads as one unit in wizard mode. Stays #tab-config-scoped
+   (no widening of a body.wizard rule to fix plain mode). */
 body.wizard #tab-config .cfg-field input[type=text],
 body.wizard #tab-config .cfg-field input[type=number],
+body.wizard #tab-config .cfg-field input[type=password],
 body.wizard #tab-config .cfg-field select,
+body.wizard #tab-config .ra-form-grid input,
 body.wizard #tab-config .cfg-advanced textarea {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
 body.wizard #tab-config .cfg-field input[type=text]:focus,
 body.wizard #tab-config .cfg-field input[type=number]:focus,
+body.wizard #tab-config .cfg-field input[type=password]:focus,
 body.wizard #tab-config .cfg-field select:focus,
+body.wizard #tab-config .ra-form-grid input:focus,
 body.wizard #tab-config .cfg-advanced textarea:focus { border-color: #a97bd6; }
 body.wizard #tab-config .cfg-field select option { color: #1a1330; background: #e7d9f5; }
 
