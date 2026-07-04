@@ -302,6 +302,71 @@ func TestReinforce_MissingGroup_Is404(t *testing.T) {
 	require.Equalf(t, http.StatusNotFound, rec.Code, "missing group should 404: %s", rec.Body.String())
 }
 
+// Scenario (cwd fallback): with no --cwd, the new members spawn in the group's
+// OWN default_cwd. Proven via the resolve error path — a group whose default_cwd
+// points at a non-existent directory makes a no-cwd reinforce fail with
+// invalid_cwd (resolveSpawnCwd rejects the missing dir). If the handler did NOT
+// fall back to g.DefaultCwd, an empty cwd would resolve to "" and succeed — so
+// the 400 uniquely proves the fallback happened.
+func TestReinforce_NoCwd_FallsBackToGroupDefaultCwd(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("crew")
+	require.Equal(t, http.StatusOK,
+		humanReq(t, f, http.MethodPatch, "/v1/groups/crew",
+			map[string]any{"default_cwd": "/nonexistent/joh376-reinforce-cwd"}).Code, "set a (non-existent) group default cwd")
+
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "reinforcements", "agents": []templateAgentSpec{{Name: "scout", Role: "dev"}}}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/reinforcements/reinforce",
+		map[string]any{"group_name": "crew"}) // no cwd → falls back to the group's default
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"no-cwd reinforce should resolve the GROUP's default cwd and reject the missing dir: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "does not exist", "the missing group default cwd is the rejected one")
+}
+
+// Scenario (single-wave reinforce IS allowed during a pending choreography):
+// only a MULTI-wave reinforce is refused while a wave choreography is in flight
+// (it would clobber the row); a single-wave reinforce writes no choreography, so
+// it is fine — and the pending choreography is left intact.
+func TestReinforce_SingleWaveWhileChoreographyPending_Allowed(t *testing.T) {
+	f := newFlow(t)
+
+	// A group with a pending choreography (two-wave deploy, wave 1 not yet up).
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name": "staged",
+			"agents": []templateAgentSpec{
+				{Name: "lead", Role: "lead", Wave: 0},
+				{Name: "dev", Role: "dev", Wave: 1},
+			},
+		}).Code, "create staged template")
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates/staged/deploy",
+			map[string]any{"group_name": "raid", "mission": "m"}).Code, "deploy staged")
+	agentd.WaitForBackgroundForTest()
+	g, err := db.GetAgentGroupByName("raid")
+	require.NoError(t, err)
+	before, err := db.GetWaveChoreography(g.ID)
+	require.NoError(t, err)
+	require.NotNil(t, before, "raid has a pending choreography")
+
+	// A single-wave reinforce is allowed alongside it.
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "one-shot", "agents": []templateAgentSpec{{Name: "medic", Role: "dev"}}}).Code)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/one-shot/reinforce",
+		map[string]any{"group_name": "raid"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "single-wave reinforce should be allowed: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	// The original choreography is untouched — the single-wave reinforce wrote none.
+	after, err := db.GetWaveChoreography(g.ID)
+	require.NoError(t, err)
+	require.NotNil(t, after, "the pending choreography survives a single-wave reinforce")
+	assert.Equal(t, "staged", after.TemplateName, "still the original staged choreography, not clobbered")
+}
+
 // Scenario (multi-wave reinforce): a two-wave roster reinforces an existing
 // group — wave 0 spawns synchronously, wave 1 via the background runner once
 // wave 0 settles. Owner suppression holds across BOTH waves (carried on the

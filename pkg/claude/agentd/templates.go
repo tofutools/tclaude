@@ -2202,21 +2202,6 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 // result and skips just it. Tearing already-spawned members back down is
 // destructive; a partial reinforcement is surfaced for the human to finish.
 func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermission(w, r, PermTemplatesUse)
-	if !ok {
-		return
-	}
-	tmplName := r.PathValue("name")
-	tmpl, err := db.GetGroupTemplate(tmplName)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if tmpl == nil {
-		writeError(w, http.StatusNotFound, "not_found", "no such template")
-		return
-	}
-
 	var body struct {
 		GroupName string `json:"group_name"`
 		Task      string `json:"task,omitempty"`
@@ -2239,6 +2224,25 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 	if g == nil {
 		writeError(w, http.StatusNotFound, "not_found",
 			"no group named "+body.GroupName+" (reinforce deploys INTO an existing group; use instantiate/deploy to create a new one)")
+		return
+	}
+	// Gate on templates.instantiate WITH the group-owner bypass — reinforce
+	// mutates an existing group's membership, so, like /rebrief, a group's own
+	// owner may reinforce it even without the global slug (owner-state fills only
+	// the undecided gap; an explicit deny still wins). The group is resolved above
+	// so it can be passed here.
+	caller, ok := requireGroupPermission(w, r, PermTemplatesUse, g)
+	if !ok {
+		return
+	}
+	tmplName := r.PathValue("name")
+	tmpl, err := db.GetGroupTemplate(tmplName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if tmpl == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such template")
 		return
 	}
 
@@ -2290,6 +2294,17 @@ type reinforceHTTPError struct {
 // Returns nil when the reinforcement may proceed, or a typed HTTP error the
 // caller renders. Reads the group's current members ONCE (member names double as
 // the collision key and the count).
+//
+// Scope note: this is up-front-within-the-request validation — nothing is
+// spawned until all checks pass — NOT a cross-request lock. Two concurrent
+// reinforces (or a reinforce racing a plain spawn / staged deploy) can both pass
+// the max-members / choreography read here and then both act, exactly like the
+// daemon's other member-count guard (checkSpawnGuardrails) and the deploy path's
+// choreography upsert, none of which hold a per-group lock. That best-effort
+// posture is deliberate and consistent across the daemon; reinforce is a
+// human/coordinator action with negligible real concurrency. A per-group
+// mutation lock would be the fix if that ever changes, but it is out of scope
+// here (and would belong daemon-wide, not bolted onto this one path).
 func validateReinforcement(g *db.AgentGroup, tmpl *db.GroupTemplate) *reinforceHTTPError {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
