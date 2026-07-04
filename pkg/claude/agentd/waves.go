@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -75,8 +76,18 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // background later waves run the SAME per-agent path. Best-effort per agent: a
 // spawn/grant failure is recorded on that agent's result and skips just it —
 // the partial-team-on-failure contract, per wave.
+//
+// existing maps a "<group>-<agent>" final name to a conv that is ALREADY a live
+// member — the restart-idempotency guard. The runner spawns a wave and only
+// persists the advanced cursor afterward (it needs the spawned conv-ids); a
+// crash in that window would otherwise re-spawn the same wave on restart
+// (executeSpawn does not dedupe by name). So the runner passes the group's
+// current member names here, and an agent whose final name is already present
+// is RECORDED (its existing conv threaded into the results) rather than
+// re-spawned. nil/empty for the inline first wave (a fresh group has no
+// members).
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, cwd, caller, granter string) waveSpawnResult {
+	groupContext, cwd, caller, granter string, existing map[string]string) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -85,6 +96,16 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 	for _, a := range agents {
 		finalName := g.Name + "-" + a.Name
 		res := instantiateAgentResult{Name: a.Name, FinalName: finalName}
+		// Restart idempotency: this agent already spawned in a prior (crashed)
+		// attempt at this wave — reuse its conv instead of spawning a duplicate.
+		if conv, ok := existing[finalName]; ok && conv != "" {
+			res.ConvID = conv
+			wr.Spawned++
+			wr.SpawnedConvs[a.Name] = conv
+			wr.SpawnedOrder = append(wr.SpawnedOrder, conv)
+			wr.Results = append(wr.Results, res)
+			continue
+		}
 		// Resolve the role this agent references (JOH-240), if any. A role that
 		// vanished since save degrades gracefully — role stays nil and the agent
 		// falls through to its own overrides / harness defaults.
@@ -156,6 +177,27 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+// groupMemberNames maps a group's live members by their effective name
+// ("<group>-<agent>", the spawn's rename title / pending name) to their conv —
+// the restart-idempotency key spawnWaveAgents dedupes against. agent.CachedTitle
+// resolves a member's custom title, falling back to the pending name set at
+// enrollment (before the fork), so a just-spawned-but-not-yet-titled member is
+// still matched.
+func groupMemberNames(g *db.AgentGroup) map[string]string {
+	out := map[string]string{}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		slog.Warn("wave runner: member-name map failed", "group", g.Name, "error", err)
+		return out
+	}
+	for _, m := range members {
+		if name := agent.CachedTitle(m.ConvID); name != "" {
+			out[name] = m.ConvID
+		}
+	}
+	return out
 }
 
 // normalizeAssignment folds CRLF → LF on the per-run assignment so the
@@ -400,11 +442,14 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 		return
 	}
 
-	// Spawn the next wave.
+	// Spawn the next wave. Pass the group's current member names so a wave that
+	// was spawned but not yet persisted (a crash-in-window on the prior run) is
+	// recognised and not duplicated — restart idempotency.
 	wave := c.Waves[c.NextWave]
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
-	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd, c.Caller, c.Granter)
+	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd, c.Caller, c.Granter,
+		groupMemberNames(g))
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)
@@ -469,6 +514,12 @@ func waveConvDead(status string) bool {
 // observed-working-then-idle rule matters because a freshly spawned agent
 // starts idle (it hasn't begun its turn); releasing on that first idle would
 // skip the planning beat the wave exists to grant.
+//
+// Latency note: the runner samples every waveChoreographyTickInterval, so a
+// conv that flips working→idle entirely between two ticks is never observed
+// working and can only advance via the max-wait deadline. In practice a real
+// turn (the lead's planning beat) far exceeds the tick, so this is a rare
+// worst-case, not the norm — the deadline is the correct backstop for it.
 func gateReleased(c *db.WaveChoreography) (bool, bool) {
 	changed := false
 	if len(c.GatingConvs) == 0 {
@@ -492,7 +543,16 @@ func gateReleased(c *db.WaveChoreography) (bool, bool) {
 			continue
 		}
 		if s == nil {
-			continue // dead / reaped → settled, does not block
+			// No session row YET. In production `tclaude session new` writes the
+			// row asynchronously after the fork, so a just-spawned gating conv is
+			// legitimately row-less for a beat — treat that as "still coming up"
+			// and HOLD the gate (never release on a not-yet-written row, which
+			// would skip the beat entirely). A conv whose row genuinely vanished
+			// (reaped/deleted) also holds here, but the deadline backstops it — a
+			// truly-dead member surfaces as StatusExited via the reaper, caught
+			// below, not as a missing row.
+			allSettled = false
+			continue
 		}
 		if waveConvDead(s.Status) {
 			continue // exited / errored → dead ≠ busy, does not block

@@ -113,6 +113,29 @@ func TestWaves_AllWaveZero_IsSynchronousToday(t *testing.T) {
 	assert.Nil(t, c, "no choreography persisted for an all-wave-0 deploy")
 }
 
+// Scenario A2: a zero-agent template deploys without panicking (partitionWaves
+// returns no waves — the empty-roster guard replaces the old for-range's
+// graceful spawned:0).
+func TestWaves_EmptyRoster_NoPanic(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "empty", "agents": []templateAgentSpec{}}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/empty/deploy",
+		map[string]any{"group_name": "hollow", "mission": "m"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res waveDeployResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 0, res.Spawned, "no agents to spawn")
+	assert.Equal(t, 0, memberCount(t, "hollow"), "group created, no members")
+
+	g, _ := db.GetAgentGroupByName("hollow")
+	c, err := db.GetWaveChoreography(g.ID)
+	require.NoError(t, err)
+	assert.Nil(t, c, "no choreography for an empty roster")
+}
+
 // Scenario B: a two-wave deploy spawns wave 0 synchronously, reports the
 // deferral, holds wave 1 until wave 0 settles, then spawns wave 1 and delivers
 // the (deferred) work pattern.
@@ -247,6 +270,67 @@ func TestWaves_DeadMember_DoesNotWedgeGate(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 
 	assert.NotEmpty(t, memberByRole(t, "wreck", "dev"), "wave 1 spawned; a dead member didn't wedge the gate")
+}
+
+// Scenario F: restart idempotency — if the daemon crashed after spawning a wave
+// but before persisting the advanced cursor, the persisted row still points at
+// the just-spawned wave. The next sweep must NOT double-spawn it: an agent
+// whose name is already a live member is reused, not re-spawned.
+func TestWaves_RestartIdempotency_NoDuplicateWave(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name": "resume",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead", Wave: 0},
+			{Name: "dev", Role: "dev", Wave: 1},
+		},
+	}
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/resume/deploy",
+		map[string]any{"group_name": "resumed", "mission": "m"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	leadConv := memberByRole(t, "resumed", "lead")
+	require.NotEmpty(t, leadConv)
+
+	// Advance wave 1 (dev) up normally.
+	settleWaveMember(t, f, leadConv)
+	require.NotEmpty(t, memberByRole(t, "resumed", "dev"), "wave 1 spawned")
+	require.Equal(t, 2, memberCount(t, "resumed"))
+
+	// Simulate the crash-in-window: re-persist a choreography row that still
+	// points at wave 1 as the pending wave (as if the advance were lost), with
+	// its gate already released (past deadline). A naive runner would re-spawn
+	// the dev; the idempotency guard must recognise the existing member.
+	g, _ := db.GetAgentGroupByName("resumed")
+	crashed := &db.WaveChoreography{
+		GroupID:      g.ID,
+		GroupName:    "resumed",
+		TemplateName: "resume",
+		Waves: []db.WaveGroup{
+			{Wave: 0, Agents: []db.GroupTemplateAgent{{Name: "lead", Role: "lead", Wave: 0}}},
+			{Wave: 1, Agents: []db.GroupTemplateAgent{{Name: "dev", Role: "dev", Wave: 1}}},
+		},
+		NextWave:     1,
+		GatingConvs:  []string{leadConv},
+		Activated:    []string{leadConv},
+		SpawnedConvs: map[string]string{"lead": leadConv},
+		SpawnedOrder: []string{leadConv},
+		WaveDeadline: time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, db.UpsertWaveChoreography(crashed))
+
+	agentd.SweepWaveChoreographiesForTest()
+	agentd.WaitForBackgroundForTest()
+
+	assert.Equal(t, 2, memberCount(t, "resumed"),
+		"the wave was NOT re-spawned — the existing dev member was reused (no duplicate)")
+	c, err := db.GetWaveChoreography(g.ID)
+	require.NoError(t, err)
+	assert.Nil(t, c, "choreography completes after the idempotent re-run")
 }
 
 // Scenario E: deleting a group cancels its pending choreography — the deferred

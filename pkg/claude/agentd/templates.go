@@ -1565,7 +1565,32 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// wave 0) is one synchronous pass, identical to pre-JOH-244 behaviour.
 	waves := partitionWaves(tmpl.Agents)
 	assignment := normalizeAssignment(spec.assignment)
-	wr := spawnWaveAgents(g, waves[0].Agents, tmpl.Process, groupContext, spec.cwd, spec.caller, granter)
+	// A zero-agent template creates the group (and materializes rhythms) but
+	// spawns nobody — mirror the pre-JOH-244 empty-roster behaviour instead of
+	// indexing waves[0].
+	if len(waves) == 0 {
+		resp := map[string]any{
+			"group":             spec.groupName,
+			"template":          tmpl.Name,
+			"agents":            []instantiateAgentResult{},
+			"spawned":           0,
+			"failed":            0,
+			"pattern_delivered": 0,
+			"pattern_errors":    []string{},
+		}
+		if rhythmsCreated > 0 {
+			resp["rhythms_created"] = rhythmsCreated
+		}
+		if spec.deployed {
+			resp["deployed"] = true
+			resp["mission"] = spec.mission
+		}
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+	// Wave 0 spawns into a fresh group, so there are no prior members to dedupe
+	// against (nil existing map).
+	wr := spawnWaveAgents(g, waves[0].Agents, tmpl.Process, groupContext, spec.cwd, spec.caller, granter, nil)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
