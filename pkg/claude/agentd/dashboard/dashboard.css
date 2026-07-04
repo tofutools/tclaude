@@ -9172,6 +9172,16 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
   z-index: 45;
 }
 body:not(.dock-open) #agent-dock { transform: translateX(100%); }
+/* The dock is offered ONLY on the Groups tab — its cards drag onto group rows,
+   so it's meaningless on Jobs / Access / Config / Costs / … . js/dock.js sets
+   body.dock-tab while Groups is the active tab (and forces dock-open OFF
+   otherwise, so none of the dock-open reservation rules below apply and no page
+   space is held). Off the Groups tab the WHOLE shell is removed — the panel and
+   its edge toggle (a child of #agent-dock, so display:none takes both). Unlike
+   the translate above (which only slides the panel off but keeps the edge tab
+   reachable so a collapsed dock can be reopened), display:none makes the dock
+   entirely unavailable — the correct state for a tab where it doesn't belong. */
+body:not(.dock-tab) #agent-dock { display: none; }
 /* Only animate the slide AFTER boot has applied the initial (persisted) state
    — otherwise a default-open dock would flash-slide in on every page load,
    since the CSS default (no .dock-open) is the translated-off state. dock.js
@@ -9272,25 +9282,31 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    and the in-dock collapse control on the right; row 2 holds the re-homed 🧠
    default-profile chip. When the dock is collapsed those controls live back in
    the toolbar, so the containers are empty — :empty collapses row 2 and the
-   header is just the collapse control (its original slim look). */
+   header is just the collapse control (its original slim look).
+   The 16px TOP padding (vs 6px on the sides/bottom) matches <main>'s 16px
+   content inset: the dock's fixed top sits at nav's bottom (--dock-top) exactly
+   like <main>'s border-box, so an equal top inset lands the re-homed "+ new
+   group" primary at the SAME height it shows at in the floating toolbar when the
+   dock is collapsed — no vertical jump as the panel opens/closes. */
 .dock-head {
   flex: 0 0 auto;
   display: flex; flex-direction: column; gap: 6px;
-  padding: 6px;
+  padding: 16px 6px 6px;
   border-bottom: 1px solid #2a3340;
 }
 .dock-head-main { display: flex; align-items: center; gap: 6px; min-width: 0; }
-/* The re-homed primary cluster ("+ new group" + ⚙ cog) fills the row (flex:1),
-   with the "+ new group" primary GROWING to absorb the slack so the cog lands at
-   a fixed offset from the right — just left of the collapse control — in BOTH
-   skins (the wider wizard "⚔ Form a party" label doesn't shove the cog around).
-   That fixed cog position keeps its right-aligned .action-menu inside the dock:
-   the menu anchors to .filter-bar-cog (position:relative rides along) and opens
-   DOWNWARD into the dock's tall body, staying within #agent-dock's box so
-   .dock-inner's overflow never clips it. min-width:0 lets the label ellipsize
-   rather than force an overflow. */
+/* The re-homed primary cluster ("+ new group" + ⚙ cog) is kept at its NATURAL
+   size — the same compact chips as the floating toolbar — rather than stretched
+   to fill the dock, so the pair looks identical whether the dock is open or
+   collapsed. margin-left:auto on the "+ new group" primary right-aligns the pair
+   within the row, so the ⚙ cog still lands at a fixed offset from the right —
+   just left of the collapse control — in BOTH skins (the wider wizard "⚔ Form a
+   party" label doesn't shove it around). That fixed cog position keeps its
+   right-aligned .action-menu inside the dock: the menu anchors to .filter-bar-cog
+   (position:relative rides along) and opens DOWNWARD into the dock's tall body,
+   staying within #agent-dock's box so .dock-inner's overflow never clips it. */
 .dock-actions { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.dock-actions #group-create-open { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dock-actions #group-create-open { flex: 0 0 auto; margin-left: auto; }
 .dock-actions .filter-bar-cog { flex: 0 0 auto; }
 /* The "+ new group" blue skin lives on `.filter-bar button.primary` (scoped to
    the toolbar it normally sits in), so once re-homed into the dock the button

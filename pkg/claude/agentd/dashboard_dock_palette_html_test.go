@@ -137,4 +137,21 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// Item 6: the template card's per-item ⚙ deep-links into THAT template's
 	// editor (like profiles/roles), not the whole-kind manager.
 	must("openTemplateEditor(t)", "the template card ⚙ opens the item's editor (JOH-390 item 6)")
+
+	// --- Groups-tab-only gate ---------------------------------------------
+	// The dock is offered ONLY on the Groups tab: its cards drag onto GROUP
+	// rows, so it's meaningless on Jobs / Access / Config / Costs / … . dock.js
+	// reads the active tab off the pane's `.active` class and mirrors it as a
+	// body.dock-tab class; CSS removes the whole shell (panel + edge toggle)
+	// off-tab, and the effective open state is forced off so no page space is
+	// reserved. One observer over the Groups pane's class re-evaluates on every
+	// tab switch, so every switch site (bindTabs, the auto-hide redirects,
+	// showAccessTab, the command palette, keyboard cycling) is covered.
+	must("body:not(.dock-tab) #agent-dock { display: none; }",
+		"the dock shell is hidden entirely off the Groups tab")
+	must("function isDockTab(", "dock.js reads whether Groups is the active tab")
+	must("classList.toggle('dock-tab'", "dock.js mirrors the tab availability as a body class")
+	// The observer keys off the Groups pane's class — the source of truth every
+	// tab-switch site writes — so a new switch path is covered without a hook.
+	must(`getElementById('tab-groups')`, "dock.js gates the dock on the Groups pane's active state")
 }
