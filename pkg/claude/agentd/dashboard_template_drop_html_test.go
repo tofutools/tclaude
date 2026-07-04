@@ -60,9 +60,12 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must("if (deployDropGroup && deployMode() === 'copy') return submitCopyGroup();", "copy mode dispatches to the instantiate POST")
 	must("/reinforce`, {", "reinforce mode POSTs to the reinforce endpoint")
 	must("/instantiate`, {", "copy mode POSTs to the existing instantiate endpoint")
-	// Copy mode ALWAYS sends context_override so the new group carries the target's
-	// context (JOH-356), never the template's.
-	must("const payload = { group_name: groupName, context_override: context };", "copy mode overrides the context with the group's own copy")
+	// Copy mode ALWAYS sends context_override AND descr_override so the new group
+	// carries the target's context (JOH-356) AND description (JOH-385) verbatim,
+	// never the template's — sending them unconditionally is how an EMPTY source
+	// context / description is faithfully copied (a bare `descr` would let the
+	// backend re-default an empty description to "Instantiated from template X").
+	must("const payload = { group_name: groupName, context_override: context, descr_override: descr };", "copy mode overrides both context and description with the group's own copy")
 
 	// The chooser reflows the dialog live (no re-open) — the mode-radio change
 	// listener + the locked/prefilled group field.

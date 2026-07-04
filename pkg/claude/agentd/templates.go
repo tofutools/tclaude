@@ -1675,11 +1675,13 @@ type instantiateAgentResult struct {
 // handleTemplateInstantiate creates a fresh group from a template and
 // spawns its whole agent team. Gated on templates.instantiate.
 //
-// Body: { group_name, task, cwd?, descr? }. group_name doubles as the
-// agent-name prefix — agent "PO" in the template becomes
+// Body: { group_name, task, cwd?, descr?, descr_override? }. group_name
+// doubles as the agent-name prefix — agent "PO" in the template becomes
 // "<group_name>-PO". task is the multi-line assignment, folded into the
 // group's default_context so every member's startup briefing carries
-// it.
+// it. descr_override mirrors context_override's grammar (see the body
+// struct below): present = honored verbatim INCLUDING empty, absent =
+// today's default.
 //
 // Agents are spawned sequentially via the shared executeSpawn core. A
 // per-agent spawn failure is recorded and reported but does NOT abort
@@ -1706,6 +1708,19 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		Task      string `json:"task,omitempty"`
 		Cwd       string `json:"cwd,omitempty"`
 		Descr     string `json:"descr,omitempty"`
+		// DescrOverride mirrors ContextOverride's grammar for the group's
+		// description (JOH-385): a pointer distinguishes "not supplied — use
+		// the plain descr / its default" (nil) from "supplied, possibly cleared
+		// to empty" (non-nil ""). When non-nil it WINS over descr and is honored
+		// verbatim — an explicit "" produces a group with NO description,
+		// suppressing the "Instantiated from template X" default. This is what
+		// the summon dialog's copy mode needs to faithfully copy a source group
+		// whose description is empty. Plain descr is left untouched (existing
+		// callers — the CLI included — omit descr_override and keep today's exact
+		// behavior). If BOTH are sent, descr_override wins: it's the more
+		// explicit grammar (same precedence as context_override vs the template
+		// context).
+		DescrOverride *string `json:"descr_override,omitempty"`
 		// ContextOverride, when non-nil, replaces the template's own
 		// default_context as the base the group's startup context is composed
 		// from (JOH-356) — the group gets its OWN edited copy of the shared
@@ -1745,6 +1760,13 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
 		descr = "Instantiated from template " + tmpl.Name
+	}
+	// descr_override (JOH-385), when supplied, wins over the plain descr and is
+	// honored verbatim — including an explicit "", which suppresses the default
+	// above and produces a group with NO description. This is what copy mode
+	// needs to faithfully copy a source group whose description is empty.
+	if body.DescrOverride != nil {
+		descr = strings.TrimSpace(*body.DescrOverride)
 	}
 	// A plain instantiate records the source template (so the dashboard can
 	// still frame it as "from template X") but no mission — that is the
