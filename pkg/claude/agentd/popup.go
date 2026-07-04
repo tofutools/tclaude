@@ -387,7 +387,7 @@ func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			fmt.Fprintf(w, "+%s\n", extendBy)
 		default:
-			http.Error(w, "decision must be approve, deny, or extend", http.StatusBadRequest)
+			http.Error(w, "decision must be approve, always, deny, or extend", http.StatusBadRequest)
 			return
 		}
 	default:

@@ -269,4 +269,15 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	if len(denies) != 1 {
 		t.Fatalf("want 1 approval.deny row, got %d", len(denies))
 	}
+
+	// An "always allow" writes its own distinct verb (JOH-367), so the audit
+	// trail tells a one-off approval apart from a persistent grant.
+	recordApprovalDecision(req, outcomeApproveAlways)
+	always, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve-always"})
+	if err != nil {
+		t.Fatalf("list always rows: %v", err)
+	}
+	if len(always) != 1 {
+		t.Fatalf("want 1 approval.approve-always row, got %d", len(always))
+	}
 }

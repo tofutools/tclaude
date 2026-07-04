@@ -495,6 +495,49 @@ func SeedApprovalForTest(id, perm string, autoGrantable bool) func() {
 	}
 }
 
+// SeedApprovalWithWaiterForTest registers a pending approval (perm,
+// convID, autoGrantable) AND starts a goroutine that consumes the first
+// decision exactly as the production waiter does — through
+// applyApprovalOutcome — so the audit + persist side-effects run for real.
+// Lets a flow test POST /approve/{id}/{decision} against the live popup
+// handler and observe the end-to-end effect (e.g. the persisted override),
+// rather than testing the handler and the persist in disconnected halves.
+// The returned channel yields the waiter's approved() result once a
+// decision lands (or the internal timeout fires); cleanup removes the
+// pending entry.
+func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) (<-chan bool, func()) {
+	req := &approvalRequest{
+		id:            id,
+		perm:          perm,
+		convID:        convID,
+		autoGrantable: autoGrantable,
+		decision:      make(chan approvalOutcome, 1),
+		extend:        make(chan time.Duration, 1),
+		createdAt:     time.Now(),
+		timeout:       10 * time.Second,
+	}
+	approvals.mu.Lock()
+	approvals.pending[id] = req
+	approvals.mu.Unlock()
+
+	done := make(chan bool, 1)
+	go func() {
+		timer := time.NewTimer(req.timeout)
+		defer timer.Stop()
+		select {
+		case d := <-req.decision:
+			done <- applyApprovalOutcome(req, d)
+		case <-timer.C:
+			done <- false
+		}
+	}()
+	return done, func() {
+		approvals.mu.Lock()
+		delete(approvals.pending, id)
+		approvals.mu.Unlock()
+	}
+}
+
 // MintApproveInitTokenForTest mints a single-use init token scoped to
 // the approval popup for id — what tclaude agentd and the tray embed
 // in the URL they launch.

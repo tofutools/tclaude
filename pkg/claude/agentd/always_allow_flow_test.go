@@ -143,6 +143,43 @@ func TestAlwaysAllow_PostHandlerGatesOnEligibility(t *testing.T) {
 	assert.Contains(t, okRec.Body.String(), "Approved")
 }
 
+// Scenario: the FULL live path — a real /approve/{id}/always POST against
+// the popup handler, consumed by a real waiter, persists the override. The
+// other tests exercise the halves separately (the POST gate with no waiter;
+// the persist via a stub that bypasses the handler); this one wires them
+// end-to-end, so a regression where the handler's "always" case sent the
+// wrong outcome onto the channel would be caught.
+func TestAlwaysAllow_LivePostThroughWaiterPersists(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t) // DB setup
+
+	const conv = "alw3-1111-2222-3333-4444"
+	const id = "alw-live-0001"
+
+	// A real waiter consumes the decision the handler sends, exactly as
+	// production does (applyApprovalOutcome → audit + persist).
+	done, cleanup := agentd.SeedApprovalWithWaiterForTest(id, agentd.PermHumanClipboard, conv, true)
+	t.Cleanup(cleanup)
+
+	mux := http.NewServeMux()
+	agentd.RegisterPopupRoutesForTest(mux)
+	cookie := exchangePopupCookie(t, mux, id)
+
+	req := popupReq(http.MethodPost, "/approve/"+id+"/always")
+	req.AddCookie(cookie)
+	req.Header.Set("Origin", "http://127.0.0.1:0")
+	rec := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, "live /always POST; body=%s", rec.Body.String())
+
+	// The waiter consumed the real outcome and ran the persist end-to-end.
+	require.True(t, <-done, "always-allow must approve the pending request")
+
+	effect, ok, err := db.AgentPermissionOverride(conv, agentd.PermHumanClipboard)
+	require.NoError(t, err)
+	require.True(t, ok, "the real /always POST must persist the override through the waiter")
+	assert.Equal(t, "grant", effect)
+}
+
 // exchangePopupCookie runs the init-token→cookie exchange and returns the
 // popup session cookie for id, so a test can then POST a decision.
 func exchangePopupCookie(t *testing.T, mux http.Handler, id string) *http.Cookie {
