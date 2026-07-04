@@ -33,6 +33,9 @@ func TestDashboardHTML_MemberColumnsShowHideWired(t *testing.T) {
 	must("import { visibleMemberCols, memberColHidden } from './member-columns.js';", "render imports the store")
 	must("sortHead('members', visibleMemberCols())", "the members header renders only the visible columns")
 	must("visibleMemberCols().map((c) => cells[c.key]", "each row emits only the visible columns, in order")
+	// A missing cell must degrade to an empty <td> (fails ALIGNED), never to
+	// '' (which would shift every later cell left into a misaligned table).
+	must("cells[c.key] ?? '<td></td>'", "a visible column with no cell keeps the row aligned")
 	// Hiding ID folds its agent-id/conv-id hover onto the Name cell.
 	must("renameNameCell(m, state, namePair)", "the id pair is passed to the name cell when ID is hidden")
 	must("function renameNameCell(m, state, idPair = '')", "renameNameCell accepts the optional id pair")

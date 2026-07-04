@@ -106,7 +106,12 @@ function memberRowHTML(m, ctx) {
     role:   `<td>${roleCell(m, ctx.group)}</td>`,
     descr:  `<td class="descr-cell muted">${esc(m.descr || '')}</td>`,
   };
-  const body = visibleMemberCols().map((c) => cells[c.key] || '').join('');
+  // A visible column with no cell here falls back to an EMPTY <td>, not ''.
+  // That keeps the body's cell count equal to the header's th count, so a
+  // future MEMBER_COLS entry added without its matching cell degrades to a
+  // blank column (fails ALIGNED) instead of silently shifting every later
+  // cell left into a misaligned table — the invariant this module promises.
+  const body = visibleMemberCols().map((c) => cells[c.key] ?? '<td></td>').join('');
   return `
               <tr class="dnd-draggable" draggable="true" data-key="${esc(m.conv_id)}" ${dndSource}
                   data-dnd-conv="${esc(m.conv_id)}"
