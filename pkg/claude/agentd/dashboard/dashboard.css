@@ -1989,6 +1989,27 @@ body.wizard .force-mission-label-wizard { display: inline; }
   }
 }
 
+/* Don't spread the header chips out when the group is EXPANDED (operator
+   request): the collapsed cluster is tight (1px margin, halved padding) but on
+   open the chips jumped back to the loose 8px base — that gap read as extra
+   space. Reuse the tight spacing for [open] too so an open header stays as
+   compact as a folded one, with no 1px→8px jump on toggle. Not gated on fold
+   mode or hover — an open header is tight everywhere. */
+details[data-group-key][open] > summary .group-descr,
+details[data-group-key][open] > summary .group-default-cwd,
+details[data-group-key][open] > summary .group-max-members,
+details[data-group-key][open] > summary .group-default-model,
+details[data-group-key][open] > summary .group-link-chips {
+  margin-left: 1px;
+}
+details[data-group-key][open] > summary .group-descr,
+details[data-group-key][open] > summary .group-default-cwd,
+details[data-group-key][open] > summary .group-max-members,
+details[data-group-key][open] > summary .group-default-model {
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
 /* 🔔/🔕 top-bar master notification bell — a chrome-free button like
    .status-dot. The per-group and per-agent notify controls used to be
    bells/chips too, but they moved into the ⚙ options menus and now wear
