@@ -3285,9 +3285,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-card .tc-count { color: #6e7681; font-size: 11px; }
 .template-card .tc-actions { margin-left: auto; display: flex; gap: 6px; }
 /* JOH-364: the deploy/summon action is a `.primary` button (the sibling
-   instantiate/edit/export/delete are `.tool`, covered by the base button.tool
-   rule). Without this it rendered white UA chrome in plain mode; the wizard
-   .tc-actions button.primary rule recolors it per skin. Mirrors
+   instantiate/duplicate/edit/export/delete are `.tool`, covered by the base
+   button.tool rule). Without this it rendered white UA chrome in plain mode;
+   the wizard .tc-actions button.primary rule recolors it per skin. Mirrors
    .filter-bar button.primary. */
 .template-card .tc-actions button.primary {
   background: #1f6feb; border: 1px solid #1f6feb; color: white;
@@ -3295,6 +3295,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
   cursor: pointer; font-family: inherit;
 }
 .template-card .tc-actions button.primary:hover { background: #388bfd; border-color: #388bfd; }
+/* Plain-mode skin for the ⧉ duplicate card action (JOH-365). A base
+   `button.tool { … }` dark rule (JOH-364) gives every .tool button in this
+   row the dark secondary chrome; until that lands this scoped rule keeps
+   the new button from falling back to the browser's white UA chrome. Same
+   palette as the base rule, so it converges cleanly — drop it once JOH-364
+   is merged. */
+.template-card .tc-actions button[data-tact="duplicate"] {
+  background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
+  border-radius: 4px; padding: 5px 12px; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.template-card .tc-actions button[data-tact="duplicate"]:hover { background: #2d333b; }
 .template-card .tc-agents { display: flex; flex-wrap: wrap; gap: 6px; }
 .template-card .tc-agent {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
@@ -6166,6 +6178,129 @@ body.wizard #window-modal #window-submit:hover {
 }
 body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
 
+/* ─── Wizard bulk cleanup — "🧹 Clean up agents and conversations" ────
+   The global filter-bar cog's "🧹 clean up" item (and the group cog's
+   "🧹 cleanup") open openCleanupModal in refresh.js: the rich multi-category
+   tool that bulk unjoins / retires / deletes / reinstates active agents,
+   retired agents and plain conversations. It reuses the same shared
+   .cleanup-modal shell the #window-modal skin above re-skins, so — exactly as
+   there — every rule is scoped to #cleanup-modal, leaving the sibling
+   worktree-cleanup / retire-preview / delete-retired dialogs on the default
+   chrome (the same discipline the retire / edit-member / window re-skins
+   follow, guarded by TestDashboardCSS_WizardWindowModalScoped and friends).
+
+   The title + hint copy is JS-set honest prose (applyChrome / applyHint),
+   not a per-theme span pair, so it is left legible and only the chrome is
+   re-skinned — matching the terminal-picker re-skin. Because every rule keys
+   on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
+   with no JS wiring. */
+
+/* The dialog surface: midnight-violet void, mystic-purple frame + glow,
+   parchment text — the Summon / Banish palette, same as #window-modal. */
+body.wizard #cleanup-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #cleanup-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  /* The same fantasy-serif stack the header h1 / spawn title use. */
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #cleanup-modal .cleanup-hint { color: #b39ddb; }
+/* The delete-tier hint keeps a caution tone — a warm ember rather than the
+   base orange — so its "cannot be undone" warning still reads as danger on
+   the violet surface. The .cleanup-warn / .cleanup-error status lines below
+   are likewise left their honest warning hues (a signal, not chrome). */
+body.wizard #cleanup-modal .cleanup-hint.danger { color: #f0a868; }
+
+/* Toolbar: select-all / none take the tarnished-gold secondary skin; the
+   inactivity (number) + filter (search) fields go dark-violet; the count
+   reads parchment. */
+body.wizard #cleanup-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #cleanup-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #cleanup-modal .cleanup-toolbar input[type=number],
+body.wizard #cleanup-modal .cleanup-toolbar input[type=search] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #cleanup-modal .cleanup-count { color: #e7d9f5; }
+
+/* Category-filter row (agents mode only): parchment toggles, violet label
+   + per-category counts. */
+body.wizard #cleanup-modal .cleanup-cats,
+body.wizard #cleanup-modal .cleanup-cats-label { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-cat-toggle { color: #f3e6c0; }
+body.wizard #cleanup-modal .cleanup-cats .muted { color: #8f7bb5; }
+
+/* The candidate list: a deeper violet-void well with a mystic-purple frame;
+   rows divide on a faint violet line, titles parchment, ids + activity violet.
+   The sticky per-category sub-header repaints violet so it doesn't flash the
+   base slate as the list scrolls under it. The semantic status badges
+   (owner / online / deleted / retired / failed …) keep their base hues —
+   they carry meaning, so the re-skin deliberately leaves them alone. */
+body.wizard #cleanup-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #cleanup-modal .cleanup-cat-head {
+  background: #1c1436; border-bottom-color: #241b3d; color: #b39ddb;
+}
+body.wizard #cleanup-modal .cleanup-cat-head span { color: #8f7bb5; }
+body.wizard #cleanup-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #cleanup-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #cleanup-modal .cleanup-row .id,
+body.wizard #cleanup-modal .cleanup-row .meta,
+body.wizard #cleanup-modal .cleanup-row .seen { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-empty { color: #b39ddb; }
+
+/* The tier selector + its sub-options: an arcane inset panel, parchment
+   labels, violet notes. The native radios / checkboxes stay legible. */
+body.wizard #cleanup-modal .cleanup-options { color: #e7d9f5; }
+body.wizard #cleanup-modal .cleanup-options .opt-note { color: #b39ddb; }
+body.wizard #cleanup-modal .cleanup-tier {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+
+/* Footer: Cancel gets the tarnished-gold secondary treatment; the submit
+   becomes a gilded lever (Summon / Banish's sibling). Its label is JS-set
+   with a live count + verb, so the CSS only gilds the chrome. The delete
+   tier flags the submit .danger — kept as a crimson-ember lever so the
+   irreversible action still signals danger inside the arcane frame. */
+body.wizard #cleanup-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #cleanup-modal #cleanup-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+body.wizard #cleanup-modal #cleanup-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #cleanup-modal #cleanup-submit.danger {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
+  border-color: #f0883e;
+  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
+}
+body.wizard #cleanup-modal #cleanup-submit.danger:hover {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
+  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
+
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
    single agent (termDirModal in refresh.js): pick Current / Worktree / Launch
@@ -7220,6 +7355,72 @@ body.wizard #template-from-group-modal #template-from-group-submit:disabled::bef
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit::before { content: "🕯 Re-trace it!"; }
 body.wizard #template-from-group-modal.tfg-updating #template-from-group-submit:disabled::before { content: "🕯 Re-tracing…"; }
 
+/* ─── Wizard mirror dialog — "🪞 Mirror the circle" ──────────────────
+   Duplicate-a-template: chalk an identical twin of a circle under a new
+   name (JOH-365). Scoped to #template-duplicate-modal — the same
+   positive-per-#id scoping the trace dialog above follows. */
+body.wizard #template-duplicate-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #template-duplicate-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #template-duplicate-modal .cron-create-label { color: #b39ddb; }
+body.wizard #template-duplicate-modal .modal-meta {
+  background: #140f28;
+  border-left-color: #d9b45a;
+  color: #b39ddb;
+}
+body.wizard #template-duplicate-modal .cron-create-row input[type=text] {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #template-duplicate-modal .cron-create-row input[type=text]:focus {
+  border-color: #a97bd6;
+}
+body.wizard #template-duplicate-modal button:not(#template-duplicate-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #template-duplicate-modal button:not(#template-duplicate-submit):hover { background: #3a2a63; }
+body.wizard #template-duplicate-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+/* Duplicate template = 🪞 Mirror it! — gilded lever; the disabled
+   in-flight beat reads "🪞 Mirroring…". */
+body.wizard #template-duplicate-modal #template-duplicate-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit::before {
+  content: "🪞 Mirror it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opacity: 0.7; }
+body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
+
 /* ─── Wizard preset-parties dialog — "⭐ Preset parties" (JOH-353) ─────
    The bundled-starters modal, the one obvious path to copy a ready-made
    party into your own circles. Scoped to #starters-modal, matching the
@@ -8026,12 +8227,21 @@ body.wizard .action-menu {
   box-shadow: 0 8px 24px rgba(10, 6, 24, 0.9), 0 0 12px rgba(169, 123, 214, 0.3);
 }
 body.wizard .action-menu .menu-sep { background: #3a2a63; }
-/* Hovering a spell in the menu lights its edge gold instead of the base
-   blue — the filter-bar items carry their own chrome, the row/group
-   items reuse the shared button skin; re-tint both for the wizard. */
-body.wizard .filter-bar-cog .action-menu button {
+/* Every spell in the list wears the same violet-void skin at rest so all
+   three cog menus read as one arcane grimoire. The filter-bar items carry
+   their own chrome (they dispatch via id-bound listeners, not the shared
+   button skin); the row/group items reuse the .row-actions / .group-actions
+   dark button skin — without this they'd sit as an unthemed default-dark
+   island inside the arcane panel. A :not(:disabled) guard leaves a disabled
+   item (e.g. the offline agent's "summary…" export) its dimmed default so it
+   still reads as an unavailable spell. */
+body.wizard .filter-bar-cog .action-menu button,
+body.wizard .row-actions .action-menu button:not(:disabled),
+body.wizard .group-actions .action-menu button:not(:disabled) {
   background: #241b3d; border-color: #3a2a63; color: #e7d9f5;
 }
+/* Reach for a spell (hover) and its edge lights gold instead of the base
+   blue — the shared gild for all three menus. */
 body.wizard .filter-bar-cog .action-menu button:hover,
 body.wizard .row-actions .action-menu button:hover,
 body.wizard .group-actions .action-menu button:hover {

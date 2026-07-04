@@ -225,6 +225,61 @@ func collectTemplatesSnapshot() []templateJSON {
 	return out
 }
 
+// knownRoleNames / knownProfileNames return the role-library / spawn-profile
+// names for an actionable validation-error hint — the same "here is what IS
+// allowed" shape the unknown-permission-slug error uses. Both are best-effort:
+// a DB read error yields nil (the caller degrades to a shorter message), never a
+// second failure on an already-failing path. db.ListRoles / db.ListSpawnProfiles
+// already order by name, so the output is stable.
+func knownRoleNames() []string {
+	roles, err := db.ListRoles()
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(roles))
+	for _, r := range roles {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func knownProfileNames() []string {
+	profiles, err := db.ListSpawnProfiles()
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		out = append(out, p.Name)
+	}
+	return out
+}
+
+// availableHint renders a "known <kind>: a, b, c" clause naming what IS allowed,
+// so a validation error for a dangling by-name reference tells an LLM caller
+// exactly which values would resolve (the bar the unknown-slug error already
+// sets). names is empty when the registry genuinely has none OR when the
+// best-effort knownRoleNames/knownProfileNames read failed — so the empty-case
+// wording stays neutral ("no <kind> available to reference") rather than
+// asserting the registry is empty, which would be wrong on a read error.
+func availableHint(kind string, names []string) string {
+	if len(names) == 0 {
+		return fmt.Sprintf("no %s available to reference", kind)
+	}
+	return fmt.Sprintf("known %s: %s", kind, strings.Join(names, ", "))
+}
+
+// sortedStringSet returns a set's keys in stable ascending order — used to list
+// the roster agent names a work_pattern step may route to.
+func sortedStringSet(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // buildTemplateFromJSON validates a wire-shape template and converts it
 // to a db.GroupTemplate. It returns a non-nil *spawnFailure (reused as
 // a generic "bad request" carrier) on the first validation problem so
@@ -333,7 +388,9 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			}
 			if rl == nil {
 				return nil, &spawnFailure{http.StatusBadRequest, "invalid_role",
-					fmt.Sprintf("agent %q: no role named %q in the role library", an, roleRef)}
+					fmt.Sprintf("agent %q: role_ref %q does not name a role in the role library — %s. "+
+						"Create it first (`tclaude agent roles create`, needs roles.manage) or clear role_ref.",
+						an, roleRef, availableHint("roles", knownRoleNames()))}
 			}
 		}
 
@@ -379,8 +436,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 	for i, e := range body.WorkPattern {
 		sendTo := strings.TrimSpace(e.SendTo)
 		if sendTo != "all" && !seenNames[sendTo] {
+			targets := append([]string{`"all"`}, sortedStringSet(seenNames)...)
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
-				fmt.Sprintf("work_pattern step #%d: send_to %q is neither \"all\" nor a template agent name", i+1, sendTo)}
+				fmt.Sprintf("work_pattern step #%d: send_to %q must be \"all\" (broadcast) or one of the "+
+					"roster agent names — valid targets: %s", i+1, sendTo, strings.Join(targets, ", "))}
 		}
 		val := strings.TrimSpace(e.Value)
 		if val == "" {
@@ -600,7 +659,9 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templat
 		}
 		if p == nil {
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
-				fmt.Sprintf("agent %q: no spawn profile named %q", agentName, profRef)}
+				fmt.Sprintf("agent %q: spawn_profile %q does not name a spawn profile — %s. "+
+					"Create it first (`tclaude agent profiles create`, needs profiles.manage) or clear spawn_profile.",
+					agentName, profRef, availableHint("spawn profiles", knownProfileNames()))}
 		}
 		refProfile = p
 	}

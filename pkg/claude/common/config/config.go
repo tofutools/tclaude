@@ -87,6 +87,62 @@ type Config struct {
 	// Session holds session-launch tuning — currently the tmux-session
 	// naming style. Absent → all defaults (short id-prefix tmux names).
 	Session *SessionConfig `json:"session,omitempty"`
+
+	// TUI holds the color scheme for tclaude's interactive terminal views
+	// (`session ls -w`, `conv ls -w`, `agent inbox -w`) — see TUIConfig.
+	// Absent → the default scheme.
+	TUI *TUIConfig `json:"tui,omitempty"`
+}
+
+// TUI color schemes — config tui.color_scheme. Picks the color palette the
+// interactive bubbletea "watch" views (`session ls -w`, `conv ls -w`, `agent
+// inbox -w`) render with:
+//
+//	"default"            — the current palette (PR #738), tuned to stay
+//	                       readable on light AND dark terminals; a little
+//	                       dimmer on a dark background.
+//	"dark-high-contrast" — the brighter pre-#738 palette (vivid yellow / green
+//	                       / red, brighter header), higher contrast on a dark
+//	                       terminal at the cost of light-terminal readability.
+//
+// An empty / unknown value falls back to "default", so a typo can never leave
+// the views unstyled. The palette values themselves live in
+// pkg/claude/common/tuistyle; this is only the selector the config file and
+// the dashboard Config tab edit.
+const (
+	TUIColorSchemeDefault      = "default"
+	TUIColorSchemeHighContrast = "dark-high-contrast"
+)
+
+// TUIConfig holds the interactive-TUI color-scheme selection.
+type TUIConfig struct {
+	// ColorScheme names the palette — one of the TUIColorScheme* constants.
+	// Empty / unknown resolves to TUIColorSchemeDefault (see TUIColorScheme).
+	ColorScheme string `json:"color_scheme,omitempty"`
+}
+
+// normalizeTUIColorScheme returns s when it's a known scheme, else "" (so the
+// resolver falls back to its default for a blank or hand-edited garbage value).
+func normalizeTUIColorScheme(s string) string {
+	switch s {
+	case TUIColorSchemeDefault, TUIColorSchemeHighContrast:
+		return s
+	default:
+		return ""
+	}
+}
+
+// TUIColorScheme reports the effective interactive-TUI color scheme — config
+// tui.color_scheme. Default "default" (absent block / key or an unknown
+// value); "dark-high-contrast" selects the brighter pre-#738 palette. Nil-safe
+// on the receiver so callers need no guard.
+func (c *Config) TUIColorScheme() string {
+	if c != nil && c.TUI != nil {
+		if s := normalizeTUIColorScheme(c.TUI.ColorScheme); s != "" {
+			return s
+		}
+	}
+	return TUIColorSchemeDefault
 }
 
 // Tmux-session naming styles — config session.tmux_name_style. The style
@@ -2026,6 +2082,13 @@ func Validate(c *Config) []string {
 		if t.Margin != nil && (*t.Margin < 0 || *t.Margin > maxTilePixels) {
 			errs = append(errs, fmt.Sprintf("focus.tile.margin %d is out of range (0–%d pixels)", *t.Margin, maxTilePixels))
 		}
+	}
+
+	// An empty/absent scheme resolves to the default; only a non-empty value
+	// outside the known set is worth flagging (mirrors focus.tile.layout).
+	if t := c.TUI; t != nil && t.ColorScheme != "" && normalizeTUIColorScheme(t.ColorScheme) == "" {
+		errs = append(errs, fmt.Sprintf("tui.color_scheme %q is not one of %s, %s",
+			t.ColorScheme, TUIColorSchemeDefault, TUIColorSchemeHighContrast))
 	}
 
 	return errs

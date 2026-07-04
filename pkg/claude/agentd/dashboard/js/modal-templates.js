@@ -145,6 +145,7 @@ function templateCardHTML(t) {
         <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
         <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
+        <button class="tool" data-tact="duplicate" data-template="${esc(t.name)}" title="${wizWord('Make a full copy of this template under a new name', 'Mirror this circle — chalk an identical copy under a new name')}">${wizWord('⧉ duplicate', '🪞 mirror')}</button>
         <button class="tool" data-tact="export" data-template="${esc(t.name)}" title="${wizWord('Download this template as a portable .task-force.json file to share or re-import', 'Inscribe this circle onto a scroll — a portable .task-force.json to carry or copy')}">${wizWord('⇪ export', '📜 inscribe')}</button>
         <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
       </span>
@@ -1109,6 +1110,80 @@ function exportTemplate(name) {
   a.remove();
 }
 
+// ---- Duplicate a template (JOH-365) -----------------------------------
+//
+// The ⧉ duplicate card action makes a full-fidelity copy of a template
+// under a new name — the operator does this often enough to want it one
+// click away. There is no dedicated backend: the whole template already
+// round-trips through the create endpoint — every stored field (agents
+// with roles/profiles/permissions/owner/initial messages, waves, process
+// phases, rhythms, work pattern, descr, default context) is carried by
+// templateJSON — so duplicate = re-POST the source template's own JSON to
+// POST /api/templates with the name swapped. Roles and spawn profiles are
+// referenced by name and already exist locally, so the copy shares them
+// exactly; no export→import round-trip (which would re-embed them and emit
+// "already exists" warnings) is needed. The server's 409-on-existing-name
+// is the collision guard, surfaced inline so the dialog stays open.
+
+let templateDuplicateSource = null;
+
+function openDuplicateModal(name) {
+  const t = templatesByName()[name];
+  if (!t) { toast('template not found', true); return; }
+  templateDuplicateSource = name;
+  $('#template-duplicate-source').textContent = name;
+  $('#template-duplicate-name').value = `${name}-copy`;
+  $('#template-duplicate-error').textContent = '';
+  $('#template-duplicate-modal').classList.add('show');
+  setTimeout(() => {
+    const inp = $('#template-duplicate-name');
+    inp.focus();
+    inp.select();
+  }, 0);
+}
+
+function closeDuplicateModal() {
+  $('#template-duplicate-modal').classList.remove('show');
+  templateDuplicateSource = null;
+}
+
+async function submitDuplicate() {
+  const src = templateDuplicateSource && templatesByName()[templateDuplicateSource];
+  const errEl = $('#template-duplicate-error');
+  errEl.textContent = '';
+  if (!src) { errEl.textContent = 'source template not found — reopen the dialog'; return; }
+  const name = $('#template-duplicate-name').value.trim();
+  if (!name) { errEl.textContent = 'name is required'; return; }
+  if (name === templateDuplicateSource) { errEl.textContent = 'pick a different name for the copy'; return; }
+  // Full-fidelity clone: re-POST the source template's own JSON with the
+  // name swapped. created_at/updated_at are response-only (the server
+  // ignores them on input); dropping them keeps the payload honest rather
+  // than rebuilding the body field-by-field, which could silently miss a
+  // field as the template struct grows.
+  const payload = { ...src, name };
+  delete payload.created_at;
+  delete payload.updated_at;
+  const btn = $('#template-duplicate-submit');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/templates', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) { errEl.textContent = (await r.text()) || `HTTP ${r.status}`; return; }
+    closeDuplicateModal();
+    toast(`template duplicated: ${name}`);
+    // force keeps every circle-list mutation's refresh uniform: harmless here
+    // (the dialog is already closed), but immune to a modal left open above it.
+    refresh({ force: true });
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function openTemplateImportModal() {
   $('#template-import-file').value = '';
   $('#template-import-paste').value = '';
@@ -1326,9 +1401,15 @@ function bindTemplatesUI() {
     else if (btn.dataset.tact === 'edit') {
       const t = templatesByName()[name];
       if (t) openTemplateEditor(t);
-    } else if (btn.dataset.tact === 'export') exportTemplate(name);
+    } else if (btn.dataset.tact === 'duplicate') openDuplicateModal(name);
+    else if (btn.dataset.tact === 'export') exportTemplate(name);
     else if (btn.dataset.tact === 'delete') deleteTemplate(name);
   });
+
+  // Duplicate modal (⧉ duplicate on a template card) — asks for the copy's name.
+  $('#template-duplicate-cancel').addEventListener('click', closeDuplicateModal);
+  $('#template-duplicate-submit').addEventListener('click', submitDuplicate);
+  bindBackdropDiscard('template-duplicate-modal', closeDuplicateModal);
 
   // Import modal (⤒ import in the toolbar).
   $('#template-import-open').addEventListener('click', openTemplateImportModal);

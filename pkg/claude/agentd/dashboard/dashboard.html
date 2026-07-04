@@ -387,6 +387,14 @@
         <label class="cfg-inline"><input type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
         <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">TUI color scheme</span>
+        <select id="cfg-tui-color-scheme" aria-label="Terminal UI color scheme">
+          <option value="default">Default</option>
+          <option value="dark-high-contrast">Dark mode (high contrast)</option>
+        </select>
+        <span class="cfg-hint">The color palette tclaude's interactive terminal views — <code>tclaude session ls -w</code>, <code>conv ls -w</code>, and <code>agent inbox -w</code> — render with. <strong>Default</strong> is tuned to stay readable on both light and dark terminals (a little dimmer on a dark background). <strong>Dark mode (high contrast)</strong> restores the brighter earlier palette (vivid yellow / green / red and a brighter header) for higher contrast on a dark terminal, at the cost of light-terminal readability. Applies to newly launched watch views. Stored as <code>tui.color_scheme</code> (the default is omitted).</span>
+      </div>
     </div>
 
     <div class="cfg-section">
@@ -1985,6 +1993,22 @@
       <button id="template-from-group-cancel" type="button">Cancel</button>
       <span class="spacer"></span>
       <button id="template-from-group-submit" class="primary" type="button">Save as template</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="template-duplicate-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="template-duplicate-title">
+    <h3 id="template-duplicate-title"><span class="tpl-word-regular">Duplicate a template</span><span class="tpl-word-wizard">🪞 Mirror the circle</span></h3>
+    <div class="modal-meta"><span class="tpl-word-regular">Makes a full copy of <b id="template-duplicate-source"></b> under a new name — every agent (with roles, launch profiles, permissions, owner flag and initial message), waves, process phases, rhythms, work pattern, description and default context. Only the name changes.</span><span class="tpl-word-wizard">Chalks an identical twin of <b>the circle</b> under a new name — every familiar (with roles, launch rites, powers, ownership and opening whisper), ranks, quest chapters, drumbeats, rite of command, lore and shared context. Only the name changes.</span></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><span class="tpl-word-regular">New name</span><span class="tpl-word-wizard">New name</span></span>
+      <input id="template-duplicate-name" type="text" placeholder="kebab-or-snake-case label for the copy" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="cron-create-error" id="template-duplicate-error"></div>
+    <div class="modal-buttons">
+      <button id="template-duplicate-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="template-duplicate-submit" class="primary" type="button">Duplicate template</button>
     </div>
   </div>
 </div>
