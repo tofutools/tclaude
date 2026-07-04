@@ -31,6 +31,12 @@ func TestDashboardHTML_TemplateDuplicate(t *testing.T) {
 	must("openDuplicateModal", "the duplicate dialog open handler is wired")
 	must("submitDuplicate", "the duplicate submit handler is wired")
 
+	// Keyboard submit: Ctrl/Cmd+Enter from anywhere in the dialog, plain Enter on
+	// the single-line name input, guarded against a double-POST while in flight.
+	must("$('#template-duplicate-modal').addEventListener('keydown'", "the duplicate dialog wires a keyboard-submit listener")
+	must("const onNameInput = e.target === $('#template-duplicate-name');", "plain Enter on the name input submits")
+	must("if ($('#template-duplicate-submit').disabled) return;", "the keyboard path is guarded against a double-POST in flight")
+
 	// (c) The name dialog — ids + both vocab titles. It prefills <name>-copy and
 	// re-POSTs to the create endpoint (the 409 there is the collision guard).
 	must(`id="template-duplicate-modal"`, "the duplicate dialog overlay ships")
