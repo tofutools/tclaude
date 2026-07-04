@@ -59,7 +59,8 @@ var (
 	reSideEffectImp   = regexp.MustCompile(`^import\s*['"]([^'"]+)['"]\s*;?\s*$`)
 	reExportBlockHead = regexp.MustCompile(`^export\s*\{`)
 	reExportDefault   = regexp.MustCompile(`^export\s+default\b`)
-	reExportDecl      = regexp.MustCompile(`^export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	reExportFuncClass = regexp.MustCompile(`^export\s+(?:async\s+)?(?:function|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	reExportVarHead   = regexp.MustCompile(`^export\s+(?:const|let|var)\s+`)
 )
 
 func isIdentChar(c byte) bool {
@@ -96,10 +97,17 @@ func parseESModule(name, src string) (moduleParse, error) {
 	lines := strings.Split(src, "\n")
 	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		// Skip blanks, line comments, and block-comment body lines. Import
-		// and export statements are anchored to the line start, so string
-		// or comment text that merely mentions "import"/"export" mid-line
-		// is never mistaken for a statement.
+		// Skip blanks, `//` line comments, and JSDoc-style block-comment
+		// body lines (which start with `*` or `/*`). Import/export
+		// statements are anchored to the line start, so string or comment
+		// text that mentions "import"/"export" mid-line is never mistaken
+		// for a statement. A commented-out import/export at column 0 *inside*
+		// a multi-line `/* */` block is NOT treated as a comment — the house
+		// style uses `//` for dead code, and full block-comment tracking
+		// would need string/regex-aware lexing because `/*` and `*/` also
+		// occur inside JS string literals here. If such a line is ever added
+		// and points at a since-removed module/name, it fails loud at that
+		// exact line rather than passing silently.
 		if trimmed == "" ||
 			strings.HasPrefix(trimmed, "//") ||
 			strings.HasPrefix(trimmed, "*") ||
@@ -278,17 +286,95 @@ func parseExportBlock(stmt string) ([]string, error) {
 	return names, nil
 }
 
-// parseExportInline extracts the external name of a single-line inline
-// export declaration (`export [async] function|const|let|var|class NAME`,
-// or `export default ...`). Fails loud on any other `export`-led form.
+// parseExportInline extracts the external name(s) of an inline export
+// declaration (`export [async] function|class NAME`, `export const|let|var
+// NAME[, NAME2...]`, or `export default ...`). Fails loud on any other
+// `export`-led form (e.g. a destructuring export, whose bound locals the
+// scanner doesn't track).
 func parseExportInline(line string) ([]string, error) {
 	if reExportDefault.MatchString(line) {
 		return []string{"default"}, nil
 	}
-	if m := reExportDecl.FindStringSubmatch(line); m != nil {
+	if m := reExportFuncClass.FindStringSubmatch(line); m != nil {
 		return []string{m[1]}, nil
 	}
+	if m := reExportVarHead.FindStringSubmatchIndex(line); m != nil {
+		// const/let/var can declare several comma-separated bindings
+		// (`export const A = 1, B = 2`). Split on TOP-LEVEL commas only, so a
+		// comma inside an initializer — an array (`= ['a', 'b']`), object,
+		// call, or string — doesn't split, and a multi-line initializer that
+		// opens `{`/`[` on this line just leaves one segment. Extracting the
+		// first name only (as a single regex would) is the "silent skip" this
+		// scanner is meant to avoid.
+		var names []string
+		for _, decl := range splitTopLevel(line[m[1]:], ',') {
+			id := leadingIdent(decl)
+			if id == "" {
+				return nil, fmt.Errorf("cannot parse export declarator %q — teach the scanner: %q", strings.TrimSpace(decl), line)
+			}
+			names = append(names, id)
+		}
+		if len(names) == 0 {
+			return nil, fmt.Errorf("unrecognized export form — teach the scanner: %q", line)
+		}
+		return names, nil
+	}
 	return nil, fmt.Errorf("unrecognized export form — teach the scanner: %q", line)
+}
+
+// splitTopLevel splits s on the byte sep, but only at bracket depth 0 and
+// outside string/template literals — so a separator inside `f(a, b)`,
+// `[a, b]`, `{a, b}`, or a quoted string is not a split point. Used to pull
+// every declarator out of `export const A = 1, B = 2` without tripping on
+// commas inside an initializer.
+func splitTopLevel(s string, sep byte) []string {
+	var parts []string
+	depth := 0
+	var quote byte // 0, or the open quote char: ' " `
+	start := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == '\\' {
+				i++ // skip the escaped char
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"', '`':
+			quote = c
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case sep:
+			if depth == 0 {
+				parts = append(parts, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, s[start:])
+}
+
+// leadingIdent returns the identifier a declarator begins with, or "" if it
+// doesn't start with one (e.g. a `{...}`/`[...]` destructuring pattern).
+func leadingIdent(s string) string {
+	s = strings.TrimSpace(s)
+	i := 0
+	for i < len(s) && isIdentChar(s[i]) {
+		i++
+	}
+	if id := s[:i]; reIdent.MatchString(id) {
+		return id
+	}
+	return ""
 }
 
 // TestDashboardModuleGraph walks the embedded dashboard/js/*.js modules and
@@ -404,6 +490,21 @@ func TestParseESModule(t *testing.T) {
 			name:        "export const / let / class",
 			src:         "export const A = 1;\nexport let b = 2;\nexport class C {}",
 			wantExports: []string{"A", "b", "C"},
+		},
+		{
+			name:        "multi-declarator export const yields every name",
+			src:         `export const A = 1, B = 2;`,
+			wantExports: []string{"A", "B"},
+		},
+		{
+			name:        "array/object/string commas in an initializer don't split declarators",
+			src:         "export const KINDS = ['a', 'b', 'c'];\nexport const MAP = { a: 1, b: 2 };\nexport const S = 'x, y';\nexport const F = fn(1, 2);",
+			wantExports: []string{"KINDS", "MAP", "S", "F"},
+		},
+		{
+			name:        "inline export opening a multi-line object initializer",
+			src:         "export const OBJ = {\n  a: 1,\n  b: 2,\n};",
+			wantExports: []string{"OBJ"},
 		},
 		{
 			name:        "single-line export block",
