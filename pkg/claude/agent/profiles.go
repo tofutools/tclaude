@@ -249,9 +249,15 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		fmt.Fprintf(w, "  toggles: %s\n", strings.Join(toggles, " · "))
 	}
 
-	// Birth-time access.
-	if p.IsOwner != nil && *p.IsOwner {
-		fmt.Fprintln(w, "  owner:   yes")
+	// Birth-time access. IsOwner is tri-state: render yes/no for any set value
+	// (an explicit false is a real, saved value distinct from unset) so the human
+	// view matches --json and the boolFlags toggles above.
+	if p.IsOwner != nil {
+		state := "no"
+		if *p.IsOwner {
+			state = "yes"
+		}
+		fmt.Fprintf(w, "  owner:   %s\n", state)
 	}
 	if len(p.PermissionOverrides) > 0 {
 		keys := make([]string, 0, len(p.PermissionOverrides))

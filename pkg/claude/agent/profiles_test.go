@@ -243,3 +243,15 @@ func TestPrintProfileHuman_Sparse(t *testing.T) {
 	printProfileHuman(&buf, profileJSON{Name: "bare"})
 	assert.Equal(t, "Profile: bare\n", buf.String())
 }
+
+// IsOwner is tri-state: an explicit false renders "owner: no" (distinct from
+// unset, which renders no owner line at all), matching --json and boolFlags.
+func TestPrintProfileHuman_OwnerTristate(t *testing.T) {
+	var no bytes.Buffer
+	printProfileHuman(&no, profileJSON{Name: "p", IsOwner: boolPtr(false)})
+	assert.Contains(t, no.String(), "owner:   no", "explicit false must render, not vanish")
+
+	var unset bytes.Buffer
+	printProfileHuman(&unset, profileJSON{Name: "p"})
+	assert.NotContains(t, unset.String(), "owner:", "unset owner renders no line")
+}
