@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -142,7 +142,7 @@ function activeSpawnModelEl() {
   const codexStyle = h && (!h.models || h.models.length === 0);
   if (codexStyle) return $('#agent-spawn-model-codex');
   const sel = $('#agent-spawn-model');
-  return sel.value === '__custom__' ? $('#agent-spawn-model-custom') : sel;
+  return sel.value === MODEL_CUSTOM_VALUE ? $('#agent-spawn-model-custom') : sel;
 }
 
 // populateSpawnEffortSelect rebuilds the Effort <select> options from the
@@ -620,9 +620,11 @@ function applyProfileToSpawnForm(p) {
   // can carry a non-preset full model id (e.g. "claude-opus-4-8[1m]" captured
   // from a live agent); setModelSelectValue injects it as a selectable option on
   // the curated <select> so it isn't dropped. Route to the control explicitly
-  // (not activeSpawnModelEl) and reconcile the "Custom…" row, so applying a
-  // profile always lands on a concrete model, never a stale half-typed custom
-  // entry left in the field from before.
+  // (not activeSpawnModelEl) and reconcile the "Custom…" row, so a profile that
+  // NAMES a model lands on that concrete value rather than a stale half-typed
+  // custom entry left in the field. (A model-less profile leaves the field as-is,
+  // this dialog's own default — the same sparse-profile behaviour as the other
+  // fields below.)
   if (p.model) {
     const hEntry = spawnHarnessByName($('#agent-spawn-harness').value);
     const codexStyle = hEntry && (!hEntry.models || !hEntry.models.length);
