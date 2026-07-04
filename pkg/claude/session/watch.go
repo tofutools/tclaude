@@ -102,6 +102,7 @@ type model struct {
 	nameInput         textinput.Model // display-name input for the new session prompt
 	harnessOptions    []string        // spawnable harness names, cycled by the harness field
 	harnessIdx        int             // index into harnessOptions currently selected
+	notice            string          // transient banner (e.g. a spawn error carried in from the previous cycle); shown until the next keypress
 }
 
 // numNewSessionFields is the count of fields the new-session prompt cycles
@@ -483,6 +484,10 @@ func (m model) updateFocusedNewSessionInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// Any key dismisses a carried-in notice banner (e.g. a spawn error
+		// from the previous cycle) — the periodic tick leaves it up, so it
+		// stays legible until the user actually interacts.
+		m.notice = ""
 		// Handle confirmation dialogs first
 		if m.confirmMode != confirmNone {
 			if m.confirmMode == confirmQuit {
@@ -893,6 +898,15 @@ func (m model) View() tea.View {
 
 	var b strings.Builder
 
+	// Carried-in notice (e.g. a spawn error from the previous cycle). Shown
+	// as a banner at the very top so it isn't overdrawn; dismissed on the
+	// next keypress.
+	if m.notice != "" {
+		b.WriteString("\n  ")
+		b.WriteString(confirmStyle.Render(m.notice))
+		b.WriteString("\n")
+	}
+
 	// Search box
 	b.WriteString("\n  ")
 	if m.searchFocused {
@@ -1173,6 +1187,10 @@ type WatchState struct {
 	HideFilter   []string
 	SearchInput  string
 	Cursor       int
+	// Notice is a one-shot banner surfaced on the NEXT interactive render —
+	// used by RunWatchMode to report a spawn failure inside the TUI.
+	// Consumed once: it is seeded into the model and not carried back out into the next state.
+	Notice string
 }
 
 // AttachResult holds the result of selecting a session to attach
@@ -1200,6 +1218,7 @@ func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState
 	m.sort = state.Sort
 	m.searchInput.SetValue(state.SearchInput)
 	m.cursor = state.Cursor
+	m.notice = state.Notice
 	m = m.refreshSessions()
 
 	// Ensure cursor is still valid after loading
@@ -1261,7 +1280,7 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 				Harness:  result.NewSessionHarness,
 			}
 			if err := runNew(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+				state.Notice = fmt.Sprintf("Failed to create session: %v", err)
 				continue
 			}
 
@@ -1277,7 +1296,9 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 				}
 				if newest != nil && newest.TmuxSession != "" {
 					fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", newest.TmuxSession)
-					_ = AttachToSession(newest.ID, newest.TmuxSession, false)
+					if err := AttachToSession(newest.ID, newest.TmuxSession, false); err != nil {
+						state.Notice = fmt.Sprintf("Failed to attach to %s: %v", newest.TmuxSession, err)
+					}
 				}
 			}
 			// After session ends or user detaches, continue back to watch
@@ -1306,7 +1327,11 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 
 		err = AttachToSession(result.SessionID, result.TmuxSession, result.ForceAttach)
 		if err != nil {
-			// Session might have ended, continue to interactive view
+			// The session may simply have ended between selection and attach
+			// (a benign race), but a real failure would otherwise vanish as we
+			// loop straight back into the alt-screen. Surface it in the TUI on
+			// the next render.
+			state.Notice = fmt.Sprintf("Failed to attach to %s: %v", result.TmuxSession, err)
 			continue
 		}
 
