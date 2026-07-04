@@ -76,7 +76,7 @@ CREATE TABLE agent_groups (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  TEXT NOT NULL
-		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER);
+		, archived_at TEXT NOT NULL DEFAULT '', default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -95,7 +95,7 @@ CREATE TABLE agent_cron_jobs (
 			last_run_at      TEXT NOT NULL DEFAULT '',
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '');
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 
@@ -233,7 +233,7 @@ CREATE TABLE group_templates (
 			default_context TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		);
+		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE group_template_agents (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,7 +246,7 @@ CREATE TABLE group_template_agents (
 			initial_message TEXT NOT NULL DEFAULT '',
 			is_owner        INTEGER NOT NULL DEFAULT 0,
 			permissions     TEXT NOT NULL DEFAULT '[]'
-		);
+		, spawn_profile TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', sandbox TEXT NOT NULL DEFAULT '', approval TEXT NOT NULL DEFAULT '', role_ref TEXT NOT NULL DEFAULT '', wave INTEGER NOT NULL DEFAULT 0);
 
 CREATE INDEX idx_group_template_agents_template
 			ON group_template_agents(template_id);
@@ -468,4 +468,46 @@ CREATE TABLE "agent_notify_prefs" (
 				mode       TEXT NOT NULL CHECK (mode IN ('on', 'off')),
 				updated_at TEXT NOT NULL
 			);
+
+CREATE TABLE roles (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			name          TEXT NOT NULL UNIQUE,
+			descr         TEXT NOT NULL DEFAULT '',
+			brief         TEXT NOT NULL DEFAULT '',
+			spawn_profile TEXT NOT NULL DEFAULT '',
+			harness       TEXT NOT NULL DEFAULT '',
+			model         TEXT NOT NULL DEFAULT '',
+			effort        TEXT NOT NULL DEFAULT '',
+			sandbox       TEXT NOT NULL DEFAULT '',
+			approval      TEXT NOT NULL DEFAULT '',
+			permissions   TEXT NOT NULL DEFAULT '[]',
+			created_at    TEXT NOT NULL,
+			updated_at    TEXT NOT NULL
+		);
+
+CREATE TABLE group_process_state (
+			group_id         INTEGER PRIMARY KEY,
+			process          TEXT NOT NULL DEFAULT '[]',
+			current_phase    TEXT NOT NULL DEFAULT '',
+			phase_started_at TEXT NOT NULL
+		);
+
+CREATE TABLE group_process_transitions (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id   INTEGER NOT NULL,
+			from_phase TEXT NOT NULL DEFAULT '',
+			to_phase   TEXT NOT NULL,
+			at         TEXT NOT NULL,
+			actor      TEXT NOT NULL DEFAULT ''
+		);
+
+CREATE INDEX idx_group_process_transitions_group
+			ON group_process_transitions(group_id);
+
+CREATE TABLE group_wave_choreography (
+			group_id   INTEGER PRIMARY KEY,
+			group_name TEXT NOT NULL,
+			state      TEXT NOT NULL DEFAULT '{}',
+			updated_at TEXT NOT NULL
+		);
 

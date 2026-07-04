@@ -292,6 +292,7 @@ function jobToPrefill(job) {
     subject: job.subject || '',
     body: job.body || '',
     enabled: !!job.enabled,
+    role: isGroup ? (job.target_role || '') : '',
   };
 }
 
@@ -322,6 +323,9 @@ function populateCronForm(p) {
   // member ⏰, an edit) → the picker is unrestricted, as before.
   setTargetPickerScope('cron-create', p.scopeGroup);
   populateTargetPicker('cron-create', p);
+  // Role filter (JOH-244): prefill then let setTargetPickerMode (fired inside
+  // populateTargetPicker) reveal/hide the row for the target mode.
+  $('#cron-create-role').value = p.role || '';
   $('#cron-create-error').textContent = '';
 }
 
@@ -470,6 +474,12 @@ function setTargetPickerMode(prefix, mode, populateOnly) {
   $('#' + prefix + '-target-solo').style.display = (solo && !scoped) ? '' : 'none';
   $('#' + prefix + '-target-scoped').style.display = (solo && scoped) ? '' : 'none';
   $('#' + prefix + '-target-group').style.display = solo ? 'none' : '';
+  // The cron create form's role filter (JOH-244) only applies to a group
+  // target (it narrows the fan-out), so reveal it only in group mode.
+  if (prefix === 'cron-create') {
+    const roleRow = $('#cron-create-role-row');
+    if (roleRow) roleRow.style.display = solo ? 'none' : '';
+  }
   if (!populateOnly) {
     if (solo && scoped) populateTargetPickerMembers(prefix);
     else if (!solo) populateTargetPickerGroups(prefix);
@@ -596,6 +606,8 @@ async function submitCronForm(keepOpen) {
   const name = $('#cron-create-name').value.trim();
   const owner = $('#cron-create-owner').value.trim();
   const { mode, target } = readTargetPicker('cron-create');
+  // Role filter (JOH-244) applies only to a group target.
+  const role = mode === 'group' ? $('#cron-create-role').value.trim() : '';
   const interval = $('#cron-create-interval').value.trim();
   const schedMode = getScheduleMode();
   const cronExpr = $('#cron-create-cron').value.trim();
@@ -664,6 +676,9 @@ async function submitCronForm(keepOpen) {
         // group's conv set on its own.
         patch.target = target;
       }
+      // Role filter (JOH-244) — always send in group mode so clearing it
+      // back to whole-group persists. Only meaningful for a group target.
+      if (mode === 'group') patch.role = role;
       r = await fetch(`/api/cron/${cronEditId}`, {
         method: 'PATCH', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -674,6 +689,7 @@ async function submitCronForm(keepOpen) {
       if (schedMode === 'cron') payload.cron_expr = cronExpr;
       else payload.interval = interval;
       if (owner) payload.owner = owner;
+      if (mode === 'group' && role) payload.role = role;
       r = await fetch('/api/cron', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

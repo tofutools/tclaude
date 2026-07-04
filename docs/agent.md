@@ -38,6 +38,9 @@ neither is refused. See [Identity](#identity).
   a group, clone an agent into a sibling, reincarnate it onto a fresh
   context window, wake/stop sessions, and open terminals — your own
   or, with the right permission, another agent's.
+- **Deploy a task force.** Author a reusable team [template](#task-forces-cli)
+  and deploy it against a mission — a whole roster spawned, briefed, and steered
+  through an advisory process. See [Task forces](#task-forces-cli).
 - **Schedule recurring nudges.** Cron jobs deliver a message to an
   agent (or a whole group) on an interval.
 - **Delegate capabilities.** Per-agent permissions live in SQLite;
@@ -263,7 +266,7 @@ tclaude agent groups ls                                   # all groups + member/
 tclaude agent groups members <group>                      # members + ● online indicator
 tclaude agent groups owners <group>                       # owners (can message members without being one)
 tclaude agent groups create <group> [--descr "..."] [--member name=lead,role=...]
-tclaude agent groups rm <group>                           # destroys the group + history; fails if messages reference it
+tclaude agent groups rm <group>                           # delete the group; sweeps its process/wave/cron state, keeps message history as direct messages
 tclaude agent groups add <group> <conv> [--role R --descr T]
 tclaude agent groups remove <group> <conv>
 tclaude agent groups update-member <group> <conv> [--role R --descr T]
@@ -278,8 +281,9 @@ tclaude agent groups archive <group>                      # soft-delete: freeze,
 tclaude agent groups unarchive <group>                    # reverse an archive
 tclaude agent groups clone <source> [new-name]            # fork every member into a brand-new group
 tclaude agent groups stop <group> [--force]                # soft /exit (or hard kill-session) every member
-tclaude agent groups resume <group>                        # spawn a session for every offline member
-tclaude agent groups retire <group> [--no-shutdown]        # retire (soft-delete) every OTHER member; bulk parallel of `agent retire`
+tclaude agent groups resume <group>                        # spawn a session for every offline member; re-enables rhythms an emptying retire auto-disabled
+tclaude agent groups retire <group> [--no-shutdown]        # retire (soft-delete) every OTHER member; if it empties the group, auto-disables its rhythms
+tclaude agent groups rebrief <group>                       # re-deliver a deployed force's work pattern + mission (see Task forces)
 tclaude agent groups export <group> [--out FILE]           # export the group (DB rows + members' .jsonl) to a portable .zip
 tclaude agent groups import <file.zip> --into <dir>        # recreate an exported group on this machine
 tclaude agent groups transfers                             # the group export / import audit log
@@ -576,6 +580,243 @@ tclaude agent dashboard --print       # print the one-shot URL only
 A browser operations console for everything above. See the
 [Agent Dashboard](dashboard.md) page for the full tour — tabs, auth,
 spawning, and drag-and-drop group editing.
+
+## Task forces (CLI)
+
+The [dashboard's Task forces journey](dashboard.md#task-forces) — author a
+template, deploy it against a mission, steer the live force, wind it down — has
+a full CLI twin. Every verb below is a thin client over the same `agentd`
+endpoints the dashboard drives.
+
+### Concepts: pattern, process & rhythms
+
+A template carries three things that shape a deployed force, and they work
+**together**:
+
+- a **work pattern** — an ordered list of routed briefing messages delivered
+  **once**, after the whole roster has spawned (`task-force deploy` delivers it;
+  [`groups rebrief`](#groups-rebrief) re-delivers the template's *current*
+  pattern to the live force on demand). It is a one-shot briefing, not a loop.
+- a **process** — an ordered, **advisory** phase plan the force advances through
+  (`task-force status` shows the current phase; `process advance` records a
+  transition and nudges the entering roles). Advisory means exactly that:
+  advancing blocks nothing, changes no permissions, and never auto-advances.
+- **rhythms** — recurring nudges materialized as group cron jobs **at deploy
+  time** (a snapshot). Editing the template afterwards does **not** retune a
+  force already deployed. `task-force stand-down` deletes them; a `groups
+  retire` that empties the group disables them (reversible via `groups resume`).
+
+| Concept | Delivered | Repeats? | Enforced? | On stand-down |
+|---|---|---|---|---|
+| Work pattern | once, after the roster is up | no — `rebrief` re-sends on demand | no — it is a briefing | already delivered (nothing to sweep) |
+| Process | snapshot at deploy | `process advance` by hand | no — advisory | phase history kept |
+| Rhythms | cron jobs at deploy | yes, on a schedule | no — nudges | cron jobs deleted |
+
+The verbs that drive each are below; the dashboard's
+[Concepts](dashboard.md#concepts-pattern-process--rhythms) note covers the same
+model from the UI side.
+
+### templates
+
+Manage reusable team blueprints. `ls` / `show` are open reads; `create` /
+`edit` / `rm` / `from-group` need `templates.manage`; `instantiate` needs
+`templates.instantiate` (both effectively human-only by default).
+
+```bash
+tclaude agent templates ls
+tclaude agent templates show <name>                       # human-readable view
+tclaude agent templates show <name> --json                # raw wire JSON (round-trips)
+tclaude agent templates create --file <path>              # create from a JSON file ('-' = stdin)
+tclaude agent templates edit <name> --file <path>         # full replace (not a field merge)
+tclaude agent templates rm <name>                         # delete the blueprint; deployed groups untouched
+tclaude agent templates instantiate <name> --group <g> [--task T | --task-file F] [--cwd DIR --descr D]
+tclaude agent templates from-group <group> <template-name> [--update]   # snapshot a live group
+tclaude agent templates export <name> [--file F]          # portable .task-force.json (stdout by default)
+tclaude agent templates import --file <path> [--as NAME | --update]     # read one back
+```
+
+A template is structured (nested agents with multi-line briefs, an optional
+work pattern, process, waves, and rhythms), so it is authored as JSON rather
+than via flags. The **edit loop** round-trips through `show --json`:
+
+```bash
+tclaude agent templates show feature-team --json > ft.json
+$EDITOR ft.json
+tclaude agent templates edit feature-team --file ft.json
+```
+
+`from-group` bootstraps a template from a running group's structure (roles,
+owners, per-agent permission grants, context); per-agent task briefs come
+through blank (a live group stores none), so fill them in with `edit`. With
+`--update` it re-snapshots into an existing template in place, keeping the
+curated briefs of agents that round-trip by name. `export` / `import` share a
+task-force blueprint between machines — the export **embeds the full definition
+of every role and spawn profile the template references**, and import
+materializes those only if they are missing locally (an existing role/profile of
+the same name is kept, never overwritten). A name collision on the *template*
+itself is an error unless you pass `--as <name>` (store under a new name) or
+`--update` (overwrite in place); a spawn-profile reference that still can't be
+resolved, and any unknown permission slug, degrade to a warning rather than
+failing the import. See
+[Sharing task forces](dashboard.md#sharing-task-forces-as-a-file).
+
+**Starters** are the bundled, ready-to-run templates (a dev squad, a research
+pod, a review crew):
+
+```bash
+tclaude agent templates starters ls
+tclaude agent templates starters show <name> [--json]
+tclaude agent templates starters install <name> [--as NAME]
+```
+
+Install stores a starter as an ordinary local template you can then deploy or
+edit. It is idempotent and **never clobbers**: if a template of the target name
+already exists the install is skipped (your edited copy is sacred) — pass `--as`
+to install a fresh copy. See [Starter task forces](dashboard.md#starter-task-forces).
+
+### roles
+
+Manage the [role library](dashboard.md#roles-library) — named, reusable agent
+defaults a template agent references via its `role_ref` field. `ls` / `show`
+are open; writes need `roles.manage` (effectively human-only). Like templates, a
+role carries a multi-line brief, so it is authored as JSON via `--file`. `show`
+without `--json` prints the role's brief, launch shape and permission slugs — so
+you can see at a glance what picking the role implies (the same transparency the
+dashboard role picker surfaces inline):
+
+```bash
+tclaude agent roles ls
+tclaude agent roles show <name> [--json]
+tclaude agent roles create --file <path>          # {name, descr, brief, spawn_profile, harness, model, effort, sandbox, approval, permissions}
+tclaude agent roles edit <name> --file <path>     # full replace
+tclaude agent roles rm <name>                     # refused while a template still references the role; a deleted seed reappears on the next daemon open
+```
+
+Roles resolve at **deploy time**: editing a role changes what *future* deploys
+of a referencing template inherit; already-deployed agents are untouched. Because
+a live reference matters, `rm` is refused while any template still names the role
+(the error lists them) — edit those templates to drop or repoint the reference
+first.
+
+### task-force deploy
+
+Deploy a whole team against a mission — the mission-framed twin of `templates
+instantiate`. Gated on `templates.instantiate`.
+
+```bash
+tclaude agent task-force deploy <template> --mission "<text>" [--group G] [--descr D]
+tclaude agent task-force deploy <template> --mission-file <path>          # long / multi-line mission ('-' = stdin)
+tclaude agent task-force deploy <template> --mission "<text>" --worktree <branch> [--worktree-base B]
+```
+
+`deploy` creates a fresh group, folds `--mission` into its shared context under
+`## Mission`, spawns the roster (staged by wave), materializes the template's
+rhythms as group cron jobs, seeds the process, and delivers the work pattern
+once the roster is whole. With no `--group` the group name is derived from the
+mission (a bare-URL mission falls back to the template name). `--worktree` lands
+the whole force on its own branch in a git worktree, which becomes its working
+directory.
+
+### task-force ls
+
+List the deployed forces — the groups a `deploy` created, carrying a mission and
+a source template. A plain hand-built group (no source template) is **not** a
+force and is not listed; `groups ls` covers those. Open read.
+
+```bash
+tclaude agent task-force ls           # aligned table
+tclaude agent task-force ls --json    # composed rows (round-trips)
+```
+
+Each row shows the group name, its **mission** (truncated), the **source
+template**, the current process **phase** (if any), the number of pending
+staged-spawn **waves**, and **live/total** members. A force with no live members
+is flagged dormant (`⏸`) — stood-down or otherwise idle. The verb is a thin
+composition of the group reads the dashboard force block uses (the groups list
+plus each force's process and waves reads).
+
+### task-force status
+
+The **CLI twin of the dashboard [force block](dashboard.md#the-force-block)** —
+a single force's full read-back. Open read; the per-member liveness rollup rides
+the group-context read (the human operator and group owners always pass, an agent
+without context access sees the rest and a note in place of the rollup). The
+group is inferred when you are in exactly one group.
+
+```bash
+tclaude agent task-force status <group>          # human-first block
+tclaude agent task-force status <group> --json   # composed status (round-trips)
+```
+
+It shows the **mission + provenance** (source template), the process **phase +
+phase map + recent transitions** (the same read `process show` uses), a
+**per-role liveness rollup** (working `●` / idle `○` / offline `✕`, with context
+`%` where the member snapshot carries it), any pending **waves**, and the group's
+**rhythm** cron jobs (name, schedule, enabled/disabled). The liveness
+classification matches the dashboard's exactly, so the two surfaces never
+disagree about who is stalling: offline is dead, an online agent is *idle* only
+when its status is literally idle, and anything else in flight is *working*. A
+disabled rhythm distinguishes a tclaude-auto-paused job — `disabled (auto:
+group-retired)`, from a `groups retire` that emptied the group — from a
+hand-paused one. A **stood-down** force still renders (mission, provenance and
+phase history survive) and reads as *dormant*. Running `status` on a plain group
+(no source template) is refused with a pointer to `groups ls`, consistent with
+`ls`'s force filter.
+
+### task-force stand-down
+
+Wind a force down — the **mirror of `deploy`**. It retires the whole roster and
+sweeps (deletes) the deploy-seeded runtime — the group-target rhythm cron jobs
+and any pending wave choreography — while **keeping the group row** as a dormant
+record (mission, provenance, and process history preserved). It is deliberately
+*not* a group delete (`groups rm` does that). Gated on the human, group owners,
+or `groups.retire`.
+
+```bash
+tclaude agent task-force stand-down <group> [--no-shutdown] [--reason "<why>"] [--ask-human <duration>]
+```
+
+By default each live member's running pane is soft-exited (sends `/exit`); pass
+`--no-shutdown` to leave the processes running. The caller's own conversation is
+always skipped (an agent never retires itself). Standing down a plain group (no
+template) simply retires its members — there is nothing to sweep. The command
+prints the per-member retire table plus a sweep summary (e.g. *"2 rhythm job(s)
+removed, 1 pending wave(s) cancelled"*).
+
+> A plain **`groups retire`** that leaves a group with no live members instead
+> **disables** (not deletes) its rhythms — reversible via `groups resume`. Use
+> `stand-down` when you want the deploy-seeded runtime *gone*, `groups retire`
+> when you may bring the force back. See
+> [Winding a force down](dashboard.md#winding-a-force-down).
+
+### process show / advance
+
+Inspect or advance a deployed force's advisory [process](dashboard.md#steering-a-force).
+`--group` is inferred when you are in exactly one group. `show` is open;
+`advance` is gated on the human, group owners of the group, or the
+`process.advance` slug.
+
+```bash
+tclaude agent process show [--group <name>]
+tclaude agent process advance [--group <name>] [--to <phase>]   # next phase, or a named one for correction
+```
+
+The process is **advisory** — advancing records the transition and nudges the
+roles active in the phase it enters, but enforces nothing.
+
+### groups rebrief
+
+Re-deliver a deployed force's **current** work pattern to its live members, with
+the group's recorded mission interpolated. Gated on the human, group owners, or
+the **`templates.instantiate`** slug.
+
+```bash
+tclaude agent groups rebrief <group> [--ask-human <duration>]
+```
+
+A group with no source template, a deleted template, or a template with no work
+pattern is refused cleanly — nothing is sent. See
+[Steering a force](dashboard.md#steering-a-force) for when to reach for it.
 
 ## Permission model
 

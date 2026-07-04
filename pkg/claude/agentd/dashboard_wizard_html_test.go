@@ -1238,3 +1238,263 @@ func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
 		t.Error("wizard window re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-agent dialogs too")
 	}
 }
+
+// TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
+// "Group templates" management overlay — in 🧙 mode a template is a
+// SUMMONING CIRCLE (chalk a new one, trace a party into one, cast one to
+// summon the whole party). Purely front-end like the rest of the wizard
+// theme, so we string-search the embedded source rather than run the JS.
+func TestDashboardHTML_WizardTemplatesManage(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The shared vocabulary span pair + its CSS swap rules.
+	must(`<span class="tpl-word-regular">Group templates</span><span class="tpl-word-wizard">🕯 Summoning circles</span>`, "the overlay title ships both voices")
+	must(".tpl-word-wizard { display: none; }", "the wizard template copy is hidden outside wizard mode")
+	must("body.wizard .tpl-word-wizard { display: inline; }", "the wizard template copy swaps in in wizard mode")
+
+	// The overlay surface + the gilded "+ chalk a new circle" primary +
+	// the circle cards, all scoped to the overlay.
+	must("body.wizard #templates-manage-modal .manage-modal", "the templates overlay surface is re-skinned")
+	must("body.wizard #templates-manage-modal #template-create-open.primary", "the + new template button gets the gilded-arcane treatment")
+	must("body.wizard #templates-manage-modal .template-card", "the template cards are re-skinned")
+	must(`<span class="tpl-word-regular">+ new template</span><span class="tpl-word-wizard">+ chalk a new circle</span>`, "the create button ships both voices")
+	must(`<span class="tpl-word-regular">⤓ from a group</span><span class="tpl-word-wizard">⤓ trace a party</span>`, "the from-a-group button ships both voices")
+
+	// The Groups-cog menu entries swap too (like ⧉ profiles… → ⧉ patterns…).
+	must(`<span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span>`, "the templates… menu item ships both voices")
+	must(`<span class="tpl-word-regular">⎘ from template</span><span class="tpl-word-wizard">🕯 cast a circle</span>`, "the from-template menu item ships both voices")
+}
+
+// TestDashboardCSS_WizardTemplatesManageScoped guards that the wizard
+// templates-overlay re-skin stays scoped to #templates-manage-modal — it's a
+// .manage-modal shared with the Profiles… / Links… overlays, so an unscoped
+// `body.wizard .manage-modal { … }` would repaint those too. Duplicates the
+// profiles-overlay guard's needle on purpose: BOTH re-skins depend on the
+// same scoping invariant.
+func TestDashboardCSS_WizardTemplatesManageScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .manage-modal {") {
+		t.Error("wizard templates-overlay re-skin is unscoped — will repaint the Profiles/Links overlays too")
+	}
+}
+
+// TestDashboardHTML_WizardTemplateEditor pins the wizard re-skin of the
+// template editor ("chalk / redraw the summoning circle"). The title is
+// JS-set via wizWord (create vs edit), so the CSS recolors chrome only and
+// the submit lever carries the themed copy.
+func TestDashboardHTML_WizardTemplateEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #template-editor-modal .cron-create-modal", "the editor surface is re-skinned")
+	// The JS-set title swaps via wizWord, like the profile editor's.
+	must("wizWord('New group template', 'Chalk a new summoning circle')", "the create title swaps in wizard mode")
+	must("`Redraw the circle: ${tmpl.name}`", "the edit title swaps in wizard mode")
+	// The agents section + submit lever.
+	must(`<span class="tpl-word-regular">Agents</span><span class="tpl-word-wizard">Familiars</span>`, "the roster heading ships both voices")
+	must(`<span class="tpl-word-regular">+ add agent</span><span class="tpl-word-wizard">+ add familiar</span>`, "the add-agent button ships both voices")
+	must(`content: "🕯 Seal the circle!"`, "the submit lever reads Seal the circle in wizard mode")
+	must(`content: "🕯 Sealing…"`, "the busy submit reads Sealing in wizard mode")
+	must("body.wizard #template-editor-modal #template-editor-submit", "the submit re-skin is scoped to the editor modal")
+}
+
+// TestDashboardHTML_WizardTemplateInstantiate pins the wizard re-skin of the
+// instantiate-from-template dialog ("🕯 Cast a summoning circle").
+func TestDashboardHTML_WizardTemplateInstantiate(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #template-instantiate-modal .cron-create-modal", "the cast dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">New group from template</span><span class="tpl-word-wizard">🕯 Cast a summoning circle</span>`, "the title ships both voices")
+	must(`content: "🕯 Cast it!"`, "the submit lever reads Cast it in wizard mode")
+	must(`content: "🕯 Casting…"`, "the busy submit reads Casting in wizard mode")
+	must("body.wizard #template-instantiate-modal #template-instantiate-submit", "the submit re-skin is scoped to the instantiate modal")
+	must("body.wizard #template-instantiate-modal .template-preview", "the final-names preview is re-skinned")
+}
+
+// TestDashboardHTML_WizardTemplateFromGroup pins the wizard re-skin of the
+// save-group-as-template dialog ("🕯 Trace the party's circle").
+func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #template-from-group-modal .cron-create-modal", "the trace dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">Save a group as a template</span><span class="tpl-word-wizard">🕯 Trace the party's circle</span>`, "the title ships both voices")
+	must(`content: "🕯 Trace it!"`, "the submit lever reads Trace it in wizard mode")
+	must(`content: "🕯 Tracing…"`, "the busy submit reads Tracing in wizard mode")
+	must("body.wizard #template-from-group-modal #template-from-group-submit", "the submit re-skin is scoped to the from-group modal")
+}
+
+// TestDashboardHTML_WizardGroupDialogs pins the wizard re-skins of the three
+// remaining group dialogs in the templates family (modal-templates.js):
+// import ("⤒ Unseal a party archive"), startup context ("📜 The party's
+// standing orders") and clone ("⧉ Mirror the party").
+func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Import: surface + honest-text gilded submit (disabled ≠ busy here, so
+	// no ::before copy swap — same reasoning as the reply dialog's Send).
+	must("body.wizard #group-import-modal .cron-create-modal", "the import dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">Import a group from a .zip archive</span><span class="tpl-word-wizard">⤒ Unseal a party archive</span>`, "the import title ships both voices")
+	must("body.wizard #group-import-modal #group-import-submit", "the Import button gets the gilded chrome (label kept honest)")
+
+	// Startup context.
+	must("body.wizard #group-context-modal .cron-create-modal", "the context dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">Group startup context</span><span class="tpl-word-wizard">📜 The party's standing orders</span>`, "the context title ships both voices")
+	must(`content: "📜 Decree it!"`, "the context submit lever reads Decree it in wizard mode")
+
+	// Clone.
+	must("body.wizard #group-clone-modal .cron-create-modal", "the clone dialog surface is re-skinned")
+	must(`<span class="tpl-word-regular">Clone group</span><span class="tpl-word-wizard">⧉ Mirror the party</span>`, "the clone title ships both voices")
+	must(`content: "⧉ Mirror it!"`, "the clone submit lever reads Mirror it in wizard mode")
+	must(`content: "⧉ Mirroring…"`, "the busy clone submit reads Mirroring in wizard mode")
+	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
+}
+
+// TestDashboardCSS_WizardTemplateDialogsScoped guards that the templates-
+// family re-skins stay scoped to their modal ids — they are all
+// .cron-create-modal dialogs like the spawn dialog and its siblings, so an
+// unscoped `body.wizard .cron-create-modal { … }` would repaint every one of
+// them. Duplicates the spawn/profile/export scoping guards on purpose: each
+// re-skin documents that it depends on the same invariant.
+func TestDashboardCSS_WizardTemplateDialogsScoped(t *testing.T) {
+	if strings.Contains(dashboardAssets, "body.wizard .cron-create-modal {") {
+		t.Error("wizard templates-family re-skin is unscoped — will repaint spawn/clone/reincarnate/cron/message modals too")
+	}
+}
+
+// TestDashboardHTML_GroupMenuSaveAsTemplate pins the per-group ⚙ cog menu's
+// "save as template…" action (theme-independent): the quick path from a
+// working group to a reusable template. The menu item dispatches
+// template-from-group, and the modal opens with the group preselected and
+// the template name prefilled.
+func TestDashboardHTML_GroupMenuSaveAsTemplate(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`data-act="template-from-group"`, "the group cog menu carries the save-as-template action")
+	must("⧉ save as template…", "the menu item's label")
+	must("openFromGroupModal(group)", "the action opens the from-group modal with the group preselected")
+	must("function openFromGroupModal(presetGroup)", "the modal accepts a preset group")
+}
+
+// TestDashboardHTML_FromGroupUpdateMode pins the from-group dialog's
+// update-in-place mode (JOH-337): typing a name that already belongs to
+// a template flips the dialog into update mode — a visible note, an
+// honest "Update template" submit label, the update flag on the wire,
+// and the wizard lever's Re-trace copy.
+func TestDashboardHTML_FromGroupUpdateMode(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-from-group-update-note"`, "the update-mode note div ships")
+	must("function refreshFromGroupUpdateState()", "the mode-flip helper exists")
+	must("classList.toggle('tfg-updating', updating)", "the mode class tracks the typed name")
+	must("template_name: name, update: updating", "submit sends the update flag the UI showed")
+	must(`content: "🕯 Re-trace it!"`, "the wizard lever reads Re-trace in update mode")
+	must(`content: "🕯 Re-tracing…"`, "the busy wizard lever reads Re-tracing in update mode")
+}
+
+// TestDashboardHTML_TemplateWorkPatternEditor pins the template editor's
+// work-pattern section (JOH-336): the ordered routed-briefing rows, the
+// add-step button's two voices, the submit wiring, and the wizard skin
+// for the rows' send-to select.
+func TestDashboardHTML_TemplateWorkPatternEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-editor-pattern"`, "the pattern rows container ships")
+	must(`id="template-editor-add-pattern"`, "the add-step button ships")
+	must(`<span class="tpl-word-regular">Work pattern</span><span class="tpl-word-wizard">Rite of command</span>`, "the section heading ships both voices")
+	must("function renderEditorPattern()", "the pattern renderer exists")
+	must("work_pattern: templateEditorPattern", "submit sends the pattern")
+	must("{{task}}", "the task placeholder is documented in the row placeholder")
+	must("body.wizard #template-editor-modal select.tw-sendto", "the send-to select gets the arcane skin")
+}
+
+// TestDashboardHTML_TemplateProcessEditor pins the template editor's process
+// section (JOH-242): the ordered phase rows container, the add-phase button's
+// two voices, the section heading in both voices, the renderer, and the submit
+// wiring that sends the process spec.
+func TestDashboardHTML_TemplateProcessEditor(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="template-editor-process"`, "the phase rows container ships")
+	must(`id="template-editor-add-phase"`, "the add-phase button ships")
+	must(`<span class="tpl-word-regular">Process</span><span class="tpl-word-wizard">Quest plan</span>`, "the section heading ships both voices")
+	must("function renderEditorProcess()", "the process renderer exists")
+	must("process: templateEditorProcess", "submit sends the process spec")
+	must(`data-act="advance-phase"`, "the group summary ships the advance control")
+	must(".group-process-advance", "the advance button has the dark-theme skin")
+}
+
+// TestDashboardHTML_TemplateWavesAndRhythms pins the JOH-244 staged-spawn +
+// rhythms editor wiring in the embedded dashboard source: the per-agent wave
+// field, the rhythms list editor (container + add button + renderer + submit
+// key), the wave_max_wait field, and the group-summary wave chip.
+func TestDashboardHTML_TemplateWavesAndRhythms(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Per-agent wave field.
+	must(`class="ta-wave"`, "the per-agent wave input ships")
+	must("wave: parseInt($('.ta-wave', row).value, 10) || 0", "the agent scraper reads the wave")
+
+	// Rhythms list editor.
+	must(`id="template-editor-rhythms"`, "the rhythm rows container ships")
+	must(`id="template-editor-add-rhythm"`, "the add-rhythm button ships")
+	must(`<span class="tpl-word-regular">Rhythms</span><span class="tpl-word-wizard">Drumbeats</span>`, "the section heading ships both voices")
+	must("function renderEditorRhythms()", "the rhythm renderer exists")
+	must("function scrapeEditorRhythms()", "the rhythm scraper exists")
+	must("rhythms: templateEditorRhythms", "submit sends the rhythms")
+	must(`id="template-editor-wave-max-wait"`, "the wave max-wait field ships")
+
+	// Cron modal role filter.
+	must(`id="cron-create-role"`, "the cron role-filter input ships")
+
+	// Group-summary wave chip.
+	must("function groupWavesChip(", "the wave chip renderer exists")
+	must(".group-waves-chip", "the wave chip has the dark-theme skin")
+}

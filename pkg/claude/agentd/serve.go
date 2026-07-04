@@ -214,6 +214,13 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 
+	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
+	// choreography: spawns each deferred wave once the prior wave's agents are
+	// up and idle (or a per-template max-wait cap fires). Restart-safe — the
+	// durable group_wave_choreography table is the whole state, re-armed on the
+	// first sweep. Shares the daemon-wide stop channel. See waves.go.
+	startWaveChoreographyRunner(cronStop)
+
 	// agent_sudo_grants housekeeping. Hard-deletes expired rows
 	// older than sudoGrantsRetention so the table stays bounded.
 	// Shares the same stop channel — both sweeps shut down together
@@ -529,11 +536,24 @@ func buildMux() http.Handler {
 	// picks them over the {name} wildcard without ambiguity.
 	mux.HandleFunc("/v1/templates", handleTemplates)
 	mux.HandleFunc("POST /v1/templates/from-group", handleTemplateFromGroup)
+	mux.HandleFunc("POST /v1/templates/import", handleTemplateImport)
 	mux.HandleFunc("POST /v1/templates/{name}/instantiate", handleTemplateInstantiate)
+	mux.HandleFunc("POST /v1/templates/{name}/deploy", handleTemplateDeploy)
+	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("/v1/templates/{name}", handleTemplateByName)
+	// Bundled starter task forces (JOH-246). Their own /v1/starters prefix
+	// (not under /v1/templates/) sidesteps a ServeMux pattern conflict with the
+	// /v1/templates/{name}/{export,instantiate,deploy} routes. Reads open;
+	// install writes a template through the shared import path (templates.manage).
+	mux.HandleFunc("GET /v1/starters", handleStarters)
+	mux.HandleFunc("GET /v1/starters/{name}", handleStarterByName)
+	mux.HandleFunc("POST /v1/starters/{name}/install", handleStarterInstall)
 	// Spawn profiles (JOH-210). Reads open, writes gated on profiles.manage.
 	mux.HandleFunc("/v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
+	// Role library (JOH-240). Reads open, writes gated on roles.manage.
+	mux.HandleFunc("/v1/roles", handleRoles)
+	mux.HandleFunc("/v1/roles/{name}", handleRoleByName)
 	mux.HandleFunc("/v1/claude-settings/default-model", handleClaudeDefaultModel)
 	mux.HandleFunc("/v1/links", handleLinksAll)
 	mux.HandleFunc("/v1/can-message", handleCanMessage)

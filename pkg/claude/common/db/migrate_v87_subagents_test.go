@@ -7,19 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV86toV87_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v87 is head, so the literal
-// currentVersion tripwire lives here now (moved forward from v86).
-func TestMigrateV86toV87_FreshSchema(t *testing.T) {
-	setupTestDB(t)
-	d, err := Open()
-	require.NoError(t, err, "Open")
-
-	var ver int
-	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 87, currentVersion, "tripwire: bump this and add a v87→v88 test when you add a migration")
-}
+// The FreshSchema + currentVersion-tripwire test moved forward to the head
+// migration's file (migrate_v88_work_pattern_test.go), per convention.
 
 // TestMigrateV86toV87_AddsColumn drives the real v86→v87 ALTER over a
 // v86-pinned DB: it asserts sessions.subagents_json appears, that a

@@ -240,7 +240,10 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string) string {
 		// path's "no_target".
 		return "no_target"
 	}
-	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, "", nil)
+	// TargetRole (JOH-244) filters the fan-out to matching members, resolved
+	// against the LIVE roster here at fire time so membership changes stay
+	// correct. "" = whole group (fanOutToGroup reads an empty filter that way).
+	recipients, err := fanOutToGroup(g, j.OwnerConv, subject, j.Body, j.TargetRole, nil)
 	if err != nil {
 		slog.Warn("cron: group fan-out failed",
 			"job", j.ID, "group", g.Name, "error", err)

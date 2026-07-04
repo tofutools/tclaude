@@ -15,7 +15,7 @@ import {
 } from './modal-cron.js';
 import { openMessageCreateModal, openPermEditModal } from './modal-message.js';
 import { openHumanReplyModal } from './modal-human-reply.js';
-import { openGroupContextModal, openGroupCloneModal } from './modal-templates.js';
+import { openGroupContextModal, openGroupCloneModal, openFromGroupModal } from './modal-templates.js';
 import { openLinkModal, openLinksManageModal } from './modal-link-wt.js';
 import { openExportModal } from './modal-export.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -347,6 +347,83 @@ function bindRowActions() {
           if (dashPrefs.getItem(pkey) === '1') dashPrefs.removeItem(pkey);
           else dashPrefs.setItem(pkey, '1');
           renderGroupsTab();
+          return;
+        }
+        case 'advance-phase': {
+          // Advance the group's advisory process to the NEXT phase (JOH-242).
+          // A deliberate act that records a transition and nudges the entering
+          // roles, so confirm first. Server-gated (process.advance / owner-pass)
+          // — a non-permitted click surfaces as a 403 toast.
+          const confirmed = await confirmModal({
+            title: 'Advance the process?',
+            body: 'Moves this group to the next phase and nudges the roles active in it. Advisory — you can correct it later with `process advance --to <phase>`.',
+            meta: group,
+            okLabel: 'Advance',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/process/advance`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!r.ok) { toast(`Advance failed: ${await r.text()}`, true); return; }
+          const res = await r.json().catch(() => null);
+          if (res && res.to) toast(`${group}: → ${res.to} (${res.notified || 0} nudged)`);
+          else toast(`${group}: process advanced`);
+          refresh();
+          return;
+        }
+        case 'rebrief-force': {
+          // Re-brief the force (JOH-247): re-deliver the source template's
+          // current work pattern to the live roster, with the mission
+          // interpolated. Existing agents get a fresh briefing copy, so confirm
+          // first. Server-gated (templates.instantiate / owner-pass) — a non-permitted
+          // click surfaces as a 403 toast.
+          const confirmed = await confirmModal({
+            title: 'Re-brief the force?',
+            body: "Re-delivers the source template's current work pattern to every live member, with the mission interpolated. Useful when the roster has drifted or the original briefing scrolled out of context.",
+            meta: group,
+            okLabel: 'Re-brief',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/rebrief`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!r.ok) { toast(`Re-brief failed: ${await r.text()}`, true); return; }
+          const res = await r.json().catch(() => null);
+          toast(res ? `${group}: re-briefed (${res.pattern_delivered || 0} delivered)` : `${group}: re-briefed`);
+          refresh();
+          return;
+        }
+        case 'stand-down-force': {
+          // Stand down the force (JOH-345): the mirror of deploy. Retires every
+          // member and sweeps the deploy-seeded rhythms + pending waves, keeping
+          // the group as a dormant record. Destructive to the running roster, so
+          // confirm first. Server-gated (groups.retire / owner-pass) — a
+          // non-permitted click surfaces as a 403 toast.
+          const confirmed = await confirmModal({
+            title: 'Stand down the force?',
+            body: "Retires every member and sweeps the deploy-seeded rhythm jobs + pending waves. The group row is KEPT as a dormant record (mission & history preserved) — this is not a delete. Running panes are soft-exited.",
+            meta: group,
+            okLabel: 'Stand down',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/stand-down`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!r.ok) { toast(`Stand-down failed: ${await r.text()}`, true); return; }
+          const res = await r.json().catch(() => null);
+          if (res) {
+            const retired = (res.members || []).filter(m => m.action === 'retired').length;
+            toast(`${group}: stood down (${retired} retired, ${res.rhythms_removed || 0} rhythm(s) swept, ${res.waves_cancelled || 0} wave(s) cancelled)`);
+          } else {
+            toast(`${group}: stood down`);
+          }
+          refresh();
           return;
         }
         case 'remove-member': {
@@ -1347,6 +1424,13 @@ function bindRowActions() {
           // Open the clone-group modal (new name + with/without agents).
           // The modal owns its POST + toast + refresh.
           openGroupCloneModal(group);
+          return;
+        }
+        case 'template-from-group': {
+          // Open the save-group-as-template modal with this group
+          // preselected — the quick "turn this working group into a
+          // reusable blueprint" path. The modal owns submit + refresh.
+          openFromGroupModal(group);
           return;
         }
         case 'delete-group': {

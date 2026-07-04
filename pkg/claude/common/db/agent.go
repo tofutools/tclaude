@@ -20,6 +20,12 @@ type AgentGroup struct {
 	MaxMembers     int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled  bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
 	RemoteControl  *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
+	// Mission and SourceTemplate are deployment provenance (JOH-245): what a
+	// task force was deployed against (a free-text topic or Linear link) and the
+	// template it was instantiated/deployed from. "" for a group not created from
+	// a template (the dashboard reads both-blank as "not a deployed force").
+	Mission        string
+	SourceTemplate string
 	CreatedAt      time.Time
 	ArchivedAt     time.Time // zero = active; non-zero = archived (soft-deleted)
 }
@@ -440,10 +446,11 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile,
-			 max_members, notify_enabled, remote_control, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 max_members, notify_enabled, remote_control, mission, source_template, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile,
 		src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
+		src.Mission, src.SourceTemplate,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
@@ -462,6 +469,25 @@ func SetAgentGroupDescr(name, descr string) (int64, error) {
 		return 0, err
 	}
 	res, err := db.Exec(`UPDATE agent_groups SET descr = ? WHERE name = ?`, descr, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// SetAgentGroupDeployMeta records a group's deployment provenance
+// (JOH-245): the mission it was deployed against and the template it was
+// instantiated/deployed from. Either may be "" (no mission / no source
+// template). Returns the number of rows affected — 0 means no group by
+// that name. Called best-effort right after CreateAgentGroup on the
+// deploy / instantiate path, mirroring SetAgentGroupDefaultCwd.
+func SetAgentGroupDeployMeta(name, mission, sourceTemplate string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET mission = ?, source_template = ? WHERE name = ?`,
+		mission, sourceTemplate, name)
 	if err != nil {
 		return 0, err
 	}
@@ -607,6 +633,33 @@ func DeleteAgentGroup(name string) error {
 	if _, err := tx.Exec(`UPDATE agent_messages SET group_id = 0 WHERE group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Advisory process state (JOH-242) is keyed to the group by group_id in
+	// sibling tables (unlike deploy meta, which lives on the agent_groups row
+	// and dies with it), so sweep it explicitly in the same transaction.
+	if _, err := tx.Exec(`DELETE FROM group_process_state WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM group_process_transitions WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	// Staged-spawn choreography state (JOH-244) is keyed to the group by
+	// group_id, so cancel any pending waves in the same transaction (the v92
+	// process-state cleanup pattern). A wave runner that reads a now-missing
+	// row simply drops it — self-healing.
+	if _, err := tx.Exec(`DELETE FROM group_wave_choreography WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
+	// Group-target cron jobs (JOH-244) — including template-seeded rhythms —
+	// target THIS group and become meaningless once it is gone, so remove them
+	// here (agent_cron_runs cascade-clean via their job FK). Conv-target jobs
+	// merely routed THROUGH the group still deliver to their conv and are left
+	// alone. A fire against an already-deleted group also no-ops gracefully
+	// (fireCronGroupJob resolves the group to nil → "no_target"), so this is
+	// tidy-up, not correctness-critical.
+	if _, err := tx.Exec(
+		`DELETE FROM agent_cron_jobs WHERE target_kind = 'group' AND group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}
@@ -620,7 +673,7 @@ func GetAgentGroupByName(name string) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE name = ?`, name)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -635,7 +688,7 @@ func GetAgentGroupByID(id int64) (*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE id = ?`, id)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -649,7 +702,7 @@ func ListAgentGroups() ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +751,7 @@ func RenameAgentGroup(oldName, newName, byConv string) (*AgentGroup, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRow(
-		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, created_at, archived_at FROM agent_groups WHERE name = ?`,
+		`SELECT id, name, descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control, mission, source_template, created_at, archived_at FROM agent_groups WHERE name = ?`,
 		oldName)
 	g, err := scanAgentGroup(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1260,7 +1313,7 @@ func ListGroupsForAgent(agentID string) ([]*AgentGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members m ON m.group_id = g.id
 		WHERE m.agent_id = ?
@@ -1331,7 +1384,7 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 	if agentA == "" || agentB == "" {
 		return nil, nil
 	}
-	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.created_at, g.archived_at
+	rows, err := db.Query(`SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context, g.default_profile, g.max_members, g.notify_enabled, g.remote_control, g.mission, g.source_template, g.created_at, g.archived_at
 		FROM agent_groups g
 		JOIN agent_group_members ma ON ma.group_id = g.id AND ma.agent_id = ?
 		JOIN agent_group_members mb ON mb.group_id = g.id AND mb.agent_id = ?
@@ -2897,7 +2950,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt string
 	var remoteControl sql.NullInt64
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &createdAt, &archivedAt); err != nil {
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext, &g.DefaultProfile, &g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission, &g.SourceTemplate, &createdAt, &archivedAt); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)

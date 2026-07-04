@@ -8,10 +8,31 @@ import { $, $$, esc } from './helpers.js';
 import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
+// wizWord swaps the template vocabulary for 🧙 wizard mode: a template is a
+// SUMMONING CIRCLE — chalk a new one, trace a party into one, cast one to
+// summon the whole party. Static HTML spots swap via the .tpl-word-regular /
+// .tpl-word-wizard span pair in dashboard.html; the JS-rendered spots (cards,
+// empty states, the editor title) swap here, like modal-profiles.js does.
+import { wizWord } from './slop.js';
 // lastSnapshot lives in dashboard.js; refresh() / confirmModal / toast
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+// Roles (JOH-240): the per-agent role dropdown reads the role library through
+// the roles.js data layer. loadRoles fills the cache on editor open; cachedRoles
+// feeds the synchronous row render.
+import { loadRoles, cachedRoles } from './roles.js';
+// Spawn profiles (JOH-350): a template agent's launch config is now "pick a
+// stored spawn profile" instead of a bespoke inline field set. The profile
+// picker reads the same profiles.js data layer the spawn dialog and profiles
+// manager use; the "＋ new" / "⧉ manage…" / "Extract to profile…" affordances
+// open the REAL profiles editor/overlay (modal-profiles.js) so there is one
+// editing surface for launch config + birth-time permissions, everywhere.
+import { loadProfiles, cachedProfiles, profileSummary } from './profiles.js';
+import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
+// roleInspectHTML (JOH-351): the shared "what does this role carry?" panel, so
+// picking a role in the dropdown isn't blind. Reused verbatim by any role picker.
+import { roleInspectHTML } from './role-inspect.js';
 
 
 // ---- Group templates --------------------------------------------------
@@ -23,10 +44,14 @@ import { refresh, confirmModal, toast, bindBackdropDiscard, bindManageOverlayDis
 //
 // templateEditorEditing holds the original name while editing an
 // existing template (the PATCH target); null while creating.
-// templateEditorAgents mirrors the editor's agent rows so add/remove
-// can re-render the container without losing typed values.
+// templateEditorAgents / templateEditorPattern mirror the editor's
+// agent and work-pattern rows so add/remove/reorder can re-render the
+// containers without losing typed values.
 let templateEditorEditing = null;
 let templateEditorAgents = [];
+let templateEditorPattern = [];
+let templateEditorProcess = [];
+let templateEditorRhythms = [];
 
 function filterTemplates(list, q) {
   if (!q) return list;
@@ -52,8 +77,10 @@ function renderTemplatesTab() {
   // innerHTML swap would wipe a selection each tick. Cards are keyed by name.
   if (!list.length) {
     morphInto(host, `<div class="template-empty">${all.length
-      ? 'No templates match the filter.'
-      : 'No templates yet — press <b>+ new template</b> to define one, or <b>⤓ from a group</b> to snapshot an existing group.'}</div>`);
+      ? wizWord('No templates match the filter.', 'No circles match the filter.')
+      : wizWord(
+        'No templates yet — press <b>+ new template</b> to define one, <b>⤓ from a group</b> to snapshot an existing group, or <b>⭐ starters</b> above to copy in a ready-made team.',
+        'No summoning circles chalked yet — press <b>+ chalk a new circle</b> to inscribe one, <b>⤓ trace a party</b> to copy an existing party’s shape, or <b>⭐ conjure a preset party</b> above to copy in a ready-made party.')}</div>`);
     return;
   }
   morphInto(host, list.map(templateCardHTML).join(''));
@@ -74,6 +101,13 @@ function openTemplatesManageModal() {
 
 function closeTemplatesManageModal() { $('#templates-manage-modal').classList.remove('show'); }
 
+// templateWaveCount is the number of distinct staged-spawn waves a template's
+// agents span (JOH-244). 1 (or 0) = a single synchronous pass, no wave badge.
+function templateWaveCount(t) {
+  const waves = new Set((t.agents || []).map(a => a.wave || 0));
+  return waves.size;
+}
+
 function templateCardHTML(t) {
   const agents = (t.agents || []).map(a => {
     const owner = a.is_owner ? '<span class="tc-owner" title="group owner">★</span> ' : '';
@@ -85,37 +119,80 @@ function templateCardHTML(t) {
     return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
   }).join('');
   const n = (t.agents || []).length;
+  // Deployed forces (JOH-245): groups deployed/instantiated from THIS template
+  // (source_template match). Rendered as a compact "task forces" strip under
+  // the card so the Templates tab doubles as a light Task Forces view — each
+  // shows its group name and (if deployed) the mission it was sent against.
+  const forces = deployedForcesFor(t.name);
+  const forcesHTML = forces.length
+    ? `<div class="tc-forces" title="${wizWord('task forces deployed from this template', 'hero parties summoned from this circle')}">`
+      + `<span class="tc-forces-label">${wizWord('🚀 forces', '⚔ parties')}:</span> `
+      + forces.map(g =>
+        `<span class="tc-force" data-force-group="${esc(g.name)}" title="${g.mission ? esc(g.mission) : ''}">`
+        + `${esc(g.name)}${g.mission ? ` <span class="tc-force-mission">— ${esc(oneLineMission(g.mission))}</span>` : ''}</span>`).join('')
+      + `</div>`
+    : '';
   return `<div class="template-card" data-key="${esc(t.name)}" data-template="${esc(t.name)}">
     <div class="tc-head">
       <span class="tc-name">${esc(t.name)}</span>
       ${t.descr ? `<span class="tc-descr">${esc(t.descr)}</span>` : ''}
-      <span class="tc-count">${n} agent${n === 1 ? '' : 's'}</span>
+      <span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>
+      ${(t.work_pattern || []).length ? `<span class="tc-count" title="${wizWord('work pattern — ordered briefing messages delivered after the team spawns', 'rite of command — ordered whispers delivered once the party stands')}">⇶ ${(t.work_pattern || []).length}-step ${wizWord('pattern', 'rite')}</span>` : ''}
+      ${(t.process || []).length ? `<span class="tc-count" title="${wizWord('process — an ordered, advisory phase plan tracked at runtime', 'quest plan — an ordered, advisory chapter plan tracked as the party works')}">◆ ${(t.process || []).length}-${wizWord('phase', 'chapter')} ${wizWord('process', 'quest')}</span>` : ''}
+      ${(t.rhythms || []).length ? `<span class="tc-count" title="${wizWord('rhythms — recurring nudges materialized as group cron jobs at deploy', 'drumbeats — recurring nudges cast as group cron jobs when the party is summoned')}">🥁 ${(t.rhythms || []).length} ${wizWord('rhythm', 'drumbeat')}${(t.rhythms || []).length === 1 ? '' : 's'}</span>` : ''}
+      ${templateWaveCount(t) > 1 ? `<span class="tc-count" title="${wizWord('staged spawn — agents span multiple waves; higher waves spawn once the prior wave settles', 'marching order — the party musters in waves, each after the last has drawn breath')}">🌊 ${templateWaveCount(t)} ${wizWord('waves', 'ranks')}</span>` : ''}
       <span class="tc-actions">
-        <button class="primary" data-tact="instantiate" data-template="${esc(t.name)}" title="Create a group from this template">⎘ instantiate</button>
+        <button class="primary" data-tact="deploy" data-template="${esc(t.name)}" title="${wizWord('Deploy a task force from this template against a mission', 'Summon a hero party from this circle against a quest')}">${wizWord('🚀 deploy', '🧙 summon')}</button>
+        <button class="tool" data-tact="instantiate" data-template="${esc(t.name)}" title="${wizWord('Create a group from this template (no mission)', 'Cast this circle — summon a fresh party from it')}">${wizWord('⎘ instantiate', '🕯 cast')}</button>
         <button class="tool" data-tact="edit" data-template="${esc(t.name)}">edit</button>
+        <button class="tool" data-tact="export" data-template="${esc(t.name)}" title="${wizWord('Download this template as a portable .task-force.json file to share or re-import', 'Inscribe this circle onto a scroll — a portable .task-force.json to carry or copy')}">${wizWord('⇪ export', '📜 inscribe')}</button>
         <button class="tool" data-tact="delete" data-template="${esc(t.name)}">delete</button>
       </span>
     </div>
     ${agents ? `<div class="tc-agents">${agents}</div>` : ''}
+    ${forcesHTML}
   </div>`;
 }
 
+// deployedForcesFor returns the groups deployed/instantiated from the named
+// template — its source_template matches — newest-ish (snapshot order), so a
+// template card can show the forces it has fielded. Never null.
+function deployedForcesFor(templateName) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  return groups.filter(g => g.source_template === templateName);
+}
+
+// oneLineMission collapses a mission to a single short line for the card's
+// force strip — a long or multi-line mission would blow out the row.
+function oneLineMission(m) {
+  const first = String(m || '').split('\n')[0].trim();
+  return first.length > 60 ? first.slice(0, 57) + '…' : first;
+}
+
 function templatesByName() {
-  const m = {};
+  // Null prototype: template names are human-typed, and a plain {} would
+  // false-positive existence checks on Object.prototype keys — a template
+  // named "constructor" or "toString" must only exist if actually saved.
+  const m = Object.create(null);
   for (const t of (lastSnapshot && lastSnapshot.templates) || []) m[t.name] = t;
   return m;
 }
 
 function blankTemplateAgent() {
-  return { name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [] };
+  return {
+    name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
+    role_ref: '', spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
+    wave: 0,
+  };
 }
 
 // ---- Template editor modal --------------------------------------------
 
 function openTemplateEditor(tmpl) {
   templateEditorEditing = tmpl ? tmpl.name : null;
-  $('#template-editor-title').textContent =
-    tmpl ? `Edit template: ${tmpl.name}` : 'New group template';
+  $('#template-editor-title').textContent = tmpl
+    ? wizWord(`Edit template: ${tmpl.name}`, `Redraw the circle: ${tmpl.name}`)
+    : wizWord('New group template', 'Chalk a new summoning circle');
   $('#template-editor-name').value = tmpl ? tmpl.name : '';
   $('#template-editor-descr').value = tmpl ? (tmpl.descr || '') : '';
   $('#template-editor-context').value = tmpl ? (tmpl.default_context || '') : '';
@@ -125,9 +202,40 @@ function openTemplateEditor(tmpl) {
         name: a.name || '', role: a.role || '', descr: a.descr || '',
         initial_message: a.initial_message || '', is_owner: !!a.is_owner,
         permissions: (a.permissions || []).slice(),
+        role_ref: a.role_ref || '',
+        spawn_profile: a.spawn_profile || '', harness: a.harness || '',
+        model: a.model || '', effort: a.effort || '', sandbox: a.sandbox || '', approval: a.approval || '',
+        wave: a.wave || 0,
       }))
     : [blankTemplateAgent()];
+  templateEditorPattern = tmpl
+    ? (tmpl.work_pattern || []).map(e => ({ send_to: e.send_to || 'all', value: e.value || '' }))
+    : [];
+  templateEditorProcess = tmpl
+    ? (tmpl.process || []).map(ph => ({ name: ph.name || '', roles: (ph.roles || []).slice(), criteria: ph.criteria || '' }))
+    : [];
+  templateEditorRhythms = tmpl
+    ? (tmpl.rhythms || []).map(r => ({
+        name: r.name || '', target_role: r.target_role || '',
+        interval: r.interval || '', cron_expr: r.cron_expr || '',
+        subject: r.subject || '', body: r.body || '',
+      }))
+    : [];
+  $('#template-editor-wave-max-wait').value = tmpl && tmpl.wave_max_wait ? tmpl.wave_max_wait : '';
   renderEditorAgents();
+  renderEditorPattern();
+  renderEditorProcess();
+  renderEditorRhythms();
+  // Fill the role-library AND spawn-profile caches so the per-agent role and
+  // launch-profile dropdowns have options, then re-render the rows (the first
+  // render used whatever was already cached). A load failure just leaves the
+  // dropdowns with the "(none)" option. Both fetches are independent, so a
+  // Promise.allSettled re-renders once when both settle.
+  Promise.allSettled([loadRoles(), loadProfiles()]).then(() => {
+    if (!$('#template-editor-modal').classList.contains('show')) return;
+    scrapeEditorAgents(); // preserve anything typed while the fetch was in flight
+    renderEditorAgents();
+  });
   $('#template-editor-modal').classList.add('show');
   setTimeout(() => $('#template-editor-name').focus(), 0);
 }
@@ -135,53 +243,386 @@ function openTemplateEditor(tmpl) {
 function closeTemplateEditor() { $('#template-editor-modal').classList.remove('show'); }
 
 function renderEditorAgents() {
-  const slugs = (lastSnapshot && lastSnapshot.slugs) || [];
   $('#template-editor-agents').innerHTML =
-    templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i, slugs)).join('');
+    templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i)).join('');
 }
 
-function editorAgentRowHTML(a, idx, slugs) {
-  const perms = new Set(a.permissions || []);
-  const checks = slugs.map(s =>
-    `<label title="${esc(s.description || '')}"><input type="checkbox" class="ta-perm" data-slug="${esc(s.slug)}"${perms.has(s.slug) ? ' checked' : ''} /> ${esc(s.slug)}</label>`
-  ).join('');
+// profileRefOptionsHTML builds the <option> list for an agent's launch-profile
+// dropdown from the cached spawn profiles (blank = "(none)"). A referenced
+// profile that is no longer in the library stays selectable — flagged
+// "⚠ missing" — so a dangling reference isn't silently cleared on the human
+// (the same graceful-degrade the role dropdown does).
+function profileRefOptionsHTML(current) {
+  const names = cachedProfiles().map(p => p.name);
+  const opts = [`<option value=""${current ? '' : ' selected'}>(none)</option>`];
+  for (const n of names) {
+    opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
+  }
+  if (current && !names.includes(current)) {
+    opts.push(`<option value="${esc(current)}" selected>⚠ ${esc(current)} (missing)</option>`);
+  }
+  return opts.join('');
+}
+
+// profileSummaryHTML renders the compact one-line summary of the picked
+// profile's set fields (harness/model/effort/… + owner/perms), reusing the
+// profiles.js summariser the manage cards use. Empty when no profile is picked;
+// a "not found here" note when the ref dangles.
+function profileSummaryHTML(current) {
+  if (!current) return '';
+  const p = cachedProfiles().find(x => x.name === current);
+  if (!p) return `<span class="ta-profile-summary-missing">⚠ no profile named “${esc(current)}” here — pick another or manage profiles</span>`;
+  const s = profileSummary(p);
+  return s ? esc(s) : '<span class="ta-profile-summary-empty">(profile sets no launch fields)</span>';
+}
+
+// agentLegacyInline reports the pre-cutover inline launch/permission fields a
+// template agent still carries (JOH-350). They are no longer editable inline —
+// they ride a profile now — but are honoured at deploy and preserved through a
+// re-save so nothing is silently dropped; "Extract to profile…" migrates them.
+function agentLegacyInline(a) {
+  const parts = [];
+  for (const k of ['harness', 'model', 'effort', 'sandbox', 'approval']) {
+    if (a[k]) parts.push(`${k} ${a[k]}`);
+  }
+  const np = (a.permissions || []).length;
+  if (np) parts.push(`${np} inline perm${np === 1 ? '' : 's'}`);
+  return parts;
+}
+
+// legacyInlineNoticeHTML renders the read-only "legacy inline settings" notice +
+// the Extract-to-profile button for an agent that still carries pre-cutover
+// inline fields; "" when it carries none.
+function legacyInlineNoticeHTML(a) {
+  const parts = agentLegacyInline(a);
+  if (!parts.length) return '';
+  return `<div class="ta-legacy-note" title="These inline launch/permission settings predate the profile picker (JOH-350). They still apply when you deploy this template and are preserved when you save, but can no longer be edited inline. Extract them into a reusable spawn profile to manage them going forward — the owner flag stays here (it is structural).">
+    <span class="ta-legacy-text">⚠ legacy inline: ${esc(parts.join(' · '))}</span>
+    <button type="button" class="tool ta-extract-profile">Extract to profile…</button>
+  </div>`;
+}
+
+// roleRefOptionsHTML builds the <option> list for a roster agent's role-library
+// dropdown from the cached roles (blank = "(none)"). A referenced role that is
+// no longer in the library stays selectable — flagged "⚠ missing" — so a
+// dangling reference isn't silently cleared on the human.
+function roleRefOptionsHTML(current) {
+  const names = cachedRoles().map(r => r.name);
+  const opts = [`<option value=""${current ? '' : ' selected'}>(none)</option>`];
+  for (const n of names) {
+    opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
+  }
+  if (current && !names.includes(current)) {
+    opts.push(`<option value="${esc(current)}" selected>⚠ ${esc(current)} (missing)</option>`);
+  }
+  return opts.join('');
+}
+
+// roleInspectFor renders the inspect panel for a role name selected in a
+// dropdown: the role's definition when it's in the library, a dangling-reference
+// note for a "⚠ missing" ref, or '' (the panel collapses) for "(none)". Used to
+// (re)paint the per-agent role-inspect container on open and on every change.
+function roleInspectFor(name) {
+  if (!name) return '';
+  const rl = cachedRoles().find(r => r.name === name);
+  if (!rl) return roleInspectHTML(null, { missing: true });
+  return roleInspectHTML(rl);
+}
+
+function editorAgentRowHTML(a, idx) {
+  // Launch config + birth-time permissions ride the picked spawn profile
+  // (JOH-350 / JOH-354): no bespoke harness/model/effort/sandbox/approval field
+  // set and no inline permission-checkbox list live here anymore — they are all
+  // configured once, in the profile, editable via the real profiles dialog. The
+  // ★ owner box stays (structural: which member leads the group). Deploy unions
+  // this flag with the profile's own is_owner default.
   return `<div class="template-agent-row" data-idx="${idx}">
     <div class="template-agent-row-head">
-      <span class="template-agent-num">Agent ${idx + 1}</span>
-      <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners">
+      <span class="template-agent-num">${wizWord('Agent', 'Familiar')} ${idx + 1}</span>
+      <label class="template-agent-owner" title="Mark this agent as an owner of the instantiated group — a group can have several owners. This is unioned with the picked profile's own owner default (either one makes the agent an owner).">
         <input type="checkbox" class="ta-owner"${a.is_owner ? ' checked' : ''} /> owner
       </label>
       <button type="button" class="tool ta-remove" title="Remove this agent">✕</button>
     </div>
     <div class="template-agent-grid">
       <input type="text" class="ta-name" placeholder="name (e.g. PO, dev1)" value="${esc(a.name)}" />
-      <input type="text" class="ta-role" placeholder="role (e.g. product-owner)" value="${esc(a.role)}" />
+      <input type="text" class="ta-role" placeholder="role label (e.g. product-owner)" value="${esc(a.role)}" />
+      <input type="number" class="ta-wave" min="0" title="Staged-spawn wave (JOH-244): wave 0 spawns first; higher waves spawn once the prior wave is up and idle. All wave 0 = one synchronous pass." placeholder="wave (0)" value="${a.wave || 0}" />
     </div>
+    <label class="template-agent-roleref" title="Reference a role from the library (JOH-240): the agent inherits that role's canonical brief, default launch shape and default permissions — beneath the picked launch profile, which overrides. Blank = no role. Roles resolve at deploy time, so editing the role changes future deploys.">
+      <span>Role library</span>
+      <select class="ta-role-ref">${roleRefOptionsHTML(a.role_ref)}</select>
+    </label>
+    <div class="ta-role-inspect">${roleInspectFor(a.role_ref)}</div>
     <input type="text" class="ta-descr" placeholder="one-line description (dashboard column)" value="${esc(a.descr)}" />
     <textarea class="ta-initmsg" rows="3" placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)">${esc(a.initial_message)}</textarea>
-    <details class="ta-perms-details">
-      <summary>Permissions (<span class="ta-perms-count">${perms.size}</span>)</summary>
-      <div class="ta-perms-list">${checks}</div>
-    </details>
+    <div class="template-agent-launch">
+      <label class="template-agent-roleref ta-launch-pick" title="Launch profile (JOH-350): the agent's harness, model, effort, sandbox/approval AND its birth-time permissions all come from the picked spawn profile. Manage profiles to create/edit one — a profile is the unit of launch config.">
+        <span>Launch profile</span>
+        <select class="ta-profile-select">${profileRefOptionsHTML(a.spawn_profile)}</select>
+      </label>
+      <div class="ta-launch-actions">
+        <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
+        <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
+      </div>
+      <div class="ta-profile-summary">${profileSummaryHTML(a.spawn_profile)}</div>
+      ${legacyInlineNoticeHTML(a)}
+    </div>
   </div>`;
+}
+
+// ---- Work-pattern rows (JOH-336) --------------------------------------
+//
+// The template's default work pattern: an ORDERED list of routed
+// briefing messages delivered after the whole roster has spawned — each
+// step to one roster agent by name, or to every member ("all"). {{task}}
+// in a step's text is replaced with the per-instantiation task. The rows
+// reuse the agent-row panel chrome (.template-agent-row) so the wizard
+// re-skin covers them for free.
+
+function renderEditorPattern() {
+  const names = templateEditorAgents.map(a => (a.name || '').trim()).filter(Boolean);
+  $('#template-editor-pattern').innerHTML =
+    templateEditorPattern.map((e, i) => patternRowHTML(e, i, names)).join('');
+}
+
+function patternRowHTML(e, idx, agentNames) {
+  const known = ['all', ...agentNames];
+  // A stale target (its agent was renamed/removed) stays selectable —
+  // flagged — so the typed text isn't silently rerouted; the server
+  // rejects it with a clear error if submitted as-is.
+  const stale = e.send_to && !known.includes(e.send_to);
+  const options =
+    (stale ? `<option value="${esc(e.send_to)}" selected>⚠ ${esc(e.send_to)} (no such agent)</option>` : '')
+    + known.map(n => {
+      const label = n === 'all' ? wizWord('all members', 'the whole party') : n;
+      return `<option value="${esc(n)}"${n === e.send_to ? ' selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+  return `<div class="template-agent-row template-pattern-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Step', 'Verse')} ${idx + 1}</span>
+      <label class="template-pattern-sendto">${wizWord('send to', 'whisper to')}
+        <select class="tw-sendto">${options}</select>
+      </label>
+      <button type="button" class="tool tw-up" title="Move this step up">↑</button>
+      <button type="button" class="tool tw-down" title="Move this step down">↓</button>
+      <button type="button" class="tool tw-remove" title="Remove this step">✕</button>
+    </div>
+    <textarea class="tw-value" rows="2" placeholder="briefing message delivered after the whole team is up — {{task}} is replaced with the dispatch task (newlines OK)">${esc(e.value)}</textarea>
+  </div>`;
+}
+
+// scrapeEditorPattern reads the pattern rows back into
+// templateEditorPattern — same never-lose-typed-values contract as
+// scrapeEditorAgents.
+function scrapeEditorPattern() {
+  templateEditorPattern = $$('#template-editor-pattern .template-pattern-row').map(row => ({
+    send_to: $('.tw-sendto', row).value,
+    value: $('.tw-value', row).value,
+  }));
+}
+
+// ---- Process phase rows (JOH-242) -------------------------------------
+//
+// The template's advisory process: an ORDERED list of phases (the party's
+// quest plan / chapters), each a {name, roles, criteria}. It is rendered
+// into every agent's briefing and tracked at runtime, but NOT enforced. The
+// rows reuse the agent-row panel chrome (.template-agent-row) so the wizard
+// re-skin covers them for free. Roles are a comma-separated free-text field
+// (matched case-insensitively against a member's role; "all" = everyone).
+
+function renderEditorProcess() {
+  $('#template-editor-process').innerHTML =
+    templateEditorProcess.map((ph, i) => processRowHTML(ph, i)).join('');
+}
+
+function processRowHTML(ph, idx) {
+  const roles = (ph.roles || []).join(', ');
+  return `<div class="template-agent-row template-process-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Phase', 'Chapter')} ${idx + 1}</span>
+      <button type="button" class="tool tpp-up" title="Move this phase up">↑</button>
+      <button type="button" class="tool tpp-down" title="Move this phase down">↓</button>
+      <button type="button" class="tool tpp-remove" title="Remove this phase">✕</button>
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="tpp-name" placeholder="phase name (e.g. design, build, review)" value="${esc(ph.name || '')}" />
+      <input type="text" class="tpp-roles" placeholder="active roles, comma-separated (e.g. dev, reviewer; 'all' = everyone)" value="${esc(roles)}" />
+    </div>
+    <textarea class="tpp-criteria" rows="2" placeholder="criteria — entry / exit / handoff in plain words (advisory, not enforced)">${esc(ph.criteria || '')}</textarea>
+  </div>`;
+}
+
+// scrapeEditorProcess reads the process rows back into templateEditorProcess
+// — same never-lose-typed-values contract as scrapeEditorPattern. Roles are
+// split on commas and trimmed; blank entries drop.
+function scrapeEditorProcess() {
+  templateEditorProcess = $$('#template-editor-process .template-process-row').map(row => ({
+    name: $('.tpp-name', row).value.trim(),
+    roles: $('.tpp-roles', row).value.split(',').map(s => s.trim()).filter(Boolean),
+    criteria: $('.tpp-criteria', row).value,
+  }));
 }
 
 // scrapeEditorAgents reads the agent rows back into templateEditorAgents
 // — called before any add/remove (which re-renders the container) and
 // before submit, so typed-but-uncommitted values are never lost.
 function scrapeEditorAgents() {
-  templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => ({
-    name: $('.ta-name', row).value.trim(),
-    role: $('.ta-role', row).value.trim(),
-    descr: $('.ta-descr', row).value.trim(),
-    initial_message: $('.ta-initmsg', row).value,
-    is_owner: $('.ta-owner', row).checked,
-    permissions: $$('.ta-perm', row).filter(c => c.checked).map(c => c.dataset.slug),
+  templateEditorAgents = $$('#template-editor-agents .template-agent-row').map(row => {
+    // Legacy inline launch/permission fields (harness/model/effort/sandbox/
+    // approval + the inline permission list) are no longer editable inline
+    // (JOH-350) — they ride the picked profile now. Carry any a pre-cutover
+    // template still holds forward from the in-memory model (keyed by the row's
+    // render-time index) so a re-save never silently drops them; "Extract to
+    // profile…" is the migration path that clears them into a profile.
+    const prev = templateEditorAgents[parseInt(row.dataset.idx, 10)] || {};
+    return {
+      name: $('.ta-name', row).value.trim(),
+      role: $('.ta-role', row).value.trim(),
+      descr: $('.ta-descr', row).value.trim(),
+      initial_message: $('.ta-initmsg', row).value,
+      is_owner: $('.ta-owner', row).checked,
+      role_ref: $('.ta-role-ref', row).value.trim(),
+      spawn_profile: $('.ta-profile-select', row).value.trim(),
+      harness: prev.harness || '',
+      model: prev.model || '',
+      effort: prev.effort || '',
+      sandbox: prev.sandbox || '',
+      approval: prev.approval || '',
+      permissions: (prev.permissions || []).slice(),
+      wave: parseInt($('.ta-wave', row).value, 10) || 0,
+    };
+  });
+}
+
+// ---- Launch-profile picker actions (JOH-350) --------------------------
+//
+// The three affordances on each agent's launch-profile row, all routing to the
+// REAL profiles editor/overlay (modal-profiles.js) so profiles are created and
+// edited in exactly one place. "＋ new" and "Extract to profile…" auto-select
+// the resulting profile for that agent; "⧉ manage…" opens the manager overlay
+// (its edits are picked up when it closes — see bindTemplatesUI).
+
+// reloadProfilesAndRender re-fetches the profile list (after a create/edit
+// through the real editor) and re-renders the agent rows so the dropdowns +
+// summaries reflect it. It does NOT scrape — callers that mutate the in-memory
+// model (selecting the just-created profile) must have scraped already, so a
+// second scrape here would clobber that change with the stale DOM value.
+function reloadProfilesAndRender() {
+  if (!$('#template-editor-modal').classList.contains('show')) return;
+  const render = () => {
+    if ($('#template-editor-modal').classList.contains('show')) renderEditorAgents();
+  };
+  loadProfiles(true).then(render).catch(render);
+}
+
+// onManageProfilesClosed picks up profiles the "⧉ manage…" overlay created or
+// edited: scrape first (preserve anything typed in the editor behind it), then
+// reload + re-render. Distinct from reloadProfilesAndRender because here there
+// is no pending in-memory selection to protect — the DOM is the source of truth.
+function onManageProfilesClosed() {
+  if (!$('#template-editor-modal').classList.contains('show')) return;
+  scrapeEditorAgents();
+  reloadProfilesAndRender();
+}
+
+// newProfileForAgent opens a blank profile editor; on save the fresh profile is
+// selected for the agent at `idx`.
+function newProfileForAgent(idx) {
+  scrapeEditorAgents();
+  openProfileEditor(null, {
+    editExisting: false,
+    onSaved: (name) => {
+      scrapeEditorAgents();
+      if (templateEditorAgents[idx]) templateEditorAgents[idx].spawn_profile = name;
+      reloadProfilesAndRender();
+    },
+  });
+}
+
+// extractAgentToProfile materializes the agent's legacy inline launch fields +
+// inline permission grants into a new spawn profile (the self-heal migration
+// path for pre-cutover templates), then points the agent at it and clears the
+// inline fields. The owner flag stays on the template agent (it is structural),
+// so it is NOT folded into the profile.
+function extractAgentToProfile(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a) return;
+  const permission_overrides = {};
+  for (const s of (a.permissions || [])) { if (s) permission_overrides[s] = 'grant'; }
+  const seed = {
+    harness: a.harness || '', model: a.model || '', effort: a.effort || '',
+    sandbox: a.sandbox || '', approval: a.approval || '',
+    permission_overrides,
+  };
+  openProfileEditor(seed, {
+    editExisting: false,
+    onSaved: (name) => {
+      scrapeEditorAgents();
+      const cur = templateEditorAgents[idx];
+      if (cur) {
+        cur.spawn_profile = name;
+        cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
+        cur.permissions = [];
+      }
+      reloadProfilesAndRender();
+    },
+  });
+}
+
+// ---- Rhythm rows (JOH-244) --------------------------------------------
+//
+// The template's rhythms: recurring nudges (the party's drumbeats)
+// materialized as group cron jobs at deploy. Each carries a name, a
+// schedule (interval OR cron expression), an optional role filter, an
+// optional subject, and a body. The rows reuse the agent-row panel chrome
+// (.template-agent-row) so the wizard re-skin covers them for free.
+
+function renderEditorRhythms() {
+  $('#template-editor-rhythms').innerHTML =
+    templateEditorRhythms.map((r, i) => rhythmRowHTML(r, i)).join('');
+}
+
+function rhythmRowHTML(r, idx) {
+  return `<div class="template-agent-row template-rhythm-row" data-idx="${idx}">
+    <div class="template-agent-row-head">
+      <span class="template-agent-num">${wizWord('Rhythm', 'Drumbeat')} ${idx + 1}</span>
+      <button type="button" class="tool trh-up" title="Move this rhythm up">↑</button>
+      <button type="button" class="tool trh-down" title="Move this rhythm down">↓</button>
+      <button type="button" class="tool trh-remove" title="Remove this rhythm">✕</button>
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="trh-name" placeholder="name (e.g. status-ping)" value="${esc(r.name || '')}" />
+      <input type="text" class="trh-role" placeholder="role filter (blank / 'all' = whole group)" value="${esc(r.target_role || '')}" />
+    </div>
+    <div class="template-agent-grid">
+      <input type="text" class="trh-interval" placeholder="interval (e.g. 10m) — OR cron below" value="${esc(r.interval || '')}" />
+      <input type="text" class="trh-cron" placeholder="cron expr (e.g. '0 * * * *') — OR interval" value="${esc(r.cron_expr || '')}" />
+    </div>
+    <input type="text" class="trh-subject" placeholder="subject (optional)" value="${esc(r.subject || '')}" />
+    <textarea class="trh-body" rows="2" placeholder="message body the nudge sends each tick (newlines OK)">${esc(r.body || '')}</textarea>
+  </div>`;
+}
+
+// scrapeEditorRhythms reads the rhythm rows back into templateEditorRhythms
+// — same never-lose-typed-values contract as scrapeEditorProcess.
+function scrapeEditorRhythms() {
+  templateEditorRhythms = $$('#template-editor-rhythms .template-rhythm-row').map(row => ({
+    name: $('.trh-name', row).value.trim(),
+    target_role: $('.trh-role', row).value.trim(),
+    interval: $('.trh-interval', row).value.trim(),
+    cron_expr: $('.trh-cron', row).value.trim(),
+    subject: $('.trh-subject', row).value.trim(),
+    body: $('.trh-body', row).value,
   }));
 }
 
 async function submitTemplateEditor() {
   scrapeEditorAgents();
+  scrapeEditorPattern();
+  scrapeEditorProcess();
+  scrapeEditorRhythms();
   const name = $('#template-editor-name').value.trim();
   const errEl = $('#template-editor-error');
   errEl.textContent = '';
@@ -191,6 +632,10 @@ async function submitTemplateEditor() {
     descr: $('#template-editor-descr').value.trim(),
     default_context: $('#template-editor-context').value,
     agents: templateEditorAgents,
+    work_pattern: templateEditorPattern,
+    process: templateEditorProcess,
+    rhythms: templateEditorRhythms,
+    wave_max_wait: parseInt($('#template-editor-wave-max-wait').value, 10) || 0,
   };
   const editing = templateEditorEditing;
   const url = editing ? `/api/templates/${encodeURIComponent(editing)}` : '/api/templates';
@@ -238,7 +683,9 @@ async function deleteTemplate(name) {
 function openInstantiateModal(presetName) {
   const templates = (lastSnapshot && lastSnapshot.templates) || [];
   if (!templates.length) {
-    toast('no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first', true);
+    toast(wizWord(
+      'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
+      'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
     return;
   }
   const sel = $('#template-instantiate-template');
@@ -264,14 +711,19 @@ function renderInstantiatePreview() {
   const host = $('#template-instantiate-preview');
   const agents = (t && t.agents) || [];
   if (!agents.length) {
-    host.innerHTML = '<span class="tp-empty">this template has no agents</span>';
+    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
     return;
   }
-  const shown = prefix || '‹group›';
+  const shown = prefix || wizWord('‹group›', '‹party›');
   host.innerHTML = agents.map(a => {
     const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
     const np = (a.permissions || []).length;
-    const meta = [a.role ? esc(a.role) : '', np ? `+${np}🔑` : '', owner]
+    // Per-role launch hint (JOH-239): show the profile ref or the most telling
+    // inline override so the human sees each role's launch shape before spawning.
+    const launch = a.spawn_profile
+      ? `⚙ ${esc(a.spawn_profile)}`
+      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
       .filter(Boolean).join(' · ');
     return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
       + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
@@ -314,6 +766,14 @@ async function submitInstantiate() {
       ? `group ${groupName}: spawned ${resp.spawned || 0}, ${failed} failed — check the group`
       : `group ${groupName}: spawned ${resp.spawned || 0} agent${resp.spawned === 1 ? '' : 's'}`,
       failed > 0);
+    // Work-pattern outcome gets its own toast — a silently-skipped
+    // kick-off briefing must not hide behind a happy spawn count.
+    const perrs = resp.pattern_errors || [];
+    if (perrs.length) {
+      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+    } else if (resp.pattern_delivered) {
+      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+    }
     try { dashPrefs.setItem('tclaude.dash.group.' + groupName, '1'); } catch (_) {}
     recordGroupInteraction(groupName);
     // Jump to the Groups tab so the freshly-spawned group is visible.
@@ -328,20 +788,233 @@ async function submitInstantiate() {
   }
 }
 
+// ---- Deploy-a-task-force modal (JOH-245) ------------------------------
+//
+// Deploy is instantiate's mission-framed twin: pick a template, state the
+// mission (free text or a Linear link), optionally name the group / pick a
+// cwd / land the force in a worktree. The group name is prefilled with a
+// slug of the mission (matching the server's derivation) until the human
+// edits it. Worktree resolution reuses POST /api/worktrees (the spawn
+// modal's endpoint), turning a branch + cwd into a worktree path that
+// becomes the deploy cwd.
+
+// deployGroupEdited tracks whether the human has typed in the group field —
+// once they have, the mission→group-name auto-prefill stops overwriting it.
+let deployGroupEdited = false;
+
+function openDeployModal(presetName) {
+  const templates = (lastSnapshot && lastSnapshot.templates) || [];
+  if (!templates.length) {
+    toast(wizWord(
+      'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
+      'no summoning circles yet — chalk one via the Groups cog ⚙ → ⧉ circles… first'), true);
+    return;
+  }
+  const sel = $('#template-deploy-template');
+  sel.innerHTML = templates.map(t =>
+    `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+  if (presetName && templates.some(t => t.name === presetName)) sel.value = presetName;
+  $('#template-deploy-mission').value = '';
+  $('#template-deploy-group').value = '';
+  $('#template-deploy-cwd').value = '';
+  $('#template-deploy-worktree').value = '';
+  $('#template-deploy-error').textContent = '';
+  deployGroupEdited = false;
+  renderDeployPreview();
+  $('#template-deploy-modal').classList.add('show');
+  setTimeout(() => $('#template-deploy-mission').focus(), 0);
+}
+
+function closeDeployModal() { $('#template-deploy-modal').classList.remove('show'); }
+
+// deploySlug mirrors the server's slugify: lowercase, runs of non-[a-z0-9]
+// collapse to a single dash, trimmed, capped to 40. Used only to PREFILL
+// the group-name field — the server re-derives (and uniquifies) authoritatively.
+function deploySlug(s) {
+  const out = String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return out.length > 40 ? out.slice(0, 40).replace(/-+$/g, '') : out;
+}
+
+// deployIsBareURL mirrors the server's isBareURL: a single whitespace-free
+// token that reads as a link has no words to slug, so the group name should
+// fall back to the template name.
+function deployIsBareURL(s) {
+  const m = String(s || '').trim();
+  if (!m || /\s/.test(m)) return false;
+  const low = m.toLowerCase();
+  return low.startsWith('http://') || low.startsWith('https://')
+    || low.startsWith('linear.app/') || low.startsWith('www.');
+}
+
+// syncDeployGroupPrefill fills the group-name field with the mission slug (or
+// the template name for a bare-URL mission) until the human takes it over.
+function syncDeployGroupPrefill() {
+  if (deployGroupEdited) return;
+  const mission = $('#template-deploy-mission').value;
+  const tmplName = $('#template-deploy-template').value;
+  let base = deployIsBareURL(mission) ? '' : deploySlug(mission);
+  if (!base) base = deploySlug(tmplName);
+  $('#template-deploy-group').value = base;
+  renderDeployPreview();
+}
+
+// renderDeployPreview paints the final agent names for the deploy, exactly
+// like the instantiate preview — agent "PO" shows as "<group>-PO".
+function renderDeployPreview() {
+  const t = templatesByName()[$('#template-deploy-template').value];
+  const prefix = $('#template-deploy-group').value.trim();
+  const host = $('#template-deploy-preview');
+  const agents = (t && t.agents) || [];
+  if (!agents.length) {
+    host.innerHTML = `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
+    return;
+  }
+  const shown = prefix || wizWord('‹group›', '‹party›');
+  host.innerHTML = agents.map(a => {
+    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+    const np = (a.permissions || []).length;
+    const launch = a.spawn_profile
+      ? `⚙ ${esc(a.spawn_profile)}`
+      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
+      .filter(Boolean).join(' · ');
+    return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
+      + (meta ? ` <span class="tp-meta">${meta}</span>` : '') + `</div>`;
+  }).join('');
+}
+
+// resolveDeployWorktree turns a branch + repo (the cwd) into a worktree path
+// via POST /api/worktrees, the same endpoint the spawn modal uses. Returns
+// the created/checked-out path, or throws with a human message. A worktree
+// needs a repo, so a blank cwd is a clear error rather than a confusing
+// server-side one.
+async function resolveDeployWorktree(branch, cwd) {
+  if (!cwd) throw new Error('worktree needs a cwd inside a git repo');
+  const r = await fetch('/api/worktrees', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo: cwd, branch }),
+  });
+  const txt = await r.text();
+  if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
+  let resp = {};
+  try { resp = JSON.parse(txt); } catch (_) {}
+  if (!resp.path) throw new Error('worktree created but no path returned');
+  return resp.path;
+}
+
+async function submitDeploy() {
+  const tmplName = $('#template-deploy-template').value;
+  const mission = $('#template-deploy-mission').value.trim();
+  const groupName = $('#template-deploy-group').value.trim();
+  const branch = $('#template-deploy-worktree').value.trim();
+  let cwd = $('#template-deploy-cwd').value.trim();
+  const errEl = $('#template-deploy-error');
+  errEl.textContent = '';
+  if (!tmplName) { errEl.textContent = 'pick a template'; return; }
+  if (!mission) { errEl.textContent = 'a mission is required'; return; }
+  const btn = $('#template-deploy-submit');
+  btn.disabled = true;
+  btn.textContent = 'Deploying…';
+  try {
+    // Land the whole force in a worktree when a branch is given — resolve it
+    // to a path first, then use that path as the deploy cwd.
+    if (branch) {
+      cwd = await resolveDeployWorktree(branch, cwd);
+    }
+    const payload = { mission };
+    if (groupName) payload.group_name = groupName;
+    if (cwd) payload.cwd = cwd;
+    const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/deploy`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const txt = await r.text();
+    if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
+    let resp = {};
+    try { resp = JSON.parse(txt); } catch (_) {}
+    const finalGroup = resp.group || groupName;
+    closeDeployModal();
+    closeTemplatesManageModal();
+    const failed = resp.failed || 0;
+    // Plain mode: "task force … deployed against <mission>"; wizard mode: the
+    // hero party is summoned against its quest.
+    toast(failed
+      ? wizWord(
+        `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`,
+        `hero party ${finalGroup}: ${resp.spawned || 0} summoned, ${failed} failed — check the party`)
+      : wizWord(
+        `task force ${finalGroup} deployed against “${oneLineMission(mission)}” — ${resp.spawned || 0} spawned`,
+        `🧙 hero party ${finalGroup} summoned against its quest — ${resp.spawned || 0} familiars answer the call`),
+      failed > 0);
+    const perrs = resp.pattern_errors || [];
+    if (perrs.length) {
+      toast(`⚠ work pattern: ${perrs.length} step${perrs.length === 1 ? '' : 's'} not sent — ${perrs[0]}`, true);
+    } else if (resp.pattern_delivered) {
+      toast(`work pattern: ${resp.pattern_delivered} briefing${resp.pattern_delivered === 1 ? '' : 's'} sent`);
+    }
+    try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
+    recordGroupInteraction(finalGroup);
+    const gbtn = $$('nav button').find(b => b.dataset.tab === 'groups');
+    if (gbtn) gbtn.click();
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Deploy task force';
+  }
+}
+
 // ---- Save-group-as-template modal -------------------------------------
 
-function openFromGroupModal() {
+// openFromGroupModal opens the snapshot dialog. With a presetGroup (the
+// per-group ⚙ "save as template…" action) that group is preselected and
+// the template name is prefilled with the group's own name — selected so
+// one keystroke replaces it; the API 409s if the name is already taken.
+function openFromGroupModal(presetGroup) {
   const groups = ((lastSnapshot && lastSnapshot.groups) || []).map(g => g.name);
   if (!groups.length) { toast('no groups to snapshot', true); return; }
   const sel = $('#template-from-group-group');
   sel.innerHTML = groups.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  $('#template-from-group-name').value = '';
+  const preset = presetGroup && groups.includes(presetGroup);
+  if (preset) sel.value = presetGroup;
+  $('#template-from-group-name').value = preset ? presetGroup : '';
   $('#template-from-group-error').textContent = '';
+  refreshFromGroupUpdateState();
   $('#template-from-group-modal').classList.add('show');
-  setTimeout(() => $('#template-from-group-name').focus(), 0);
+  setTimeout(() => {
+    const inp = $('#template-from-group-name');
+    inp.focus();
+    if (preset) inp.select();
+  }, 0);
 }
 
 function closeFromGroupModal() { $('#template-from-group-modal').classList.remove('show'); }
+
+// refreshFromGroupUpdateState flips the from-group dialog between its
+// create and update modes as the human types: when the typed template
+// name already exists, submitting re-snapshots that template IN PLACE
+// (roster/owners/permissions/context re-traced from the group; curated
+// per-agent briefs kept on name match), so the note and the submit
+// label say so before anything is overwritten. .tfg-updating is a MODE
+// flag on the modal (like the cron dialog's .cron-editing) — the wizard
+// lever's Re-trace copy keys on it in pure CSS.
+function refreshFromGroupUpdateState() {
+  const name = $('#template-from-group-name').value.trim();
+  const updating = !!templatesByName()[name];
+  $('#template-from-group-modal').classList.toggle('tfg-updating', updating);
+  const note = $('#template-from-group-update-note');
+  note.style.display = updating ? '' : 'none';
+  note.textContent = updating
+    ? wizWord(
+      `⚠ A template “${name}” already exists — saving re-snapshots it in place: roles, owners, permissions and context are re-traced from the group; curated per-agent task briefs are kept for matching agents.`,
+      `⚠ A circle “${name}” is already chalked — tracing redraws it in place: roles, owners, powers and lore are re-traced from the party; curated familiar briefs are kept for matching names.`)
+    : '';
+  $('#template-from-group-submit').textContent =
+    updating ? 'Update template' : 'Save as template';
+}
 
 async function submitFromGroup() {
   const group = $('#template-from-group-group').value;
@@ -350,29 +1023,257 @@ async function submitFromGroup() {
   errEl.textContent = '';
   if (!group) { errEl.textContent = 'pick a group'; return; }
   if (!name) { errEl.textContent = 'template name is required'; return; }
+  // The mode the dialog showed the human — kept in lockstep with the
+  // typed name by refreshFromGroupUpdateState, so update is only ever
+  // sent after the "will update in place" note was visible. The server
+  // fails closed either way (409 without update on a taken name).
+  const updating = $('#template-from-group-modal').classList.contains('tfg-updating');
   const btn = $('#template-from-group-submit');
   btn.disabled = true;
   try {
     const r = await fetch('/api/templates/from-group', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group, template_name: name }),
+      body: JSON.stringify({ group, template_name: name, update: updating }),
     });
     const txt = await r.text();
     if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
     let tmpl = null;
     try { tmpl = JSON.parse(txt); } catch (_) {}
     closeFromGroupModal();
-    toast(`template created from ${group}: ${name}`);
+    // A from-group snapshot can't recover per-agent briefs from a live group,
+    // so blank_briefs counts how many agents this template would deploy with
+    // nothing to do — surfaced honestly so the human edits before deploying
+    // (JOH-344).
+    const blank = (tmpl && tmpl.blank_briefs) || 0;
+    const blankNote = blank > 0
+      ? ` — ⚠ ${blank} agent brief(s) blank; edit the template before deploying`
+      : '';
+    if (tmpl && tmpl.updated) {
+      const kept = (tmpl.briefs_kept || []).length;
+      const added = (tmpl.added || []).length;
+      const removed = (tmpl.removed || []).length;
+      toast(`template updated from ${group}: ${name}`
+        + ` (briefs kept: ${kept}, added: ${added}, removed: ${removed})${blankNote}`);
+    } else {
+      toast(`template created from ${group}: ${name}${blankNote}`);
+    }
     refresh();
     // Open the editor on the fresh template so the human can fill in
-    // per-agent task briefs (from-group leaves those blank).
+    // per-agent task briefs (from-group leaves new agents' blank).
     if (tmpl) openTemplateEditor(tmpl);
   } catch (err) {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
     btn.disabled = false;
   }
+}
+
+// ---- Export / import (JOH-341) ----------------------------------------
+//
+// Export downloads a template as a portable `<name>.task-force.json`
+// envelope (same shape `tclaude agent templates export` writes and
+// `import` reads). Import takes a picked file OR pasted JSON, POSTs it to
+// the daemon's import endpoint, and surfaces the returned degradation
+// warnings (stripped profile refs / unknown permission slugs).
+
+// exportTemplate starts a browser download of the portable envelope. The
+// endpoint is same-origin, so the anchor's download attribute forces a
+// save with our `<name>.task-force.json` filename regardless of the
+// JSON content-type.
+function exportTemplate(name) {
+  const a = document.createElement('a');
+  a.href = `/api/templates/${encodeURIComponent(name)}/export`;
+  a.download = `${name}.task-force.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function openTemplateImportModal() {
+  $('#template-import-file').value = '';
+  $('#template-import-paste').value = '';
+  $('#template-import-as').value = '';
+  $('#template-import-update').checked = false;
+  $('#template-import-error').textContent = '';
+  $('#template-import-modal').classList.add('show');
+  setTimeout(() => $('#template-import-paste').focus(), 0);
+}
+
+function closeTemplateImportModal() { $('#template-import-modal').classList.remove('show'); }
+
+// readImportSource returns the JSON text to import: the picked file's
+// contents if one is chosen, else the pasted text. A picked file wins so
+// a stale paste can't shadow a freshly-picked file.
+async function readImportSource() {
+  const fileInput = $('#template-import-file');
+  const file = fileInput.files && fileInput.files[0];
+  if (file) return (await file.text()).trim();
+  return $('#template-import-paste').value.trim();
+}
+
+async function submitTemplateImport() {
+  const errEl = $('#template-import-error');
+  errEl.textContent = '';
+  const btn = $('#template-import-submit');
+  btn.disabled = true;
+  try {
+    const raw = await readImportSource();
+    if (!raw) { errEl.textContent = 'pick a file or paste the task-force JSON'; return; }
+    // Validate JSON locally for a friendlier error than a raw 400; the
+    // daemon is still the authority on the envelope format + version.
+    try { JSON.parse(raw); } catch (e) {
+      errEl.textContent = 'not valid JSON: ' + ((e && e.message) || String(e));
+      return;
+    }
+    const q = new URLSearchParams();
+    const as = $('#template-import-as').value.trim();
+    if (as) q.set('as', as);
+    if ($('#template-import-update').checked) q.set('update', 'true');
+    const qs = q.toString();
+    const r = await fetch('/api/templates/import' + (qs ? '?' + qs : ''), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: raw,
+    });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      return;
+    }
+    let res = null;
+    try { res = JSON.parse(txt); } catch (_) {}
+    closeTemplateImportModal();
+    const name = (res && res.imported) || as || 'template';
+    const warnings = (res && res.warnings) || [];
+    let msg = res && res.updated ? `template overwritten: ${name}` : `template imported: ${name}`;
+    if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
+    toast(msg);
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- Starter task forces (JOH-246) ----------------------------------
+//
+// A small starters section reachable from the templates overlay's ⭐ button.
+// It lists the bundled starters (fetched from /api/starters) and installs one
+// on click through the shared import path. Install never clobbers an existing
+// template of the same name — the daemon reports a skip, which we surface as-is.
+
+function openStartersModal() {
+  $('#starters-error').textContent = '';
+  $('#starters-list').innerHTML =
+    `<div class="template-empty">${wizWord('Loading starters…', 'Conjuring presets…')}</div>`;
+  $('#starters-modal').classList.add('show');
+  loadStarters();
+}
+
+function closeStartersModal() { $('#starters-modal').classList.remove('show'); }
+
+async function loadStarters() {
+  const errEl = $('#starters-error');
+  try {
+    const r = await fetch('/api/starters', { credentials: 'same-origin' });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      $('#starters-list').innerHTML = '';
+      return;
+    }
+    let list = [];
+    try { list = JSON.parse(txt) || []; } catch (_) {}
+    renderStartersList(list);
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+    $('#starters-list').innerHTML = '';
+  }
+}
+
+// starterBadges renders the compact "what it demonstrates" chips for a starter
+// row — agents, waves, process phases, rhythms, work-pattern steps.
+function starterBadges(s) {
+  const n = s.agents || 0;
+  const chips = [`<span class="tc-count">${n} ${wizWord('agent', 'familiar')}${n === 1 ? '' : 's'}</span>`];
+  if ((s.waves || 0) > 1) chips.push(`<span class="tc-count" title="staged-spawn waves">🌊 ${s.waves} ${wizWord('waves', 'ranks')}</span>`);
+  if ((s.process || 0) > 0) chips.push(`<span class="tc-count" title="process phases">◆ ${s.process}-${wizWord('phase', 'chapter')}</span>`);
+  if ((s.rhythms || 0) > 0) chips.push(`<span class="tc-count" title="seeded rhythms">🥁 ${s.rhythms}</span>`);
+  if ((s.work_pattern || 0) > 0) chips.push(`<span class="tc-count" title="work-pattern steps">⇶ ${s.work_pattern}</span>`);
+  return chips.join(' ');
+}
+
+function renderStartersList(list) {
+  const host = $('#starters-list');
+  if (!list.length) {
+    host.innerHTML = `<div class="template-empty">${wizWord('No starters bundled.', 'No presets bound.')}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(s => `<div class="starter-row" data-starter="${esc(s.name)}">
+    <div class="starter-head">
+      <span class="tc-name">${esc(s.name)}</span>
+      ${s.descr ? `<span class="tc-descr">${esc(s.descr)}</span>` : ''}
+    </div>
+    <div class="starter-meta">${starterBadges(s)}</div>
+    <div class="starter-actions">
+      <button class="tool" data-sact="install" data-starter="${esc(s.name)}" title="${wizWord('Copy this starter into your templates list — this does NOT spawn a team; deploy or edit it from the list afterwards', 'Copy this preset into your circles — this summons NO party; cast or redraw it from your circles afterwards')}">${wizWord('⤓ copy to my templates', '⭐ copy into my circles')}</button>
+    </div>
+  </div>`).join('');
+}
+
+async function installStarter(name) {
+  const errEl = $('#starters-error');
+  errEl.textContent = '';
+  const btn = $(`.starter-row[data-starter="${cssEscape(name)}"] [data-sact="install"]`);
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/starters/${encodeURIComponent(name)}/install`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    const txt = await r.text();
+    if (!r.ok) {
+      let msg = txt;
+      try { const j = JSON.parse(txt); if (j && j.error) msg = j.error; } catch (_) {}
+      errEl.textContent = msg || `HTTP ${r.status}`;
+      return;
+    }
+    let res = null;
+    try { res = JSON.parse(txt); } catch (_) {}
+    if (res && res.skipped) {
+      // The daemon's skip message already spells out "a template named X
+      // already exists — skipped (your copy is left untouched) …"; surface it
+      // verbatim, with a terse fallback if it's somehow absent.
+      toast(res.message || wizWord(
+        `${name} is already in your templates — nothing copied`,
+        `${name} is already in your circles — nothing copied`));
+    } else {
+      const finalName = (res && res.name) || name;
+      const warnings = (res && res.warnings) || [];
+      // Say WHERE it landed and that nothing spawned — the copy-not-cast point.
+      let msg = wizWord(
+        `added to your templates: ${finalName} — deploy or edit it from the list (nothing spawned yet)`,
+        `copied into your circles: ${finalName} — cast or redraw it from your circles (no party summoned yet)`);
+      if (warnings.length) msg += ` — ${warnings.length} warning${warnings.length === 1 ? '' : 's'}: ${warnings.join('; ')}`;
+      toast(msg);
+    }
+    refresh();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// cssEscape quotes a starter name for a CSS attribute selector — starter names
+// are kebab-case so this is belt-and-suspenders, but keeps the query robust.
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
 }
 
 function bindTemplatesUI() {
@@ -383,7 +1284,7 @@ function bindTemplatesUI() {
   $('#templates-manage-close').addEventListener('click', closeTemplatesManageModal);
   bindManageOverlayDismiss('templates-manage-modal', closeTemplatesManageModal);
   $('#template-create-open').addEventListener('click', () => openTemplateEditor(null));
-  $('#template-from-group-open').addEventListener('click', openFromGroupModal);
+  $('#template-from-group-open').addEventListener('click', () => openFromGroupModal(null));
   $('#group-from-template-open').addEventListener('click', () => openInstantiateModal(null));
 
   // Template-card actions (delegated — the list re-renders every poll).
@@ -392,11 +1293,29 @@ function bindTemplatesUI() {
     const btn = e.target.closest('[data-tact]');
     if (!btn) return;
     const name = btn.dataset.template;
-    if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
+    if (btn.dataset.tact === 'deploy') openDeployModal(name);
+    else if (btn.dataset.tact === 'instantiate') openInstantiateModal(name);
     else if (btn.dataset.tact === 'edit') {
       const t = templatesByName()[name];
       if (t) openTemplateEditor(t);
-    } else if (btn.dataset.tact === 'delete') deleteTemplate(name);
+    } else if (btn.dataset.tact === 'export') exportTemplate(name);
+    else if (btn.dataset.tact === 'delete') deleteTemplate(name);
+  });
+
+  // Import modal (⤒ import in the toolbar).
+  $('#template-import-open').addEventListener('click', openTemplateImportModal);
+  $('#template-import-cancel').addEventListener('click', closeTemplateImportModal);
+  $('#template-import-submit').addEventListener('click', submitTemplateImport);
+  bindBackdropDiscard('template-import-modal', closeTemplateImportModal);
+
+  // Starters modal (⭐ starters in the toolbar) — install a bundled starter.
+  $('#starters-open').addEventListener('click', openStartersModal);
+  $('#starters-close').addEventListener('click', closeStartersModal);
+  bindBackdropDiscard('starters-modal', closeStartersModal);
+  $('#starters-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-sact="install"]');
+    if (!btn) return;
+    installStarter(btn.dataset.starter);
   });
 
   // Editor modal.
@@ -404,27 +1323,125 @@ function bindTemplatesUI() {
   $('#template-editor-submit').addEventListener('click', submitTemplateEditor);
   $('#template-editor-add-agent').addEventListener('click', () => {
     scrapeEditorAgents();
+    scrapeEditorPattern();
     templateEditorAgents.push(blankTemplateAgent());
     renderEditorAgents();
+    // The roster changed — refresh the pattern rows' send-to options.
+    renderEditorPattern();
   });
-  // Delegated handlers on the (re-rendered) agent container.
+  // Delegated handlers on the (re-rendered) agent container: remove an agent, or
+  // one of the launch-profile picker actions (JOH-350).
   $('#template-editor-agents').addEventListener('click', e => {
-    const rm = e.target.closest('.ta-remove');
-    if (!rm) return;
-    const row = rm.closest('.template-agent-row');
-    scrapeEditorAgents();
-    templateEditorAgents.splice(parseInt(row.dataset.idx, 10), 1);
-    renderEditorAgents();
-  });
-  // Keep each agent row's permission count in sync as boxes toggle.
-  // Owner is a plain per-agent checkbox — a group can have several
-  // owners, so there is no single-select enforcement.
-  $('#template-editor-agents').addEventListener('change', e => {
-    if (e.target.classList.contains('ta-perm')) {
-      const row = e.target.closest('.template-agent-row');
-      $('.ta-perms-count', row).textContent =
-        $$('.ta-perm', row).filter(c => c.checked).length;
+    const row = e.target.closest('.template-agent-row');
+    if (!row) return;
+    const idx = parseInt(row.dataset.idx, 10);
+    if (e.target.closest('.ta-remove')) {
+      scrapeEditorAgents();
+      scrapeEditorPattern();
+      templateEditorAgents.splice(idx, 1);
+      renderEditorAgents();
+      renderEditorPattern();
+    } else if (e.target.closest('.ta-profile-new')) {
+      newProfileForAgent(idx);
+    } else if (e.target.closest('.ta-profile-manage')) {
+      // Preserve typed values before the overlay steals focus; its edits are
+      // picked up when it closes (bindProfilesOverlayRefresh below).
+      scrapeEditorAgents();
+      openProfilesManageModal();
+    } else if (e.target.closest('.ta-extract-profile')) {
+      extractAgentToProfile(idx);
     }
+  });
+  // Owner is a plain per-agent checkbox — a group can have several owners, so
+  // there is no single-select enforcement. A committed agent-name edit (change
+  // fires on blur) refreshes the work-pattern rows' send-to options to the new
+  // roster names; a launch-profile pick re-renders the row so its summary +
+  // legacy-notice track the selection.
+  $('#template-editor-agents').addEventListener('change', e => {
+    if (e.target.classList.contains('ta-name')) {
+      scrapeEditorAgents();
+      scrapeEditorPattern();
+      renderEditorPattern();
+    } else if (e.target.classList.contains('ta-profile-select')) {
+      scrapeEditorAgents();
+      renderEditorAgents();
+    } else if (e.target.classList.contains('ta-role-ref')) {
+      // Repaint the role-inspect panel for the newly-picked role so the pick is
+      // never blind (JOH-351). Scoped to this agent's row.
+      const row = e.target.closest('.template-agent-row');
+      const panel = $('.ta-role-inspect', row);
+      if (panel) panel.innerHTML = roleInspectFor(e.target.value.trim());
+    }
+  });
+  // When the spawn-profiles manager (opened from an agent's "⧉ manage…") closes,
+  // pick up any profile it created/edited by re-fetching + re-rendering the
+  // template editor's launch-profile dropdowns — but only while that editor is
+  // still open behind it (onManageProfilesClosed guards on that). Covers both
+  // close paths: the Close button and a backdrop click.
+  $('#profiles-manage-close').addEventListener('click', onManageProfilesClosed);
+  $('#profiles-manage-modal').addEventListener('click', (e) => {
+    if (e.target === $('#profiles-manage-modal')) onManageProfilesClosed();
+  });
+  // Work-pattern rows: add / remove / reorder (delegated — the container
+  // re-renders on every mutation).
+  $('#template-editor-add-pattern').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    templateEditorPattern.push({ send_to: 'all', value: '' });
+    renderEditorPattern();
+  });
+  $('#template-editor-pattern').addEventListener('click', e => {
+    const btn = e.target.closest('.tw-remove, .tw-up, .tw-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-pattern-row').dataset.idx, 10);
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    const arr = templateEditorPattern;
+    if (btn.classList.contains('tw-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('tw-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('tw-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorPattern();
+  });
+  // Process phase rows: add / remove / reorder (JOH-242, delegated — the
+  // container re-renders on every mutation).
+  $('#template-editor-add-phase').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    scrapeEditorProcess();
+    templateEditorProcess.push({ name: '', roles: [], criteria: '' });
+    renderEditorProcess();
+  });
+  $('#template-editor-process').addEventListener('click', e => {
+    const btn = e.target.closest('.tpp-remove, .tpp-up, .tpp-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-process-row').dataset.idx, 10);
+    scrapeEditorProcess();
+    const arr = templateEditorProcess;
+    if (btn.classList.contains('tpp-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('tpp-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('tpp-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorProcess();
+  });
+  // Rhythm rows: add / remove / reorder (JOH-244, delegated — the container
+  // re-renders on every mutation, so scrape all sibling editors first).
+  $('#template-editor-add-rhythm').addEventListener('click', () => {
+    scrapeEditorAgents();
+    scrapeEditorPattern();
+    scrapeEditorProcess();
+    scrapeEditorRhythms();
+    templateEditorRhythms.push({ name: '', target_role: '', interval: '', cron_expr: '', subject: '', body: '' });
+    renderEditorRhythms();
+  });
+  $('#template-editor-rhythms').addEventListener('click', e => {
+    const btn = e.target.closest('.trh-remove, .trh-up, .trh-down');
+    if (!btn) return;
+    const idx = parseInt(btn.closest('.template-rhythm-row').dataset.idx, 10);
+    scrapeEditorRhythms();
+    const arr = templateEditorRhythms;
+    if (btn.classList.contains('trh-remove')) arr.splice(idx, 1);
+    else if (btn.classList.contains('trh-up') && idx > 0) [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+    else if (btn.classList.contains('trh-down') && idx < arr.length - 1) [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+    renderEditorRhythms();
   });
   bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
 
@@ -435,9 +1452,21 @@ function bindTemplatesUI() {
   $('#template-instantiate-group').addEventListener('input', renderInstantiatePreview);
   bindBackdropDiscard('template-instantiate-modal', closeInstantiateModal);
 
-  // From-group modal.
+  // Deploy modal (JOH-245). The mission drives the group-name prefill until
+  // the human edits the group field; the template select refreshes both the
+  // prefill and the preview.
+  $('#template-deploy-cancel').addEventListener('click', closeDeployModal);
+  $('#template-deploy-submit').addEventListener('click', submitDeploy);
+  $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
+  $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
+  $('#template-deploy-group').addEventListener('input', () => { deployGroupEdited = true; renderDeployPreview(); });
+  bindBackdropDiscard('template-deploy-modal', closeDeployModal);
+
+  // From-group modal. Typing the name live-flips the dialog between its
+  // create and update-in-place modes.
   $('#template-from-group-cancel').addEventListener('click', closeFromGroupModal);
   $('#template-from-group-submit').addEventListener('click', submitFromGroup);
+  $('#template-from-group-name').addEventListener('input', refreshFromGroupUpdateState);
   bindBackdropDiscard('template-from-group-modal', closeFromGroupModal);
 
 }
@@ -941,5 +1970,5 @@ function bindGroupCloneModal() {
 export {
   renderTemplatesTab, bindTemplatesUI, bindGroupImportModal,
   openGroupContextModal, bindGroupContextModal, groupDefaultContext,
-  openGroupCloneModal, bindGroupCloneModal,
+  openGroupCloneModal, bindGroupCloneModal, openFromGroupModal,
 };

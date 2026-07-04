@@ -278,10 +278,10 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 	assert.Equal(t, 1, msgRowCount(t, w1), "fired dashboard-created job reached the member")
 }
 
-// Scenario 6: a group-target job whose group has been deleted out from
-// under it fires cleanly with a "no_target" status — it does not error
-// the scheduler tick.
-func TestCronGroupMulticast_DeletedGroup_NoTarget(t *testing.T) {
+// Scenario 6: deleting a group removes its group-target cron jobs (JOH-244) —
+// a group-target job (incl. a seeded rhythm) is meaningless once its group is
+// gone, so DeleteAgentGroup sweeps it in the same cleanup transaction.
+func TestCronGroupMulticast_DeletedGroup_RemovesGroupJob(t *testing.T) {
 	f := newFlow(t)
 
 	f.HaveGroup("doomed")
@@ -296,10 +296,36 @@ func TestCronGroupMulticast_DeletedGroup_NoTarget(t *testing.T) {
 		"body":     "anyone home",
 	})
 
-	// The group vanishes after the job is scheduled.
+	// The group vanishes after the job is scheduled — its group-target job goes
+	// with it.
 	require.NoError(t, db.DeleteAgentGroup("doomed"), "delete group")
 
-	assert.Equal(t, "no_target", fireCronNow(t, f, id),
-		"firing a job whose target group was deleted is a clean no_target")
+	job, err := db.GetAgentCronJob(id)
+	require.NoError(t, err)
+	assert.Nil(t, job, "the group-target job was removed with its group")
 	assert.Zero(t, msgRowCount(t, w1), "no rows fanned out for a deleted group")
+}
+
+// Scenario 6b: a group-target job that somehow outlives its group (a stray
+// row pointing at a group id that no longer resolves) still fires cleanly with
+// a "no_target" status — the defense-in-depth behind the delete-time cleanup,
+// so a lost sweep never errors the scheduler tick.
+func TestCronGroupMulticast_StaleGroupJob_NoTarget(t *testing.T) {
+	f := newFlow(t)
+	_ = f
+
+	// A group-target job whose group id never resolves (never existed / already
+	// swept). Inserted directly so we model the survived-row case.
+	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name:            "orphan",
+		TargetKind:      db.CronTargetGroup,
+		GroupID:         987654,
+		IntervalSeconds: 600,
+		Body:            "anyone home",
+		Enabled:         true,
+	})
+	require.NoError(t, err, "insert stale group job")
+
+	assert.Equal(t, "no_target", fireCronNow(t, f, id),
+		"firing a group job whose group is gone is a clean no_target")
 }

@@ -1,0 +1,102 @@
+{
+  "format": "tclaude-task-force",
+  "format_version": 1,
+  "template": {
+    "name": "dev-squad",
+    "descr": "Lead-run feature squad: design → implement → review → test → ship.",
+    "default_context": "You are part of a small software squad shipping one feature or fix end to end. Work in a git worktree and open a PR — never commit to the main branch directly. Keep commits small and focused, and raise scope questions and blockers early instead of guessing. The lead sets the approach and is the final technical vet before anything merges.",
+    "agents": [
+      {
+        "name": "lead",
+        "role": "lead",
+        "role_ref": "lead",
+        "descr": "Tech lead — sets the approach and vets what ships.",
+        "initial_message": "You lead this squad. Turn the mission into a short plan: the approach, who does what, and the done-criteria. Drive the work through design → implement → review → test → ship, keep everyone pointed at the same goal, unblock people, and do the final technical vet before anything merges. Spawn another pair of hands if the work genuinely needs it.",
+        "is_owner": true,
+        "permissions": ["groups.spawn"],
+        "model": "opus",
+        "wave": 0
+      },
+      {
+        "name": "designer",
+        "role": "designer",
+        "role_ref": "designer",
+        "descr": "Designer — owns UX, layout, flow and copy.",
+        "initial_message": "You own the user experience. Where the mission has a UI, produce a concrete design — layout, flow, copy, the feel of it — and partner with the dev to get it built faithfully. If the mission is pure backend with no user-facing surface, say so and stand down.",
+        "wave": 1
+      },
+      {
+        "name": "dev",
+        "role": "dev",
+        "role_ref": "dev",
+        "descr": "Developer — implements the feature end to end.",
+        "initial_message": "You build the feature. Wait for the lead's plan, then implement it end to end with tests as you go. Hand a working, self-tested change to the reviewer and tester. Raise blockers and scope questions early rather than guessing.",
+        "wave": 1
+      },
+      {
+        "name": "reviewer",
+        "role": "reviewer",
+        "role_ref": "reviewer",
+        "descr": "Reviewer — reviews the diff cold, no backstory.",
+        "initial_message": "You review the change with fresh eyes. Read the diff cold — you were not part of building it — and hunt for correctness bugs, missing cases, and quality problems the author has already rationalised away. Be specific and separate real defects from nits. Do not rubber-stamp.",
+        "wave": 1
+      },
+      {
+        "name": "tester",
+        "role": "tester",
+        "role_ref": "tester",
+        "descr": "Tester — verifies behaviour and hardens the suite.",
+        "initial_message": "You verify the change actually does what the mission asked by exercising it, and you harden the test suite around the edge cases. Report what you observed — including failures — plainly and reproducibly.",
+        "model": "haiku",
+        "wave": 1
+      }
+    ],
+    "work_pattern": [
+      {
+        "send_to": "lead",
+        "value": "The squad is fully assembled. Break down the mission, post the plan and the done-criteria to the group, and hand out first steps. Mission recap: {{mission}}"
+      },
+      {
+        "send_to": "all",
+        "value": "Squad is live. Follow the lead's plan and the process phases (design → implement → review → test → ship), and keep the group posted at each handoff."
+      }
+    ],
+    "process": [
+      {
+        "name": "design",
+        "roles": ["lead", "designer"],
+        "criteria": "Agree the approach and, where there's a UI, the UX. Exit when there is a shared plan the dev can build to and any user-facing surface has a concrete design."
+      },
+      {
+        "name": "implement",
+        "roles": ["dev"],
+        "criteria": "Build the feature end to end behind the plan, writing tests as you go. Exit when it builds, self-tests pass, and it is ready for a cold review."
+      },
+      {
+        "name": "review",
+        "roles": ["reviewer"],
+        "criteria": "Review the diff cold — correctness, missing cases, quality. Exit when findings are triaged: the real ones fixed, deliberate skips noted."
+      },
+      {
+        "name": "test",
+        "roles": ["tester"],
+        "criteria": "Exercise the change against its done-criteria and harden the suite. Exit when behaviour is verified and the important regressions are covered."
+      },
+      {
+        "name": "ship",
+        "roles": ["lead"],
+        "criteria": "Final technical vet and merge. Exit when the change is merged and the mission's done-criteria are met."
+      }
+    ],
+    "rhythms": [
+      {
+        "name": "lead-checkin",
+        "target_role": "lead",
+        "interval": "30m",
+        "subject": "Squad checkpoint",
+        "body": "Checkpoint: is the squad on track against the mission? Nudge anyone stalled, resolve open decisions, and surface anything the human needs to decide."
+      }
+    ],
+    "wave_max_wait": 300
+  }
+}

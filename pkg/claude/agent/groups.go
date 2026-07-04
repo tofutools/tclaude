@@ -46,6 +46,7 @@ func groupsCmd() *cobra.Command {
 			groupsStopCmd(),
 			groupsResumeCmd(),
 			groupsRetireCmd(),
+			groupsRebriefCmd(),
 			groupsOwnersCmd(),
 			groupsGrantOwnerCmd(),
 			groupsRevokeOwnerCmd(),
@@ -868,6 +869,70 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, tbl.Render())
 	for _, warn := range resp.Warnings {
 		fmt.Fprintf(stdout, "⚠ %s\n", warn)
+	}
+	return rcOK
+}
+
+// --- groups rebrief ---
+
+type groupsRebriefParams struct {
+	Name     string `pos:"true" help:"Group name (a deployed force — has a source template)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsRebriefCmd() *cobra.Command {
+	return boa.CmdT[groupsRebriefParams]{
+		Use:   "rebrief",
+		Short: "Re-deliver a deployed force's work pattern with its mission",
+		Long: "Re-briefs a task force deployed from a template: re-delivers the source template's CURRENT work pattern " +
+			"to the force's live members, with the group's recorded mission interpolated ({{mission}}/{{task}}). Useful " +
+			"when the roster has drifted or the original briefing has scrolled out of context. Gated: the human always, " +
+			"group owners of the group, otherwise the templates.instantiate permission. Degrades clearly: a group with no source " +
+			"template, a deleted template, or a template with no work pattern is a 4xx (nothing is sent).",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRebriefParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsRebriefParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsRebrief(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsRebrief(p *groupsRebriefParams, stdout, stderr io.Writer) int {
+	if p.Name == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Name) + "/rebrief"
+	var resp struct {
+		Group            string   `json:"group"`
+		Template         string   `json:"template"`
+		Mission          string   `json:"mission"`
+		PatternDelivered int      `json:"pattern_delivered"`
+		PatternErrors    []string `json:"pattern_errors"`
+	}
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "Re-briefed group %q from template %q: %d message%s delivered.\n",
+		resp.Group, resp.Template, resp.PatternDelivered, plural(resp.PatternDelivered))
+	for _, e := range resp.PatternErrors {
+		fmt.Fprintf(stdout, "⚠ %s\n", e)
 	}
 	return rcOK
 }

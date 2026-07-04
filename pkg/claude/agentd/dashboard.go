@@ -871,9 +871,25 @@ type dashboardGroup struct {
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
 	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
 	// profile), "optin" (force Remote Access on) or "deny" (force it off).
-	RemoteControlPolicy string            `json:"remote_control_policy"`
-	Members             []dashboardMember `json:"members"`
-	Online              int               `json:"online"`
+	RemoteControlPolicy string `json:"remote_control_policy"`
+	// Mission and SourceTemplate are deployment provenance (JOH-245): what
+	// the group was deployed against and the template it was
+	// instantiated/deployed from. Both "" for a group not created from a
+	// template — the Task Forces framing on the Templates tab renders a group
+	// as a deployed force only when SourceTemplate is set.
+	Mission        string            `json:"mission,omitempty"`
+	SourceTemplate string            `json:"source_template,omitempty"`
+	// Process is the group's advisory process state (JOH-242): the current
+	// phase, the ordered phase map, and the transition log. nil for a group
+	// with no process (the phase chip + advance control render only when set).
+	Process *processStateJSON `json:"process,omitempty"`
+	// Waves is the group's staged-spawn choreography status (JOH-244): the
+	// current wave + how many waves/agents are still pending. nil once the
+	// choreography is complete (or for a single-wave deploy) — the "wave N/M
+	// pending" chip renders only while set.
+	Waves   *waveStatusJSON  `json:"waves,omitempty"`
+	Members []dashboardMember `json:"members"`
+	Online  int               `json:"online"`
 }
 
 // dashboardMember.Owner mirrors the memberJSON convention from
@@ -1385,7 +1401,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Groups = []dashboardGroup{}
 	out.Agents = []dashboardAgent{}
 	for _, g := range groups {
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Members: []dashboardMember{}}
+		// Advisory process state (JOH-242): attach the current phase + phase map
+		// + transition log so the group view can render a phase chip + advance
+		// control. nil for a group with no process.
+		if st, trs, perr := loadGroupProcess(g.ID); perr == nil && st != nil {
+			pv := processStateToJSON(st, trs)
+			dg.Process = &pv
+		}
+		// Staged-spawn choreography status (JOH-244): a "wave N/M pending" chip
+		// while later waves are still deferred. nil when the deploy is complete.
+		if wv := loadWaveStatus(g.ID); wv != nil {
+			dg.Waves = wv
+		}
 		members, _ := db.ListAgentGroupMembers(g.ID)
 		// Pre-load the owner set so we can tag members who are also
 		// owners. Mirrors handleGroupMembersList in handlers.go.
