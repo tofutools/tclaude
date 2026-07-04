@@ -98,8 +98,7 @@ const SECTIONS = [
     icon: '⚙',
     // Full section name (JOH-390 item 5): the operator wants the profiles
     // heading spelled out — "Agent profiles" / "Familiar patterns" — rather
-    // than the bare "Profiles" / "Patterns". Templates + Roles keep their
-    // short headings (he named only this one).
+    // than the bare "Profiles" / "Patterns". Roles keeps its short heading.
     title: () => wizWord('Agent profiles', 'Familiar patterns'),
     empty: () => wizWord('no profiles yet', 'no patterns yet'),
     items: (snap) => (snap && snap.profiles) || [],
@@ -112,7 +111,10 @@ const SECTIONS = [
   {
     key: 'templates',
     icon: '🧩',
-    title: () => wizWord('Templates', 'Summoning circles'),
+    // Spelled out like the profiles heading (operator follow-up to JOH-390
+    // item 5): these are the GROUP templates, and "Summoning circles" is
+    // already the full arcane name.
+    title: () => wizWord('Group templates', 'Summoning circles'),
     empty: () => wizWord('no templates yet', 'no circles yet'),
     items: (snap) => (snap && snap.templates) || [],
     name: (t) => t.name,
