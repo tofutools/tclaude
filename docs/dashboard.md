@@ -285,7 +285,11 @@ and **⭐ starters** (see [Starter task forces](#starter-task-forces)).
 > `templates.manage` can author and edit templates by conversation — no
 > dashboard needed. Reads stay open, so any agent can discover and inspect
 > circles. See [Agentic template editing](agent.md#templates) for the grant
-> bundle and the bundled `agent-circles` skill.
+> bundle and the bundled `agent-circles` skill. The **Config tab → Scribe
+> defaults** selector picks which saved spawn profile a freshly summoned scribe
+> launches with (harness / model / effort) — e.g. to run scribes on Codex; it
+> applies to the next fresh summon and is stored as `scribe.profile` in
+> config.json.
 
 #### Sharing task forces as a file
 

@@ -504,6 +504,15 @@
     </div>
 
     <div class="cfg-section">
+      <h3>Scribe defaults</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Profile</span>
+        <select id="scribe-profile" aria-label="Scribe default profile" style="min-width:160px"></select>
+        <span class="cfg-hint">Optional. Pick a saved <strong>spawn profile</strong> (from the Groups tab) that a freshly <em>summoned</em> scribe — the chat agent behind the <strong>🤖 Edit with agent</strong> buttons — launches with: its harness / model / effort / sandbox. This is the harness-independent way to run scribes on <strong>Codex</strong> as well as Claude, or to pin a cheaper model for their light editing. Leave as <em>(default)</em> to use the harness default (Claude Code). Applies to the <strong>next fresh</strong> summon — a live scribe you re-summon keeps the launch shape it was born with. Stored in the <code>scribe</code> block of config.json; saved with <strong>Save changes</strong> below, like the rest of this page.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
       <h3>Log rotation</h3>
       <div class="cfg-field">
         <span class="cfg-label">Max log size</span>

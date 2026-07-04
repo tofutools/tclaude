@@ -64,6 +64,11 @@ type Config struct {
 	// ResolvedAskProfile.
 	Ask *AskConfig `json:"ask,omitempty"`
 
+	// Scribe holds the launch profile for dashboard-summoned scribes — see
+	// ScribeConfig. Absent / blank = today's behaviour (the harness default:
+	// Claude Code at its default model/effort); see ScribeProfileName.
+	Scribe *ScribeConfig `json:"scribe,omitempty"`
+
 	// Audit holds the audit-log retention policy (JOH-268). Absent block /
 	// absent keys fall back to the built-in default — see
 	// ResolvedAuditRetentionDays.
@@ -567,6 +572,50 @@ func (c *Config) ResolvedAskProfile() (model, effort string) {
 		effort = c.Ask.Effort
 	}
 	return model, effort
+}
+
+// ScribeConfig is the persistent launch profile for dashboard-summoned
+// scribes (JOH-371) — the ad-hoc chat agents behind the dashboard's "Edit
+// with agent" buttons (JOH-361). Out of the box a summon leaves every launch
+// field unset, so a scribe falls through to the harness default (Claude Code
+// at its default model/effort). This block lets the operator designate a
+// saved spawn profile (a Groups-tab profile) whose whole launch shape
+// (harness/model/effort/sandbox/…) a FRESH scribe adopts — e.g. to run
+// scribes on Codex, or pin a cheaper model for the light editing they do.
+//
+// It deliberately mirrors AskConfig's precedent — reusing the SAME
+// spawn-profile mechanism `tclaude ask` reuses — but is profile-only: the
+// profile already carries harness/model/effort together, so there are no
+// separate model/effort fields here. "" / absent = today's behaviour.
+//
+// Resolved LIVE at summon time (the summon re-stamps the scribe group's
+// default spawn profile from this name on every fresh summon), so a deleted
+// or renamed profile self-heals to the no-profile default rather than wedging
+// the summon — the same live self-heal AskConfig has. It applies to the NEXT
+// fresh summon only: a live scribe that gets reused keeps the launch shape it
+// was born with. The dashboard's Config tab edits this same block through the
+// usual /api/config save flow, so config.json stays the single source of
+// truth the summon reads.
+//
+// Scope: one global scribe profile for now. Per-scribe-kind profiles (a
+// different profile for a future roles-scribe vs circle-scribe) are out of
+// scope (JOH-362).
+type ScribeConfig struct {
+	// Profile names a spawn profile (Groups-tab profile) whose launch shape a
+	// fresh dashboard-summoned scribe adopts. Resolved live at summon time
+	// (db.GetSpawnProfile, via the scribe group's stamped default profile); a
+	// deleted/renamed profile self-heals to the no-profile default. "" means
+	// no profile: the harness default (Claude Code).
+	Profile string `json:"profile,omitempty"`
+}
+
+// ScribeProfileName returns the configured scribe spawn-profile name, or ""
+// when no scribe block / no profile is set. Nil-safe so callers need no guard.
+func (c *Config) ScribeProfileName() string {
+	if c == nil || c.Scribe == nil {
+		return ""
+	}
+	return c.Scribe.Profile
 }
 
 // CostConfig holds display-only cost knobs.
