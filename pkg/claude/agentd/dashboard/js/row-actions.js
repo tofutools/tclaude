@@ -373,6 +373,30 @@ function bindRowActions() {
           refresh();
           return;
         }
+        case 'rebrief-force': {
+          // Re-brief the force (JOH-247): re-deliver the source template's
+          // current work pattern to the live roster, with the mission
+          // interpolated. Existing agents get a fresh briefing copy, so confirm
+          // first. Server-gated (templates.use / owner-pass) — a non-permitted
+          // click surfaces as a 403 toast.
+          const confirmed = await confirmModal({
+            title: 'Re-brief the force?',
+            body: "Re-delivers the source template's current work pattern to every live member, with the mission interpolated. Useful when the roster has drifted or the original briefing scrolled out of context.",
+            meta: group,
+            okLabel: 'Re-brief',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/groups/${encodeURIComponent(group)}/rebrief`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          if (!r.ok) { toast(`Re-brief failed: ${await r.text()}`, true); return; }
+          const res = await r.json().catch(() => null);
+          toast(res ? `${group}: re-briefed (${res.pattern_delivered || 0} delivered)` : `${group}: re-briefed`);
+          refresh();
+          return;
+        }
         case 'remove-member': {
           const confirmed = await confirmModal({
             title: 'Remove member from group?',
