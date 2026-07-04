@@ -251,12 +251,24 @@ func summonScribe(name string, overrides map[string]string, brief string) (*scri
 
 // ensureScribeGroup returns the scribe's eponymous group, creating it on first
 // summon. The group is a plain container for the one scribe member.
+//
+// It fails closed on a NON-scribe group of the same name: the caller supplies
+// the name, so without this a summon whose name collided with a real working
+// group would resolve that group and treat its first live member as "the
+// scribe" — re-granting + re-briefing + nudging a foreign agent, or (empty
+// group) spawning a stray scribe into it. Verifying the scribe-group marker
+// before touching an existing group keeps the summon operating only on groups
+// this machinery created.
 func ensureScribeGroup(name string) (*db.AgentGroup, *spawnFailure) {
 	g, err := db.GetAgentGroupByName(name)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "look up scribe group: " + err.Error()}
 	}
 	if g != nil {
+		if !isScribeGroup(g) {
+			return nil, &spawnFailure{http.StatusConflict, "group",
+				fmt.Sprintf("a non-scribe group named %q already exists — rename or remove it to summon a scribe by that name", name)}
+		}
 		return g, nil
 	}
 	id, err := db.CreateAgentGroup(name, scribeGroupDescr)
@@ -271,6 +283,14 @@ func ensureScribeGroup(name string) (*db.AgentGroup, *spawnFailure) {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "scribe group vanished after create"}
 	}
 	return g, nil
+}
+
+// isScribeGroup reports whether g is a group this machinery created (marked by
+// its descr), so a summon never reuses / spawns into a same-named foreign group.
+// The descr is stamped at creation and nothing in the scribe path rewrites it; a
+// human who edits it just makes future summons fail closed (safe), not misfire.
+func isScribeGroup(g *db.AgentGroup) bool {
+	return g != nil && g.Descr == scribeGroupDescr
 }
 
 // aliveScribeConv returns the conv-id of a live member of the scribe group, or

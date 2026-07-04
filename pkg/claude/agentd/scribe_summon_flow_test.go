@@ -222,6 +222,37 @@ func mustOverrides(t *testing.T, conv string) map[string]string {
 	return m
 }
 
+// Scenario: confused-deputy guard. A summon whose name collides with a real,
+// non-scribe group must NOT resolve that group — it fails closed rather than
+// re-granting/re-briefing a foreign agent or spawning a stray scribe into it.
+func TestScribeSummon_RefusesForeignGroupCollision(t *testing.T) {
+	f := newFlow(t)
+	stubScribeTerminal(t)
+
+	// A real working group + a live member that happens to share the scribe name.
+	f.HaveGroup("circle-scribe")
+	const foreigner = "frgn-1111-2222-3333-4444"
+	f.HaveMember("circle-scribe", foreigner)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
+		map[string]any{
+			"name":  "circle-scribe",
+			"slugs": []string{agentd.PermTemplatesManage},
+			"brief": "Edit summoning circles.",
+		})))
+	assert.Equalf(t, http.StatusConflict, rec.Code, "summon into a non-scribe group must 409; body=%s", rec.Body.String())
+
+	// The foreign member was neither granted the scribe slug nor pulled in.
+	overrides, err := db.ListAgentPermissionOverridesForConv(foreigner)
+	require.NoError(t, err)
+	assert.Empty(t, overrides[agentd.PermTemplatesManage], "the foreign agent was not granted templates.manage")
+	g, err := db.GetAgentGroupByName("circle-scribe")
+	require.NoError(t, err)
+	members, err := db.ListAgentGroupMembers(g.ID)
+	require.NoError(t, err)
+	assert.Len(t, members, 1, "no stray scribe was spawned into the foreign group")
+}
+
 // Scenario: input validation at the boundary — an unknown slug, a missing
 // slug set, a missing brief and a missing name each 400 without spawning.
 func TestScribeSummon_ValidationRejections(t *testing.T) {
