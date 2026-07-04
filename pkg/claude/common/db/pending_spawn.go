@@ -182,6 +182,26 @@ func DeletePendingSpawn(label string) error {
 	return err
 }
 
+// ClaimPendingSpawn atomically claims a pending spawn for enrollment by
+// deleting its row. Exactly one concurrent caller observes claimed=true; the
+// loser sees false and must not run enrollment side effects. If the caller
+// fails before enrollment commits, it may reinsert its saved PendingSpawn.
+func ClaimPendingSpawn(label string) (bool, error) {
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(`DELETE FROM pending_spawns WHERE label = ?`, label)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // scanPendingSpawn reads one row into a PendingSpawn. rowScanner (defined
 // in agent.go) is the shared Scan surface of *sql.Row and *sql.Rows, so the
 // single-row Get and the multi-row List share this helper.

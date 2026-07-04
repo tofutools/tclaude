@@ -135,6 +135,54 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
 }
 
+func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) {
+	f := newFlow(t)
+
+	t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(700 * time.Millisecond))
+
+	delayed := &delayedCodexSpawner{
+		t:     t,
+		w:     f.World,
+		inner: f.World.DefaultMocks(t).Spawner,
+		delay: 150 * time.Millisecond,
+		conv:  map[string]string{},
+	}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = delayed
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	g := f.HaveGroup("codex-crew")
+	resp := f.AsHuman().SpawnWith("codex-crew", map[string]any{
+		"name":            "codex-worker",
+		"harness":         "codex",
+		"initial_message": "Audit the auth module for timing-safe comparison bugs",
+	})
+	require.Equal(t, http.StatusOK, resp.Code, "pending spawn still returns 200 (raw=%s)", resp.Raw)
+	require.Empty(t, resp.ConvID, "response should not wait for the delayed Codex conv-id")
+	require.NotEmpty(t, resp.Label, "pending spawn returns its label")
+
+	ps, err := db.GetPendingSpawn(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, ps, "fast response records the pending row immediately")
+
+	var convID string
+	require.Eventually(t, func() bool {
+		convID = delayed.convID(resp.Label)
+		if convID == "" {
+			return false
+		}
+		m, err := db.FindMemberInGroup(g.ID, convID)
+		return err == nil && m != nil
+	}, 2*time.Second, 20*time.Millisecond, "background inline back-fill should enroll without a sweeper tick")
+
+	require.Eventually(t, func() bool {
+		gone, err := db.GetPendingSpawn(resp.Label)
+		return err == nil && gone == nil
+	}, 2*time.Second, 20*time.Millisecond, "background enrollment clears the pending row")
+	f.AssertGroupMember("codex-crew", convID, "codex-worker", 3*time.Second)
+}
+
 // gatedCodexSpawner is a SpawnerLike whose codex SpawnNew models a Codex
 // blocked behind a startup gate: it builds the CodexSim but leaves it
 // unstarted (no rollout, not alive) and writes a SessionRow with NO conv-id,
@@ -177,6 +225,77 @@ func (s *gatedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 
 func (s *gatedCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	return s.inner.SpawnResume(args)
+}
+
+type delayedCodexSpawner struct {
+	t     *testing.T
+	w     *testharness.World
+	inner testharness.SpawnerLike
+	delay time.Duration
+
+	mu   sync.Mutex
+	conv map[string]string
+}
+
+func (s *delayedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if args.Harness != "codex" {
+		return s.inner.SpawnNew(args)
+	}
+	label := args.Label
+	cx := testharness.NewCodexSim(s.t, s.w.HomeDir, args.Cwd)
+	if err := db.SaveSession(&db.SessionRow{
+		ID:          label,
+		TmuxSession: label,
+		Cwd:         cx.Cwd,
+		Status:      "running",
+		Harness:     "codex",
+	}); err != nil {
+		return err
+	}
+	s.w.Tmux.Register(label, cx.Cwd, cx)
+	go func() {
+		time.Sleep(s.delay)
+		if err := cx.Start(); err != nil {
+			s.t.Logf("delayed codex start failed: %v", err)
+			return
+		}
+		if err := cx.WriteThreadRow(testharness.CodexThreadSeed{
+			Cwd:       cx.Cwd,
+			Model:     args.Model,
+			CreatedAt: cx.CreatedUnix(),
+			UpdatedAt: cx.CreatedUnix(),
+		}); err != nil {
+			s.t.Logf("delayed codex thread seed failed: %v", err)
+			return
+		}
+		s.w.RecordSpawnInitialPrompt(cx.ConvID, args.InitialPrompt)
+		if err := db.SaveSession(&db.SessionRow{
+			ID:          label,
+			TmuxSession: label,
+			ConvID:      cx.ConvID,
+			Cwd:         cx.Cwd,
+			Status:      "running",
+			Harness:     "codex",
+		}); err != nil {
+			s.t.Logf("delayed codex session update failed: %v", err)
+			return
+		}
+		s.w.Codexes.Set(label, cx)
+		s.mu.Lock()
+		s.conv[label] = cx.ConvID
+		s.mu.Unlock()
+	}()
+	return nil
+}
+
+func (s *delayedCodexSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnResume(args)
+}
+
+func (s *delayedCodexSpawner) convID(label string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conv[label]
 }
 
 // firstTurn models the spawned Codex finally taking its first turn once the
