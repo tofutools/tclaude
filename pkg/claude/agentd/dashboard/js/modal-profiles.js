@@ -17,7 +17,7 @@
 // wipe it, so submit carries those forward from the original (guarded on an
 // unchanged harness).
 
-import { $, esc, bindSelectTitles, bindModalSubmitHotkey } from './helpers.js';
+import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
@@ -311,10 +311,14 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
   applyProfileEditorHarness(hSel.value);
 
   // Model into the now-active control; effort + sandbox into their (reshaped)
-  // selects.
-  $('#profile-editor-model').value = '';
+  // selects. setModelSelectValue clears both controls (dropping any option a
+  // prior open injected) and, for the curated <select>, keeps an out-of-catalog
+  // seed model (a full id like "claude-opus-4-8[1m]") selectable rather than
+  // silently dropping it — so capturing a live agent running a non-preset model
+  // into a profile round-trips its exact model.
+  setModelSelectValue($('#profile-editor-model'), '');
   $('#profile-editor-model-codex').value = '';
-  if (seed && seed.model) profileActiveModelEl().value = seed.model;
+  if (seed && seed.model) setModelSelectValue(profileActiveModelEl(), seed.model);
   setSelectIfPresent($('#profile-editor-effort'), seed ? seed.effort : '');
   setSelectIfPresent($('#profile-editor-sandbox'), seed ? seed.sandbox : '');
   setSelectIfPresent($('#profile-editor-approval'), seed ? seed.approval : '');

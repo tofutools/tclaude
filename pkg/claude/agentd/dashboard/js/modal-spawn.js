@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -610,9 +610,11 @@ function applyProfileToSpawnForm(p) {
   applySpawnHarness($('#agent-spawn-harness').value);
 
   // Model goes into whichever control the (now-applied) harness uses — the
-  // curated <select> for Claude, the free-text <input> for Codex. A curated
-  // value not in the <select>'s options silently stays on the prior pick.
-  if (p.model) activeSpawnModelEl().value = p.model;
+  // curated <select> for Claude, the free-text <input> for Codex. A profile can
+  // carry a non-preset full model id (e.g. "claude-opus-4-8[1m]" captured from
+  // a live agent); setModelSelectValue injects it as a selectable option so it
+  // isn't silently dropped on the <select>'s prior pick.
+  if (p.model) setModelSelectValue(activeSpawnModelEl(), p.model);
 
   // Effort: an explicit profile value wins (when the harness offers it);
   // otherwise fall back to the per-model effort memory for the model just set,
@@ -675,7 +677,9 @@ function clearSpawnProfileFields() {
   $('#agent-spawn-descr').value = '';
   $('#agent-spawn-task').value = '';
   $('#agent-spawn-init-msg').value = '';
-  $('#agent-spawn-model').value = '';
+  // setModelSelectValue('') also drops any out-of-catalog option a prior
+  // profile-apply injected, so Clear leaves the curated list clean.
+  setModelSelectValue($('#agent-spawn-model'), '');
   $('#agent-spawn-model-codex').value = '';
   populateSpawnHarnessSelect();
   applySpawnHarness($('#agent-spawn-harness').value);
@@ -1091,7 +1095,8 @@ function openAgentSpawnModal(opts) {
   $('#agent-spawn-descr').value = '';
   $('#agent-spawn-task').value = '';
   $('#agent-spawn-init-msg').value = '';
-  $('#agent-spawn-model').value = '';
+  // '' also drops any out-of-catalog option a prior open's profile-apply added.
+  setModelSelectValue($('#agent-spawn-model'), '');
   $('#agent-spawn-model-codex').value = '';
   // Attachments are per-spawn (like cwd/worktree, not a profile field) — start
   // every open with an empty list and any prior preview URLs revoked.
