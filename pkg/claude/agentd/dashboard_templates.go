@@ -24,6 +24,7 @@ import "net/http"
 //	DELETE /api/templates/{name}                → delete a template
 //	POST   /api/templates/{name}/instantiate    → create a group + spawn its team
 //	POST   /api/templates/{name}/deploy         → deploy a task force against a mission
+//	POST   /api/templates/{name}/reinforce      → deploy the roster INTO an existing group
 //	POST   /api/templates/from-group            → snapshot a live group into a template
 //	GET    /api/templates/{name}/export         → download a portable template envelope
 //	POST   /api/templates/import                → import a portable template envelope
@@ -36,6 +37,7 @@ func registerDashboardTemplateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/templates/import", dashboardTemplatesRoute(handleTemplateImport))
 	mux.HandleFunc("POST /api/templates/{name}/instantiate", dashboardTemplatesRoute(handleTemplateInstantiate))
 	mux.HandleFunc("POST /api/templates/{name}/deploy", dashboardTemplatesRoute(handleTemplateDeploy))
+	mux.HandleFunc("POST /api/templates/{name}/reinforce", dashboardTemplatesRoute(handleTemplateReinforce))
 	mux.HandleFunc("GET /api/templates/{name}/export", dashboardTemplatesRoute(handleTemplateExport))
 	mux.HandleFunc("/api/templates/{name}", dashboardTemplatesRoute(handleTemplateByName))
 	// Bundled starter task forces (JOH-246) — loopback twins of /v1/starters,

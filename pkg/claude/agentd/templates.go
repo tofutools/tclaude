@@ -33,6 +33,7 @@ import (
 //	PATCH  /v1/templates/{name}                → replace a template (full state)
 //	DELETE /v1/templates/{name}                → delete a template
 //	POST   /v1/templates/{name}/instantiate    → create a group + spawn its team
+//	POST   /v1/templates/{name}/reinforce      → deploy the roster INTO an existing group (JOH-376)
 //	POST   /v1/templates/from-group            → snapshot a live group into a template (update: re-snapshot in place)
 //	GET    /v1/templates/{name}/export         → a portable, versioned envelope (JOH-341)
 //	POST   /v1/templates/import                → import a portable envelope (as=/update= query knobs)
@@ -1662,8 +1663,13 @@ type instantiateAgentResult struct {
 	FinalName string   `json:"final_name"` // "<group>-<name>"
 	ConvID    string   `json:"conv_id,omitempty"`
 	Owner     bool     `json:"owner,omitempty"`
-	Granted   []string `json:"granted,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	// OwnerDropped records that this agent's template owner flag was NOT applied
+	// because it was spawned into an EXISTING group (reinforce mode never
+	// transfers ownership — see handleTemplateReinforce). Mutually exclusive with
+	// Owner. Surfaced so the dashboard can tell the operator what was adjusted.
+	OwnerDropped bool     `json:"owner_dropped,omitempty"`
+	Granted      []string `json:"granted,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // handleTemplateInstantiate creates a fresh group from a template and
@@ -1780,6 +1786,19 @@ type instantiateSpec struct {
 	// the group context is composed from (JOH-356 — the "Form a party" picker's
 	// editable copy of the shared context). nil = use the template's context.
 	contextOverride *string
+	// intoExisting, when non-nil, switches runInstantiation into REINFORCE mode
+	// (JOH-376 / the reinforcements half of JOH-355): instead of creating a fresh
+	// group, the template's roster is deployed INTO this already-resolved,
+	// already-validated existing group. In that mode no group is created and no
+	// GROUP-LEVEL field is touched (descr / context / cwd / max-members / process
+	// / deploy-meta all stay as the group had them — the template's group-level
+	// fields are ignored; the roster is what's being deployed). New members
+	// inherit the EXISTING group's context + current process (so they match the
+	// members already there), template owner flags are dropped (ownership is never
+	// transferred), and the collision / max-members / in-flight-choreography
+	// checks all ran up-front in handleTemplateReinforce. nil = create-new mode
+	// (byte-identical to the pre-JOH-376 instantiate/deploy behaviour).
+	intoExisting *db.AgentGroup
 }
 
 // runInstantiation is the shared core behind both `templates instantiate`
@@ -1793,68 +1812,112 @@ type instantiateSpec struct {
 // differ, all carried on spec.
 func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	tmpl := spec.tmpl
-	// The base context is the template's default_context unless the caller
-	// supplied its own edited copy (JOH-356) — the group's context is its own,
-	// the stored template is never mutated.
+	reinforce := spec.intoExisting != nil
+
+	// The base context + the process rendered into each new agent's briefing
+	// differ by mode:
+	//   - create-new: the template's default_context (or the caller's edited copy,
+	//     JOH-356) + the template's process — the group is the template's.
+	//   - reinforce (JOH-376): the EXISTING group's context + its CURRENT process.
+	//     The template's group-level fields are deliberately ignored — the new
+	//     members join an existing group, so they inherit THAT group's shared
+	//     context and whatever process phase it is in, staying consistent with the
+	//     members already there.
 	baseContext := tmpl.DefaultContext
 	if spec.contextOverride != nil {
 		baseContext = *spec.contextOverride
 	}
+	procPhases := tmpl.Process
+	if reinforce {
+		baseContext = spec.intoExisting.DefaultContext
+		// Load the existing group's current process snapshot (nil when the group
+		// has no process — a no-op ## Process block, same as an empty template).
+		if st, perr := db.GetGroupProcessState(spec.intoExisting.ID); perr != nil {
+			slog.Warn("reinforce: load group process failed", "group", spec.groupName, "error", perr)
+			procPhases = nil
+		} else if st != nil {
+			procPhases = st.Process
+		} else {
+			procPhases = nil
+		}
+	}
+
 	groupContext, err := normalizeGroupContext(composeInstantiationContext(baseContext, spec.assignment, spec.contextHeader))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
 
-	gid, err := db.CreateAgentGroup(spec.groupName, spec.descr)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
-		return
-	}
-	// Best-effort post-create config — a failure here is logged, not
-	// fatal: the group exists and the human can adjust it on the
-	// dashboard. Mirrors the /v1/groups create path.
-	if spec.cwd != "" {
-		if _, err := db.SetAgentGroupDefaultCwd(spec.groupName, spec.cwd); err != nil {
-			slog.Warn("instantiate: set default cwd failed", "group", spec.groupName, "error", err)
-		}
-	}
-	if groupContext != "" {
-		if _, err := db.SetAgentGroupDefaultContext(spec.groupName, groupContext); err != nil {
-			slog.Warn("instantiate: set default context failed", "group", spec.groupName, "error", err)
-		}
-	}
-	// Deployment provenance (JOH-245): what this force was deployed against
-	// and from. Best-effort like the cwd/context above; a blank mission +
-	// blank source_template is the "not a deployed force" default, so a
-	// no-op write is harmless.
-	if spec.mission != "" || spec.sourceTemplate != "" {
-		if _, err := db.SetAgentGroupDeployMeta(spec.groupName, spec.mission, spec.sourceTemplate); err != nil {
-			slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
-		}
-	}
-
-	g := &db.AgentGroup{
-		ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
-		Mission: spec.mission, SourceTemplate: spec.sourceTemplate,
-	}
 	granter := granterLabel(spec.caller)
 
-	// Advisory process runtime (JOH-242): if the template carries a process,
-	// snapshot it into the group's runtime state at the first phase (recording
-	// an initial "" → first-phase transition). Best-effort like the meta writes
-	// above; a group with no process simply has no state. The snapshotted phases
-	// are ALSO rendered into every agent's ## Process block below.
-	if len(tmpl.Process) > 0 {
-		if err := db.InitGroupProcess(gid, tmpl.Process, granter); err != nil {
-			slog.Warn("instantiate: init process state failed", "group", spec.groupName, "error", err)
+	var g *db.AgentGroup
+	var gid int64
+	if reinforce {
+		// Reinforce mode: the group already exists and was resolved + validated
+		// (collisions, max-members, in-flight choreography) in
+		// handleTemplateReinforce. Do NOT create a group and do NOT touch ANY
+		// group-level field — descr / context / cwd / max-members / process /
+		// deploy-meta all stay exactly as the group had them. The composed
+		// groupContext above is used only for the NEW members' briefings; it is
+		// never written back as the group's default_context.
+		g = spec.intoExisting
+		gid = g.ID
+	} else {
+		gid, err = db.CreateAgentGroup(spec.groupName, spec.descr)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
+			return
+		}
+		// Best-effort post-create config — a failure here is logged, not
+		// fatal: the group exists and the human can adjust it on the
+		// dashboard. Mirrors the /v1/groups create path.
+		if spec.cwd != "" {
+			if _, err := db.SetAgentGroupDefaultCwd(spec.groupName, spec.cwd); err != nil {
+				slog.Warn("instantiate: set default cwd failed", "group", spec.groupName, "error", err)
+			}
+		}
+		if groupContext != "" {
+			if _, err := db.SetAgentGroupDefaultContext(spec.groupName, groupContext); err != nil {
+				slog.Warn("instantiate: set default context failed", "group", spec.groupName, "error", err)
+			}
+		}
+		// Deployment provenance (JOH-245): what this force was deployed against
+		// and from. Best-effort like the cwd/context above; a blank mission +
+		// blank source_template is the "not a deployed force" default, so a
+		// no-op write is harmless.
+		if spec.mission != "" || spec.sourceTemplate != "" {
+			if _, err := db.SetAgentGroupDeployMeta(spec.groupName, spec.mission, spec.sourceTemplate); err != nil {
+				slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
+			}
+		}
+
+		g = &db.AgentGroup{
+			ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
+			Mission: spec.mission, SourceTemplate: spec.sourceTemplate,
+		}
+
+		// Advisory process runtime (JOH-242): if the template carries a process,
+		// snapshot it into the group's runtime state at the first phase (recording
+		// an initial "" → first-phase transition). Best-effort like the meta writes
+		// above; a group with no process simply has no state. The snapshotted phases
+		// are ALSO rendered into every agent's ## Process block below. Reinforce
+		// mode skips this entirely — it never re-inits an existing group's process.
+		if len(tmpl.Process) > 0 {
+			if err := db.InitGroupProcess(gid, tmpl.Process, granter); err != nil {
+				slog.Warn("instantiate: init process state failed", "group", spec.groupName, "error", err)
+			}
 		}
 	}
 
 	// Seeded rhythms (JOH-244): materialize the template's recurring nudges as
-	// normal group cron jobs on the fresh group before any spawn, so they are
-	// armed the moment the team comes up. Best-effort; owned by the deploying
-	// identity.
+	// normal group cron jobs before any spawn, so they are armed the moment the
+	// team comes up. Best-effort; owned by the deploying identity. In reinforce
+	// mode these are still materialized ("rhythms still fire") — a job whose
+	// "<group>-<rhythm>" name already exists on the group (e.g. a prior deploy of
+	// the same template) is skipped by materializeRhythms, not duplicated. Note
+	// that a rhythm is a role-filtered GROUP cron, so it fires group-wide by role;
+	// the per-member scoping the reinforcement gives is the work pattern below,
+	// which routes only to the newly-spawned members.
 	rhythmsCreated := materializeRhythms(g, tmpl.Rhythms, spec.caller)
 
 	// Staged spawn — waves (JOH-244). Partition the roster by wave; spawn wave 0
@@ -1884,12 +1947,19 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			resp["deployed"] = true
 			resp["mission"] = spec.mission
 		}
+		if reinforce {
+			resp["reinforced"] = true
+		}
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
-	// Wave 0 spawns into a fresh group, so there are no prior members to dedupe
-	// against (nil existing map).
-	wr := spawnWaveAgents(g, waves[0].Agents, tmpl.Process, groupContext, spec.cwd, spec.caller, granter, nil)
+	// Wave 0: create-new spawns into a fresh group (no prior members to dedupe
+	// against, nil existing map); reinforce validated collisions up-front, so a
+	// nil map is also correct here (the choreography's later waves still dedupe
+	// via groupMemberNames in the runner). suppressOwner drops template owner
+	// flags in reinforce mode — ownership is never transferred into an existing
+	// group.
+	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd, spec.caller, granter, nil, reinforce)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
@@ -1922,7 +1992,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			Caller:         spec.caller,
 			Granter:        granter,
 			Assignment:     assignment,
-			Process:        tmpl.Process,
+			Process:        procPhases,
 			WorkPattern:    tmpl.WorkPattern,
 			Waves:          waves,
 			MaxWaitSeconds: tmpl.WaveMaxWait,
@@ -1932,6 +2002,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			SpawnedConvs:   wr.SpawnedConvs,
 			SpawnedOrder:   wr.SpawnedOrder,
 			WaveDeadline:   time.Now().Add(waveMaxWaitDuration(tmpl.WaveMaxWait)),
+			SuppressOwner:  reinforce,
 		}
 		if err := db.UpsertWaveChoreography(choreo); err != nil {
 			slog.Warn("instantiate: persist choreography failed", "group", spec.groupName, "error", err)
@@ -1952,6 +2023,25 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	if spec.deployed {
 		resp["deployed"] = true
 		resp["mission"] = spec.mission
+	}
+	// Reinforce framing (JOH-376): mark the response as a reinforcement and
+	// surface what was adjusted so ticket 4/4's dialog can render it. The
+	// owner-drop note reports the synchronously-processed (wave 0) roster —
+	// later-wave drops are reported through the same per-agent OwnerDropped flag
+	// on their own (background) results, not here.
+	if reinforce {
+		resp["reinforced"] = true
+		dropped := 0
+		for _, r := range wr.Results {
+			if r.OwnerDropped {
+				dropped++
+			}
+		}
+		if dropped > 0 {
+			resp["owner_note"] = fmt.Sprintf(
+				"%d template owner flag(s) dropped — reinforcing an existing group never transfers ownership",
+				dropped)
+		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -2071,6 +2161,192 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",
 	})
+}
+
+// handleTemplateReinforce deploys a template's roster INTO an already-existing
+// group (JOH-376 — the "reinforcements" half of JOH-355), instead of creating a
+// fresh group the way instantiate/deploy do. It is the backend the palette's
+// "drag a template onto a group" flow (ticket 4/4) consumes. Gated on
+// templates.instantiate (reinforce IS instantiate, aimed at an existing group).
+//
+// Body: { group_name, task?, cwd? } — group_name names the EXISTING group to
+// reinforce (NOT a new name to create). task is an optional per-run assignment
+// folded into the new members' briefing under "## Task". cwd overrides the spawn
+// directory for the new members; when omitted it defaults to the group's own
+// default_cwd (the new members land where the group's existing members are).
+//
+// Design decisions (all validated up-front, before anything is spawned — a
+// validation failure leaves the group untouched, never a half-deployed roster):
+//
+//   - Group must EXIST — a missing group is a 404 (unlike instantiate/deploy,
+//     where a taken name is the 409). The template's group-level fields (descr /
+//     context / max-members / process / owner) are IGNORED: the roster is what's
+//     being deployed, and the group is left exactly as it was.
+//   - Name collisions: any roster agent whose final "<group>-<agent>" name is
+//     already a live member 409s the WHOLE call, listing the colliding names —
+//     predictable, whole-or-nothing behaviour beats silent suffixing for an
+//     operator-facing action (the lead's steer; agreed).
+//   - max-members: enforced against (current members + full roster). A roster
+//     that would push the group past its cap 409s up-front — never partially
+//     spawned.
+//   - Ownership: the template's per-agent owner flags are DROPPED. An existing
+//     group already has its owner; reinforcement never transfers ownership. The
+//     response notes how many flags were dropped.
+//   - In-flight staged deploy: a multi-wave roster cannot be deployed into a
+//     group that already has a pending wave choreography (the choreography table
+//     is keyed by group, so a second one would clobber the first). That is a 409;
+//     a single-wave reinforce is always fine.
+//
+// Mid-roster failure (after validation passes): best-effort continue, exactly as
+// create-new does — a per-agent spawn/grant failure is recorded on that agent's
+// result and skips just it. Tearing already-spawned members back down is
+// destructive; a partial reinforcement is surfaced for the human to finish.
+func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermTemplatesUse)
+	if !ok {
+		return
+	}
+	tmplName := r.PathValue("name")
+	tmpl, err := db.GetGroupTemplate(tmplName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if tmpl == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such template")
+		return
+	}
+
+	var body struct {
+		GroupName string `json:"group_name"`
+		Task      string `json:"task,omitempty"`
+		Cwd       string `json:"cwd,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	body.GroupName = strings.TrimSpace(body.GroupName)
+	if err := validateGroupName(body.GroupName); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "group_name: "+err.Error())
+		return
+	}
+	g, err := db.GetAgentGroupByName(body.GroupName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup group: "+err.Error())
+		return
+	}
+	if g == nil {
+		writeError(w, http.StatusNotFound, "not_found",
+			"no group named "+body.GroupName+" (reinforce deploys INTO an existing group; use instantiate/deploy to create a new one)")
+		return
+	}
+
+	// cwd: an explicit override, else the group's own default (so the new members
+	// land alongside the group's existing members). Existence-checked like
+	// instantiate — a non-existent dir must fail loudly here, not wedge each spawn.
+	rawCwd := strings.TrimSpace(body.Cwd)
+	if rawCwd == "" {
+		rawCwd = g.DefaultCwd
+	}
+	cwd, err := resolveSpawnCwd(rawCwd)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+		return
+	}
+
+	// Up-front, whole-or-nothing validation — nothing is spawned until all of
+	// these pass, so a rejection leaves the group exactly as it was.
+	if httpErr := validateReinforcement(g, tmpl); httpErr != nil {
+		writeError(w, httpErr.status, httpErr.code, httpErr.msg)
+		return
+	}
+
+	runInstantiation(w, instantiateSpec{
+		tmpl:          tmpl,
+		caller:        caller,
+		groupName:     g.Name,
+		assignment:    body.Task,
+		contextHeader: "Task",
+		cwd:           cwd,
+		intoExisting:  g,
+	})
+}
+
+// reinforceHTTPError is a validation rejection that handleTemplateReinforce
+// turns into an HTTP error. Kept as a small typed value so validateReinforcement
+// can express the several distinct refusals (missing/full/collision/in-flight)
+// with their own status + code without writing to the ResponseWriter itself.
+type reinforceHTTPError struct {
+	status int
+	code   string
+	msg    string
+}
+
+// validateReinforcement runs the whole-or-nothing pre-spawn checks for deploying
+// tmpl's roster into the existing group g (JOH-376): no final-name collision
+// with a current member, the roster fits under max_members, and no multi-wave
+// roster is deployed over a group that already has a pending staged deploy.
+// Returns nil when the reinforcement may proceed, or a typed HTTP error the
+// caller renders. Reads the group's current members ONCE (member names double as
+// the collision key and the count).
+func validateReinforcement(g *db.AgentGroup, tmpl *db.GroupTemplate) *reinforceHTTPError {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return &reinforceHTTPError{http.StatusInternalServerError, "io", "count members: " + err.Error()}
+	}
+	// Current member names, resolved the same way spawnWaveAgents dedupes — a
+	// custom title, falling back to the pending enrollment name. This is the
+	// collision key.
+	present := map[string]bool{}
+	for _, m := range members {
+		if name := agent.CachedTitle(m.ConvID); name != "" {
+			present[name] = true
+		}
+	}
+	collisions := []string{}
+	for _, a := range tmpl.Agents {
+		finalName := g.Name + "-" + a.Name
+		if present[finalName] {
+			collisions = append(collisions, finalName)
+		}
+	}
+	if len(collisions) > 0 {
+		return &reinforceHTTPError{http.StatusConflict, "name_collision",
+			fmt.Sprintf("cannot reinforce %q: %d roster member name(s) already taken by a live member: %s. "+
+				"Rename the template agent(s) or the existing member(s) and retry.",
+				g.Name, len(collisions), strings.Join(collisions, ", "))}
+	}
+
+	// max-members: the group's hard cap binds a reinforcement the same way it
+	// binds a plain spawn. Refuse a roster that would push it past the cap —
+	// up-front, so nothing is partially spawned.
+	if g.MaxMembers > 0 {
+		want := len(members) + len(tmpl.Agents)
+		if want > g.MaxMembers {
+			return &reinforceHTTPError{http.StatusConflict, "group_full",
+				fmt.Sprintf("cannot reinforce %q: %d current member(s) + %d roster agent(s) = %d would exceed the group's max_members cap (%d). "+
+					"A human must raise max_members (`tclaude agent groups set-max-members %s <n>`) first.",
+					g.Name, len(members), len(tmpl.Agents), want, g.MaxMembers, g.Name)}
+		}
+	}
+
+	// In-flight staged deploy: the choreography table is keyed by group, so a
+	// second (multi-wave) deploy into the same group would REPLACE the pending
+	// one, orphaning its remaining waves. Refuse a multi-wave reinforce while a
+	// choreography is pending. A single-wave reinforce never writes a
+	// choreography, so it is always allowed.
+	if len(partitionWaves(tmpl.Agents)) > 1 {
+		if c, cerr := db.GetWaveChoreography(g.ID); cerr != nil {
+			return &reinforceHTTPError{http.StatusInternalServerError, "io", "check staged deploy: " + cerr.Error()}
+		} else if c != nil {
+			return &reinforceHTTPError{http.StatusConflict, "staged_deploy_in_flight",
+				fmt.Sprintf("cannot reinforce %q with a multi-wave roster: the group has a staged deploy still in flight "+
+					"(wave %d/%d). Wait for it to finish, or reinforce with a single-wave template.",
+					g.Name, c.NextWave, len(c.Waves))}
+		}
+	}
+	return nil
 }
 
 // deriveGroupNameFromMission picks a group name for a deploy when the human
