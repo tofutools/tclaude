@@ -550,8 +550,20 @@ function bindPermEditModal() {
 // routes through the template instantiate path (spawns the whole roster) instead
 // of the empty-group create. Agent : spawn-profile :: party : template.
 
-// groupCreateTemplates returns the templates available in the last snapshot.
+// gcTemplateCache holds a freshly-fetched template list for the picker, or null
+// to fall back to the live snapshot. It exists because opening "⧉ manage
+// circles…" stacks the templates manager over this (refresh-suspending) modal,
+// so lastSnapshot.templates goes stale while a circle is created/edited there —
+// on the manager's close we fetch /api/templates directly and hold the result
+// here so a just-created circle is not only visible in the dropdown but also
+// resolvable (selectable + submittable) by every reader below.
+let gcTemplateCache = null;
+
+// groupCreateTemplates returns the templates the picker should offer — the
+// freshly-fetched list when we have one (after managing circles), else the live
+// snapshot.
 function groupCreateTemplates() {
+  if (gcTemplateCache) return gcTemplateCache;
   return (lastSnapshot && lastSnapshot.templates) || [];
 }
 
@@ -623,6 +635,9 @@ function renderGroupCreateTemplatePreview() {
 }
 
 function openGroupCreateModal(presetTemplate) {
+  // Start from the live snapshot each open; a stale manage-fetch cache from a
+  // prior session must not shadow it.
+  gcTemplateCache = null;
   $('#group-create-name').value = '';
   $('#group-create-descr').value = '';
   $('#group-create-cwd').value = '';
@@ -779,13 +794,23 @@ async function browseGroupCreateCwd() {
 // repopulateGroupCreateTemplatesIfOpen refreshes the party-profile dropdown
 // after the templates manager (opened from "⧉ manage circles…") closes, so a
 // circle created / renamed / deleted there shows up — but only while the
-// create-group dialog is still open behind it. If the selection survived, the
-// human's edited copy of descr / context / task is left intact (no re-prefill
-// over their edits); if it vanished (deleted in the manager), the dependent
-// fields are reconciled back to the blank state.
-function repopulateGroupCreateTemplatesIfOpen() {
+// create-group dialog is still open behind it. Because that dialog is a
+// refresh-suspending modal-overlay, the live snapshot went stale while the
+// manager was stacked on top, so we fetch /api/templates DIRECTLY and hold it
+// in gcTemplateCache (a failed fetch falls back to the snapshot). If the
+// selection survived, the human's edited copy of descr / context / task is left
+// intact (no re-prefill over their edits); if it vanished (deleted in the
+// manager), the dependent fields are reconciled back to the blank state.
+async function repopulateGroupCreateTemplatesIfOpen() {
   if (!$('#group-create-modal').classList.contains('show')) return;
   const cur = $('#group-create-template').value;
+  try {
+    const r = await fetch('/api/templates', { credentials: 'same-origin' });
+    if (r.ok) {
+      const list = await r.json();
+      if (Array.isArray(list)) gcTemplateCache = list;
+    }
+  } catch (_) { /* keep the snapshot fallback */ }
   populateGroupCreateTemplates(cur);
   if ($('#group-create-template').value !== cur) applyGroupCreateTemplate();
   else renderGroupCreateTemplatePreview();
@@ -811,7 +836,9 @@ function bindGroupCreateModal() {
   // with the first circle preselected (JOH-356 — one obvious create-a-group
   // surface) instead of the separate instantiate modal.
   $('#group-from-template-open').addEventListener('click', () => {
-    const templates = groupCreateTemplates();
+    // Read the live snapshot (not gcTemplateCache) — openGroupCreateModal resets
+    // the cache, so the preselected circle must exist in the current snapshot.
+    const templates = (lastSnapshot && lastSnapshot.templates) || [];
     if (!templates.length) {
       toast(wizWord(
         'no templates yet — define one via the Groups cog ⚙ → ⧉ templates… first',
