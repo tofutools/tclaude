@@ -108,10 +108,9 @@ func statusPriority(status string) int {
 		return 1 // Yellow
 	case StatusMainAgentIdle:
 		return 2 // Green
-	case StatusWorking:
+	case StatusWorking, StatusRunning:
+		// StatusRunning is a plain shell session, alive and nothing to report
 		return 2 // Green
-	case StatusRunning:
-		return 2 // Green - a plain shell session, alive and nothing to report
 	case StatusExited:
 		return 3 // Gray
 	default:

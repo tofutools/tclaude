@@ -194,9 +194,7 @@ func getStatusColorFunc(status string) func(a ...interface{}) string {
 		return text.FgYellow.Sprint
 	case StatusMainAgentIdle:
 		return text.FgGreen.Sprint
-	case StatusWorking:
-		return text.FgGreen.Sprint
-	case StatusRunning:
+	case StatusWorking, StatusRunning:
 		return text.FgGreen.Sprint
 	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return text.FgHiRed.Sprint

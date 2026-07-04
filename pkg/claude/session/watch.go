@@ -1167,9 +1167,7 @@ func getRowStyle(status string) lipgloss.Style {
 		return idleStyle
 	case StatusMainAgentIdle:
 		return workingStyle
-	case StatusWorking:
-		return workingStyle
-	case StatusRunning:
+	case StatusWorking, StatusRunning:
 		return workingStyle
 	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return needsInput
