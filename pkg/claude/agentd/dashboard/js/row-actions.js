@@ -377,7 +377,7 @@ function bindRowActions() {
           // Re-brief the force (JOH-247): re-deliver the source template's
           // current work pattern to the live roster, with the mission
           // interpolated. Existing agents get a fresh briefing copy, so confirm
-          // first. Server-gated (templates.use / owner-pass) — a non-permitted
+          // first. Server-gated (templates.instantiate / owner-pass) — a non-permitted
           // click surfaces as a 403 toast.
           const confirmed = await confirmModal({
             title: 'Re-brief the force?',

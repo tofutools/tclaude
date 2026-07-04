@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -1805,15 +1806,68 @@ func deriveGroupNameFromMission(mission, templateName string) string {
 // slugForMission slugs a mission into a group-name base, unless the mission
 // is a BARE URL — a single whitespace-free token that looks like a link
 // (an http(s):// URL or a scheme-less linear.app/… reference). A bare URL
-// has no readable words, so it yields "" and the caller falls back to the
-// template name. A mission that merely CONTAINS a URL amid text still slugs
-// the text (the URL collapses to dashes and trims away).
+// has no readable words to slug, BUT an issue-tracker link usually carries an
+// issue key in its path (e.g. JOH-245); that key names the force far better
+// than the template does, so it becomes the slug when present. A bare URL with
+// no recognizable key still yields "" and the caller falls back to the template
+// name. A mission that merely CONTAINS a URL amid text still slugs the text
+// (the URL collapses to dashes and trims away).
 func slugForMission(mission string) string {
 	m := strings.TrimSpace(mission)
 	if isBareURL(m) {
+		if key := issueKeyFromURL(m); key != "" {
+			return slugify(key, 40)
+		}
 		return ""
 	}
 	return slugify(m, 40)
+}
+
+// issueKeyRe matches an issue-key-shaped path segment: <letters>-<digits>,
+// e.g. "JOH-245". Anchored so a longer segment ("JOH-245-title") does not match.
+var issueKeyRe = regexp.MustCompile(`^[A-Za-z]+-[0-9]+$`)
+
+// issueKeyFromURL pulls an issue-key-like segment out of a bare URL — a path
+// segment shaped <letters>-<digits> (e.g. "JOH-245" in a Linear issue link
+// linear.app/<org>/issue/JOH-245/<title-slug>). Returns the key lowercased, or
+// "" when the URL carries no such segment. Generic pattern matching, not
+// Linear-specific: a GitHub ".../issues/123" link has no letters-dashed key and
+// falls through (its bare number is not a key), which is fine — the caller keeps
+// its template-name fallback.
+//
+// To avoid latching onto an unrelated org/title segment that merely looks like a
+// key (e.g. an org slug "acme-2"), a key-shaped segment immediately following an
+// "issue"/"issues" path segment wins; only when no key follows such a segment
+// does the first key-shaped segment anywhere in the path apply.
+func issueKeyFromURL(s string) string {
+	// Strip any query/fragment and the scheme, then split the path on '/'.
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '#'); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.IndexByte(s, '?'); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	segs := strings.Split(s, "/")
+	firstKey := ""
+	for i, seg := range segs {
+		if !issueKeyRe.MatchString(seg) {
+			continue
+		}
+		if firstKey == "" {
+			firstKey = seg
+		}
+		if i > 0 {
+			switch strings.ToLower(segs[i-1]) {
+			case "issue", "issues":
+				return strings.ToLower(seg)
+			}
+		}
+	}
+	return strings.ToLower(firstKey)
 }
 
 // isBareURL reports whether s is a single token that reads as a URL — an
@@ -1953,7 +2007,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			t.ID = id
-			writeJSON(w, http.StatusCreated, templateToJSON(t))
+			writeJSON(w, http.StatusCreated, fromGroupCreateJSON{
+				templateJSON: templateToJSON(t),
+				BlankBriefs:  countBlankBriefs(t),
+			})
 			return
 		}
 
@@ -2033,6 +2090,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			BriefsKept:   briefsKept,
 			Added:        added,
 			Removed:      removed,
+			BlankBriefs:  countBlankBriefs(t),
 		})
 		return
 	}
@@ -2125,6 +2183,35 @@ type fromGroupUpdateJSON struct {
 	BriefsKept []string `json:"briefs_kept"`
 	Added      []string `json:"added"`
 	Removed    []string `json:"removed"`
+	// BlankBriefs counts agents still left with a blank per-agent brief after
+	// the snapshot — see countBlankBriefs (JOH-344).
+	BlankBriefs int `json:"blank_briefs"`
+}
+
+// fromGroupCreateJSON is the create-mode from-group response: the fresh
+// template plus the blank-brief count (JOH-344). A from-group snapshot cannot
+// recover per-agent briefs from a live group, so every agent comes through
+// blank; blank_briefs lets the CLI/dashboard warn that a deploy of this
+// template would tell its agents nothing. templateJSON embeds flat, so a
+// consumer that only reads the template shape is unaffected.
+type fromGroupCreateJSON struct {
+	templateJSON
+	BlankBriefs int `json:"blank_briefs"`
+}
+
+// countBlankBriefs counts template agents whose per-agent brief
+// (initial_message) is blank — the agents a deploy would spawn with nothing to
+// do. A from-group snapshot has no briefs to trace from a live group, so a
+// fresh snapshot's agents are all blank; an update re-snapshot keeps curated
+// briefs on name-match, so this reflects only those still empty afterwards.
+func countBlankBriefs(t *db.GroupTemplate) int {
+	n := 0
+	for _, a := range t.Agents {
+		if strings.TrimSpace(a.InitialMessage) == "" {
+			n++
+		}
+	}
+	return n
 }
 
 // recoverTemplateAgentName maps a live member back to an agent of the

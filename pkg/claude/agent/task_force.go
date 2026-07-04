@@ -61,8 +61,9 @@ func taskForceDeployCmd() *cobra.Command {
 		Long: "Creates a fresh group and spawns one agent per template spec, framed as a task force deployed " +
 			"against --mission. The mission is folded into the group's shared context under '## Mission', so every " +
 			"spawned agent's startup briefing carries it. With no --group, a group name is derived from the mission. " +
-			"With --worktree, the whole force lands on its own branch in a git worktree. `deploy` is an alias over " +
-			"the instantiate path — a Linear-link mission is stored verbatim (tclaude pulls no title).",
+			"With --worktree, the whole force lands on its own branch in a git worktree. `deploy` is the mission-framed " +
+			"form of `templates instantiate` (an alias over the same path) — a Linear-link mission is stored verbatim " +
+			"(tclaude pulls no title).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskForceDeployParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
@@ -194,6 +195,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 	for _, e := range resp.PatternErrors {
 		fmt.Fprintf(stdout, "  ⚠ work pattern: %s\n", e)
 	}
+	printStagedSpawnAndRhythms(stdout, resp.instantiateResponse)
 	// A partial (or total) spawn failure is a non-zero exit so scripts notice
 	// — the group + any spawned agents still exist for the human to finish or
 	// retry by hand. The worktree (if any) is deliberately KEPT: agents are

@@ -20,13 +20,14 @@ import (
 //
 //	POST /v1/groups/{name}/rebrief → re-deliver the work pattern to live members
 //
-// Gating: this reuses requireGroupPermission(templates.use) — the human always
-// passes, a group OWNER passes structurally (the owner bypass fills the
+// Gating: this reuses requireGroupPermission(templates.instantiate) — the human
+// always passes, a group OWNER passes structurally (the owner bypass fills the
 // undecided gap for ANY group-scoped slug, regardless of the slug's registry
-// OwnerImplied flag), and any other agent needs the templates.use slug. That is
-// deliberately the SAME shape as process-advance (human + owner + slug) but a
-// DIFFERENT slug: re-brief is a template-use act (it re-runs the template's work
-// pattern against the group), so it borrows the existing templates.use bar
+// OwnerImplied flag), and any other agent needs the templates.instantiate slug.
+// That is deliberately the SAME shape as process-advance (human + owner + slug)
+// but a DIFFERENT slug: re-brief is a template-use act (it re-runs the
+// template's work pattern against the group), so it borrows the existing
+// templates.instantiate bar
 // rather than minting a new slug or overloading process.advance (a process act,
 // not a comms one).
 

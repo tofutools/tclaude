@@ -2815,7 +2815,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 
 	// Re-brief a deployed force (JOH-247): re-deliver the source template's
 	// work pattern to the live roster with the group's mission interpolated.
-	// Gated on templates.use + owner-pass (see handleGroupRebrief).
+	// Gated on templates.instantiate + owner-pass (see handleGroupRebrief).
 	mux.HandleFunc("POST /v1/groups/{name}/rebrief", v1GroupRoute(handleGroupRebrief))
 
 	mux.HandleFunc("GET /v1/groups/{name}/members", v1GroupRoute(handleGroupMembersList))

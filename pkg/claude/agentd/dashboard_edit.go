@@ -642,7 +642,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	// Re-brief a deployed force (JOH-247): re-deliver the source template's work
 	// pattern to the live roster. asDashboardHumanPeer so the shared,
 	// permission-checked handler sees the cookie-authed dashboard caller as the
-	// human (re-brief is templates.use-gated on the /v1 path).
+	// human (re-brief is templates.instantiate-gated on the /v1 path).
 	mux.HandleFunc("POST /api/groups/{name}/rebrief", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupRebrief(w, asDashboardHumanPeer(r), g)
 	}))

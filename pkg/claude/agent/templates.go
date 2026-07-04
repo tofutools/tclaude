@@ -530,7 +530,8 @@ func templatesInstantiateCmd() *cobra.Command {
 			"The --task text is folded into the group's shared context, so every spawned agent's startup briefing " +
 			"carries it; give it inline with --task or, for long / multi-line text, with --task-file. The template's " +
 			"owner agent(s) are granted group ownership and each agent its permission slugs. Spawning a whole team " +
-			"can take some time; a per-agent failure is reported, not rolled back.",
+			"can take some time; a per-agent failure is reported, not rolled back. Prefer `task-force deploy` when " +
+			"working against a mission — it is the mission-framed twin of this verb.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesInstantiateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
@@ -561,6 +562,42 @@ type instantiateResponse struct {
 	Failed           int                      `json:"failed"`
 	PatternDelivered int                      `json:"pattern_delivered"`
 	PatternErrors    []string                 `json:"pattern_errors"`
+
+	// Staged-spawn choreography + seeded rhythms (JOH-244): when a template
+	// spreads its roster across waves, the deploy/instantiate response reports
+	// only wave 0's spawns inline and defers the rest — so the headline
+	// "N spawned" undercounts the eventual team. These fields let the CLI say
+	// so honestly (JOH-344). All zero for a simple single-wave template.
+	RhythmsCreated   int    `json:"rhythms_created"`
+	WavesTotal       int    `json:"waves_total"`
+	PendingWaves     int    `json:"pending_waves"`
+	PendingAgents    int    `json:"pending_agents"`
+	ChoreographyNote string `json:"choreography_note"`
+}
+
+// printStagedSpawnAndRhythms prints the JOH-244 staged-spawn + seeded-rhythm
+// summary that the "N spawned, M failed" headline alone hides: when later waves
+// are deferred, the team is NOT whole yet, so a first-time deployer of a
+// wave-using template (e.g. the dev-squad starter: lead now, four more as the
+// wave settles) would otherwise read "1 spawned" as a failure. Nothing is
+// printed for a simple single-wave template with no rhythms (zero-noise).
+//
+// The wave line prints the daemon's choreography_note verbatim — the daemon is
+// the single source of truth for the wording — falling back to a locally
+// composed line only if the note is absent. The rhythms line is derived from
+// rhythms_created.
+func printStagedSpawnAndRhythms(w io.Writer, r instantiateResponse) {
+	if r.PendingWaves > 0 {
+		if note := strings.TrimSpace(r.ChoreographyNote); note != "" {
+			fmt.Fprintf(w, "  staged spawn: %s\n", note)
+		} else {
+			fmt.Fprintf(w, "  staged spawn: wave 1/%d up — %d more agent(s) will spawn as this wave settles\n",
+				r.WavesTotal, r.PendingAgents)
+		}
+	}
+	if r.RhythmsCreated > 0 {
+		fmt.Fprintf(w, "  rhythms: %d recurring nudge%s armed\n", r.RhythmsCreated, plural(r.RhythmsCreated))
+	}
 }
 
 func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -621,6 +658,7 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 	for _, e := range resp.PatternErrors {
 		fmt.Fprintf(stdout, "  ⚠ work pattern: %s\n", e)
 	}
+	printStagedSpawnAndRhythms(stdout, resp)
 	// A partial (or total) spawn failure is a non-zero exit so scripts
 	// notice — the group + any spawned agents still exist for the human
 	// to finish or retry by hand.
@@ -681,6 +719,9 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 		BriefsKept []string `json:"briefs_kept"`
 		Added      []string `json:"added"`
 		Removed    []string `json:"removed"`
+		// BlankBriefs: agents still left with a blank per-agent brief after the
+		// snapshot — a from-group snapshot can't recover briefs (JOH-344).
+		BlankBriefs int `json:"blank_briefs"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/templates/from-group", body, &t, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -691,12 +732,26 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 			t.Name, group, len(t.Agents), plural(len(t.Agents)))
 		fmt.Fprintf(stdout, "  briefs kept: %s; added: %s; removed: %s\n",
 			orNone(t.BriefsKept), orNone(t.Added), orNone(t.Removed))
+		printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",
 		t.Name, group, len(t.Agents), plural(len(t.Agents)))
-	fmt.Fprintln(stdout, "  Per-agent task briefs are blank — fill them in with `tclaude agent templates edit "+t.Name+" --file …`")
+	printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
 	return rcOK
+}
+
+// printBlankBriefWarning warns that n of a from-group snapshot's agents carry a
+// blank per-agent brief: a live group stores no brief per member, so a template
+// saved from a hand-built team would deploy agents told nothing until the briefs
+// are filled in (JOH-344). Nothing is printed when n is 0 (a fully-briefed
+// re-snapshot, or an empty roster).
+func printBlankBriefWarning(w io.Writer, n int, tmplName string) {
+	if n <= 0 {
+		return
+	}
+	fmt.Fprintf(w, "  ⚠ %d agent brief(s) are blank — edit the template (initial_message) before deploying\n", n)
+	fmt.Fprintf(w, "    fill them in with `tclaude agent templates edit %s --file …`\n", tmplName)
 }
 
 // ---- export / import (JOH-341) ----
