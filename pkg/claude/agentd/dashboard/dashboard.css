@@ -2250,6 +2250,32 @@ details.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
+/* Dock drag (dock-dnd.js): dragging a palette profile/role card onto a group
+   box — or the groups-list empty space — to open the spawn dialog prefilled.
+   A DISTINCT class from .dnd-drop-over so dnd.js's own dragleave/dragend (which
+   strip only .dnd-drop-over) never fight this highlight. The dashed accent
+   outline mirrors the member-drop highlight so the "drop lands on this whole
+   box" affordance reads the same across both drag features. */
+details[data-dnd-target-group].dock-drop-over,
+#groups-list.dock-drop-over {
+  background: rgba(31, 49, 72, 0.4);
+  outline: 2px dashed #58a6ff;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+/* The empty-space (groups-list) target uses an inset offset so its dashed frame
+   sits just inside the scroll container rather than under the scrollbar. */
+#groups-list.dock-drop-over { outline-offset: -4px; }
+/* The dragged card fades while in flight, like .dnd-source-row / .group-reorder-source. */
+.dock-card.dock-drag-source { opacity: 0.5; }
+/* Wizard skin: tint the drop highlight to the grimoire palette. Scoped to this
+   feature's selectors (NOT an unscoped body.wizard rule) — see the dock's
+   anti-pin invariant. */
+body.wizard details[data-dnd-target-group].dock-drop-over,
+body.wizard #groups-list.dock-drop-over {
+  background: rgba(63, 45, 90, 0.42);
+  outline-color: #a371f7;
+}
 /* Drag-to-reorder real groups (group-reorder.js). The group HEADER (its
    <summary>) is the reorder drag handle: press the bare header and drag to
    reorder the group. Its interactive children are NOT drag handles — a
