@@ -23,6 +23,13 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	db.ResetForTest()
+	// tick() sees the alive session and fires a debounced goBackground
+	// flush (maybeFlushUndelivered → drainNudgeLoop) that touches the
+	// singleton DB under $HOME/.tclaude. Drain it before t.TempDir's
+	// RemoveAll runs (this Cleanup is registered after TempDir's, so LIFO
+	// runs it first) so no orphaned goroutine races the teardown — the
+	// ENOTEMPTY that bgWG exists to prevent (see background.go).
+	t.Cleanup(bgWG.Wait)
 
 	const sessionID = "agent-codex-reap"
 	const convID = "019ec004-4250-79b1-9ade-ebaea4159777"
