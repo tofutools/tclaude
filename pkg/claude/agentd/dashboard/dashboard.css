@@ -8114,12 +8114,21 @@ body.wizard .action-menu {
   box-shadow: 0 8px 24px rgba(10, 6, 24, 0.9), 0 0 12px rgba(169, 123, 214, 0.3);
 }
 body.wizard .action-menu .menu-sep { background: #3a2a63; }
-/* Hovering a spell in the menu lights its edge gold instead of the base
-   blue — the filter-bar items carry their own chrome, the row/group
-   items reuse the shared button skin; re-tint both for the wizard. */
-body.wizard .filter-bar-cog .action-menu button {
+/* Every spell in the list wears the same violet-void skin at rest so all
+   three cog menus read as one arcane grimoire. The filter-bar items carry
+   their own chrome (they dispatch via id-bound listeners, not the shared
+   button skin); the row/group items reuse the .row-actions / .group-actions
+   dark button skin — without this they'd sit as an unthemed default-dark
+   island inside the arcane panel. A :not(:disabled) guard leaves a disabled
+   item (e.g. the offline agent's "summary…" export) its dimmed default so it
+   still reads as an unavailable spell. */
+body.wizard .filter-bar-cog .action-menu button,
+body.wizard .row-actions .action-menu button:not(:disabled),
+body.wizard .group-actions .action-menu button:not(:disabled) {
   background: #241b3d; border-color: #3a2a63; color: #e7d9f5;
 }
+/* Reach for a spell (hover) and its edge lights gold instead of the base
+   blue — the shared gild for all three menus. */
 body.wizard .filter-bar-cog .action-menu button:hover,
 body.wizard .row-actions .action-menu button:hover,
 body.wizard .group-actions .action-menu button:hover {

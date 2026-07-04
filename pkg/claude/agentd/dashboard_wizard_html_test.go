@@ -1125,6 +1125,15 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	must("body.wizard .row-actions .cog-btn", "the per-row cog is re-skinned in wizard mode")
 	must("body.wizard .group-actions .cog-btn", "the per-group cog is re-skinned in wizard mode")
 
+	// …and so do the DROPDOWN menus each cog opens — the arcane panel plus a
+	// violet-void base skin on every menu item, so the per-group and per-agent
+	// "spell lists" match the global filter-bar one instead of staying an
+	// unthemed default-dark island inside the arcane panel.
+	must("body.wizard .action-menu {", "the cog dropdown panels get the arcane skin")
+	must("body.wizard .filter-bar-cog .action-menu button", "the filter-bar menu items get the arcane base skin at rest")
+	must("body.wizard .row-actions .action-menu button:not(:disabled)", "the per-agent menu items get the arcane base skin at rest")
+	must("body.wizard .group-actions .action-menu button:not(:disabled)", "the per-group menu items get the arcane base skin at rest")
+
 	// The enchanted rotation + its keyframes — the "self-turning clockwork" gag.
 	must("animation: wizard-cog-turn", "the wizard cog glyph spins under its own enchantment")
 	must("@keyframes wizard-cog-turn", "the cog-turn keyframes are defined")
