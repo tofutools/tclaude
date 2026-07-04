@@ -611,11 +611,15 @@ type ScribeConfig struct {
 
 // ScribeProfileName returns the configured scribe spawn-profile name, or ""
 // when no scribe block / no profile is set. Nil-safe so callers need no guard.
+// Trimmed so a hand-edited config.json with a whitespace-padded name still
+// matches a real profile at resolution time (the dashboard already trims);
+// otherwise a stray space would silently self-heal to the default instead of
+// applying the intended profile.
 func (c *Config) ScribeProfileName() string {
 	if c == nil || c.Scribe == nil {
 		return ""
 	}
-	return c.Scribe.Profile
+	return strings.TrimSpace(c.Scribe.Profile)
 }
 
 // CostConfig holds display-only cost knobs.
