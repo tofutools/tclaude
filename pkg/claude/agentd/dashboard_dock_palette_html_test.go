@@ -31,9 +31,16 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must(`id="agent-dock"`, "the dock shell exists")
 	must(`id="dock-toggle"`, "the edge toggle exists")
 	must(`id="dock-body"`, "the morph-target body exists")
-	// The head title uses the established span-pair vocab idiom (both modes).
+	// JOH-388 req 2: two more discoverable show/hide controls beyond the edge
+	// tab — a top-bar toggle next to the windows/power controls, and an in-dock
+	// collapse affordance in the (now title-less, req 6) dock header.
+	must(`id="dock-toggle-top"`, "the top-bar dock toggle exists (discoverable show/hide)")
+	must(`id="dock-collapse"`, "the in-dock collapse affordance exists")
+	// The "Palette"/"Grimoire" vocab span-pair moved from the dropped head title
+	// (req 6) onto the top-bar toggle — same established span-pair idiom, both
+	// modes, so the CSS .tpl-word-* swap picks the voice per theme.
 	must(`<span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span>`,
-		"the dock head carries both vocab modes")
+		"the top-bar dock toggle carries both vocab modes")
 
 	// The dock is NAMED `dock`, not `palette`, because js/palette.js is the
 	// Ctrl/Cmd-K command palette — guard against a regression that reuses the
@@ -44,13 +51,28 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// slide-off. The wizard skin must stay SCOPED under #agent-dock (the
 	// anti-pin invariant — no unscoped body.wizard widening from this feature).
 	must("#agent-dock {", "the dock shell has a CSS rule")
-	must("body.dock-open { padding-right: var(--dock-w); }",
-		"an open dock reflows the page to reclaim its width")
+	// JOH-388 req 3: an open dock reserves its width AND makes BODY the
+	// horizontal scroll container, so the padding-right becomes real scroll
+	// clearance and wide content can be scrolled clear of the fixed dock rather
+	// than sliding underneath it (padding-inline-end counts in a scroll
+	// container's scrollable overflow). This pin was swapped from the pre-rework
+	// bare `padding-right` rule when the overflow-x mechanism landed.
+	must("body.dock-open { padding-right: var(--dock-w); overflow-x: auto; }",
+		"an open dock reserves its width AND becomes the h-scroll container (content clears the dock)")
+	// JOH-388 req 1: the dock rail spans only the content area (top tracks the
+	// chrome via --dock-top, bottom pinned to the footer) instead of covering
+	// the header/nav controls at top:0.
+	must("top: var(--dock-top); right: 0; bottom: var(--footer-h);",
+		"the dock rail spans the content area (below the top bar, above the footer)")
 	must("body:not(.dock-open) #agent-dock { transform: translateX(100%); }",
 		"a collapsed dock slides off-screen")
 	must("body.dock-anim #agent-dock { transition: transform", "the slide is gated behind .dock-anim (no flash-in on load)")
-	must("classList.add('dock-anim')", "dock.js enables the slide only after the initial paint")
 	must("body.wizard #agent-dock .dock-card {", "the wizard skin is scoped under #agent-dock")
+	// JOH-388 req 5: each category is a collapsible <details>; its per-section
+	// fold persists via dashPrefs and the disclosure chevron flips on [open].
+	must(".dock-section[open] > .dock-section-head .dock-section-chevron", "the section chevron flips with the <details> open state")
+	must("tclaude.dash.dock.section.", "each section's collapse persists via a dashPrefs key")
+	must("classList.add('dock-anim')", "dock.js enables the slide only after the initial paint")
 
 	// JS: the module is defined, its two entry points exported, and both are
 	// wired from boot / the poll.

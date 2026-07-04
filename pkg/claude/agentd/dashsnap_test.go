@@ -312,6 +312,28 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + `document.body.classList.remove('dock-open');`,
 		},
 		{
+			// JOH-388 req 3: with the dock open, a wide content block must be
+			// scrollable fully CLEAR of the fixed dock (not slide underneath it).
+			// Inject a 3000px block with a bright right-edge marker, open the
+			// dock, and scroll body (the h-scroll container when dock-open) to the
+			// far right — the marker should land at the dock's left edge, proving
+			// nothing hides behind the palette.
+			Key:     "dock-wide-scroll",
+			Title:   "Palette dock + wide content, scrolled right",
+			Caption: "Req 3: dock open, a 3000px block scrolled to max-right — its right edge (green marker) lands at the dock's left edge, nothing hidden underneath.",
+			JS: showGroups + `document.body.classList.add('dock-open');` + `
+var __wide = document.createElement('div');
+__wide.style.cssText = 'position:relative;width:3000px;height:120px;margin-top:12px;box-sizing:border-box;padding:8px;color:#fff;font:14px monospace;background:linear-gradient(90deg,#1b3a5b,#2d6da8);';
+__wide.textContent = 'WIDE 3000px — scroll right to reveal the end →';
+var __end = document.createElement('div');
+__end.style.cssText = 'position:absolute;top:0;right:0;width:10px;height:100%;background:#3fb950;';
+__wide.appendChild(__end);
+document.querySelector('#tab-groups').prepend(__wide);
+document.body.scrollLeft = 999999;
+`,
+			SettleMS: 400,
+		},
+		{
 			Key:      "summon-normal",
 			Title:    "Summon dialog (normal)",
 			Caption:  "Template dropped on empty space → plain summon, no mode chooser.",

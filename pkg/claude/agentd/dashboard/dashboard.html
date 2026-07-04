@@ -106,6 +106,15 @@
     </span>
   </span>
   <button id="command-palette-btn" type="button" aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog" title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run.">🔍</button>
+  <!-- The discoverable show/hide for the right-side palette dock (JOH-388 req 2):
+       a top-bar toggle next to the windows/power controls, the obvious sibling
+       of the on-dock collapse chevron + the edge tab. dock.js wires it (by id)
+       to the same body.dock-open state the edge toggle drives, persisted via
+       dashPrefs. It carries the "🧰 Palette" / "🧰 Grimoire" vocab span-pair the
+       dock head used to (the head title was dropped, req 6) — the CSS
+       .tpl-word-regular/.tpl-word-wizard swap picks the voice per theme, since
+       this static control is never re-rendered by the poll. -->
+  <button id="dock-toggle-top" type="button" aria-controls="agent-dock" aria-expanded="true" aria-label="Show or hide the palette of profiles, templates and roles" title="Show / hide the palette dock (profiles, templates, roles) on the right edge"><span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span></button>
   <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
        .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
        see the wizard windows button/modal rules in dashboard.css), matching
@@ -1063,10 +1072,18 @@
     <span class="dock-toggle-chevron" aria-hidden="true">›</span>
   </button>
   <div class="dock-inner">
+    <!-- Slim dock header (JOH-388 req 6: the decorative "Palette" title row was
+         dropped — the section headings carry the meaning and the title only cost
+         vertical space). What remains is a thin bar holding the clear in-dock
+         collapse affordance (req 2): a labelled "Hide ›" / "Furl ›" control, the
+         obvious-from-inside twin of the top-bar toggle and the edge tab. dock.js
+         wires it (by id) to the same body.dock-open state. -->
     <div class="dock-head">
-      <span class="dock-head-title"><span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span></span>
+      <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
     </div>
-    <!-- dock.js renders the three keyed sections here off the live snapshot. -->
+    <!-- dock.js renders the three keyed <details> sections here off the live
+         snapshot; their open/collapsed state (req 5) persists via dashPrefs and
+         survives the 2s morph (open is live-owned in js/morph.js). -->
     <div id="dock-body" class="dock-body"></div>
   </div>
 </aside>

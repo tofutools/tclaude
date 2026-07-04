@@ -52,13 +52,20 @@ function syncFullBleedBars() {
   for (const bar of bars) bar.style.minWidth = '';
   for (const inner of inners) inner.style.width = '';
 
-  const overflow = doc.scrollWidth > doc.clientWidth;
+  // Pick the live horizontal scroll container: when the palette dock is open,
+  // BODY scrolls sideways (dashboard.css body.dock-open{overflow-x:auto}, which
+  // is what lets wide content clear the fixed dock — JOH-388 req 3), so its
+  // scrollWidth is the content width the bars must fill. Dock closed, the page
+  // (documentElement) scrolls as usual. The visible width for the pinned
+  // .bar-inner is always the viewport (documentElement.clientWidth).
+  const scroller = document.body.classList.contains('dock-open') ? document.body : doc;
+  const overflow = scroller.scrollWidth > doc.clientWidth;
   document.body.classList.toggle('hscroll-overflow', overflow);
   if (!overflow) return;
 
   // Widen the bars to the full scrollable width; keep their content one
   // viewport wide so the right-aligned controls stay on-screen.
-  const contentWidth = doc.scrollWidth + 'px';
+  const contentWidth = scroller.scrollWidth + 'px';
   const viewportWidth = doc.clientWidth + 'px';
   for (const bar of bars) bar.style.minWidth = contentWidth;
   for (const inner of inners) inner.style.width = viewportWidth;

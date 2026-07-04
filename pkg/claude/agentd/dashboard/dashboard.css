@@ -3728,13 +3728,18 @@ details.group-virtual .group-name { color: #8aa0b8; }
    shout. The bare <button> default skin is far too bright next to the dark
    chrome, so these explicit rules keep them quiet — and identical. */
 #command-palette-btn,
-#window-all-btn {
+#window-all-btn,
+#dock-toggle-top {
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 11px;
   font-family: inherit; white-space: nowrap;
 }
 #command-palette-btn:hover,
-#window-all-btn:hover { border-color: #58a6ff; color: #d4d4d4; }
+#window-all-btn:hover,
+#dock-toggle-top:hover { border-color: #58a6ff; color: #d4d4d4; }
+/* When the dock is open the top-bar toggle reads as "on" — a lit accent border
+   + tint, so the show/hide control's state is obvious at a glance (req 2). */
+#dock-toggle-top[aria-expanded="true"] { border-color: #388bfd; background: #1c2b44; color: #d4d4d4; }
 /* === Config tab — visual editor for ~/.tclaude/config.json ========== */
 #tab-config { max-width: 780px; }
 .cfg-intro { font-size: 12px; color: #7d8590; margin: 0 0 14px; line-height: 1.55; }
@@ -9134,16 +9139,21 @@ body.wizard .cost-whatif-banner code { color: #f0d066; }
    palette). The wizard skin below is deliberately scoped under
    #agent-dock so it never widens body.wizard globally.
    ============================================================ */
-:root { --dock-w: 264px; --dock-tab-w: 22px; }
+:root { --dock-w: 264px; --dock-tab-w: 22px; --dock-top: 0px; }
 
-/* The dock is fixed to the right edge, spanning from the top to just above
-   the fixed footer, and slides off to the right when collapsed. overflow is
+/* The dock is fixed to the right edge, spanning ONLY the content area — below
+   the top bar (header + marquee + nav) and above the fixed footer (JOH-388
+   req 1) — rather than the old top:0 rail that covered the header's right-side
+   controls. --dock-top is kept in sync by js/dock.js (syncDockTop): it tracks
+   nav's live viewport-bottom (clamped ≥ 0), so at rest the dock starts just
+   under the nav and, as the page scrolls the chrome away, it rises to fill the
+   full height. The bottom is pinned to the fixed footer bar. overflow is
    visible so the edge toggle (negative-left, see below) isn't clipped; the
-   inner panel owns the scroll + chrome. z-index sits above the footer (40)
-   but below dropdowns (50+) and modals (100+) so a manager overlay covers it. */
+   inner panel owns the scroll + chrome. z-index sits above the footer (40) but
+   below dropdowns (50+) and modals (100+) so a manager overlay covers it. */
 #agent-dock {
   position: fixed;
-  top: 0; right: 0; bottom: var(--footer-h);
+  top: var(--dock-top); right: 0; bottom: var(--footer-h);
   width: var(--dock-w);
   z-index: 45;
 }
@@ -9154,14 +9164,39 @@ body:not(.dock-open) #agent-dock { transform: translateX(100%); }
    adds .dock-anim on the frame after the first applyDockOpen. */
 body.dock-anim #agent-dock { transition: transform .2s ease; }
 
-/* When open, reserve the dock's width so <main> reflows and no content hides
-   behind it (the "reclaim the space, don't overlay dead area" rule). The
-   in-flow header/nav/main shrink via body padding; the viewport-fixed footer +
-   slop lever are pushed off the dock explicitly. Collapsed → padding drops to
-   0 and the space is reclaimed. */
-body.dock-open { padding-right: var(--dock-w); }
+/* When open, reserve the dock's width so the content reflows and no content
+   hides behind it (the "reclaim the space, don't overlay dead area" rule), and
+   make BODY the horizontal scroll container so that reservation actually holds
+   for horizontally-scrolling content (JOH-388 req 3). The subtlety: the dock is
+   a viewport-fixed rail, so with the page (documentElement) as the h-scroll
+   container, wide tables overflow PAST body's padding-right and slide underneath
+   the dock with no way to scroll them clear — a fixed overlay can't be escaped
+   by document scroll. Making body the scroll container fixes this exactly:
+   padding-inline-end of a scroll container IS counted in its scrollable
+   overflow, so padding-right becomes real scroll clearance and the content's
+   right edge lands at the dock's left edge at max scroll — everything reachable.
+   Scoped to .dock-open so the page keeps its normal viewport-level h-scroll
+   (and viewport-pinned scrollbar) whenever the dock is closed. The viewport-
+   fixed footer + slop lever + drag-to-retire bin are pushed clear of the dock
+   explicitly. Collapsed → padding + overflow drop and the space is reclaimed. */
+body.dock-open { padding-right: var(--dock-w); overflow-x: auto; }
 body.dock-open footer { right: var(--dock-w); }
 body.dock-open #slop-lever { right: var(--dock-w); }
+/* The full-bleed top bars sit ABOVE the dock now (the dock starts below the
+   nav, req 1), so they must span the FULL viewport width — otherwise body's
+   dock-reservation padding would inset them and leave a bare --dock-w notch in
+   the top-right, where the old top:0 rail used to cover. A negative right
+   margin pulls each bar back out to the viewport edge (it reaches body's
+   border-box edge, so it adds no extra scroll width); only <main> keeps the
+   reservation so its content stays clear of the dock. */
+body.dock-open > header,
+body.dock-open > #slop-marquee,
+body.dock-open > nav { margin-right: calc(-1 * var(--dock-w)); }
+/* Main's drag-to-retire bin (#835/#838) is a viewport-fixed overlay at
+   right:22px; nudge it left of the open dock so a retire-drag target never
+   lands on top of (or behind) the palette. It only shows mid-drag, so this just
+   relocates a transient overlay — no layout impact. */
+body.dock-open #dnd-trash { right: calc(var(--dock-w) + 22px); }
 
 /* Edge toggle — a chevron tab riding the dock's left edge (negative left), so
    it stays reachable in BOTH states: open it sits just left of the panel;
@@ -9196,26 +9231,48 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   display: flex; flex-direction: column;
   overflow: hidden;
 }
+/* Slim dock header (JOH-388 req 6: the "Palette" title row was dropped — the
+   section headings carry the meaning). All that remains is a thin bar with the
+   in-dock collapse control right-aligned. */
 .dock-head {
   flex: 0 0 auto;
-  padding: 10px 12px;
+  display: flex; justify-content: flex-end; align-items: center;
+  padding: 4px 6px;
   border-bottom: 1px solid #2a3340;
 }
-.dock-head-title { font-weight: 600; font-size: 13px; color: #d4d4d4; }
+/* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
+   it reads as a deliberate control, not chrome. */
+.dock-collapse {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  color: #7d8590; cursor: pointer;
+  font-size: 11px; font-weight: 500; line-height: 1; padding: 3px 8px;
+}
+.dock-collapse:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
 .dock-section { margin-bottom: 12px; }
 .dock-section:last-child { margin-bottom: 0; }
-/* The section heading sticks while its cards scroll under it — a long
-   profile list still tells you which kind you're looking at. */
+/* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
+   Its <summary> is the heading; it sticks while its cards scroll under it (a
+   long profile list still tells you which kind you're looking at) and doubles
+   as the fold toggle. Strip the native disclosure marker — a rotating chevron
+   in the title carries the open/closed state instead. */
 .dock-section-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 2px 4px 6px;
   position: sticky; top: 0;
   background: #12171d;
   z-index: 1;
+  cursor: pointer;
+  list-style: none;
 }
-.dock-section-title { font-size: 12px; font-weight: 600; color: #adbac7; }
+.dock-section-head::-webkit-details-marker { display: none; }
+.dock-section-head:hover .dock-section-title { color: #c9d1d9; }
+.dock-section-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: #adbac7; min-width: 0; }
+/* The disclosure chevron points down when the section is open, right when
+   collapsed — the [open] attribute on the parent <details> drives the flip. */
+.dock-section-chevron { flex: 0 0 auto; font-size: 9px; color: #6e7681; transition: transform .15s ease; }
+.dock-section[open] > .dock-section-head .dock-section-chevron { transform: rotate(90deg); }
 .dock-section-icon { font-size: 12px; }
 .dock-section-count { color: #6e7681; font-weight: 400; font-size: 11px; margin-left: 2px; }
 .dock-section-manage {
@@ -9266,18 +9323,41 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-card:hover .dock-card-manage, .dock-card-manage:focus-visible { opacity: 1; }
 .dock-card-manage:hover { color: #58a6ff; border-color: #2a3340; background: #21262d; }
 
-/* Wizard skin — arcane purple, scoped strictly under #agent-dock so it never
-   widens body.wizard globally (the anti-pin invariant). */
-body.wizard #agent-dock .dock-inner { background: #17131f; border-left-color: #4a3d6b; }
-body.wizard #agent-dock .dock-head { border-bottom-color: #4a3d6b; }
-body.wizard #agent-dock .dock-head-title { color: #d7c9ff; text-shadow: 0 0 6px rgba(139, 109, 214, 0.5); }
-body.wizard #agent-dock .dock-section-head { background: #17131f; }
-body.wizard #agent-dock .dock-section-title { color: #c9b8f0; }
+/* Wizard skin (JOH-388 req 4) — the palette becomes a shelf in The Wizard's
+   Tower: a deep arcane-purple re-skin (backgrounds, borders AND accents, not
+   just a couple of tints), reading unmistakably as part of body.wizard's
+   grimoire chrome. Kept STRICTLY scoped under #agent-dock so it never widens
+   body.wizard globally (the anti-pin invariant); the section headings + card
+   names already speak the arcane vocabulary via wizWord (Patterns / Summoning
+   circles / Classes). The one exception below is the top-bar toggle, a header
+   control themed like its sibling buttons, not part of the dock's inner skin. */
+body.wizard #agent-dock .dock-inner {
+  background: linear-gradient(180deg, #191225 0%, #140e1e 100%);
+  border-left-color: #4a3d6b;
+  box-shadow: inset 1px 0 0 rgba(139, 109, 214, 0.18);
+}
+body.wizard #agent-dock .dock-head { border-bottom-color: #3a2f57; }
+body.wizard #agent-dock .dock-collapse { color: #b39ddb; }
+body.wizard #agent-dock .dock-collapse:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+body.wizard #agent-dock .dock-section-head { background: #171021; }
+body.wizard #agent-dock .dock-section-head:hover .dock-section-title { color: #e6dcff; }
+body.wizard #agent-dock .dock-section-title { color: #c9b8f0; text-shadow: 0 0 6px rgba(139, 109, 214, 0.4); }
+body.wizard #agent-dock .dock-section-chevron { color: #8b6dd6; }
+body.wizard #agent-dock .dock-section-count { color: #9a86c9; }
+body.wizard #agent-dock .dock-empty { color: #7a6ba0; }
 body.wizard #agent-dock .dock-card { background: #1d1730; border-color: #3a2f57; }
 body.wizard #agent-dock .dock-card:hover { border-color: #7c5cc4; background: #241a3a; }
+body.wizard #agent-dock .dock-card-name { color: #e6dcff; }
+body.wizard #agent-dock .dock-grip { color: #6b5a94; }
 body.wizard #agent-dock .dock-chip { background: #241a3a; border-color: #3a2f57; color: #b39ddb; }
 body.wizard #agent-dock .tc-count { color: #b39ddb; }
 body.wizard #agent-dock .dock-toggle { background: #17131f; border-color: #4a3d6b; }
 body.wizard #agent-dock .dock-toggle:hover { border-color: #7c5cc4; color: #d7c9ff; }
+body.wizard #agent-dock .dock-section-manage,
+body.wizard #agent-dock .dock-card-manage { color: #9a86c9; }
 body.wizard #agent-dock .dock-section-manage:hover,
 body.wizard #agent-dock .dock-card-manage:hover { color: #d7c9ff; border-color: #4a3d6b; background: #241a3a; }
+/* The top-bar dock toggle's "on" accent in arcane purple instead of blue — a
+   single header control, themed like the sibling wizard header buttons (this
+   targets one id, it is not a global body.wizard widening). */
+body.wizard #dock-toggle-top[aria-expanded="true"] { border-color: #7c5cc4; background: #241a3a; color: #e6dcff; }
