@@ -125,6 +125,62 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_RetireIconButtonWired pins the top-level 🗑 trash icon —
+// the quick-control twin of the ⚙-menu retire item. It rides beside the cog
+// in the row-action cluster and dispatches the SAME retire-agent path
+// (conv-keyed, no data-agent) so the delegated handler routes it through the
+// identical retireAgentInteractive → retireConfirm flow guarded above. This
+// pins the icon's shape + its mount in both active-agent row renderers so a
+// refactor can't silently drop it or key it wrong.
+func TestDashboardHTML_RetireIconButtonWired(t *testing.T) {
+	tmpl := helpersFuncBody(t, "retireIconButton")
+	for _, needle := range []string{
+		`data-act="retire-agent"`,
+		`data-conv="`,
+		`data-label="`,
+		`class="icon-btn warn"`, // reversible-demotion semantics (warn), not danger
+		`${TRASH_SVG}`,          // renders the trash glyph, not a text label
+		`aria-label="Retire agent"`,
+	} {
+		if !strings.Contains(tmpl, needle) {
+			t.Errorf("retireIconButton: missing %q", needle)
+		}
+	}
+	// The glyph itself is a module-level inline SVG (like the eye pair),
+	// referenced above via ${TRASH_SVG}. Pin its definition + the CSS hook
+	// so the icon can't silently become an empty span.
+	for _, needle := range []string{
+		`const TRASH_SVG =`,
+		`class="trash-ico"`,
+		`<svg`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets: missing %q (the TRASH_SVG glyph)", needle)
+		}
+	}
+	// It must stay conv-keyed (no data-agent): a stable agent_id would
+	// resolve even for a dangling agent and silently demote the orphan
+	// instead of offering to remove it — the same reason the menu button is
+	// conv-keyed (retireMemberButton / JOH-322).
+	if strings.Contains(tmpl, "data-agent=") {
+		t.Error("retireIconButton: must stay conv-keyed (no data-agent) — see retireMemberButton / JOH-322")
+	}
+	// Both active-agent row renderers mount the icon next to the cog. These
+	// are the same two renderers that carry the menu retire item; the icon
+	// is additive, not a replacement.
+	for _, fn := range []string{"memberActions", "ungroupedMemberActions"} {
+		body := helpersFuncBody(t, fn)
+		if !strings.Contains(body, "retireIconButton(m)") {
+			t.Errorf("%s: missing retireIconButton(m) — the top-level retire icon is not in this row", fn)
+		}
+		// Belt-and-braces: the menu twin must still be there too (the icon
+		// promotes retire to a shortcut, it does not remove the menu entry).
+		if !strings.Contains(body, "retireMemberButton(m)") {
+			t.Errorf("%s: retireMemberButton(m) went missing — the menu retire twin must stay", fn)
+		}
+	}
+}
+
 // TestDashboardHTML_SingleRetireSpinner pins the in-flight feedback for the
 // SINGLE-agent retire (the bulk-retire preview's spinner is guarded
 // separately in dashboard_retire_preview_test.go). retireConfirm runs its
