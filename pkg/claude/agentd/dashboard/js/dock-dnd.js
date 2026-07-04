@@ -8,7 +8,9 @@
 // prefilled — no new spawn semantics, just a shortcut into the same dialog.
 // Dropping onto the groups-list background (empty space, no group box) opens
 // the same dialog with the profile/role prefilled but the group left to the
-// picker (a plain spawn).
+// picker (a plain spawn). The VIRTUAL group boxes (Ungrouped / Retired / …) are
+// inert — "spawn into Retired" is meaningless — so only real groups and genuine
+// empty space are drop targets.
 //
 // Isolation from the two OTHER document-level DnD features is deliberate and
 // total, mirroring how group-reorder.js coexists with dnd.js:
@@ -64,12 +66,17 @@ const EMPTY_TARGET_SEL = '#groups-list';
 // dockTarget resolves what the cursor is over during a dock drag:
 //   { group: '<name>', box } when over a real group's box, or
 //   { group: '', box }       when over the groups-list empty space, or
-//   null                     when over neither (no drop here).
+//   null                     when over neither / an inert box (no drop here).
 // A group box wins over the surrounding groups-list (closest() walks up from
 // the cursor's element, hitting the inner <details> first).
 function dockTarget(e) {
   const box = e.target.closest(GROUP_TARGET_SEL);
   if (box) return { group: box.getAttribute('data-dnd-target-group') || '', box };
+  // A VIRTUAL group box (Ungrouped / Retired / … — all carry .group-virtual) is
+  // not a spawn target: "spawn into Retired" is meaningless. Treat it as inert
+  // so hovering it neither flashes the whole groups-list nor drops — the
+  // no-group plain spawn is reserved for the genuine empty gaps/background.
+  if (e.target.closest('details.group-virtual')) return null;
   const list = e.target.closest(EMPTY_TARGET_SEL);
   if (list) return { group: '', box: list };
   return null;
