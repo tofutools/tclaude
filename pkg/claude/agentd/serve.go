@@ -587,6 +587,9 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/agent/aliases/", handleHeadAliasByHandle)
 	mux.HandleFunc("/v1/agent/", handleAgentByConv)
 	mux.HandleFunc("/v1/groups", handleGroups)
+	// Scribe summon (JOH-361): summon a pre-briefed, pre-granted scribe agent.
+	// Human always passes; an agent caller needs groups.spawn + permissions.grant.
+	mux.HandleFunc("POST /v1/scribe", handleScribeSummon)
 	mux.HandleFunc("POST /v1/groups/import", handleGroupImport)
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)

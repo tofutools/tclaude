@@ -1128,6 +1128,13 @@ export function bindBackdropDiscard(modalId, closeFn) {
     e.stopImmediatePropagation();
     tryDismiss();
   });
+
+  // Return a small handle so a caller can consult the SAME dirty flag before an
+  // action that would abandon the form some other way — e.g. the template
+  // editor's "Edit with agent" button, which closes the editor to hand off to a
+  // scribe and must offer the discard confirm first (JOH-361). Existing callers
+  // ignore the return value, so this is purely additive.
+  return { isDirty: () => dirty };
 }
 
 // bindManageOverlayDismiss wires backdrop-click + Escape close for the

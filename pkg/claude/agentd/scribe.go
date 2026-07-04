@@ -1,0 +1,319 @@
+package agentd
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// Scribe summon (JOH-361) — the reusable "summon a pre-briefed, pre-granted
+// scribe agent by chat" primitive behind the dashboard's "Edit with agent"
+// buttons. A scribe is an ordinary agent the human talks to; its whole value
+// is that it comes up already briefed on the task and already holding the
+// permission slugs to do it (e.g. templates.manage to edit summoning circles).
+//
+// Deliberately generic: the request is {name, slugs, brief} and the endpoint
+// knows nothing about templates. The Templates tab is the first caller; the
+// settings-editing follow-up (JOH-362) reuses the same endpoint for spawn
+// profiles / the role library by passing different slugs + a different brief.
+//
+// Shape decisions:
+//   - Reuse-if-alive on a STABLE name: repeat clicks re-brief and re-focus the
+//     one live scribe rather than littering a new agent per click.
+//   - The scribe lives in its own eponymous one-member group. executeSpawn is
+//     group-bound (no group-less spawn primitive), and an eponymous group makes
+//     reuse-if-alive an unambiguous name lookup rather than a global
+//     title-selector guess.
+//   - Neutral cwd (the human's home): a scribe edits daemon-side state through
+//     the `tclaude agent` CLI, so it needs no repo checkout.
+
+// scribeGroupDescr is the descr stamped on a scribe's eponymous group so the
+// Groups tab explains what the stray one-member group is.
+const scribeGroupDescr = "Ad-hoc scribe agent — summoned from the dashboard to edit tclaude state by chat (JOH-361)."
+
+// scribeGranter is the audit label for the birth-time / reuse-time permission
+// grants a summon applies, distinct from <human-dashboard> so a forensic query
+// can tell a scribe's auto-grant apart from a hand-typed dashboard grant.
+const scribeGranter = "<scribe-summon>"
+
+// scribeSummonRequest is the wire body of POST /api/scribe and its /v1 twin.
+type scribeSummonRequest struct {
+	// Name is the scribe's stable display name AND the name of its dedicated
+	// one-member group. Reuse-if-alive keys on it.
+	Name string `json:"name"`
+	// Slugs are the permission slugs to grant the scribe at birth (and re-grant
+	// on reuse), e.g. ["templates.manage"]. Each is validated against the slug
+	// registry; an unknown slug is a 400 listing the known slugs.
+	Slugs []string `json:"slugs"`
+	// Brief is the pre-briefing delivered to the scribe's inbox — the concept
+	// pointer + scope anchor the human's chat starts from. Same charset/length
+	// rule as any spawn initial_message.
+	Brief string `json:"brief"`
+}
+
+// scribeOutcome is summonScribe's result: the live scribe's conv-id, whether an
+// existing one was reused, and the open-window handshake (native vs the
+// in-browser terminal fallback), mirroring the spawn/open-window responses.
+type scribeOutcome struct {
+	ConvID    string
+	Reused    bool
+	FocusMode string // "native" | "browser" | ""
+	FocusWS   string // set when FocusMode == "browser"
+}
+
+// handleScribeSummon is the shared /v1 handler. The human (dashboard peer or a
+// human on the socket) always passes; an agent caller must hold groups.spawn —
+// and, because a summon applies birth-time grants, permissions.grant too. That
+// is exactly the bar handleGroupSpawn sets for a birth-time-granted spawn, so
+// no new privilege model is introduced.
+func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	// requirePermission hands back the caller's conv-id: a real agent resolves
+	// to its conv, the human resolves to "".
+	spawnerConvID, ok := requirePermission(w, r, PermGroupsSpawn)
+	if !ok {
+		return
+	}
+
+	var body scribeSummonRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "json", err.Error())
+			return
+		}
+	}
+
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name", "name is required")
+		return
+	}
+	// The name is the scribe's group name (and, when it clears the rename-title
+	// gate, its launch --name). Validate it as a group name up front.
+	if err := validateGroupName(name); err != nil {
+		writeError(w, http.StatusBadRequest, "name", "invalid scribe name: "+err.Error())
+		return
+	}
+
+	// Slugs → birth-time grants. Reuse the spawn-boundary normaliser so an
+	// unknown slug is rejected with the same actionable "known slugs: …" list
+	// the spawn endpoint gives.
+	in := make(map[string]string, len(body.Slugs))
+	for _, s := range body.Slugs {
+		if s = strings.TrimSpace(s); s != "" {
+			in[s] = db.PermEffectGrant
+		}
+	}
+	overrides, povErr := normalizeSpawnPermissionOverrides(in)
+	if povErr != "" {
+		writeError(w, http.StatusBadRequest, "slugs", povErr)
+		return
+	}
+	if len(overrides) == 0 {
+		writeError(w, http.StatusBadRequest, "slugs", "at least one permission slug is required to summon a scribe")
+		return
+	}
+
+	// A summon applies birth-time grants, so an agent caller (not the human)
+	// needs permissions.grant on top of groups.spawn — the same guard
+	// handleGroupSpawn puts on a spawn carrying permission_overrides.
+	if spawnerConvID != "" && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
+		writeError(w, http.StatusForbidden, "permission",
+			"granting a scribe birth-time permissions requires the "+PermPermissionsGrant+" permission")
+		return
+	}
+
+	brief := strings.TrimSpace(body.Brief)
+	if brief == "" {
+		writeError(w, http.StatusBadRequest, "brief", "brief is required")
+		return
+	}
+	// The brief rides the inbox as an agent_messages row, so it must clear the
+	// same charset/length rule every initial_message does.
+	if !isValidInitialMessage(brief) {
+		writeError(w, http.StatusBadRequest, "brief",
+			fmt.Sprintf("brief must be at most %d characters; newlines and tabs are allowed "+
+				"(it is delivered to the scribe's inbox, not typed into its pane), but other "+
+				"control characters are not", agent.MaxInitialMessageBytes))
+		return
+	}
+
+	out, fail := summonScribe(name, overrides, brief)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+
+	resp := map[string]any{
+		"name":    name,
+		"conv_id": out.ConvID,
+		"reused":  out.Reused,
+	}
+	if aid := peerAgentID(out.ConvID); aid != "" {
+		resp["agent_id"] = aid
+	}
+	// FocusMode is "browser" when no native window could be popped (headless
+	// agentd / no terminal emulator) — the dashboard points at the in-browser
+	// terminal instead of claiming success, the same handshake spawn uses.
+	if out.FocusMode != "" {
+		resp["focus_mode"] = out.FocusMode
+		if out.FocusMode == "browser" {
+			resp["focus_ws"] = out.FocusWS
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleDashboardScribeAPI is the cookie-auth /api twin: the dashboard cookie +
+// Origin pin is the human-consent layer, so it stamps a synthetic human peer
+// and delegates to the shared handler (same pattern as dashboardSpawnInGroup).
+func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	handleScribeSummon(w, asDashboardHumanPeer(r))
+}
+
+// summonScribe is the reusable core: ensure the scribe's eponymous group,
+// reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one with the
+// birth-time grants and auto-focus. Neutral cwd = the human's home.
+func summonScribe(name string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory: " + err.Error()}
+	}
+
+	g, fail := ensureScribeGroup(name)
+	if fail != nil {
+		return nil, fail
+	}
+
+	// Reuse-if-alive: a repeat click on a live scribe re-grants the slugs
+	// (idempotent — covers a widened slug set), re-briefs it (a repeat click may
+	// carry a fresh scope: library-wide vs one specific template), and just
+	// re-opens its window.
+	if convID := aliveScribeConv(g); convID != "" {
+		grantScribeSlugs(convID, overrides)
+		rebriefScribe(convID, brief)
+		out := &scribeOutcome{ConvID: convID, Reused: true}
+		openScribeWindow(convID, out)
+		return out, nil
+	}
+
+	// Fresh summon. executeSpawn enrolls the scribe into its group, applies the
+	// birth-time grants (enrollSpawnedConv), delivers the brief to its inbox and
+	// — AutoFocus — opens its terminal window. Synchronous (Async left false) so
+	// the conv-id materialises for the grants + the response.
+	p := spawnParams{
+		Name:                name,
+		Cwd:                 home,
+		InitialMessage:      brief,
+		AutoFocus:           true,
+		PermissionOverrides: overrides,
+	}
+	outcome, spawnFail := executeSpawn(g, p)
+	if spawnFail != nil {
+		return nil, spawnFail
+	}
+	out := &scribeOutcome{ConvID: outcome.ConvID, FocusMode: outcome.FocusMode}
+	if outcome.FocusMode == "browser" {
+		out.FocusWS = spawnFocusWSPath(outcome.Label)
+	}
+	return out, nil
+}
+
+// ensureScribeGroup returns the scribe's eponymous group, creating it on first
+// summon. The group is a plain container for the one scribe member.
+func ensureScribeGroup(name string) (*db.AgentGroup, *spawnFailure) {
+	g, err := db.GetAgentGroupByName(name)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "group", "look up scribe group: " + err.Error()}
+	}
+	if g != nil {
+		return g, nil
+	}
+	id, err := db.CreateAgentGroup(name, scribeGroupDescr)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "group", "create scribe group: " + err.Error()}
+	}
+	g, err = db.GetAgentGroupByID(id)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "group", "reload scribe group: " + err.Error()}
+	}
+	if g == nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "group", "scribe group vanished after create"}
+	}
+	return g, nil
+}
+
+// aliveScribeConv returns the conv-id of a live member of the scribe group, or
+// "" if none is up. The group holds a single scribe, so the first alive member
+// is the scribe.
+func aliveScribeConv(g *db.AgentGroup) string {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		slog.Warn("scribe: list group members failed", "group", g.Name, "error", err)
+		return ""
+	}
+	for _, m := range members {
+		if pickAliveSession(m.ConvID) != nil {
+			return m.ConvID
+		}
+	}
+	return ""
+}
+
+// grantScribeSlugs (re)applies the requested slug grants to a reused scribe —
+// best-effort, so a single grant failure doesn't sink the whole summon.
+func grantScribeSlugs(convID string, overrides map[string]string) {
+	for slug, effect := range overrides {
+		if err := db.SetAgentPermissionOverride(convID, slug, effect, scribeGranter); err != nil {
+			slog.Warn("scribe: re-grant slug failed", "conv", short8(convID), "slug", slug, "error", err)
+		}
+	}
+}
+
+// rebriefScribe delivers a fresh brief to a reused scribe's inbox and nudges it
+// if it's live — the same universal-inbox transport a self-reincarnate request
+// rides. A daemon-originated system message (FromConv empty, group_id 0).
+func rebriefScribe(convID, brief string) {
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID:      0,
+		FromConv:     "",
+		ToConv:       convID,
+		Subject:      "New editing task",
+		Body:         brief,
+		ToRecipients: []string{convID},
+	})
+	if err != nil {
+		slog.Warn("scribe: re-brief insert failed", "conv", short8(convID), "error", err)
+		return
+	}
+	nudgeIfAlive(id, convID)
+}
+
+// openScribeWindow opens a terminal attached to the scribe's live session,
+// recording the native/browser outcome onto out — the same native-first /
+// in-browser-fallback the open-window row action does.
+func openScribeWindow(convID string, out *scribeOutcome) {
+	sess := pickAliveSession(convID)
+	if sess == nil {
+		return // caller just confirmed it was alive; a race here is harmless
+	}
+	if err := openTerminal(openAttachCmd(sess.ID)); err != nil {
+		out.FocusMode = "browser"
+		out.FocusWS = "/api/open-window-ws/" + url.PathEscape(convID)
+		return
+	}
+	out.FocusMode = "native"
+}
