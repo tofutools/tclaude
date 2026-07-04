@@ -181,11 +181,15 @@ working directory for agents spawned into the group), **📋 startup-context**
 member-cap** chip (`agent_groups.max_members` — a spawn that would exceed it
 is refused; the chip turns orange when the group is full).
 
-The tab's filter bar carries **+ new group**, **⤒ import** (recreate a
-group from an exported `.zip`), **⎘ from template** (spawn a whole team from
-a [template](#templates)), and a **🧹 clean up** button (the all-categories
-cleanup tool — see [Cleanup](#cleanup)). Toggles surface three **virtual
-groups** below the real ones: **Ungrouped** (online agents in no group),
+The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
+less-frequent group-wide actions: **⤒ import** (recreate a group from an
+exported `.zip`), **🧹 clean up** (the all-categories cleanup tool — see
+[Cleanup](#cleanup)), **🗑 delete retired…**, **⎘ from template** (spawn a whole
+team from a [template](#templates)), **⧉ templates…** and **⧉ roles…** (the
+[template](#templates) and [role-library](#roles-library) overlays), **⧉
+profiles…** (spawn profiles), and **🔗 links…**. Toggles surface three
+**virtual groups** below the real ones: **Ungrouped** (online agents in no
+group),
 **Retired** (agents demoted to plain conversations, each with a
 **reinstate** button), and **Conversations** (recent non-agent
 conversations, each with a **promote** button). Dragging a row onto or off
@@ -218,19 +222,44 @@ armed.
 
 ### Templates
 
-Reusable **group blueprints**. A template is a recipe for a whole team — a
-group name, a shared default context, and an ordered list of agent specs
-(name, role, description, task brief, owner flag, permission slugs). Unlike a
-group [export](#groups), a template holds no conv-ids; it describes a group
-that does not exist yet.
+Reusable **group blueprints**. A template describes a whole team that does not
+exist yet — unlike a group [export](#groups) it holds no conv-ids. Open the
+templates overlay from the Groups tab's filter-bar cog (**⚙ → ⧉ templates…**).
 
-**+ new template** defines one from scratch; **⤓ from a group** snapshots an
-existing group's structure into a new template. Instantiating a template
-creates a fresh group and spawns its entire agent team in one action.
+**A minimal template is just a name, a roster, and per-agent briefs** — that
+alone instantiates a working group. Everything below is an *optional advanced
+layer* you add only when you want it, so don't read the list as a wall of
+required concepts. A full template can carry:
 
-**⇪ export** (per template) downloads it as a portable `<name>.task-force.json`
-file, and **⤒ import** reads one back — see
-[Sharing task forces](#sharing-task-forces-as-a-file) below.
+- a **roster** of agent specs — name, role label, description, task brief,
+  owner flag, and permission slugs;
+- a **role reference** per agent (`role_ref`) into the [roles library](#roles-library),
+  so the agent inherits that role's canonical brief and launch defaults beneath
+  its own fields;
+- **per-agent launch tuning** — a spawn-profile reference plus inline
+  harness / model / effort / sandbox / approval overrides that win over it;
+- an ordered, routed **work pattern** — briefing messages delivered, in order,
+  once the whole roster has spawned (each routed to one agent or `all`);
+- an advisory **process** — an ordered list of phases (the quest plan), tracked
+  at runtime but never enforced (see [Steering a force](#steering-a-force));
+- staged-spawn **waves** — agents tagged with a wave number spawn in ascending
+  order, each wave holding until the previous one has come up and gone idle;
+- **rhythms** — recurring nudges that become ordinary group cron jobs when the
+  force is deployed (see [The rhythm model](#the-rhythm-model)).
+
+Per-card actions: **🚀 deploy** (against a mission — see
+[Task forces](#task-forces)), **⎘ instantiate** (create a group with no
+mission), **edit**, **⇪ export** (a portable `<name>.task-force.json` file), and
+**delete**. Each card also lists the **🚀 forces** already deployed from that
+template. The overlay's own buttons are **+ new template** (from scratch),
+**⤓ from a group** (snapshot an existing group's structure), **⤒ import** (read
+an exported file back — see [Sharing task forces](#sharing-task-forces-as-a-file)),
+and **⭐ starters** (see [Starter task forces](#starter-task-forces)).
+
+> In 🧙 **wizard mode** these labels re-theme — a template is a "summoning
+> circle", **🚀 deploy** reads **🧙 summon**, **⭐ starters** reads **⭐ conjure
+> a preset party**, and so on. The affordances are identical; only the copy
+> changes.
 
 #### Sharing task forces as a file
 
@@ -308,6 +337,31 @@ tclaude agent templates starters install dev-squad --as my-squad  # install a fr
 tclaude agent task-force deploy dev-squad --mission "…"  # then deploy it against a mission
 ```
 
+### Roles library
+
+Open it from the Groups tab's filter-bar cog (**⚙ → ⧉ roles…**; **⧉ classes…**
+in wizard mode). A **role** is a named, reusable bundle of defaults a template
+roster agent can point at: a canonical **role-brief** (folded into that agent's
+startup context under a `## Role` block), a default **launch shape**
+(spawn-profile reference, or inline harness / model / effort / sandbox /
+approval), and a default **permission set**. A template agent references a role
+by name in its `role_ref` field; the role fills whatever the agent leaves blank
+and the agent's own fields always override it. This is distinct from the
+freeform `role` **label** on an agent (e.g. `tech-lead`), which is just
+display / routing text and carries no defaults.
+
+tclaude ships six **seed roles** — `po`, `lead`, `dev`, `designer`, `reviewer`,
+and `tester` — as short, generic starting points. Their briefs are sensible
+defaults, not policy, and their launch fields and permissions are deliberately
+left blank (what a role launches on or is granted is your call). The seeds are
+**self-healing**: they are re-checked on every daemon start, so a seed you
+delete reappears on the next open — but **your edits are sacred**, never
+overwritten by the re-seed. Edit a seed to taste, or add your own roles, and
+they stick. (The name `all` is reserved — it is the work-pattern broadcast
+target — so you cannot create a role called `all`.) A role a template
+references but which no longer exists simply resolves to nothing at deploy: that
+agent falls back to its own inline overrides.
+
 ### Cron
 
 The scheduled-job table — name, owner, target, interval, last run, status pill,
@@ -381,6 +435,117 @@ default windows keep their **current size** and are only repositioned; tick
 best-effort per platform (macOS AppleScript, Linux xdotool/kdotool, WSL
 PowerShell); an unsupported desktop simply leaves the windows as-is. A single
 focused window is never tiled.
+
+## Task forces
+
+A **task force** is a whole agent team deployed from a [template](#templates)
+against a **mission** — a topic, problem, or epic. The journey runs in order:
+pick a template → deploy it against a mission → watch and steer the live force
+on its group → wind it down when the work is done. (The
+[CLI](agent.md#task-forces-cli) drives the same journey headlessly.)
+
+### Deploying a force
+
+A template card's **🚀 deploy** button opens the deploy modal: pick the
+template, state the **mission** (free text, or a Linear epic / issue link — it
+is stored verbatim, tclaude pulls no title), and optionally set a working
+directory and a **worktree** branch. The mission is folded into the new group's
+shared context under a `## Mission` heading, so every spawned agent's startup
+briefing carries it.
+
+The **group name** is derived from the mission (slugged and made unique) and
+pre-fills the field as you type; a bare-URL mission has no words to slug, so it
+falls back to the template name. Type over the field to name the group
+yourself. The group name is also the prefix for every agent — template agent
+`PO` lands as `<group>-PO` (the modal previews the final names). The optional
+**worktree** branch lands the whole force on its own branch in a git worktree,
+which becomes the force's working directory.
+
+Deploying does several things in one action:
+
+- creates the fresh group, recording the mission and the source template on it
+  (this is what marks the group a *deployed force*);
+- spawns **wave 0** synchronously, so the modal returns with real per-agent
+  outcomes, and **defers** any higher waves to a background runner that spawns
+  each as the previous wave settles (goes idle) or a max-wait backstop fires;
+- **materializes the template's rhythms** as ordinary group cron jobs, armed
+  the moment the team comes up (see [The rhythm model](#the-rhythm-model));
+- **seeds the process** state at the first phase, if the template has one;
+- delivers the template's **work pattern** — the ordered briefing messages —
+  once the whole roster has spawned (immediately for a single-wave force, after
+  the final wave settles for a staged one).
+
+**⎘ instantiate** on the card is the same machinery without the mission framing
+(no `## Mission`, no derived name — you name the group). Deploy is the
+mission-framed twin; both spawn the whole team.
+
+### The force block
+
+Expand a deployed force's group on the Groups tab and its body leads with a
+**force block** — a live glance at the deployment:
+
+- the **mission** (labelled 🎯 Mission, or 🗺 Quest in wizard mode) and the
+  **source template** it was deployed from. A force deployed with no mission
+  reads "Deployed from template *X* — no mission recorded" instead.
+- a **phase line** (◆ phase *N/M: name*) with a **history (*N*)** affordance;
+  hover it for the transition log. Absent for a force with no process.
+- a per-role **liveness rollup** — members grouped by role, each a pill showing
+  a status glyph (● working, ○ idle, ✕ dead) and its context-window pressure
+  (e.g. `62%`) when the snapshot carries it.
+- a **⚠ stalling** hint next to the Roles heading. It fires **only when every
+  live member is idle** — a conservative "nothing appears to be in flight"
+  glance. A fully-offline force is dormant, not stalling, so the hint stays off
+  when no member is live.
+- a **↻ re-brief** button (see below).
+
+The group's **summary line** also carries a **◆ phase** chip (with a **▸
+advance** button when a next phase exists) and a **🌊 wave *N/M* pending** chip
+while later waves are still deferred. Advancing lives on the summary chip and
+retiring lives in the group's ⚙ cog, so the force block does not duplicate them.
+
+### Steering a force
+
+- **Advance the process.** The **▸ advance** button on the phase chip moves the
+  group to the next phase, records the transition, and nudges the roles active
+  in the phase it enters. The process is **advisory** — tracked and surfaced,
+  never enforced. Advancing is gated server-side (the human always, group owners
+  of the group, otherwise the `process.advance` slug); a non-permitted click
+  just gets a 403 toast.
+- **Re-brief.** **↻ re-brief** re-delivers the source template's **current**
+  work pattern to the force's live members, with the group's recorded mission
+  interpolated (`{{mission}}` / `{{task}}`). Reach for it when the roster has
+  drifted or the original briefing has scrolled out of context. It is gated on
+  the human, group owners, or the **`templates.instantiate`** slug. A force with
+  no source template, a deleted template, or a template with no work pattern is
+  refused cleanly (nothing is sent).
+
+### The rhythm model
+
+A template's rhythms are a **deploy-time snapshot**. At deploy each rhythm is
+materialized into an ordinary group cron job (named `<group>-<rhythm>`) and from
+that point on the two are independent:
+
+- **editing the template later does *not* change already-deployed jobs**, and
+- **re-brief does *not* re-sync them** — re-brief only re-delivers the work
+  pattern, never the rhythms.
+
+To change a running force's cadence, edit its jobs directly in the **Cron** tab.
+This is deliberate: a deployed force's live cron schedule is its own state, not a
+mirror of the blueprint it came from.
+
+### Winding a force down
+
+Two verbs, with different blast radii:
+
+- **Retire** (per-member status dot / the group ⚙ cog, or `groups retire`) is
+  **non-destructive**: it demotes agents to plain conversations. The group and
+  its history survive, and a retired conversation can be reinstated.
+- **Delete group** (the group ⚙ cog, or `groups rm`) is the **full sweep**: it
+  removes the group and, in one transaction, its advisory **process state** and
+  transition log, its staged-spawn **wave choreography**, and its group-target
+  **cron jobs** (including the template-seeded rhythms). What each member *said*
+  to the others is preserved as direct messages, and cron jobs that merely
+  routed *through* the group (conv-targeted) still deliver and are left alone.
 
 ## Spawning agents from the dashboard
 
