@@ -2636,10 +2636,12 @@ details.group-virtual .group-name { color: #8aa0b8; }
 }
 .filter-bar .view-btn:hover { color: #d4d4d4; border-color: #58a6ff; }
 .filter-bar .view-btn[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
+/* Subtle grey count — matches the Terminals tab's .tab-badge.count so a
+   deviation-from-default reads as a quiet informational number, not an alert. */
 .filter-bar .view-badge {
   display: inline-block; margin-left: 5px; padding: 0 5px;
-  border-radius: 7px; background: #1f6feb; color: #fff;
-  font-size: 10px; font-weight: bold; line-height: 13px; vertical-align: middle;
+  border-radius: 7px; background: #21262d; color: #8b949e;
+  font-size: 10px; font-weight: 500; line-height: 13px; vertical-align: middle;
 }
 .view-menu {
   display: none; position: absolute; top: 100%; left: 0; z-index: 50;
@@ -8360,7 +8362,9 @@ body.wizard .filter-bar label.filter-toggle select {
 body.wizard .filter-bar .view-btn { color: #b39ddb; }
 body.wizard .filter-bar .view-btn:hover,
 body.wizard .filter-bar .view-btn[aria-expanded="true"] { color: #f3e6c0; border-color: #a97bd6; }
-body.wizard .filter-bar .view-badge { background: #d9b45a; color: #1e1640; }
+/* Muted amethyst-grey rather than bright gold — the wizard echo of the quiet
+   grey terminals count, so the deviation number stays subtle in this skin too. */
+body.wizard .filter-bar .view-badge { background: #2a2140; color: #9a86c4; }
 body.wizard .view-menu {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border-color: rgba(122, 93, 176, 0.5);
