@@ -23,6 +23,7 @@ import {
 import { renderTemplatesTab } from './modal-templates.js';
 import { renderPluginsTab, renderPluginsBadge } from './plugins.js';
 import { morphInto } from './morph.js';
+import { renderDock } from './dock.js';
 // renameEditing (row-actions.js) and dndDragActive (dnd.js) are owned by
 // their feature modules; refreshSuspended() only reads them. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
@@ -489,6 +490,10 @@ export async function refresh(opts = {}) {
     renderGroupsTab();
     renderGlobalActivity();
     renderTemplatesTab();
+    // The right-side palette dock (JOH-374) rides the poll like the rest —
+    // keyed morphInto so its selection/scroll survive and a manager edit
+    // shows up on the next tick.
+    renderDock();
     renderJobsTab();
     renderSudoTab();
     renderLinksTab();

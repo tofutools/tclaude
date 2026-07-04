@@ -1046,6 +1046,30 @@
     <div id="vegas-leaderboard" class="vegas-leaderboard"></div>
   </section>
 </main>
+<!-- Retractable right-side PALETTE DOCK (JOH-374). Lists the spawn PROFILES,
+     group TEMPLATES (summoning circles) and ROLES (classes) as future
+     drag SOURCES — this ticket is the panel shell; drag itself lands in the
+     follow-up tickets. The shell + edge toggle are STATIC so they survive
+     the 2s morph; js/dock.js only reconciles #dock-body's inner sections
+     (keyed morphInto). Open/collapse is body.dock-open, persisted via
+     dashPrefs (tclaude.dash.dock.open) so CSS reflows <main> to reclaim the
+     space when collapsed rather than overlaying dead area. NB: named `dock`,
+     not `palette`, because js/palette.js is the Ctrl/Cmd-K command palette. -->
+<aside id="agent-dock" class="dock" aria-label="Palette of profiles, templates and roles">
+  <!-- Edge toggle — a chevron tab on the dock's left edge, pinned to the
+       viewport so it stays reachable in both states. Its glyph is CSS-rotated
+       per open state; dock.js keeps its title/aria in sync. -->
+  <button id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
+    <span class="dock-toggle-chevron" aria-hidden="true">›</span>
+  </button>
+  <div class="dock-inner">
+    <div class="dock-head">
+      <span class="dock-head-title"><span class="tpl-word-regular">🧰 Palette</span><span class="tpl-word-wizard">🧰 Grimoire</span></span>
+    </div>
+    <!-- dock.js renders the three keyed sections here off the live snapshot. -->
+    <div id="dock-body" class="dock-body"></div>
+  </div>
+</aside>
 <!-- Footer bar — the dashboard's base URL + last-refresh heartbeat (#meta),
      moved out of the header so they stop crowding the title row's prime
      horizontal space. It's position:fixed to the viewport bottom so the

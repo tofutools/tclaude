@@ -546,6 +546,14 @@ type snapshotPayload struct {
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
+	// Profiles + Roles are the spawn-profile and role-library registries,
+	// carried on the poll so the retractable right-side palette dock
+	// (JOH-374) renders them off the live snapshot like the rest of the
+	// dashboard — no separate fetch, so a manager edit shows up on the next
+	// tick. Both are the same wire shapes their /api/{spawn-profiles,roles}
+	// endpoints serve. Empty slices (not nil) so JS .map() is safe.
+	Profiles []spawnProfileJSON `json:"profiles"`
+	Roles    []roleJSON         `json:"roles"`
 	// Messages are the human-facing notifications agents have sent via
 	// `tclaude agent notify-human`, newest first — the Messages tab.
 	// MessagesUnread is the count of unread ones, driving the tab badge.
@@ -1716,6 +1724,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = !hasRealCost && showOnSub
 	out.Templates = collectTemplatesSnapshot()
+	out.Profiles = collectProfilesSnapshot()
+	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 	var pluginsErr error
 	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
