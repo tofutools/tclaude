@@ -2565,6 +2565,26 @@ details.group-virtual .group-name { color: #8aa0b8; }
 #clone-agent-modal .cron-create-modal {
   resize: both; overflow: auto;
 }
+/* The summoning-circle template editor is user-resizable too (JOH-357), the
+   same escape hatch as spawn/clone above: many familiar rows + a role brief
+   make the fixed dialog feel cramped. resize needs overflow non-visible on
+   both axes, so this overrides the .template-editor-modal overflow-y:auto
+   with overflow:auto. max-height:90vh (from .template-editor-modal) caps the
+   height; max-width here raises the horizontal drag ceiling to match spawn's
+   min(1100px,…) — width:640 (base .cron-create-modal) still caps the *used*
+   width, so a never-resized editor renders exactly as today; the raised cap
+   only becomes reachable once the user drags. Wizard chrome (the arcane
+   gradient/border/box-shadow re-skin below) only recolors, never touches
+   overflow/resize/max-*, so the grip works identically in both skins. The
+   dragged size persists per modal (makeModalResizable → dashPrefs key
+   tclaude.dash.modalSize.template-editor); JS pins the minimum to the
+   dialog's natural at-rest size each open (refreshModalMinSize). Scoped to
+   the id, not the shared .template-editor-modal class, so the profile/role
+   editor cards that also carry that class stay unaffected. */
+#template-editor-modal .cron-create-modal {
+  resize: both; overflow: auto;
+  max-width: min(1100px, calc(100vw - 32px));
+}
 /* Theme the scroll container's scrollbar to the dark dialog chrome. Without
    this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
    to the browser's default light, classic scrollbar — the same white-default

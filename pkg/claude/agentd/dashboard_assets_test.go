@@ -239,13 +239,41 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
 		"function makeModalResizable(",                                  // helper exists (helpers.js)
-		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
-		"makeModalResizable($('#clone-agent-modal .cron-create-modal')", // clone modal wires it
-		"tclaude.dash.modalSize.agent-spawn",                            // per-modal pref key
+		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')",     // spawn modal wires it
+		"makeModalResizable($('#clone-agent-modal .cron-create-modal')",     // clone modal wires it
+		"makeModalResizable($('#template-editor-modal .cron-create-modal')", // template editor wires it (JOH-357)
+		"tclaude.dash.modalSize.agent-spawn",                                // per-modal pref key
+		"tclaude.dash.modalSize.template-editor",                            // template editor pref key (JOH-357)
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — modal resize persistence broken", needle)
 		}
+	}
+}
+
+// TestDashboardCSS_TemplateEditorResizable guards the paired CSS half of the
+// resizable summoning-circle editor (JOH-357): the id-scoped card must carry
+// `resize: both` with non-visible overflow on both axes (else the grip is
+// inert), and a raised max-width drag ceiling. Scoped to the #id, NOT the
+// shared .template-editor-modal class, so the profile/role editor cards that
+// also carry that class stay unaffected. A refactor dropping the override (or
+// widening it to the shared class) regresses this.
+func TestDashboardCSS_TemplateEditorResizable(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	// Pin the whole rule body verbatim: id-scoped card, resize on both axes with
+	// non-visible overflow, and the raised max-width drag ceiling (min(1100px,…)
+	// also appears on the base .cron-create-modal, so only the full id-scoped
+	// block proves it's this editor's rule).
+	needle := "#template-editor-modal .cron-create-modal {\n" +
+		"  resize: both; overflow: auto;\n" +
+		"  max-width: min(1100px, calc(100vw - 32px));\n" +
+		"}"
+	if !strings.Contains(css, needle) {
+		t.Errorf("dashboard.css missing %q — template editor resize regressed", needle)
 	}
 }
 

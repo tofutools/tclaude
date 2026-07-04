@@ -4,7 +4,7 @@
 // from-group modals, the group-import modal, and the group-context
 // modal. Extracted from dashboard.js in the Stage 2 module split.
 
-import { $, $$, esc } from './helpers.js';
+import { $, $$, esc, makeModalResizable } from './helpers.js';
 import { morphInto } from './morph.js';
 import { dashPrefs } from './prefs.js';
 import { recordGroupInteraction } from './last-group.js';
@@ -1444,6 +1444,11 @@ function bindTemplatesUI() {
     renderEditorRhythms();
   });
   bindBackdropDiscard('template-editor-modal', closeTemplateEditor);
+  // The summoning-circle editor is user-resizable, exactly like the spawn /
+  // clone dialogs (JOH-357): drag the bottom-right grip on both axes, size
+  // persists per modal via dashPrefs. See makeModalResizable + the paired
+  // #template-editor-modal .cron-create-modal { resize } rule in dashboard.css.
+  makeModalResizable($('#template-editor-modal .cron-create-modal'), 'tclaude.dash.modalSize.template-editor');
 
   // Instantiate modal.
   $('#template-instantiate-cancel').addEventListener('click', closeInstantiateModal);
