@@ -62,3 +62,36 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 		t.Errorf("hideDndTrash() (at %d) must be called inside the dragend handler (between %d and %d) so a drag-end always hides the bin", hide, dragend, dragover)
 	}
 }
+
+// TestDashboardJS_DragToRetireBinWizardSkin guards the 🧙 wizard-mode
+// re-skin of the bin: retiring an agent is "banishing a familiar", so the
+// trashcan becomes a swirling banishment portal with a "Banish" label. Like
+// the other per-theme label swaps (Summon / Awaken / Slumber), both voices
+// are always emitted and CSS picks one per theme — so a wizard-mode user
+// must never see the bare "Retire"/trashcan chrome.
+func TestDashboardJS_DragToRetireBinWizardSkin(t *testing.T) {
+	for _, c := range []struct{ needle, why string }{
+		// dashboard.html: both label voices emitted + the portal glyph.
+		{`<span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span>`,
+			"the bin emits both the regular (Retire) and wizard (Banish) label voices"},
+		{`class="dnd-trash-glyph-wizard"`,
+			"the bin carries the wizard-mode portal glyph element"},
+		// dashboard.css: the wizard theme swaps the label + glyph and skins the box.
+		{`body.wizard .dnd-trash-label-regular { display: none; }`,
+			"wizard mode hides the regular Retire label"},
+		{`body.wizard .dnd-trash-label-wizard { display: inline; }`,
+			"wizard mode shows the Banish label"},
+		{`body.wizard .dnd-trash-icon { display: none; }`,
+			"wizard mode hides the mundane trashcan SVG"},
+		{`body.wizard .dnd-trash-glyph-wizard {`,
+			"wizard mode reveals + styles the banishment portal glyph"},
+		{`body.wizard #dnd-trash {`,
+			"wizard mode skins the bin box (arcane chrome)"},
+		{`body.wizard #dnd-trash.dnd-drop-over {`,
+			"wizard mode skins the armed (drop-over) bin (crimson flare)"},
+	} {
+		if !strings.Contains(dashboardAssets, c.needle) {
+			t.Errorf("dashboard assets missing %q — %s", c.needle, c.why)
+		}
+	}
+}
