@@ -44,8 +44,17 @@ type NewParams struct {
 	// "claude"). "codex" launches OpenAI Codex CLI in the tmux pane via
 	// the codex Spawner. The chosen harness's ModelCatalog validates
 	// --model/--effort and its Spawner builds the launch command, so the
-	// rest of runNew stays harness-agnostic.
-	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex"`
+	// rest of runNew stays harness-agnostic. The special value "shell"
+	// (ShellHarnessName) is NOT a registered harness — it starts a plain,
+	// ephemeral interactive shell instead (no conversation, no hooks, no
+	// model/sandbox/approval), handled by runNewShell before any harness
+	// resolution happens. See shell.go.
+	Harness string `long:"harness" optional:"true" help:"Coding harness to launch: claude (default) | codex | shell (a plain, ephemeral shell — no conversation)"`
+
+	// Shell is shorthand for --harness shell: it sets Harness to
+	// ShellHarnessName in runNew before any harness resolution happens.
+	// Mutually exclusive with an explicit --harness naming anything else.
+	Shell bool `long:"shell" short:"s" help:"Start a plain interactive shell instead of a coding harness (shorthand for --harness shell)"`
 
 	// Sandbox selects a harness's launch containment. On a direct `session new`
 	// it is opt-in: unset emits no flag, so each harness uses its own config
@@ -214,6 +223,23 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	// "shell" is a sentinel, not a registered harness (see shell.go) — branch
+	// before any harness resolution so a plain shell never touches the
+	// coding-harness machinery below (model/effort validation, sandbox,
+	// approval, hooks, --join-group, …). --shell is shorthand for
+	// --harness shell; an explicit --harness naming anything else alongside
+	// it is a conflicting request rather than something to silently resolve.
+	params.Harness = strings.TrimSpace(params.Harness)
+	if params.Shell {
+		if params.Harness != "" && params.Harness != ShellHarnessName {
+			return fmt.Errorf("--shell conflicts with --harness %s", params.Harness)
+		}
+		params.Harness = ShellHarnessName
+	}
+	if params.Harness == ShellHarnessName {
+		return runNewShell(params)
+	}
+
 	// The spawn command, model/effort validation and resume form all come
 	// from the selected harness behind the seam (pkg/claude/harness).
 	// --harness picks it (default "claude"); an unknown value errors here
@@ -402,19 +428,9 @@ func runNew(params *NewParams) error {
 	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
 	// Determine working directory
-	cwd := params.Dir
-	if cwd == "" {
-		var err error
-		cwd, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
-		}
-	}
-
-	// Make path absolute
-	if cwd[0] != '/' {
-		wd, _ := os.Getwd()
-		cwd = wd + "/" + cwd
+	cwd, err := resolveSessionDir(params.Dir)
+	if err != nil {
+		return err
 	}
 
 	// Set up signal handling for clean shutdown
@@ -691,6 +707,26 @@ func runNew(params *NewParams) error {
 
 // The CC launch-command builder lives behind the harness seam now —
 // see claudeSpawner.BuildCommand in pkg/claude/harness/claude.go.
+
+// resolveSessionDir resolves the --dir/-C value to an absolute working
+// directory: the current directory when unset, else dir made absolute
+// against the current directory. Shared by runNew and runNewShell.
+func resolveSessionDir(dir string) (string, error) {
+	cwd := dir
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		return cwd, nil
+	}
+	if cwd[0] != '/' {
+		wd, _ := os.Getwd()
+		cwd = wd + "/" + cwd
+	}
+	return cwd, nil
+}
 
 // resolveResumeConv resolves a --resume id prefix to a full conversation
 // id + its project path, using the harness's own conversation source:

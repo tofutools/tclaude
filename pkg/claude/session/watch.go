@@ -51,6 +51,7 @@ var filterOptions = []struct {
 	{"all", "All (no filter)", ""},
 	{StatusIdle, "Idle", StatusIdle},
 	{StatusWorking, "Working", StatusWorking},
+	{StatusRunning, "Running", StatusRunning},
 	{StatusAwaitingPermission, "Awaiting permission", StatusAwaitingPermission},
 	{StatusAwaitingInput, "Awaiting input", StatusAwaitingInput},
 	{StatusError, "Error", StatusError},
@@ -768,7 +769,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dirSuggestions = nil
 			m.labelInput = newLabelInput()
 			m.nameInput = newNameInput()
-			m.harnessOptions = spawnableHarnessNames()
+			// "shell" is appended after the registered harnesses: it is a
+			// sentinel handled by runNewShell, not a pkg/claude/harness
+			// registry entry (see shell.go), so it doesn't come from
+			// spawnableHarnessNames().
+			m.harnessOptions = append(spawnableHarnessNames(), ShellHarnessName)
 			m.harnessIdx = 0
 			for i, name := range m.harnessOptions {
 				if name == harness.DefaultName {
@@ -1104,6 +1109,8 @@ func getRowStyle(status string) lipgloss.Style {
 	case StatusMainAgentIdle:
 		return workingStyle
 	case StatusWorking:
+		return workingStyle
+	case StatusRunning:
 		return workingStyle
 	case StatusAwaitingPermission, StatusAwaitingInput, StatusError:
 		return needsInput

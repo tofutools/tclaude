@@ -18,6 +18,14 @@ conversations, which in-pane commands it understands).
     path; the Codex integration is usable end-to-end but newer. File issues if
     something behaves differently between the two.
 
+!!! note "`--harness shell` is not a harness"
+    `tclaude session new --harness shell` starts a plain, ephemeral
+    interactive shell — no conversation, no hooks. It's handled entirely
+    inside the `session` package and is deliberately **not** registered
+    here: it won't show up in `tclaude setup --harness`, `agent spawn
+    --harness`, group spawn templates, or `conv ls`, none of which apply to
+    a session with no conversation. See [Shell sessions](sessions.md#shell-sessions).
+
 ## Choosing a harness
 
 Every place that launches a session takes a `--harness` flag. It defaults to

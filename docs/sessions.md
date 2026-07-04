@@ -35,6 +35,42 @@ tclaude session new -d
 | `-C, --dir <path>` | Directory to start the session in                       |
 | `--resume <id>`    | Resume an existing conversation                          |
 | `--label <name>`   | Custom label for the session                             |
+| `--harness <name>` | Coding harness to launch: `claude` (default) \| `codex` \| `shell` |
+| `-s, --shell`      | Start a plain shell instead of a coding harness (shorthand for `--harness shell`) |
+
+### Shell sessions
+
+`--harness shell` (or its shorthand, `-s`/`--shell`) starts a plain
+interactive shell — your `$SHELL` (falling back to `/bin/sh`) — in a tmux
+session instead of a coding harness. It gets the same detach/reattach,
+`session ls`/watch visibility, and attach/kill as any other session, but it
+is **ephemeral**: there is no conversation, no hooks, and none of the
+model/sandbox/approval/rename/compact machinery a coding-harness session
+carries.
+
+```bash
+# Start a plain shell in the current directory
+tclaude session new --shell
+
+# In a specific directory, with a label
+tclaude session new --shell -C /path/to/project --label scratch
+```
+
+`--shell` and `--harness shell` are interchangeable; combining `--shell` with
+an explicit `--harness` naming anything else (e.g. `--shell --harness codex`)
+is an error rather than silently picking one.
+
+Only `-C/--dir`, `--label`, and `-d/--detached` apply. Every other `session
+new` flag (`--resume`, `--model`, `--effort`, `--sandbox`,
+`--ask-for-approval`, `--auto-review`, `--trust-dir`, `--remote-control`,
+`--join-group`, `--name`, `--session-id`, post-`--` passthrough args, …) is
+coding-harness-only and errors out if set alongside `--harness shell`.
+
+A shell session shows up in `session ls` / watch mode with status `running`
+(green) for as long as its tmux session is alive, and `exited` once it ends —
+there's no hook to report anything finer-grained. It's also reachable from
+the watch-mode `n` ("new session") prompt: cycle the harness field
+(↑/↓/Tab) past the coding harnesses to `shell`.
 
 ### session ls
 
@@ -65,7 +101,7 @@ tclaude session ls --hide exited
 | `--hide <s>`   | Hide these statuses                          |
 | `--sort <col>` | Sort by: id, directory, status, age, updated |
 
-**Status values:** `idle`, `working`, `awaiting_permission`, `awaiting_input`, `error`, `exited`
+**Status values:** `idle`, `working`, `running`, `awaiting_permission`, `awaiting_input`, `error`, `exited`
 
 ### session watch
 
@@ -164,6 +200,7 @@ Sessions report their status via Claude hooks:
 |-----------------------|-----------|--------------------------------------|
 | `idle`                | 🟡 Yellow | Claude is waiting for input          |
 | `working`             | 🟢 Green  | Claude is processing                 |
+| `running`             | 🟢 Green  | A plain shell session is alive (no hooks, so no finer-grained status) |
 | `awaiting_permission` | 🔴 Red    | Needs permission approval            |
 | `awaiting_input`      | 🔴 Red    | Waiting for user input               |
 | `error`               | 🔴 Red    | Last turn ended in an error          |

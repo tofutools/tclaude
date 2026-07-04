@@ -23,11 +23,11 @@ import (
 
 // SessionState represents the state of a Claude session
 type SessionState struct {
-	ID            string    `json:"id"`
-	TmuxSession   string    `json:"tmuxSession"`
-	PID           int       `json:"pid"`
-	Cwd           string    `json:"cwd"`
-	ConvID        string    `json:"convId,omitempty"`
+	ID           string `json:"id"`
+	TmuxSession  string `json:"tmuxSession"`
+	PID          int    `json:"pid"`
+	Cwd          string `json:"cwd"`
+	ConvID       string `json:"convId,omitempty"`
 	Status       string `json:"status"`
 	StatusDetail string `json:"statusDetail,omitempty"`
 	// SubagentCount is a derived cache of Subagents (recomputed by the
@@ -40,9 +40,9 @@ type SessionState struct {
 	// self-healing story (why not a bare counter).
 	Subagents db.SubagentSet `json:"subagents,omitempty"`
 	Created   time.Time      `json:"created"`
-	Updated       time.Time `json:"updated"`
-	LastHook      time.Time `json:"lastHook"`
-	Attached      int       `json:"-"` // Number of attached clients (runtime only, not persisted)
+	Updated   time.Time      `json:"updated"`
+	LastHook  time.Time      `json:"lastHook"`
+	Attached  int            `json:"-"` // Number of attached clients (runtime only, not persisted)
 	// Harness is the coding tool this session belongs to ("claude",
 	// "codex"). Carried through toRow/fromRow so the hook callback's
 	// load→mutate→save round-trip preserves a non-claude tag instead of
@@ -61,6 +61,10 @@ type SessionState struct {
 
 // Status constants
 const (
+	// StatusRunning marks a plain shell session (runNewShell): it has no
+	// hook to report a finer-grained status, so it stays "running" for as
+	// long as its tmux session / PID is alive and flips straight to
+	// StatusExited when that ends (see RefreshSessionStatus).
 	StatusRunning           = "running"
 	StatusWaitingInput      = "waiting_input"
 	StatusWaitingPermission = "waiting_permission"
@@ -106,6 +110,8 @@ func statusPriority(status string) int {
 		return 2 // Green
 	case StatusWorking:
 		return 2 // Green
+	case StatusRunning:
+		return 2 // Green - a plain shell session, alive and nothing to report
 	case StatusExited:
 		return 3 // Gray
 	default:
