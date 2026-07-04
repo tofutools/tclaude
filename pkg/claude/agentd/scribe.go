@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -184,10 +185,19 @@ func handleDashboardScribeAPI(w http.ResponseWriter, r *http.Request) {
 	handleScribeSummon(w, asDashboardHumanPeer(r))
 }
 
+// scribeSummonMu serializes summons so the reuse-if-alive check-then-spawn is
+// atomic: two near-simultaneous clicks would otherwise both see "no live
+// scribe" and double-spawn — or race on the UNIQUE group-name insert and 500.
+// Summons are rare human actions, so a global lock costs nothing.
+var scribeSummonMu sync.Mutex
+
 // summonScribe is the reusable core: ensure the scribe's eponymous group,
 // reuse-if-alive (re-grant + re-brief + re-focus), otherwise spawn one with the
 // birth-time grants and auto-focus. Neutral cwd = the human's home.
 func summonScribe(name string, overrides map[string]string, brief string) (*scribeOutcome, *spawnFailure) {
+	scribeSummonMu.Lock()
+	defer scribeSummonMu.Unlock()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "home", "resolve home directory: " + err.Error()}
