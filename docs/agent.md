@@ -676,6 +676,52 @@ mission (a bare-URL mission falls back to the template name). `--worktree` lands
 the whole force on its own branch in a git worktree, which becomes its working
 directory.
 
+### task-force ls
+
+List the deployed forces — the groups a `deploy` created, carrying a mission and
+a source template. A plain hand-built group (no source template) is **not** a
+force and is not listed; `groups ls` covers those. Open read.
+
+```bash
+tclaude agent task-force ls           # aligned table
+tclaude agent task-force ls --json    # composed rows (round-trips)
+```
+
+Each row shows the group name, its **mission** (truncated), the **source
+template**, the current process **phase** (if any), the number of pending
+staged-spawn **waves**, and **live/total** members. A force with no live members
+is flagged dormant (`⏸`) — stood-down or otherwise idle. The verb is a thin
+composition of the group reads the dashboard force block uses (the groups list
+plus each force's process and waves reads).
+
+### task-force status
+
+The **CLI twin of the dashboard [force block](dashboard.md#the-force-block)** —
+a single force's full read-back. Open read; the per-member liveness rollup rides
+the group-context read (the human operator and group owners always pass, an agent
+without context access sees the rest and a note in place of the rollup). The
+group is inferred when you are in exactly one group.
+
+```bash
+tclaude agent task-force status <group>          # human-first block
+tclaude agent task-force status <group> --json   # composed status (round-trips)
+```
+
+It shows the **mission + provenance** (source template), the process **phase +
+phase map + recent transitions** (the same read `process show` uses), a
+**per-role liveness rollup** (working `●` / idle `○` / offline `✕`, with context
+`%` where the member snapshot carries it), any pending **waves**, and the group's
+**rhythm** cron jobs (name, schedule, enabled/disabled). The liveness
+classification matches the dashboard's exactly, so the two surfaces never
+disagree about who is stalling: offline is dead, an online agent is *idle* only
+when its status is literally idle, and anything else in flight is *working*. A
+disabled rhythm distinguishes a tclaude-auto-paused job — `disabled (auto:
+group-retired)`, from a `groups retire` that emptied the group — from a
+hand-paused one. A **stood-down** force still renders (mission, provenance and
+phase history survive) and reads as *dormant*. Running `status` on a plain group
+(no source template) is refused with a pointer to `groups ls`, consistent with
+`ls`'s force filter.
+
 ### task-force stand-down
 
 Wind a force down — the **mirror of `deploy`**. It retires the whole roster and

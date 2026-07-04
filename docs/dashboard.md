@@ -503,6 +503,12 @@ advance** button when a next phase exists) and a **🌊 wave *N/M* pending** chi
 while later waves are still deferred. Advancing lives on the summary chip and
 retiring lives in the group's ⚙ cog, so the force block does not duplicate them.
 
+This whole block has a CLI twin: **`tclaude agent task-force status <group>`**
+prints the same mission, phase map, liveness rollup, waves and rhythms
+headlessly (and **`task-force ls`** lists every deployed force) — see
+[Task forces (CLI)](agent.md#task-forces-cli). The liveness classification is
+shared, so the terminal and the dashboard never disagree about who is stalling.
+
 ### Steering a force
 
 - **Advance the process.** The **▸ advance** button on the phase chip moves the

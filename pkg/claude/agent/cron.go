@@ -55,6 +55,7 @@ type cronJobJSON struct {
 	Subject         string `json:"subject,omitempty"`
 	Body            string `json:"body"`
 	Enabled         bool   `json:"enabled"`
+	DisabledReason  string `json:"disabled_reason,omitempty"`
 	CreatedAt       string `json:"created_at,omitempty"`
 	LastRunAt       string `json:"last_run_at,omitempty"`
 	LastRunStatus   string `json:"last_run_status,omitempty"`
