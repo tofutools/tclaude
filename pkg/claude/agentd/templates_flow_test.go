@@ -589,5 +589,8 @@ func TestGroupTemplate_WorkPatternValidation(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, "unknown send_to must 400: %s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "nobody", "the error names the bad target")
+	body := rec.Body.String()
+	assert.Contains(t, body, "nobody", "the error names the bad target")
+	assert.Contains(t, body, "dev1", "the error lists the valid roster targets")
+	assert.Contains(t, body, "broadcast", "the error explains the \"all\" broadcast target")
 }

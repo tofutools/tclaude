@@ -12,20 +12,26 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+// Watch-view styles. Their colors come from the active TUI color scheme
+// (config tui.color_scheme) resolved through tuistyle: init() seeds the
+// default scheme and RunInteractive re-applies the configured one before the
+// program starts. See applyTUIColorScheme.
 var (
-	selectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")) // Dark gray background, preserves row foreground color
-	idleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("178"))            // Gold - readable on both light and dark backgrounds
-	workingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))             // Green
-	needsInput    = lipgloss.NewStyle().Foreground(lipgloss.Color("160"))            // Red
-	exitedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))            // Gray
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	searchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
+	selectedStyle lipgloss.Style
+	idleStyle     lipgloss.Style
+	workingStyle  lipgloss.Style
+	needsInput    lipgloss.Style
+	exitedStyle   lipgloss.Style
+	headerStyle   lipgloss.Style
+	helpStyle     lipgloss.Style
+	searchStyle   lipgloss.Style
 )
 
 type tickMsg time.Time
@@ -808,10 +814,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	confirmStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160"))
-	menuStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("166"))
-	filterBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
+	confirmStyle lipgloss.Style
+	menuStyle    lipgloss.Style
+	filterBadge  lipgloss.Style
 )
+
+func init() { applyTUIColorScheme(config.TUIColorSchemeDefault) }
+
+// applyTUIColorScheme (re)builds the watch-view styles from the palette for
+// the given color scheme (config tui.color_scheme). It is called at package
+// init with the default scheme, then again from RunInteractive with the
+// configured scheme before the bubbletea program starts. The watch view is a
+// per-process singleton, so mutating these package-level styles once at
+// startup is safe.
+func applyTUIColorScheme(scheme string) {
+	p := tuistyle.Resolve(scheme)
+	// The selected row keeps the row's own foreground color (bold, on a
+	// dark-gray background) in both schemes — it never sets a foreground of
+	// its own.
+	selectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color(p.SelectedBg))
+	idleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Idle))
+	workingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Working))
+	needsInput = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Danger))
+	exitedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Exited))
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Header))
+	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Help))
+	searchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent))
+	confirmStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Danger))
+	menuStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Accent))
+	filterBadge = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent))
+}
 
 // columns returns the column definitions for the session table.
 // Used by both Update (for sort key handling) and View (for rendering).
@@ -1146,6 +1178,11 @@ type AttachResult struct {
 // RunInteractive starts the interactive session viewer
 // Returns the attach result (if any) and the final watch state
 func RunInteractive(includeAll bool, state WatchState) (AttachResult, WatchState, error) {
+	// Apply the configured TUI color scheme before building the program so the
+	// styles are set once, up front (Load is nil-safe on error → default).
+	cfg, _ := config.Load()
+	applyTUIColorScheme(cfg.TUIColorScheme())
+
 	m := initialModel(includeAll, state.StatusFilter, state.HideFilter)
 	m.sort = state.Sort
 	m.searchInput.SetValue(state.SearchInput)

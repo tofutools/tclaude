@@ -715,6 +715,50 @@ func TestDashboardCSS_WizardEditMemberModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardTermPickerModal pins the wizard re-skin of the
+// "Open a terminal" which-dir picker (#term-modal — termDirModal in refresh.js),
+// the dialog that pops before a single agent's terminal window opens. Like the
+// retire / edit-member re-skins it is a pure-CSS title span swap plus a
+// modal-scoped surface + gilded-primary re-skin, so we string-search the
+// embedded source.
+func TestDashboardHTML_WizardTermPickerModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// Title copy: a pure-CSS span swap, "Open a terminal" → "🔮 Open a scrying
+	// portal" (the palette's scrying-portal voice, matching the Terminals tab).
+	must(`<span class="term-title-regular">Open a terminal</span>`, "the default terminal-picker title span")
+	must(`<span class="term-title-wizard">🔮 Open a scrying portal</span>`, "the wizard terminal-picker title span")
+	must("body.wizard #term-title .term-title-regular", "wizard hides the default title")
+	must("body.wizard #term-title .term-title-wizard", "wizard shows the scrying-portal title")
+
+	// The whole dialog surface is re-skinned arcane, and the default Current dir
+	// button becomes a gilded lever (Summon / Banish's sibling), both scoped to
+	// #term-modal.
+	must("body.wizard #term-modal .modal {", "the terminal-picker dialog surface is re-skinned")
+	must("body.wizard #term-modal #term-current {", "Current dir becomes the gilded primary lever, scoped to the term modal")
+	must("body.wizard #term-modal .modal-buttons button:not(#term-current) {", "Cancel / Launch / Worktree get the tarnished-gold secondary treatment")
+}
+
+// TestDashboardCSS_WizardTermPickerModalScoped guards that the wizard
+// terminal-picker re-skin stays scoped to #term-modal. #term-modal is a generic
+// .modal (like the retire modal), so an unscoped `body.wizard .modal { … }` would
+// repaint every sibling confirm dialog. The shared retire-scope test already
+// rejects that literal; this asserts the positive — the re-skin is present and
+// carries the #term-modal scope prefix.
+func TestDashboardCSS_WizardTermPickerModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #term-modal .modal") {
+		t.Error("wizard terminal-picker re-skin missing its #term-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .modal {") {
+		t.Error("wizard terminal-picker re-skin is unscoped — will repaint sibling confirm dialogs too")
+	}
+}
+
 // TestDashboardHTML_WizardSummonButton pins the wizard re-skin of the
 // group-header spawn button (the blue .spawn-btn that opens the dialog): the
 // per-theme label swap "spawn" → "🔮 Summon" and the arcane chrome hooks.
@@ -1081,6 +1125,15 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	must("body.wizard .row-actions .cog-btn", "the per-row cog is re-skinned in wizard mode")
 	must("body.wizard .group-actions .cog-btn", "the per-group cog is re-skinned in wizard mode")
 
+	// …and so do the DROPDOWN menus each cog opens — the arcane panel plus a
+	// violet-void base skin on every menu item, so the per-group and per-agent
+	// "spell lists" match the global filter-bar one instead of staying an
+	// unthemed default-dark island inside the arcane panel.
+	must("body.wizard .action-menu {", "the cog dropdown panels get the arcane skin")
+	must("body.wizard .filter-bar-cog .action-menu button", "the filter-bar menu items get the arcane base skin at rest")
+	must("body.wizard .row-actions .action-menu button:not(:disabled)", "the per-agent menu items get the arcane base skin at rest")
+	must("body.wizard .group-actions .action-menu button:not(:disabled)", "the per-group menu items get the arcane base skin at rest")
+
 	// The enchanted rotation + its keyframes — the "self-turning clockwork" gag.
 	must("animation: wizard-cog-turn", "the wizard cog glyph spins under its own enchantment")
 	must("@keyframes wizard-cog-turn", "the cog-turn keyframes are defined")
@@ -1243,6 +1296,52 @@ func TestDashboardCSS_WizardWindowModalScoped(t *testing.T) {
 	}
 	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
 		t.Error("wizard window re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-agent dialogs too")
+	}
+}
+
+// TestDashboardHTML_WizardCleanupModal pins the wizard re-skin of the bulk
+// cleanup dialog (#cleanup-modal — openCleanupModal in refresh.js), the
+// multi-category tool the global filter-bar cog's "🧹 clean up" item opens.
+// Like the #window-modal skin it shares the .cleanup-modal shell, so the
+// re-skin is a modal-scoped surface + gilded-primary lever repaint (the
+// title/hint copy is JS-set honest prose and left legible, matching the
+// terminal-picker re-skin). String-search the embedded source.
+func TestDashboardHTML_WizardCleanupModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The whole dialog surface is re-skinned arcane, scoped to #cleanup-modal.
+	must("body.wizard #cleanup-modal .cleanup-modal {", "the cleanup dialog surface is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-modal h3", "the dialog title is re-skinned")
+	// The cleanup-modal-unique controls: the category-filter row, the tier
+	// selector panel, and the sticky per-category list sub-header.
+	must("body.wizard #cleanup-modal .cleanup-cats", "the category-filter row is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-tier {", "the tier selector panel is re-skinned")
+	must("body.wizard #cleanup-modal .cleanup-cat-head {", "the sticky category sub-header repaints violet")
+	must("body.wizard #cleanup-modal .cleanup-list {", "the candidate list is re-skinned")
+	// The submit becomes a gilded lever; the delete tier keeps a danger-ember
+	// variant so the irreversible action still signals danger.
+	must("body.wizard #cleanup-modal #cleanup-submit {", "the submit button gets the gilded lever chrome")
+	must("body.wizard #cleanup-modal #cleanup-submit.danger {", "the delete-tier submit keeps a danger-ember lever")
+	// Cancel gets the tarnished-gold secondary treatment (scoped off the submit).
+	must("body.wizard #cleanup-modal .modal-buttons button:not(#cleanup-submit)", "Cancel gets the secondary arcane skin")
+}
+
+// TestDashboardCSS_WizardCleanupModalScoped guards that the wizard bulk-cleanup
+// re-skin stays scoped to #cleanup-modal. Like #window-modal it is a
+// .cleanup-modal shared with the worktree-cleanup / retire-preview /
+// delete-retired dialogs, so an unscoped `body.wizard .cleanup-modal { … }`
+// would repaint all of them.
+func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
+	if !strings.Contains(dashboardAssets, "body.wizard #cleanup-modal .cleanup-modal") {
+		t.Error("wizard cleanup re-skin missing its #cleanup-modal scope prefix")
+	}
+	if strings.Contains(dashboardAssets, "body.wizard .cleanup-modal {") {
+		t.Error("wizard cleanup re-skin is unscoped — will repaint worktree-cleanup/retire-preview/delete-retired dialogs too")
 	}
 }
 

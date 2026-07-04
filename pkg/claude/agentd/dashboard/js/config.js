@@ -407,6 +407,12 @@ function populateConfigForm(cfg) {
   $('#cfg-resume-tokens').value = cr.token_threshold != null ? cr.token_threshold : '';
 
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
+
+  // tui.color_scheme — the interactive watch views' palette. Absent/unknown
+  // resolves to 'default'; only 'dark-high-contrast' is the non-default choice.
+  $('#cfg-tui-color-scheme').value = (cfg.tui && cfg.tui.color_scheme === 'dark-high-contrast')
+    ? 'dark-high-contrast' : 'default';
+
   $('#cfg-focus-raiseonly').checked = !!(cfg.focus && cfg.focus.raise_only);
   // window_title: on is the default, so it's checked unless an explicit
   // focus.window_title:false (skip the title) unchecks it.
@@ -586,6 +592,15 @@ function assembleConfig() {
   if (Object.keys(cr).length) cfg.claude_resume = cr; else delete cfg.claude_resume;
 
   cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+  // tui is an optional block. Clone the existing one so a future sub-field
+  // with no widget round-trips, then set the one form-owned key. 'default' is
+  // the omitempty default — drop the field, and the block when it's all that's
+  // left, so an all-default config doesn't marshal a spurious "tui": {} diff.
+  const tui = (cfg.tui && typeof cfg.tui === 'object') ? cfg.tui : {};
+  const scheme = $('#cfg-tui-color-scheme').value;
+  if (scheme && scheme !== 'default') tui.color_scheme = scheme; else delete tui.color_scheme;
+  if (Object.keys(tui).length) cfg.tui = tui; else delete cfg.tui;
 
   // cost is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, then set the one form-owned

@@ -19,19 +19,49 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
+// Watch-view styles. Their colors come from the active TUI color scheme
+// (config tui.color_scheme) resolved through tuistyle: init() seeds the
+// default scheme and RunConvWatch re-applies the configured one before the
+// program starts. See applyTUIColorScheme.
 var (
-	wSelectedStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255"))
-	wHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("244"))
-	wHelpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	wSearchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("166"))
-	wConfirmStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("160"))
-	wSemanticStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")) // cyan
+	wSelectedStyle lipgloss.Style
+	wHeaderStyle   lipgloss.Style
+	wHelpStyle     lipgloss.Style
+	wSearchStyle   lipgloss.Style
+	wConfirmStyle  lipgloss.Style
+	wSemanticStyle lipgloss.Style
 )
+
+func init() { applyTUIColorScheme(config.TUIColorSchemeDefault) }
+
+// applyTUIColorScheme (re)builds the watch-view styles from the palette for
+// the given color scheme (config tui.color_scheme). It is called at package
+// init with the default scheme, then again from RunConvWatch with the
+// configured scheme before the bubbletea program starts. The watch view is a
+// per-process singleton, so mutating these package-level styles once at
+// startup is safe.
+func applyTUIColorScheme(scheme string) {
+	p := tuistyle.Resolve(scheme)
+	// Selected row: bold on a dark-gray background. The default scheme paints
+	// its foreground white; the high-contrast scheme leaves the row's own
+	// color (empty SelectedFg) as it did before #738.
+	sel := lipgloss.NewStyle().Bold(true).Background(lipgloss.Color(p.SelectedBg))
+	if p.SelectedFg != "" {
+		sel = sel.Foreground(lipgloss.Color(p.SelectedFg))
+	}
+	wSelectedStyle = sel
+	wHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Header))
+	wHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Help))
+	wSearchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent))
+	wConfirmStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Danger))
+	wSemanticStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Info)) // cyan
+}
 
 type watchTickMsg time.Time
 
@@ -181,9 +211,9 @@ func newSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
 	s := ti.Styles()
-	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Focused.Placeholder = wHelpStyle
 	s.Focused.Text = wSearchStyle
-	s.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	s.Blurred.Placeholder = wHelpStyle
 	s.Blurred.Text = wSearchStyle
 	ti.SetStyles(s)
 	return ti
@@ -221,7 +251,7 @@ func newSemanticInput() textarea.Model {
 	focused := textarea.StyleState{
 		Base:        lipgloss.NewStyle(),
 		Text:        wSemanticStyle,
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+		Placeholder: wHelpStyle,
 	}
 	styles := ta.Styles()
 	styles.Focused = focused
@@ -2004,6 +2034,11 @@ type ConvWatchState struct {
 
 // RunConvWatch runs the interactive watch mode and returns the result
 func RunConvWatch(global bool, since, before string, state ConvWatchState) (WatchResult, ConvWatchState, error) {
+	// Apply the configured TUI color scheme before building the program so the
+	// styles are set once, up front (Load is nil-safe on error → default).
+	cfg, _ := config.Load()
+	applyTUIColorScheme(cfg.TUIColorScheme())
+
 	m := initialWatchModel(global, since, before)
 
 	// Restore previous state
