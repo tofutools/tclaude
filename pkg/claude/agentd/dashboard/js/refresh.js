@@ -36,6 +36,7 @@ import { groupReorderActive } from './group-reorder.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode, isWizardActive } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
+import { noteConnected, noteDisconnected } from './connection.js';
 
 // refreshSuspended() is the single source of truth for whether the
 // auto-refresh is allowed to re-render the DOM right now. refresh()
@@ -355,6 +356,12 @@ export async function refresh() {
     // refresh() once the user is done.
     return;
   }
+  // responded flips true the instant the /api/snapshot fetch resolves (agentd
+  // answered, any status). The catch below counts a disconnect ONLY when it's
+  // still false — i.e. the fetch itself REJECTED (agentd unreachable) — so an
+  // error thrown after agentd already answered (json parse, a renderer) never
+  // masquerades as a connection drop. See connection.js.
+  let responded = false;
   try {
     // The three heavy, ever-growing lists — retired / conversations / replaced
     // — no longer ride inside the snapshot. Each has its own paginated endpoint
@@ -387,6 +394,11 @@ export async function refresh() {
       (onGroups && replacedVisible()) ? get('/api/replaced?' + listParams('replaced', groupsQ)) : Promise.resolve(undefined),
       jobsTabActive() ? get('/api/jobs?' + listParams('jobs', jobsQ)) : Promise.resolve(undefined),
     ]);
+    // agentd answered this poll (any HTTP status) — we're connected. Clear the
+    // disconnect banner + resume music if it had been raised. Done before the
+    // stale-seq bail below so even a superseded run still registers the reconnect.
+    responded = true;
+    noteConnected();
     // A newer refresh() (a pager click, a filter change, or the next interval
     // tick) started while this one's fetches were in flight — drop this stale
     // run before it touches any shared state. Without this, a slow older refresh
@@ -505,6 +517,11 @@ export async function refresh() {
     // re-render detached it. No-op when focus was never stolen.
     restoreFocus(focusToken);
   } catch (e) {
+    // Only a REJECTED /api/snapshot fetch (agentd unreachable — connection
+    // refused / network down, so `responded` never flipped) counts toward the
+    // disconnect banner; a fault thrown after agentd already answered is a
+    // client-side error, not a lost connection.
+    if (!responded) noteDisconnected();
     showStatus('snapshot failed: ' + (e.message || e), true);
   }
 }

@@ -1050,6 +1050,24 @@
   </div>
   <div class="slop-lever-label">PULL</div>
 </div>
+<!-- Disconnected banner — connection.js adds .show when the 2s poll can no
+     longer reach agentd (the /api/snapshot fetch REJECTS for FAIL_THRESHOLD
+     consecutive ticks) and removes it the instant a poll gets through again.
+     Deliberately NOT a .modal-overlay: the auto-refresh must keep polling
+     beneath it so the reconnect that clears it is actually seen (see
+     refreshSuspended() in refresh.js). While it's up, vegas.js stops the radio
+     and keeps it stopped so a dead dashboard isn't left playing music. Hidden
+     by default via `display:none`; role=alert so screen readers announce the
+     drop when it appears. -->
+<div class="disconnect-overlay" id="disconnect-overlay">
+  <div class="disconnect-card" role="alert" aria-live="assertive">
+    <div class="disconnect-icon" aria-hidden="true">⚠️</div>
+    <h2 class="disconnect-title" id="disconnect-title">Disconnected from agentd</h2>
+    <p class="disconnect-body">The dashboard can’t reach the tclaude&nbsp;agentd daemon.
+      Everything below may be stale, and the music has been stopped.</p>
+    <p class="disconnect-status" id="disconnect-status">Reconnecting…</p>
+  </div>
+</div>
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
     <h3 id="confirm-title"></h3>
