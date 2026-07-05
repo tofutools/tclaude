@@ -319,17 +319,27 @@ export function templateRosterRowsHTML(t, prefix, defaultProfile) {
   }
   const shown = (prefix || '').trim() || wizWord('‹group›', '‹party›');
   const dflt = (defaultProfile || '').trim();
+  const dp = dflt && cachedProfiles().find(x => x.name === dflt);
   return agents.map(a => {
-    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
-    const np = (a.permissions || []).length;
-    // Per-role launch hint (JOH-239): the profile ref or the most telling
-    // inline override so the human sees each role's launch shape before spawning.
-    // A blank member falls back to the deploy default (if the dialog resolved
-    // one), flagged so it's clear the value came from the default, not the member.
+    // A member adopts the deploy default only when it carries no launch config of
+    // its own (no profile, no role, no inline field) — the same eligibility the
+    // deploy submit uses, so the preview matches what will be sent per-member.
+    const adoptsDefault = !!dp && !a.spawn_profile && agentInheritsDeployDefault(a);
+    // Owner / perm chips reflect the member's OWN access PLUS, when it adopts the
+    // default profile, that profile's owner default + override count — so the
+    // birth-time permissions/ownership the default carries is visible, not silent.
+    const owner = (a.is_owner || (adoptsDefault && dp.is_owner))
+      ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+    let np = (a.permissions || []).length;
+    if (adoptsDefault && dp.permission_overrides) np += Object.keys(dp.permission_overrides).length;
+    // Per-role launch hint (JOH-239): the profile ref or the most telling inline
+    // override so the human sees each role's launch shape before spawning. A member
+    // with no config of its own falls back to the deploy default (if the dialog
+    // resolved one), flagged so it's clear the value came from the default.
     const launch = a.spawn_profile
       ? `⚙ ${esc(a.spawn_profile)}`
-      : dflt
-        ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile">(default)</span>`
+      : adoptsDefault
+        ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile — applies its launch config and birth-time permissions/ownership">(default)</span>`
         : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
     const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
       .filter(Boolean).join(' · ');
@@ -416,19 +426,34 @@ function renderEditorAgents() {
     templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i)).join('');
 }
 
+// agentInheritsDeployDefault reports whether leaving THIS member's profile blank
+// would actually inherit the deploy/dashboard default at deploy time — true only
+// when the member carries no launch config of its own: no referenced role and no
+// inline launch field. A role or an inline field is the member's own setting and
+// wins over the default (the deploy path never overrides such a member), so a
+// "(default → X)" hint would be misleading for them. Mirrors the eligibility the
+// deploy client (deployAgentProfiles) and server (applyAgentProfileOverrides) use.
+function agentInheritsDeployDefault(a) {
+  const hasInline = [a.harness, a.model, a.effort, a.sandbox, a.approval].some(Boolean);
+  return !a.role_ref && !hasInline;
+}
+
 // profileRefOptionsHTML builds the <option> list for an agent's launch-profile
 // dropdown from the cached spawn profiles. A referenced profile that is no longer
 // in the library stays selectable — flagged "⚠ missing" — so a dangling reference
 // isn't silently cleared on the human (the same graceful-degrade the role dropdown
 // does). The blank/inherit option is RELABELLED to name the dashboard default
-// profile ("(default → X)") when one is set: a member left blank inherits that
+// profile ("(default → X)") when one is set AND the member would actually inherit
+// it (no role / inline config of its own): a member left blank inherits that
 // default at deploy (the deploy dialog resolves it and sends it per-member), so
 // the picker shows what blank will yield WITHOUT baking the default into the
 // stored template — the value stays "" and the template stays portable.
-function profileRefOptionsHTML(current) {
+function profileRefOptionsHTML(a) {
+  const current = a.spawn_profile || '';
   const names = cachedProfiles().map(p => p.name);
   const dflt = getDashDefaultProfile();
-  const blankLabel = (dflt && names.includes(dflt)) ? `(default → ${esc(dflt)})` : '(none)';
+  const blankLabel = (dflt && names.includes(dflt) && agentInheritsDeployDefault(a))
+    ? `(default → ${esc(dflt)})` : '(none)';
   const opts = [`<option value=""${current ? '' : ' selected'}>${blankLabel}</option>`];
   for (const n of names) {
     opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
@@ -443,12 +468,15 @@ function profileRefOptionsHTML(current) {
 // profile's set fields (harness/model/effort/… + owner/perms), reusing the
 // profiles.js summariser the manage cards use. Empty when no profile is picked;
 // a "not found here" note when the ref dangles.
-function profileSummaryHTML(current) {
+function profileSummaryHTML(a) {
+  const current = a.spawn_profile || '';
   if (!current) {
-    // A blank member inherits the dashboard default profile at deploy — preview
-    // its shape so the human sees what "(default → X)" resolves to.
+    // A blank member inherits the dashboard default profile at deploy — but only
+    // when it has no role / inline config of its own (otherwise the default never
+    // applies). Preview the default's shape so the human sees what "(default → X)"
+    // resolves to; stay silent for a member that won't inherit it.
     const dflt = getDashDefaultProfile();
-    const dp = dflt && cachedProfiles().find(x => x.name === dflt);
+    const dp = dflt && agentInheritsDeployDefault(a) && cachedProfiles().find(x => x.name === dflt);
     if (!dp) return '';
     const ds = profileSummary(dp);
     return `<span class="ta-profile-summary-default">inherits default ${esc(dflt)}${ds ? ' · ' + esc(ds) : ''}</span>`;
@@ -542,13 +570,13 @@ function editorAgentRowHTML(a, idx) {
     <div class="template-agent-launch">
       <label class="template-agent-roleref ta-launch-pick" title="Launch profile (JOH-350): the agent's harness, model, effort, sandbox/approval AND its birth-time permissions all come from the picked spawn profile. Manage profiles to create/edit one — a profile is the unit of launch config.">
         <span>Launch profile</span>
-        <select class="ta-profile-select">${profileRefOptionsHTML(a.spawn_profile)}</select>
+        <select class="ta-profile-select">${profileRefOptionsHTML(a)}</select>
       </label>
       <div class="ta-launch-actions">
         <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
         <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
       </div>
-      <div class="ta-profile-summary">${profileSummaryHTML(a.spawn_profile)}</div>
+      <div class="ta-profile-summary">${profileSummaryHTML(a)}</div>
       ${legacyInlineNoticeHTML(a)}
     </div>
   </div>`;
@@ -1218,15 +1246,17 @@ function deployDefaultProfileValue() {
 }
 
 // deployAgentProfiles builds the per-member override map the deploy request
-// carries: every roster member with NO profile of its own is resolved to the
-// picker's default. A member that already carries a template profile is omitted
-// (the server keeps the template's). {} when there is no default to apply.
+// carries: every roster member with NO launch config of its own — no profile, no
+// referenced role, no inline launch field — is resolved to the picker's default.
+// A member that already carries any of those is omitted, so the default never
+// displaces (or escalates the access of) a member that expressed its own launch
+// shape; the server enforces the same eligibility. {} when no default to apply.
 function deployAgentProfiles(t) {
   const dflt = deployDefaultProfileValue();
   const map = {};
   if (!dflt) return map;
   for (const a of (t && t.agents) || []) {
-    if (a && a.name && !a.spawn_profile) map[a.name] = dflt;
+    if (a && a.name && !a.spawn_profile && agentInheritsDeployDefault(a)) map[a.name] = dflt;
   }
   return map;
 }

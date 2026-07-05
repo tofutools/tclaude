@@ -2075,7 +2075,7 @@
       <span class="cron-create-label"><span class="tpl-word-regular">Startup context</span><span class="tpl-word-wizard">Party lore</span></span>
       <textarea id="template-deploy-context" class="modal-context-textarea" rows="5" placeholder="the new group's shared startup context (source group + template context — edit freely, or clear for none)" spellcheck="false"></textarea>
     </label>
-    <label class="cron-create-row" id="template-deploy-default-profile-row" title="The launch profile a roster member with no profile of its own is spawned with. Prefilled from the group's own default profile (when deploying into or from a group) or the dashboard default — reconfigure or clear to (none). The preview below shows each member's effective profile.">
+    <label class="cron-create-row" id="template-deploy-default-profile-row" title="The launch profile a roster member with no launch config of its own (no profile, no role, no inline fields) is spawned with — applying that profile's launch shape AND its birth-time permissions/ownership. Prefilled from the group's own default profile (when deploying into or from a group) or the dashboard default — reconfigure or clear to (none). The preview below shows each member's effective profile, including any owner ★ / permission 🔑 the default carries.">
       <span class="cron-create-label">Default profile</span>
       <select id="template-deploy-default-profile"></select>
     </label>

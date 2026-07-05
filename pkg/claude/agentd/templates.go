@@ -1872,10 +1872,17 @@ type instantiateSpec struct {
 
 // applyAgentProfileOverrides returns the roster with the deploy form's per-member
 // launch-profile selections folded in (see instantiateSpec.agentProfiles): for a
-// member the map names, whose OWN template profile is blank, the map's profile
-// becomes its spawn profile. A member the map does not name — or one that already
-// carries an explicit template profile — is left untouched, so a stale or broad
-// override can never displace an explicit per-member choice. Returns the input
+// member the map names that carries NO launch config of its own, the map's profile
+// becomes its spawn profile. "No config of its own" means no referenced spawn
+// profile, no referenced role, and no inline launch field — any of those is the
+// member's own explicit setting and MUST win over a deploy-form default (setting
+// SpawnProfile would otherwise land at a tier above the role, silently displacing
+// it, and would also apply the default profile's birth permissions/ownership over
+// a member that expressed its own launch shape). A member the map does not name,
+// or one that is already configured, is left untouched — so a stale or broad
+// override can never displace an explicit per-member choice. The client resolves
+// the same eligibility before sending, so this is normally a no-op guard; it makes
+// the contract hold regardless of what the request carries. Returns the input
 // slice unchanged when there are no overrides; otherwise a shallow copy (only the
 // SpawnProfile string is rewritten, so sharing the members' slice fields is safe).
 func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[string]string) []db.GroupTemplateAgent {
@@ -1885,11 +1892,17 @@ func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[st
 	out := make([]db.GroupTemplateAgent, len(agents))
 	copy(out, agents)
 	for i := range out {
-		if strings.TrimSpace(out[i].SpawnProfile) != "" {
-			continue // never override an explicit per-member profile
+		a := &out[i]
+		configured := strings.TrimSpace(a.SpawnProfile) != "" ||
+			strings.TrimSpace(a.RoleRef) != "" ||
+			strings.TrimSpace(a.Harness) != "" || strings.TrimSpace(a.Model) != "" ||
+			strings.TrimSpace(a.Effort) != "" || strings.TrimSpace(a.Sandbox) != "" ||
+			strings.TrimSpace(a.Approval) != ""
+		if configured {
+			continue // the member has its own launch config — the default never wins
 		}
-		if p := strings.TrimSpace(overrides[out[i].Name]); p != "" {
-			out[i].SpawnProfile = p
+		if p := strings.TrimSpace(overrides[a.Name]); p != "" {
+			a.SpawnProfile = p
 		}
 	}
 	return out

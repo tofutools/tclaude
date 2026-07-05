@@ -3516,6 +3516,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .ta-profile-summary:empty { display: none; }
 .ta-profile-summary-missing { color: #d29922; }
 .ta-profile-summary-empty { color: #6e7681; font-style: italic; }
+/* "inherits default X" preview under a blank member's picker — muted + italic,
+   the same "this value is inherited, not set here" cue as -empty. */
+.ta-profile-summary-default { color: #6e7681; font-style: italic; }
 .ta-legacy-note {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   font-size: 11px; color: #d29922; background: #21262d;
@@ -3653,6 +3656,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .template-preview .tp-name { color: #c9d1d9; font-weight: 600; }
 .template-preview .tp-meta { color: #7d8590; }
 .template-preview .tp-owner { color: #d29922; }
+/* "(default)" flag on a member adopting the deploy default profile — dimmer than
+   the profile name it trails, so it reads as provenance not a second value. */
+.template-preview .tp-default-tag { color: #6e7681; font-style: italic; }
 .template-preview .tp-empty { color: #6e7681; }
 /* Templates tab list — one card per template. */
 .template-card {
@@ -7490,6 +7496,7 @@ body.wizard #template-editor-modal .template-agent-roleref span { color: #b39ddb
 body.wizard #template-editor-modal .ta-profile-summary { color: #b39ddb; }
 body.wizard #template-editor-modal .ta-profile-summary-missing { color: #d9b45a; }
 body.wizard #template-editor-modal .ta-profile-summary-empty { color: #9d86c9; }
+body.wizard #template-editor-modal .ta-profile-summary-default { color: #9d86c9; }
 body.wizard #template-editor-modal .ta-legacy-note {
   background: #241b3d; border-color: #d9b45a; color: #f0d9a0;
 }
@@ -7620,6 +7627,7 @@ body.wizard #template-deploy-modal .template-preview {
 body.wizard #template-deploy-modal .template-preview .tp-name { color: #f3e6c0; }
 body.wizard #template-deploy-modal .template-preview .tp-meta { color: #b39ddb; }
 body.wizard #template-deploy-modal .template-preview .tp-owner { color: #d9b45a; }
+body.wizard #template-deploy-modal .template-preview .tp-default-tag { color: #9d86c9; }
 body.wizard #template-deploy-modal .template-preview .tp-empty { color: #b39ddb; }
 body.wizard #template-deploy-modal button:not(#template-deploy-submit) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;

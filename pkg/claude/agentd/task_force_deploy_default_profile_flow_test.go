@@ -68,6 +68,52 @@ func TestTaskForceDeploy_DefaultProfile_FillsBlankMemberOnly(t *testing.T) {
 	assert.Equal(t, "haiku", workerModel, "the blank worker adopts the deploy default profile")
 }
 
+// Scenario: the server never applies the default to a member that carries its own
+// launch config even when the map names it — an inline model, or a referenced
+// role, is the member's own setting and wins. (The client omits such members from
+// the map; this asserts the server's own eligibility guard as defence-in-depth.)
+func TestTaskForceDeploy_DefaultProfile_SkipsConfiguredMembers(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		createProfile(t, f, map[string]any{"name": "cheap", "model": "haiku"}).Code, "create cheap")
+	// A role carrying its own launch model.
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/roles",
+			map[string]any{"name": "tf-default-reviewer", "model": "sonnet"}).Code, "create role")
+
+	createBody := map[string]any{
+		"name": "team",
+		"agents": []map[string]any{
+			{"name": "inliner", "role": "dev", "model": "opus"}, // inline model, blank profile
+			{"name": "roled", "role": "qa", "role_ref": "tf-default-reviewer"}, // launch via role
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	// The map (wrongly) names both — the server must ignore both.
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/deploy", map[string]any{
+		"group_name":     "phoenix",
+		"agent_profiles": map[string]any{"inliner": "cheap", "roled": "cheap"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 2, res.Spawned)
+	require.Equal(t, 0, res.Failed, "no spawn failures: %+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	convByName := map[string]string{}
+	for _, a := range res.Agents {
+		convByName[a.Name] = a.ConvID
+	}
+	inlinerModel, _ := f.World.SpawnModel(convByName["inliner"])
+	assert.Equal(t, "opus", inlinerModel, "an inline model wins over the deploy default")
+	roledModel, _ := f.World.SpawnModel(convByName["roled"])
+	assert.Equal(t, "sonnet", roledModel, "a role's own launch model wins over the deploy default")
+}
+
 // Scenario: no agent_profiles sent — the deploy is byte-identical to before this
 // feature (a blank member spawns on the harness default, not some inferred one).
 func TestTaskForceDeploy_DefaultProfile_NoOverrideIsNoOp(t *testing.T) {
