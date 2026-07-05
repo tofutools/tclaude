@@ -361,9 +361,9 @@ function buildCommands() {
   cmds.push({
     icon: wiz('＋', '⚔'), label: wiz('Create new group…', 'Form a party…'),
     hint: wiz('open the new-group dialog',
-      'gather a fresh coven — muster a new adventuring party'),
+      'gather a fresh band — muster a new adventuring party'),
     keywords: 'new group create make add team squad'
-      + ' party form fellowship warband adventuring muster gather assemble coven guild',
+      + ' party form fellowship warband adventuring muster gather assemble guild',
     run: () => openGroupCreateModal(),
   });
 
@@ -422,9 +422,9 @@ function buildCommands() {
     cmds.push({
       icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
       hint: wiz('open the spawn dialog pinned to this group',
-        'open the summoning circle bound to this coven'),
+        'open the summoning circle bound to this party'),
       keywords: 'new agent create spawn launch start group ' + g.name
-        + ' summon conjure invoke familiar coven',
+        + ' summon conjure invoke familiar party',
       run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
     });
   }
@@ -525,32 +525,32 @@ function buildCommands() {
   //    apply to EVERY group (even idle ones — folding an idle group is
   //    valid), unlike the window ops below which need a running member.
   cmds.push({
-    icon: wiz('⊟', '📕'), label: wiz('Collapse all groups', 'Furl all covens'),
-    hint: wiz('fold every group on the Groups tab', "roll up every coven's scroll on the Groups tab"),
+    icon: wiz('⊟', '📕'), label: wiz('Collapse all groups', 'Furl all parties'),
+    hint: wiz('fold every group on the Groups tab', "roll up every party's scroll on the Groups tab"),
     keywords: 'collapse fold close all groups view rows'
-      + ' furl seal roll scroll covens',
+      + ' furl seal roll scroll parties',
     run: () => setAllGroupsOpen(false),
   });
   cmds.push({
-    icon: wiz('⊞', '📖'), label: wiz('Expand all groups', 'Unfurl all covens'),
-    hint: wiz('unfold every group on the Groups tab', "unroll every coven's scroll on the Groups tab"),
+    icon: wiz('⊞', '📖'), label: wiz('Expand all groups', 'Unfurl all parties'),
+    hint: wiz('unfold every group on the Groups tab', "unroll every party's scroll on the Groups tab"),
     keywords: 'expand unfold open all groups view rows'
-      + ' unfurl unseal unroll scroll covens',
+      + ' unfurl unseal unroll scroll parties',
     run: () => setAllGroupsOpen(true),
   });
   for (const g of groups) {
     cmds.push({
-      icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl coven: ${g.name}`),
-      hint: wiz('fold this group', 'roll up this coven'),
+      icon: wiz('⊟', '📕'), label: wiz(`Collapse group: ${g.name}`, `Furl party: ${g.name}`),
+      hint: wiz('fold this group', 'roll up this party'),
       keywords: 'collapse fold close group ' + g.name
-        + ' furl seal roll scroll coven',
+        + ' furl seal roll scroll party',
       run: () => setGroupOpen(g.name, false),
     });
     cmds.push({
-      icon: wiz('⊞', '📖'), label: wiz(`Expand group: ${g.name}`, `Unfurl coven: ${g.name}`),
-      hint: wiz('unfold this group', 'unroll this coven'),
+      icon: wiz('⊞', '📖'), label: wiz(`Expand group: ${g.name}`, `Unfurl party: ${g.name}`),
+      hint: wiz('unfold this group', 'unroll this party'),
       keywords: 'expand unfold open group ' + g.name
-        + ' unfurl unseal unroll scroll coven',
+        + ' unfurl unseal unroll scroll party',
       run: () => setGroupOpen(g.name, true),
     });
   }
@@ -563,19 +563,19 @@ function buildCommands() {
     const n = `${online} window${online === 1 ? '' : 's'}`;
     const nPortals = `${online} scrying portal${online === 1 ? '' : 's'}`;
     cmds.push({
-      icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil coven: ${g.name}`),
+      icon: wiz('⏏', '🌫'), label: wiz(`Hide group: ${g.name}`, `Veil party: ${g.name}`),
       hint: wiz(`hide ${n}`, `draw the veil over ${nPortals}`),
       keywords: 'hide unfocus group windows ' + g.name
-        + ' veil conceal cloak portal scrying coven',
+        + ' veil conceal cloak portal scrying party',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'unfocus', scope: 'group', group: g.name },
         `hide group ${g.name}`); },
     });
     cmds.push({
-      icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal coven: ${g.name}`),
+      icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
       hint: wiz(`raise ${n}`, `conjure ${nPortals}`),
       keywords: 'focus show group windows ' + g.name
-        + ' reveal behold conjure portal scrying coven',
+        + ' reveal behold conjure portal scrying party',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'focus', scope: 'group', group: g.name },
         `focus group ${g.name}`); },
@@ -593,11 +593,11 @@ function buildCommands() {
     if (onlineG) {
       const plural = onlineG === 1 ? '' : 's';
       cmds.push({
-        icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber coven: ${g.name}`),
+        icon: wiz('⏻', '🌙'), label: wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`),
         hint: wiz(`stop ${onlineG} running agent${plural} (resumable; no data deleted)`,
           `lull ${onlineG} channeling familiar${plural} into slumber (rousable; nothing is lost)`),
         keywords: 'shutdown shut down stop kill power off halt group batch ' + g.name
-          + ' slumber sleep rest lull dormant coven familiars',
+          + ' slumber sleep rest lull dormant party familiars',
         run: () => { recordGroupInteraction(g.name); shutdownScope('group', g.name); },
       });
     }
@@ -605,11 +605,11 @@ function buildCommands() {
     if (offlineG) {
       const plural = offlineG === 1 ? '' : 's';
       cmds.push({
-        icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken coven: ${g.name}`),
+        icon: wiz('⏼', '✨'), label: wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`),
         hint: wiz(`resume ${offlineG} offline agent${plural} onto their conversations`,
           `rouse ${offlineG} slumbering familiar${plural} back onto their scrolls`),
         keywords: 'power on start resume wake boot up group batch ' + g.name
-          + ' awaken rouse stir revive kindle coven familiars',
+          + ' awaken rouse stir revive kindle party familiars',
         run: () => { recordGroupInteraction(g.name); powerOnScope('group', g.name); },
       });
     }
@@ -688,7 +688,7 @@ function buildCommands() {
         hint: wiz(`preview + demote ${n} ${status} agent${plural} to plain conversations`,
           `preview + banish ${n} ${status} familiar${plural} back to plain scrolls`),
         keywords: 'retire demote cleanup remove tidy bulk ' + status + ' agents group ' + g.name
-          + ' banish exile dismiss familiars coven',
+          + ' banish exile dismiss familiars party',
         run: () => { recordGroupInteraction(g.name); openRetirePreview(g.name, status); },
       });
     }
@@ -707,9 +707,9 @@ function buildCommands() {
     cmds.push({
       icon: wiz('🧹', '🍂'), label: wiz(`Cleanup worktrees in ${g.name}`, `Prune stray branches in ${g.name}`),
       hint: wiz("scan this group's repo for stale worktrees and remove the ones you pick",
-        "scan this coven's grove for withered branches and prune the ones you pick"),
+        "scan this party's grove for withered branches and prune the ones you pick"),
       keywords: 'cleanup worktree worktrees tidy remove stale orphan branch git group ' + g.name
-        + ' prune withered grove branches coven',
+        + ' prune withered grove branches party',
       run: () => { recordGroupInteraction(g.name); openWorktreeCleanup(g.name); },
     });
   }

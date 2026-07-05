@@ -170,9 +170,9 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("wiz('Power on all agents', 'Awaken all familiars')", "the palette offers a global power-on (plain + arcane label)")
 	must("powerOnScope('all', null)", "global power-on reuses powerOnScope")
 	// Per-group batch.
-	must("wiz(`Shut down group: ${g.name}`, `Slumber coven: ${g.name}`)", "the palette offers a per-group shutdown (plain + arcane label)")
+	must("wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`)", "the palette offers a per-group shutdown (plain + arcane label)")
 	must("shutdownScope('group', g.name)", "per-group shutdown reuses shutdownScope")
-	must("wiz(`Power on group: ${g.name}`, `Awaken coven: ${g.name}`)", "the palette offers a per-group power-on (plain + arcane label)")
+	must("wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`)", "the palette offers a per-group power-on (plain + arcane label)")
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
 	must("wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
