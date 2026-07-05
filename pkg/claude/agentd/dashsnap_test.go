@@ -178,6 +178,15 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 		t.Fatalf("nest %s under %s: %v", otherGroup, tfTemplate, err)
 	}
 
+	// Record deployment provenance on frontend-squad (mission + source_template)
+	// so isDeployedForce is true and the group renders its task-force info card
+	// (renderForceBlock) — the surface the 🎯 hide/show toggle acts on. Without
+	// this the card (and its toggle) never render, so the fold states below would
+	// have nothing to fold.
+	if _, err := db.SetAgentGroupDeployMeta(tfTemplate, "Ship the new dashboard charts", tfTemplate); err != nil {
+		t.Fatalf("set deploy meta on %s: %v", tfTemplate, err)
+	}
+
 	seedPalette(t, f)
 }
 
@@ -300,12 +309,52 @@ func baseStates() []dashsnap.State {
 	const showGroups = `document.querySelector('nav button[data-tab="groups"]').click();`
 	const expandGroups = `document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){d.open=true;});`
 	const collapseGroups = `document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){d.open=false;});`
+	// The 🎯 force-fold state is stored in dashPrefs, which persists SERVER-side
+	// in the run's shared SQLite — so once ANY state folds frontend-squad's card
+	// the fold leaks into every later state (unlike group open/close, which each
+	// state re-forces via `d.open`). The card's visibility is a render-time read
+	// of that pref, not a DOM toggle we can override, so a card-showing state must
+	// reconcile it: click the 🎯 toggle iff the card is currently absent (folded).
+	// A no-op when the card is already open. Prepended to every state that expects
+	// the open card so ordering (and the folded state below) can't taint it.
+	const ensureForceOpen = `(function(){
+  var det = document.querySelector('details[data-group-key="frontend-squad"]');
+  if (det && det.open && !det.querySelector(':scope > .subtable > .group-force-block')) {
+    var b = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+    if (b) b.click();
+  }
+})();`
 	return []dashsnap.State{
 		{
 			Key:     "groups",
 			Title:   "Groups tab",
-			Caption: "Groups tab, members expanded: tf:frontend-squad chips, owner ★, online + offline, task links.",
-			JS:      showGroups + expandGroups + `document.body.classList.add('dock-open');`,
+			Caption: "Groups tab, members expanded: the task-force info card (mission/roles) atop frontend-squad, its 🎯 hide-info toggle in the action row, tf: chips, owner ★, online + offline, task links.",
+			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');`,
+		},
+		{
+			// The 🎯 fold toggle: frontend-squad is a deployed force (fixture sets
+			// its mission), so its .group-force-block renders by default. Clicking
+			// the toggle in the action row must hide the card and leave the button
+			// in its .folded accent reading "show info". ensureForceOpen first, so
+			// this state starts from a known-open card even if a prior state (or the
+			// other skin's run of THIS state) already folded the persisted pref.
+			// Self-checking (throws) so a broken fold fails the run instead of
+			// passing as a silent "ok".
+			Key:     "force-folded",
+			Title:   "Groups tab — task-force card folded",
+			Caption: "The 🎯 toggle (self-checked): frontend-squad's info card is hidden; the accented 🎯 show-info button in the action row is the way back.",
+			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');` + `(function(){
+  var det = document.querySelector('details[data-group-key="frontend-squad"]');
+  if (!det) throw new Error('force-folded: frontend-squad not found');
+  if (!det.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: expected an open force card before folding');
+  var btn = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+  if (!btn) throw new Error('force-folded: no 🎯 toggle button in the action row');
+  btn.click();
+  var det2 = document.querySelector('details[data-group-key="frontend-squad"]');
+  if (det2.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: card still present after folding');
+  var btn2 = det2.querySelector('.force-fold-btn.folded[data-act="toggle-force-fold"]');
+  if (!btn2) throw new Error('force-folded: toggle did not enter its .folded state');
+})();`,
 		},
 		{
 			// JOH-392 — the group TREE. infra-crew is nested under frontend-squad
@@ -316,7 +365,7 @@ func baseStates() []dashsnap.State {
 			Key:     "groups-nested",
 			Title:   "Groups tab — nested subgroup",
 			Caption: "JOH-392 (self-checked): infra-crew nested inside frontend-squad — drawn in the parent's body above its member list; collapse the parent to hide the whole subtree.",
-			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `(function(){
+			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');` + `(function(){
   var parent = document.querySelector('details[data-group-key="frontend-squad"]');
   var child = document.querySelector('details[data-group-key="infra-crew"]');
   if (!parent) throw new Error('groups-nested: frontend-squad not found');
@@ -346,7 +395,7 @@ func baseStates() []dashsnap.State {
 			// JOH-390 item 4: collapsed, the re-homed controls render back in the
 			// toolbar exactly as before (the only reopen affordance is the edge tab).
 			Caption: "Palette dock collapsed, members expanded — main list reclaims the width; + new group / ⚙ cog / 🧠 default-profile are back in the toolbar.",
-			JS:      showGroups + expandGroups + `document.body.classList.remove('dock-open');`,
+			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.remove('dock-open');`,
 		},
 		{
 			// JOH-388 req 3 — the WIDE case: a block far wider than the viewport

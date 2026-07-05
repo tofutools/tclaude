@@ -351,6 +351,19 @@ function bindRowActions() {
           renderGroupsTab();
           return;
         }
+        case 'toggle-force-fold': {
+          // Pure client-side view state — fold away / reveal this deployed
+          // force's info card. renderForceBlock reads the same dashPref and
+          // renders nothing while folded; the 🎯 toggle in the action row is
+          // the way back. Stored in dashPrefs (server-side, per browser) like
+          // the quick-pin toggle above; default open, so a stored '1' = folded.
+          // No daemon round-trip; re-render shows the new state.
+          const fkey = 'tclaude.dash.forcefold.' + group;
+          if (dashPrefs.getItem(fkey) === '1') dashPrefs.removeItem(fkey);
+          else dashPrefs.setItem(fkey, '1');
+          renderGroupsTab();
+          return;
+        }
         case 'advance-phase': {
           // Advance the group's advisory process to the NEXT phase (JOH-242).
           // A deliberate act that records a transition and nudges the entering
