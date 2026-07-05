@@ -1788,20 +1788,23 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	if body.DescrOverride != nil {
 		descr = strings.TrimSpace(*body.DescrOverride)
 	}
-	// A plain instantiate records the source template (so the dashboard can
-	// still frame it as "from template X") but no mission — that is the
-	// deploy verb's addition.
+	task := strings.TrimSpace(body.Task)
+	// A plain instantiate records the source template and the supplied task as
+	// group provenance so the dashboard can frame the launched group with the
+	// purpose it was created for. It still renders the assignment under "Task";
+	// deploy is the path that renders under "Mission" and marks deployed=true.
 	runInstantiation(w, instantiateSpec{
 		tmpl:              tmpl,
 		caller:            caller,
 		groupName:         body.GroupName,
-		assignment:        body.Task,
+		assignment:        task,
 		contextHeader:     "Task",
 		cwd:               cwd,
 		worktreePath:      worktreePath,
 		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
 		perAgentWorktrees: perAgentWorktrees,
 		descr:             descr,
+		mission:           task,
 		sourceTemplate:    tmpl.Name,
 		contextOverride:   body.ContextOverride,
 		parentGroup:       parentGroup,
