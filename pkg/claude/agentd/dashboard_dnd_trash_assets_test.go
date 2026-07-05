@@ -35,9 +35,10 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 		// handler would ever recognise a drop on it.
 		{`,#dnd-trash'`,
 			"dnd.js includes #dnd-trash in DND_TARGET_SEL"},
-		// dnd.js: show on dragstart (gated on a retireable source) + hide on dragend.
-		{`showDndTrash(!sourceRetired && !sourceConversation)`,
-			"dnd.js reveals the bin on dragstart only for a retireable source"},
+		// dnd.js: show on dragstart (gated on a retireable source — or a
+		// pending spawn, whose only valid target IS the bin) + hide on dragend.
+		{`showDndTrash(sourcePending || (!sourceRetired && !sourceConversation))`,
+			"dnd.js reveals the bin on dragstart for a retireable source or a pending spawn"},
 		{`function showDndTrash(`, "dnd.js defines the bin show helper"},
 		{`function hideDndTrash(`, "dnd.js defines the bin hide helper"},
 		// dashboard.css: the bin and its armed state are styled.
@@ -60,6 +61,45 @@ func TestDashboardJS_DragToRetireBinWired(t *testing.T) {
 	}
 	if dragend >= hide || hide >= dragover {
 		t.Errorf("hideDndTrash() (at %d) must be called inside the dragend handler (between %d and %d) so a drag-end always hides the bin", hide, dragend, dragover)
+	}
+}
+
+// TestDashboardJS_PendingDeleteWired guards the pending-spawn cleanup
+// escape hatch — the per-row 🗑 delete button and the drag-to-trash gesture,
+// both of which discard a spawn wedged behind a startup gate it will never
+// clear (POST /api/pending/delete/{label}).
+//
+// A pending spawn is not an agent (no conv-id / group / permissions), so it
+// can't take the conv-keyed retire path; this is its own dedicated wiring.
+// Like the other dashboard-asset guards, it string-searches the embedded JS
+// to pin the load-bearing pieces against a silent refactor break.
+func TestDashboardJS_PendingDeleteWired(t *testing.T) {
+	for _, c := range []struct{ needle, why string }{
+		// render.js: the per-row button + the draggable pending row tagged so
+		// dnd.js recognises it as a pending source.
+		{`data-act="delete-pending"`,
+			"render.js emits the per-row 🗑 delete button"},
+		{`data-dnd-pending="1"`,
+			"render.js tags the pending row as a draggable pending source"},
+		// row-actions.js: the button handler POSTs to the delete endpoint.
+		{`case 'delete-pending':`,
+			"row-actions.js handles the delete-pending click"},
+		{"`/api/pending/delete/${encodeURIComponent(label)}`",
+			"row-actions.js POSTs to the pending-delete endpoint"},
+		// dnd.js: the pending source flag, its trash-only routing, and the
+		// delete handler the drop invokes.
+		{`row.hasAttribute('data-dnd-pending')`,
+			"dnd.js reads the pending source flag on dragstart"},
+		{`if (dndSourcePending) return !box.hasAttribute('data-dnd-target-retired');`,
+			"dnd.js makes a pending source inert over every target but the trash"},
+		{`await runDndDeletePending(payload);`,
+			"dnd.js routes a pending drop to the delete handler"},
+		{`async function runDndDeletePending(`,
+			"dnd.js defines the pending-delete drop handler"},
+	} {
+		if !strings.Contains(dashboardAssets, c.needle) {
+			t.Errorf("dashboard assets missing %q — %s", c.needle, c.why)
+		}
 	}
 }
 

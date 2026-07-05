@@ -346,20 +346,30 @@ function pendingFocusButton(p) {
     : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
 }
 
+// pendingDeleteButton clears a stuck spawn that will never enrol — the
+// escape hatch for a pending row wedged behind a startup gate the operator
+// has given up on. Kills the pane and drops the pending + session rows
+// (POST /api/pending/delete/{label}). The matching drag-to-trash gesture
+// (dnd.js) invokes the same endpoint. Always enabled — a dead pane is
+// exactly the case that most needs clearing.
+function pendingDeleteButton(p) {
+  return `<button class="danger" data-act="delete-pending" data-label="${esc(p.label)}" title="Delete this stuck spawn — kills its pane (if any) and removes it from the pending list. Use when a spawn will never clear its startup gate. It never became a real agent, so there is no conversation to keep.">🗑 delete</button>`;
+}
+
 function pendingTableHTML(rows) {
   return `
         <table>
           ${sortHead('pending', PENDING_COLS)}
           <tbody>
             ${applySort('pending', rows, PENDING_ACCESSORS).map(p => `
-              <tr data-key="${esc(p.label)}">
+              <tr data-key="${esc(p.label)}" class="dnd-draggable" draggable="true" data-dnd-pending="1" data-dnd-conv="${esc(p.label)}" data-dnd-label="${esc(p.label)}">
                 <td>${onlineDot(p.online)}</td>
                 <td class="id">${esc(p.label)}</td>
                 <td><span class="rowname">${esc(p.name || p.role || '(unnamed)')}</span></td>
                 <td>${esc(p.group || '(none)')}</td>
                 <td><span class="muted" title="${esc(p.cwd || '')}">${esc(p.cwd ? shortCwd(p.cwd) : '')}</span></td>
                 <td><span class="last-hook">${esc(p.created_at ? relTime(p.created_at) : '')}</span></td>
-                <td><div class="row-actions">${pendingFocusButton(p)}</div></td>
+                <td><div class="row-actions">${pendingFocusButton(p)}${pendingDeleteButton(p)}</div></td>
               </tr>`).join('')}
           </tbody>
         </table>`;

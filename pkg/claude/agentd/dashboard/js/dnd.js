@@ -41,6 +41,13 @@ let dndDragActive = false;
 let dndSourceUngrouped = false;
 let dndSourceConversation = false;
 let dndSourceRetired = false;
+// dndSourcePending: the dragged row is a PENDING spawn (JOH-205) — a spawn
+// wedged behind a startup gate, not a real agent (no conv-id, no group, no
+// permissions). Its ONLY valid drop is the trash, where it routes to a
+// DELETE (kill pane + drop rows) rather than a retire. Every hover handler
+// keys off this to make a pending source inert over group / ungrouped
+// targets and to relabel the trash gesture as a delete.
+let dndSourcePending = false;
 // dndSourceGroup: the real group a dragged member row comes from (''
 // for the virtual sources). Like the flags above, dragover/dragenter
 // can't read the DataTransfer payload, so this module-level copy is how
@@ -79,6 +86,12 @@ function isCloneGesture(e, box) {
 //   - a conversation or an already-retired row onto Retired;
 //   - a plain (non-clone) move onto the source's OWN group.
 function dndInertOnto(box, isClone) {
+  // A pending spawn isn't an agent — it can't join, leave, or be retired.
+  // Its only real gesture is delete-via-trash, so it's inert over EVERY
+  // target except a retired-target (the trash bin or the virtual Retired
+  // group, both carrying data-dnd-target-retired), where the drop handler
+  // routes it to runDndDeletePending.
+  if (dndSourcePending) return !box.hasAttribute('data-dnd-target-retired');
   if (box.hasAttribute('data-dnd-target-ungrouped')) return dndSourceUngrouped;
   if (box.hasAttribute('data-dnd-target-retired')) return dndSourceRetired || dndSourceConversation;
   // Real-group target: inert only when it's the source's own group and
@@ -177,17 +190,21 @@ function bindDnd() {
     const sourceUngrouped = row.hasAttribute('data-dnd-source-ungrouped');
     const sourceConversation = row.hasAttribute('data-dnd-source-conversation');
     const sourceRetired = row.hasAttribute('data-dnd-source-retired');
+    // A PENDING spawn (JOH-205): a stuck spawn, not an agent. Its only
+    // valid drag is to the trash (→ delete). It has no conv-id / source
+    // group / virtual-source flags, so it needs its own source predicate.
+    const sourcePending = row.hasAttribute('data-dnd-pending');
     const label = row.getAttribute('data-dnd-label') || conv;
     // A draggable row is a real-group member (has a source group), a
-    // virtual-Ungrouped row, a virtual-Conversations row, or a
-    // virtual-Retired row. Anything else isn't a valid drag.
-    if (!conv || (!sourceGroup && !sourceUngrouped && !sourceConversation && !sourceRetired)) return;
+    // virtual-Ungrouped row, a virtual-Conversations row, a virtual-Retired
+    // row, or a pending spawn. Anything else isn't a valid drag.
+    if (!conv || (!sourceGroup && !sourceUngrouped && !sourceConversation && !sourceRetired && !sourcePending)) return;
     // Stash the payload on the DataTransfer so the eventual drop can
     // read it without globals. The MIME type 'text/plain' is the
     // most-supported channel; the JSON body keeps the encoding
     // self-describing. We allow both move (default) and copy effects
     // so Ctrl-drag can flip the cursor hint via dropEffect.
-    const payload = JSON.stringify({conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, label});
+    const payload = JSON.stringify({conv, agent, sourceGroup: sourceGroup || '', sourceUngrouped, sourceConversation, sourceRetired, sourcePending, label});
     e.dataTransfer.setData('application/x-tclaude-member', payload);
     e.dataTransfer.setData('text/plain', payload);
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -196,12 +213,14 @@ function bindDnd() {
     dndSourceUngrouped = sourceUngrouped;
     dndSourceConversation = sourceConversation;
     dndSourceRetired = sourceRetired;
+    dndSourcePending = sourcePending;
     dndSourceGroup = sourceGroup || '';
     // Reveal the fixed drag-to-retire bin for a retireable source (a
     // real-group member or an ungrouped agent — not an already-retired
-    // row, not a plain conversation), so retiring never means dragging
-    // all the way to the possibly-offscreen Retired group.
-    showDndTrash(!sourceRetired && !sourceConversation);
+    // row, not a plain conversation) OR a pending spawn (where the bin is
+    // its only valid target), so clearing never means dragging all the way
+    // to the possibly-offscreen Retired group.
+    showDndTrash(sourcePending || (!sourceRetired && !sourceConversation));
     // dndDragActive (set above) is what suspends auto-refresh for the
     // duration of the drag — see refreshSuspended().
   });
@@ -217,6 +236,7 @@ function bindDnd() {
     dndSourceUngrouped = false;
     dndSourceConversation = false;
     dndSourceRetired = false;
+    dndSourcePending = false;
     dndSourceGroup = '';
     // Hide the drag-to-retire bin alongside the flag resets, ahead of the
     // DOM cleanup below: like those resets it must run on every drag-end
@@ -265,7 +285,8 @@ function bindDnd() {
     e.dataTransfer.dropEffect = isClone ? 'copy' : 'move';
     box.classList.toggle('dnd-effect-clone', isClone);
     let text;
-    if (targetRetired) text = '↓ retire — demote to conversation';
+    if (targetRetired && dndSourcePending) text = '🗑 delete stuck spawn';
+    else if (targetRetired) text = '↓ retire — demote to conversation';
     else if (targetUngrouped) text = dndSourceRetired ? '↓ reinstate (no group)' : dndSourceConversation ? '↓ promote (no group)' : '↓ remove from group';
     else if (isClone) text = '→ clone into group';
     else if (dndSourceRetired) text = '→ reinstate + join group';
@@ -321,6 +342,7 @@ function bindDnd() {
     const sourceUngrouped = !!payload.sourceUngrouped;
     const sourceConversation = !!payload.sourceConversation;
     const sourceRetired = !!payload.sourceRetired;
+    const sourcePending = !!payload.sourcePending;
     // Clone applies only to a real-group target, never to a retired
     // source (that path reinstates).
     const isClone = (!!e.ctrlKey || !!e.metaKey) && !targetUngrouped && !targetRetired && !sourceRetired;
@@ -338,6 +360,16 @@ function bindDnd() {
     // checkbox and all — so a retire-by-drag and the per-row retire
     // button ask the identical question.
 
+    // A pending spawn can only ever be dropped on a retired-target (the
+    // trash bin or the virtual Retired group — dndInertOnto makes every
+    // other target inert for it). Both mean the same thing: delete the
+    // stuck spawn. This branch precedes the retire branch below because a
+    // pending row is not a real agent and must never take the retire path.
+    if (sourcePending) {
+      if (!targetRetired) return; // inert everywhere else (see dndInertOnto)
+      await runDndDeletePending(payload);
+      return;
+    }
     // Target = the virtual Retired group → retire the agent,
     // demoting it back to a plain conversation.
     if (targetRetired) {
@@ -680,6 +712,38 @@ async function runDndRetire(payload) {
   });
   if (!choice) {
     await refresh(); // undo the optimistic dragend state on cancel
+  }
+}
+
+// runDndDeletePending handles a drag of a PENDING spawn (JOH-205) onto the
+// trash / Retired target — the escape hatch for a spawn wedged behind a
+// startup gate it will never clear. A pending spawn is keyed by its LABEL
+// (no conv-id yet) and is not an agent, so this hits the dedicated
+// /api/pending/delete/{label} endpoint (kill pane + drop pending + session
+// rows) rather than the conv-keyed retire path. Same op and confirmation
+// wording as the per-row 🗑 delete button (row-actions.js).
+async function runDndDeletePending(payload) {
+  const {label} = payload;
+  const confirmed = await confirmModal({
+    title: 'Delete pending spawn?',
+    body: 'This spawn never finished starting up — its pane is stuck behind a startup gate (untrusted dir, config prompt, or an OpenAI-auth modal). Deleting kills its pane and removes it from the pending list. It never became a real agent, so there is no conversation to keep.',
+    meta: label,
+    okLabel: 'Delete',
+  });
+  if (!confirmed) { await refresh(); return; }
+  try {
+    const r = await fetch(`/api/pending/delete/${encodeURIComponent(label)}`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    if (!r.ok) {
+      toast(`delete ${label} failed: ${await r.text()}`, true);
+      return;
+    }
+    toast(`deleted pending spawn: ${label}`);
+  } catch (err) {
+    toast(`delete failed: ${err && err.message || err}`, true);
+  } finally {
+    await refresh();
   }
 }
 
