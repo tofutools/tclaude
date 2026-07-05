@@ -867,7 +867,7 @@ let deployGroupEdited = false;
 //   copy      — create a NEW group inheriting the target's descr / cwd / context
 //               (no agents cloned) with the roster spawned in (POST …/instantiate
 //               carrying the JOH-356 context_override so the new group gets its
-//               OWN edited copy of the shared context, not the template's).
+//               OWN edited copy of the combined target + template context).
 //   subgroup  — same as copy, but the new group is nested under the target.
 let deployDropGroup = '';
 // The copy-mode prefills, computed once from the drop target's snapshot when the
@@ -889,11 +889,27 @@ function deployMirrorSource() {
   return sel ? sel.value.trim() : '';
 }
 
+function selectedDeployTemplate() {
+  return templatesByName()[$('#template-deploy-template').value] || null;
+}
+
+function combineGroupAndTemplateContext(groupContext, templateContext) {
+  const group = String(groupContext || '').trim();
+  const tmpl = String(templateContext || '').trim();
+  if (group && tmpl) {
+    return `## Mirrored group context\n\n${group}\n\n## Template context\n\n${tmpl}`;
+  }
+  return group || tmpl;
+}
+
 function prefillDeployFromGroup(groupName, { setGroupName = false } = {}) {
   const gs = groupSnapshot(groupName);
   if (!gs) return;
+  const tmpl = selectedDeployTemplate();
   $('#template-deploy-descr').value = gs.descr || '';
-  $('#template-deploy-context').value = gs.default_context || '';
+  $('#template-deploy-context').value = combineGroupAndTemplateContext(
+    gs.default_context,
+    tmpl && tmpl.default_context);
   $('#template-deploy-cwd').value = gs.default_cwd || '';
   if (setGroupName) {
     $('#template-deploy-group').value = suggestCopyGroupName(groupName);
@@ -915,7 +931,9 @@ export function openSummonForDrop(templateName, dropGroup) {
   deployCopyDefaults = {
     groupName: suggestCopyGroupName(g),
     descr: (gs && gs.descr) || '',
-    context: (gs && gs.default_context) || '',
+    context: combineGroupAndTemplateContext(
+      gs && gs.default_context,
+      selectedDeployTemplate() && selectedDeployTemplate().default_context),
     cwd: (gs && gs.default_cwd) || '',
   };
   // Seed the copy-only fields now so they carry the target's settings the moment
@@ -1205,9 +1223,8 @@ async function submitReinforce() {
 // submitCopyGroup (mode 2) — create a NEW group in the drop target's image via
 // POST …/instantiate: it inherits the target's descr / cwd / context (no agents
 // copied) with the template's roster spawned in. context_override (JOH-356)
-// carries the group's OWN edited copy of the context, so the new group gets the
-// target's context, not the template's. instantiate is the existing create-new
-// path — no endpoint added.
+// carries the group's OWN edited copy of the combined target + template context.
+// instantiate is the existing create-new path — no endpoint added.
 async function submitCopyGroup() {
   const mode = deployMode();
   const tmplName = $('#template-deploy-template').value;
@@ -2018,7 +2035,19 @@ function bindTemplatesUI() {
   $('#template-deploy-submit').addEventListener('click', submitDeploy);
   wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
-  $('#template-deploy-template').addEventListener('change', syncDeployGroupPrefill);
+  $('#template-deploy-template').addEventListener('change', () => {
+    syncDeployGroupPrefill();
+    if (deployDropGroup && deployCopyDefaults) {
+      const gs = groupSnapshot(deployDropGroup);
+      deployCopyDefaults.context = combineGroupAndTemplateContext(
+        gs && gs.default_context,
+        selectedDeployTemplate() && selectedDeployTemplate().default_context);
+      $('#template-deploy-context').value = deployCopyDefaults.context;
+    } else if (deployMirrorSource()) {
+      prefillDeployFromGroup(deployMirrorSource());
+    }
+    renderDeployPreview();
+  });
   $('#template-deploy-group').addEventListener('input', () => {
     deployGroupEdited = true;
     // In copy mode the group field IS the new group's name — track edits on the

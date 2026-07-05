@@ -594,12 +594,24 @@ function groupCreateSnapshot(groupName) {
   return groups.find(g => g && g.name === groupName) || null;
 }
 
+function combineGroupAndTemplateContext(groupContext, templateContext) {
+  const group = String(groupContext || '').trim();
+  const tmpl = String(templateContext || '').trim();
+  if (group && tmpl) {
+    return `## Mirrored group context\n\n${group}\n\n## Template context\n\n${tmpl}`;
+  }
+  return group || tmpl;
+}
+
 function prefillGroupCreateFromSource(groupName) {
   const g = groupCreateSnapshot(groupName);
   if (!g) return;
+  const tmpl = selectedGroupCreateTemplate();
   $('#group-create-descr').value = g.descr || '';
   $('#group-create-cwd').value = g.default_cwd || '';
-  $('#group-create-context').value = g.default_context || '';
+  $('#group-create-context').value = combineGroupAndTemplateContext(
+    g.default_context,
+    tmpl && tmpl.default_context);
 }
 
 // populateGroupCreateTemplates fills the party-profile dropdown with a blank

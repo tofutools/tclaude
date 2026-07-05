@@ -544,12 +544,13 @@ yourself. The group name is also the prefix for every agent — template agent
 which becomes the force's working directory.
 
 When creating a new force, the modal can also **mirror settings from an existing
-group**: description, default cwd, and startup context are copied into editable
-fields before submit. Leave it top-level to create a separate force with the
-same settings, or tick **Deploy as subgroup** to nest the new force under the
-mirrored group. Dragging a template from the right dock onto a group offers the
-same choices plus **Reinforce this group**, which keeps the existing group and
-spawns the template roster directly into it.
+group**: description and default cwd are copied into editable fields before
+submit, and the startup context field shows the mirrored group's context
+combined with the template's default context. Leave it top-level to create a
+separate force with the same settings, or tick **Deploy as subgroup** to nest
+the new force under the mirrored group. Dragging a template from the right dock
+onto a group offers the same choices plus **Reinforce this group**, which keeps
+the existing group and spawns the template roster directly into it.
 
 Deploying does several things in one action:
 

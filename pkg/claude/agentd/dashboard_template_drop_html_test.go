@@ -78,11 +78,14 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must("/reinforce`, {", "reinforce mode POSTs to the reinforce endpoint")
 	must("/instantiate`, {", "copy mode POSTs to the existing instantiate endpoint")
 	// Copy mode ALWAYS sends context_override AND descr_override so the new group
-	// carries the target's context (JOH-356) AND description (JOH-385) verbatim,
-	// never the template's — sending them unconditionally is how an EMPTY source
-	// context / description is faithfully copied (a bare `descr` would let the
-	// backend re-default an empty description to "Instantiated from template X").
-	must("const payload = { group_name: groupName, context_override: context, descr_override: descr };", "copy mode overrides both context and description with the group's own copy")
+	// carries the visible, edited combined context (JOH-356) AND description
+	// (JOH-385). Sending them unconditionally is how an EMPTY source context /
+	// description is faithfully copied (a bare `descr` would let the backend
+	// re-default an empty description to "Instantiated from template X").
+	must("combineGroupAndTemplateContext(", "the visible context combines the mirrored group and template defaults")
+	must("## Mirrored group context", "the combined context labels the mirrored group portion")
+	must("## Template context", "the combined context labels the template portion")
+	must("const payload = { group_name: groupName, context_override: context, descr_override: descr };", "copy mode sends the visible combined context and description")
 	must("if (mode === 'subgroup') payload.parent = deployDropGroup;", "subgroup drop mode sends the parent group")
 	must("payload.descr_override = descr;", "normal deploy can mirror a group's description")
 	must("payload.context_override = context;", "normal deploy can mirror a group's context")
