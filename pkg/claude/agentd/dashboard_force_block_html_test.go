@@ -63,3 +63,48 @@ func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 		}
 	}
 }
+
+// TestDashboardAssets_ForceFoldWired guards the 🎯 hide/show toggle for the
+// force info card. Like the block itself its pieces span render.js,
+// row-actions.js and dashboard.css and must stay in lockstep — a rename in one
+// file silently breaks the fold only in the browser:
+//   - render.js reads the fold dashPref (isForceFolded), gates renderForceBlock
+//     on it, and emits the toggle button in the group action row
+//     (forceFoldToggleHTML, data-act="toggle-force-fold");
+//   - row-actions.js handles the toggle (flip the dashPref, re-render);
+//   - dashboard.css skins the toggle's folded accent + its wizard label swap.
+//
+// The default-open contract is load-bearing: a freshly deployed force must show
+// its card, so the pref is ABSENT by default and only a stored '1' folds it.
+func TestDashboardAssets_ForceFoldWired(t *testing.T) {
+	for _, needle := range []string{
+		// render.js — the fold-state read, the gate, and the toggle button.
+		"function isForceFolded(",
+		"function forceFoldToggleHTML(",
+		"'tclaude.dash.forcefold.' + name",
+		"if (isForceFolded(g.name)) return '';",
+		`data-act="toggle-force-fold"`,
+		"isDeployedForce(g) ? forceFoldToggleHTML(g) : ''",
+		// row-actions.js — the toggle handler flipping the same pref.
+		"case 'toggle-force-fold':",
+		"'tclaude.dash.forcefold.' + group",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — force-fold wiring broken", needle)
+		}
+	}
+
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, needle := range []string{
+		".force-fold-btn.folded {",
+		"body.wizard .force-fold-label-regular",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — force-fold styling broken", needle)
+		}
+	}
+}

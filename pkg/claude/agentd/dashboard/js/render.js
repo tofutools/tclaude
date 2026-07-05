@@ -505,7 +505,25 @@ function groupActionsHTML(g, members) {
     // the Summon button above does.
     + `<button data-act="power-on-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on</span><span class="pwr-label-wizard">✨ Awaken</span></button>`
     + `<button class="warn" data-act="shutdown-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown</span><span class="pwr-label-wizard">🌙 Slumber</span></button>`
+    // Task-force info toggle — only for a deployed force, which is the only
+    // group that HAS an info card (renderForceBlock). Sits alongside
+    // awaken/slumber and flips the fold dashPref the card reads.
+    + (isDeployedForce(g) ? forceFoldToggleHTML(g) : '')
     + `</span>`;
+}
+
+// forceFoldToggleHTML renders the 🎯 show/hide toggle for a deployed force's
+// info card, sitting next to awaken/slumber in the group action row. It flips
+// the per-browser dashPref that renderForceBlock reads (default open), so the
+// human can tuck the card away and bring it back later. groupActionsHTML gates
+// it on isDeployedForce — a plain group has no card, hence no toggle. The label
+// span-swaps regular → wizard the same way the power buttons do.
+function forceFoldToggleHTML(g) {
+  const folded = isForceFolded(g.name);
+  const tip = folded
+    ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.'
+    : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.';
+  return `<button class="force-fold-btn${folded ? ' folded' : ''}" data-act="toggle-force-fold" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-folded="${folded ? '1' : '0'}" aria-pressed="${folded ? 'true' : 'false'}" title="${esc(tip)}">🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>`;
 }
 
 // groupNestMenuItems renders the group ⚙ menu's nesting controls (n-level
@@ -633,6 +651,16 @@ function isDeployedForce(g) {
   return !!(g.source_template || g.mission || (g.process && g.process.phases && g.process.phases.length) || g.waves);
 }
 
+// isForceFolded reports whether the human has folded away this force's info
+// card via the 🎯 toggle in the group action row. Per-browser view state in
+// dashPrefs, keyed by group name; ABSENT = open, which is the default so a
+// freshly deployed force shows its card. Only a stored '1' means folded (the
+// same "default-open, flag = the non-default" idiom the quick-pin uses), so a
+// never-toggled force always renders its card.
+function isForceFolded(name) {
+  return dashPrefs.getItem('tclaude.dash.forcefold.' + name) === '1';
+}
+
 // forceMemberLiveness classifies a member for the roles rollup + stalling
 // glance: an offline / exited member is 'dead'; an online member is 'idle' only
 // when its recorded status is literally idle, and 'working' for anything else in
@@ -712,6 +740,11 @@ function forcePhaseHistory(g) {
 // (its children are positional — no keys to collide).
 function renderForceBlock(g, members) {
   if (!isDeployedForce(g)) return '';
+  // Folded away via the 🎯 toggle in the group action row — hide the card
+  // entirely. The toggle (rendered by groupActionsHTML, always present for a
+  // deployed force) is how it comes back. Returning '' drops the
+  // .group-force-block node; the 2s morph re-adds it verbatim on unfold.
+  if (isForceFolded(g.name)) return '';
   const parts = [];
   if (g.mission) {
     const from = g.source_template ? ` <span class="force-from">from ${esc(g.source_template)}</span>` : '';

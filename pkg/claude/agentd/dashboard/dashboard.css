@@ -1882,6 +1882,16 @@ body.show-group-description .group-create-descr-row { display: flex; }
 .force-mission-label-wizard { display: none; }
 body.wizard .force-mission-label-regular { display: none; }
 body.wizard .force-mission-label-wizard { display: inline; }
+/* The 🎯 task-force info toggle in the group action row. Inherits the
+   .group-actions button skin; .folded warms it to a blue accent so a hidden
+   card is legible at a glance (the label already reads "show info"). Its label
+   span-swaps regular → wizard the same way the mission label above does. */
+.force-fold-btn.folded {
+  color: #58a6ff; border-color: #1f3a5f; background: #10243d;
+}
+.force-fold-label-wizard { display: none; }
+body.wizard .force-fold-label-regular { display: none; }
+body.wizard .force-fold-label-wizard { display: inline; }
 .group-default-cwd {
   font-family: ui-monospace, monospace; font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
