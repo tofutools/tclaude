@@ -9,6 +9,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
+// The Config tab's labeled "Dashboard bind" field must stay wired end to end:
+// the input exists, is populated from agent.dashboard_bind on load, and is
+// written back on save. Guards the discoverable control the operator asked for
+// (so it can't silently regress to raw-JSON-only).
+func TestDashboardConfigTab_DashboardBindFieldWired(t *testing.T) {
+	for _, needle := range []string{
+		`id="cfg-agent-dashboardbind"`,                          // the labeled field (HTML)
+		"$('#cfg-agent-dashboardbind').value = a.dashboard_bind", // populated on load (config.js)
+		"a.dashboard_bind = dbRaw",                               // written on save (config.js)
+	} {
+		assert.Contains(t, dashboardAssets, needle, "Config-tab dashboard_bind field wiring broken")
+	}
+}
+
 // resolveDashboardBind picks the host the dashboard listener binds to:
 // flag > config > default("127.0.0.1"). A whitespace-only value at a tier is
 // treated as unset and falls through.

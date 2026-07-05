@@ -616,7 +616,17 @@
       <div class="cfg-field">
         <span class="cfg-label">Dashboard port</span>
         <input type="number" id="cfg-agent-dashboardport" min="0" max="65535" placeholder="(random)" aria-label="Dashboard port" autocomplete="off" style="min-width:120px" />
-        <span class="cfg-hint">Fixed loopback port for the dashboard + approval popup. Empty / <code>0</code> = a random free port each start. A stable port gives a bookmarkable URL; takes effect on the next <code>agentd serve</code>.</span>
+        <span class="cfg-hint">Fixed port for the dashboard + approval popup. Empty / <code>0</code> = a random free port each start. A stable port gives a bookmarkable URL; takes effect on the next <code>agentd serve</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Dashboard bind</span>
+        <input type="text" id="cfg-agent-dashboardbind" list="cfg-agent-dashboardbind-list" placeholder="127.0.0.1" aria-label="Dashboard bind host" autocomplete="off" spellcheck="false" style="min-width:160px" />
+        <datalist id="cfg-agent-dashboardbind-list">
+          <option value="127.0.0.1">loopback only — default (safe)</option>
+          <option value="0.0.0.0">all interfaces — behind your OWN auth</option>
+          <option value="::">all interfaces (IPv6)</option>
+        </datalist>
+        <span class="cfg-hint">Host/interface the <strong>local</strong> dashboard binds to (host only — the port is above). Empty / <code>127.0.0.1</code> = loopback only. Set <code>0.0.0.0</code> / <code>::</code> to expose it on the network — <strong>only behind your own auth</strong> (reverse proxy / VPN / IAP), since its own gate is just a cookie + operator token. This is <em>not</em> the “Remote access” section below — that's a separate mTLS + passphrase listener. Takes effect on the next <code>agentd serve</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">System tray</span>

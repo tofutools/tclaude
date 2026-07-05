@@ -572,6 +572,8 @@ function populateConfigForm(cfg) {
   // blank — the form drops it on save anyway. A negative / out-of-range
   // value is shown as-is so the human sees the value the server rejects.
   $('#cfg-agent-dashboardport').value = (a.dashboard_port != null && a.dashboard_port !== 0) ? a.dashboard_port : '';
+  // dashboard_bind: host the local dashboard binds to. Empty = loopback default.
+  $('#cfg-agent-dashboardbind').value = a.dashboard_bind || '';
   $('#cfg-agent-clonecooldown').value = a.clone_cooldown || '';
   // nil / true both mean "on" (the default); only an explicit false is off.
   $('#cfg-agent-spawnrestrict').checked = a.spawn_group_restriction !== false;
@@ -858,6 +860,11 @@ function assembleConfig() {
   const dpRaw = $('#cfg-agent-dashboardport').value.trim();
   const dp = cfgInt('cfg-agent-dashboardport', 0);
   if (dpRaw !== '' && dp !== 0) a.dashboard_port = dp; else delete a.dashboard_port;
+  // dashboard_bind: host only. Empty / "127.0.0.1" = loopback default — drop the
+  // key so config.json stays tidy; any other host is written verbatim (the
+  // server's Validate rejects a host:port with a friendly message).
+  const dbRaw = $('#cfg-agent-dashboardbind').value.trim();
+  if (dbRaw !== '' && dbRaw !== '127.0.0.1') a.dashboard_bind = dbRaw; else delete a.dashboard_bind;
   const cc = $('#cfg-agent-clonecooldown').value.trim();
   if (cc) a.clone_cooldown = cc; else delete a.clone_cooldown;
   // Checked = "on" = also the default (nil): preserve an existing nil
