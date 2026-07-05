@@ -370,7 +370,7 @@ function renderGroupPendingBlock(g) {
   if (!pending.length) return '';
   return `
         <div class="group-pending-block">
-          <div class="group-pending-title">Pending spawns</div>
+          <div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div>
           ${pendingTableHTML(pending)}
         </div>`;
 }
