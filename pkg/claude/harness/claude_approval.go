@@ -117,7 +117,7 @@ func (claudeApproval) Modes() []string {
 // renders in its warn colour. Keyed by mode value. (Source: Claude Code
 // permission-modes docs, v2.1.195.)
 var claudePermissionModeHelp = map[string]string{
-	claudePermInherit: "Recommended. No per-session override — Claude uses your settings.json permission rules (allow / deny / ask) and the agentd approval popup as-is.",
+	claudePermInherit: "Use your settings.json permission rules and the agentd approval popup as-is.",
 	claudePermPlan:    "Read-only planning — Claude explores and proposes a plan without editing files. ⚠ Still prompts on a write, so a detached agent can block if it tries one.",
 	claudePermDefault: "Standard interactive permissions — prompts before every non-read-only action. ⚠ A detached agent (no human at the pane) can block on a prompt no one answers.",
 	claudePermAccept:  "Auto-approve file edits + common filesystem commands (mkdir/touch/mv/cp/rm) in the working dir; other actions prompt. ⚠ Can still block a detached agent on a non-edit prompt.",

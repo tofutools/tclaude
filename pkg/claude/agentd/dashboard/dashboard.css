@@ -3101,6 +3101,24 @@ details.group-virtual .group-name { color: #8aa0b8; }
 .cron-create-row .cron-create-label {
   flex: 0 0 var(--cron-label-w, 72px); color: #7d8590; padding-top: 6px;
 }
+/* Spawn dialog compact launch row: Model and Effort are both short controls, so
+   keep them on one line at the normal dialog width. Model gets a little extra
+   room for its longer default label; Effort omits a visual label in this row
+   and the select itself carries an aria-label. */
+#agent-spawn-modal .spawn-inline-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 10px;
+  align-items: start;
+}
+#agent-spawn-modal .spawn-inline-fields .cron-create-row {
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  #agent-spawn-modal .spawn-inline-fields {
+    grid-template-columns: 1fr;
+  }
+}
 /* input[type=number] gets the same dark treatment as text/select/textarea —
    without it the group-create dialog's Max members field falls back to the
    browser's default (white) styling and clashes with the dialog, the same
