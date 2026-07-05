@@ -2831,7 +2831,7 @@ function openDeleteGroupModal(group) {
       retire: wiz ? 'banish' : 'retire',
       retired: wiz ? 'banished' : 'retired',
       retirement: wiz ? 'banishment' : 'retirement',
-      deleteTitle: wiz ? 'Disband party' : 'Delete group',
+      deleteTitle: wiz ? 'Disband this party?' : 'Delete group',
       deleteVerb: wiz ? 'disband' : 'delete',
       deleting: wiz ? 'Disbanding' : 'Deleting',
       deleted: wiz ? 'disbanded' : 'deleted',
@@ -2867,8 +2867,11 @@ function openDeleteGroupModal(group) {
     const bits = [];
     if (retireN) bits.push(`${retireN} ${w.retired}`);
     if (detachN) bits.push(`${detachN} detached`);
-    hintEl.textContent = `${w.deleting} "${group}" drops the ${w.group}, owner rows, memberships, and ${w.group} message history. `
-      + `Conversations are kept. ${bits.length ? `Preview: ${bits.join(', ')}.` : `The ${w.group} has no ${w.agents}.`}`;
+    hintEl.textContent = isWizardActive()
+      ? `${w.deleting} "${group}" erases the ${w.group}, owner marks, memberships, and ${w.group} message history. `
+        + `Conversation scrolls are kept. ${bits.length ? `Preview: ${bits.join(', ')}.` : `The ${w.group} has no ${w.agents}.`}`
+      : `${w.deleting} "${group}" drops the ${w.group}, owner rows, memberships, and ${w.group} message history. `
+        + `Conversations are kept. ${bits.length ? `Preview: ${bits.join(', ')}.` : `The ${w.group} has no ${w.agents}.`}`;
   }
   function renderList() {
     const w = modalWords();
@@ -2930,7 +2933,7 @@ function openDeleteGroupModal(group) {
     const toRetire = retireTargets().map(m => m.agent_id || m.conv_id).filter(Boolean);
     submitBtn.disabled = true;
     submitBtn.setAttribute('aria-busy', 'true');
-    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Deleting...';
+    submitBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Deleting…';
     errEl.textContent = '';
 
     let retired = 0;
@@ -2958,7 +2961,7 @@ function openDeleteGroupModal(group) {
       retired = rows.filter(m => m.action === 'retired').length;
       if (errors) {
         const w = modalWords();
-        errEl.textContent = `${w.retire} failed for ${errors} ${errors === 1 ? w.agent : w.agents}; ${w.group} was not deleted`;
+        errEl.textContent = `${w.retire} failed for ${errors} ${errors === 1 ? w.agent : w.agents}; ${w.group} was not ${w.deleted}`;
         renderFooter();
         return;
       }

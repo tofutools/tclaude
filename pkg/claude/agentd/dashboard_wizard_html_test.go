@@ -1387,7 +1387,11 @@ func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
 	must(".delete-group-copy-wizard { display: none; }", "wizard copy is hidden outside wizard mode")
 	must("body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }", "wizard mode hides regular delete-group copy")
 	must("body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }", "wizard mode shows familiar/party delete-group copy")
-	must("body.wizard #delete-group-modal #delete-group-submit {", "the destructive submit gets danger-ember chrome")
+	must(`content: "🪄 Disband!"`, "the submit button reads Disband in wizard mode")
+	must(`content: "Disbanding…"`, "the busy submit button reads Disbanding in wizard mode")
+	must("body.wizard #delete-group-modal #delete-group-submit {", "the submit gets the retire-modal-style gilded lever")
+	must("body.wizard #delete-group-modal #delete-group-submit:active", "the submit uses the retire-modal pressed lever state")
+	must("body.wizard #delete-group-modal .cleanup-row input[type=checkbox]", "member checkboxes use the wizard accent")
 	must("body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit)", "Cancel gets the secondary arcane skin")
 }
 

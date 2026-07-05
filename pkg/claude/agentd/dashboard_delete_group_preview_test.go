@@ -37,7 +37,8 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 	must("if (m) m.checked = cb.checked", "per-row toggles update the retirement selection")
 	must("not auto-${w.retired}", "multi-group members are visible but not automatically retired/banished")
 	must("explicitly included", "checking a multi-group member opts it into retirement")
-	must("deleteTitle: wiz ? 'Disband party' : 'Delete group'", "wizard title/submit says Disband party")
+	must("deleteTitle: wiz ? 'Disband this party?' : 'Delete group'", "wizard title/submit says Disband this party")
+	must("Conversation scrolls are kept.", "wizard hint copy keeps the scroll/familiar vocabulary")
 	must("retireDecision: wiz ? 'banish familiar + stop' : 'retire + stop'", "wizard row decision says banish familiar")
 	must("const toRetire = retireTargets().map(m => m.agent_id || m.conv_id).filter(Boolean);",
 		"submit sends only preview-approved retire targets")
