@@ -168,11 +168,10 @@ It's a **host**, not a `host:port` — the port stays `dashboard_port` /
 `--dashboard-port`. `0.0.0.0` (or `::`) exposes every interface; a specific IP
 binds one. agentd logs a loud warning at startup whenever it binds non-loopback.
 
-To set it from the dashboard, edit the **raw `config.json`** in the **Config
-tab**'s JSON editor and add `dashboard_bind` to the `agent` block — there is no
-dedicated labeled field for it. **Don't confuse it with the Config tab's
-"Remote access → listen interface" field: that one is `remote_access.bind`, the
-separate mTLS listener above, not this.**
+From the dashboard, set it in the **Config tab → Agent coordination →
+"Dashboard bind"** field (right below "Dashboard port"). **Don't confuse it with
+the Config tab's separate "Remote access → listen interface" field: that one is
+`remote_access.bind`, the mTLS listener above, not this.**
 
 > ⚠ **This puts the control plane on the network with only a cookie + operator
 > token in front of it.** Only ever set it when your own auth (reverse proxy /
