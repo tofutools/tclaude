@@ -42,6 +42,7 @@ import {
   editMemberModal, shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
   openWorktreeCleanup,
   resumeAgentReq, retireAgentInteractive, shutdownConfirm, stopAgentReq, termDirModal,
+  openDeleteGroupModal,
   showAccessTab,
 } from './refresh.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
@@ -1476,20 +1477,8 @@ function bindRowActions() {
           break;
         }
         case 'delete-group': {
-          const memberCount = parseInt(btn.getAttribute('data-members') || '0', 10);
-          const confirmed = await confirmModal({
-            title: 'Delete group?',
-            body: `This drops the group plus all ${memberCount} membership row(s), any owner grants, and the entire group message history. The conversations themselves keep running.`,
-            meta: group,
-            okLabel: 'Delete group',
-          });
-          if (!confirmed) return;
-          const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          ok = r.ok;
-          if (!ok) toast(`Delete failed: ${await r.text()}`, true);
-          break;
+          openDeleteGroupModal(group);
+          return;
         }
         case 'revoke-owner': {
           const confirmed = await confirmModal({

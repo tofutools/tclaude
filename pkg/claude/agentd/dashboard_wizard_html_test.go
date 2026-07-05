@@ -1347,6 +1347,32 @@ func TestDashboardCSS_WizardCleanupModalScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardDeleteGroupModal pins the wizard re-skin of the
+// delete-group preview (#delete-group-modal), opened by the group cog and the
+// drag-to-banish overlay. It shares the cleanup-modal shell, so the skin must
+// stay scoped to this one overlay.
+func TestDashboardHTML_WizardDeleteGroupModal(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must("body.wizard #delete-group-modal .cleanup-modal {", "the delete-group dialog surface is re-skinned")
+	must("body.wizard #delete-group-modal .cleanup-modal h3", "the dialog title is re-skinned")
+	must("body.wizard #delete-group-modal .cleanup-list {", "the preview list is re-skinned")
+	must("body.wizard #delete-group-modal .cleanup-row .title", "preview row titles are parchment")
+	must("body.wizard #delete-group-modal .delete-agent-wt", "the retire-default checkbox row is re-skinned")
+	must(`<span class="delete-group-copy-wizard">Banish checked familiars before disbanding the party</span>`, "the wizard checkbox label uses familiar/party wording")
+	must(`single-party familiars are checked by default; familiars also in other parties`, "the wizard helper copy uses familiar/party wording")
+	must(".delete-group-copy-wizard { display: none; }", "wizard copy is hidden outside wizard mode")
+	must("body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }", "wizard mode hides regular delete-group copy")
+	must("body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }", "wizard mode shows familiar/party delete-group copy")
+	must("body.wizard #delete-group-modal #delete-group-submit {", "the destructive submit gets danger-ember chrome")
+	must("body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit)", "Cancel gets the secondary arcane skin")
+}
+
 // TestDashboardHTML_WizardTemplatesManage pins the wizard re-skin of the
 // "Group templates" management overlay — in 🧙 mode a template is a
 // SUMMONING CIRCLE (chalk a new one, trace a party into one, cast one to
