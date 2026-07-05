@@ -131,6 +131,39 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 	}
 }
 
+// Scenario: a plain instantiate with a task records that task as the group's
+// mission provenance while still using instantiate's "Task" briefing semantics.
+// This is the read surface the dashboard uses for the Groups tab mission line.
+func TestGroupTemplate_InstantiateTaskRecordsMissionProvenance(t *testing.T) {
+	f := newFlow(t)
+
+	createBody := map[string]any{
+		"name": "opcodex",
+		"agents": []templateAgentSpec{
+			{Name: "lead", Role: "lead"},
+		},
+	}
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
+		"create template")
+
+	const task = "This is a test to see if spawning a pair of opus + codex agent works"
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/opcodex/instantiate",
+		map[string]any{"group_name": "pair-smoke", "task": "  " + task + "  "})
+	require.Equal(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	row := groupRowByName(t, f, "pair-smoke")
+	require.NotNil(t, row, "group appears in /v1/groups")
+	assert.Equal(t, task, row.Mission, "task is surfaced as the group mission")
+	assert.Equal(t, "opcodex", row.SourceTemplate, "source template is preserved")
+
+	g, err := db.GetAgentGroupByName("pair-smoke")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Contains(t, g.DefaultContext, "## Task", "plain instantiate still renders a Task block")
+	assert.NotContains(t, g.DefaultContext, "## Mission", "plain instantiate does not become deploy semantics")
+}
+
 // Scenario (JOH-356): the "Form a party" dialog lets the human edit the
 // template's shared context into the group's OWN copy before submitting. The
 // instantiate endpoint accepts a context_override that REPLACES the template's
