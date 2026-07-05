@@ -498,14 +498,13 @@ func SeedApprovalForTest(id, perm string, autoGrantable bool) func() {
 	}
 }
 
-// ResetApprovalsForTest clears the whole approval registry — pending AND the
-// recent-handled history ring — so a flow test that decides an approval doesn't
-// leak resolved entries into another test's snapshot (the registry is a package
-// global). Called from newFlow.
+// ResetApprovalsForTest clears the in-memory approval registry so a flow test
+// that leaves a pending approval doesn't leak it into another test's snapshot
+// (the registry is a package global). Handled history lives in each test's temp
+// DB and is isolated there. Called from newFlow.
 func ResetApprovalsForTest() {
 	approvals.mu.Lock()
 	approvals.pending = map[string]*approvalRequest{}
-	approvals.resolved = nil
 	approvals.mu.Unlock()
 }
 

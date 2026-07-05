@@ -105,6 +105,15 @@ func TestAccessRequests_HandledStaysInListAsHistory(t *testing.T) {
 	assert.Equal(t, id, got.ID)
 	assert.Equal(t, "approved", got.Status)
 	assert.NotEmpty(t, got.DecidedAt, "handled entries carry a decided_at")
+
+	// Simulate an agentd restart: the in-memory approval registry is empty, but
+	// the handled history must still come back from SQLite.
+	agentd.ResetApprovalsForTest()
+	snap = fetchAccessReqSnapshot(t, h)
+	assert.Equal(t, 0, snap.AccessRequestsPending, "no in-memory pending request after restart")
+	require.Len(t, snap.AccessRequests, 1, "handled access-request history survives restart")
+	assert.Equal(t, id, snap.AccessRequests[0].ID)
+	assert.Equal(t, "approved", snap.AccessRequests[0].Status)
 }
 
 // Scenario: a "deny" decision resolves the waiter as not-approved.

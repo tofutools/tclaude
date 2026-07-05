@@ -2,11 +2,14 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Access requests — the in-dashboard home of the human-approval flow.
@@ -19,12 +22,13 @@ import (
 // loopback the approval has to live INSIDE the dashboard the operator already
 // has open.
 //
-// This file surfaces every in-flight approval on the 2s snapshot (the
-// Messages tab's "Access requests" folder + the attention overlay render off
-// it) and adds one dashboard-authed decision endpoint. The in-memory,
-// blocking approval registry (popup.go) is unchanged — only delivery and the
-// decision surface move. Because the routes ride checkDashboardAuth they work
-// on both the loopback listener and the remote (mTLS) listener.
+// This file surfaces in-flight approvals plus persisted handled history on the
+// 2s snapshot (the Messages tab's "Access requests" folder + the attention
+// overlay render off it) and adds one dashboard-authed decision endpoint. The
+// in-memory registry (popup.go) remains the only actionable waiter store, while
+// handled cards come back from SQLite so they survive agentd restarts. Because
+// the routes ride checkDashboardAuth they work on both the loopback listener
+// and the remote (mTLS) listener.
 
 // setDeadline records the wall-clock instant the auto-deny timer will fire,
 // under the request mutex. Called by the approval waiter at start and on each
@@ -104,6 +108,62 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 	}
 }
 
+func accessRequestDB(req *approvalRequest, status string, decidedAt time.Time) *db.AccessRequest {
+	req.mu.Lock()
+	deadline := req.deadline
+	req.mu.Unlock()
+	if deadline.IsZero() && !req.createdAt.IsZero() && req.timeout > 0 {
+		deadline = req.createdAt.Add(req.timeout)
+	}
+	return &db.AccessRequest{
+		ID:              req.id,
+		Perm:            req.perm,
+		ConvID:          req.convID,
+		ConvTitle:       req.convTitle,
+		Method:          req.method,
+		Path:            req.path,
+		RawQuery:        req.rawQuery,
+		BodyPreview:     req.bodyPreview,
+		BodyLabel:       req.bodyLabel,
+		TargetGroup:     req.targetGroup,
+		TargetConvID:    req.targetConvID,
+		TargetConvTitle: req.targetConvTitle,
+		AutoGrantable:   req.autoGrantable,
+		Status:          status,
+		CreatedAt:       req.createdAt,
+		DeadlineAt:      deadline,
+		DecidedAt:       decidedAt,
+	}
+}
+
+func dbAccessRequestToDashboard(ar *db.AccessRequest) dashboardAccessRequest {
+	out := dashboardAccessRequest{
+		ID:              ar.ID,
+		Perm:            ar.Perm,
+		ConvID:          ar.ConvID,
+		ConvTitle:       ar.ConvTitle,
+		AgentID:         ar.AgentID,
+		Path:            ar.Path,
+		Body:            ar.BodyPreview,
+		BodyLabel:       ar.BodyLabel,
+		TargetGroup:     ar.TargetGroup,
+		TargetConvID:    ar.TargetConvID,
+		TargetConvTitle: ar.TargetConvTitle,
+		AutoGrantable:   ar.AutoGrantable,
+		Status:          ar.Status,
+	}
+	if !ar.CreatedAt.IsZero() {
+		out.CreatedAt = ar.CreatedAt.Format(time.RFC3339)
+	}
+	if !ar.DeadlineAt.IsZero() {
+		out.Deadline = ar.DeadlineAt.Format(time.RFC3339)
+	}
+	if !ar.DecidedAt.IsZero() {
+		out.DecidedAt = ar.DecidedAt.Format(time.RFC3339)
+	}
+	return out
+}
+
 // dashboardSnapshot returns the access-requests list for the dashboard: the
 // in-flight (pending) approvals oldest-first — the longest-blocked agent leads,
 // where the operator's eye lands — followed by the recently-handled history
@@ -116,8 +176,6 @@ func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 	for _, req := range a.pending {
 		pending = append(pending, req)
 	}
-	resolved := make([]resolvedApproval, len(a.resolved))
-	copy(resolved, a.resolved)
 	a.mu.Unlock()
 
 	out := make([]dashboardAccessRequest, 0, len(pending))
@@ -132,12 +190,13 @@ func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 		}
 		return out[i].ID < out[j].ID
 	})
-	// Recently-handled history, newest-first (resolved is appended oldest-last).
-	for i := len(resolved) - 1; i >= 0; i-- {
-		ar := toDashboardAccessRequest(resolved[i].req)
-		ar.Status = resolved[i].outcome
-		ar.DecidedAt = resolved[i].decidedAt.Format(time.RFC3339)
-		out = append(out, ar)
+	handled, err := db.ListRecentHandledAccessRequests(maxResolvedApprovals)
+	if err != nil {
+		slog.Warn("access requests: failed to load handled history", "err", err)
+		return out
+	}
+	for _, ar := range handled {
+		out = append(out, dbAccessRequestToDashboard(ar))
 	}
 	return out
 }
