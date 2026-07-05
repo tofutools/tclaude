@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -332,6 +333,12 @@ func originMatchesBase(value, base string) bool {
 // to tests that register the mux directly; there the operator-token
 // compare is still the real gate, so this stays belt-and-braces.
 func checkLoginOrigin(r *http.Request) bool {
+	// Non-loopback bind: the browser reaches the dashboard through some
+	// other hostname/proxy (not the fixed loopback URL), so pin host-relative
+	// the way the remote listener does. See dashboardHostRelativeOrigin.
+	if !isLoopbackHost(dashboardBindHost) {
+		return dashboardHostRelativeOrigin(r)
+	}
 	if popupBaseURL == "" {
 		return true
 	}
@@ -344,6 +351,37 @@ func checkLoginOrigin(r *http.Request) bool {
 	// Neither header present: a real same-origin browser form POST
 	// always sends at least one, so treat the absence as suspicious.
 	return false
+}
+
+// dashboardHostRelativeOrigin is the same-origin check used when the dashboard
+// is bound NON-loopback: the Origin (or, absent it, Referer) header's host must
+// equal the host the request was sent to (r.Host). A direct analogue of the
+// remote listener's remoteSameOrigin (remote_server.go), but with the fixed
+// loopback base-URL pin dropped — the operator exposed the dashboard behind
+// their own hostname/proxy, which agentd can't know in advance, so it can only
+// require internal consistency. The SameSite=Strict dashboard cookie remains
+// the primary CSRF defense (a cross-site context never sends it); rejecting a
+// cross-host Origin here is belt-and-braces. Neither header present is treated
+// as suspicious — a real browser form POST / same-origin fetch always sends one.
+func dashboardHostRelativeOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		return originHostMatchesRequest(o, r.Host)
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return originHostMatchesRequest(ref, r.Host)
+	}
+	return false
+}
+
+// originHostMatchesRequest reports whether an Origin/Referer header value's
+// host equals reqHost (the Host the request was sent to). url.Parse pulls the
+// host out of both a bare Origin (scheme://host) and a Referer (scheme://host/path).
+func originHostMatchesRequest(value, reqHost string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Host == reqHost
 }
 
 // handleDashboardOpen mints a fresh dashboard init token and returns
@@ -467,6 +505,16 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	if err != nil || c.Value != dashboardSessionToken {
 		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
+	// Non-loopback bind: host-relative same-origin (mirror the remote
+	// listener), since the browser reaches us through a hostname/proxy the
+	// fixed loopback pin would never match. Cookie above + SameSite=Strict
+	// stay the primary gate.
+	if !isLoopbackHost(dashboardBindHost) {
+		if !dashboardHostRelativeOrigin(r) {
+			return false, http.StatusForbidden, "Origin/Referer host mismatch"
+		}
+		return true, http.StatusOK, ""
+	}
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
 	if origin == "" && referer == "" {
@@ -559,6 +607,15 @@ type snapshotPayload struct {
 	// MessagesUnread is the count of unread ones, driving the tab badge.
 	Messages       []dashboardHumanMessage `json:"messages"`
 	MessagesUnread int                     `json:"messages_unread"`
+	// AccessRequests are the in-flight human-approval requests — an agent is
+	// BLOCKED waiting for the operator to approve/deny a permission-gated
+	// action (formerly the loopback-only browser popup). They ride the poll so
+	// the Messages tab's "Access requests" folder + the attention overlay
+	// render off the live snapshot and work over the remote listener too.
+	// AccessRequestsPending is the count, driving the blinking tab badge +
+	// overlay. Empty slice (not nil) so JS .map()/.length are safe.
+	AccessRequests        []dashboardAccessRequest `json:"access_requests"`
+	AccessRequestsPending int                      `json:"access_requests_pending"`
 	// Plugins are the human-managed external integrations on the
 	// Plugins tab, with their cached step-check statuses (the snapshot
 	// never runs the checks itself — see plugins.go). PluginsCatalog is
@@ -1805,6 +1862,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Profiles = collectProfilesSnapshot()
 	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
+	out.AccessRequests = approvals.dashboardSnapshot()
+	out.AccessRequestsPending = len(out.AccessRequests)
 	var pluginsErr error
 	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
 	if pluginsErr != nil {

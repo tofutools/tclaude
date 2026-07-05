@@ -109,47 +109,39 @@ func TestAlwaysAllow_GrantFollowsAgentIdentityThroughRotation(t *testing.T) {
 	require.Len(t, rec.texts, 1)
 }
 
-// Scenario: the popup's "/always" decision is gated SERVER-SIDE on
-// eligibility, independent of whether the button was rendered. A forged
-// POST /approve/{id}/always for an ineligible slug is refused (403); an
-// eligible one is accepted. Closes the "scraper skips the UI" hole.
-func TestAlwaysAllow_PostHandlerGatesOnEligibility(t *testing.T) {
+// Scenario: the "always" decision is gated SERVER-SIDE on eligibility,
+// independent of whether the button was rendered. A forged decision POST for
+// an ineligible slug is refused (403); an eligible one is accepted. Closes the
+// "scraper skips the UI" hole. Now driven through the dashboard access-request
+// endpoint that replaced the loopback /approve page.
+func TestAlwaysAllow_DecisionGatesOnEligibility(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t) // DB setup (peerAgentID lookups on the snapshot side)
+	h := agentd.BuildDashboardHandlerForTest()
 
-	mux := http.NewServeMux()
-	agentd.RegisterPopupRoutesForTest(mux)
-
-	// Ineligible slug → /always is refused even with a valid session.
+	// Ineligible slug → "always" is refused even for the authed operator.
 	const idBad = "alw-bad-0001"
 	t.Cleanup(agentd.SeedApprovalForTest(idBad, "agent.delete", false))
-	badCookie := exchangePopupCookie(t, mux, idBad)
-	badReq := popupReq(http.MethodPost, "/approve/"+idBad+"/always")
-	badReq.AddCookie(badCookie)
-	badReq.Header.Set("Origin", "http://127.0.0.1:0")
-	badRec := testharness.Serve(mux, badReq)
+	badRec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+idBad+"/decision", map[string]any{"decision": "always"}))
 	assert.Equal(t, http.StatusForbidden, badRec.Code,
-		"an ineligible slug must reject /always; body=%s", badRec.Body.String())
+		"an ineligible slug must reject always; body=%s", badRec.Body.String())
 
-	// Eligible slug → /always is accepted.
+	// Eligible slug → "always" is accepted.
 	const idOK = "alw-ok-0002"
 	t.Cleanup(agentd.SeedApprovalForTest(idOK, agentd.PermHumanClipboard, true))
-	okCookie := exchangePopupCookie(t, mux, idOK)
-	okReq := popupReq(http.MethodPost, "/approve/"+idOK+"/always")
-	okReq.AddCookie(okCookie)
-	okReq.Header.Set("Origin", "http://127.0.0.1:0")
-	okRec := testharness.Serve(mux, okReq)
+	okRec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+idOK+"/decision", map[string]any{"decision": "always"}))
 	require.Equal(t, http.StatusOK, okRec.Code,
-		"an eligible slug must accept /always; body=%s", okRec.Body.String())
-	assert.Contains(t, okRec.Body.String(), "Approved")
+		"an eligible slug must accept always; body=%s", okRec.Body.String())
 }
 
-// Scenario: the FULL live path — a real /approve/{id}/always POST against
-// the popup handler, consumed by a real waiter, persists the override. The
-// other tests exercise the halves separately (the POST gate with no waiter;
-// the persist via a stub that bypasses the handler); this one wires them
-// end-to-end, so a regression where the handler's "always" case sent the
-// wrong outcome onto the channel would be caught.
-func TestAlwaysAllow_LivePostThroughWaiterPersists(t *testing.T) {
+// Scenario: the FULL live path — a real "always" decision POST against the
+// dashboard access-request endpoint, consumed by a real waiter, persists the
+// override. Wires the HTTP decision and the waiter's persist end-to-end, so a
+// regression where the handler sent the wrong outcome onto the channel would
+// be caught.
+func TestAlwaysAllow_LiveDecisionThroughWaiterPersists(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t) // DB setup
 
@@ -161,37 +153,16 @@ func TestAlwaysAllow_LivePostThroughWaiterPersists(t *testing.T) {
 	done, cleanup := agentd.SeedApprovalWithWaiterForTest(id, agentd.PermHumanClipboard, conv, true)
 	t.Cleanup(cleanup)
 
-	mux := http.NewServeMux()
-	agentd.RegisterPopupRoutesForTest(mux)
-	cookie := exchangePopupCookie(t, mux, id)
-
-	req := popupReq(http.MethodPost, "/approve/"+id+"/always")
-	req.AddCookie(cookie)
-	req.Header.Set("Origin", "http://127.0.0.1:0")
-	rec := testharness.Serve(mux, req)
-	require.Equal(t, http.StatusOK, rec.Code, "live /always POST; body=%s", rec.Body.String())
+	h := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+id+"/decision", map[string]any{"decision": "always"}))
+	require.Equal(t, http.StatusOK, rec.Code, "live always decision; body=%s", rec.Body.String())
 
 	// The waiter consumed the real outcome and ran the persist end-to-end.
 	require.True(t, <-done, "always-allow must approve the pending request")
 
 	effect, ok, err := db.AgentPermissionOverride(conv, agentd.PermHumanClipboard)
 	require.NoError(t, err)
-	require.True(t, ok, "the real /always POST must persist the override through the waiter")
+	require.True(t, ok, "the real decision must persist the override through the waiter")
 	assert.Equal(t, "grant", effect)
-}
-
-// exchangePopupCookie runs the init-token→cookie exchange and returns the
-// popup session cookie for id, so a test can then POST a decision.
-func exchangePopupCookie(t *testing.T, mux http.Handler, id string) *http.Cookie {
-	t.Helper()
-	tok := agentd.MintApproveInitTokenForTest(id)
-	rec := testharness.Serve(mux, popupReq(http.MethodGet, "/approve/"+id+"?init_token="+tok))
-	require.Equal(t, http.StatusSeeOther, rec.Code, "cookie exchange; body=%s", rec.Body.String())
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == "tclaude_popup_"+id {
-			return c
-		}
-	}
-	t.Fatalf("exchange did not set the popup session cookie for %s", id)
-	return nil
 }
