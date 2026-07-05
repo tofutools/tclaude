@@ -154,25 +154,9 @@ type approvalRequest struct {
 type approvalRegistry struct {
 	mu      sync.Mutex
 	pending map[string]*approvalRequest
-	// resolved is a bounded, most-recent-last ring of decided requests, kept
-	// so the dashboard's Access-requests folder can show a short "recently
-	// handled" history (what the operator chose, and when) instead of the card
-	// just vanishing. In-memory + capped (maxResolvedApprovals): the audit log
-	// is the durable record, so this is only the at-a-glance recent view and is
-	// cleared on daemon restart.
-	resolved []resolvedApproval
 }
 
-// resolvedApproval is one decided request retained for the recent-history view.
-// It holds the original *approvalRequest (read only for its set-once display
-// fields, never its mutable deadline) plus the outcome + when it was decided.
-type resolvedApproval struct {
-	req       *approvalRequest
-	outcome   string // "approved" | "declined" | "always" | "timed out"
-	decidedAt time.Time
-}
-
-// maxResolvedApprovals bounds the in-memory recent-history ring.
+// maxResolvedApprovals bounds the dashboard's recent-history query.
 const maxResolvedApprovals = 25
 
 var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
@@ -185,16 +169,14 @@ func (a *approvalRegistry) pendingCount() int {
 	return len(a.pending)
 }
 
-// recordResolved appends a decided request to the bounded recent-history ring.
+// recordResolved persists a decided request to the bounded recent-history store.
 // Called by the approval waiter at each terminal outcome (human decision or
 // timeout) so the dashboard can show what was chosen.
 func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) {
-	a.mu.Lock()
-	a.resolved = append(a.resolved, resolvedApproval{req: req, outcome: outcome, decidedAt: time.Now()})
-	if len(a.resolved) > maxResolvedApprovals {
-		a.resolved = a.resolved[len(a.resolved)-maxResolvedApprovals:]
+	if err := db.UpsertAccessRequest(accessRequestDB(req, outcome, time.Now())); err != nil {
+		slog.Warn("access request: failed to persist resolved request",
+			"id", req.id, "perm", req.perm, "outcome", outcome, "err", err)
 	}
-	a.mu.Unlock()
 }
 
 // outcomeLabel maps a decided outcome to its history label. The timeout path
@@ -310,6 +292,10 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	timer := time.NewTimer(req.timeout)
 	defer timer.Stop()
 	req.setDeadline(time.Now().Add(req.timeout))
+	if err := db.UpsertAccessRequest(accessRequestDB(req, db.AccessRequestStatusPending, time.Time{})); err != nil {
+		slog.Warn("access request: failed to persist pending request",
+			"id", req.id, "perm", req.perm, "conv", req.convID, "err", err)
+	}
 	for {
 		select {
 		case d := <-req.decision:

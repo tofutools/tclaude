@@ -519,3 +519,27 @@ CREATE TABLE agent_tags (
 
 CREATE INDEX idx_agent_tags_tag ON agent_tags(tag);
 
+CREATE TABLE access_requests (
+			id                TEXT PRIMARY KEY,
+			perm              TEXT NOT NULL,
+			conv_id           TEXT NOT NULL DEFAULT '',
+			agent_id          TEXT NOT NULL DEFAULT '',
+			conv_title        TEXT NOT NULL DEFAULT '',
+			method            TEXT NOT NULL DEFAULT '',
+			path              TEXT NOT NULL DEFAULT '',
+			raw_query         TEXT NOT NULL DEFAULT '',
+			body_preview      TEXT NOT NULL DEFAULT '',
+			body_label        TEXT NOT NULL DEFAULT '',
+			target_group      TEXT NOT NULL DEFAULT '',
+			target_conv_id    TEXT NOT NULL DEFAULT '',
+			target_conv_title TEXT NOT NULL DEFAULT '',
+			auto_grantable    INTEGER NOT NULL DEFAULT 0,
+			status            TEXT NOT NULL DEFAULT 'pending',
+			created_at        TEXT NOT NULL,
+			deadline_at       TEXT NOT NULL DEFAULT '',
+			decided_at        TEXT NOT NULL DEFAULT ''
+		);
+
+CREATE INDEX idx_access_requests_status_decided
+			ON access_requests(status, decided_at, created_at);
+

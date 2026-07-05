@@ -27,9 +27,9 @@ import (
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
 
-	// The approval registry (pending + recent-handled history) is a package
-	// global; reset it so a prior test's decided approvals don't leak into this
-	// one's access-requests snapshot.
+	// The pending approval registry is a package global; reset it so a prior
+	// test's pending approvals don't leak into this one's access-requests
+	// snapshot. Handled history lives in the per-test DB.
 	agentd.ResetApprovalsForTest()
 
 	// Shrink the production waits to test-scale durations. Production
