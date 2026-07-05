@@ -19,10 +19,11 @@ import (
 const usagePollInterval = 3 * time.Minute
 
 // usageStaleAfter is the fallback cap on how old a cached usage reading may
-// be before the dashboard treats it as unavailable, used only when a caller
-// can't reach config (see collectUsageSnapshotWithin). The live snapshot
-// path passes the configured grace instead — config.ResolvedUsageIdleTimeout,
-// default config.DefaultUsageIdleTimeout (3 days).
+// be before the dashboard treats it as unavailable, used only for the
+// defensive idleTimeout <= 0 branch in collectUsageSnapshot. The live
+// snapshot path passes the configured grace instead —
+// config.ResolvedUsageIdleTimeout, default config.DefaultUsageIdleTimeout
+// (3 days).
 //
 // The cap can't be tiny: the Claude readout is fed by Claude Code's
 // statusline callback (only while a session runs) and a periodic Anthropic
