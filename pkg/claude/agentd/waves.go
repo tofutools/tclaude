@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
 // Staged spawn — "waves" (JOH-244). A template agent carries a `wave` int; a
@@ -102,7 +103,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 // the agent is already spawned). Empty templateName skips the stamp — the seam
 // stays inert for any non-template caller of this path.
 func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process []db.ProcessPhase,
-	groupContext, cwd, caller, granter, templateName string, existing map[string]string, suppressOwner bool) waveSpawnResult {
+	groupContext, cwd, sharedWorktreePath, sharedWorktreeBranch string, perAgentWorktrees *db.WavePerAgentWorktrees,
+	caller, granter, templateName string, existing map[string]string, suppressOwner bool) waveSpawnResult {
 	wr := waveSpawnResult{
 		Results:      []instantiateAgentResult{},
 		SpawnedConvs: map[string]string{},
@@ -126,6 +128,29 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.Results = append(wr.Results, res)
 			continue
 		}
+		agentCwd := cwd
+		agentWorktreePath := strings.TrimSpace(sharedWorktreePath)
+		agentWorktreeBranch := strings.TrimSpace(sharedWorktreeBranch)
+		if perAgentWorktrees != nil {
+			branch := perAgentBranchName(perAgentWorktrees.BranchPrefix, a.Name, finalName)
+			path, err := worktree.AddWorktreeIn(perAgentWorktrees.Repo, branch, perAgentWorktrees.FromBranch, "")
+			if err != nil {
+				res.Error = "create worktree: " + err.Error()
+				wr.Failed++
+				wr.Results = append(wr.Results, res)
+				continue
+			}
+			agentWorktreePath = path
+			agentWorktreeBranch = branch
+			if perAgentWorktrees.WorktreeAsCwd {
+				agentCwd = path
+			}
+			res.WorktreePath = path
+			res.WorktreeBranch = branch
+		} else {
+			res.WorktreePath = agentWorktreePath
+			res.WorktreeBranch = agentWorktreeBranch
+		}
 		// Resolve the role this agent references (JOH-240), if any. A role that
 		// vanished since save degrades gracefully — role stays nil and the agent
 		// falls through to its own overrides / harness defaults.
@@ -137,7 +162,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 				role = rl
 			}
 		}
-		launch, lfail := resolveTemplateAgentLaunch(a, role, cwd)
+		launch, lfail := resolveTemplateAgentLaunch(a, role, agentCwd)
 		if lfail != nil {
 			res.Error = lfail.Msg
 			wr.Failed++
@@ -156,7 +181,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Role:           a.Role,
 			Descr:          a.Descr,
 			InitialMessage: a.InitialMessage,
-			Cwd:            cwd,
+			Cwd:            agentCwd,
+			WorktreePath:   agentWorktreePath,
+			WorktreeBranch: agentWorktreeBranch,
 			Harness:        launch.Harness,
 			Model:          launch.Model,
 			Effort:         launch.Effort,
@@ -221,6 +248,23 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+func perAgentBranchName(prefix, agentName, finalName string) string {
+	base := strings.TrimSpace(prefix)
+	if base != "" {
+		base += "-" + strings.TrimSpace(agentName)
+	} else {
+		base = finalName
+	}
+	name := agent.NormalizeSpawnName(base)
+	if name == "" {
+		name = agent.NormalizeSpawnName(finalName)
+	}
+	if name == "" {
+		name = "agent-worktree"
+	}
+	return name
 }
 
 // stampTaskForceTag stamps the auto task-force tag `tf:<templateName>` on
@@ -530,8 +574,9 @@ func advanceChoreographyIfReady(c *db.WaveChoreography) {
 	wave := c.Waves[c.NextWave]
 	slog.Info("wave runner: spawning wave", "group", c.GroupName, "wave", wave.Wave,
 		"agents", len(wave.Agents), "index", c.NextWave, "of", len(c.Waves))
-	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd, c.Caller, c.Granter,
-		c.TemplateName, groupMemberNames(g), c.SuppressOwner)
+	wr := spawnWaveAgents(g, wave.Agents, c.Process, c.GroupContext, c.Cwd,
+		c.WorktreePath, c.WorktreeBranch, c.PerAgentWorktrees,
+		c.Caller, c.Granter, c.TemplateName, groupMemberNames(g), c.SuppressOwner)
 
 	// Accumulate the spawns for the final work-pattern routing.
 	maps.Copy(c.SpawnedConvs, wr.SpawnedConvs)

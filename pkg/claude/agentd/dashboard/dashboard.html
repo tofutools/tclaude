@@ -2094,9 +2094,35 @@
       <button id="template-deploy-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
     </label>
     <label class="cron-create-row">
-      <span class="cron-create-label">Worktree branch</span>
-      <input id="template-deploy-worktree" type="text" placeholder="optional — land the whole force in a git worktree on this branch (needs a cwd inside a repo)" autocomplete="off" spellcheck="false" />
+      <span class="cron-create-label">Worktree repo</span>
+      <input id="template-deploy-wt-repo" type="text" list="template-deploy-subrepo-list" placeholder="git repo to worktree — defaults to CWD; for a monorepo, pick a sub-repo" autocomplete="off" spellcheck="false" />
+      <datalist id="template-deploy-subrepo-list"></datalist>
+      <button id="template-deploy-wt-repo-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop">Browse…</button>
     </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label">Worktree</span>
+      <select id="template-deploy-worktree"><option value="">(enter a CWD to enable worktrees)</option></select>
+    </label>
+    <label class="cron-create-enabled cron-check-aligned" id="template-deploy-wt-sync-row" title="Create the task force in a fresh git worktree whose branch is named after the group. Needs a CWD inside a git repo.">
+      <input id="template-deploy-wt-sync" type="checkbox" checked /> Sync worktree branch with group name
+    </label>
+    <label class="cron-create-enabled cron-check-aligned" id="template-deploy-wt-per-agent-row" title="Opt in to creating one git worktree per spawned agent. Branches are derived from the branch field below and the roster member names.">
+      <input id="template-deploy-wt-per-agent" type="checkbox" /> Give each agent its own worktree
+    </label>
+    <label class="cron-create-row" id="template-deploy-wt-new-row" style="display:none">
+      <span class="cron-create-label">New branch</span>
+      <input id="template-deploy-wt-branch" type="text" placeholder="branch name for the shared worktree, or prefix for per-agent branches" autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row" id="template-deploy-wt-base-row" style="display:none">
+      <span class="cron-create-label">Base branch</span>
+      <select id="template-deploy-wt-base"></select>
+    </label>
+    <p class="wt-orphan-warn" id="template-deploy-wt-orphan-hint" style="display:none">
+      ⚠ This repo has no commits yet, so the worktree will be cut as an
+      <strong>orphan branch</strong> (no base to branch off). That's fine for
+      bootstrapping a fresh repo — once you make the first commit, later
+      worktrees branch off it normally.
+    </p>
     <!-- Copy-mode-only (JOH-377): the new group's startup context, prefilled from
          the source group's (the JOH-356 context_override — the editable copy). -->
     <label class="cron-create-row" id="template-deploy-context-row" hidden>

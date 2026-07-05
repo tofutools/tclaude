@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -39,12 +41,14 @@ type instantiateResult struct {
 	Spawned int    `json:"spawned"`
 	Failed  int    `json:"failed"`
 	Agents  []struct {
-		Name      string   `json:"name"`
-		FinalName string   `json:"final_name"`
-		ConvID    string   `json:"conv_id"`
-		Owner     bool     `json:"owner"`
-		Granted   []string `json:"granted"`
-		Error     string   `json:"error"`
+		Name           string   `json:"name"`
+		FinalName      string   `json:"final_name"`
+		ConvID         string   `json:"conv_id"`
+		Owner          bool     `json:"owner"`
+		WorktreePath   string   `json:"worktree_path"`
+		WorktreeBranch string   `json:"worktree_branch"`
+		Granted        []string `json:"granted"`
+		Error          string   `json:"error"`
 	} `json:"agents"`
 }
 
@@ -129,6 +133,66 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 		require.NotEmpty(t, msgs, "member %s has an inbox message", m.ConvID)
 		assert.Contains(t, msgs[0].Body, task, "member %s briefing carries the task", m.ConvID)
 	}
+}
+
+func TestGroupTemplate_InstantiatePerAgentWorktrees(t *testing.T) {
+	f := newFlow(t)
+	repo, parent := initRepoOnMain(t)
+
+	createBody := map[string]any{
+		"name": "wt-team",
+		"agents": []templateAgentSpec{
+			{Name: "lead"},
+			{Name: "dev"},
+		},
+	}
+	require.Equal(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code,
+		"create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/wt-team/instantiate",
+		map[string]any{
+			"group_name": "wtforce",
+			"cwd":        repo,
+			"per_agent_worktrees": map[string]any{
+				"repo":            repo,
+				"branch_prefix":   "wtforce",
+				"from_branch":     "main",
+				"worktree_as_cwd": true,
+			},
+		})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 2, res.Spawned, "all agents spawned")
+	require.Equal(t, 0, res.Failed, "no worktree/spawn failures")
+
+	want := map[string]string{
+		"lead": filepath.Join(parent, "repo-wtforce-lead"),
+		"dev":  filepath.Join(parent, "repo-wtforce-dev"),
+	}
+	for _, a := range res.Agents {
+		wantPath := want[a.Name]
+		require.NotEmpty(t, wantPath, "unexpected agent %s", a.Name)
+		assert.Equal(t, resolveSym(t, wantPath), resolveSym(t, a.WorktreePath), "response worktree path")
+		assert.Equal(t, "wtforce-"+a.Name, a.WorktreeBranch, "response worktree branch")
+
+		rows, err := db.FindSessionsByConvID(a.ConvID)
+		require.NoError(t, err, "FindSessionsByConvID(%s)", a.ConvID)
+		require.NotEmpty(t, rows, "session row for %s", a.Name)
+		assert.Equal(t, resolveSym(t, wantPath), resolveSym(t, rows[0].Cwd),
+			"agent %s launched in its own worktree", a.Name)
+	}
+
+	wts, err := worktree.ListWorktreesIn(repo)
+	require.NoError(t, err, "ListWorktreesIn")
+	branches := map[string]bool{}
+	for _, wt := range wts {
+		branches[wt.Branch] = true
+	}
+	assert.True(t, branches["wtforce-lead"], "lead worktree branch listed")
+	assert.True(t, branches["wtforce-dev"], "dev worktree branch listed")
 }
 
 // Scenario (JOH-356): the "Form a party" dialog lets the human edit the
