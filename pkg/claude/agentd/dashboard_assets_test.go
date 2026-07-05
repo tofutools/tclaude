@@ -472,6 +472,35 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_GroupWebTerminalWired guards the group ⚙ menu's "open web
+// terminal" item — the group counterpart of the per-agent "web term" button. Its
+// pieces span three JS files plus a server route (dashboard_edit.go), and there's
+// no JS render test, so a rename in any one of them would silently break the
+// feature in the browser. Assert on the embedded concatenation at `go test ./...`;
+// the server route + resolve is covered by TestGroupTermWS_* below.
+//   - render.js builds the gated menu item (groupWebTermMenuItem);
+//   - row-actions.js imports the pane-opener and dispatches the data-act;
+//   - terminals-tab.js exports the pane-opener that hits /api/group-term-ws.
+func TestDashboardAssets_GroupWebTerminalWired(t *testing.T) {
+	for _, needle := range []string{
+		// render.js — the gated menu item + its data-act.
+		"function groupWebTermMenuItem(",
+		`data-act="group-web-term"`,
+		"+ groupWebTermMenuItem(g)",
+		// row-actions.js — the import and the dispatch case.
+		"openGroupWebTermPane,",
+		"case 'group-web-term':",
+		"openGroupWebTermPane(group, label);",
+		// terminals-tab.js — the exported pane-opener + its WS path.
+		"export function openGroupWebTermPane(",
+		"/api/group-term-ws/",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — group web-terminal wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_ShowAgentHideButtonWired guards the per-agent "hide
 // window" button's default-hidden toggle (config
 // dashboard.show_agent_hide_button), whose pieces span several files that must
