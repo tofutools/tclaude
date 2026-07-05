@@ -1732,6 +1732,11 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// (non-nil ""). Existing callers (the instantiate/deploy modals) omit
 		// it and keep the template's context verbatim.
 		ContextOverride *string `json:"context_override,omitempty"`
+		// AgentProfiles — the deploy form's per-member launch-profile resolution;
+		// see handleTemplateDeploy's body for the full contract. Applied in
+		// runInstantiation (applyAgentProfileOverrides) only to members with no
+		// profile of their own.
+		AgentProfiles map[string]string `json:"agent_profiles,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1787,6 +1792,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		sourceTemplate:  tmpl.Name,
 		contextOverride: body.ContextOverride,
 		parentGroup:     parentGroup,
+		agentProfiles:   body.AgentProfiles,
 	})
 }
 
@@ -1853,6 +1859,40 @@ type instantiateSpec struct {
 	// checks all ran up-front in handleTemplateReinforce. nil = create-new mode
 	// (byte-identical to the pre-JOH-376 instantiate/deploy behaviour).
 	intoExisting *db.AgentGroup
+	// agentProfiles is the dashboard deploy form's per-member launch-profile
+	// resolution, keyed by template-agent name. The deploy dialog prefills a
+	// "default profile" from the group / dashboard default, lets the human
+	// reconfigure it, and sends the resolved profile for every member that carried
+	// NO profile of its own. It is applied by applyAgentProfileOverrides BEFORE the
+	// roster is partitioned into waves, so both the synchronous wave 0 and the
+	// persisted choreography for later waves carry it. Empty / nil = no overrides
+	// (the roster spawns with exactly the template's stored per-member profiles).
+	agentProfiles map[string]string
+}
+
+// applyAgentProfileOverrides returns the roster with the deploy form's per-member
+// launch-profile selections folded in (see instantiateSpec.agentProfiles): for a
+// member the map names, whose OWN template profile is blank, the map's profile
+// becomes its spawn profile. A member the map does not name — or one that already
+// carries an explicit template profile — is left untouched, so a stale or broad
+// override can never displace an explicit per-member choice. Returns the input
+// slice unchanged when there are no overrides; otherwise a shallow copy (only the
+// SpawnProfile string is rewritten, so sharing the members' slice fields is safe).
+func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[string]string) []db.GroupTemplateAgent {
+	if len(overrides) == 0 {
+		return agents
+	}
+	out := make([]db.GroupTemplateAgent, len(agents))
+	copy(out, agents)
+	for i := range out {
+		if strings.TrimSpace(out[i].SpawnProfile) != "" {
+			continue // never override an explicit per-member profile
+		}
+		if p := strings.TrimSpace(overrides[out[i].Name]); p != "" {
+			out[i].SpawnProfile = p
+		}
+	}
+	return out
 }
 
 // runInstantiation is the shared core behind both `templates instantiate`
@@ -1987,7 +2027,11 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// when higher waves exist — persist a choreography that the background
 	// runner advances as each wave settles. A single-wave template (every agent
 	// wave 0) is one synchronous pass, identical to pre-JOH-244 behaviour.
-	waves := partitionWaves(tmpl.Agents)
+	// Fold the deploy form's per-member profile selections into the roster before
+	// partitioning — so wave 0 AND the persisted choreography for later waves both
+	// carry them. Only members that carried no profile of their own are touched.
+	roster := applyAgentProfileOverrides(tmpl.Agents, spec.agentProfiles)
+	waves := partitionWaves(roster)
 	assignment := normalizeAssignment(spec.assignment)
 	// A zero-agent template creates the group (and materializes rhythms) but
 	// spawns nobody — mirror the pre-JOH-244 empty-roster behaviour instead of
@@ -2168,6 +2212,17 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		// group's settings instead of the template defaults.
 		DescrOverride   *string `json:"descr_override,omitempty"`
 		ContextOverride *string `json:"context_override,omitempty"`
+		// AgentProfiles carries the dashboard deploy form's per-member launch-profile
+		// selection (JOH-…): keyed by template-agent name, each value the spawn
+		// profile the deploy dialog resolved for a member that carried NO profile of
+		// its own (the form prefilled it from the group / dashboard default and the
+		// human could reconfigure it). It is a FORM-supplied override, not a
+		// server-inferred default: the client resolves each member and sends the
+		// result, and the roster is spawned with exactly what was sent. A member the
+		// map does not name keeps its own template profile; an entry that names a
+		// member which already carries a profile is ignored (applyAgentProfileOverrides
+		// only fills a blank), so the map can never stomp an explicit template choice.
+		AgentProfiles map[string]string `json:"agent_profiles,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2240,6 +2295,7 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		sourceTemplate:  tmpl.Name,
 		parentGroup:     parentGroup,
 		contextOverride: body.ContextOverride,
+		agentProfiles:   body.AgentProfiles,
 		// Only frame as a deployed force when there IS a mission; a mission-less
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",
@@ -2289,6 +2345,12 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		GroupName string `json:"group_name"`
 		Task      string `json:"task,omitempty"`
 		Cwd       string `json:"cwd,omitempty"`
+		// AgentProfiles — the deploy form's per-member launch-profile resolution;
+		// see handleTemplateDeploy's body for the full contract. Reinforce prefills
+		// the form's default from the target group's own default profile, so a
+		// blank member joins wearing the same launch shape the group's existing
+		// members do (unless the human picked another in the dialog).
+		AgentProfiles map[string]string `json:"agent_profiles,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2357,6 +2419,7 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		contextHeader: "Task",
 		cwd:           cwd,
 		intoExisting:  g,
+		agentProfiles: body.AgentProfiles,
 	})
 }
 
