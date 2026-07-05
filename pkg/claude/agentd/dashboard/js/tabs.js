@@ -59,16 +59,51 @@ function filterGroups(groups, q) {
              ((m.actor_conv_id || '').toLowerCase().includes(needle)) ||
              ((m.reason || '').toLowerCase().includes(needle));
     });
+    const matchedPending = (g.pending || []).filter(p => pendingRowMatches(p, needle));
     if (nameHit || descrHit) {
       // Group name / descr matched: keep all members so the user can
       // see the whole group context.
       out.push(g);
-    } else if (matchedMembers.length > 0) {
-      // Members matched: show only the matching subset.
-      out.push({ ...g, members: matchedMembers });
+    } else if (matchedMembers.length > 0 || matchedPending.length > 0) {
+      // Members / pending spawns matched: show only the matching subset.
+      out.push({ ...g, members: matchedMembers, pending: matchedPending });
     }
   }
   return out;
+}
+
+function pendingRowMatches(p, needle) {
+  return ((p.label || '').toLowerCase().includes(needle)) ||
+         ((p.name || '').toLowerCase().includes(needle)) ||
+         ((p.role || '').toLowerCase().includes(needle)) ||
+         ((p.descr || '').toLowerCase().includes(needle)) ||
+         ((p.group || '').toLowerCase().includes(needle)) ||
+         ((p.cwd || '').toLowerCase().includes(needle)) ||
+         ((p.harness || '').toLowerCase().includes(needle));
+}
+
+function distributePendingToGroups(groups, pending) {
+  const byGroup = new Map();
+  const fallback = [];
+  for (const p of pending || []) {
+    const group = (p.group || '').trim();
+    if (!group) {
+      fallback.push(p);
+      continue;
+    }
+    const rows = byGroup.get(group) || [];
+    rows.push(p);
+    byGroup.set(group, rows);
+  }
+
+  const withPending = groups.map(g => {
+    const rows = byGroup.get(g.name);
+    if (!rows || rows.length === 0) return g;
+    byGroup.delete(g.name);
+    return { ...g, pending: rows };
+  });
+  for (const rows of byGroup.values()) fallback.push(...rows);
+  return { groups: withPending, fallback };
 }
 
 function renderGroupsTab() {
@@ -79,6 +114,8 @@ function renderGroupsTab() {
   // and surfaces only when the human ticks "show circle-scribe" in the view
   // popover. Everything else renders as normal.
   const realGroups = (lastSnapshot.groups || []).filter(g => scribeVisible() || !g.scribe);
+  const pending = lastSnapshot.pending || [];
+  const distributed = distributePendingToGroups(realGroups, pending);
   // Append the virtual "Ungrouped" group LAST so it always sorts to
   // the bottom of the listing. filterGroups preserves order, so the
   // text filter narrows it like any other group without moving it.
@@ -87,19 +124,12 @@ function renderGroupsTab() {
   // hides it; a text filter narrows it like any group).
   //
   // Real groups render in the human's persisted drag-reorder order
-  // (group-reorder.js); the virtual groups below keep their fixed slots
-  // (Pending prepended, the rest appended). sortGroupsByPref returns the
-  // groups unchanged when no custom order is saved — i.e. backend order
-  // (alphabetical).
-  const list = sortGroupsByPref(realGroups.slice());
-  // The virtual "Pending" group is PREPENDED so a just-spawned agent
-  // still stuck behind a startup gate (JOH-205) is the first thing the
-  // operator sees — it's an actionable alert, not a routine bucket. Only
-  // built when there are pending spawns: no opt-out checkbox and no
-  // persistent empty box (unlike the other virtual groups below).
-  const pending = lastSnapshot.pending || [];
-  if (pending.length) {
-    list.unshift(virtualPendingGroup(pending));
+  // (group-reorder.js); pending spawns ride inside their intended real group
+  // while they wait for a conv-id. The virtual Pending group is now only a
+  // fallback for rows whose target group is gone or hidden from this view.
+  const list = sortGroupsByPref(distributed.groups.slice());
+  if (distributed.fallback.length) {
+    list.unshift(virtualPendingGroup(distributed.fallback));
   }
   if (ungroupedVisible()) {
     list.push(virtualUngroupedGroup(lastSnapshot.ungrouped || []));
