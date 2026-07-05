@@ -640,6 +640,15 @@ type templateAgentLaunch struct {
 	Effort       string
 	Sandbox      string
 	Approval     string
+	// TrustDir / AutoReview are the two *bool launch toggles a referenced spawn
+	// profile carries (the same pair applyDefaultProfile overlays from a group's
+	// default profile). They are resolved (not just validated) here so the
+	// template instantiator threads them into spawnParams — without this a
+	// profile's trust_dir never reaches a template-spawned Codex agent, leaving
+	// it frozen on the trust-folder modal (JOH-205 regression for the template
+	// path). Off by default; only a referenced profile turns them on.
+	TrustDir   bool
+	AutoReview bool
 }
 
 // validateTemplateAgentLaunch validates one template agent's per-role launch
@@ -717,6 +726,13 @@ type launchAccum struct {
 	effort   string
 	sandbox  string
 	approval string
+	// trustDir / autoReview are tri-state (*bool): nil = no tier has spoken yet
+	// (still open to a lower-priority source), non-nil = a higher-priority
+	// profile already decided. Mirrors the string fields' "first non-blank
+	// wins", but nil-vs-set is the "still open" test since false is a real
+	// decision here (an explicit trust_dir=false in a profile).
+	trustDir   *bool
+	autoReview *bool
 }
 
 // overlay fills this accumulator's still-blank fields from a lower-priority
@@ -725,7 +741,11 @@ type launchAccum struct {
 // resolving harness is still unset (then it adopts the source's harness) or
 // already matches the source's harness — so a source tuned for one harness
 // never bleeds its model/effort into a spawn on another.
-func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcApproval string) {
+// srcTrustDir / srcAutoReview are the source's *bool launch toggles (only a
+// spawn profile carries them; a role's inline defaults pass nil,nil). Filled on
+// the same harness-compatible gate as the string fields, and only while still
+// unset (nil) so the highest-priority profile that sets one wins.
+func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcApproval string, srcTrustDir, srcAutoReview *bool) {
 	srcHarness = strings.TrimSpace(srcHarness)
 	if l.harness != "" && harnessOrDefault(l.harness) != harnessOrDefault(srcHarness) {
 		return
@@ -744,6 +764,12 @@ func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcAp
 	}
 	if l.approval == "" {
 		l.approval = strings.TrimSpace(srcApproval)
+	}
+	if l.trustDir == nil {
+		l.trustDir = srcTrustDir
+	}
+	if l.autoReview == nil {
+		l.autoReview = srcAutoReview
 	}
 }
 
@@ -787,7 +813,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval)
+		acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval, prof.TrustDir, prof.AutoReview)
 	}
 
 	// Tier 3 + 4: the referenced role's inline defaults, then the role's own
@@ -795,7 +821,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	// blank (agent overrides win); the role's spawn profile fills what the
 	// role's inline fields left open.
 	if role != nil {
-		acc.overlay(role.Harness, role.Model, role.Effort, role.Sandbox, role.Approval)
+		acc.overlay(role.Harness, role.Model, role.Effort, role.Sandbox, role.Approval, nil, nil)
 		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
 			prof, err := db.GetSpawnProfile(ref)
 			if err != nil {
@@ -805,7 +831,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
 			}
-			acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval)
+			acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval, prof.TrustDir, prof.AutoReview)
 		}
 	}
 
@@ -831,6 +857,21 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
 	}
+	// Resolve the two *bool launch toggles against the chosen harness — the
+	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
+	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
+	// a true request on a harness that has no such concept (Claude Code); in
+	// practice a profile carrying trust_dir=true is a Codex profile (validated
+	// at save) and is only adopted above when the harness matched, so this
+	// won't fire — but a mismatch is a clean per-agent 400, not a silent drop.
+	trustDir, err := harness.ResolveTrustDir(h, acc.trustDir != nil && *acc.trustDir)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_trust_dir", err.Error()}
+	}
+	autoReview, err := harness.ResolveAutoReview(h, acc.autoReview != nil && *acc.autoReview)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -841,11 +882,13 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	}
 
 	return templateAgentLaunch{
-		Harness:  h.Name,
-		Model:    model,
-		Effort:   effort,
-		Sandbox:  sandbox,
-		Approval: approval,
+		Harness:    h.Name,
+		Model:      model,
+		Effort:     effort,
+		Sandbox:    sandbox,
+		Approval:   approval,
+		TrustDir:   trustDir,
+		AutoReview: autoReview,
 	}, nil
 }
 
