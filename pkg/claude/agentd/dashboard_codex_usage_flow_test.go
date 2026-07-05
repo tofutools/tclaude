@@ -61,9 +61,9 @@ func TestDashboardCodexUsage_SurfacedInSnapshot(t *testing.T) {
 // while. Unlike the Claude readout (kept fresh by a network poller), Codex
 // figures come from rollouts that only update when Codex runs — so the readout
 // has to persist on the last-known snapshot until each window actually resets,
-// not expire on a short wall-clock cap. A rollout last touched ~40 minutes ago
-// (well past the Claude 30-min cap), with both windows still open, must still
-// surface. Regression guard for the staleness model.
+// not expire on a short wall-clock cap. A rollout last touched ~40 minutes ago,
+// with both windows still open, must still surface. Regression guard for the
+// staleness model.
 func TestDashboardCodexUsage_PersistsWhileWindowOpen(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
@@ -77,8 +77,8 @@ func TestDashboardCodexUsage_PersistsWhileWindowOpen(t *testing.T) {
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 22, WindowMinutes: 300, ResetsAt: time.Now().Add(3 * time.Hour)},
 		&testharness.CodexRateLimitWindowSeed{UsedPercent: 9, WindowMinutes: 10080, ResetsAt: time.Now().Add(6 * 24 * time.Hour)},
 	))
-	// Codex last ran ~40 minutes ago — past the old 30-min cap that would have
-	// hidden it.
+	// Codex last ran ~40 minutes ago — a short wall-clock cap would have hidden
+	// it, but Codex keys visibility on each window's own reset.
 	idle := time.Now().Add(-40 * time.Minute)
 	require.NoError(t, os.Chtimes(cx.RolloutPath, idle, idle))
 
@@ -100,8 +100,8 @@ func TestDashboardCodexUsage_PersistsWhileWindowOpen(t *testing.T) {
 //  1. Codex never run (no rollouts at all),
 //  2. a rollout whose only token_count carries no usable rate limits (a turn
 //     before any rate-limit header arrived — both windows null),
-//  3. a rollout whose rate-limit snapshot is older than the 30-min staleness
-//     cap (a long-idle Codex must not keep showing hours-old figures),
+//  3. a rollout whose rate-limit snapshot is older than Codex's max-age
+//     window (a long-idle Codex must not keep showing days-old figures),
 //  4. a fresh rollout whose token_count windows have already reset.
 func TestDashboardCodexUsage_UnavailableDegradesGracefully(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")

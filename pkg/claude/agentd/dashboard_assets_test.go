@@ -545,6 +545,29 @@ func TestDashboardAssets_TUIColorSchemeWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_UsageIdleTimeoutWired guards the usage-readout idle
+// timeout knob (config usage.idle_timeout), whose Config-tab pieces span
+// dashboard.html + config.js and must stay in lockstep — there's no JS render
+// test, so we assert on the embedded concatenation at `go test ./...`. The Go
+// resolver + round-trip is covered separately by
+// config.TestResolvedUsageIdleTimeout. A rename in either file silently breaks
+// the field only in the browser:
+//   - dashboard.html — the Config-tab text input;
+//   - config.js — load (fill) + gather (save) the value.
+func TestDashboardAssets_UsageIdleTimeoutWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.html — the Config-tab control.
+		`id="cfg-usage-idle-timeout"`,
+		// config.js — load + gather the value (the key that actually writes).
+		"#cfg-usage-idle-timeout",
+		"usage.idle_timeout = uitRaw",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — usage idle-timeout knob broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

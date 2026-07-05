@@ -1785,7 +1785,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.ExportJobsActive = n
 	}
 	out.Links = collectLinksSnapshot()
-	out.Usage = collectUsageSnapshot()
+	out.Usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in

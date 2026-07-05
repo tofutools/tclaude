@@ -418,6 +418,15 @@
     </div>
 
     <div class="cfg-section">
+      <h3>Usage readout</h3>
+      <div class="cfg-field">
+        <span class="cfg-label">Idle timeout</span>
+        <input type="text" id="cfg-usage-idle-timeout" placeholder="72h" aria-label="Usage readout idle timeout" style="min-width:120px" />
+        <span class="cfg-hint">How long the top-bar <strong>Claude</strong> subscription usage bars (5h / 7d) keep showing their last-known reading after the live source goes quiet. That source is Claude Code's statusline (only while a session runs) plus a periodic Anthropic usage-API poll — and the poll commonly starts failing a few hours after your last session, once its OAuth token has rotated. A failed poll keeps the figures but stops refreshing them, so a short cap would blank a perfectly good weekly reading the same night (leaving only Codex). A Go duration — e.g. <code>72h</code> (3 days, the default), <code>30m</code>, <code>2h30m</code>. Blank = default. Stored as <code>usage.idle_timeout</code>.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
       <h3>Dashboard</h3>
       <div class="cfg-field">
         <span class="cfg-label">Activity bots — regular mode</span>
