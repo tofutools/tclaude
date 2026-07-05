@@ -861,18 +861,45 @@ let deployGroupEdited = false;
 // deployDropGroup is that drop-target group; '' for a NORMAL open (the
 // templates-manage 🚀 button or an empty-space drop), which behaves exactly as
 // before this ticket (no mode chooser, no extra fields). A non-empty value
-// turns the unified summon dialog into a two-mode drop dialog:
+// turns the unified summon dialog into a three-mode drop dialog:
 //   reinforce — spawn the roster INTO the existing group (POST …/reinforce);
 //               the group keeps its own name / settings / context.
 //   copy      — create a NEW group inheriting the target's descr / cwd / context
 //               (no agents cloned) with the roster spawned in (POST …/instantiate
 //               carrying the JOH-356 context_override so the new group gets its
 //               OWN edited copy of the shared context, not the template's).
+//   subgroup  — same as copy, but the new group is nested under the target.
 let deployDropGroup = '';
 // The copy-mode prefills, computed once from the drop target's snapshot when the
 // dialog is opened onto a group, so toggling reinforce↔copy doesn't refetch and
 // the human's edits to the copied context survive a mode flip.
 let deployCopyDefaults = null;
+
+function groupMirrorOptions(blankLabel) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const opts = [`<option value="">${esc(blankLabel)}</option>`];
+  for (const g of groups) {
+    if (g && g.name) opts.push(`<option value="${esc(g.name)}">${esc(g.name)}</option>`);
+  }
+  return opts.join('');
+}
+
+function deployMirrorSource() {
+  const sel = $('#template-deploy-source');
+  return sel ? sel.value.trim() : '';
+}
+
+function prefillDeployFromGroup(groupName, { setGroupName = false } = {}) {
+  const gs = groupSnapshot(groupName);
+  if (!gs) return;
+  $('#template-deploy-descr').value = gs.descr || '';
+  $('#template-deploy-context').value = gs.default_context || '';
+  $('#template-deploy-cwd').value = gs.default_cwd || '';
+  if (setGroupName) {
+    $('#template-deploy-group').value = suggestCopyGroupName(groupName);
+    deployGroupEdited = true;
+  }
+}
 
 // openSummonForDrop opens the unified summon dialog for a template dragged from
 // the palette dock (dock-dnd.js). dropGroup '' → a plain open with the template
@@ -898,9 +925,9 @@ export function openSummonForDrop(templateName, dropGroup) {
   // Default cwd to the target's when the field is still blank (a normal open
   // leaves it empty; don't stomp a value the picker/prefill already set).
   if (!$('#template-deploy-cwd').value) $('#template-deploy-cwd').value = deployCopyDefaults.cwd;
-  // Every open onto a group defaults to reinforce (the common "add helpers here").
-  const reinforce = $('input[name=template-deploy-mode][value=reinforce]');
-  if (reinforce) reinforce.checked = true;
+  // Every open onto a group defaults to a nested task-force subgroup.
+  const subgroup = $('input[name=template-deploy-mode][value=subgroup]');
+  if (subgroup) subgroup.checked = true;
   applyDeployMode();
 }
 
@@ -917,17 +944,19 @@ function suggestCopyGroupName(target) {
 }
 
 // deployMode reads the selected drop mode. Only meaningful when deployDropGroup
-// is set (a drop onto a group); defaults to reinforce.
+// is set (a drop onto a group); defaults to subgroup.
 function deployMode() {
   const checked = $('input[name=template-deploy-mode]:checked');
-  return (checked && checked.value) || 'reinforce';
+  return (checked && checked.value) || 'subgroup';
 }
 
 // deploySubmitLabel is the PLAIN-skin submit-button text for the active mode
 // (wizard mode hides it behind a fixed ::before glyph — see dashboard.css).
 function deploySubmitLabel() {
   if (!deployDropGroup) return 'Deploy task force';
-  return deployMode() === 'reinforce' ? 'Reinforce group' : 'Create group';
+  if (deployMode() === 'reinforce') return 'Reinforce group';
+  if (deployMode() === 'subgroup') return 'Create subgroup';
+  return 'Create group';
 }
 
 // applyDeployMode reflows the dialog for the current state: no chooser + today's
@@ -941,9 +970,12 @@ function applyDeployMode() {
 
   const groupInput = $('#template-deploy-group');
   const note = $('#template-deploy-group-note');
+  const sourceRow = $('#template-deploy-source-row');
+  const parentRow = $('#template-deploy-parent-row');
   const descrRow = $('#template-deploy-descr-row');
   const ctxRow = $('#template-deploy-context-row');
   const wtRow = $('#template-deploy-worktree').closest('.cron-create-row');
+  const normalSource = active ? '' : deployMirrorSource();
 
   if (mode === 'reinforce') {
     // The roster goes INTO the existing group: its name is fixed, and only the
@@ -959,32 +991,44 @@ function applyDeployMode() {
         `reinforcing ${deployDropGroup} — its name, settings and context are kept`,
         `reinforcing ${deployDropGroup} — its name, ways and lore are kept`);
     }
+    if (sourceRow) sourceRow.hidden = true;
+    if (parentRow) parentRow.hidden = true;
     if (descrRow) descrRow.hidden = true;
     if (ctxRow) ctxRow.hidden = true;
     if (wtRow) wtRow.hidden = true;
-  } else if (mode === 'copy') {
+  } else if (mode === 'copy' || mode === 'subgroup') {
     // A NEW group in the target's image: name editable (prefilled), and the
-    // copied settings (descr / context) + worktree are all in play.
+    // copied settings (descr / context) + worktree are all in play. Subgroup
+    // mode additionally sends parent=the drop target.
     groupInput.readOnly = false;
     groupInput.classList.remove('locked');
     groupInput.value = (deployCopyDefaults && deployCopyDefaults.groupName) || '';
     deployGroupEdited = true; // the mission→group auto-derive must not clobber it
     if (note) {
       note.hidden = false;
-      note.textContent = wizWord(
-        `new group inheriting ${deployDropGroup}'s description, cwd and context (no agents copied)`,
-        `new party in ${deployDropGroup}'s image — its lore, lair and ways, but none of its familiars`);
+      note.textContent = mode === 'subgroup'
+        ? wizWord(
+          `new subgroup under ${deployDropGroup}, inheriting its description, cwd and context (no agents copied)`,
+          `new party tucked under ${deployDropGroup}, inheriting its lore, lair and ways`)
+        : wizWord(
+          `new top-level group inheriting ${deployDropGroup}'s description, cwd and context (no agents copied)`,
+          `new top-level party in ${deployDropGroup}'s image — its lore, lair and ways, but none of its familiars`);
     }
+    if (sourceRow) sourceRow.hidden = true;
+    if (parentRow) parentRow.hidden = true;
     if (descrRow) descrRow.hidden = false;
     if (ctxRow) ctxRow.hidden = false;
     if (wtRow) wtRow.hidden = false;
   } else {
-    // Normal open — byte-identical to before JOH-377.
+    // Normal open. Optionally mirror another group's settings and, if checked,
+    // nest the new task force under that same source group.
     groupInput.readOnly = false;
     groupInput.classList.remove('locked');
     if (note) note.hidden = true;
-    if (descrRow) descrRow.hidden = true;
-    if (ctxRow) ctxRow.hidden = true;
+    if (sourceRow) sourceRow.hidden = false;
+    if (parentRow) parentRow.hidden = !normalSource;
+    if (descrRow) descrRow.hidden = !normalSource;
+    if (ctxRow) ctxRow.hidden = !normalSource;
     if (wtRow) wtRow.hidden = false;
   }
   const submit = $('#template-deploy-submit');
@@ -1010,14 +1054,17 @@ function openDeployModal(presetName) {
   $('#template-deploy-worktree').value = '';
   $('#template-deploy-descr').value = '';
   $('#template-deploy-context').value = '';
+  $('#template-deploy-source').innerHTML = groupMirrorOptions('template defaults (top-level)');
+  $('#template-deploy-source').value = '';
+  $('#template-deploy-parent').checked = false;
   $('#template-deploy-error').textContent = '';
   deployGroupEdited = false;
   // Clear any prior drop state — a bare open is always the normal (no-chooser)
   // flow; openSummonForDrop re-arms it afterwards for a drop onto a group.
   deployDropGroup = '';
   deployCopyDefaults = null;
-  const reinforceRadio = $('input[name=template-deploy-mode][value=reinforce]');
-  if (reinforceRadio) reinforceRadio.checked = true;
+  const subgroupRadio = $('input[name=template-deploy-mode][value=subgroup]');
+  if (subgroupRadio) subgroupRadio.checked = true;
   applyDeployMode();
   $('#template-deploy-modal').classList.add('show');
   setTimeout(() => $('#template-deploy-mission').focus(), 0);
@@ -1093,7 +1140,7 @@ async function resolveDeployWorktree(branch, cwd) {
 // here, so every mode gets the disabled-guard and the same entry point.
 async function submitDeploy() {
   if (deployDropGroup && deployMode() === 'reinforce') return submitReinforce();
-  if (deployDropGroup && deployMode() === 'copy') return submitCopyGroup();
+  if (deployDropGroup && (deployMode() === 'copy' || deployMode() === 'subgroup')) return submitCopyGroup();
   return submitDeployCreate();
 }
 
@@ -1162,6 +1209,7 @@ async function submitReinforce() {
 // target's context, not the template's. instantiate is the existing create-new
 // path — no endpoint added.
 async function submitCopyGroup() {
+  const mode = deployMode();
   const tmplName = $('#template-deploy-template').value;
   const groupName = $('#template-deploy-group').value.trim();
   const task = $('#template-deploy-mission').value.trim();
@@ -1193,6 +1241,7 @@ async function submitCopyGroup() {
     const payload = { group_name: groupName, context_override: context, descr_override: descr };
     if (task) payload.task = task;
     if (cwd) payload.cwd = cwd;
+    if (mode === 'subgroup') payload.parent = deployDropGroup;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1209,9 +1258,13 @@ async function submitCopyGroup() {
     const failed = resp.failed || 0;
     toast(failed
       ? `${finalGroup}: ${spawned} spawned, ${failed} failed — check the group`
-      : wizWord(
-        `group ${finalGroup} created in ${deployDropGroup}'s image — ${spawned} spawned`,
-        `🧙 party ${finalGroup} chalked in ${deployDropGroup}'s image — ${spawned} familiars answer the call`),
+      : mode === 'subgroup'
+        ? wizWord(
+          `subgroup ${finalGroup} created under ${deployDropGroup} — ${spawned} spawned`,
+          `🧙 party ${finalGroup} tucked under ${deployDropGroup} — ${spawned} familiars answer the call`)
+        : wizWord(
+          `top-level group ${finalGroup} created in ${deployDropGroup}'s image — ${spawned} spawned`,
+          `🧙 top-level party ${finalGroup} chalked in ${deployDropGroup}'s image — ${spawned} familiars answer the call`),
       failed > 0);
     surfaceDeployPatternOutcome(resp);
     try { dashPrefs.setItem('tclaude.dash.group.' + finalGroup, '1'); } catch (_) {}
@@ -1242,6 +1295,9 @@ async function submitDeployCreate() {
   const tmplName = $('#template-deploy-template').value;
   const mission = $('#template-deploy-mission').value.trim();
   const groupName = $('#template-deploy-group').value.trim();
+  const mirrorSource = deployMirrorSource();
+  const descr = $('#template-deploy-descr').value.trim();
+  const context = $('#template-deploy-context').value;
   const branch = $('#template-deploy-worktree').value.trim();
   let cwd = $('#template-deploy-cwd').value.trim();
   const errEl = $('#template-deploy-error');
@@ -1265,6 +1321,11 @@ async function submitDeployCreate() {
     const payload = { mission };
     if (groupName) payload.group_name = groupName;
     if (cwd) payload.cwd = cwd;
+    if (mirrorSource) {
+      payload.descr_override = descr;
+      payload.context_override = context;
+      if ($('#template-deploy-parent').checked) payload.parent = mirrorSource;
+    }
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/deploy`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1308,7 +1369,7 @@ async function submitDeployCreate() {
     errEl.textContent = (err && err.message) || String(err);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Deploy task force';
+    btn.textContent = deploySubmitLabel();
   }
 }
 
@@ -1961,12 +2022,18 @@ function bindTemplatesUI() {
   $('#template-deploy-group').addEventListener('input', () => {
     deployGroupEdited = true;
     // In copy mode the group field IS the new group's name — track edits on the
-    // copy defaults so a reinforce↔copy toggle restores what the human typed
+    // copy defaults so a mode toggle restores what the human typed
     // rather than resetting to the suggested <target>-N.
-    if (deployDropGroup && deployMode() === 'copy' && deployCopyDefaults) {
+    if (deployDropGroup && (deployMode() === 'copy' || deployMode() === 'subgroup') && deployCopyDefaults) {
       deployCopyDefaults.groupName = $('#template-deploy-group').value;
     }
     renderDeployPreview();
+  });
+  $('#template-deploy-source').addEventListener('change', () => {
+    const source = deployMirrorSource();
+    $('#template-deploy-parent').checked = false;
+    if (source) prefillDeployFromGroup(source);
+    applyDeployMode();
   });
   // The drop-mode chooser (JOH-377) reflows the dialog live — no re-open.
   $$('input[name=template-deploy-mode]').forEach(rdo =>

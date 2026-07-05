@@ -23,12 +23,12 @@ import (
 // deployResult mirrors the JSON the deploy endpoint returns — the
 // instantiate shape plus the deploy framing.
 type deployResult struct {
-	Group            string `json:"group"`
-	Template         string `json:"template"`
-	Spawned          int    `json:"spawned"`
-	Failed           int    `json:"failed"`
-	Deployed         bool   `json:"deployed"`
-	Mission          string `json:"mission"`
+	Group            string   `json:"group"`
+	Template         string   `json:"template"`
+	Spawned          int      `json:"spawned"`
+	Failed           int      `json:"failed"`
+	Deployed         bool     `json:"deployed"`
+	Mission          string   `json:"mission"`
 	PatternDelivered int      `json:"pattern_delivered"`
 	PatternErrors    []string `json:"pattern_errors"`
 	Agents           []struct {
@@ -112,6 +112,43 @@ func TestTaskForceDeploy_RendersMissionAndRecordsProvenance(t *testing.T) {
 	}
 	assert.Contains(t, joined, "Own the mission: "+mission,
 		"work-pattern step interpolates {{mission}}")
+}
+
+// Scenario: deploy can mirror an existing group's settings and optionally nest
+// the new task force under that same group. This is the normal deploy-button
+// path; drag-copy uses /instantiate and is covered separately.
+func TestTaskForceDeploy_MirroredSettingsCanNestUnderParent(t *testing.T) {
+	f := newFlow(t)
+
+	parentID, err := db.CreateAgentGroup("parent", "settings source")
+	require.NoError(t, err)
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name":            "crew",
+			"default_context": "template context should be replaced",
+			"agents":          []templateAgentSpec{{Name: "lead"}},
+		}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/deploy",
+		map[string]any{
+			"group_name":       "nested-force",
+			"mission":          "Ship nested deploy",
+			"parent":           "parent",
+			"context_override": "mirrored deploy context",
+			"descr_override":   "mirrored descr",
+		})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy mirrored subgroup: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	g, err := db.GetAgentGroupByName("nested-force")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.NotNil(t, g.ParentGroupID, "new task force is nested")
+	assert.Equal(t, parentID, *g.ParentGroupID)
+	assert.Equal(t, "mirrored descr", g.Descr)
+	assert.Contains(t, g.DefaultContext, "mirrored deploy context")
+	assert.Contains(t, g.DefaultContext, "## Mission")
+	assert.NotContains(t, g.DefaultContext, "template context should be replaced")
 }
 
 // Scenario: deploy with no --group derives a group name from the mission text

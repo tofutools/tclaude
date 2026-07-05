@@ -7,9 +7,11 @@ import (
 
 // JOH-377 4/4: dragging a palette-dock TEMPLATE card onto a group opens the
 // unified summon dialog with a drop-mode chooser — reinforce the group in place
-// (POST …/reinforce) or create a NEW group in its image (POST …/instantiate
-// carrying the JOH-356 context_override). Dropping onto empty space opens the
-// plain "new party from circle" flow. Like the other dashboard render guards
+// (POST …/reinforce), create a NEW top-level group in its image, or create a
+// NEW subgroup in its image (POST …/instantiate carrying the JOH-356
+// context_override and, for subgroup, parent). Dropping onto empty space opens
+// the plain "new party from circle" flow with optional mirror settings. Like
+// the other dashboard render guards
 // this pins the wiring across HTML / CSS / JS by string-searching the embedded
 // source rather than running the JS, so a rename that silently breaks the drag
 // in the browser fails at `go test ./...` instead. It is a pure-frontend feature
@@ -20,6 +22,14 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+	mustOrder := func(first, second, why string) {
+		t.Helper()
+		i := strings.Index(dashboardAssets, first)
+		j := strings.Index(dashboardAssets, second)
+		if i < 0 || j < 0 || i >= j {
+			t.Errorf("dashboard source order wrong (%s): %q should appear before %q", why, first, second)
 		}
 	}
 
@@ -38,26 +48,33 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	must("wizWord('deploy', 'summon')", "the pill reads deploy/summon for a template onto a group")
 	must("wizWord('new group from', 'new party from')", "the pill reads new-group for a template onto empty space")
 
-	// The mode chooser markup — the two radio options, both vocab modes.
+	// The mode chooser markup — the three radio options, both vocab modes.
 	must(`id="template-deploy-mode"`, "the drop-mode chooser exists")
 	must(`name="template-deploy-mode" value="reinforce"`, "the reinforce mode radio exists")
 	must(`name="template-deploy-mode" value="copy"`, "the copy mode radio exists")
+	must(`name="template-deploy-mode" value="subgroup" checked`, "the subgroup mode radio exists and is the static default")
+	mustOrder(`name="template-deploy-mode" value="subgroup" checked`, `name="template-deploy-mode" value="reinforce"`,
+		"subgroup is the first drop-mode option")
 	must(`<span class="tpl-word-regular">Reinforce this group</span><span class="tpl-word-wizard">Summon into this party</span>`,
 		"the reinforce option ships both voices")
-	must(`<span class="tpl-word-regular">New group copying this group's settings</span><span class="tpl-word-wizard">New party in this party's image</span>`,
+	must(`<span class="tpl-word-regular">New top-level group copying settings</span><span class="tpl-word-wizard">New top-level party in this party's image</span>`,
 		"the copy option ships both voices")
+	must(`<span class="tpl-word-regular">New subgroup copying this group's settings</span><span class="tpl-word-wizard">New sub-party in this party's image</span>`,
+		"the subgroup option ships both voices")
 
-	// The copy-mode-only fields (hidden on a normal open) + the per-mode note.
+	// The mirror/copy-mode fields + the per-mode note.
 	must(`id="template-deploy-descr-row"`, "the copy-mode description row exists")
 	must(`id="template-deploy-descr"`, "the copy-mode description input exists")
 	must(`id="template-deploy-context-row"`, "the copy-mode context row exists")
 	must(`id="template-deploy-context"`, "the copy-mode context textarea exists")
+	must(`id="template-deploy-source-row"`, "the normal-open mirror-source row exists")
+	must(`id="template-deploy-parent-row"`, "the normal-open subgroup checkbox row exists")
 	must(`id="template-deploy-group-note"`, "the per-mode group note exists")
 
 	// One submit handler, mode-dispatched — reinforce and copy fork to their own
 	// POSTs; the create-new path is unchanged.
 	must("if (deployDropGroup && deployMode() === 'reinforce') return submitReinforce();", "reinforce mode dispatches to the reinforce POST")
-	must("if (deployDropGroup && deployMode() === 'copy') return submitCopyGroup();", "copy mode dispatches to the instantiate POST")
+	must("if (deployDropGroup && (deployMode() === 'copy' || deployMode() === 'subgroup')) return submitCopyGroup();", "copy/subgroup modes dispatch to the instantiate POST")
 	must("/reinforce`, {", "reinforce mode POSTs to the reinforce endpoint")
 	must("/instantiate`, {", "copy mode POSTs to the existing instantiate endpoint")
 	// Copy mode ALWAYS sends context_override AND descr_override so the new group
@@ -66,11 +83,16 @@ func TestDashboardHTML_TemplateDrop(t *testing.T) {
 	// context / description is faithfully copied (a bare `descr` would let the
 	// backend re-default an empty description to "Instantiated from template X").
 	must("const payload = { group_name: groupName, context_override: context, descr_override: descr };", "copy mode overrides both context and description with the group's own copy")
+	must("if (mode === 'subgroup') payload.parent = deployDropGroup;", "subgroup drop mode sends the parent group")
+	must("payload.descr_override = descr;", "normal deploy can mirror a group's description")
+	must("payload.context_override = context;", "normal deploy can mirror a group's context")
+	must("if ($('#template-deploy-parent').checked) payload.parent = mirrorSource;", "normal deploy can nest under the mirrored source")
 
 	// The chooser reflows the dialog live (no re-open) — the mode-radio change
 	// listener + the locked/prefilled group field.
 	must("rdo.addEventListener('change', applyDeployMode)", "switching mode reflows the dialog live")
 	must("groupInput.readOnly = true;", "reinforce mode locks the group name to the target")
+	must("return (checked && checked.value) || 'subgroup';", "the JS fallback default is subgroup")
 
 	// CSS: the chooser is styled in both skins, wizard SCOPED under the modal (the
 	// anti-pin invariant — no unscoped body.wizard widening).

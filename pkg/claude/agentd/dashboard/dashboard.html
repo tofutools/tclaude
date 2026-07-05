@@ -1585,6 +1585,14 @@
       <span class="cron-create-label">Name</span>
       <input id="group-create-name" type="text" placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck="false" />
     </label>
+    <label class="cron-create-row" id="group-create-source-row" style="display:none">
+      <span class="cron-create-label">Mirror settings</span>
+      <select id="group-create-source"></select>
+    </label>
+    <label class="cron-create-enabled" id="group-create-parent-row" style="display:none">
+      <input id="group-create-parent" type="checkbox" />
+      <span>Deploy as subgroup under the mirrored group</span>
+    </label>
     <label class="cron-create-row group-create-descr-row">
       <span class="cron-create-label">Descr</span>
       <input id="group-create-descr" type="text" placeholder="optional one-line description" autocomplete="off" spellcheck="false" />
@@ -2015,12 +2023,15 @@
          A normal open (the 🚀 button / an empty-space drop) leaves this hidden
          and the dialog behaves exactly as before. -->
     <div class="deploy-mode" id="template-deploy-mode" role="radiogroup" aria-label="Drop mode" hidden>
-      <label><input type="radio" name="template-deploy-mode" value="reinforce" checked />
+      <label><input type="radio" name="template-deploy-mode" value="subgroup" checked />
+        <span><span class="tpl-word-regular">New subgroup copying this group's settings</span><span class="tpl-word-wizard">New sub-party in this party's image</span></span>
+        <span class="opt-note"><span class="tpl-word-regular">— create a NEW group nested under this one, inheriting its description, cwd and context, with the template's roster spawned into it.</span><span class="tpl-word-wizard">— chalk a NEW party tucked under this one, inheriting its lore, lair and ways, then summon this circle's roster into it.</span></span></label>
+      <label><input type="radio" name="template-deploy-mode" value="reinforce" />
         <span><span class="tpl-word-regular">Reinforce this group</span><span class="tpl-word-wizard">Summon into this party</span></span>
         <span class="opt-note"><span class="tpl-word-regular">— add this template's agents into the existing group; it keeps its own name, settings and context.</span><span class="tpl-word-wizard">— call this circle's familiars into the party as it stands; it keeps its name, ways and lore.</span></span></label>
       <label><input type="radio" name="template-deploy-mode" value="copy" />
-        <span><span class="tpl-word-regular">New group copying this group's settings</span><span class="tpl-word-wizard">New party in this party's image</span></span>
-        <span class="opt-note"><span class="tpl-word-regular">— create a NEW group that inherits this group's description, cwd and context (no agents copied), with the template's roster spawned into it.</span><span class="tpl-word-wizard">— chalk a NEW party in this one's likeness (its lore, lair and ways, but none of its familiars), then summon this circle's roster into it.</span></span></label>
+        <span><span class="tpl-word-regular">New top-level group copying settings</span><span class="tpl-word-wizard">New top-level party in this party's image</span></span>
+        <span class="opt-note"><span class="tpl-word-regular">— create a NEW top-level group that inherits this group's description, cwd and context (no agents copied), with the template's roster spawned into it.</span><span class="tpl-word-wizard">— chalk a NEW top-level party in this one's likeness (its lore, lair and ways, but none of its familiars), then summon this circle's roster into it.</span></span></label>
     </div>
     <label class="cron-create-row">
       <span class="cron-create-label"><span class="tpl-word-regular">Template</span><span class="tpl-word-wizard">Circle</span></span>
@@ -2036,6 +2047,14 @@
     </label>
     <!-- Drop-mode note (JOH-377): explains the locked/copied group in each mode; hidden on a normal open. -->
     <div class="deploy-group-note" id="template-deploy-group-note" hidden></div>
+    <label class="cron-create-row" id="template-deploy-source-row" hidden>
+      <span class="cron-create-label">Mirror settings</span>
+      <select id="template-deploy-source"></select>
+    </label>
+    <label class="cron-create-enabled" id="template-deploy-parent-row" hidden>
+      <input id="template-deploy-parent" type="checkbox" />
+      <span>Deploy as subgroup under the mirrored group</span>
+    </label>
     <!-- Copy-mode-only (JOH-377): the new group inherits the target's description. -->
     <label class="cron-create-row" id="template-deploy-descr-row" hidden>
       <span class="cron-create-label"><span class="tpl-word-regular">Description</span><span class="tpl-word-wizard">Lore</span></span>

@@ -205,6 +205,35 @@ func TestGroupTemplate_InstantiateContextOverride(t *testing.T) {
 	assert.NotContains(t, msgs[0].Body, boilerplate, "member briefing drops the replaced boilerplate")
 }
 
+// Scenario: instantiating a template can create the new group as a subgroup of
+// an existing group while still using the caller's mirrored context override.
+func TestGroupTemplate_InstantiateParentNestsNewGroup(t *testing.T) {
+	f := newFlow(t)
+
+	parentID, err := db.CreateAgentGroup("parent", "parent settings source")
+	require.NoError(t, err)
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{"name": "crew", "agents": []templateAgentSpec{{Name: "lead"}}}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew/instantiate",
+		map[string]any{
+			"group_name":       "child-force",
+			"parent":           "parent",
+			"context_override": "mirrored parent context",
+			"descr_override":   "",
+		})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate as subgroup: %s", rec.Body.String())
+	agentd.WaitForBackgroundForTest()
+
+	g, err := db.GetAgentGroupByName("child-force")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	require.NotNil(t, g.ParentGroupID, "new group is nested")
+	assert.Equal(t, parentID, *g.ParentGroupID, "parent pointer records the selected group")
+	assert.Equal(t, "mirrored parent context", g.DefaultContext, "context override is the new group's own mirrored copy")
+	assert.Empty(t, g.Descr, "empty descr_override stays empty")
+}
+
 // Scenario (JOH-385): the summon dialog's copy mode ("new group in this group's
 // image") copies the drop target's description into the new group by POSTing a
 // descr_override to instantiate. descr_override mirrors context_override's

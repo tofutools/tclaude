@@ -423,16 +423,45 @@ type AgentMessage struct {
 
 // CreateAgentGroup inserts a new group. Returns the new group's ID.
 func CreateAgentGroup(name, descr string) (int64, error) {
+	return CreateAgentGroupWithParent(name, descr, "")
+}
+
+// CreateAgentGroupWithParent inserts a new group, optionally nested under an
+// existing parent group. parentName == "" creates a top-level group.
+func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 	db, err := Open()
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`INSERT INTO agent_groups (name, descr, created_at) VALUES (?, ?, ?)`,
-		name, descr, time.Now().Format(time.RFC3339Nano))
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	defer func() { _ = tx.Rollback() }()
+
+	var parentID sql.NullInt64
+	if parentName = strings.TrimSpace(parentName); parentName != "" {
+		if parentName == name {
+			return 0, ErrGroupParentCycle
+		}
+		if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, parentName).Scan(&parentID.Int64); errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrGroupParentNotFound
+		} else if err != nil {
+			return 0, err
+		}
+		parentID.Valid = true
+	}
+
+	res, err := tx.Exec(`INSERT INTO agent_groups (name, descr, created_at, parent_id) VALUES (?, ?, ?, ?)`,
+		name, descr, time.Now().Format(time.RFC3339Nano), parentID)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
 // CreateAgentGroupFrom inserts a new group named `name` that carries
