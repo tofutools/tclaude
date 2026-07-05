@@ -286,6 +286,27 @@ func TestWriteOperatorTokenBanner_SecretOnlyOnTTY(t *testing.T) {
 	}
 }
 
+func TestMaybeWriteOperatorTokenBanner_NoPrintSuppresses(t *testing.T) {
+	const secret = "tclo_super_secret_value"
+	src := tokenSource{kind: tokenSourceEphemeral}
+
+	// noPrint=true: nothing written, even on a TTY where the secret would
+	// otherwise appear.
+	var suppressed bytes.Buffer
+	maybeWriteOperatorTokenBanner(&suppressed, secret, src, true, true)
+	if suppressed.Len() != 0 {
+		t.Fatalf("--no-print-human-token should suppress the banner entirely, got:\n%s", suppressed.String())
+	}
+
+	// noPrint=false: behaves exactly like writeOperatorTokenBanner.
+	var printed, want bytes.Buffer
+	maybeWriteOperatorTokenBanner(&printed, secret, src, true, false)
+	writeOperatorTokenBanner(&want, secret, src, true)
+	if printed.String() != want.String() {
+		t.Fatalf("noPrint=false diverged from writeOperatorTokenBanner:\n got: %q\nwant: %q", printed.String(), want.String())
+	}
+}
+
 func TestLoadOrCreateOperatorTokenFile_ReChmodsLoosePerms(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, ".tclaude", "operator_token")

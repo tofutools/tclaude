@@ -357,12 +357,25 @@ func spawnEnvWithoutOperatorToken() []string {
 // to a terminal. For a PERSISTED token it instead points at where the token
 // lives (keychain, or the 0600 file path — never the secret itself), since
 // a stable token can be retrieved there and only needs exporting once.
-func printOperatorTokenBanner(tok string, src tokenSource) {
+// printOperatorTokenBanner is the printing form; noPrint (the
+// --no-print-human-token flag) suppresses it entirely — the token is still
+// minted and honored, only the banner is silenced.
+func printOperatorTokenBanner(tok string, src tokenSource, noPrint bool) {
 	isTTY := false
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		isTTY = true
 	}
-	writeOperatorTokenBanner(os.Stdout, tok, src, isTTY)
+	maybeWriteOperatorTokenBanner(os.Stdout, tok, src, isTTY, noPrint)
+}
+
+// maybeWriteOperatorTokenBanner writes the banner unless noPrint is set. Split
+// from writeOperatorTokenBanner so the --no-print-human-token gate is
+// unit-testable without a real terminal.
+func maybeWriteOperatorTokenBanner(w io.Writer, tok string, src tokenSource, isTTY, noPrint bool) {
+	if noPrint {
+		return
+	}
+	writeOperatorTokenBanner(w, tok, src, isTTY)
 }
 
 // writeOperatorTokenBanner renders the banner to w. The secret (tok) is

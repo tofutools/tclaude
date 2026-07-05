@@ -37,6 +37,7 @@ type serveParams struct {
 	DashboardPort        int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
 	DashboardBind        string `long:"dashboard-bind" optional:"true" help:"Host/interface the dashboard + approval listener binds to (host only; set the port via --dashboard-port). Default 127.0.0.1 = loopback only. Set e.g. 0.0.0.0 or :: to expose the local dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken bool   `long:"persist-operator-token" help:"Persist the operator token across restarts (OS keychain when available, else a 0600 ~/.tclaude/operator_token file) instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
+	NoPrintHumanToken    bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
 }
 
 func serveCmd() *cobra.Command {
@@ -351,7 +352,7 @@ func runServe(p *serveParams) error {
 			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
 			fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
 		}
-		printOperatorTokenBanner(operatorTok, tokenSrc)
+		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
 		serveErrCh <- srv.Serve(ln)
 	}()
 
