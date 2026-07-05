@@ -1037,7 +1037,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("'Banish unbound familiars…'", "retire-ungrouped presents as Banish unbound familiars in wizard mode")
 	must("`Banish familiar: ${label}`", "per-agent retire presents as Banish in wizard mode")
 	must("`Scry the ${name}`", "tab navigation presents as Scry in wizard mode")
-	must("`Furl coven: ${g.name}`", "group collapse presents as Furl in wizard mode")
+	must("`Furl party: ${g.name}`", "group collapse presents as Furl in wizard mode")
 	must("`Prune stray branches in ${g.name}`", "worktree cleanup presents as Prune in wizard mode")
 	must("'Edit familiar patterns…'", "the profiles manager presents as Edit familiar patterns in wizard mode")
 	must("'Unfurl the grimoire'", "show-dock presents as Unfurl the grimoire in wizard mode (matching the dock edge-toggle title)")
@@ -1051,7 +1051,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("banish exile dismiss familiar", "per-agent retire carries the arcane banish keywords")
 	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
 	must("patterns pattern familiar weave inscribe grimoire", "the profiles manager carries the arcane pattern keywords")
-	must("party form fellowship warband adventuring muster gather assemble coven guild", "create-group carries the arcane party keywords")
+	must("party form fellowship warband adventuring muster gather assemble guild", "create-group carries the arcane party keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
 	// placeholder — the tclaude:wizard listener rebuilds the command list AND
