@@ -35,9 +35,9 @@ func TestOriginMatchesBase(t *testing.T) {
 	}
 
 	// Empty base is a defensive default of the pure predicate: callers
-	// (checkDashboardAuth / checkLoginOrigin / checkPopupAuth) gate on
-	// popupBaseURL != "" and skip the pin entirely when no listener is
-	// bound, so they never reach here with an empty base.
+	// (checkDashboardAuth / checkLoginOrigin) gate on popupBaseURL != "" and
+	// skip the pin entirely when no listener is bound, so they never reach
+	// here with an empty base.
 	if originMatchesBase("http://127.0.0.1:655", "") {
 		t.Error("originMatchesBase with empty base must be false")
 	}
