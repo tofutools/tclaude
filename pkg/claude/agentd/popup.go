@@ -152,7 +152,26 @@ type approvalRequest struct {
 type approvalRegistry struct {
 	mu      sync.Mutex
 	pending map[string]*approvalRequest
+	// resolved is a bounded, most-recent-last ring of decided requests, kept
+	// so the dashboard's Access-requests folder can show a short "recently
+	// handled" history (what the operator chose, and when) instead of the card
+	// just vanishing. In-memory + capped (maxResolvedApprovals): the audit log
+	// is the durable record, so this is only the at-a-glance recent view and is
+	// cleared on daemon restart.
+	resolved []resolvedApproval
 }
+
+// resolvedApproval is one decided request retained for the recent-history view.
+// It holds the original *approvalRequest (read only for its set-once display
+// fields, never its mutable deadline) plus the outcome + when it was decided.
+type resolvedApproval struct {
+	req       *approvalRequest
+	outcome   string // "approved" | "declined" | "always" | "timed out"
+	decidedAt time.Time
+}
+
+// maxResolvedApprovals bounds the in-memory recent-history ring.
+const maxResolvedApprovals = 25
 
 var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
 
@@ -162,6 +181,32 @@ func (a *approvalRegistry) pendingCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.pending)
+}
+
+// recordResolved appends a decided request to the bounded recent-history ring.
+// Called by the approval waiter at each terminal outcome (human decision or
+// timeout) so the dashboard can show what was chosen.
+func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) {
+	a.mu.Lock()
+	a.resolved = append(a.resolved, resolvedApproval{req: req, outcome: outcome, decidedAt: time.Now()})
+	if len(a.resolved) > maxResolvedApprovals {
+		a.resolved = a.resolved[len(a.resolved)-maxResolvedApprovals:]
+	}
+	a.mu.Unlock()
+}
+
+// outcomeLabel maps a decided outcome to its history label. The timeout path
+// records "timed out" directly (it isn't an approvalOutcome).
+func outcomeLabel(o approvalOutcome) string {
+	switch o {
+	case outcomeApprove:
+		return "approved"
+	case outcomeApproveAlways:
+		return "always"
+	case outcomeDeny:
+		return "declined"
+	}
+	return "declined"
 }
 
 // pendingApprovalSummary is a tray-friendly slice of one pending row.
@@ -228,11 +273,13 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		approvals.mu.Unlock()
 	}()
 
-	// Auto-raise the operator's LOCAL browser straight to the dashboard's
-	// access-request view (the "redirect it into the dashboard" nicety): a
-	// deep link into the Messages tab focused on this request. A remote
-	// operator instead sees it in their already-open dashboard on the next
-	// 2s poll (the daemon can't launch a browser on their phone).
+	// Auto-raise the operator's LOCAL browser to the dashboard (the "redirect
+	// it into the dashboard" nicety). It deliberately lands on the DEFAULT view
+	// — NOT deep-linked to this request — so a busy operator isn't yanked to the
+	// approval mid-task: the blinking Messages badge + the "N requesting access"
+	// banner signal it passively, and they click Review to go there when ready.
+	// A remote operator sees the same signals in their already-open dashboard on
+	// the next 2s poll (the daemon can't launch a browser on their phone).
 	//
 	// SCOPE NOTE: the old loopback popup minted a token scoped to THIS one
 	// approval (initScopeApprove); this mints a full-dashboard init token, the
@@ -245,7 +292,7 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	// non-sandboxed same-uid process can already read ~/.tclaude directly — so
 	// this is no new boundary against either. Best-effort: a headless /
 	// no-browser host just relies on the dashboard surface + the OS notification.
-	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard) + "&" + accessRequestDeepLinkQuery(req.id)
+	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
 	go func() {
 		if err := openBrowser(url); err != nil {
 			slog.Warn("popup: failed to open browser", "err", err, "url", url)
@@ -264,7 +311,9 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	for {
 		select {
 		case d := <-req.decision:
-			return applyApprovalOutcome(req, d)
+			approved := applyApprovalOutcome(req, d)
+			approvals.recordResolved(req, outcomeLabel(d))
+			return approved
 		case d := <-req.extend:
 			if !timer.Stop() {
 				select {
@@ -279,6 +328,7 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		case <-timer.C:
 			slog.Info("popup: timeout fired (auto-deny)",
 				"id", req.id, "perm", req.perm)
+			approvals.recordResolved(req, "timed out")
 			return false
 		}
 	}

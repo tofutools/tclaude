@@ -498,6 +498,17 @@ func SeedApprovalForTest(id, perm string, autoGrantable bool) func() {
 	}
 }
 
+// ResetApprovalsForTest clears the whole approval registry — pending AND the
+// recent-handled history ring — so a flow test that decides an approval doesn't
+// leak resolved entries into another test's snapshot (the registry is a package
+// global). Called from newFlow.
+func ResetApprovalsForTest() {
+	approvals.mu.Lock()
+	approvals.pending = map[string]*approvalRequest{}
+	approvals.resolved = nil
+	approvals.mu.Unlock()
+}
+
 // SeedApprovalWithWaiterForTest registers a pending approval (perm,
 // convID, autoGrantable) AND starts a goroutine that consumes the first
 // decision exactly as the production waiter does — through
@@ -527,10 +538,24 @@ func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) 
 	go func() {
 		timer := time.NewTimer(req.timeout)
 		defer timer.Stop()
+		// Mirror realRequestHumanApproval: run the outcome side-effects, record
+		// the resolution into the recent-history ring, and drop the pending
+		// entry — so a flow test sees the same pending→handled transition the
+		// dashboard snapshot renders in production.
+		remove := func() {
+			approvals.mu.Lock()
+			delete(approvals.pending, id)
+			approvals.mu.Unlock()
+		}
 		select {
 		case d := <-req.decision:
-			done <- applyApprovalOutcome(req, d)
+			approved := applyApprovalOutcome(req, d)
+			approvals.recordResolved(req, outcomeLabel(d))
+			remove()
+			done <- approved
 		case <-timer.C:
+			approvals.recordResolved(req, "timed out")
+			remove()
 			done <- false
 		}
 	}()

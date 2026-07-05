@@ -26,8 +26,10 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"decideAccess(btn.getAttribute('data-id'), 'deny')",
 		// Cards render through the keyed reconciler (not innerHTML), so a
 		// button focus / the deep-link highlight survives the 2s repaint.
-		"morphInto(el, list.map(accessCardHTML).join(''))",
-		`<div class="access-card${attn}" data-key="${esc(r.id)}">`,
+		"pending.map(accessCardHTML).join('')",
+		"handled.map(accessCardHTML).join('')",
+		"morphInto(el, html)",
+		`<div class="access-card${handled ? ' handled' : ''}${attn}" data-key="${esc(r.id)}">`,
 		// The attention affordances: blinking nav badge + non-blocking banner.
 		"badge.classList.toggle('blink', accessPending > 0)",
 		`id="access-banner"`,
@@ -36,9 +38,15 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"function focusAccessRequest(",
 		"dlParams.get('access_request')",
 		"renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0)",
-		// CSS presence (card + blink).
+		// Recently-handled history: outcome chips + the divider stay in the list.
+		"function accessOutcome(",
+		"function accessIsPending(",
+		`data-key="__access_handled__"`,
+		// CSS presence (card + blink + handled history).
 		".access-card {",
 		".tab-badge.blink {",
+		".access-card.handled {",
+		".access-outcome {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — access-requests UI wiring broken", needle)

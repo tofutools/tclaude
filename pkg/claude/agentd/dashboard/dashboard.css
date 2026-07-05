@@ -196,6 +196,21 @@ nav button:hover { color: #d4d4d4; }
 .access-btn.always:hover { background: #4a3c1c; }
 .access-btn.extend { font-weight: 500; color: #8b949e; }
 
+/* Recently-handled history: decided requests stay in the folder (dimmed) so the
+   operator can see what they chose, under a small divider below the pending ones. */
+.access-card.handled { border-left-color: #30363d; opacity: 0.72; }
+.access-card.handled .access-who { color: #adbac7; }
+.access-divider {
+  margin: 16px 8px 2px; padding: 0 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: #6e7681;
+}
+.access-outcome { font-size: 12px; font-weight: 700; }
+.access-outcome.approved { color: #3fb950; }
+.access-outcome.always { color: #d29922; }
+.access-outcome.declined { color: #f85149; }
+.access-outcome.timedout { color: #8b949e; }
+.access-decided-at { margin-left: 8px; font-size: 11px; color: #6e7681; }
+
 /* Wizard re-skin: a petition for a boon on midnight-violet parchment, matching
    the Summon/Bind dialogs' palette (violet void, mystic-purple frame, gold edge,
    parchment text). The gold approval accent becomes arcane gold; deny stays a
@@ -228,6 +243,13 @@ body.wizard .access-btn.approve { background: #3a2f16; border-color: #d4af37; co
 body.wizard .access-btn.approve:hover { background: #4a3c1c; }
 body.wizard .access-btn.always { background: #2a2140; border-color: #a97bd6; color: #f3e6c0; }
 body.wizard .access-btn.deny { background: #3a1c2a; border-color: #b3426a; color: #f0b3cb; }
+body.wizard .access-card.handled { border-left-color: rgba(122, 93, 176, 0.35); }
+body.wizard .access-divider { color: #8f7bb5; }
+body.wizard .access-outcome.approved { color: #7bd88f; }
+body.wizard .access-outcome.always { color: #e6c07b; }
+body.wizard .access-outcome.declined { color: #f0a3bf; }
+body.wizard .access-outcome.timedout { color: #b39ddb; }
+body.wizard .access-decided-at { color: #8f7bb5; }
 
 /* === Messages tab — mail client (mail.js) ===
    Three columns: a mailbox sidebar, the selected folder's message list,

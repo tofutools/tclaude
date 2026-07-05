@@ -1891,7 +1891,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
 	out.AccessRequests = approvals.dashboardSnapshot()
-	out.AccessRequestsPending = len(out.AccessRequests)
+	// Only the actionable (pending) ones drive the blink/banner/badge — the
+	// list also carries recently-handled history, which must not count.
+	out.AccessRequestsPending = approvals.pendingCount()
 	var pluginsErr error
 	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
 	if pluginsErr != nil {

@@ -65,48 +65,66 @@ type dashboardAccessRequest struct {
 	// countdown. RFC3339.
 	CreatedAt string `json:"created_at"`
 	Deadline  string `json:"deadline,omitempty"`
+	// Status is "pending" for an actionable request, or the decided outcome
+	// ("approved" | "declined" | "always" | "timed out") for a recently-handled
+	// one the folder shows as history. DecidedAt (RFC3339) is set only for a
+	// handled entry.
+	Status    string `json:"status"`
+	DecidedAt string `json:"decided_at,omitempty"`
 }
 
-// dashboardSnapshot returns every in-flight approval in the dashboard wire
-// shape, oldest-first (the longest-blocked agent leads — the operator's eye
-// lands on what's waited most). Safe from any goroutine; takes the registry
-// mutex briefly to copy the pointer set, then each request's mutex only to
-// read its live deadline.
+// toDashboardAccessRequest builds the common wire fields from a request. The
+// caller stamps Status (+ DecidedAt for a handled entry). Reads only set-once
+// fields plus the mutable deadline (under the request mutex).
+func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
+	req.mu.Lock()
+	deadline := req.deadline
+	req.mu.Unlock()
+	if deadline.IsZero() {
+		// The waiter hasn't stamped a live deadline yet (a brief window between
+		// registry insert and the waiter's first line): fall back to the
+		// request's own createdAt + timeout.
+		deadline = req.createdAt.Add(req.timeout)
+	}
+	return dashboardAccessRequest{
+		ID:              req.id,
+		Perm:            req.perm,
+		ConvID:          req.convID,
+		ConvTitle:       req.convTitle,
+		AgentID:         peerAgentID(req.convID),
+		Path:            req.path,
+		Body:            req.bodyPreview,
+		BodyLabel:       req.bodyLabel,
+		TargetGroup:     req.targetGroup,
+		TargetConvID:    req.targetConvID,
+		TargetConvTitle: req.targetConvTitle,
+		AutoGrantable:   req.autoGrantable,
+		CreatedAt:       req.createdAt.Format(time.RFC3339),
+		Deadline:        deadline.Format(time.RFC3339),
+	}
+}
+
+// dashboardSnapshot returns the access-requests list for the dashboard: the
+// in-flight (pending) approvals oldest-first — the longest-blocked agent leads,
+// where the operator's eye lands — followed by the recently-handled history
+// newest-first, so "what did I just decide" reads top-down under the pending
+// ones. Safe from any goroutine; takes the registry mutex briefly to copy, then
+// each request's mutex only to read its live deadline.
 func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 	a.mu.Lock()
-	reqs := make([]*approvalRequest, 0, len(a.pending))
+	pending := make([]*approvalRequest, 0, len(a.pending))
 	for _, req := range a.pending {
-		reqs = append(reqs, req)
+		pending = append(pending, req)
 	}
+	resolved := make([]resolvedApproval, len(a.resolved))
+	copy(resolved, a.resolved)
 	a.mu.Unlock()
 
-	out := make([]dashboardAccessRequest, 0, len(reqs))
-	for _, req := range reqs {
-		req.mu.Lock()
-		deadline := req.deadline
-		req.mu.Unlock()
-		if deadline.IsZero() {
-			// The waiter hasn't stamped a live deadline yet (a brief window
-			// between registry insert and the waiter's first line): fall back
-			// to the request's own createdAt + timeout.
-			deadline = req.createdAt.Add(req.timeout)
-		}
-		out = append(out, dashboardAccessRequest{
-			ID:              req.id,
-			Perm:            req.perm,
-			ConvID:          req.convID,
-			ConvTitle:       req.convTitle,
-			AgentID:         peerAgentID(req.convID),
-			Path:            req.path,
-			Body:            req.bodyPreview,
-			BodyLabel:       req.bodyLabel,
-			TargetGroup:     req.targetGroup,
-			TargetConvID:    req.targetConvID,
-			TargetConvTitle: req.targetConvTitle,
-			AutoGrantable:   req.autoGrantable,
-			CreatedAt:       req.createdAt.Format(time.RFC3339),
-			Deadline:        deadline.Format(time.RFC3339),
-		})
+	out := make([]dashboardAccessRequest, 0, len(pending))
+	for _, req := range pending {
+		ar := toDashboardAccessRequest(req)
+		ar.Status = "pending"
+		out = append(out, ar)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CreatedAt != out[j].CreatedAt {
@@ -114,6 +132,13 @@ func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 		}
 		return out[i].ID < out[j].ID
 	})
+	// Recently-handled history, newest-first (resolved is appended oldest-last).
+	for i := len(resolved) - 1; i >= 0; i-- {
+		ar := toDashboardAccessRequest(resolved[i].req)
+		ar.Status = resolved[i].outcome
+		ar.DecidedAt = resolved[i].decidedAt.Format(time.RFC3339)
+		out = append(out, ar)
+	}
 	return out
 }
 

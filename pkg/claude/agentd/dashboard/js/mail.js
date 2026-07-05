@@ -1415,11 +1415,30 @@ function accessCountdown(deadlineISO) {
   return wz(`auto-declines in ${label}`, `refused in ${label}`);
 }
 
-// accessCardHTML renders one pending approval as a self-contained action card.
-// Every agent-supplied value (perm, path, body, titles) is esc()'d before it
-// lands in the markup — the body preview is untrusted agent output, so this is
-// the injection gate the old server-rendered popup used html.EscapeString for.
+// accessIsPending reports whether a request is still awaiting a decision (vs a
+// handled one kept in the folder as history).
+function accessIsPending(r) { return !r.status || r.status === 'pending'; }
+
+// accessOutcome maps a handled status to its display chip — an icon + label + a
+// css modifier class. wz() supplies the wizard wording.
+function accessOutcome(status) {
+  switch (status) {
+    case 'approved': return { cls: 'approved', txt: wz('✓ Approved', '✓ Granted') };
+    case 'always': return { cls: 'always', txt: wz('★ Always allowed', '★ Granted ever after') };
+    case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
+    case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
+    default: return { cls: 'declined', txt: esc(status || '') };
+  }
+}
+
+// accessCardHTML renders one request as a self-contained card. A pending one
+// carries the action buttons + countdown; a handled one is dimmed and shows the
+// outcome + when it was decided (the recent-history view). Every agent-supplied
+// value (perm, path, body, titles) is esc()'d before it lands in the markup —
+// the body preview is untrusted agent output, the injection gate the old
+// server-rendered popup used html.EscapeString for.
 function accessCardHTML(r) {
+  const handled = !accessIsPending(r);
   const who = esc(r.conv_title || shortAgentId(r.agent_id, r.conv_id) || wz('an agent', 'a familiar'));
   const idHover = idTooltip(r.agent_id, r.conv_id);
   const attn = accessHighlightId === r.id ? ' attn' : '';
@@ -1430,35 +1449,48 @@ function accessCardHTML(r) {
   if (r.body) {
     meta += `<div class="access-row access-body-row"><span class="access-k">${esc(r.body_label || 'Body')}</span><pre class="access-body">${esc(r.body)}</pre></div>`;
   }
-  const always = r.auto_grantable
-    ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
-    : '';
-  return `<div class="access-card${attn}" data-key="${esc(r.id)}">
-    <div class="access-head">
-      <span class="access-sigil">🔐</span>
-      <span class="access-who"${idHover ? ` title="${esc(idHover)}"` : ''}>${who}</span>
-      <span class="access-verb">${wz('is requesting access', 'begs a boon')}</span>
-    </div>
-    <div class="access-meta">${meta}</div>
-    <div class="access-foot">
-      <span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
+  let foot;
+  if (handled) {
+    const o = accessOutcome(r.status);
+    const when = r.decided_at ? relTime(r.decided_at) : '';
+    foot = `<span class="access-outcome ${o.cls}">${o.txt}</span>${when ? `<span class="access-decided-at">${esc(when)}</span>` : ''}`;
+  } else {
+    const always = r.auto_grantable
+      ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
+      : '';
+    foot = `<span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
       <span class="grow"></span>
       <button class="access-btn extend" data-act="access-extend" data-id="${esc(r.id)}" title="Push the auto-decline back 5 minutes">+5m</button>
       ${always}
       <button class="access-btn deny" data-act="access-deny" data-id="${esc(r.id)}">${wz('Decline', 'Refuse')}</button>
-      <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>
+      <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>`;
+  }
+  return `<div class="access-card${handled ? ' handled' : ''}${attn}" data-key="${esc(r.id)}">
+    <div class="access-head">
+      <span class="access-sigil">🔐</span>
+      <span class="access-who"${idHover ? ` title="${esc(idHover)}"` : ''}>${who}</span>
+      <span class="access-verb">${handled ? wz('requested access', 'begged a boon') : wz('is requesting access', 'begs a boon')}</span>
     </div>
+    <div class="access-meta">${meta}</div>
+    <div class="access-foot">${foot}</div>
   </div>`;
 }
 
 // paintAccessRequests renders the live approval cards into the message-list
-// pane (#mail-list). Keyed by request id so morph keeps a button focus / the
-// deep-link highlight across the 2s repaint.
+// pane (#mail-list): the pending (actionable) ones first, then a "recently
+// handled" history section. Keyed by request id so morph keeps a button focus /
+// the deep-link highlight across the 2s repaint.
 function paintAccessRequests(el) {
-  const list = (lastSnapshot && lastSnapshot.access_requests) || [];
+  const all = (lastSnapshot && lastSnapshot.access_requests) || [];
+  const pending = all.filter(accessIsPending);
+  const handled = all.filter(r => !accessIsPending(r));
   const countEl = $('#filter-messages-count');
-  if (countEl) countEl.textContent = list.length ? `${list.length} pending` : wz('none pending', 'no petitions');
-  if (!list.length) {
+  if (countEl) {
+    const parts = [pending.length ? `${pending.length} pending` : wz('none pending', 'no petitions')];
+    if (handled.length) parts.push(`${handled.length} handled`);
+    countEl.textContent = parts.join(' · ');
+  }
+  if (!all.length) {
     // Keep any deep-link highlight pending: a boot-time ?access_request lands
     // before the first snapshot, so the folder paints empty once, then fills.
     el.innerHTML = `<div class="empty">${wz(
@@ -1466,7 +1498,13 @@ function paintAccessRequests(el) {
       'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.')}</div>`;
     return;
   }
-  morphInto(el, list.map(accessCardHTML).join(''));
+  let html = pending.map(accessCardHTML).join('');
+  if (handled.length) {
+    // Keyed divider so morph treats it as a stable node between the keyed cards.
+    html += `<div class="access-divider" data-key="__access_handled__">${wz('Recently handled', 'Judgements past')}</div>`;
+    html += handled.map(accessCardHTML).join('');
+  }
+  morphInto(el, html);
   // Consume the one-shot deep-link highlight: scroll the flagged card in view.
   if (accessHighlightId) {
     const card = [...el.querySelectorAll('.access-card')].find(c => c.dataset.key === accessHighlightId);
@@ -1475,10 +1513,11 @@ function paintAccessRequests(el) {
   }
 }
 
-// decideAccess records the operator's decision on one request through the
-// dashboard endpoint that replaced the loopback popup. Optimistically drops the
-// decided card so the UI feels instant; the next 2s snapshot reconciles (the
-// blocked waiter removes the registry entry when it returns).
+// decideAccess records the operator's decision through the dashboard endpoint
+// that replaced the loopback popup. Optimistically flips the card to its handled
+// state (it STAYS in the folder as history, showing what was chosen) so the UI
+// feels instant; the next 2s snapshot reconciles with the server's canonical
+// outcome + timestamp.
 async function decideAccess(id, decision) {
   if (!id) return;
   try {
@@ -1494,8 +1533,12 @@ async function decideAccess(id, decision) {
       return;
     }
     if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
-      lastSnapshot.access_requests = lastSnapshot.access_requests.filter(x => x.id !== id);
-      lastSnapshot.access_requests_pending = lastSnapshot.access_requests.length;
+      const e = lastSnapshot.access_requests.find(x => x.id === id);
+      if (e) {
+        e.status = decision === 'approve' ? 'approved' : decision === 'always' ? 'always' : 'declined';
+        e.decided_at = new Date().toISOString();
+      }
+      lastSnapshot.access_requests_pending = lastSnapshot.access_requests.filter(accessIsPending).length;
       renderAccessRequests(lastSnapshot.access_requests, lastSnapshot.access_requests_pending);
     }
     paintSidebar();
