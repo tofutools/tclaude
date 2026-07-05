@@ -232,11 +232,19 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	// access-request view (the "redirect it into the dashboard" nicety): a
 	// deep link into the Messages tab focused on this request. A remote
 	// operator instead sees it in their already-open dashboard on the next
-	// 2s poll (the daemon can't launch a browser on their phone). The
-	// one-shot init token exchanges for the dashboard session cookie exactly
-	// as the tray's "Open dashboard" does — see inittoken.go for the residual
-	// /proc-scrape note. Best-effort: a headless / no-browser host just
-	// relies on the dashboard surface + the OS notification.
+	// 2s poll (the daemon can't launch a browser on their phone).
+	//
+	// SCOPE NOTE: the old loopback popup minted a token scoped to THIS one
+	// approval (initScopeApprove); this mints a full-dashboard init token, the
+	// same one autoLaunchDashboard / the tray's "Open dashboard" already put on
+	// the browser-launcher argv. So the accepted /proc-scrape residual (see
+	// inittoken.go) now carries a full-dashboard capability on an
+	// agent-triggered event, not just "approve this request". We accept it:
+	// it's the same residual class the dashboard already lives with, sandboxed
+	// agents run in a PID namespace that hides the host browser's argv, and a
+	// non-sandboxed same-uid process can already read ~/.tclaude directly — so
+	// this is no new boundary against either. Best-effort: a headless /
+	// no-browser host just relies on the dashboard surface + the OS notification.
 	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard) + "&" + accessRequestDeepLinkQuery(req.id)
 	go func() {
 		if err := openBrowser(url); err != nil {

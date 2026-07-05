@@ -140,9 +140,9 @@ func registerDashboardAccessRequestRoutes(mux *http.ServeMux) {
 // gated server-side on the request's AutoGrantable flag so a hand-crafted POST
 // can't self-grant an ineligible slug even though the frontend hides the
 // button. The send onto req.decision is non-blocking (the channel is buffered
-// cap 1 and the waiter consumes exactly one), mirroring handlePopupApprove;
-// the waiter runs applyApprovalOutcome so audit + always-allow persistence
-// happen exactly once for the decision that took effect.
+// cap 1 and the waiter consumes exactly one); the waiter runs
+// applyApprovalOutcome so audit + always-allow persistence happen exactly once
+// for the decision that took effect.
 func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return

@@ -188,13 +188,16 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setDashboardSessionCookie(w)
-		// Preserve the cosmetic-theme param (?slop=1 / ?wizard=1) across the
-		// redirect — it's purely a client-side theme switch the dashboard JS
-		// reads from the URL, so it needs to survive the bare-path bounce.
-		// Anything else (init_token included) is intentionally dropped.
+		// Preserve the client-side URL state the dashboard JS reads on load —
+		// the cosmetic theme (?slop=1 / ?wizard=1) AND the deep-link focus
+		// (?tab=...&access_request=...) that the approval auto-raise / tray
+		// build — across the bare-path bounce that drops the one-shot
+		// init_token. Without this the "open the dashboard focused on THIS
+		// request" deep link is lost on exactly the token-carrying path it
+		// exists for. The init_token itself is intentionally dropped.
 		redirectTarget := r.URL.Path
-		if kv := dashboardThemeParamKV(r); kv != "" {
-			redirectTarget += "?" + kv
+		if q := dashboardRedirectQuery(r); q != "" {
+			redirectTarget += "?" + q
 		}
 		http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 		return
@@ -235,6 +238,31 @@ func dashboardThemeParamKV(r *http.Request) string {
 		return "wizard=1"
 	}
 	return ""
+}
+
+// dashboardRedirectQuery builds the query string the auth redirect carries
+// forward: the cosmetic theme param PLUS the deep-link focus (?tab=... &
+// access_request=...) the dashboard JS reads on load. Values are url.Values-
+// encoded, so a request-controlled tab / id can't inject a header or open-
+// redirect (it stays a percent-escaped query on our own path); the dashboard
+// JS treats an unknown tab / id as a harmless no-op. Returned without a leading
+// separator, or "" when nothing needs carrying.
+func dashboardRedirectQuery(r *http.Request) string {
+	q := r.URL.Query()
+	v := url.Values{}
+	if kv := dashboardThemeParamKV(r); kv != "" {
+		// kv is one of a fixed internal set ("slop=1"/"wizard=1"); split once.
+		if k, val, ok := strings.Cut(kv, "="); ok {
+			v.Set(k, val)
+		}
+	}
+	if tab := q.Get("tab"); tab != "" {
+		v.Set("tab", tab)
+	}
+	if ar := q.Get("access_request"); ar != "" {
+		v.Set("access_request", ar)
+	}
+	return v.Encode()
 }
 
 // setDashboardSessionCookie writes the long-lived dashboard session
@@ -468,10 +496,10 @@ func autoLaunchDashboard(theme string) {
 	fmt.Println("  opening dashboard in your browser…")
 }
 
-// checkDashboardAuth mirrors checkPopupAuth: cookie value match +
-// Origin/Referer pinned to the popup base URL. Refuses every
-// /api/* call when the dashboard token isn't set (cryptographic
-// randomness failed at startup).
+// checkDashboardAuth gates every /api/* call: dashboard cookie value match +
+// Origin/Referer pinned to the popup base URL (or host-relative when bound
+// non-loopback). Refuses every /api/* call when the dashboard token isn't set
+// (cryptographic randomness failed at startup).
 func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 	// The remote (mTLS + passphrase) listener authenticates at its own
 	// boundary (remoteAuthMiddleware) and tags the request; such requests

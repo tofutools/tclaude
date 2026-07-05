@@ -617,13 +617,14 @@ func resolveDashboardBind(flagValue string, cfg *config.Config) (string, string)
 }
 
 // isLoopbackHost reports whether host binds only the local machine — the
-// empty/default host, the IPv4/IPv6 loopback literals, or any IP in
-// 127.0.0.0/8 or ::1. A hostname that isn't a bare IP (e.g. "localhost") is
-// treated conservatively as NON-loopback: it may resolve anywhere, so it
-// takes the host-relative origin path rather than the strict loopback pin.
+// empty/default host, the literal "localhost", the IPv4/IPv6 loopback literals,
+// or any IP in 127.0.0.0/8 or ::1. Any OTHER hostname (not a bare loopback IP
+// and not "localhost") is treated conservatively as NON-loopback: it may
+// resolve anywhere, so it takes the host-relative origin path rather than the
+// strict loopback pin (and trips the network-exposed startup warning).
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSpace(host)
-	if host == "" || host == defaultDashboardBind {
+	if host == "" || host == defaultDashboardBind || host == "localhost" {
 		return true
 	}
 	if ip := net.ParseIP(host); ip != nil {

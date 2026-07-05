@@ -56,8 +56,8 @@ func TestIsLoopbackHost(t *testing.T) {
 		{"::", false},
 		{"192.168.1.5", false},
 		{"10.0.0.9", false},
-		{"localhost", false}, // a hostname may resolve anywhere → conservative
-		{"box.example", false},
+		{"localhost", true}, // the literal localhost is loopback (no false network warning)
+		{"box.example", false}, // any other hostname → conservative non-loopback
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
@@ -99,6 +99,27 @@ func TestOriginHostMatchesRequest(t *testing.T) {
 			assert.Equal(t, tc.want, originHostMatchesRequest(tc.value, reqHost))
 		})
 	}
+}
+
+// The dashboard init-token exchange 303 must carry the deep-link focus
+// (?tab=...&access_request=...) and the cosmetic theme across the bare-path
+// bounce, while dropping the one-shot init_token. Without this the approval
+// auto-raise / tray "review" lands on the default tab instead of the request.
+func TestDashboardRoot_PreservesDeepLinkParamsAcrossTokenExchange(t *testing.T) {
+	initDashboardToken()
+	tok := mintInitToken(initScopeDashboard)
+	req := httptest.NewRequest("GET", "/?init_token="+tok+"&tab=messages&access_request=abc123&wizard=1", nil)
+	rec := httptest.NewRecorder()
+	handleDashboardRoot(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("want 303 See Other, got %d: %s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	assert.NotContains(t, loc, "init_token", "the one-shot token must drop out of the URL")
+	assert.Contains(t, loc, "tab=messages", "deep-link tab must survive the redirect")
+	assert.Contains(t, loc, "access_request=abc123", "deep-link request id must survive the redirect")
+	assert.Contains(t, loc, "wizard=1", "the cosmetic theme param must still survive")
 }
 
 // When bound non-loopback, dashboardAuthResult must switch to the host-relative
