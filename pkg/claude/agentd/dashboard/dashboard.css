@@ -6906,9 +6906,10 @@ body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
 /* ─── Wizard delete group — drag-to-banish group preview ────────────
    The delete-group preview reuses the shared .cleanup-modal shell and sits
    next to the retire-preview / delete-retired / worktree-cleanup overlays, so
-   every rule is scoped to #delete-group-modal. It mirrors #cleanup-modal's
-   arcane surface and danger submit while leaving the per-row decisions honest:
-   "retire + stop" vs "detach only" stays literal. */
+   every rule is scoped to #delete-group-modal. It mirrors #retire-modal's
+   arcane surface, list chrome, checkbox copy and gilded Banish-style submit
+   while leaving the per-row decisions honest: "banish familiar + stop" vs
+   "detach only" stays literal. */
 .delete-group-copy-wizard { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
 body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }
@@ -6932,10 +6933,18 @@ body.wizard #delete-group-modal .cleanup-list {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
 body.wizard #delete-group-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #delete-group-modal .cleanup-row input[type=checkbox],
+body.wizard #delete-group-modal .delete-agent-wt input[type=checkbox] {
+  accent-color: #a97bd6;
+}
 body.wizard #delete-group-modal .cleanup-row .title { color: #f3e6c0; }
 body.wizard #delete-group-modal .cleanup-row .id,
 body.wizard #delete-group-modal .cleanup-row .muted { color: #b39ddb; }
-body.wizard #delete-group-modal .cleanup-badge { border-color: #3a2a63; color: #b39ddb; }
+body.wizard #delete-group-modal .cleanup-badge {
+  background: #1c1436;
+  border-color: #3a2a63;
+  color: #b39ddb;
+}
 body.wizard #delete-group-modal .cleanup-empty { color: #b39ddb; }
 body.wizard #delete-group-modal .delete-agent-wt { color: #e7d9f5; }
 body.wizard #delete-group-modal .delete-agent-wt .wt-note { color: #b39ddb; }
@@ -6947,18 +6956,42 @@ body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit):
   background: #3a2a63; border-color: #d9b45a;
 }
 body.wizard #delete-group-modal #delete-group-submit {
-  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
-  border: 2px solid #f0883e;
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0;
-  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
-  letter-spacing: 0.5px;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
   font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #delete-group-modal #delete-group-submit::before {
+  content: "🪄 Disband!";
+  font-size: 14px;
+  letter-spacing: 1px;
 }
 body.wizard #delete-group-modal #delete-group-submit:hover {
-  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
-  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  border-color: #d9b45a;
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
-body.wizard #delete-group-modal #delete-group-submit:disabled { opacity: 0.6; }
+body.wizard #delete-group-modal #delete-group-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #delete-group-modal #delete-group-submit:disabled {
+  font-size: 0;
+  opacity: 0.7;
+}
+body.wizard #delete-group-modal #delete-group-submit:disabled::before { content: none; }
+body.wizard #delete-group-modal #delete-group-submit:disabled::after {
+  content: "Disbanding…";
+  font-size: 13px;
+  letter-spacing: 1px;
+}
 
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
