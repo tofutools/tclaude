@@ -33,7 +33,7 @@ import { loadRoles, cachedRoles } from './roles.js';
 // manager use; the "＋ new" / "⧉ manage…" / "Extract to profile…" affordances
 // open the REAL profiles editor/overlay (modal-profiles.js) so there is one
 // editing surface for launch config + birth-time permissions, everywhere.
-import { loadProfiles, cachedProfiles, profileSummary } from './profiles.js';
+import { loadProfiles, cachedProfiles, profileSummary, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor, openProfilesManageModal } from './modal-profiles.js';
 // roleInspectHTML (JOH-351): the shared "what does this role carry?" panel, so
 // picking a role in the dropdown isn't blind. Reused verbatim by any role picker.
@@ -307,20 +307,40 @@ export function templateReadbackBadges(t) {
 // for a template's roster under the typed group prefix — agent "PO" shows as
 // "<group>-PO". A blank prefix falls back to a ‹group› placeholder. Shared by
 // the instantiate / deploy / party-create previews.
-export function templateRosterRowsHTML(t, prefix) {
+//
+// defaultProfile (optional) is the deploy dialog's resolved default launch
+// profile: a member with no profile of its own is shown adopting it (flagged
+// "(default)"), so the preview is WYSIWYG for what the deploy will send per
+// member. Omitted by the plain group-create preview, which has no default picker.
+export function templateRosterRowsHTML(t, prefix, defaultProfile) {
   const agents = (t && t.agents) || [];
   if (!agents.length) {
     return `<span class="tp-empty">${wizWord('this template has no agents', 'this circle names no familiars')}</span>`;
   }
   const shown = (prefix || '').trim() || wizWord('‹group›', '‹party›');
+  const dflt = (defaultProfile || '').trim();
+  const dp = dflt && cachedProfiles().find(x => x.name === dflt);
   return agents.map(a => {
-    const owner = a.is_owner ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
-    const np = (a.permissions || []).length;
-    // Per-role launch hint (JOH-239): the profile ref or the most telling
-    // inline override so the human sees each role's launch shape before spawning.
+    // A member adopts the deploy default only when it carries no launch config of
+    // its own (no profile, no role, no inline field) — the same eligibility the
+    // deploy submit uses, so the preview matches what will be sent per-member.
+    const adoptsDefault = !!dp && !a.spawn_profile && agentInheritsDeployDefault(a);
+    // Owner / perm chips reflect the member's OWN access PLUS, when it adopts the
+    // default profile, that profile's owner default + override count — so the
+    // birth-time permissions/ownership the default carries is visible, not silent.
+    const owner = (a.is_owner || (adoptsDefault && dp.is_owner))
+      ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
+    let np = (a.permissions || []).length;
+    if (adoptsDefault && dp.permission_overrides) np += Object.keys(dp.permission_overrides).length;
+    // Per-role launch hint (JOH-239): the profile ref or the most telling inline
+    // override so the human sees each role's launch shape before spawning. A member
+    // with no config of its own falls back to the deploy default (if the dialog
+    // resolved one), flagged so it's clear the value came from the default.
     const launch = a.spawn_profile
       ? `⚙ ${esc(a.spawn_profile)}`
-      : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+      : adoptsDefault
+        ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile — applies its launch config and birth-time permissions/ownership">(default)</span>`
+        : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
     const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
       .filter(Boolean).join(' · ');
     return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
@@ -406,14 +426,35 @@ function renderEditorAgents() {
     templateEditorAgents.map((a, i) => editorAgentRowHTML(a, i)).join('');
 }
 
+// agentInheritsDeployDefault reports whether leaving THIS member's profile blank
+// would actually inherit the deploy/dashboard default at deploy time — true only
+// when the member carries no launch config of its own: no referenced role and no
+// inline launch field. A role or an inline field is the member's own setting and
+// wins over the default (the deploy path never overrides such a member), so a
+// "(default → X)" hint would be misleading for them. Mirrors the eligibility the
+// deploy client (deployAgentProfiles) and server (applyAgentProfileOverrides) use.
+function agentInheritsDeployDefault(a) {
+  const hasInline = [a.harness, a.model, a.effort, a.sandbox, a.approval].some(Boolean);
+  return !a.role_ref && !hasInline;
+}
+
 // profileRefOptionsHTML builds the <option> list for an agent's launch-profile
-// dropdown from the cached spawn profiles (blank = "(none)"). A referenced
-// profile that is no longer in the library stays selectable — flagged
-// "⚠ missing" — so a dangling reference isn't silently cleared on the human
-// (the same graceful-degrade the role dropdown does).
-function profileRefOptionsHTML(current) {
+// dropdown from the cached spawn profiles. A referenced profile that is no longer
+// in the library stays selectable — flagged "⚠ missing" — so a dangling reference
+// isn't silently cleared on the human (the same graceful-degrade the role dropdown
+// does). The blank/inherit option is RELABELLED to name the dashboard default
+// profile ("(default → X)") when one is set AND the member would actually inherit
+// it (no role / inline config of its own): a member left blank inherits that
+// default at deploy (the deploy dialog resolves it and sends it per-member), so
+// the picker shows what blank will yield WITHOUT baking the default into the
+// stored template — the value stays "" and the template stays portable.
+function profileRefOptionsHTML(a) {
+  const current = a.spawn_profile || '';
   const names = cachedProfiles().map(p => p.name);
-  const opts = [`<option value=""${current ? '' : ' selected'}>(none)</option>`];
+  const dflt = getDashDefaultProfile();
+  const blankLabel = (dflt && names.includes(dflt) && agentInheritsDeployDefault(a))
+    ? `(default → ${esc(dflt)})` : '(none)';
+  const opts = [`<option value=""${current ? '' : ' selected'}>${blankLabel}</option>`];
   for (const n of names) {
     opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
   }
@@ -427,8 +468,19 @@ function profileRefOptionsHTML(current) {
 // profile's set fields (harness/model/effort/… + owner/perms), reusing the
 // profiles.js summariser the manage cards use. Empty when no profile is picked;
 // a "not found here" note when the ref dangles.
-function profileSummaryHTML(current) {
-  if (!current) return '';
+function profileSummaryHTML(a) {
+  const current = a.spawn_profile || '';
+  if (!current) {
+    // A blank member inherits the dashboard default profile at deploy — but only
+    // when it has no role / inline config of its own (otherwise the default never
+    // applies). Preview the default's shape so the human sees what "(default → X)"
+    // resolves to; stay silent for a member that won't inherit it.
+    const dflt = getDashDefaultProfile();
+    const dp = dflt && agentInheritsDeployDefault(a) && cachedProfiles().find(x => x.name === dflt);
+    if (!dp) return '';
+    const ds = profileSummary(dp);
+    return `<span class="ta-profile-summary-default">inherits default ${esc(dflt)}${ds ? ' · ' + esc(ds) : ''}</span>`;
+  }
   const p = cachedProfiles().find(x => x.name === current);
   if (!p) return `<span class="ta-profile-summary-missing">⚠ no profile named “${esc(current)}” here — pick another or manage profiles</span>`;
   const s = profileSummary(p);
@@ -518,13 +570,13 @@ function editorAgentRowHTML(a, idx) {
     <div class="template-agent-launch">
       <label class="template-agent-roleref ta-launch-pick" title="Launch profile (JOH-350): the agent's harness, model, effort, sandbox/approval AND its birth-time permissions all come from the picked spawn profile. Manage profiles to create/edit one — a profile is the unit of launch config.">
         <span>Launch profile</span>
-        <select class="ta-profile-select">${profileRefOptionsHTML(a.spawn_profile)}</select>
+        <select class="ta-profile-select">${profileRefOptionsHTML(a)}</select>
       </label>
       <div class="ta-launch-actions">
         <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
         <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
       </div>
-      <div class="ta-profile-summary">${profileSummaryHTML(a.spawn_profile)}</div>
+      <div class="ta-profile-summary">${profileSummaryHTML(a)}</div>
       ${legacyInlineNoticeHTML(a)}
     </div>
   </div>`;
@@ -857,6 +909,11 @@ async function deleteTemplate(name) {
 // once they have, the mission→group-name auto-prefill stops overwriting it.
 let deployGroupEdited = false;
 
+// deployDefaultProfileEdited tracks whether the human has picked in the "Default
+// profile" selector — once they have, the group/dashboard-default auto-prefill
+// stops re-seeding it on a mode/source flip (their choice survives).
+let deployDefaultProfileEdited = false;
+
 // JOH-377 4/4 — drag a template from the palette dock onto an existing group.
 // deployDropGroup is that drop-target group; '' for a NORMAL open (the
 // templates-manage 🚀 button or an empty-space drop), which behaves exactly as
@@ -1051,6 +1108,9 @@ function applyDeployMode() {
   }
   const submit = $('#template-deploy-submit');
   if (submit) submit.textContent = deploySubmitLabel();
+  // Re-seed the default-profile picker: the source group changes with the mode
+  // (drop target vs mirror source vs none), so the sensible default follows it.
+  prefillDeployDefaultProfile();
   renderDeployPreview();
 }
 
@@ -1077,12 +1137,22 @@ function openDeployModal(presetName) {
   $('#template-deploy-parent').checked = false;
   $('#template-deploy-error').textContent = '';
   deployGroupEdited = false;
+  deployDefaultProfileEdited = false;
   // Clear any prior drop state — a bare open is always the normal (no-chooser)
   // flow; openSummonForDrop re-arms it afterwards for a drop onto a group.
   deployDropGroup = '';
   deployCopyDefaults = null;
   const subgroupRadio = $('input[name=template-deploy-mode][value=subgroup]');
   if (subgroupRadio) subgroupRadio.checked = true;
+  // Seed the default-profile picker from the cache now, then refresh once the
+  // library load settles (the cache may be cold on first open) — a failed load
+  // just leaves the picker with its "(none)" option.
+  populateDeployDefaultProfile();
+  loadProfiles().then(() => {
+    if (!$('#template-deploy-modal').classList.contains('show')) return;
+    populateDeployDefaultProfile();
+    renderDeployPreview();
+  }).catch(() => {});
   applyDeployMode();
   $('#template-deploy-modal').classList.add('show');
   setTimeout(() => $('#template-deploy-mission').focus(), 0);
@@ -1124,12 +1194,80 @@ function syncDeployGroupPrefill() {
   renderDeployPreview();
 }
 
+// ---- Deploy default-profile picker ------------------------------------
+//
+// The deploy dialog carries a "Default profile" selector: the launch profile a
+// roster member with NO profile of its own is spawned with. It is PREFILLED from
+// a sensible default — the target / mirror-source group's own default_profile if
+// the deploy is based on a group, else the dashboard default profile — and the
+// human can reconfigure it or clear it to "(none)". On submit the client resolves
+// each blank member to this value and sends the result per-member (agent_profiles):
+// the roster spawns with exactly what the form showed, no server-side defaulting.
+
+// deployDefaultProfileSource resolves the group whose own default_profile should
+// seed the picker: the drop / reinforce / copy target when the dialog was opened
+// onto a group, else the mirror-source chosen in a normal open. "" when neither.
+function deployDefaultProfileSource() {
+  return deployDropGroup || deployMirrorSource();
+}
+
+// populateDeployDefaultProfile rebuilds the selector's options from the cached
+// spawn profiles (a leading "(none)"), preserving a hand-picked value across the
+// repopulate, then (re)seeds the prefill.
+function populateDeployDefaultProfile() {
+  const sel = $('#template-deploy-default-profile');
+  if (!sel) return;
+  const names = cachedProfiles().map(p => p.name);
+  const cur = sel.value;
+  sel.innerHTML = ['<option value="">(none — harness default)</option>']
+    .concat(names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`)).join('');
+  if (cur && names.includes(cur)) sel.value = cur;
+  prefillDeployDefaultProfile();
+}
+
+// prefillDeployDefaultProfile (re)seeds the picker from the source group's own
+// default_profile, else the dashboard default — but never once the human has
+// taken the picker over (deployDefaultProfileEdited). A default that names a
+// now-deleted profile (not in the options) falls back to blank rather than an
+// invisible selection.
+function prefillDeployDefaultProfile() {
+  if (deployDefaultProfileEdited) return;
+  const sel = $('#template-deploy-default-profile');
+  if (!sel) return;
+  const gs = groupSnapshot(deployDefaultProfileSource());
+  const want = (gs && gs.default_profile) || getDashDefaultProfile() || '';
+  sel.value = [...sel.options].some(o => o.value === want) ? want : '';
+}
+
+// deployDefaultProfileValue reads the picker ("" = none).
+function deployDefaultProfileValue() {
+  const sel = $('#template-deploy-default-profile');
+  return sel ? sel.value.trim() : '';
+}
+
+// deployAgentProfiles builds the per-member override map the deploy request
+// carries: every roster member with NO launch config of its own — no profile, no
+// referenced role, no inline launch field — is resolved to the picker's default.
+// A member that already carries any of those is omitted, so the default never
+// displaces (or escalates the access of) a member that expressed its own launch
+// shape; the server enforces the same eligibility. {} when no default to apply.
+function deployAgentProfiles(t) {
+  const dflt = deployDefaultProfileValue();
+  const map = {};
+  if (!dflt) return map;
+  for (const a of (t && t.agents) || []) {
+    if (a && a.name && !a.spawn_profile && agentInheritsDeployDefault(a)) map[a.name] = dflt;
+  }
+  return map;
+}
+
 // renderDeployPreview paints the final agent names for the deploy, exactly
-// like the instantiate preview — agent "PO" shows as "<group>-PO".
+// like the instantiate preview — agent "PO" shows as "<group>-PO". Blank members
+// are shown adopting the deploy default profile, matching what submit will send.
 function renderDeployPreview() {
   const t = templatesByName()[$('#template-deploy-template').value];
   $('#template-deploy-preview').innerHTML =
-    templateRosterRowsHTML(t, $('#template-deploy-group').value);
+    templateRosterRowsHTML(t, $('#template-deploy-group').value, deployDefaultProfileValue());
 }
 
 // resolveDeployWorktree turns a branch + repo (the cwd) into a worktree path
@@ -1183,6 +1321,8 @@ async function submitReinforce() {
     const payload = { group_name: group };
     if (task) payload.task = task;
     if (cwd) payload.cwd = cwd;
+    const ap = deployAgentProfiles(templatesByName()[tmplName]);
+    if (Object.keys(ap).length) payload.agent_profiles = ap;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/reinforce`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1259,6 +1399,8 @@ async function submitCopyGroup() {
     if (task) payload.task = task;
     if (cwd) payload.cwd = cwd;
     if (mode === 'subgroup') payload.parent = deployDropGroup;
+    const ap = deployAgentProfiles(templatesByName()[tmplName]);
+    if (Object.keys(ap).length) payload.agent_profiles = ap;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1343,6 +1485,8 @@ async function submitDeployCreate() {
       payload.context_override = context;
       if ($('#template-deploy-parent').checked) payload.parent = mirrorSource;
     }
+    const ap = deployAgentProfiles(templatesByName()[tmplName]);
+    if (Object.keys(ap).length) payload.agent_profiles = ap;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/deploy`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -2063,6 +2207,10 @@ function bindTemplatesUI() {
     $('#template-deploy-parent').checked = false;
     if (source) prefillDeployFromGroup(source);
     applyDeployMode();
+  });
+  $('#template-deploy-default-profile').addEventListener('change', () => {
+    deployDefaultProfileEdited = true;
+    renderDeployPreview();
   });
   // The drop-mode chooser (JOH-377) reflows the dialog live — no re-open.
   $$('input[name=template-deploy-mode]').forEach(rdo =>
