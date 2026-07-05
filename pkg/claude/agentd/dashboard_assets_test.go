@@ -144,6 +144,31 @@ func TestDashboardJS_SlopPullPausesRefresh(t *testing.T) {
 	}
 }
 
+// TestDashboardJS_PendingSpawnsRenderInTargetGroups guards the dashboard
+// presentation for Codex pending spawns: the backend keeps them in
+// pending_spawns until a conv-id exists, but the Groups tab buckets each
+// pending row under its intended real group and uses the virtual Pending group
+// only as a fallback for rows whose target group is gone/hidden.
+func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
+	for _, needle := range []string{
+		"function distributePendingToGroups(",
+		"return { ...g, pending: rows };",
+		"if (distributed.fallback.length) {",
+		"list.unshift(virtualPendingGroup(distributed.fallback));",
+		"function renderGroupPendingBlock(g)",
+		"groupPendingChip(g)",
+		"const isOpen = openPref === '1' || (pending.length > 0 && openPref !== '0');",
+		".group-pending-block",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — pending spawns may no longer render in their target groups", needle)
+		}
+	}
+	if strings.Contains(dashboardAssets, "list.unshift(virtualPendingGroup(pending));") {
+		t.Error("dashboard still prepends every pending spawn into the global virtual Pending group")
+	}
+}
+
 // TestDashboardCSS_SpawnFieldsCannotOverflow guards the fix for the
 // spawn/clone modals' horizontal scrollbar: the worktree <select>'s
 // options carry long "branch — ~/path" labels, and a flex child's

@@ -40,7 +40,7 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 		{`e.dataTransfer.types.includes('application/x-tclaude-group')`,
 			"dnd.js's drop handler explicitly ignores a group-reorder drop"},
 		// tabs.js: real groups render in the persisted order.
-		{`sortGroupsByPref(realGroups.slice())`, "renderGroupsTab applies the saved group order"},
+		{`sortGroupsByPref(distributed.groups.slice())`, "renderGroupsTab applies the saved group order"},
 		// dashboard.js: the feature is bound at boot.
 		{`bindGroupReorder()`, "dashboard.js wires the reorder binder at boot"},
 		// refresh.js: a reorder drag suspends auto-refresh on its own flag.

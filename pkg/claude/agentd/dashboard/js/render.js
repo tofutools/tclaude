@@ -340,21 +340,18 @@ function renderVirtualReplacedGroup(g) {
 // so the rows should be visible without a click (collapsible all the same,
 // persisted like every other group). The empty branch is defensive — the
 // caller (tabs.js) only builds this group when there are pending spawns.
-function renderVirtualPendingGroup(g) {
-  const members = g.members || [];
-  const key = g.key || g.name;
-  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) !== '0';
-  const body = members.length === 0
-    ? '<div class="muted">(no pending spawns)</div>'
-    : `
+function pendingFocusButton(p) {
+  return p.online
+    ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
+    : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
+}
+
+function pendingTableHTML(rows) {
+  return `
         <table>
           ${sortHead('pending', PENDING_COLS)}
           <tbody>
-            ${applySort('pending', members, PENDING_ACCESSORS).map(p => {
-              const focusBtn = p.online
-                ? `<button class="primary" data-act="focus-pending" data-label="${esc(p.label)}" title="Open this spawn's pane so you can clear its startup gate — trust the dir, dismiss the new-config prompt, or finish OpenAI auth. Once cleared it takes its first turn and becomes a normal agent.">focus</button>`
-                : `<button disabled title="This spawn's tmux pane is gone — it can no longer be focused, and will clear from this list shortly.">focus</button>`;
-              return `
+            ${applySort('pending', rows, PENDING_ACCESSORS).map(p => `
               <tr data-key="${esc(p.label)}">
                 <td>${onlineDot(p.online)}</td>
                 <td class="id">${esc(p.label)}</td>
@@ -362,11 +359,29 @@ function renderVirtualPendingGroup(g) {
                 <td>${esc(p.group || '(none)')}</td>
                 <td><span class="muted" title="${esc(p.cwd || '')}">${esc(p.cwd ? shortCwd(p.cwd) : '')}</span></td>
                 <td><span class="last-hook">${esc(p.created_at ? relTime(p.created_at) : '')}</span></td>
-                <td><div class="row-actions">${focusBtn}</div></td>
-              </tr>`;
-            }).join('')}
+                <td><div class="row-actions">${pendingFocusButton(p)}</div></td>
+              </tr>`).join('')}
           </tbody>
         </table>`;
+}
+
+function renderGroupPendingBlock(g) {
+  const pending = g.pending || [];
+  if (!pending.length) return '';
+  return `
+        <div class="group-pending-block">
+          <div class="group-pending-title">Pending spawns</div>
+          ${pendingTableHTML(pending)}
+        </div>`;
+}
+
+function renderVirtualPendingGroup(g) {
+  const members = g.members || [];
+  const key = g.key || g.name;
+  const isOpen = dashPrefs.getItem('tclaude.dash.group.' + key) !== '0';
+  const body = members.length === 0
+    ? '<div class="muted">(no pending spawns)</div>'
+    : pendingTableHTML(members);
   return `
     <details class="group-virtual" data-group-key="${esc(key)}"${isOpen ? ' open' : ''}>
       <summary>
@@ -600,6 +615,15 @@ function groupWavesChip(g) {
   return `<span class="group-waves-chip" title="${esc(titleParts.join('\n'))}">🌊 wave ${wv.current_wave}/${wv.total_waves} pending</span>`;
 }
 
+// groupPendingChip renders Codex spawns that are intended for this group but
+// are not members yet because their conv-id has not materialised.
+function groupPendingChip(g) {
+  const n = (g.pending || []).length;
+  if (!n) return '';
+  const label = `${n} pending spawn${n === 1 ? '' : 's'}`;
+  return `<span class="group-pending-chip" title="${esc(label + ' waiting for startup')}">⏳ ${esc(label)}</span>`;
+}
+
 // isDeployedForce reports whether a group looks like a deployed task force
 // (JOH-247): it carries deployment provenance (a source template / mission) or
 // live process / wave machinery. Degrades gracefully — any one signal is
@@ -781,6 +805,7 @@ function renderGroups(groups) {
 // action buttons and ABOVE the direct member list, per the tree layout.
 function renderRealGroup(g, childrenHTML) {
     const members = g.members || [];
+    const pending = g.pending || [];
     // Offline visibility: per-group override falls back to the
     // tab-wide checkbox. Hidden members still count toward the
     // 👥 chip's online/total/cap counts so the header stays truthful.
@@ -789,7 +814,8 @@ function renderRealGroup(g, childrenHTML) {
     // Restore expanded state across the 2s polling re-renders by
     // keying on group name. Persisted in localStorage so it
     // survives a full page reload too.
-    const isOpen = dashPrefs.getItem('tclaude.dash.group.' + g.name) === '1';
+    const openPref = dashPrefs.getItem('tclaude.dash.group.' + g.name);
+    const isOpen = openPref === '1' || (pending.length > 0 && openPref !== '0');
     // Quick-options pin: a per-group, per-browser opt-out of the
     // body.group-quick-fold accordion. A pinned group carries .quick-pinned
     // on its <details>, which the fold CSS excludes, so its chips stay
@@ -834,6 +860,7 @@ function renderRealGroup(g, childrenHTML) {
         ${groupActivityChip(members)}
         ${groupProcessChip(g)}
         ${groupWavesChip(g)}
+        ${groupPendingChip(g)}
         ${g.virtual ? '' : groupHeaderCogHTML(g, members)}
         <span class="group-descr${g.descr ? '' : ' unset'}" data-act="set-group-descr" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-descr="${esc(g.descr || '')}" title="${g.descr ? 'Group description — click to edit' : 'No description — click to set one'}">📝<span class="qo-text"> ${g.descr ? esc(g.descr) : 'no description'}</span></span>
         <span class="group-default-cwd${g.default_cwd ? '' : ' unset'}" data-act="set-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="${g.default_cwd ? 'Default spawn directory: ' + esc(g.default_cwd) + ' — click the text to edit, the 📁 to browse' : 'No default spawn directory — click the text to type one, the 📁 to browse'}"><span class="gdc-pick" data-act="pick-group-dir" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-cwd="${esc(g.default_cwd || '')}" title="Browse for a directory with a native picker">📁</span><span class="qo-text"> ${g.default_cwd ? esc(shortCwd(g.default_cwd)) : 'no default dir'}</span></span>
@@ -843,6 +870,7 @@ function renderRealGroup(g, childrenHTML) {
       </summary>
       <div class="subtable">
         ${childrenHTML}
+        ${renderGroupPendingBlock(g)}
         <div class="group-header-actions">${groupActionsHTML(g, members)}</div>
         ${renderForceBlock(g, members)}
         ${members.length === 0
