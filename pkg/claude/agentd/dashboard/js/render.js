@@ -1081,11 +1081,18 @@ function showStatus(text, isError) {
 // agent-to-agent folders carry their own per-mailbox unread badges in
 // the mail-client sidebar (see mail.js). The rest of the Messages tab —
 // sidebar / list / reading pane — lives in mail.js.
-function renderMessagesBadge(unread) {
+// accessPending (in-flight human-approval requests) folds into the same badge
+// because both live on the Messages tab, but it also makes the badge BLINK:
+// an approval is a blocked agent waiting on the operator, more urgent than an
+// unread notification. The blink class is toggled off when nothing is pending
+// so a plain unread count reads calmly.
+function renderMessagesBadge(unread, accessPending = 0) {
   const badge = $('#messages-badge');
   if (!badge) return;
-  badge.textContent = unread > 99 ? '99+' : String(unread);
-  badge.hidden = unread === 0;
+  const total = (unread || 0) + (accessPending || 0);
+  badge.textContent = total > 99 ? '99+' : String(total);
+  badge.hidden = total === 0;
+  badge.classList.toggle('blink', accessPending > 0);
 }
 
 // === Subscription-usage readout (top bar, left of the live dot) ===

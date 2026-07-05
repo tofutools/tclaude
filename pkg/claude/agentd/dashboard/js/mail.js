@@ -80,6 +80,17 @@ import { fetchListFull } from './list-paging.js';
 
 const HUMAN_ID = 'human';
 const ALL_ID = 'all';
+// The synthetic "access requests" folder — in-flight human-approval requests
+// (an agent blocked waiting for the operator to approve/deny a permission-gated
+// action). Unlike every other folder it has NO server mailbox: its rows are the
+// live lastSnapshot.access_requests, and its decisions POST to
+// /api/access-requests/{id}/decision. It replaces the old loopback browser
+// popup, so approvals work through the (possibly remote) dashboard.
+const ACCESS_ID = 'access-requests';
+// accessHighlightId is a one-shot deep-link target (?access_request=<id>): the
+// card with this id gets an .attn pulse + scrollIntoView on the next paint,
+// then it's cleared so the highlight doesn't stick across ticks.
+let accessHighlightId = null;
 // Group folders are keyed "group:<name>" (the server's groupMailboxPrefix).
 // They're aggregate views like the "all" firehose — every row renders
 // from→to, there's no per-folder "mark all read" (a group isn't a single
@@ -303,6 +314,10 @@ async function loadPrevGenIds(force) {
 
 async function loadMessages() {
   const id = mail.selected;
+  // The access-requests folder renders from the live snapshot, not from
+  // /api/mailbox — there are no stored rows to page. Skip the fetch so it
+  // doesn't 404 on a mailbox that doesn't exist server-side.
+  if (id === ACCESS_ID) { mail.messages = []; mail.total = 0; mail.totalUnfiltered = 0; return; }
   const q = currentSearch();
   const seq = ++mail.reqSeq;
   const params = new URLSearchParams({
@@ -416,7 +431,7 @@ function pruneSelections() {
   const hiddenPrevGen = !!hiddenPrev && hiddenPrev.has(mail.selected);
   const validFolder = mail.mailboxes.some(mb => mb.id === mail.selected) && !hiddenPrevGen;
   if (mail.mailboxes.length
-      && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID
+      && mail.selected !== ALL_ID && mail.selected !== HUMAN_ID && mail.selected !== ACCESS_ID
       && !validFolder) {
     mail.selected = ALL_ID;
     mail.selectedMsgId = null;
@@ -660,6 +675,7 @@ function setShowPrevGens(on) {
 function mailboxLabel(mb) {
   if (mb.kind === 'all') return wz('All agent messages', 'All ravens');
   if (mb.kind === 'human') return wz('Human notifications', 'The Archmage');
+  if (mb.kind === 'access-requests') return wz('Access requests', 'Petitions');
   if (mb.kind === 'group') return mb.title || '(group)';
   // A nameless agent folder leads with its stable agt_ handle (shortAgentId),
   // falling back to the short conv-id prefix only when no agent_id is known.
@@ -682,6 +698,7 @@ function mailboxTitleAttr(mb) {
 function mailboxIcon(mb) {
   if (mb.kind === 'all') return '🗂';
   if (mb.kind === 'human') return '📬';
+  if (mb.kind === 'access-requests') return '🔐';
   if (mb.kind === 'group') return '👥';
   return `<span class="mail-dot ${mb.online ? 'online' : 'offline'}">●</span>`;
 }
@@ -708,7 +725,9 @@ function mailboxRowHTML(mb, nested = false, prevGen = false) {
   // message count instead of the agent folder's "received · sent".
   const countTitle = mb.kind === 'group'
     ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
-    : `${mb.in} received · ${mb.out} sent`;
+    : mb.kind === 'access-requests'
+      ? `${mb.total} pending access request${mb.total === 1 ? '' : 's'}`
+      : `${mb.in} received · ${mb.out} sent`;
   const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
   // Retired folders only appear when the toggle is on; tag them so they
   // read as demoted rather than a live agent. Predecessor generations get
@@ -767,6 +786,11 @@ function paintSidebar() {
   // divider that follows. A one-line divider heads the Groups and Agents
   // sections; the pinned "all"/"human" folders need none.
   const pinned = boxes.filter(mb => mb.kind === 'all' || mb.kind === 'human');
+  // The access-requests folder is synthetic (not in the server roster), so it
+  // isn't in `boxes`. Build it from the live snapshot and pin it after the
+  // all/human folders, honouring the sidebar text filter like any other row.
+  const accessMb = accessRequestsMailbox();
+  const accessPinned = mailboxMatchesFilter(accessMb, q) ? [accessMb] : [];
   const groups = boxes.filter(mb => mb.kind === 'group');
   // Predecessor ("previous") generations are archival: hidden from the agent
   // listing — flat AND nested — until the operator ticks "show previous
@@ -784,7 +808,7 @@ function paintSidebar() {
   // absent from the flat list.
   const agentById = new Map(agents.map(mb => [mb.id, mb]));
 
-  let html = pinned.map(mb => mailboxRowHTML(mb)).join('');
+  let html = [...pinned, ...accessPinned].map(mb => mailboxRowHTML(mb)).join('');
   if (groups.length) {
     html += `<div class="mailbox-section">${wz('Groups', 'Parties')}</div>`;
     for (const g of groups) {
@@ -963,6 +987,8 @@ function filteredMessages() {
 function paintList() {
   const el = $('#mail-list');
   if (!el) return;
+  // The access-requests folder renders live approval cards, not stored rows.
+  if (mail.selected === ACCESS_ID) { paintAccessRequests(el); return; }
   const q = currentSearch();
   const filtered = mail.messages;
 
@@ -1171,6 +1197,15 @@ function humanReplyButton(m) {
 function paintReader() {
   const el = $('#mail-reader');
   if (!el) return;
+  // The access-requests folder has self-contained action cards in the list;
+  // the reader just carries a short standing hint.
+  if (mail.selected === ACCESS_ID) {
+    el.removeAttribute('data-kind');
+    el.innerHTML = `<div class="empty">${wz(
+      'Approve or decline requests in the list. A request appears the moment an agent asks for access it can’t self-grant, and disappears once you decide or it times out.',
+      'Grant or refuse petitions in the list. A petition appears when a familiar begs a boon beyond its station, and fades once judged or the sands run out.')}</div>`;
+    return;
+  }
   const m = mail.messages.find(x => x.id === mail.selectedMsgId);
   if (!m) {
     el.removeAttribute('data-kind');
@@ -1356,6 +1391,148 @@ async function openMailbox(id) {
   if (navBtn) navBtn.click();
   await loadMailboxes();
   selectMailbox(id);
+}
+
+// --- access requests (human approvals) ------------------------------
+
+// accessRequestsMailbox is the synthetic sidebar folder for pending approvals.
+// It carries no server mailbox — its badge is the live pending count and its
+// rows are lastSnapshot.access_requests (rendered by paintAccessRequests).
+function accessRequestsMailbox() {
+  const pending = (lastSnapshot && lastSnapshot.access_requests_pending) || 0;
+  return { id: ACCESS_ID, kind: 'access-requests', unread: pending, total: pending, in: 0, out: 0 };
+}
+
+// accessCountdown renders "auto-declines in Xm Ys" from an ISO deadline.
+// Recomputed on every paint (≤2s cadence), so no per-second timer is needed.
+function accessCountdown(deadlineISO) {
+  if (!deadlineISO) return '';
+  const ms = new Date(deadlineISO).getTime() - Date.now();
+  if (!(ms > 0)) return wz('auto-declining…', 'the sands have run out…');
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  const label = m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+  return wz(`auto-declines in ${label}`, `refused in ${label}`);
+}
+
+// accessCardHTML renders one pending approval as a self-contained action card.
+// Every agent-supplied value (perm, path, body, titles) is esc()'d before it
+// lands in the markup — the body preview is untrusted agent output, so this is
+// the injection gate the old server-rendered popup used html.EscapeString for.
+function accessCardHTML(r) {
+  const who = esc(r.conv_title || shortAgentId(r.agent_id, r.conv_id) || wz('an agent', 'a familiar'));
+  const idHover = idTooltip(r.agent_id, r.conv_id);
+  const attn = accessHighlightId === r.id ? ' attn' : '';
+  let meta = `<div class="access-row"><span class="access-k">${wz('Permission', 'Boon')}</span><span class="access-v mono">${esc(r.perm)}</span></div>`;
+  if (r.path) meta += `<div class="access-row"><span class="access-k">${wz('Endpoint', 'Rite')}</span><span class="access-v mono">${esc(r.path)}</span></div>`;
+  if (r.target_group) meta += `<div class="access-row"><span class="access-k">${wz('Group', 'Party')}</span><span class="access-v">${esc(r.target_group)}</span></div>`;
+  if (r.target_conv_id) meta += `<div class="access-row"><span class="access-k">${wz('Target', 'Quarry')}</span><span class="access-v">${esc(r.target_conv_title || r.target_conv_id)}</span></div>`;
+  if (r.body) {
+    meta += `<div class="access-row access-body-row"><span class="access-k">${esc(r.body_label || 'Body')}</span><pre class="access-body">${esc(r.body)}</pre></div>`;
+  }
+  const always = r.auto_grantable
+    ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
+    : '';
+  return `<div class="access-card${attn}" data-key="${esc(r.id)}">
+    <div class="access-head">
+      <span class="access-sigil">🔐</span>
+      <span class="access-who"${idHover ? ` title="${esc(idHover)}"` : ''}>${who}</span>
+      <span class="access-verb">${wz('is requesting access', 'begs a boon')}</span>
+    </div>
+    <div class="access-meta">${meta}</div>
+    <div class="access-foot">
+      <span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
+      <span class="grow"></span>
+      <button class="access-btn extend" data-act="access-extend" data-id="${esc(r.id)}" title="Push the auto-decline back 5 minutes">+5m</button>
+      ${always}
+      <button class="access-btn deny" data-act="access-deny" data-id="${esc(r.id)}">${wz('Decline', 'Refuse')}</button>
+      <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>
+    </div>
+  </div>`;
+}
+
+// paintAccessRequests renders the live approval cards into the message-list
+// pane (#mail-list). Keyed by request id so morph keeps a button focus / the
+// deep-link highlight across the 2s repaint.
+function paintAccessRequests(el) {
+  const list = (lastSnapshot && lastSnapshot.access_requests) || [];
+  const countEl = $('#filter-messages-count');
+  if (countEl) countEl.textContent = list.length ? `${list.length} pending` : wz('none pending', 'no petitions');
+  if (!list.length) {
+    // Keep any deep-link highlight pending: a boot-time ?access_request lands
+    // before the first snapshot, so the folder paints empty once, then fills.
+    el.innerHTML = `<div class="empty">${wz(
+      'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.',
+      'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.')}</div>`;
+    return;
+  }
+  morphInto(el, list.map(accessCardHTML).join(''));
+  // Consume the one-shot deep-link highlight: scroll the flagged card in view.
+  if (accessHighlightId) {
+    const card = [...el.querySelectorAll('.access-card')].find(c => c.dataset.key === accessHighlightId);
+    if (card) card.scrollIntoView({ block: 'nearest' });
+    accessHighlightId = null;
+  }
+}
+
+// decideAccess records the operator's decision on one request through the
+// dashboard endpoint that replaced the loopback popup. Optimistically drops the
+// decided card so the UI feels instant; the next 2s snapshot reconciles (the
+// blocked waiter removes the registry entry when it returns).
+async function decideAccess(id, decision) {
+  if (!id) return;
+  try {
+    const r = await fetch(`/api/access-requests/${encodeURIComponent(id)}/decision`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    if (decision === 'extend') {
+      toast(wz('Auto-decline pushed back 5 minutes.', 'The sands turned back five minutes.'));
+      return;
+    }
+    if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
+      lastSnapshot.access_requests = lastSnapshot.access_requests.filter(x => x.id !== id);
+      lastSnapshot.access_requests_pending = lastSnapshot.access_requests.length;
+      renderAccessRequests(lastSnapshot.access_requests, lastSnapshot.access_requests_pending);
+    }
+    paintSidebar();
+    if (mail.selected === ACCESS_ID) paintList();
+  } catch {
+    toast(wz('That request could not be recorded — it may have just been decided or timed out.',
+      'The petition slipped away — already judged, or the sands ran out.'), true);
+  }
+}
+
+// renderAccessRequests updates the global attention affordances each snapshot
+// tick: the non-blocking top banner with a "Review" deep link when approvals
+// are pending. The blinking Messages-tab badge is driven from render.js's
+// renderMessagesBadge; the cards themselves repaint via renderMailTab.
+function renderAccessRequests(list, pending) {
+  const banner = $('#access-banner');
+  if (!banner) return;
+  const n = pending || 0;
+  banner.classList.toggle('show', n > 0);
+  banner.setAttribute('aria-hidden', n > 0 ? 'false' : 'true');
+  const label = $('#access-banner-text');
+  if (label && n > 0) {
+    label.textContent = n === 1
+      ? wz('An agent is requesting access', 'A familiar begs a boon')
+      : wz(`${n} agents are requesting access`, `${n} familiars beg boons`);
+  }
+}
+
+// focusAccessRequest brings the Messages tab forward and opens the
+// access-requests folder, optionally flagging one request for a highlight
+// pulse. The deep-link target for ?tab=messages&access_request=<id> and the
+// banner's Review button.
+function focusAccessRequest(id) {
+  accessHighlightId = id || null;
+  const navBtn = $('nav button[data-tab="messages"]');
+  if (navBtn) navBtn.click();
+  selectMailbox(ACCESS_ID);
 }
 
 // --- mutations ------------------------------------------------------
@@ -1609,6 +1786,14 @@ function initMail() {
       const act = btn.getAttribute('data-act');
       if (act === 'mailbox-select') {
         selectMailbox(btn.getAttribute('data-id'));
+      } else if (act === 'access-approve') {
+        decideAccess(btn.getAttribute('data-id'), 'approve');
+      } else if (act === 'access-deny') {
+        decideAccess(btn.getAttribute('data-id'), 'deny');
+      } else if (act === 'access-always') {
+        decideAccess(btn.getAttribute('data-id'), 'always');
+      } else if (act === 'access-extend') {
+        decideAccess(btn.getAttribute('data-id'), 'extend');
       } else if (act === 'mailbox-toggle-group') {
         toggleGroupExpand(btn.getAttribute('data-group'));
       } else if (act === 'mailbox-toggle-agents-section') {
@@ -1728,6 +1913,10 @@ function initMail() {
   $$('nav button[data-tab="messages"]').forEach(b =>
     b.addEventListener('click', renderMailTab));
 
+  // The pending-approval attention banner's "Review" button jumps to the
+  // access-requests folder. Static element (never repainted), so bind once.
+  $('#access-banner-review')?.addEventListener('click', () => focusAccessRequest());
+
   // Seed the theme-aware placeholder copy, and re-apply it (plus repaint the
   // panes so the empty-state / reader copy + per-kind scroll styling refresh)
   // whenever the 🧙 wizard theme flips. slop.js dispatches tclaude:wizard on
@@ -1739,4 +1928,4 @@ function initMail() {
   });
 }
 
-export { renderMailTab, initMail, onMailSearchChanged, openMailbox, senderOnline };
+export { renderMailTab, initMail, onMailSearchChanged, renderAccessRequests, focusAccessRequest, openMailbox, senderOnline };
