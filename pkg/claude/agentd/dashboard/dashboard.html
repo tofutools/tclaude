@@ -2550,21 +2550,39 @@
       <span class="cron-create-label">Harness</span>
       <select id="agent-spawn-harness"></select>
     </label>
-    <label class="cron-create-row" id="agent-spawn-model-claude-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
-      <span class="cron-create-label">Model</span>
-      <select id="agent-spawn-model">
-        <option value="">Default (claude's own)</option>
-        <option value="fable">fable</option>
-        <option value="fable[1m]">fable[1m]</option>
-        <option value="opus">opus</option>
-        <option value="opus[1m]">opus[1m]</option>
-        <option value="sonnet">sonnet</option>
-        <option value="sonnet[1m]">sonnet[1m]</option>
-        <option value="haiku">haiku</option>
-        <option value="opusplan">opusplan</option>
-        <option value="__custom__">Custom model id…</option>
-      </select>
-    </label>
+    <div class="spawn-inline-fields">
+      <label class="cron-create-row" id="agent-spawn-model-claude-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
+        <span class="cron-create-label">Model</span>
+        <select id="agent-spawn-model">
+          <option value="">Default (claude's own)</option>
+          <option value="fable">fable</option>
+          <option value="fable[1m]">fable[1m]</option>
+          <option value="opus">opus</option>
+          <option value="opus[1m]">opus[1m]</option>
+          <option value="sonnet">sonnet</option>
+          <option value="sonnet[1m]">sonnet[1m]</option>
+          <option value="haiku">haiku</option>
+          <option value="opusplan">opusplan</option>
+          <option value="__custom__">Custom model id…</option>
+        </select>
+      </label>
+      <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
+        <span class="cron-create-label">Model</span>
+        <input id="agent-spawn-model-codex" type="text" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="cron-create-row" title="Reasoning effort for the new agent. Default leaves the harness on its own setting (no --effort passed). For Codex, the level maps onto its reasoning-effort scale (max → xhigh).">
+        <!-- Pre-snapshot fallback; populateSpawnEffortSelect() rebuilds these
+             from the chosen harness's effort_levels once the catalog loads. -->
+        <select id="agent-spawn-effort" aria-label="Effort">
+          <option value="">Default (harness's own)</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </label>
+    </div>
     <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
          human type any Claude model id/alias the presets don't list (a full id
          like claude-opus-4-8[1m], or a new alias). The daemon validates it at
@@ -2572,23 +2590,6 @@
     <label class="cron-create-row" id="agent-spawn-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the agent spawns.">
       <span class="cron-create-label"></span>
       <input id="agent-spawn-model-custom" type="text" aria-label="Custom model id" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
-      <span class="cron-create-label">Model</span>
-      <input id="agent-spawn-model-codex" type="text" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row" title="Reasoning effort for the new agent. Default leaves the harness on its own setting (no --effort passed). For Codex, the level maps onto its reasoning-effort scale (max → xhigh).">
-      <span class="cron-create-label">Effort</span>
-      <!-- Pre-snapshot fallback; populateSpawnEffortSelect() rebuilds these
-           from the chosen harness's effort_levels once the catalog loads. -->
-      <select id="agent-spawn-effort">
-        <option value="">Default (harness's own)</option>
-        <option value="low">low</option>
-        <option value="medium">medium</option>
-        <option value="high">high</option>
-        <option value="xhigh">xhigh</option>
-        <option value="max">max</option>
-      </select>
     </label>
     <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. The live hint below explains the selected mode.">
       <span class="cron-create-label">Sandbox</span>

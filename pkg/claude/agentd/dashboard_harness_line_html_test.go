@@ -132,9 +132,12 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	// dashboard.html: the harness selector, the Codex free-text model row,
 	// and the sandbox selector row exist.
 	must(`id="agent-spawn-harness"`, "spawn dialog has a harness selector")
+	must(`class="spawn-inline-fields"`, "spawn dialog compacts Model and Effort onto one row")
 	must(`id="agent-spawn-model-claude-row"`, "the curated (claude) model row is identifiable for toggling")
 	must(`id="agent-spawn-model-codex"`, "spawn dialog has a Codex free-text model input")
+	must(`id="agent-spawn-effort" aria-label="Effort"`, "compact Effort select keeps an accessible label")
 	must(`id="agent-spawn-sandbox"`, "spawn dialog has a sandbox selector")
+	must(`#agent-spawn-modal .spawn-inline-fields`, "spawn dialog has scoped CSS for the compact launch row")
 
 	// modal-spawn.js: the selector is populated from the catalog, the rows
 	// reshape per harness, and the active model control is read on submit.
