@@ -459,7 +459,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 			// For a clipboard write, show the human the exact text about to
 			// be copied under a clear label — the JSON envelope would render
 			// newlines as literal \n and read poorly for a snippet. The raw
-			// text is still HTML-escaped at render time (renderApprovalPage).
+			// text is still escaped when the dashboard card renders it
+			// (mail.js esc() on r.body — the access-requests folder).
 			bodyLabel := ""
 			if raw, ok := clipboardApprovalPreview(perm, bodyPreview); ok {
 				bodyPreview = raw

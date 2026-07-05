@@ -27,6 +27,11 @@ import (
 func newFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
 
+	// The approval registry (pending + recent-handled history) is a package
+	// global; reset it so a prior test's decided approvals don't leak into this
+	// one's access-requests snapshot.
+	agentd.ResetApprovalsForTest()
+
 	// Shrink the production waits to test-scale durations. Production
 	// uses 60s alive-timeout + 1s ready-delay to absorb CC startup
 	// jitter; under simulator-backed tests the new conv is alive

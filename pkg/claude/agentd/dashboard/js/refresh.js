@@ -16,7 +16,7 @@ import {
   renderMessagesBadge, renderUsage, renderDashDefaultProfile,
   renderNotifyGlobal, renderGlobalActivity,
 } from './render.js';
-import { renderMailTab, onMailSearchChanged } from './mail.js';
+import { renderMailTab, onMailSearchChanged, renderAccessRequests } from './mail.js';
 import {
   renderGroupsTab, renderJobsTab, renderSudoTab, renderLinksTab,
 } from './tabs.js';
@@ -533,7 +533,8 @@ export async function refresh(opts = {}) {
     morphInto($('#permissions-body'), renderPermissions(data.permissions, data.agents));
     morphInto($('#slugs-body'), renderSlugs(data.slugs));
     renderMailTab();
-    renderMessagesBadge(data.messages_unread || 0);
+    renderMessagesBadge(data.messages_unread || 0, data.access_requests_pending || 0);
+    renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0);
     renderUsage(data.usage);
     renderDashDefaultProfile();
     renderNotifyGlobal(!!data.notifications_enabled);

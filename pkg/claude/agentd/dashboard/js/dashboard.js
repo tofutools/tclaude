@@ -65,7 +65,7 @@ import { bindPluginsUI } from './plugins.js';
 import { bindCostsTab, bindCostDisplayToggle } from './costs.js';
 import { bindAuditTab } from './audit.js';
 import { bindLogsTab } from './logs.js';
-import { initMail } from './mail.js';
+import { initMail, focusAccessRequest } from './mail.js';
 import { initDashPrefs } from './prefs.js';
 import { loadSortState } from './sort.js';
 import { bindCommandPalette } from './palette.js';
@@ -252,4 +252,15 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   bindVegasMusic();
   refresh();
   setInterval(refresh, 2000);
+
+  // Deep link: ?tab=messages&access_request=<id> — the target the approval
+  // auto-raise / tray "review" builds. Bring the Messages tab forward on the
+  // access-requests folder; the card highlight applies once the first snapshot
+  // paints the pending request in.
+  const dlParams = new URLSearchParams(window.location.search);
+  if (dlParams.get('tab') === 'messages') {
+    const reqId = dlParams.get('access_request');
+    if (reqId !== null) focusAccessRequest(reqId || undefined);
+    else document.querySelector('nav button[data-tab="messages"]')?.click();
+  }
 })();

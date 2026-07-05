@@ -183,11 +183,12 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) {
 					if id == "" || cfg.PopupBaseURL == "" {
 						continue
 					}
-					// Mint a one-shot init token bound to this approval
-					// so the popup's `/approve/{id}` exchange hands out a
-					// session cookie. In-process — the tray IS the daemon.
-					url := cfg.PopupBaseURL + "/approve/" + id +
-						"?init_token=" + mintInitToken(initScopeApprove(id))
+					// Open the dashboard deep-linked to this access request
+					// (the Messages tab's "Access requests" folder). Mint a
+					// one-shot dashboard init token for the cookie exchange —
+					// in-process, the tray IS the daemon.
+					url := cfg.PopupBaseURL + "/?init_token=" +
+						mintInitToken(initScopeDashboard) + "&" + accessRequestDeepLinkQuery(id)
 					if err := openBrowser(url); err != nil {
 						slog.Warn("tray: open approval failed",
 							"id", id, "error", err)

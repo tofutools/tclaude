@@ -260,9 +260,9 @@ func StubAlwaysAllowApprovalForTest() func() {
 }
 
 // BuildDashboardHandlerForTest exposes the dashboard mux (the
-// loopback-port mux that hosts `/`, `/api/snapshot`,
-// `/api/groups/...` mutation endpoints, and the popup `/approve/...`
-// route in production). Flow tests use this when asserting the
+// dashboard-listener mux that hosts `/`, `/api/snapshot`,
+// `/api/groups/...` mutation endpoints, and the access-request decision
+// endpoint in production). Flow tests use this when asserting the
 // dashboard's snapshot or edit endpoints — `BuildHandlerForTest` only
 // covers the /v1 Unix-socket mux.
 //
@@ -465,17 +465,10 @@ func NewSessionReaperForTest(grace time.Duration, onNotify func(convID, prevStat
 // Tick runs one reaper sweep and returns the number of sessions reaped.
 func (h *SessionReaperHandle) Tick() int { return h.r.tick(time.Now()) }
 
-// RegisterPopupRoutesForTest mounts the approval-popup route
-// (`/approve/...`) on mux so flow tests can exercise handlePopupApprove
-// without binding a real loopback listener.
-func RegisterPopupRoutesForTest(mux *http.ServeMux) {
-	mux.HandleFunc("/approve/", handlePopupApprove)
-}
-
 // SeedPendingApprovalForTest registers a minimal pending approval under
-// id so flow tests can drive handlePopupApprove against it. The
-// decision channel is buffered, so a POST approve/deny records without
-// a blocked reader. Returns a cleanup that removes the entry.
+// id so flow tests can drive the dashboard access-request decision endpoint
+// against it. The decision channel is buffered, so a POST approve/deny records
+// without a blocked reader. Returns a cleanup that removes the entry.
 func SeedPendingApprovalForTest(id string) func() {
 	return SeedApprovalForTest(id, "self.rename", false)
 }
@@ -505,13 +498,24 @@ func SeedApprovalForTest(id, perm string, autoGrantable bool) func() {
 	}
 }
 
+// ResetApprovalsForTest clears the whole approval registry — pending AND the
+// recent-handled history ring — so a flow test that decides an approval doesn't
+// leak resolved entries into another test's snapshot (the registry is a package
+// global). Called from newFlow.
+func ResetApprovalsForTest() {
+	approvals.mu.Lock()
+	approvals.pending = map[string]*approvalRequest{}
+	approvals.resolved = nil
+	approvals.mu.Unlock()
+}
+
 // SeedApprovalWithWaiterForTest registers a pending approval (perm,
 // convID, autoGrantable) AND starts a goroutine that consumes the first
 // decision exactly as the production waiter does — through
 // applyApprovalOutcome — so the audit + persist side-effects run for real.
-// Lets a flow test POST /approve/{id}/{decision} against the live popup
-// handler and observe the end-to-end effect (e.g. the persisted override),
-// rather than testing the handler and the persist in disconnected halves.
+// Lets a flow test POST a decision to the dashboard access-request endpoint
+// and observe the end-to-end effect (e.g. the persisted override), rather
+// than testing the handler and the persist in disconnected halves.
 // The returned channel yields the waiter's approved() result once a
 // decision lands (or the internal timeout fires); cleanup removes the
 // pending entry.
@@ -534,10 +538,24 @@ func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) 
 	go func() {
 		timer := time.NewTimer(req.timeout)
 		defer timer.Stop()
+		// Mirror realRequestHumanApproval: run the outcome side-effects, record
+		// the resolution into the recent-history ring, and drop the pending
+		// entry — so a flow test sees the same pending→handled transition the
+		// dashboard snapshot renders in production.
+		remove := func() {
+			approvals.mu.Lock()
+			delete(approvals.pending, id)
+			approvals.mu.Unlock()
+		}
 		select {
 		case d := <-req.decision:
-			done <- applyApprovalOutcome(req, d)
+			approved := applyApprovalOutcome(req, d)
+			approvals.recordResolved(req, outcomeLabel(d))
+			remove()
+			done <- approved
 		case <-timer.C:
+			approvals.recordResolved(req, "timed out")
+			remove()
 			done <- false
 		}
 	}()
@@ -546,13 +564,6 @@ func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) 
 		delete(approvals.pending, id)
 		approvals.mu.Unlock()
 	}
-}
-
-// MintApproveInitTokenForTest mints a single-use init token scoped to
-// the approval popup for id — what tclaude agentd and the tray embed
-// in the URL they launch.
-func MintApproveInitTokenForTest(id string) string {
-	return mintInitToken(initScopeApprove(id))
 }
 
 // SetWorktreeFnsForTest swaps the git-worktree seam — directory

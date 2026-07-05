@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -23,41 +22,47 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
-// startPopupServer binds a loopback HTTP listener and runs a tiny
-// server that handles /approve/{id}[/{decision}] plus the dashboard
-// routes (both are human-only and share the one stable URL handed to
-// the tray icon / `tclaude agent dashboard`). port pins the bound TCP
-// port; 0 means an OS-chosen random free port (the historical default).
+// startPopupServer binds the dashboard HTTP listener (also the home of the
+// human-approval "Access requests" surface) and serves the dashboard routes.
+// bindHost is the host/interface to bind (defaultDashboardBind = loopback when
+// empty; a non-loopback host exposes it on the network); port pins the bound
+// TCP port, 0 means an OS-chosen random free port (the historical default).
 //
-// A bind failure is returned as an error, NOT swallowed: the dashboard
-// + approval popup are essential, and a requested fixed port that is
-// already in use must surface at startup rather than silently degrade to
-// a random port — that would break the bookmark / reverse-proxy / firewall
-// rule the fixed port was set up for. The caller aborts startup on error.
-// On success returns the server (so the caller can Shutdown it) and the
-// base URL.
-func startPopupServer(port int) (*http.Server, string, error) {
-	bindAddr := "127.0.0.1:0"
-	if port > 0 {
-		bindAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+// A bind failure is returned as an error, NOT swallowed: the dashboard is
+// essential, and a requested fixed port that is already in use must surface at
+// startup rather than silently degrade to a random port — that would break the
+// bookmark / reverse-proxy / firewall rule the fixed port was set up for. The
+// caller aborts startup on error. On success returns the server (so the caller
+// can Shutdown it) and the locally-reachable base URL.
+func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
+	if strings.TrimSpace(bindHost) == "" {
+		bindHost = defaultDashboardBind
 	}
+	portStr := "0"
+	if port > 0 {
+		portStr = strconv.Itoa(port)
+	}
+	bindAddr := net.JoinHostPort(bindHost, portStr)
 	ln, err := net.Listen("tcp", bindAddr)
 	if err != nil {
-		return nil, "", fmt.Errorf("bind loopback listener %s: %w", bindAddr, err)
+		return nil, "", fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/approve/", handlePopupApprove)
-	// Dashboard rides on the same loopback listener — both views are
-	// human-only, both want one stable URL we can hand to the tray
-	// icon's "Open dashboard" action. Token + cookie auth pinned to
-	// popupBaseURL gates /api/* the same way popup approval does.
+	// The dashboard is the one human-facing surface on this listener — a
+	// single stable URL we can hand to the tray icon's "Open dashboard"
+	// action. Human-approval requests are surfaced INSIDE the dashboard now
+	// (the Messages tab's "Access requests" folder, dashboard_access_requests.go),
+	// so they ride the dashboard's cookie/Origin auth and work over the remote
+	// listener too — no separate loopback-only /approve page. Token + cookie
+	// auth pinned to popupBaseURL (or host-relative when bound non-loopback)
+	// gates /api/*.
 	initDashboardToken()
 	registerDashboardRoutes(mux)
 	srv := &http.Server{
 		// auditRequests records dashboard commands (spawn, message,
-		// lifecycle, …) to the audit log; non-command routes (/, /static,
-		// /approve, the snapshot poll) fall through unmatched. See audit.go
-		// (JOH-268).
+		// lifecycle, access-request decisions, …) to the audit log;
+		// non-command routes (/, /static, the snapshot poll) fall through
+		// unmatched. See audit.go (JOH-268).
 		Handler:           auditRequests(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -67,7 +72,27 @@ func startPopupServer(port int) (*http.Server, string, error) {
 		}
 	}()
 	addr := ln.Addr().(*net.TCPAddr)
-	return srv, fmt.Sprintf("http://127.0.0.1:%d", addr.Port), nil
+	// popupBaseURL must be a locally-reachable URL: it drives the local
+	// browser auto-launch, the tray "open dashboard" action, the deep links
+	// agentd builds, and (on a loopback bind) the same-origin pin. A wildcard
+	// bind (0.0.0.0 / ::) isn't itself dialable, so fall back to loopback; a
+	// specific host is used verbatim (JoinHostPort brackets IPv6). When bound
+	// non-loopback the browser typically reaches the dashboard through some
+	// OTHER hostname (a proxy/LAN IP) whose origin the host-relative check
+	// accepts — this base URL just needs to be one that works from this box.
+	return srv, "http://" + net.JoinHostPort(dashboardURLHost(bindHost), strconv.Itoa(addr.Port)), nil
+}
+
+// dashboardURLHost maps a bind host to the host to put in the
+// locally-reachable base URL. A wildcard listen address binds every
+// interface but is not itself a dialable destination, so it becomes
+// loopback; any specific host (loopback or not) is returned as-is.
+func dashboardURLHost(bindHost string) string {
+	switch strings.TrimSpace(bindHost) {
+	case "", "0.0.0.0", "::", "[::]":
+		return defaultDashboardBind
+	}
+	return bindHost
 }
 
 // approvalOutcome is the human's decision on a pending approval. It widens
@@ -88,9 +113,10 @@ const (
 // (approve or approve-always). Only outcomeDeny blocks it.
 func (o approvalOutcome) approved() bool { return o != outcomeDeny }
 
-// ApprovalRequest is what the popup UI shows the human. Fields are
-// embedded into the HTML page; all values must be HTML-escaped before
-// rendering.
+// approvalRequest is one in-flight human-approval request. It is surfaced to
+// the operator in the dashboard's "Access requests" folder (see
+// dashboard_access_requests.go) and blocks the requesting agent until the
+// operator decides or the timeout auto-denies.
 type approvalRequest struct {
 	id              string
 	perm            string
@@ -110,13 +136,15 @@ type approvalRequest struct {
 	decision        chan approvalOutcome // the human's choice: deny / approve / approve-always
 	extend          chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
 
-	// sessionToken is minted when a valid init token is exchanged at
-	// the GET handler, and is required on all POSTs (approve/deny/
-	// extend) for this approval. Stored as an HttpOnly, SameSite=Strict
-	// cookie. See handlePopupApprove and checkPopupAuth for the threat
-	// model.
-	mu           sync.Mutex
-	sessionToken string
+	// mu guards the mutable field(s) below; the rest of approvalRequest is
+	// set once at construction and read lock-free.
+	mu sync.Mutex
+	// deadline is the wall-clock instant the auto-deny timer will fire,
+	// kept live so the dashboard countdown stays honest across "+extend"
+	// clicks. Set by the waiter (realRequestHumanApproval) at start and on
+	// each extend; read by the snapshot under mu. Zero until the waiter
+	// runs — the snapshot then falls back to createdAt+timeout.
+	deadline time.Time
 }
 
 // approvalRegistry holds pending approvals keyed by ID. Browser
@@ -124,7 +152,26 @@ type approvalRequest struct {
 type approvalRegistry struct {
 	mu      sync.Mutex
 	pending map[string]*approvalRequest
+	// resolved is a bounded, most-recent-last ring of decided requests, kept
+	// so the dashboard's Access-requests folder can show a short "recently
+	// handled" history (what the operator chose, and when) instead of the card
+	// just vanishing. In-memory + capped (maxResolvedApprovals): the audit log
+	// is the durable record, so this is only the at-a-glance recent view and is
+	// cleared on daemon restart.
+	resolved []resolvedApproval
 }
+
+// resolvedApproval is one decided request retained for the recent-history view.
+// It holds the original *approvalRequest (read only for its set-once display
+// fields, never its mutable deadline) plus the outcome + when it was decided.
+type resolvedApproval struct {
+	req       *approvalRequest
+	outcome   string // "approved" | "declined" | "always" | "timed out"
+	decidedAt time.Time
+}
+
+// maxResolvedApprovals bounds the in-memory recent-history ring.
+const maxResolvedApprovals = 25
 
 var approvals = &approvalRegistry{pending: map[string]*approvalRequest{}}
 
@@ -134,6 +181,32 @@ func (a *approvalRegistry) pendingCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.pending)
+}
+
+// recordResolved appends a decided request to the bounded recent-history ring.
+// Called by the approval waiter at each terminal outcome (human decision or
+// timeout) so the dashboard can show what was chosen.
+func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) {
+	a.mu.Lock()
+	a.resolved = append(a.resolved, resolvedApproval{req: req, outcome: outcome, decidedAt: time.Now()})
+	if len(a.resolved) > maxResolvedApprovals {
+		a.resolved = a.resolved[len(a.resolved)-maxResolvedApprovals:]
+	}
+	a.mu.Unlock()
+}
+
+// outcomeLabel maps a decided outcome to its history label. The timeout path
+// records "timed out" directly (it isn't an approvalOutcome).
+func outcomeLabel(o approvalOutcome) string {
+	switch o {
+	case outcomeApprove:
+		return "approved"
+	case outcomeApproveAlways:
+		return "always"
+	case outcomeDeny:
+		return "declined"
+	}
+	return "declined"
 }
 
 // pendingApprovalSummary is a tray-friendly slice of one pending row.
@@ -200,11 +273,26 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		approvals.mu.Unlock()
 	}()
 
-	// Embed a one-shot init token bound to this approval; the popup's
-	// GET exchanges it for the session cookie. The human's browser,
-	// launched right below, consumes it — see inittoken.go for the
-	// residual /proc-scrape note.
-	url := popupBaseURL + "/approve/" + req.id + "?init_token=" + mintInitToken(initScopeApprove(req.id))
+	// Auto-raise the operator's LOCAL browser to the dashboard (the "redirect
+	// it into the dashboard" nicety). It deliberately lands on the DEFAULT view
+	// — NOT deep-linked to this request — so a busy operator isn't yanked to the
+	// approval mid-task: the blinking Messages badge + the "N requesting access"
+	// banner signal it passively, and they click Review to go there when ready.
+	// A remote operator sees the same signals in their already-open dashboard on
+	// the next 2s poll (the daemon can't launch a browser on their phone).
+	//
+	// SCOPE NOTE: the old loopback popup minted a token scoped to THIS one
+	// approval (initScopeApprove); this mints a full-dashboard init token, the
+	// same one autoLaunchDashboard / the tray's "Open dashboard" already put on
+	// the browser-launcher argv. So the accepted /proc-scrape residual (see
+	// inittoken.go) now carries a full-dashboard capability on an
+	// agent-triggered event, not just "approve this request". We accept it:
+	// it's the same residual class the dashboard already lives with, sandboxed
+	// agents run in a PID namespace that hides the host browser's argv, and a
+	// non-sandboxed same-uid process can already read ~/.tclaude directly — so
+	// this is no new boundary against either. Best-effort: a headless /
+	// no-browser host just relies on the dashboard surface + the OS notification.
+	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
 	go func() {
 		if err := openBrowser(url); err != nil {
 			slog.Warn("popup: failed to open browser", "err", err, "url", url)
@@ -219,10 +307,13 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	// indefinitely.
 	timer := time.NewTimer(req.timeout)
 	defer timer.Stop()
+	req.setDeadline(time.Now().Add(req.timeout))
 	for {
 		select {
 		case d := <-req.decision:
-			return applyApprovalOutcome(req, d)
+			approved := applyApprovalOutcome(req, d)
+			approvals.recordResolved(req, outcomeLabel(d))
+			return approved
 		case d := <-req.extend:
 			if !timer.Stop() {
 				select {
@@ -231,11 +322,13 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 				}
 			}
 			timer.Reset(d)
+			req.setDeadline(time.Now().Add(d))
 			slog.Info("popup: timeout extended",
 				"id", req.id, "perm", req.perm, "by", d)
 		case <-timer.C:
 			slog.Info("popup: timeout fired (auto-deny)",
 				"id", req.id, "perm", req.perm)
+			approvals.recordResolved(req, "timed out")
 			return false
 		}
 	}
@@ -251,148 +344,6 @@ func newApprovalID() string {
 		return fmt.Sprintf("%016x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
-}
-
-// handlePopupApprove serves both the GET (render the page) and POST
-// (record the decision) sides of /approve/{id}[/{decision}]. Mounted on
-// the loopback HTTP server, never on the unix socket.
-func handlePopupApprove(w http.ResponseWriter, r *http.Request) {
-	// Refuse anything that isn't loopback. http.ListenAndServe on
-	// 127.0.0.1 already restricts the listening addr, but a
-	// belt-and-braces check on RemoteAddr keeps the door shut even if
-	// the listener gets reused later.
-	if !strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") && !strings.HasPrefix(r.RemoteAddr, "[::1]:") {
-		http.Error(w, "forbidden: loopback only", http.StatusForbidden)
-		return
-	}
-
-	rest := strings.TrimPrefix(r.URL.Path, "/approve/")
-	parts := strings.SplitN(rest, "/", 2)
-	id := parts[0]
-	if id == "" {
-		http.Error(w, "missing approval id", http.StatusBadRequest)
-		return
-	}
-	approvals.mu.Lock()
-	req, ok := approvals.pending[id]
-	approvals.mu.Unlock()
-	if !ok {
-		http.Error(w, "no such approval (already decided, expired, or unknown)", http.StatusNotFound)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		// The session cookie is handed out only in exchange for a
-		// valid single-use init token — the same token-exchange the
-		// dashboard uses. tclaude agentd embeds the token in the URL
-		// it launches; the tray re-mints one on demand. A bare GET
-		// with no token and no cookie is refused, so a process that
-		// merely scrapes the approval id cannot mint itself a cookie.
-		if tok := r.URL.Query().Get("init_token"); tok != "" {
-			if !consumeInitToken(tok, initScopeApprove(req.id)) {
-				http.Error(w, "invalid or expired init token; reopen this approval from the agentd tray icon", http.StatusForbidden)
-				return
-			}
-			req.mu.Lock()
-			if req.sessionToken == "" {
-				req.sessionToken = newApprovalID() // reuse the random gen; same entropy
-			}
-			token := req.sessionToken
-			req.mu.Unlock()
-			http.SetCookie(w, &http.Cookie{
-				Name:     "tclaude_popup_" + req.id,
-				Value:    token,
-				Path:     "/approve/" + req.id,
-				HttpOnly: true,
-				SameSite: http.SameSiteStrictMode,
-			})
-			// Redirect to the bare path so the one-shot token drops
-			// out of the address bar and browser history.
-			http.Redirect(w, r, "/approve/"+req.id, http.StatusSeeOther)
-			return
-		}
-		// No init token: render only for an already-exchanged cookie
-		// (a refresh of the page the human already opened).
-		req.mu.Lock()
-		expected := req.sessionToken
-		req.mu.Unlock()
-		if expected == "" {
-			http.Error(w, "open this approval via the link tclaude agentd launched, or from the agentd tray icon", http.StatusForbidden)
-			return
-		}
-		if c, err := r.Cookie("tclaude_popup_" + req.id); err != nil || c.Value != expected {
-			http.Error(w, "missing or invalid popup session cookie", http.StatusForbidden)
-			return
-		}
-		renderApprovalPage(w, req)
-	case http.MethodPost:
-		if !checkPopupAuth(w, r, req) {
-			return
-		}
-		if len(parts) < 2 {
-			http.Error(w, "missing decision", http.StatusBadRequest)
-			return
-		}
-		decision := parts[1]
-		switch decision {
-		case "approve":
-			select {
-			case req.decision <- outcomeApprove:
-			default:
-			}
-			renderApprovalDoneCallback(w, true)
-		case "always":
-			// "Always allow for this agent" — approve AND persist an allow
-			// override. Server-side gate: only slugs the registry flags
-			// AutoGrantable may be persisted this way, so a scraped popup URL
-			// can't self-grant an ineligible (e.g. destructive) slug even if
-			// the button was never rendered. The persist itself happens in the
-			// waiter (applyApprovalOutcome), keeping the "exactly the decision
-			// that took effect, exactly once" guarantee.
-			if !req.autoGrantable {
-				http.Error(w, "this permission is not eligible for \"always allow\"", http.StatusForbidden)
-				return
-			}
-			select {
-			case req.decision <- outcomeApproveAlways:
-			default:
-			}
-			renderApprovalDoneCallback(w, true)
-		case "deny":
-			select {
-			case req.decision <- outcomeDeny:
-			default:
-			}
-			renderApprovalDoneCallback(w, false)
-		case "extend":
-			// Resets the auto-deny timer; bounded so an unattended
-			// popup still eventually times out. Default +5 minutes;
-			// caller can pass ?secs=N (capped at 300 to match the
-			// daemon's overall AskHuman ceiling).
-			extendBy := 5 * time.Minute
-			if v := r.URL.Query().Get("secs"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n > 0 {
-					if n > 300 {
-						n = 300
-					}
-					extendBy = time.Duration(n) * time.Second
-				}
-			}
-			select {
-			case req.extend <- extendBy:
-			default:
-				// Already an extend in flight; idempotent no-op.
-			}
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "+%s\n", extendBy)
-		default:
-			http.Error(w, "decision must be approve, always, deny, or extend", http.StatusBadRequest)
-			return
-		}
-	default:
-		http.Error(w, "GET or POST", http.StatusMethodNotAllowed)
-	}
 }
 
 // applyApprovalOutcome runs the side-effects of a consumed decision and
@@ -486,226 +437,6 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 	}
 }
 
-const approvalPageTemplate = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>tclaude agent approval</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 4em auto; padding: 0 1em; }
-  h1 { margin-bottom: 0.2em; }
-  h2 { font-size: 1em; margin-top: 1.4em; margin-bottom: 0.4em; color: #444; }
-  .meta { color: #555; font-size: 0.9em; margin-bottom: 1.5em; }
-  .meta dt { font-weight: bold; }
-  .meta dd { margin-left: 0; margin-bottom: 0.6em; }
-  .name { font-weight: 600; color: #222; }
-  .id   { font-family: ui-monospace, monospace; color: #777; font-size: 0.85em; display: block; }
-  .mono { font-family: ui-monospace, monospace; }
-  pre.body {
-    background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px;
-    padding: 0.8em 1em; font-family: ui-monospace, monospace; font-size: 0.85em;
-    white-space: pre-wrap; word-break: break-word; max-height: 22em; overflow-y: auto;
-  }
-  form { display: inline; }
-  button { font-size: 1.1em; padding: 0.6em 1.4em; margin-right: 0.4em; cursor: pointer; }
-  .approve { background: #2c7a39; color: white; border: 1px solid #1f5c2a; }
-  .always  { background: #7a5c2c; color: white; border: 1px solid #5c4520; }
-  .deny    { background: #b03a2e; color: white; border: 1px solid #862c22; }
-  .extend  { background: #4d6fb3; color: white; border: 1px solid #345088; }
-  .extend:disabled { background: #aaa; border-color: #888; cursor: default; }
-  .hint    { color: #777; font-size: 0.85em; margin-top: 1em; }
-  .countdown { font-family: ui-monospace, monospace; font-weight: bold; color: #b03a2e; }
-  .countdown.paused { color: #2c7a39; }
-</style>
-</head>
-<body>
-<h1>Agent wants permission</h1>
-<dl class="meta">
-  <dt>Permission</dt><dd class="mono">%s</dd>
-  <dt>Requester</dt><dd><span class="name">%s</span><span class="id">%s</span></dd>%s%s
-  <dt>Endpoint</dt><dd class="mono">%s %s</dd>%s%s
-  <dt>Timeout</dt><dd>auto-deny in <span id="countdown" class="countdown">%ds</span></dd>
-</dl>
-<form action="/approve/%s/approve" method="post">
-  <button class="approve" autofocus>Approve</button>
-</form>%s
-<form action="/approve/%s/deny" method="post">
-  <button class="deny">Deny</button>
-</form>
-<button id="extend-btn" class="extend" type="button" data-id="%s">+5min</button>
-<p class="hint">This popup was opened by <code>tclaude agentd</code>
-on this machine. If you didn't expect it, click Deny. Use <strong>+5min</strong>
-to push the auto-deny back if you need more time to read.%s</p>
-<script>
-(function() {
-  const id = document.getElementById('extend-btn').dataset.id;
-  const cd = document.getElementById('countdown');
-  let remaining = parseInt(cd.textContent, 10);
-  let lastTick = Date.now();
-  function render() {
-    if (remaining <= 0) { cd.textContent = 'TIMED OUT'; return; }
-    cd.textContent = remaining + 's';
-  }
-  setInterval(function() {
-    const now = Date.now();
-    if (now - lastTick >= 1000) {
-      remaining -= Math.floor((now - lastTick) / 1000);
-      lastTick = now;
-      render();
-    }
-  }, 200);
-  document.getElementById('extend-btn').addEventListener('click', function() {
-    const btn = this;
-    btn.disabled = true;
-    btn.textContent = 'extending…';
-    fetch('/approve/' + id + '/extend?secs=300', {method: 'POST'})
-      .then(function(r) { return r.text(); })
-      .then(function() {
-        remaining += 300;
-        cd.classList.add('paused');
-        render();
-        btn.textContent = '+5min';
-        btn.disabled = false;
-      })
-      .catch(function() {
-        btn.textContent = 'extend failed';
-      });
-  });
-})();
-</script>
-</body>
-</html>
-`
-
-func renderApprovalPage(w http.ResponseWriter, req *approvalRequest) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	requesterTitle := req.convTitle
-	if requesterTitle == "" {
-		requesterTitle = "(unnamed)"
-	}
-
-	groupRow := ""
-	if req.targetGroup != "" {
-		groupRow = "\n  <dt>Group</dt><dd>" + html.EscapeString(req.targetGroup) + "</dd>"
-	}
-
-	targetRow := ""
-	if req.targetConvID != "" {
-		t := req.targetConvTitle
-		if t == "" {
-			t = "(unknown)"
-		}
-		targetRow = "\n  <dt>Target agent</dt><dd>" +
-			"<span class=\"name\">" + html.EscapeString(t) + "</span>" +
-			"<span class=\"id\">" + html.EscapeString(req.targetConvID) + "</span></dd>"
-	}
-
-	queryRow := ""
-	if req.rawQuery != "" {
-		queryRow = "\n  <dt>Query</dt><dd>" + html.EscapeString(req.rawQuery) + "</dd>"
-	}
-
-	bodyRow := ""
-	if req.bodyPreview != "" {
-		label := req.bodyLabel
-		if label == "" {
-			label = "Body"
-		}
-		// req.bodyPreview is untrusted (agent-supplied request body or, for
-		// a clipboard write, the raw text to be copied) — html.EscapeString
-		// is the injection gate before it lands in the page.
-		bodyRow = "\n  <dt>" + html.EscapeString(label) + "</dt><dd><pre class=\"body\">" +
-			html.EscapeString(req.bodyPreview) + "</pre></dd>"
-	}
-
-	// The "Always allow for this agent" button + its hint render ONLY when
-	// the requested slug is auto-grantable (JOH-367). req.id is a random hex
-	// token; escaped for consistency with the other req.id embeds.
-	alwaysBtn, alwaysHint := "", ""
-	if req.autoGrantable {
-		alwaysBtn = "\n<form action=\"/approve/" + html.EscapeString(req.id) + "/always\" method=\"post\">\n" +
-			"  <button class=\"always\">Always allow for this agent</button>\n</form>"
-		alwaysHint = " <strong>Always allow for this agent</strong> approves this " +
-			"and remembers the permission for this agent, so it won't ask again."
-	}
-
-	fmt.Fprintf(w, approvalPageTemplate,
-		html.EscapeString(req.perm),
-		html.EscapeString(requesterTitle),
-		html.EscapeString(req.convID),
-		groupRow,
-		targetRow,
-		html.EscapeString(req.method),
-		html.EscapeString(req.path),
-		queryRow,
-		bodyRow,
-		int(req.timeout.Seconds()),
-		html.EscapeString(req.id), // approve form
-		alwaysBtn,                 // conditional "always" form
-		html.EscapeString(req.id), // deny form
-		html.EscapeString(req.id), // extend button
-		alwaysHint,                // conditional hint clause
-	)
-}
-
-// checkPopupAuth gates POSTs to the approval endpoints with two
-// cheap defense-in-depth checks:
-//
-//  1. The HttpOnly session cookie must be present and match the
-//     stored token. The cookie is handed out only in exchange for a
-//     single-use init token (see handlePopupApprove's GET), so a
-//     process that scraped the approval URL but lost the race to the
-//     human's browser cannot have it.
-//
-//  2. The Origin (or Referer if Origin is missing) must point at
-//     our own popup base URL. Stops drive-by CSRF from another tab.
-//
-// Residual: a same-user process that reads the browser launcher's
-// argv off /proc can still race the human's browser for the
-// single-use init token. Winning that race means beating a browser
-// the daemon launches immediately, and losing burns the token.
-// Closing it entirely means stopping a process from reading another
-// process's argv — a sandbox responsibility, not tclaude's.
-func checkPopupAuth(w http.ResponseWriter, r *http.Request, req *approvalRequest) bool {
-	// Cookie check.
-	c, err := r.Cookie("tclaude_popup_" + req.id)
-	if err != nil || c.Value == "" {
-		http.Error(w, "missing popup session cookie; load the popup page first", http.StatusForbidden)
-		return false
-	}
-	req.mu.Lock()
-	expected := req.sessionToken
-	req.mu.Unlock()
-	if expected == "" || c.Value != expected {
-		http.Error(w, "popup session cookie does not match", http.StatusForbidden)
-		return false
-	}
-
-	// Origin / Referer check. Browser fetch() sends Origin; classic
-	// form posts only send Referer. Accept either as long as it
-	// points at our own popup base.
-	origin := r.Header.Get("Origin")
-	referer := r.Header.Get("Referer")
-	if origin == "" && referer == "" {
-		http.Error(w, "missing Origin and Referer", http.StatusForbidden)
-		return false
-	}
-	// popupBaseURL is empty only in tests that stand up the mux without a
-	// bound listener; the per-approval session cookie is the gate there
-	// and the origin pin is disabled (mirrors checkDashboardAuth).
-	if popupBaseURL != "" {
-		if origin != "" && !originMatchesBase(origin, popupBaseURL) {
-			http.Error(w, "Origin mismatch", http.StatusForbidden)
-			return false
-		}
-		if origin == "" && !originMatchesBase(referer, popupBaseURL) {
-			http.Error(w, "Referer mismatch", http.StatusForbidden)
-			return false
-		}
-	}
-	return true
-}
-
 // snapshotRequestBody reads the request body, builds a bounded preview
 // string for the popup (JSON-prettified when it parses), and replaces
 // r.Body with a fresh reader holding the SAME bytes so the downstream
@@ -763,19 +494,6 @@ func snapshotRequestBody(r *http.Request) string {
 		out += "\n…[truncated]"
 	}
 	return out
-}
-
-func renderApprovalDoneCallback(w http.ResponseWriter, approved bool) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	verb := "Denied"
-	if approved {
-		verb = "Approved"
-	}
-	fmt.Fprintf(w, `<!doctype html>
-<html><head><meta charset="utf-8"><title>%s</title>
-<style>body{font-family:system-ui;max-width:640px;margin:4em auto;text-align:center;}</style>
-</head><body><h1>%s</h1>
-<p>You can close this tab.</p></body></html>`, verb, verb)
 }
 
 // openBrowser launches the platform's default browser pointed at url.

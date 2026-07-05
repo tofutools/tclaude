@@ -54,7 +54,7 @@ func freeTCPPort(t *testing.T) int {
 
 // A random port (0) always binds and yields a loopback URL.
 func TestStartPopupServer_RandomPort(t *testing.T) {
-	srv, url, err := startPopupServer(0)
+	srv, url, err := startPopupServer(defaultDashboardBind, 0)
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 	t.Cleanup(func() { _ = srv.Close() })
@@ -65,7 +65,7 @@ func TestStartPopupServer_RandomPort(t *testing.T) {
 // the feature exists to provide.
 func TestStartPopupServer_FixedPort(t *testing.T) {
 	port := freeTCPPort(t)
-	srv, url, err := startPopupServer(port)
+	srv, url, err := startPopupServer(defaultDashboardBind, port)
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 	t.Cleanup(func() { _ = srv.Close() })
@@ -81,7 +81,7 @@ func TestStartPopupServer_PortInUseIsFatal(t *testing.T) {
 	t.Cleanup(func() { _ = occupied.Close() })
 	port := occupied.Addr().(*net.TCPAddr).Port
 
-	srv, url, err := startPopupServer(port)
+	srv, url, err := startPopupServer(defaultDashboardBind, port)
 	require.Error(t, err, "binding an in-use port must fail, not fall back")
 	assert.Nil(t, srv)
 	assert.Empty(t, url)
@@ -89,7 +89,7 @@ func TestStartPopupServer_PortInUseIsFatal(t *testing.T) {
 
 // An out-of-range port likewise fails the bind rather than degrading.
 func TestStartPopupServer_OutOfRangeIsFatal(t *testing.T) {
-	srv, url, err := startPopupServer(70000)
+	srv, url, err := startPopupServer(defaultDashboardBind, 70000)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 	assert.Empty(t, url)

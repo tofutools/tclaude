@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -34,6 +35,7 @@ type serveParams struct {
 	Terminal             string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 	AgentCloneCooldown   string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
 	DashboardPort        int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
+	DashboardBind        string `long:"dashboard-bind" optional:"true" help:"Host/interface the dashboard + approval listener binds to (host only; set the port via --dashboard-port). Default 127.0.0.1 = loopback only. Set e.g. 0.0.0.0 or :: to expose the local dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken bool   `long:"persist-operator-token" help:"Persist the operator token across restarts (OS keychain when available, else a 0600 ~/.tclaude/operator_token file) instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 }
 
@@ -140,12 +142,22 @@ func runServe(p *serveParams) error {
 	// bookmark / reverse-proxy / firewall rule the fixed port was set up
 	// for). An out-of-range port likewise fails the bind and aborts here.
 	dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
-	popupSrv, popupURL, err := startPopupServer(dashPort)
+	dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
+	dashboardBindHost = dashBind
+	popupSrv, popupURL, err := startPopupServer(dashBind, dashPort)
 	if err != nil {
-		return fmt.Errorf("start dashboard/approval-popup server (port source: %s): %w", dashPortSrc, err)
+		return fmt.Errorf("start dashboard/approval-popup server (port source: %s, bind source: %s): %w", dashPortSrc, dashBindSrc, err)
 	}
 	popupBaseURL = popupURL
-	slog.Info("dashboard loopback port", "resolved", dashPort, "source", dashPortSrc, "url", popupBaseURL)
+	if isLoopbackHost(dashBind) {
+		slog.Info("dashboard listener", "bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
+	} else {
+		// A non-loopback bind is network-exposed — call it out loudly so an
+		// accidental 0.0.0.0 (no auth in front) can't hide in a quiet log line.
+		slog.Warn("dashboard listener bound NON-LOOPBACK — exposed on the network; put your own auth (reverse proxy / VPN) in front",
+			"bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
+		fmt.Printf("  ⚠ dashboard bound to %s (non-loopback) — network-exposed; front it with your own auth\n", dashBind)
+	}
 
 	// Operator token — positively authenticates the human operator on the
 	// CLI / Unix-socket path so the daemon can fail closed instead of
@@ -332,8 +344,12 @@ func runServe(p *serveParams) error {
 		slog.Info("agentd listening", "socket", sockPath, "popup", popupBaseURL)
 		fmt.Printf("tclaude agentd listening on %s\n", sockPath)
 		if popupBaseURL != "" {
-			fmt.Printf("  human-approval popup on %s/approve/<id>\n", popupBaseURL)
-			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (loopback %s)\n", popupBaseURL)
+			dashLoc := "loopback"
+			if !isLoopbackHost(dashboardBindHost) {
+				dashLoc = "bind " + dashboardBindHost
+			}
+			fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
+			fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
 		}
 		printOperatorTokenBanner(operatorTok, tokenSrc)
 		serveErrCh <- srv.Serve(ln)
@@ -560,6 +576,61 @@ func resolveDashboardPort(flagValue int, cfg *config.Config) (int, string) {
 		return cfg.Agent.DashboardPort, "config"
 	}
 	return 0, "default (random)"
+}
+
+// defaultDashboardBind is the loopback-only host the dashboard + approval
+// listener binds to unless the operator widens it. Keeping it here (rather
+// than inline "127.0.0.1") lets resolveDashboardBind and the loopback test
+// share the one canonical default.
+const defaultDashboardBind = "127.0.0.1"
+
+// dashboardBindHost is the resolved host the dashboard/popup listener bound
+// to, set in runServe before the origin checks run. It governs the
+// same-origin model: a loopback host keeps the strict popupBaseURL pin; a
+// non-loopback host switches the dashboard origin check to host-relative
+// (mirroring the remote listener), so a browser reaching the dashboard
+// through a LAN IP / proxy hostname still authenticates. Defaults to
+// loopback so tests and any pre-runServe reader see the safe value.
+var dashboardBindHost = defaultDashboardBind
+
+// resolveDashboardBind resolves the host the dashboard + human-approval
+// listener binds to. Priority, highest first:
+//
+//  1. the --dashboard-bind serve flag (when non-empty)
+//  2. the agent.dashboard_bind config.json field (when non-empty)
+//  3. "127.0.0.1" — loopback only (the default)
+//
+// A host is trimmed of surrounding whitespace; an all-whitespace value at a
+// tier is treated as unset and falls through. Returns the resolved host and
+// the tier it came from, for the startup log line + bind-error message. The
+// value is a HOST only; the port comes from resolveDashboardPort.
+func resolveDashboardBind(flagValue string, cfg *config.Config) (string, string) {
+	if v := strings.TrimSpace(flagValue); v != "" {
+		return v, "flag"
+	}
+	if cfg != nil && cfg.Agent != nil {
+		if v := strings.TrimSpace(cfg.Agent.DashboardBind); v != "" {
+			return v, "config"
+		}
+	}
+	return defaultDashboardBind, "default (loopback)"
+}
+
+// isLoopbackHost reports whether host binds only the local machine — the
+// empty/default host, the literal "localhost", the IPv4/IPv6 loopback literals,
+// or any IP in 127.0.0.0/8 or ::1. Any OTHER hostname (not a bare loopback IP
+// and not "localhost") is treated conservatively as NON-loopback: it may
+// resolve anywhere, so it takes the host-relative origin path rather than the
+// strict loopback pin (and trips the network-exposed startup warning).
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || host == defaultDashboardBind || host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func buildMux() http.Handler {

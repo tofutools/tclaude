@@ -6,18 +6,16 @@ import (
 )
 
 // Init tokens are short-lived, single-use capabilities that the
-// loopback HTTP server's cookie-exchange endpoints — the dashboard `/`
-// and the approval popup `/approve/{id}` — require before they hand
-// out a long-lived session cookie. They are minted only over channels
-// the human controls (the peer-cred-authenticated `/v1/dashboard/open`
-// endpoint, the in-process tray, and approval creation), never on an
-// unauthenticated GET.
+// dashboard HTTP server's cookie-exchange endpoint — the dashboard `/` —
+// requires before it hands out a long-lived session cookie. They are minted
+// only over channels the human controls (the peer-cred-authenticated
+// `/v1/dashboard/open` endpoint, the in-process tray, and approval creation's
+// auto-raise), never on an unauthenticated GET.
 //
-// Each token carries a scope, and consumeInitToken checks it: a token
-// minted for one purpose cannot be redeemed for another, so a popup
-// token can never unlock the dashboard's admin surface. The store is
-// in-memory only — a daemon restart drops every pending token and the
-// human just reopens whatever they were after.
+// Each token carries a scope, and consumeInitToken checks it: a token minted
+// for one purpose cannot be redeemed for another. The store is in-memory only
+// — a daemon restart drops every pending token and the human just reopens
+// whatever they were after.
 //
 // The token does NOT fully close the same-user `/proc`-scrape window:
 // the daemon embeds it in the URL it hands to the browser, so it lands
@@ -29,12 +27,6 @@ import (
 
 // initScopeDashboard scopes a token to the dashboard `/` exchange.
 const initScopeDashboard = "dashboard"
-
-// initScopeApprove scopes a token to one specific approval popup, so a
-// token scraped for approval A cannot be replayed against approval B.
-func initScopeApprove(approvalID string) string {
-	return "approve:" + approvalID
-}
 
 type initTokenEntry struct {
 	scope     string

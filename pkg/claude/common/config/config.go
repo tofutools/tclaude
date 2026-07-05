@@ -1448,6 +1448,30 @@ type AgentConfig struct {
 	// agentd.resolveDashboardPort.
 	DashboardPort int `json:"dashboard_port,omitempty"`
 
+	// DashboardBind sets the host/interface the agentd dashboard +
+	// human-approval listener binds to. It is a HOST only (no port — the
+	// port is DashboardPort / --dashboard-port); e.g. "127.0.0.1",
+	// "0.0.0.0", "::", or a specific interface IP.
+	//
+	// Empty / absent (the default) means "127.0.0.1" — loopback only, the
+	// historical behaviour: the dashboard + approval popup are reachable
+	// only from this machine. Set a non-loopback host to expose the local
+	// dashboard on the network so an EXTERNALLY-managed auth layer (a
+	// reverse proxy, VPN, mesh, Cloudflare Access, …) can front it. That
+	// is the intended use — the dashboard's own gate is only a cookie +
+	// operator token, so binding it wide WITHOUT your own auth in front
+	// would expose it to anyone who can reach the port. When bound
+	// non-loopback, agentd relaxes its same-origin check from the fixed
+	// loopback URL to host-relative (Origin.Host == request Host), the
+	// same model the remote (mTLS) listener uses, so a browser reaching
+	// the dashboard through any hostname/IP still works while the
+	// SameSite=Strict cookie keeps CSRF closed.
+	//
+	// The `agentd serve --dashboard-bind` flag overrides this. An invalid
+	// host fails daemon startup (and the config editor's Validate catches
+	// it earlier with a friendly message). See agentd.resolveDashboardBind.
+	DashboardBind string `json:"dashboard_bind,omitempty"`
+
 	// PersistOperatorToken opts the daemon into a STABLE operator token
 	// that survives restarts, instead of the default (a fresh random
 	// token minted in memory each `agentd serve` and lost on exit).
@@ -2109,6 +2133,18 @@ func Validate(c *Config) []string {
 		}
 		if a.DashboardPort < 0 || a.DashboardPort > 65535 {
 			errs = append(errs, fmt.Sprintf("agent.dashboard_port %d is out of range (1–65535, or 0/absent for a random free port)", a.DashboardPort))
+		}
+		if b := strings.TrimSpace(a.DashboardBind); b != "" {
+			// A HOST only — the port lives in dashboard_port. Catch the most
+			// common mistake (a host:port pasted in here) with a clean save-time
+			// message; a bare IPv6 like "::1" / "::" trips SplitHostPort's
+			// too-many-colons error and is correctly left alone. Anything else
+			// that can't be bound surfaces as a fatal net.Listen error at daemon
+			// startup (see agentd.startPopupServer), the same way an in-use
+			// dashboard_port does.
+			if _, _, err := net.SplitHostPort(b); err == nil {
+				errs = append(errs, fmt.Sprintf("agent.dashboard_bind %q must be a host only, without a port (set the port via agent.dashboard_port); e.g. \"127.0.0.1\", \"0.0.0.0\", or \"::\"", b))
+			}
 		}
 		if cn := a.ContextNudge; cn != nil {
 			// When the nudge is enabled, 0 is a footgun: Resolved()

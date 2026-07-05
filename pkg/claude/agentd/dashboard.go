@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -187,13 +188,16 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setDashboardSessionCookie(w)
-		// Preserve the cosmetic-theme param (?slop=1 / ?wizard=1) across the
-		// redirect — it's purely a client-side theme switch the dashboard JS
-		// reads from the URL, so it needs to survive the bare-path bounce.
-		// Anything else (init_token included) is intentionally dropped.
+		// Preserve the client-side URL state the dashboard JS reads on load —
+		// the cosmetic theme (?slop=1 / ?wizard=1) AND the deep-link focus
+		// (?tab=...&access_request=...) that the approval auto-raise / tray
+		// build — across the bare-path bounce that drops the one-shot
+		// init_token. Without this the "open the dashboard focused on THIS
+		// request" deep link is lost on exactly the token-carrying path it
+		// exists for. The init_token itself is intentionally dropped.
 		redirectTarget := r.URL.Path
-		if kv := dashboardThemeParamKV(r); kv != "" {
-			redirectTarget += "?" + kv
+		if q := dashboardRedirectQuery(r); q != "" {
+			redirectTarget += "?" + q
 		}
 		http.Redirect(w, r, redirectTarget, http.StatusSeeOther)
 		return
@@ -234,6 +238,31 @@ func dashboardThemeParamKV(r *http.Request) string {
 		return "wizard=1"
 	}
 	return ""
+}
+
+// dashboardRedirectQuery builds the query string the auth redirect carries
+// forward: the cosmetic theme param PLUS the deep-link focus (?tab=... &
+// access_request=...) the dashboard JS reads on load. Values are url.Values-
+// encoded, so a request-controlled tab / id can't inject a header or open-
+// redirect (it stays a percent-escaped query on our own path); the dashboard
+// JS treats an unknown tab / id as a harmless no-op. Returned without a leading
+// separator, or "" when nothing needs carrying.
+func dashboardRedirectQuery(r *http.Request) string {
+	q := r.URL.Query()
+	v := url.Values{}
+	if kv := dashboardThemeParamKV(r); kv != "" {
+		// kv is one of a fixed internal set ("slop=1"/"wizard=1"); split once.
+		if k, val, ok := strings.Cut(kv, "="); ok {
+			v.Set(k, val)
+		}
+	}
+	if tab := q.Get("tab"); tab != "" {
+		v.Set("tab", tab)
+	}
+	if ar := q.Get("access_request"); ar != "" {
+		v.Set("access_request", ar)
+	}
+	return v.Encode()
 }
 
 // setDashboardSessionCookie writes the long-lived dashboard session
@@ -332,6 +361,12 @@ func originMatchesBase(value, base string) bool {
 // to tests that register the mux directly; there the operator-token
 // compare is still the real gate, so this stays belt-and-braces.
 func checkLoginOrigin(r *http.Request) bool {
+	// Non-loopback bind: the browser reaches the dashboard through some
+	// other hostname/proxy (not the fixed loopback URL), so pin host-relative
+	// the way the remote listener does. See dashboardHostRelativeOrigin.
+	if !isLoopbackHost(dashboardBindHost) {
+		return dashboardHostRelativeOrigin(r)
+	}
 	if popupBaseURL == "" {
 		return true
 	}
@@ -344,6 +379,37 @@ func checkLoginOrigin(r *http.Request) bool {
 	// Neither header present: a real same-origin browser form POST
 	// always sends at least one, so treat the absence as suspicious.
 	return false
+}
+
+// dashboardHostRelativeOrigin is the same-origin check used when the dashboard
+// is bound NON-loopback: the Origin (or, absent it, Referer) header's host must
+// equal the host the request was sent to (r.Host). A direct analogue of the
+// remote listener's remoteSameOrigin (remote_server.go), but with the fixed
+// loopback base-URL pin dropped — the operator exposed the dashboard behind
+// their own hostname/proxy, which agentd can't know in advance, so it can only
+// require internal consistency. The SameSite=Strict dashboard cookie remains
+// the primary CSRF defense (a cross-site context never sends it); rejecting a
+// cross-host Origin here is belt-and-braces. Neither header present is treated
+// as suspicious — a real browser form POST / same-origin fetch always sends one.
+func dashboardHostRelativeOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		return originHostMatchesRequest(o, r.Host)
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return originHostMatchesRequest(ref, r.Host)
+	}
+	return false
+}
+
+// originHostMatchesRequest reports whether an Origin/Referer header value's
+// host equals reqHost (the Host the request was sent to). url.Parse pulls the
+// host out of both a bare Origin (scheme://host) and a Referer (scheme://host/path).
+func originHostMatchesRequest(value, reqHost string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Host == reqHost
 }
 
 // handleDashboardOpen mints a fresh dashboard init token and returns
@@ -430,10 +496,10 @@ func autoLaunchDashboard(theme string) {
 	fmt.Println("  opening dashboard in your browser…")
 }
 
-// checkDashboardAuth mirrors checkPopupAuth: cookie value match +
-// Origin/Referer pinned to the popup base URL. Refuses every
-// /api/* call when the dashboard token isn't set (cryptographic
-// randomness failed at startup).
+// checkDashboardAuth gates every /api/* call: dashboard cookie value match +
+// Origin/Referer pinned to the popup base URL (or host-relative when bound
+// non-loopback). Refuses every /api/* call when the dashboard token isn't set
+// (cryptographic randomness failed at startup).
 func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 	// The remote (mTLS + passphrase) listener authenticates at its own
 	// boundary (remoteAuthMiddleware) and tags the request; such requests
@@ -466,6 +532,16 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 	c, err := r.Cookie(dashboardCookieName)
 	if err != nil || c.Value != dashboardSessionToken {
 		return false, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
+	}
+	// Non-loopback bind: host-relative same-origin (mirror the remote
+	// listener), since the browser reaches us through a hostname/proxy the
+	// fixed loopback pin would never match. Cookie above + SameSite=Strict
+	// stay the primary gate.
+	if !isLoopbackHost(dashboardBindHost) {
+		if !dashboardHostRelativeOrigin(r) {
+			return false, http.StatusForbidden, "Origin/Referer host mismatch"
+		}
+		return true, http.StatusOK, ""
 	}
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
@@ -559,6 +635,15 @@ type snapshotPayload struct {
 	// MessagesUnread is the count of unread ones, driving the tab badge.
 	Messages       []dashboardHumanMessage `json:"messages"`
 	MessagesUnread int                     `json:"messages_unread"`
+	// AccessRequests are the in-flight human-approval requests — an agent is
+	// BLOCKED waiting for the operator to approve/deny a permission-gated
+	// action (formerly the loopback-only browser popup). They ride the poll so
+	// the Messages tab's "Access requests" folder + the attention overlay
+	// render off the live snapshot and work over the remote listener too.
+	// AccessRequestsPending is the count, driving the blinking tab badge +
+	// overlay. Empty slice (not nil) so JS .map()/.length are safe.
+	AccessRequests        []dashboardAccessRequest `json:"access_requests"`
+	AccessRequestsPending int                      `json:"access_requests_pending"`
 	// Plugins are the human-managed external integrations on the
 	// Plugins tab, with their cached step-check statuses (the snapshot
 	// never runs the checks itself — see plugins.go). PluginsCatalog is
@@ -1805,6 +1890,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Profiles = collectProfilesSnapshot()
 	out.Roles = collectRolesSnapshot()
 	out.Messages, out.MessagesUnread = buildHumanMessagesSnapshot()
+	out.AccessRequests = approvals.dashboardSnapshot()
+	// Only the actionable (pending) ones drive the blink/banner/badge — the
+	// list also carries recently-handled history, which must not count.
+	out.AccessRequestsPending = approvals.pendingCount()
 	var pluginsErr error
 	out.Plugins, out.PluginsWarn, pluginsErr = collectPluginsSnapshot()
 	if pluginsErr != nil {

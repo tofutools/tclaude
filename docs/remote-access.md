@@ -139,6 +139,64 @@ at the same privilege tier. The passphrase / `.p12` passwords are entered into
 the form, used immediately, and never stored beyond the existing `0600`
 material on disk.
 
+## Alternative: expose the loopback dashboard behind your OWN auth
+
+The mTLS + passphrase listener above is the batteries-included path. But
+sometimes you already have an authentication layer you'd rather reuse — a
+reverse proxy with SSO, a mesh VPN, Cloudflare Access, an identity-aware proxy.
+In that case it's more natural to expose the **local** dashboard endpoint and
+let your layer gate it, than to enable the second (mTLS) listener.
+
+For that, agentd lets the loopback dashboard bind to a **non-loopback host**:
+
+| Priority | Where | Value |
+|----------|-------|-------|
+| 1 (highest) | `tclaude agentd serve --dashboard-bind <host>` | e.g. `0.0.0.0` |
+| 2 | `agent.dashboard_bind` in `config.json` | e.g. `0.0.0.0` |
+| 3 (default) | — | `127.0.0.1` (loopback only) |
+
+```jsonc
+{
+  "agent": {
+    "dashboard_bind": "0.0.0.0",   // host ONLY — the port is dashboard_port
+    "dashboard_port": 8080
+  }
+}
+```
+
+It's a **host**, not a `host:port` — the port stays `dashboard_port` /
+`--dashboard-port`. `0.0.0.0` (or `::`) exposes every interface; a specific IP
+binds one. agentd logs a loud warning at startup whenever it binds non-loopback.
+
+From the dashboard, set it in the **Config tab → Agent coordination →
+"Dashboard bind"** field (right below "Dashboard port"). **Don't confuse it with
+the Config tab's separate "Remote access → listen interface" field: that one is
+`remote_access.bind`, the mTLS listener above, not this.**
+
+> ⚠ **This puts the control plane on the network with only a cookie + operator
+> token in front of it.** Only ever set it when your own auth (reverse proxy /
+> VPN / IAP) actually fronts the port — otherwise anyone who can reach it can
+> spawn/kill agents and approve permissions. If you want the daemon itself to do
+> the authenticating, use the mTLS + passphrase listener above instead.
+
+When bound non-loopback, agentd relaxes its same-origin CSRF check from the
+fixed loopback URL to **host-relative** (the request's `Origin` host must match
+the host it was served on) — the same model the mTLS listener uses — so the
+dashboard works through whatever hostname your proxy presents, while the
+`SameSite=Strict` session cookie keeps cross-site requests out. Default
+(loopback) behaviour is unchanged.
+
+## Human approvals over remote access
+
+When an agent hits a permission-gated action it can't self-satisfy (an
+`--ask-human` call, a cross-agent action), it **blocks** waiting for you to
+decide. These requests appear in the dashboard's **Messages tab** under a
+**🔐 Access requests** folder — each an Approve / Decline / Always-allow card —
+and a blinking badge plus a top banner flag them from any tab. Because that
+surface rides the dashboard's own auth, approvals are actionable **remotely**
+over either path above (the mTLS listener or your own-auth bind), not just from
+a browser on the host. (This replaces the old host-only browser popup.)
+
 ## Caveats
 
 - Very old devices may not import the modern `.p12` encryption profile; a legacy

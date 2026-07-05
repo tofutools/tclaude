@@ -1,11 +1,8 @@
 package agentd
 
 import (
-	"net/http/httptest"
 	"runtime"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -32,40 +29,6 @@ func TestClipboardApprovalPreview(t *testing.T) {
 	// An empty text field: declined (nothing meaningful to preview).
 	_, ok = clipboardApprovalPreview(PermHumanClipboard, `{"text":""}`)
 	assert.False(t, ok, "empty text should be declined")
-}
-
-// TestRenderApprovalPage_EscapesClipboardContent proves the injection gate:
-// untrusted clipboard text rendered into the approval page is HTML-escaped,
-// so agent output can't inject markup/script into the human's popup. The
-// custom "Clipboard content" label also appears.
-func TestRenderApprovalPage_EscapesClipboardContent(t *testing.T) {
-	const evil = `</pre><script>alert('xss')</script>`
-	req := &approvalRequest{
-		id:          "abc123",
-		perm:        PermHumanClipboard,
-		convID:      "cccc-1111",
-		convTitle:   "worker",
-		method:      "POST",
-		path:        "/v1/clipboard",
-		bodyPreview: evil,
-		bodyLabel:   "Clipboard content",
-		timeout:     30 * time.Second,
-	}
-
-	rec := httptest.NewRecorder()
-	renderApprovalPage(rec, req)
-	body := rec.Body.String()
-
-	assert.NotContains(t, body, "<script>alert('xss')</script>",
-		"raw agent markup must NOT reach the page verbatim")
-	assert.Contains(t, body, "&lt;script&gt;",
-		"the script tag must be HTML-escaped")
-	assert.Contains(t, body, "Clipboard content",
-		"the clipboard body row carries its dedicated label")
-	// The label itself is also escaped through html.EscapeString; a plain
-	// label survives unchanged.
-	assert.True(t, strings.Contains(body, "<dt>Clipboard content</dt>"),
-		"expected the labelled body row, got:\n%s", body)
 }
 
 // TestLinuxClipboardTools_FixedArgsAndOrder locks the command-injection
