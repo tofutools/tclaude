@@ -6758,6 +6758,63 @@ body.wizard #cleanup-modal #cleanup-submit.danger:hover {
 }
 body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
 
+/* ─── Wizard delete group — drag-to-banish group preview ────────────
+   The delete-group preview reuses the shared .cleanup-modal shell and sits
+   next to the retire-preview / delete-retired / worktree-cleanup overlays, so
+   every rule is scoped to #delete-group-modal. It mirrors #cleanup-modal's
+   arcane surface and danger submit while leaving the per-row decisions honest:
+   "retire + stop" vs "detach only" stays literal. */
+.delete-group-copy-wizard { display: none; }
+body.wizard #delete-group-modal .delete-group-copy-regular { display: none; }
+body.wizard #delete-group-modal .delete-group-copy-wizard { display: inline; }
+body.wizard #delete-group-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #delete-group-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #delete-group-modal .cleanup-hint { color: #b39ddb; }
+body.wizard #delete-group-modal .cleanup-hint.danger { color: #f0a868; }
+body.wizard #delete-group-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #delete-group-modal .cleanup-count { color: #e7d9f5; }
+body.wizard #delete-group-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #delete-group-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #delete-group-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #delete-group-modal .cleanup-row .id,
+body.wizard #delete-group-modal .cleanup-row .muted { color: #b39ddb; }
+body.wizard #delete-group-modal .cleanup-badge { border-color: #3a2a63; color: #b39ddb; }
+body.wizard #delete-group-modal .cleanup-empty { color: #b39ddb; }
+body.wizard #delete-group-modal .delete-agent-wt { color: #e7d9f5; }
+body.wizard #delete-group-modal .delete-agent-wt .wt-note { color: #b39ddb; }
+body.wizard #delete-group-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #delete-group-modal .modal-buttons button:not(#delete-group-submit):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #delete-group-modal #delete-group-submit {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
+  border: 2px solid #f0883e;
+  color: #f3e6c0;
+  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+body.wizard #delete-group-modal #delete-group-submit:hover {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
+  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard #delete-group-modal #delete-group-submit:disabled { opacity: 0.6; }
+
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
    single agent (termDirModal in refresh.js): pick Current / Worktree / Launch

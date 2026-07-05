@@ -56,7 +56,8 @@ import { $, $$ } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast } from './refresh.js';
+import { refresh, toast, openDeleteGroupModal } from './refresh.js';
+import { isWizardActive } from './slop.js';
 
 const GROUP_ORDER_KEY = 'tclaude.dash.groupOrder';
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
@@ -126,6 +127,10 @@ function reorderTarget(e) {
   const details = e.target.closest('details[data-group-key]');
   if (!details || details.classList.contains('group-virtual')) return null;
   return details;
+}
+
+function groupTrashTarget(e) {
+  return e.target.closest('#dnd-trash');
 }
 
 // clearDropMarkers strips the insertion-line + nest-target classes from every
@@ -285,6 +290,8 @@ function endGroupDrag() {
   groupDragName = null;
   $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
   clearDropMarkers();
+  const trash = $('#dnd-trash');
+  if (trash) trash.classList.remove('show', 'dnd-drop-over');
   reorderPill(null, null);
 }
 
@@ -332,6 +339,8 @@ function bindGroupReorder() {
     e.dataTransfer.effectAllowed = 'move';
     const details = handle.closest('details[data-group-key]');
     if (details) details.classList.add('group-reorder-source');
+    const trash = $('#dnd-trash');
+    if (trash) trash.classList.add('show');
   });
 
   // dragend is the guaranteed reset for a CANCELLED or no-target drag
@@ -344,6 +353,15 @@ function bindGroupReorder() {
 
   document.addEventListener('dragover', (e) => {
     if (!groupReorderActive) return;
+    const trash = groupTrashTarget(e);
+    if (trash) {
+      clearDropMarkers();
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      trash.classList.add('dnd-drop-over');
+      reorderPill(e, isWizardActive() ? `↓ disband party ${groupDragName}` : `↓ delete group ${groupDragName}`);
+      return;
+    }
     const details = reorderTarget(e);
     clearDropMarkers();
     if (!details) {
@@ -377,8 +395,24 @@ function bindGroupReorder() {
     }
   });
 
+  document.addEventListener('dragleave', (e) => {
+    if (!groupReorderActive) return;
+    const trash = groupTrashTarget(e);
+    if (!trash) return;
+    if (trash.contains(e.relatedTarget)) return;
+    trash.classList.remove('dnd-drop-over');
+  });
+
   document.addEventListener('drop', (e) => {
     if (!groupReorderActive) return;
+    const trash = groupTrashTarget(e);
+    if (trash) {
+      e.preventDefault();
+      const dragName = groupDragName;
+      endGroupDrag();
+      openDeleteGroupModal(dragName);
+      return;
+    }
     const details = reorderTarget(e);
     if (!details) return;
     e.preventDefault();
