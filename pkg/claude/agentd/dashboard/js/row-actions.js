@@ -650,6 +650,27 @@ function bindRowActions() {
           toast(`opened pending spawn: ${label}`);
           return;
         }
+        case 'delete-pending': {
+          // Clean up a PENDING spawn (JOH-205) that is stuck behind a
+          // startup gate it will never clear — keyed on its LABEL, since a
+          // pending agent has no conv-id yet. Kills its tmux pane and drops
+          // its pending + session rows server-side. Destructive, so confirm
+          // first. The same op the drag-to-trash gesture invokes (dnd.js).
+          const confirmed = await confirmModal({
+            title: 'Delete pending spawn?',
+            body: 'This spawn never finished starting up — its pane is stuck behind a startup gate (untrusted dir, config prompt, or an OpenAI-auth modal). Deleting kills its pane and removes it from the pending list. It never became a real agent, so there is no conversation to keep.',
+            meta: label,
+            okLabel: 'Delete',
+          });
+          if (!confirmed) return;
+          const r = await fetch(`/api/pending/delete/${encodeURIComponent(label)}`, {
+            method: 'POST', credentials: 'same-origin',
+          });
+          if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
+          toast(`deleted pending spawn: ${label}`);
+          refresh();
+          return;
+        }
         case 'term-dir': {
           // Click on a CWD path cell — the cell already names one
           // specific directory, so open a terminal there straight
