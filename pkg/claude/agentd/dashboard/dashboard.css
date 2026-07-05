@@ -2784,6 +2784,9 @@ details.group-virtual .group-name { color: #8aa0b8; }
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
+.group-pending-title-wizard { display: none; }
+body.wizard .group-pending-title-regular { display: none; }
+body.wizard .group-pending-title-wizard { display: inline; }
 /* Tab-wide drag & drop hint — sits at the bottom of the groups tab,
    below every real and virtual group. Replaces the per-virtual-group
    one-liners that previously repeated on each virtual summary; the

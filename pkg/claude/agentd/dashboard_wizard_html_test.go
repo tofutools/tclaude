@@ -787,6 +787,24 @@ func TestDashboardHTML_WizardSummonButton(t *testing.T) {
 	must("body.wizard .spawn-btn {", "the spawn button gets the arcane chrome re-skin")
 }
 
+// TestDashboardHTML_WizardPendingSpawnTitle pins the wizard wording for the
+// temporary pending-spawns subgroup that appears inside a real group while a
+// dashboard Codex spawn is waiting for its first conv-id.
+func TestDashboardHTML_WizardPendingSpawnTitle(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`<span class="group-pending-title-regular">Pending spawns</span>`, "the default pending-spawns title span")
+	must(`<span class="group-pending-title-wizard">Currently summoning...</span>`, "the wizard pending-spawns title span")
+	must(".group-pending-title-wizard { display: none; }", "the wizard pending-spawns title is hidden by default")
+	must("body.wizard .group-pending-title-regular { display: none; }", "wizard hides the default pending-spawns title")
+	must("body.wizard .group-pending-title-wizard { display: inline; }", "wizard shows the summoning title")
+}
+
 // TestDashboardHTML_WizardPartyButton pins the wizard re-skin of the filter
 // bar's "+ new group" primary ("⚔ Form a party"): the per-theme label span
 // swap, the button re-skin, and the matching swap in the "No groups yet…"
