@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
@@ -120,9 +121,11 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 	assert.Nil(t, snap.Usage.FiveHour, "no 5h window when unavailable")
 	assert.Nil(t, snap.Usage.SevenDay, "no 7d window when unavailable")
 
-	// Case 2: a cached reading older than the 30-min staleness cap —
-	// a dead source must not keep showing hours-old figures.
-	stale := time.Now().Add(-31 * time.Minute)
+	// Case 2: a cached reading older than the idle-timeout grace — a truly
+	// dead source (no statusline, the usage poll failing for days) must
+	// eventually stop showing days-old figures. Just past the default 3-day
+	// window (config.DefaultUsageIdleTimeout).
+	stale := time.Now().Add(-config.DefaultUsageIdleTimeout - time.Hour)
 	seedUsageCache(t, usageapi.CachedUsage{
 		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: time.Now().Add(time.Hour)},
 		SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: time.Now().Add(48 * time.Hour)},
@@ -130,7 +133,22 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 		LastAttemptAt: stale,
 	})
 	snap = fetchDashSnapshot(t, mux)
-	assert.False(t, snap.Usage.Available, "unavailable when the cached reading is stale")
+	assert.False(t, snap.Usage.Available, "unavailable when the cached reading is older than the idle timeout")
+
+	// Case 2b: the same reading, but only a few hours old — well within the
+	// 3-day grace. It must STILL show, off the last-known figures, even
+	// though the live source (statusline + usage poll) has gone quiet. This
+	// is the "hiding too soon" fix: an overnight idle spell plus a rotated
+	// OAuth token used to blank the readout within 30 minutes.
+	fresh := time.Now().Add(-6 * time.Hour)
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: time.Now().Add(time.Hour)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 40, ResetsAt: time.Now().Add(48 * time.Hour)},
+		FetchedAt:     fresh,
+		LastAttemptAt: fresh,
+	})
+	snap = fetchDashSnapshot(t, mux)
+	assert.True(t, snap.Usage.Available, "still available hours after the source went quiet, within the idle grace")
 
 	// Case 3: a fresh cache entry carrying no rolling-limit buckets.
 	now := time.Now()
@@ -258,6 +276,37 @@ func TestDashboardUsage_ShowsBothWindowsOrNeither(t *testing.T) {
 	require.NotNil(t, snap.Usage.SevenDay, "7d bar present at 0%")
 	assert.Equal(t, 0.0, snap.Usage.SevenDay.Pct, "7d shows a genuine 0%")
 	assert.NotEmpty(t, snap.Usage.SevenDay.Remaining, "live 0% 7d keeps its remaining-time hint")
+}
+
+// Scenario: the operator's "hiding too soon" report. The weekly (7d) bucket
+// still holds real usage but arrives WITHOUT a resets_at — the Anthropic
+// usage API commonly drops that field once a session goes quiet — while the
+// 5h window has reset overnight. The old gate required a future reset on
+// SOME window and hid the whole Claude readout, leaving only Codex on the
+// top bar. It must now stay: a reset-less window with a nonzero percent is
+// live usage and keeps the readout up. Drives the fix at the real
+// /api/snapshot surface.
+func TestDashboardUsage_SevenDayWithoutResetStillShows(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	now := time.Now()
+	// 5h reset overnight (elapsed); 7d carries a real percent but no reset.
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 60, ResetsAt: now.Add(-3 * time.Hour)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 42}, // zero ResetsAt
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+	snap := fetchDashSnapshot(t, mux)
+	require.True(t, snap.Usage.Available, "readout stays up on a reset-less 7d window that still has usage")
+	require.NotNil(t, snap.Usage.SevenDay, "7d bar present")
+	assert.Equal(t, 42.0, snap.Usage.SevenDay.Pct, "7d shows its real percent")
+	require.NotNil(t, snap.Usage.FiveHour, "5h bar paired in, at 0%")
+	assert.Equal(t, 0.0, snap.Usage.FiveHour.Pct, "reset 5h reads 0%, not its stale percent")
 }
 
 // seedCostSession writes one sessions row carrying a recorded API

@@ -18,12 +18,14 @@ import (
 // same staleness cap the Claude readout uses.
 
 // codexUsageMaxAge bounds how far back a rollout snapshot may be observed and
-// still feed the readout. Unlike the Claude usage cap (usageStaleAfter, 30
-// min) — which is safe only because a network poller keeps that cache fresh
-// regardless of activity — Codex usage comes from rollouts that update ONLY
-// when Codex runs. A 30-min cap would make the Codex line vanish 30 min after
-// the last Codex turn, hiding a weekly figure that is still entirely valid.
-// So the cap is the weekly window length plus margin: a snapshot older than
+// still feed the readout. The Claude usage cap (config.ResolvedUsageIdleTimeout,
+// default 3 days) measures staleness from FetchedAt, which a network poller —
+// or Claude Code's statusline — advances independently of activity. Codex
+// usage instead comes from rollouts that update ONLY when Codex runs, so its
+// cap is measured from the last rollout write and must be generous: too short
+// and the Codex line would vanish that long after the last Codex turn, hiding
+// a weekly figure that is still entirely valid. So the cap is the weekly
+// window length plus margin: a snapshot older than
 // that can only describe windows that have themselves already reset (caught
 // per-window by codexUsageWindowFor). Within that span, each window's own
 // resets_at is the real expiry, so the readout persists across idle periods

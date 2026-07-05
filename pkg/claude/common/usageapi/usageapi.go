@@ -815,6 +815,18 @@ func carryForwardWindows(fresh, prev *CachedUsage, now time.Time) {
 // own (much shorter) reset.
 func carryForwardWindow(fresh, prev *CachedBucket, now time.Time) *CachedBucket {
 	if fresh != nil {
+		// A fresh reading wins — but the Anthropic weekly bucket sometimes
+		// arrives with a real percent and NO (or an already-elapsed)
+		// resets_at, which would overwrite a previously-cached reset that is
+		// still in the future for the same window. Don't downgrade: keep the
+		// fresh percent but graft the previous window's still-future reset,
+		// so the bar keeps its remaining-time hint and still expires itself
+		// when that period actually ends. When the fresh reading carries its
+		// own future reset, or there's no better prior reset to borrow, the
+		// fresh bucket is returned untouched.
+		if !fresh.ResetsAt.After(now) && prev != nil && prev.ResetsAt.After(now) {
+			return &CachedBucket{Pct: fresh.Pct, ResetsAt: prev.ResetsAt}
+		}
 		return fresh
 	}
 	if prev == nil {

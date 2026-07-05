@@ -97,6 +97,13 @@ type Config struct {
 	// (`session ls -w`, `conv ls -w`, `agent inbox -w`) — see TUIConfig.
 	// Absent → the default scheme.
 	TUI *TUIConfig `json:"tui,omitempty"`
+
+	// Usage tunes the dashboard's subscription-usage readout (the top-bar
+	// 5h/7d bars) — currently just how long the last-known Claude reading
+	// stays visible after the live source goes dark. Absent / blank falls
+	// back to the built-in default (DefaultUsageIdleTimeout); see
+	// ResolvedUsageIdleTimeout.
+	Usage *UsageConfig `json:"usage,omitempty"`
 }
 
 // TUI color schemes — config tui.color_scheme. Picks the color palette the
@@ -691,6 +698,52 @@ func (c *Config) ResolvedCostFactor() float64 {
 		return maxCostEstimateFactor
 	}
 	return f
+}
+
+// UsageConfig tunes the dashboard's subscription-usage readout (the 5h/7d
+// bars in the top bar).
+type UsageConfig struct {
+	// IdleTimeout is how long the last-known Claude usage reading stays
+	// visible after fresh data stops arriving, as a Go duration string
+	// ("72h", "30m", "2h30m"). The Claude readout is fed by two sources:
+	// Claude Code's statusline callback (only while a session runs) and a
+	// periodic Anthropic usage-API poll — and that poll commonly starts
+	// failing a few hours after the last session, when the OAuth token has
+	// rotated. A failed poll preserves the cached figures but does NOT
+	// advance their freshness clock, so a short cap would hide a perfectly
+	// good 7d (weekly) reading the same night, leaving only Codex on the top
+	// bar. This is the grace window: keep showing the last-known reading for
+	// this long since the last successful update, then degrade to
+	// "usage: n/a". Empty / absent → DefaultUsageIdleTimeout; a value that
+	// doesn't parse, or is ≤ 0, is rejected by Validate. See
+	// ResolvedUsageIdleTimeout.
+	IdleTimeout string `json:"idle_timeout,omitempty"`
+}
+
+// DefaultUsageIdleTimeout is how long a last-known Claude usage reading
+// stays on the dashboard after its live source goes dark, when config.json
+// pins no usage.idle_timeout. Three days comfortably outlives an overnight
+// idle spell plus a rotated OAuth token (the common reason the usage poll
+// stops refreshing), so the 5h/7d bars persist off the last good reading
+// instead of collapsing to "usage: n/a" — while still eventually clearing a
+// genuinely dead source.
+const DefaultUsageIdleTimeout = 72 * time.Hour
+
+// ResolvedUsageIdleTimeout returns the effective grace window for the
+// dashboard's Claude usage readout: the configured usage.idle_timeout when
+// it parses to a positive duration, else DefaultUsageIdleTimeout. Nil-safe
+// on the receiver, and forgiving of a blank / garbage value (Validate is
+// what surfaces a bad string to the human; the resolver never leaves the
+// readout unbounded).
+func (c *Config) ResolvedUsageIdleTimeout() time.Duration {
+	if c == nil || c.Usage == nil || c.Usage.IdleTimeout == "" {
+		return DefaultUsageIdleTimeout
+	}
+	d, err := time.ParseDuration(c.Usage.IdleTimeout)
+	if err != nil || d <= 0 {
+		return DefaultUsageIdleTimeout
+	}
+	return d
 }
 
 // ConvWatchConfig holds the watch view's persisted UI preferences.
@@ -2094,6 +2147,17 @@ func Validate(c *Config) []string {
 	if cc := c.Cost; cc != nil && cc.EstimateFactor != nil {
 		if f := *cc.EstimateFactor; f <= 0 || f > maxCostEstimateFactor {
 			errs = append(errs, fmt.Sprintf("cost.estimate_factor %g is out of range (>0 and ≤%g) — it is a display multiplier, e.g. 1.1 for +10%%", f, maxCostEstimateFactor))
+		}
+	}
+
+	// usage.idle_timeout is a Go duration string; reject anything that
+	// doesn't parse or isn't positive so the human is told, rather than
+	// letting ResolvedUsageIdleTimeout silently fall back to the default.
+	if uc := c.Usage; uc != nil && uc.IdleTimeout != "" {
+		if d, err := time.ParseDuration(uc.IdleTimeout); err != nil {
+			errs = append(errs, fmt.Sprintf("usage.idle_timeout %q is not a valid duration (e.g. %q for 3 days, or %q) — it is how long the last-known usage reading stays on the dashboard after its source goes idle", uc.IdleTimeout, "72h", "30m"))
+		} else if d <= 0 {
+			errs = append(errs, fmt.Sprintf("usage.idle_timeout %q must be positive — it is how long the last-known usage reading stays on the dashboard after its source goes idle", uc.IdleTimeout))
 		}
 	}
 

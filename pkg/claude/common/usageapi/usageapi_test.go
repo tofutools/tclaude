@@ -605,6 +605,36 @@ func TestCarryForwardWindow(t *testing.T) {
 	}
 }
 
+// The clobber guard: when a fresh reading carries a real percent but no
+// usable reset (the Anthropic weekly bucket often drops resets_at), it must
+// NOT erase a previously-cached reset that is still in the future — that
+// would blank the bar's remaining-time hint and lose the window's real
+// expiry. The fresh percent wins; the prior future reset is grafted on.
+func TestCarryForwardWindow_KeepsFutureResetOverResetlessFresh(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	prev := &CachedBucket{Pct: 35, ResetsAt: now.Add(4 * 24 * time.Hour)}
+
+	// Fresh: real percent, no reset at all.
+	freshNoReset := &CachedBucket{Pct: 36}
+	got := carryForwardWindow(freshNoReset, prev, now)
+	require.NotNil(t, got)
+	assert.Equal(t, 36.0, got.Pct, "fresh percent wins")
+	assert.Equal(t, prev.ResetsAt, got.ResetsAt, "prior future reset grafted on")
+
+	// Fresh: real percent, an already-elapsed reset — also downgraded, so
+	// the same graft applies.
+	freshPastReset := &CachedBucket{Pct: 37, ResetsAt: now.Add(-time.Hour)}
+	got = carryForwardWindow(freshPastReset, prev, now)
+	require.NotNil(t, got)
+	assert.Equal(t, 37.0, got.Pct, "fresh percent wins")
+	assert.Equal(t, prev.ResetsAt, got.ResetsAt, "prior future reset grafted over the elapsed one")
+
+	// But when the prior reset is ALSO gone, there's nothing better to
+	// borrow — the fresh bucket is returned untouched.
+	got = carryForwardWindow(freshNoReset, &CachedBucket{Pct: 30, ResetsAt: now.Add(-time.Hour)}, now)
+	require.Same(t, freshNoReset, got, "no future prior reset to borrow → fresh returned as-is")
+}
+
 // A subsequent statusline render that omits the 7d (weekly) bucket — the
 // API drops it when it has nothing fresh to report — must not blank out
 // the dashboard's 7d bar: UpdateFromStatusLine carries the last-known

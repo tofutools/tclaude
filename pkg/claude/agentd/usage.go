@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
@@ -17,13 +18,22 @@ import (
 // even when no Claude Code statusbar is running to populate it.
 const usagePollInterval = 3 * time.Minute
 
-// usageStaleAfter caps how old a cached usage reading may be before the
-// dashboard treats it as unavailable. Comfortably larger than
-// usagePollInterval so a healthy poller never trips it, yet small
-// enough that a genuinely dead source (usage API down, no statusbar
-// running) degrades to a muted "n/a" rather than showing figures from
-// hours ago.
-const usageStaleAfter = 30 * time.Minute
+// usageStaleAfter is the fallback cap on how old a cached usage reading may
+// be before the dashboard treats it as unavailable, used only for the
+// defensive idleTimeout <= 0 branch in collectUsageSnapshot. The live
+// snapshot path passes the configured grace instead —
+// config.ResolvedUsageIdleTimeout, default config.DefaultUsageIdleTimeout
+// (3 days).
+//
+// The cap can't be tiny: the Claude readout is fed by Claude Code's
+// statusline callback (only while a session runs) and a periodic Anthropic
+// usage-API poll — and that poll commonly starts failing a few hours after
+// the last session, once the OAuth token has rotated. A failed poll keeps
+// the cached figures but does NOT advance their FetchedAt clock (see
+// usageapi.stampLastAttempt), so an aggressive cap would hide a perfectly
+// good weekly reading the same night, leaving only Codex on the top bar —
+// the "hiding too soon" the grace window fixes.
+const usageStaleAfter = config.DefaultUsageIdleTimeout
 
 // dashboardUsage is the /api/snapshot view of the account's
 // subscription usage limits — one readout for the whole dashboard, not
@@ -113,10 +123,13 @@ func refreshUsage() {
 // has gone stale, or carries no live rolling-limit window at all (an
 // API-billing account, or a subscription account idle long enough that
 // both windows have reset).
-func collectUsageSnapshot() dashboardUsage {
+func collectUsageSnapshot(idleTimeout time.Duration) dashboardUsage {
 	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost(), Codex: collectCodexUsageSnapshot()}
+	if idleTimeout <= 0 {
+		idleTimeout = usageStaleAfter
+	}
 	cached := usageapi.Peek()
-	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > usageStaleAfter {
+	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > idleTimeout {
 		return out
 	}
 	now := time.Now()
@@ -132,28 +145,40 @@ func collectUsageSnapshot() dashboardUsage {
 	return out
 }
 
-// liveUsageWindow returns the wire shape for a cached bucket only while it
-// still represents the current rolling period: present, and with a reset
-// that lies in the future. A future reset is what makes a window "live" —
-// a window the account simply hasn't spent into yet reads as a genuine 0%
-// rather than disappearing, so a quiet-but-current account shows "0%"
-// instead of "n/a" (the bug this gate caused when both windows were idle).
-// An absent bucket, or one whose reset has already elapsed (or carries no
-// reset at all), returns nil — the caller then renders it as a 0% bar (see
-// pairUsageWindows), so e.g. a 5h window whose 5 hours have elapsed reads
-// as 0 rather than its now-stale percentage. Keying liveness on the reset
-// (not on a nonzero percent) is also what self-corrects that just-reset
-// window the instant it resets, ahead of the 3-minute usage poll that
-// drops it from the cache; in practice every nonzero reading carries a
-// future reset, so the two only diverge for exactly that stale case.
+// liveUsageWindow returns the wire shape for a cached bucket while it still
+// carries meaningful, current usage, or nil to drop it. A window is live
+// when either:
+//
+//   - its reset lies in the future — the current rolling period, even at a
+//     genuine 0% the account simply hasn't spent into yet (so a quiet-but-
+//     current account shows "0%" instead of "n/a"); or
+//   - it has NO reset timestamp but a nonzero percent — real usage whose
+//     reset the source didn't report. The Anthropic weekly bucket in
+//     particular often arrives with a percent but an empty resets_at; the
+//     old "future reset required" gate discarded it, which is exactly why
+//     the whole Claude readout vanished overnight even though the week still
+//     had usage. This mirrors the Codex readout (codexUsageWindowFor), which
+//     likewise only drops a window on a KNOWN, elapsed reset.
+//
+// A bucket whose reset is KNOWN and already elapsed is dropped (returns
+// nil): its percent is now stale — the window reset — so the caller renders
+// it as a 0% bar (see pairUsageWindows), e.g. a 5h window whose 5 hours have
+// elapsed reads as 0 rather than its now-stale percentage. An absent bucket,
+// or a reset-less one at 0%, is likewise dropped (nothing to say).
 func liveUsageWindow(b *usageapi.CachedBucket, now time.Time) *usageWindow {
 	if b == nil {
 		return nil
 	}
-	if !b.ResetsAt.After(now) {
-		return nil
+	if b.ResetsAt.After(now) {
+		return usageWindowFor(b)
 	}
-	return usageWindowFor(b)
+	// No future reset. Keep it only when the reset is entirely absent yet
+	// there's real usage to show; a known-but-elapsed reset means the window
+	// genuinely reset and its percent is stale.
+	if b.ResetsAt.IsZero() && b.Pct > 0 {
+		return usageWindowFor(b)
+	}
+	return nil
 }
 
 // pairUsageWindows enforces the dashboard's "show both bars or neither"
