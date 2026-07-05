@@ -2584,6 +2584,7 @@ details.dnd-drop-over.dnd-effect-clone {
    outline mirrors the member-drop highlight so the "drop lands on this whole
    box" affordance reads the same across both drag features. */
 details[data-dnd-target-group].dock-drop-over,
+details[data-dnd-target-ungrouped].dock-drop-over,
 #groups-list.dock-drop-over {
   background: rgba(31, 49, 72, 0.4);
   outline: 2px dashed #58a6ff;
@@ -2599,6 +2600,7 @@ details[data-dnd-target-group].dock-drop-over,
    feature's selectors (NOT an unscoped body.wizard rule) — see the dock's
    anti-pin invariant. */
 body.wizard details[data-dnd-target-group].dock-drop-over,
+body.wizard details[data-dnd-target-ungrouped].dock-drop-over,
 body.wizard #groups-list.dock-drop-over {
   background: rgba(63, 45, 90, 0.42);
   outline-color: #a371f7;

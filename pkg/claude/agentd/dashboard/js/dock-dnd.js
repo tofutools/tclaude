@@ -9,11 +9,13 @@
 // same dialog. Dropping a TEMPLATE onto a group opens the unified summon dialog
 // (modal-templates.js) with a drop-mode chooser: reinforce the group in place,
 // or spawn a NEW group in its image (JOH-377). Dropping onto the groups-list
-// background (empty space, no group box) opens the relevant dialog with the item
-// prefilled but no group pinned (a plain spawn / a plain "new party from
-// circle" open). The VIRTUAL group boxes (Ungrouped / Retired / …) are inert —
-// "spawn into Retired" is meaningless — so only real groups and genuine empty
-// space are drop targets.
+// background (empty space, no group box) — OR onto the virtual UNGROUPED box,
+// which literally means "no group" and is the discoverable target for the same
+// gesture — opens the relevant dialog with the item prefilled but no group
+// pinned (a plain spawn with the group picker left open / a plain "new party
+// from circle" open). Every OTHER virtual group box (Retired / Conversations /
+// Generations / Pending) stays inert — "spawn into Retired" is meaningless — so
+// the drop targets are real groups, the Ungrouped box, and genuine empty space.
 //
 // Isolation from the two OTHER document-level DnD features is deliberate and
 // total, mirroring how group-reorder.js coexists with dnd.js:
@@ -70,17 +72,24 @@ const EMPTY_TARGET_SEL = '#groups-list';
 
 // dockTarget resolves what the cursor is over during a dock drag:
 //   { group: '<name>', box } when over a real group's box, or
-//   { group: '', box }       when over the groups-list empty space, or
+//   { group: '', box }       when over the Ungrouped box or the empty space, or
 //   null                     when over neither / an inert box (no drop here).
 // A group box wins over the surrounding groups-list (closest() walks up from
 // the cursor's element, hitting the inner <details> first).
 function dockTarget(e) {
   const box = e.target.closest(GROUP_TARGET_SEL);
   if (box) return { group: box.getAttribute('data-dnd-target-group') || '', box };
-  // A VIRTUAL group box (Ungrouped / Retired / … — all carry .group-virtual) is
-  // not a spawn target: "spawn into Retired" is meaningless. Treat it as inert
-  // so hovering it neither flashes the whole groups-list nor drops — the
-  // no-group plain spawn is reserved for the genuine empty gaps/background.
+  // The virtual UNGROUPED box means "no group", so it's a natural, discoverable
+  // target for a no-group spawn — same result as an empty-space drop (group '')
+  // but on an obvious surface rather than the background gaps. Light the box
+  // itself so the affordance reads. Checked BEFORE the generic .group-virtual
+  // inert guard below (the Ungrouped box carries both classes/attrs).
+  const ungrouped = e.target.closest('details[data-dnd-target-ungrouped]');
+  if (ungrouped) return { group: '', box: ungrouped };
+  // Every OTHER virtual group box (Retired / Conversations / Generations /
+  // Pending — all carry .group-virtual) is not a spawn target: "spawn into
+  // Retired" is meaningless. Treat it as inert so hovering it neither flashes
+  // the whole groups-list nor drops.
   if (e.target.closest('details.group-virtual')) return null;
   const list = e.target.closest(EMPTY_TARGET_SEL);
   if (list) return { group: '', box: list };
