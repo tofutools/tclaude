@@ -35,6 +35,10 @@ func TestDashboardHTML_TemplateCwdBrowse(t *testing.T) {
 		"modal-templates.js imports pickDirectory from helpers.js")
 	must(`wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');`,
 		"the summon dialog's Browse… is wired in bindTemplatesUI")
+	must(`wireTemplateCwdBrowse('template-deploy-wt-repo-browse', 'template-deploy-wt-repo', 'template-deploy-error', 'Select the git repo to worktree');`,
+		"the summon dialog's Worktree repo Browse… is wired in bindTemplatesUI")
+	must("input.dispatchEvent(new Event('input', { bubbles: true }));",
+		"template browse picks dispatch input so cwd/worktree reload listeners run")
 
 	// The folded-in cast dialog's picker id is gone — guard against a stray
 	// re-introduction of the second dialog.

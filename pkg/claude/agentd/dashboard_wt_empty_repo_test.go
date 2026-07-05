@@ -6,7 +6,7 @@ import (
 )
 
 // The worktree picker's empty-repo (unborn-HEAD) handling lives in the
-// shared picker JS (modal-link-wt.js) + the spawn/clone modal markup —
+// shared picker JS (modal-link-wt.js) + the spawn/clone/template modal markup —
 // no server path renders it, so this guards the wiring against a silent
 // drop in a future refactor. The actual orphan-worktree creation is
 // covered end-to-end by TestSpawnCLI_WorktreeInEmptyRepoCutsOrphan and
@@ -19,10 +19,11 @@ func TestDashboardHTML_EmptyRepoOrphanHintWired(t *testing.T) {
 		}
 	}
 
-	// Both worktree-bearing modals carry the orphan warning the picker
+	// All worktree-bearing modals carry the orphan warning the picker
 	// reveals when the repo has no commits, styled as the amber callout.
 	must(`id="agent-spawn-wt-orphan-hint"`, "spawn modal orphan warning exists")
 	must(`id="clone-agent-wt-orphan-hint"`, "clone modal orphan warning exists")
+	must(`id="template-deploy-wt-orphan-hint"`, "template deploy modal orphan warning exists")
 	must(`class="wt-orphan-warn"`, "orphan warning uses the callout class")
 	must(".wt-orphan-warn {", "orphan warning callout is styled")
 

@@ -18,6 +18,9 @@ import { wizWord } from './slop.js';
 // in refresh.js. Imported back — benign cycles (see render.js); TDZ-safe.
 import { lastSnapshot } from './dashboard.js';
 import { refresh, confirmModal, confirmDiscard, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
+import {
+  WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve,
+} from './modal-link-wt.js';
 // Scribe summon (JOH-361): the "Edit with agent" buttons hand a template off to
 // a pre-briefed, pre-granted chat agent. On a headless daemon the summon opens
 // an in-browser terminal instead of a native window — same fallback the spawn
@@ -902,8 +905,9 @@ async function deleteTemplate(name) {
 // server (POST …/deploy) accepts an empty mission and only frames the group as a
 // deployed force when a mission was given. The group name is prefilled with a
 // slug of the mission (matching the server's derivation) until the human edits
-// it. Worktree resolution reuses POST /api/worktrees (the spawn modal's
-// endpoint), turning a branch + cwd into a worktree path that becomes the cwd.
+// it. Worktree resolution reuses the spawn modal's shared picker: a worktree can
+// become the force cwd, point at a monorepo sub-repo, or fan out into one
+// worktree per agent when the explicit opt-in is checked.
 
 // deployGroupEdited tracks whether the human has typed in the group field —
 // once they have, the mission→group-name auto-prefill stops overwriting it.
@@ -931,6 +935,13 @@ let deployDropGroup = '';
 // dialog is opened onto a group, so toggling reinforce↔copy doesn't refetch and
 // the human's edits to the copied context survive a mode flip.
 let deployCopyDefaults = null;
+
+// True once the human has typed/picked in the deploy dialog's "Worktree repo"
+// field. Until then it mirrors Default cwd, matching the single-agent spawn
+// dialog's monorepo/sub-repo flow.
+let deployWtRepoEdited = false;
+
+const DEPLOY_WT_NONE = '(no worktree — use Default cwd above)';
 
 function groupMirrorOptions(blankLabel) {
   const groups = (lastSnapshot && lastSnapshot.groups) || [];
@@ -968,9 +979,96 @@ function prefillDeployFromGroup(groupName, { setGroupName = false } = {}) {
     gs.default_context,
     tmpl && tmpl.default_context);
   $('#template-deploy-cwd').value = gs.default_cwd || '';
+  if (!deployWtRepoEdited) {
+    $('#template-deploy-wt-repo').value = $('#template-deploy-cwd').value;
+    deployWtLoad($('#template-deploy-wt-repo').value.trim());
+  }
   if (setGroupName) {
     $('#template-deploy-group').value = suggestCopyGroupName(groupName);
     deployGroupEdited = true;
+    applyDeployWtSync();
+  }
+}
+
+function deployWtRows() {
+  return [
+    $('#template-deploy-wt-repo').closest('.cron-create-row'),
+    $('#template-deploy-worktree').closest('.cron-create-row'),
+    $('#template-deploy-wt-sync-row'),
+    $('#template-deploy-wt-per-agent-row'),
+    $('#template-deploy-wt-new-row'),
+    $('#template-deploy-wt-base-row'),
+    $('#template-deploy-wt-orphan-hint'),
+  ].filter(Boolean);
+}
+
+function setDeployWtRowsHidden(hidden) {
+  for (const row of deployWtRows()) row.hidden = hidden;
+  if (hidden) wtToggleNew('template-deploy', false);
+  else applyDeployWtPerAgent();
+}
+
+function applyDeployWtSync() {
+  const syncEl = $('#template-deploy-wt-sync');
+  const select = $('#template-deploy-worktree');
+  const usable = !select.disabled;
+  syncEl.disabled = !usable;
+  $('#template-deploy-wt-sync-row').classList.toggle('disabled', !usable);
+  if (!usable || !syncEl.checked) return;
+  const group = $('#template-deploy-group').value.trim();
+  if (group) {
+    if (select.value !== WT_NEW) select.value = WT_NEW;
+    wtToggleNew('template-deploy', true);
+    $('#template-deploy-wt-branch').value = group;
+  } else if (select.value === WT_NEW) {
+    select.value = '';
+    wtToggleNew('template-deploy', false);
+    $('#template-deploy-wt-branch').value = '';
+  }
+  applyDeployWtPerAgent();
+}
+
+function deployWtLoad(repo) {
+  return wtLoad('template-deploy', repo, DEPLOY_WT_NONE).then(() => {
+    applyDeployWtSync();
+    applyDeployWtPerAgent();
+  });
+}
+
+function applyDeployWtPerAgent() {
+  const perAgent = $('#template-deploy-wt-per-agent').checked;
+  const select = $('#template-deploy-worktree');
+  if (perAgent && !select.disabled && select.value !== WT_NEW) {
+    select.value = WT_NEW;
+  }
+  wtToggleNew('template-deploy', !select.disabled && select.value === WT_NEW);
+}
+
+async function resolveDeployWorktreeSelection(body, cwd, wtRepo) {
+  const perAgent = $('#template-deploy-wt-per-agent').checked;
+  if (perAgent) {
+    if (!wtRepo) throw new Error('per-agent worktrees need a worktree repo');
+    const branchPrefix = $('#template-deploy-wt-branch').value.trim();
+    if (!branchPrefix) throw new Error('enter a branch prefix for per-agent worktrees');
+    body.per_agent_worktrees = {
+      repo: wtRepo,
+      branch_prefix: branchPrefix,
+      from_branch: $('#template-deploy-wt-base').value || '',
+      worktree_as_cwd: !cwd || wtRepo === cwd,
+    };
+    if (cwd) body.cwd = cwd;
+    return;
+  }
+
+  const sel = await wtResolve('template-deploy', wtRepo);
+  if (sel.path && wtRepo && wtRepo !== cwd) {
+    body.cwd = cwd;
+    body.worktree_path = sel.path;
+    body.worktree_branch = sel.branch;
+  } else if (sel.path) {
+    body.cwd = sel.path;
+  } else if (cwd) {
+    body.cwd = cwd;
   }
 }
 
@@ -999,7 +1097,13 @@ export function openSummonForDrop(templateName, dropGroup) {
   $('#template-deploy-context').value = deployCopyDefaults.context;
   // Default cwd to the target's when the field is still blank (a normal open
   // leaves it empty; don't stomp a value the picker/prefill already set).
-  if (!$('#template-deploy-cwd').value) $('#template-deploy-cwd').value = deployCopyDefaults.cwd;
+  if (!$('#template-deploy-cwd').value) {
+    $('#template-deploy-cwd').value = deployCopyDefaults.cwd;
+    if (!deployWtRepoEdited) {
+      $('#template-deploy-wt-repo').value = deployCopyDefaults.cwd;
+      deployWtLoad($('#template-deploy-wt-repo').value.trim());
+    }
+  }
   // Every open onto a group defaults to a nested task-force subgroup.
   const subgroup = $('input[name=template-deploy-mode][value=subgroup]');
   if (subgroup) subgroup.checked = true;
@@ -1049,7 +1153,6 @@ function applyDeployMode() {
   const parentRow = $('#template-deploy-parent-row');
   const descrRow = $('#template-deploy-descr-row');
   const ctxRow = $('#template-deploy-context-row');
-  const wtRow = $('#template-deploy-worktree').closest('.cron-create-row');
   const normalSource = active ? '' : deployMirrorSource();
 
   if (mode === 'reinforce') {
@@ -1070,7 +1173,7 @@ function applyDeployMode() {
     if (parentRow) parentRow.hidden = true;
     if (descrRow) descrRow.hidden = true;
     if (ctxRow) ctxRow.hidden = true;
-    if (wtRow) wtRow.hidden = true;
+    setDeployWtRowsHidden(true);
   } else if (mode === 'copy' || mode === 'subgroup') {
     // A NEW group in the target's image: name editable (prefilled), and the
     // copied settings (descr / context) + worktree are all in play. Subgroup
@@ -1093,7 +1196,7 @@ function applyDeployMode() {
     if (parentRow) parentRow.hidden = true;
     if (descrRow) descrRow.hidden = false;
     if (ctxRow) ctxRow.hidden = false;
-    if (wtRow) wtRow.hidden = false;
+    setDeployWtRowsHidden(false);
   } else {
     // Normal open. Optionally mirror another group's settings and, if checked,
     // nest the new task force under that same source group.
@@ -1104,7 +1207,7 @@ function applyDeployMode() {
     if (parentRow) parentRow.hidden = !normalSource;
     if (descrRow) descrRow.hidden = !normalSource;
     if (ctxRow) ctxRow.hidden = !normalSource;
-    if (wtRow) wtRow.hidden = false;
+    setDeployWtRowsHidden(false);
   }
   const submit = $('#template-deploy-submit');
   if (submit) submit.textContent = deploySubmitLabel();
@@ -1129,7 +1232,14 @@ function openDeployModal(presetName) {
   $('#template-deploy-mission').value = '';
   $('#template-deploy-group').value = '';
   $('#template-deploy-cwd').value = '';
-  $('#template-deploy-worktree').value = '';
+  $('#template-deploy-subrepo-list').innerHTML = '';
+  $('#template-deploy-wt-repo').value = '';
+  $('#template-deploy-worktree').innerHTML = '<option value="">(enter a CWD to enable worktrees)</option>';
+  $('#template-deploy-worktree').disabled = true;
+  $('#template-deploy-wt-branch').value = '';
+  $('#template-deploy-wt-sync').checked = true;
+  $('#template-deploy-wt-per-agent').checked = false;
+  deployWtRepoEdited = false;
   $('#template-deploy-descr').value = '';
   $('#template-deploy-context').value = '';
   $('#template-deploy-source').innerHTML = groupMirrorOptions('template defaults (top-level)');
@@ -1144,6 +1254,7 @@ function openDeployModal(presetName) {
   deployCopyDefaults = null;
   const subgroupRadio = $('input[name=template-deploy-mode][value=subgroup]');
   if (subgroupRadio) subgroupRadio.checked = true;
+  deployWtLoad($('#template-deploy-wt-repo').value.trim());
   // Seed the default-profile picker from the cache now, then refresh once the
   // library load settles (the cache may be cold on first open) — a failed load
   // just leaves the picker with its "(none)" option.
@@ -1270,26 +1381,6 @@ function renderDeployPreview() {
     templateRosterRowsHTML(t, $('#template-deploy-group').value, deployDefaultProfileValue());
 }
 
-// resolveDeployWorktree turns a branch + repo (the cwd) into a worktree path
-// via POST /api/worktrees, the same endpoint the spawn modal uses. Returns
-// the created/checked-out path, or throws with a human message. A worktree
-// needs a repo, so a blank cwd is a clear error rather than a confusing
-// server-side one.
-async function resolveDeployWorktree(branch, cwd) {
-  if (!cwd) throw new Error('worktree needs a cwd inside a git repo');
-  const r = await fetch('/api/worktrees', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repo: cwd, branch }),
-  });
-  const txt = await r.text();
-  if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
-  let resp = {};
-  try { resp = JSON.parse(txt); } catch (_) {}
-  if (!resp.path) throw new Error('worktree created but no path returned');
-  return resp.path;
-}
-
 // submitDeploy is the ONE submit handler, mode-dispatched (JOH-377): reinforce
 // and copy fork to their own POSTs; a normal open (or an empty-space drop) runs
 // the unchanged create-new path. The Deploy button + Ctrl/Cmd+Enter both land
@@ -1374,8 +1465,8 @@ async function submitCopyGroup() {
   // Context preserved verbatim (it's a body of prose, not a token) — the copied,
   // possibly-edited startup context for the new group.
   const context = $('#template-deploy-context').value;
-  const branch = $('#template-deploy-worktree').value.trim();
-  let cwd = $('#template-deploy-cwd').value.trim();
+  const cwd = $('#template-deploy-cwd').value.trim();
+  const wtRepo = $('#template-deploy-wt-repo').value.trim();
   const errEl = $('#template-deploy-error');
   errEl.textContent = '';
   if (!tmplName) { errEl.textContent = 'pick a template'; return; }
@@ -1384,9 +1475,6 @@ async function submitCopyGroup() {
   btn.disabled = true;
   btn.textContent = 'Creating…';
   try {
-    if (branch) {
-      cwd = await resolveDeployWorktree(branch, cwd);
-    }
     // context_override AND descr_override are sent ALWAYS (even when empty):
     // mode 2's whole point is that the new group carries the TARGET's settings
     // verbatim, never the template's, so we override unconditionally. An
@@ -1397,8 +1485,8 @@ async function submitCopyGroup() {
     // JOH-385.)
     const payload = { group_name: groupName, context_override: context, descr_override: descr };
     if (task) payload.task = task;
-    if (cwd) payload.cwd = cwd;
     if (mode === 'subgroup') payload.parent = deployDropGroup;
+    await resolveDeployWorktreeSelection(payload, cwd, wtRepo);
     const ap = deployAgentProfiles(templatesByName()[tmplName]);
     if (Object.keys(ap).length) payload.agent_profiles = ap;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/instantiate`, {
@@ -1457,8 +1545,8 @@ async function submitDeployCreate() {
   const mirrorSource = deployMirrorSource();
   const descr = $('#template-deploy-descr').value.trim();
   const context = $('#template-deploy-context').value;
-  const branch = $('#template-deploy-worktree').value.trim();
-  let cwd = $('#template-deploy-cwd').value.trim();
+  const cwd = $('#template-deploy-cwd').value.trim();
+  const wtRepo = $('#template-deploy-wt-repo').value.trim();
   const errEl = $('#template-deploy-error');
   errEl.textContent = '';
   if (!tmplName) { errEl.textContent = 'pick a template'; return; }
@@ -1472,19 +1560,14 @@ async function submitDeployCreate() {
   btn.disabled = true;
   btn.textContent = 'Deploying…';
   try {
-    // Land the whole force in a worktree when a branch is given — resolve it
-    // to a path first, then use that path as the deploy cwd.
-    if (branch) {
-      cwd = await resolveDeployWorktree(branch, cwd);
-    }
     const payload = { mission };
     if (groupName) payload.group_name = groupName;
-    if (cwd) payload.cwd = cwd;
     if (mirrorSource) {
       payload.descr_override = descr;
       payload.context_override = context;
       if ($('#template-deploy-parent').checked) payload.parent = mirrorSource;
     }
+    await resolveDeployWorktreeSelection(payload, cwd, wtRepo);
     const ap = deployAgentProfiles(templatesByName()[tmplName]);
     if (Object.keys(ap).length) payload.agent_profiles = ap;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmplName)}/deploy`, {
@@ -1947,6 +2030,7 @@ function wireTemplateCwdBrowse(btnId, inputId, errId, title) {
       if (res.error) { if (errEl) errEl.textContent = res.error; return; }
       if (res.canceled) return; // dialog dismissed — leave the field as-is
       input.value = res.path;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
       input.focus();
     } finally {
       btn.disabled = false;
@@ -2178,6 +2262,7 @@ function bindTemplatesUI() {
   $('#template-deploy-cancel').addEventListener('click', closeDeployModal);
   $('#template-deploy-submit').addEventListener('click', submitDeploy);
   wireTemplateCwdBrowse('template-deploy-cwd-browse', 'template-deploy-cwd', 'template-deploy-error', 'Select the working directory for the task force');
+  wireTemplateCwdBrowse('template-deploy-wt-repo-browse', 'template-deploy-wt-repo', 'template-deploy-error', 'Select the git repo to worktree');
   $('#template-deploy-mission').addEventListener('input', syncDeployGroupPrefill);
   $('#template-deploy-template').addEventListener('change', () => {
     syncDeployGroupPrefill();
@@ -2194,6 +2279,7 @@ function bindTemplatesUI() {
   });
   $('#template-deploy-group').addEventListener('input', () => {
     deployGroupEdited = true;
+    applyDeployWtSync();
     // In copy mode the group field IS the new group's name — track edits on the
     // copy defaults so a mode toggle restores what the human typed
     // rather than resetting to the suggested <target>-N.
@@ -2211,6 +2297,41 @@ function bindTemplatesUI() {
   $('#template-deploy-default-profile').addEventListener('change', () => {
     deployDefaultProfileEdited = true;
     renderDeployPreview();
+  });
+  bindWtPicker('template-deploy');
+  $('#template-deploy-wt-sync').addEventListener('change', applyDeployWtSync);
+  $('#template-deploy-wt-branch').addEventListener('input', () => {
+    $('#template-deploy-wt-sync').checked = false;
+  });
+  $('#template-deploy-worktree').addEventListener('change', (e) => {
+    if (e.target.value !== WT_NEW) {
+      $('#template-deploy-wt-sync').checked = false;
+      $('#template-deploy-wt-per-agent').checked = false;
+    }
+    applyDeployWtPerAgent();
+  });
+  $('#template-deploy-wt-per-agent').addEventListener('change', () => {
+    if ($('#template-deploy-wt-per-agent').checked) {
+      $('#template-deploy-wt-sync').checked = true;
+      applyDeployWtSync();
+    }
+    applyDeployWtPerAgent();
+  });
+  let deployCwdTimer;
+  $('#template-deploy-cwd').addEventListener('input', () => {
+    clearTimeout(deployCwdTimer);
+    deployCwdTimer = setTimeout(() => {
+      if (!deployWtRepoEdited) $('#template-deploy-wt-repo').value = $('#template-deploy-cwd').value;
+      deployWtLoad($('#template-deploy-wt-repo').value.trim());
+    }, 350);
+  });
+  let deployWtRepoTimer;
+  $('#template-deploy-wt-repo').addEventListener('input', () => {
+    deployWtRepoEdited = true;
+    clearTimeout(deployWtRepoTimer);
+    deployWtRepoTimer = setTimeout(() => {
+      deployWtLoad($('#template-deploy-wt-repo').value.trim());
+    }, 350);
   });
   // The drop-mode chooser (JOH-377) reflows the dialog live — no re-open.
   $$('input[name=template-deploy-mode]').forEach(rdo =>

@@ -36,6 +36,15 @@ type WaveChoreography struct {
 	GroupContext string `json:"group_context"`
 	// Cwd is the group's default working directory for every spawn.
 	Cwd string `json:"cwd,omitempty"`
+	// WorktreePath/WorktreeBranch optionally point spawned agents at a shared
+	// code worktree while they launch from Cwd. Used by the dashboard's
+	// template-deploy picker for the same sub-repo worktree flow as single spawn.
+	WorktreePath   string `json:"worktree_path,omitempty"`
+	WorktreeBranch string `json:"worktree_branch,omitempty"`
+	// PerAgentWorktrees, when set, creates a fresh worktree for each later-wave
+	// agent before spawning it. Stored in the JSON state so delayed waves match
+	// the synchronous first wave without a schema migration.
+	PerAgentWorktrees *WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
 	// Caller is the conv that deployed (reply-to / spawned-by attribution for
 	// later-wave spawns + the work-pattern deliveries). May be "" (human).
 	Caller string `json:"caller,omitempty"`
@@ -96,6 +105,15 @@ type WaveChoreography struct {
 type WaveGroup struct {
 	Wave   int                  `json:"wave"`
 	Agents []GroupTemplateAgent `json:"agents"`
+}
+
+// WavePerAgentWorktrees is the persisted per-agent worktree creation policy for
+// staged template deploys.
+type WavePerAgentWorktrees struct {
+	Repo          string `json:"repo"`
+	FromBranch    string `json:"from_branch,omitempty"`
+	BranchPrefix  string `json:"branch_prefix,omitempty"`
+	WorktreeAsCwd bool   `json:"worktree_as_cwd,omitempty"`
 }
 
 // PendingWaves is the count of waves not yet spawned (NextWave..end).

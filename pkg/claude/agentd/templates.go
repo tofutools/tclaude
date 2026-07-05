@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
 // Group templates — reusable blueprints for instantiating a working
@@ -1659,10 +1660,12 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 
 // instantiateAgentResult is the per-agent outcome of an instantiation.
 type instantiateAgentResult struct {
-	Name      string `json:"name"`       // the template agent name
-	FinalName string `json:"final_name"` // "<group>-<name>"
-	ConvID    string `json:"conv_id,omitempty"`
-	Owner     bool   `json:"owner,omitempty"`
+	Name           string `json:"name"`       // the template agent name
+	FinalName      string `json:"final_name"` // "<group>-<name>"
+	ConvID         string `json:"conv_id,omitempty"`
+	Owner          bool   `json:"owner,omitempty"`
+	WorktreePath   string `json:"worktree_path,omitempty"`
+	WorktreeBranch string `json:"worktree_branch,omitempty"`
 	// OwnerDropped records that this agent's template owner flag was NOT applied
 	// because it was spawned into an EXISTING group (reinforce mode never
 	// transfers ownership — see handleTemplateReinforce). Mutually exclusive with
@@ -1704,11 +1707,14 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		GroupName string `json:"group_name"`
-		Task      string `json:"task,omitempty"`
-		Cwd       string `json:"cwd,omitempty"`
-		Descr     string `json:"descr,omitempty"`
-		Parent    string `json:"parent,omitempty"`
+		GroupName         string                    `json:"group_name"`
+		Task              string                    `json:"task,omitempty"`
+		Cwd               string                    `json:"cwd,omitempty"`
+		WorktreePath      string                    `json:"worktree_path,omitempty"`
+		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
+		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		Descr             string                    `json:"descr,omitempty"`
+		Parent            string                    `json:"parent,omitempty"`
 		// DescrOverride mirrors ContextOverride's grammar for the group's
 		// description (JOH-385): a pointer distinguishes "not supplied — use
 		// the plain descr / its default" (nil) from "supplied, possibly cleared
@@ -1767,6 +1773,10 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 		return
 	}
+	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
+	if !ok {
+		return
+	}
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
 		descr = "Instantiated from template " + tmpl.Name
@@ -1784,18 +1794,21 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// purpose it was created for. It still renders the assignment under "Task";
 	// deploy is the path that renders under "Mission" and marks deployed=true.
 	runInstantiation(w, instantiateSpec{
-		tmpl:            tmpl,
-		caller:          caller,
-		groupName:       body.GroupName,
-		assignment:      task,
-		contextHeader:   "Task",
-		cwd:             cwd,
-		descr:           descr,
-		mission:         task,
-		sourceTemplate:  tmpl.Name,
-		contextOverride: body.ContextOverride,
-		parentGroup:     parentGroup,
-		agentProfiles:   body.AgentProfiles,
+		tmpl:              tmpl,
+		caller:            caller,
+		groupName:         body.GroupName,
+		assignment:        task,
+		contextHeader:     "Task",
+		cwd:               cwd,
+		worktreePath:      worktreePath,
+		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
+		perAgentWorktrees: perAgentWorktrees,
+		descr:             descr,
+		mission:           task,
+		sourceTemplate:    tmpl.Name,
+		contextOverride:   body.ContextOverride,
+		parentGroup:       parentGroup,
+		agentProfiles:     body.AgentProfiles,
 	})
 }
 
@@ -1824,6 +1837,40 @@ func validateInstantiationParent(w http.ResponseWriter, groupName, parentName st
 	return parentName, true
 }
 
+func resolveTemplateWorktreeInputs(w http.ResponseWriter, rawSharedPath string, rawPerAgent *db.WavePerAgentWorktrees) (string, *db.WavePerAgentWorktrees, bool) {
+	var sharedPath string
+	if strings.TrimSpace(rawSharedPath) != "" {
+		wt, err := resolveSpawnCwd(rawSharedPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_worktree", err.Error())
+			return "", nil, false
+		}
+		sharedPath = wt
+	}
+	if rawPerAgent == nil {
+		return sharedPath, nil, true
+	}
+	pa := *rawPerAgent
+	pa.Repo = expandTilde(strings.TrimSpace(pa.Repo))
+	pa.FromBranch = strings.TrimSpace(pa.FromBranch)
+	pa.BranchPrefix = strings.TrimSpace(pa.BranchPrefix)
+	if pa.Repo == "" {
+		writeError(w, http.StatusBadRequest, "invalid_worktree", "per_agent_worktrees.repo is required")
+		return "", nil, false
+	}
+	root, err := worktree.RepoRootForPath(pa.Repo)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_worktree", err.Error())
+		return "", nil, false
+	}
+	pa.Repo = root
+	if pa.BranchPrefix == "" {
+		writeError(w, http.StatusBadRequest, "invalid_worktree", "per_agent_worktrees.branch_prefix is required")
+		return "", nil, false
+	}
+	return sharedPath, &pa, true
+}
+
 // instantiateSpec carries the fully-validated inputs of one
 // instantiate-or-deploy run into the shared runInstantiation core: the
 // resolved cwd, the caller, the group name, the per-run assignment text
@@ -1834,17 +1881,20 @@ func validateInstantiationParent(w http.ResponseWriter, groupName, parentName st
 // resolution, then hand off here so the group-create → spawn-team →
 // work-pattern → response pipeline lives in exactly one place.
 type instantiateSpec struct {
-	tmpl           *db.GroupTemplate
-	caller         string
-	groupName      string // already validated + collision-checked
-	assignment     string // the task / mission free text
-	contextHeader  string // "Task" | "Mission"
-	cwd            string // already resolved
-	descr          string // already defaulted
-	mission        string // stored on the group row
-	sourceTemplate string // stored on the group row
-	parentGroup    string // optional existing group to nest the new group under
-	deployed       bool   // frames the response (adds mission + deployed)
+	tmpl              *db.GroupTemplate
+	caller            string
+	groupName         string // already validated + collision-checked
+	assignment        string // the task / mission free text
+	contextHeader     string // "Task" | "Mission"
+	cwd               string // already resolved
+	worktreePath      string // optional shared worktree path, already resolved
+	worktreeBranch    string
+	perAgentWorktrees *db.WavePerAgentWorktrees
+	descr             string // already defaulted
+	mission           string // stored on the group row; "" for a plain instantiate
+	sourceTemplate    string // stored on the group row
+	parentGroup       string // optional existing group to nest the new group under
+	deployed          bool   // frames the response (adds mission + deployed)
 	// contextOverride, when non-nil, replaces tmpl.DefaultContext as the base
 	// the group context is composed from (JOH-356 — the "Form a party" picker's
 	// editable copy of the shared context). nil = use the template's context.
@@ -2084,7 +2134,9 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// via groupMemberNames in the runner). suppressOwner drops template owner
 	// flags in reinforce mode — ownership is never transferred into an existing
 	// group.
-	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd, spec.caller, granter, tmpl.Name, nil, reinforce)
+	wr := spawnWaveAgents(g, waves[0].Agents, procPhases, groupContext, spec.cwd,
+		spec.worktreePath, spec.worktreeBranch, spec.perAgentWorktrees,
+		spec.caller, granter, tmpl.Name, nil, reinforce)
 
 	resp := map[string]any{
 		"group":    spec.groupName,
@@ -2112,25 +2164,28 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		// to the final wave and persist the choreography for the background
 		// runner. The response reports wave 0's outcomes plus what is deferred.
 		choreo := &db.WaveChoreography{
-			GroupID:        gid,
-			GroupName:      spec.groupName,
-			TemplateName:   tmpl.Name,
-			GroupContext:   groupContext,
-			Cwd:            spec.cwd,
-			Caller:         spec.caller,
-			Granter:        granter,
-			Assignment:     assignment,
-			Process:        procPhases,
-			WorkPattern:    tmpl.WorkPattern,
-			Waves:          waves,
-			MaxWaitSeconds: tmpl.WaveMaxWait,
-			NextWave:       1,
-			GatingConvs:    wr.SpawnedOrder,
-			Activated:      []string{},
-			SpawnedConvs:   wr.SpawnedConvs,
-			SpawnedOrder:   wr.SpawnedOrder,
-			WaveDeadline:   time.Now().Add(waveMaxWaitDuration(tmpl.WaveMaxWait)),
-			SuppressOwner:  reinforce,
+			GroupID:           gid,
+			GroupName:         spec.groupName,
+			TemplateName:      tmpl.Name,
+			GroupContext:      groupContext,
+			Cwd:               spec.cwd,
+			WorktreePath:      spec.worktreePath,
+			WorktreeBranch:    spec.worktreeBranch,
+			PerAgentWorktrees: spec.perAgentWorktrees,
+			Caller:            spec.caller,
+			Granter:           granter,
+			Assignment:        assignment,
+			Process:           procPhases,
+			WorkPattern:       tmpl.WorkPattern,
+			Waves:             waves,
+			MaxWaitSeconds:    tmpl.WaveMaxWait,
+			NextWave:          1,
+			GatingConvs:       wr.SpawnedOrder,
+			Activated:         []string{},
+			SpawnedConvs:      wr.SpawnedConvs,
+			SpawnedOrder:      wr.SpawnedOrder,
+			WaveDeadline:      time.Now().Add(waveMaxWaitDuration(tmpl.WaveMaxWait)),
+			SuppressOwner:     reinforce,
 		}
 		if err := db.UpsertWaveChoreography(choreo); err != nil {
 			slog.Warn("instantiate: persist choreography failed", "group", spec.groupName, "error", err)
@@ -2218,11 +2273,14 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Mission   string `json:"mission"`
-		GroupName string `json:"group_name,omitempty"`
-		Cwd       string `json:"cwd,omitempty"`
-		Descr     string `json:"descr,omitempty"`
-		Parent    string `json:"parent,omitempty"`
+		Mission           string                    `json:"mission"`
+		GroupName         string                    `json:"group_name,omitempty"`
+		Cwd               string                    `json:"cwd,omitempty"`
+		WorktreePath      string                    `json:"worktree_path,omitempty"`
+		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
+		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
+		Descr             string                    `json:"descr,omitempty"`
+		Parent            string                    `json:"parent,omitempty"`
 		// Mirrors the instantiate endpoint's override grammar so the dashboard
 		// can deploy a top-level or nested task force while mirroring an existing
 		// group's settings instead of the template defaults.
@@ -2285,6 +2343,10 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 		return
 	}
+	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
+	if !ok {
+		return
+	}
 
 	descr := strings.TrimSpace(body.Descr)
 	if descr == "" {
@@ -2300,18 +2362,21 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		descr = strings.TrimSpace(*body.DescrOverride)
 	}
 	runInstantiation(w, instantiateSpec{
-		tmpl:            tmpl,
-		caller:          caller,
-		groupName:       groupName,
-		assignment:      mission,
-		contextHeader:   "Mission",
-		cwd:             cwd,
-		descr:           descr,
-		mission:         mission,
-		sourceTemplate:  tmpl.Name,
-		parentGroup:     parentGroup,
-		contextOverride: body.ContextOverride,
-		agentProfiles:   body.AgentProfiles,
+		tmpl:              tmpl,
+		caller:            caller,
+		groupName:         groupName,
+		assignment:        mission,
+		contextHeader:     "Mission",
+		cwd:               cwd,
+		worktreePath:      worktreePath,
+		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
+		perAgentWorktrees: perAgentWorktrees,
+		descr:             descr,
+		mission:           mission,
+		sourceTemplate:    tmpl.Name,
+		parentGroup:       parentGroup,
+		contextOverride:   body.ContextOverride,
+		agentProfiles:     body.AgentProfiles,
 		// Only frame as a deployed force when there IS a mission; a mission-less
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",
@@ -2358,9 +2423,12 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 // destructive; a partial reinforcement is surfaced for the human to finish.
 func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		GroupName string `json:"group_name"`
-		Task      string `json:"task,omitempty"`
-		Cwd       string `json:"cwd,omitempty"`
+		GroupName         string                    `json:"group_name"`
+		Task              string                    `json:"task,omitempty"`
+		Cwd               string                    `json:"cwd,omitempty"`
+		WorktreePath      string                    `json:"worktree_path,omitempty"`
+		WorktreeBranch    string                    `json:"worktree_branch,omitempty"`
+		PerAgentWorktrees *db.WavePerAgentWorktrees `json:"per_agent_worktrees,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Reinforce prefills
 		// the form's default from the target group's own default profile, so a
@@ -2419,6 +2487,10 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 		return
 	}
+	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
+	if !ok {
+		return
+	}
 
 	// Up-front, whole-or-nothing validation — nothing is spawned until all of
 	// these pass, so a rejection leaves the group exactly as it was.
@@ -2428,14 +2500,17 @@ func handleTemplateReinforce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runInstantiation(w, instantiateSpec{
-		tmpl:          tmpl,
-		caller:        caller,
-		groupName:     g.Name,
-		assignment:    body.Task,
-		contextHeader: "Task",
-		cwd:           cwd,
-		intoExisting:  g,
-		agentProfiles: body.AgentProfiles,
+		tmpl:              tmpl,
+		caller:            caller,
+		groupName:         g.Name,
+		assignment:        body.Task,
+		contextHeader:     "Task",
+		cwd:               cwd,
+		worktreePath:      worktreePath,
+		worktreeBranch:    strings.TrimSpace(body.WorktreeBranch),
+		perAgentWorktrees: perAgentWorktrees,
+		intoExisting:      g,
+		agentProfiles:     body.AgentProfiles,
 	})
 }
 
