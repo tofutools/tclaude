@@ -23,7 +23,7 @@ import { triggerExportDownload } from './export-progress.js';
 import { openTermModal } from './modal-term.js';
 import {
   openTerminalPane, closeTerminalsForConvs, focusTerminalForConv,
-  openWebWindowPane, openWebTermPane,
+  openWebWindowPane, openWebTermPane, openGroupWebTermPane,
 } from './terminals-tab.js';
 import {
   openAgentSpawnModal, openCloneAgentModal,
@@ -1470,6 +1470,16 @@ function bindRowActions() {
           // The top-bar button: focus/unfocus windows across every
           // agent on the dashboard. No group context.
           openWindowModal('all', null);
+          return;
+        }
+        case 'group-web-term': {
+          // The group counterpart of the per-agent "web term" action: open an
+          // in-browser throwaway shell in the group's DEFAULT directory
+          // (agent_groups.default_cwd), as a pane in the Terminals tab. The
+          // menu item is only rendered when the group HAS a default dir, so the
+          // server resolve always has a target; a group whose dir was cleared
+          // between render and click 404s, which the pane surfaces as an error.
+          openGroupWebTermPane(group, label);
           return;
         }
         case 'set-group-context': {

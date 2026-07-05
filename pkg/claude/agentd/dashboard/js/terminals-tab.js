@@ -125,6 +125,22 @@ export function openWebTermPane(agent, label, whichOrPromise) {
   );
 }
 
+// openGroupWebTermPane opens an in-browser throwaway shell in a GROUP's default
+// directory (agent_groups.default_cwd) in the Terminals tab — the group
+// counterpart of openWebTermPane, backing the group ⚙ menu's "open web terminal"
+// item. Connects to /api/group-term-ws/{group}, which resolves the group's
+// default dir server-side (a group with no default dir 404s → the socket closes
+// and the pane surfaces the error). Keyed on `groupterm:{group}` so re-opening
+// the same group focuses the existing pane. No hideConv / agent: a group term is
+// a throwaway session with nothing to detach on close and no agent to focus-jump.
+export function openGroupWebTermPane(group, label) {
+  openTerminalPane({
+    ws: `/api/group-term-ws/${encodeURIComponent(group)}`,
+    label,
+    key: `groupterm:${group}`,
+  });
+}
+
 // focusTerminalForConv reveals the Terminals tab and activates the FIRST open
 // pane belonging to an agent in `selectors` (matched on seed.agent). Returns
 // true when a pane was found + focused, so the caller (the per-agent "focus"

@@ -110,6 +110,72 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	runPTYOverWS(w, r, cmd, name)
 }
 
+// groupTermSessionName builds the tmux session name backing an ad hoc
+// browser terminal opened in a GROUP's default directory. Distinct
+// prefix from both real agent session names (the human-chosen label)
+// and per-agent term sessions (termSessionName), so it can never
+// collide with either. The identity is a hash of the group name, so
+// re-opening the same group's terminal attaches back to the same shell
+// (`tmux new-session -A`). Like termSessionName, this session is never
+// written to the sessions DB table, so it stays invisible to every
+// DB-row-driven dashboard surface.
+func groupTermSessionName(groupName string) string {
+	sum := sha256.Sum256([]byte(groupName))
+	return fmt.Sprintf("tclaude-groupterm-%x", sum[:8])
+}
+
+// handleDashboardGroupTermWS is the group counterpart of
+// handleDashboardTermWS: it opens an in-browser shell in a GROUP's
+// default working directory (agent_groups.default_cwd) rather than a
+// single agent's resolved dir. Backs the group ⚙ menu's "open web
+// terminal" item.
+//
+//	GET /api/group-term-ws/{group}
+//
+// The directory is captured at FIRST open: groupTermSessionName keys the
+// backing tmux session on the group name alone, and `tmux new-session -A`
+// re-attaches an existing session in its original dir, ignoring the -c
+// here. So changing the group's default_cwd (or renaming it) after a
+// terminal was opened re-attaches the old shell in the old dir until that
+// session is killed — the same first-open-wins behaviour termSessionName
+// documents for the per-agent path.
+//
+// Same threat model as the rest of /api/* — the dashboard cookie +
+// Origin pin (or remote pre-auth) is the human-consent layer.
+func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/group-term-ws/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "expected /api/group-term-ws/{group}", http.StatusNotFound)
+		return
+	}
+	if len(parts) > 1 && parts[1] != "" {
+		http.Error(w, "unknown subpath /api/group-term-ws/{group}/"+parts[1], http.StatusNotFound)
+		return
+	}
+	name := parts[0]
+	if u, err := url.PathUnescape(name); err == nil {
+		name = u
+	}
+	g, err := db.GetAgentGroupByName(name)
+	if err != nil || g == nil {
+		http.Error(w, "resolve group: "+name, http.StatusNotFound)
+		return
+	}
+	dir := strings.TrimSpace(g.DefaultCwd)
+	if dir == "" {
+		http.Error(w, "group "+name+" has no default working directory set", http.StatusNotFound)
+		return
+	}
+	sessName := groupTermSessionName(g.Name)
+	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
+		clcommon.TmuxSocketName, shellSingleQuote(sessName), shellSingleQuote(dir))
+	runPTYOverWS(w, r, cmd, sessName)
+}
+
 // handleDashboardOpenWindowWS is the in-browser fallback for "open
 // window": it streams a PTY running the exact same `tclaude session
 // attach <label>` command openAttachCmd already builds for the native

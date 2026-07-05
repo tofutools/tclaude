@@ -420,6 +420,19 @@ function groupNotifyMenuItem(g) {
   return `<button data-act="toggle-group-notify" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-enabled="${on ? '1' : '0'}" title="${esc(tip)}">${esc(text)}</button>`;
 }
 
+// groupWebTermMenuItem renders the group ⚙ menu's "open web terminal" row — the
+// group counterpart of the per-agent "web term" button. It opens an in-browser
+// shell in the group's DEFAULT directory (agent_groups.default_cwd), streamed
+// into a Terminals-tab pane (js/terminals-tab.js openGroupWebTermPane →
+// /api/group-term-ws/{name}). Gated on the group HAVING a default dir: the
+// action has no target without one, so the item is simply omitted (the dir chip
+// in the summary is where you set one). The tip names the actual directory.
+function groupWebTermMenuItem(g) {
+  const dir = (g.default_cwd || '').trim();
+  if (!dir) return '';
+  return `<button data-act="group-web-term" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Open a terminal in this group's default directory (${esc(dir)}), in the browser (always a web terminal — never a native window)">🖥 open web terminal</button>`;
+}
+
 // A real group's controls are split across three renderers: spawn / power on /
 // shutdown ride the expanded body (groupActionsHTML); the rest (add member,
 // multicast cron, message, startup context, notifications, rename, nest,
@@ -474,6 +487,7 @@ function groupMenuItems(g, members) {
     + `<button data-act="cleanup-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Remove confirmed-offline members from this group">🧹 cleanup</button>`
     + `<button data-act="cleanup-worktrees-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" title="Clean up git worktrees — scan this group's repo(s) for stale worktrees (leftovers from retired/deleted agents and hand-made branches) and remove the ones you pick. Main repo and live-agent worktrees are protected.">🧹 cleanup worktrees…</button>`
     + `<button data-act="window-modal-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" aria-label="Focus or unfocus this group's agent windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of agents in this group. Window-only: the agents keep running either way.">🪟 windows…</button>`
+    + groupWebTermMenuItem(g)
     + `<button class="danger" data-act="delete-group" data-group="${esc(g.name)}" data-label="${esc(g.name)}" data-members="${members.length}" title="Delete this group">delete group</button>`;
   return menu;
 }

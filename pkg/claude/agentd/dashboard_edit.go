@@ -59,6 +59,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/open-window/", handleDashboardOpenWindowAPI)
 	mux.HandleFunc("/api/scribe", handleDashboardScribeAPI)
 	mux.HandleFunc("/api/term-ws/", handleDashboardTermWS)
+	mux.HandleFunc("/api/group-term-ws/", handleDashboardGroupTermWS)
 	mux.HandleFunc("/api/open-window-ws/", handleDashboardOpenWindowWS)
 	mux.HandleFunc("/api/spawn-focus-ws/", handleDashboardSpawnFocusWS)
 	mux.HandleFunc("/api/pick-directory", handleDashboardPickDirAPI)
