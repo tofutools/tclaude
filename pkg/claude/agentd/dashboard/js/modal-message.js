@@ -575,6 +575,33 @@ function selectedGroupCreateTemplate() {
   return groupCreateTemplates().find(t => t.name === name) || null;
 }
 
+function groupCreateMirrorOptions() {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  const opts = [`<option value="">${wizWord('template settings (top-level)', 'circle lore (top-level)')}</option>`];
+  for (const g of groups) {
+    if (g && g.name) opts.push(`<option value="${esc(g.name)}">${esc(g.name)}</option>`);
+  }
+  return opts.join('');
+}
+
+function groupCreateMirrorSource() {
+  const sel = $('#group-create-source');
+  return sel ? sel.value.trim() : '';
+}
+
+function groupCreateSnapshot(groupName) {
+  const groups = (lastSnapshot && lastSnapshot.groups) || [];
+  return groups.find(g => g && g.name === groupName) || null;
+}
+
+function prefillGroupCreateFromSource(groupName) {
+  const g = groupCreateSnapshot(groupName);
+  if (!g) return;
+  $('#group-create-descr').value = g.descr || '';
+  $('#group-create-cwd').value = g.default_cwd || '';
+  $('#group-create-context').value = g.default_context || '';
+}
+
 // populateGroupCreateTemplates fills the party-profile dropdown with a blank
 // default + every template. preset preselects a named circle (the redirected
 // "from template" cog shortcut); a preset that no longer exists falls back to
@@ -602,19 +629,32 @@ function applyGroupCreateTemplate() {
   const taskRow = $('#group-create-task-row');
   const previewRow = $('#group-create-template-preview-row');
   const maxRow = $('#group-create-max-members-row');
+  const sourceRow = $('#group-create-source-row');
+  const parentRow = $('#group-create-parent-row');
   const submitBtn = $('#group-create-submit');
   if (!t) {
     $('#group-create-descr').value = '';
     $('#group-create-context').value = '';
     $('#group-create-task').value = '';
+    $('#group-create-source').value = '';
+    $('#group-create-parent').checked = false;
+    sourceRow.style.display = 'none';
+    parentRow.style.display = 'none';
     taskRow.style.display = 'none';
     previewRow.style.display = 'none';
     maxRow.style.display = '';
     submitBtn.textContent = 'Create';
     return;
   }
-  $('#group-create-descr').value = t.descr || '';
-  $('#group-create-context').value = t.default_context || '';
+  const source = groupCreateMirrorSource();
+  if (source) {
+    prefillGroupCreateFromSource(source);
+  } else {
+    $('#group-create-descr').value = t.descr || '';
+    $('#group-create-context').value = t.default_context || '';
+  }
+  sourceRow.style.display = '';
+  parentRow.style.display = source ? '' : 'none';
   taskRow.style.display = '';
   previewRow.style.display = '';
   maxRow.style.display = 'none';
@@ -644,6 +684,9 @@ function openGroupCreateModal(presetTemplate) {
   $('#group-create-context').value = '';
   $('#group-create-task').value = '';
   $('#group-create-max-members').value = '';
+  $('#group-create-source').innerHTML = groupCreateMirrorOptions();
+  $('#group-create-source').value = '';
+  $('#group-create-parent').checked = false;
   $('#group-create-error').textContent = '';
   populateGroupCreateTemplates(presetTemplate);
   applyGroupCreateTemplate();
@@ -721,6 +764,7 @@ async function submitGroupCreateFromTemplate(tmpl) {
   const cwd = $('#group-create-cwd').value.trim();
   const context = $('#group-create-context').value;
   const task = $('#group-create-task').value;
+  const mirrorSource = groupCreateMirrorSource();
   const errEl = $('#group-create-error');
   errEl.textContent = '';
   if (!name) {
@@ -730,10 +774,12 @@ async function submitGroupCreateFromTemplate(tmpl) {
   const submitBtn = $('#group-create-submit');
   submitBtn.disabled = true;
   try {
+    const payload = { group_name: name, task, cwd, descr_override: descr, context_override: context };
+    if (mirrorSource && $('#group-create-parent').checked) payload.parent = mirrorSource;
     const r = await fetch(`/api/templates/${encodeURIComponent(tmpl.name)}/instantiate`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ group_name: name, task, cwd, descr, context_override: context }),
+      body: JSON.stringify(payload),
     });
     const txt = await r.text();
     if (!r.ok) { errEl.textContent = txt || `HTTP ${r.status}`; return; }
@@ -823,6 +869,10 @@ function bindGroupCreateModal() {
   // template-only fields; typing the group name re-flows the roster preview's
   // "<group>-<agent>" names.
   $('#group-create-template').addEventListener('change', applyGroupCreateTemplate);
+  $('#group-create-source').addEventListener('change', () => {
+    $('#group-create-parent').checked = false;
+    applyGroupCreateTemplate();
+  });
   $('#group-create-name').addEventListener('input', renderGroupCreateTemplatePreview);
   // "⧉ manage circles…" opens the same templates manager the Groups cog does
   // (the JOH-350 "⧉ manage…" idiom); its create/edit/delete is picked up when

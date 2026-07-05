@@ -32,6 +32,8 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must(`id="group-create-task"`, "the Task textarea exists")
 	must(`id="group-create-template-preview-row"`, "the roster preview row exists")
 	must(`id="group-create-template-preview"`, "the roster preview host exists")
+	must(`id="group-create-source-row"`, "the mirror-source row exists")
+	must(`id="group-create-parent-row"`, "the subgroup checkbox row exists")
 	must(`id="group-create-max-members-row"`, "the Max-members row is id'd so it can hide in template mode")
 
 	// (b) CSS: the new <select> and the roster readback get the wizard skin,
@@ -47,6 +49,8 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must("renderGroupCreateTemplatePreview", "the roster preview render is wired")
 	must("submitGroupCreateFromTemplate", "the instantiate routing exists")
 	must("context_override", "the edited context copy is sent as context_override")
+	must("descr_override", "the edited description copy is sent as descr_override")
+	must("if (mirrorSource && $('#group-create-parent').checked) payload.parent = mirrorSource;", "template-based group create can nest under the mirrored source")
 	must("(blank party)", "the regular blank-party default option")
 	must("(no circle — a blank party)", "the wizard blank-party default option")
 

@@ -1659,10 +1659,10 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 
 // instantiateAgentResult is the per-agent outcome of an instantiation.
 type instantiateAgentResult struct {
-	Name      string   `json:"name"`       // the template agent name
-	FinalName string   `json:"final_name"` // "<group>-<name>"
-	ConvID    string   `json:"conv_id,omitempty"`
-	Owner     bool     `json:"owner,omitempty"`
+	Name      string `json:"name"`       // the template agent name
+	FinalName string `json:"final_name"` // "<group>-<name>"
+	ConvID    string `json:"conv_id,omitempty"`
+	Owner     bool   `json:"owner,omitempty"`
 	// OwnerDropped records that this agent's template owner flag was NOT applied
 	// because it was spawned into an EXISTING group (reinforce mode never
 	// transfers ownership — see handleTemplateReinforce). Mutually exclusive with
@@ -1675,7 +1675,7 @@ type instantiateAgentResult struct {
 // handleTemplateInstantiate creates a fresh group from a template and
 // spawns its whole agent team. Gated on templates.instantiate.
 //
-// Body: { group_name, task, cwd?, descr?, descr_override? }. group_name
+// Body: { group_name, task, cwd?, descr?, descr_override?, parent? }. group_name
 // doubles as the agent-name prefix — agent "PO" in the template becomes
 // "<group_name>-PO". task is the multi-line assignment, folded into the
 // group's default_context so every member's startup briefing carries
@@ -1708,6 +1708,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		Task      string `json:"task,omitempty"`
 		Cwd       string `json:"cwd,omitempty"`
 		Descr     string `json:"descr,omitempty"`
+		Parent    string `json:"parent,omitempty"`
 		// DescrOverride mirrors ContextOverride's grammar for the group's
 		// description (JOH-385): a pointer distinguishes "not supplied — use
 		// the plain descr / its default" (nil) from "supplied, possibly cleared
@@ -1743,6 +1744,10 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing, _ := db.GetAgentGroupByName(body.GroupName); existing != nil {
 		writeError(w, http.StatusConflict, "exists", "a group named "+body.GroupName+" already exists")
+		return
+	}
+	parentGroup, ok := validateInstantiationParent(w, body.GroupName, body.Parent)
+	if !ok {
 		return
 	}
 	// Existence-check the cwd with resolveSpawnCwd — the same validator
@@ -1781,7 +1786,33 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		descr:           descr,
 		sourceTemplate:  tmpl.Name,
 		contextOverride: body.ContextOverride,
+		parentGroup:     parentGroup,
 	})
+}
+
+func validateInstantiationParent(w http.ResponseWriter, groupName, parentName string) (string, bool) {
+	parentName = strings.TrimSpace(parentName)
+	if parentName == "" {
+		return "", true
+	}
+	if err := validateGroupName(parentName); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "parent: "+err.Error())
+		return "", false
+	}
+	if parentName == groupName {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "parent must name an existing group other than the new group")
+		return "", false
+	}
+	parent, err := db.GetAgentGroupByName(parentName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "lookup parent group: "+err.Error())
+		return "", false
+	}
+	if parent == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no parent group named "+parentName)
+		return "", false
+	}
+	return parentName, true
 }
 
 // instantiateSpec carries the fully-validated inputs of one
@@ -1803,6 +1834,7 @@ type instantiateSpec struct {
 	descr          string // already defaulted
 	mission        string // stored on the group row; "" for a plain instantiate
 	sourceTemplate string // stored on the group row
+	parentGroup    string // optional existing group to nest the new group under
 	deployed       bool   // frames the response (adds mission + deployed)
 	// contextOverride, when non-nil, replaces tmpl.DefaultContext as the base
 	// the group context is composed from (JOH-356 — the "Form a party" picker's
@@ -1885,8 +1917,16 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		g = spec.intoExisting
 		gid = g.ID
 	} else {
-		gid, err = db.CreateAgentGroup(spec.groupName, spec.descr)
+		gid, err = db.CreateAgentGroupWithParent(spec.groupName, spec.descr, spec.parentGroup)
 		if err != nil {
+			if errors.Is(err, db.ErrGroupParentNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", "no parent group named "+spec.parentGroup)
+				return
+			}
+			if errors.Is(err, db.ErrGroupParentCycle) {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "parent must name an existing group other than the new group")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
 			return
 		}
@@ -1972,6 +2012,9 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		if reinforce {
 			resp["reinforced"] = true
 		}
+		if spec.parentGroup != "" {
+			resp["parent"] = spec.parentGroup
+		}
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
@@ -1992,6 +2035,9 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	}
 	if rhythmsCreated > 0 {
 		resp["rhythms_created"] = rhythmsCreated
+	}
+	if spec.parentGroup != "" {
+		resp["parent"] = spec.parentGroup
 	}
 
 	if len(waves) == 1 {
@@ -2071,7 +2117,7 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 // handleTemplateDeploy is the first-class "deploy a task force against a
 // mission" verb (JOH-245): a thin wrapper over the shared runInstantiation
 // core. Gated on templates.instantiate (deploy IS instantiate). Body:
-// { mission?, group_name?, cwd?, descr? }.
+// { mission?, group_name?, cwd?, descr?, descr_override?, context_override?, parent? }.
 //
 // mission is the team's assignment — free text or a Linear epic/issue link
 // — and renders into the composed context under "## Mission" (instantiate's
@@ -2116,6 +2162,12 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		GroupName string `json:"group_name,omitempty"`
 		Cwd       string `json:"cwd,omitempty"`
 		Descr     string `json:"descr,omitempty"`
+		Parent    string `json:"parent,omitempty"`
+		// Mirrors the instantiate endpoint's override grammar so the dashboard
+		// can deploy a top-level or nested task force while mirroring an existing
+		// group's settings instead of the template defaults.
+		DescrOverride   *string `json:"descr_override,omitempty"`
+		ContextOverride *string `json:"context_override,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2152,6 +2204,10 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "derived group name is invalid: "+err.Error())
 		return
 	}
+	parentGroup, ok := validateInstantiationParent(w, groupName, body.Parent)
+	if !ok {
+		return
+	}
 
 	cwd, err := resolveSpawnCwd(body.Cwd)
 	if err != nil {
@@ -2169,16 +2225,21 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 			descr = "Task force deployed from template " + tmpl.Name
 		}
 	}
+	if body.DescrOverride != nil {
+		descr = strings.TrimSpace(*body.DescrOverride)
+	}
 	runInstantiation(w, instantiateSpec{
-		tmpl:           tmpl,
-		caller:         caller,
-		groupName:      groupName,
-		assignment:     mission,
-		contextHeader:  "Mission",
-		cwd:            cwd,
-		descr:          descr,
-		mission:        mission,
-		sourceTemplate: tmpl.Name,
+		tmpl:            tmpl,
+		caller:          caller,
+		groupName:       groupName,
+		assignment:      mission,
+		contextHeader:   "Mission",
+		cwd:             cwd,
+		descr:           descr,
+		mission:         mission,
+		sourceTemplate:  tmpl.Name,
+		parentGroup:     parentGroup,
+		contextOverride: body.ContextOverride,
 		// Only frame as a deployed force when there IS a mission; a mission-less
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",
