@@ -151,6 +151,12 @@ nav button:hover { color: #d4d4d4; }
 .access-banner-review:hover { background: #e3ad33; }
 @media (prefers-reduced-motion: reduce) { .access-banner.show { animation: none; } }
 
+.access-row-wrap.handled .mail-row { opacity: 0.72; }
+.access-row-item.access-attn { animation: access-attn 1.1s ease-in-out 2; }
+.access-reader-actions { align-items: center; flex-wrap: wrap; }
+.access-reader-actions .grow { flex: 1 1 auto; }
+.access-reader-body { white-space: normal; }
+
 .access-card {
   border: 1px solid #2a3340; border-left: 3px solid #d29922; border-radius: 6px;
   background: #0f141a; margin: 8px 8px 0; padding: 10px 12px;

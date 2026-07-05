@@ -19,19 +19,27 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"return { id: ACCESS_ID, kind: 'access-requests', unread: pending, total",
 		// The decision endpoint call + the four decisions.
 		"/api/access-requests/${encodeURIComponent(id)}/decision",
+		`data-act="access-open"`,
 		`data-act="access-approve"`,
 		`data-act="access-deny"`,
 		`data-act="access-always"`,
 		`data-act="access-extend"`,
 		// Dispatch → decideAccess wiring.
+		"selectMessage(btn.getAttribute('data-id'))",
 		"decideAccess(btn.getAttribute('data-id'), 'approve')",
 		"decideAccess(btn.getAttribute('data-id'), 'deny')",
-		// Cards render through the keyed reconciler (not innerHTML), so a
-		// button focus / the deep-link highlight survives the 2s repaint.
-		"pending.map(accessCardHTML).join('')",
-		"handled.map(accessCardHTML).join('')",
+		// Rows render through the keyed reconciler (not innerHTML), so
+		// selection / the deep-link highlight survives the 2s repaint.
+		"pending.map(accessRowHTML).join('')",
+		"handled.map(accessRowHTML).join('')",
 		"morphInto(el, html)",
-		`<div class="access-card${handled ? ' handled' : ''}${attn}" data-key="${esc(r.id)}">`,
+		`class="mail-row access-row-item${active ? ' active' : ''}${!handled ? ' unread' : ''}${attn}"`,
+		// The selected request renders in the reader pane, matching the
+		// human/all mail split between list and detail.
+		"function accessRequestById(",
+		"function accessActionsHTML(",
+		"const r = accessRequestById(mail.selectedMsgId)",
+		"<div class=\"mail-reader-body access-reader-body\">",
 		// The attention affordances: blinking nav badge + non-blocking banner.
 		"badge.classList.toggle('blink', accessPending > 0)",
 		`id="access-banner"`,
@@ -44,10 +52,10 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"function accessOutcome(",
 		"function accessIsPending(",
 		`data-key="__access_handled__"`,
-		// CSS presence (card + blink + handled history).
-		".access-card {",
+		// CSS presence (row + reader actions + blink + handled history).
+		".access-row-wrap.handled .mail-row",
+		".access-reader-actions",
 		".tab-badge.blink {",
-		".access-card.handled {",
 		".access-outcome {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {

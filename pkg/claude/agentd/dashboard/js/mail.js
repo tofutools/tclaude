@@ -511,6 +511,10 @@ function onMailSearchChanged() {
   mail.page = 1;
   mail.selectedMsgs.clear();
   paintListBulkBar();
+  if (mail.selected === ACCESS_ID) {
+    paintList();
+    return;
+  }
   scheduleMailReload();
 }
 
@@ -726,7 +730,7 @@ function mailboxRowHTML(mb, nested = false, prevGen = false) {
   const countTitle = mb.kind === 'group'
     ? `${mb.members || 0} member${mb.members === 1 ? '' : 's'} · ${mb.total} message${mb.total === 1 ? '' : 's'}`
     : mb.kind === 'access-requests'
-      ? `${mb.total} pending access request${mb.total === 1 ? '' : 's'}`
+      ? `${mb.unread || 0} pending · ${mb.total} total access request${mb.total === 1 ? '' : 's'}`
       : `${mb.in} received · ${mb.out} sent`;
   const count = `<span class="mailbox-count" title="${esc(countTitle)}">${mb.total}</span>`;
   // Retired folders only appear when the toggle is on; tag them so they
@@ -1197,13 +1201,52 @@ function humanReplyButton(m) {
 function paintReader() {
   const el = $('#mail-reader');
   if (!el) return;
-  // The access-requests folder has self-contained action cards in the list;
-  // the reader just carries a short standing hint.
   if (mail.selected === ACCESS_ID) {
-    el.removeAttribute('data-kind');
-    el.innerHTML = `<div class="empty">${wz(
-      'Approve or decline requests in the list. A request appears the moment an agent asks for access it can’t self-grant, and disappears once you decide or it times out.',
-      'Grant or refuse petitions in the list. A petition appears when a familiar begs a boon beyond its station, and fades once judged or the sands run out.')}</div>`;
+    const all = accessRequests();
+    const r = accessRequestById(mail.selectedMsgId);
+    if (!all.length) {
+      el.removeAttribute('data-kind');
+      el.innerHTML = `<div class="empty">${wz(
+        'No access requests to review.',
+        'No petitions await judgement.')}</div>`;
+      return;
+    }
+    if (!r) {
+      el.removeAttribute('data-kind');
+      el.innerHTML = `<div class="empty">${wz(
+        'Select an access request to review its details.',
+        'Choose a petition to weigh its boon.')}</div>`;
+      return;
+    }
+    el.dataset.kind = 'decree';
+    const handled = !accessIsPending(r);
+    const whoIdHTML = r.conv_id
+      ? `<span class="mail-cid" title="${esc(idTooltip(r.agent_id, r.conv_id))}">${esc(shortAgentId(r.agent_id, r.conv_id))}</span>`
+      : '';
+    const whoHTML = r.conv_title ? `${esc(r.conv_title)} ${whoIdHTML}` : whoIdHTML;
+    const targetIdHTML = r.target_conv_id
+      ? `<span class="mail-cid" title="${esc(idTooltip('', r.target_conv_id))}">${esc(shortAgentId('', r.target_conv_id))}</span>`
+      : '';
+    const targetHTML = r.target_conv_title ? `${esc(r.target_conv_title)} ${targetIdHTML}` : targetIdHTML;
+    const created = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+    const deadline = !handled && r.deadline ? accessCountdown(r.deadline) : '';
+    const decided = handled && r.decided_at ? new Date(r.decided_at).toLocaleString() : '';
+    morphInto(el, `
+      <div class="mail-reader-head">
+        <div class="mail-subject">${esc(wz('Access request', 'Petition'))} <span class="mail-id">#${esc(shortId(r.id))}</span></div>
+        <div class="mail-headers">
+          ${readerHeaderRow(wz('From', 'From'), whoHTML)}
+          ${readerHeaderRow(wz('Status', 'State'), handled ? `<span class="access-outcome ${accessOutcome(r.status).cls}">${accessOutcome(r.status).txt}</span>` : `<span class="mail-state-pending">${esc(accessStatusText(r))}</span>`)}
+          ${readerHeaderRow(wz('Created', 'Raised'), esc(created))}
+          ${readerHeaderRow(wz('Deadline', 'Sands'), esc(deadline))}
+          ${readerHeaderRow(wz('Decided', 'Judged'), esc(decided))}
+          ${readerHeaderRow(wz('Target', 'Quarry'), targetHTML)}
+        </div>
+      </div>
+      <div class="mail-reader-body access-reader-body">
+        <div class="access-meta">${accessMetaHTML(r)}</div>
+      </div>
+      ${accessActionsHTML(r)}`);
     return;
   }
   const m = mail.messages.find(x => x.id === mail.selectedMsgId);
@@ -1328,7 +1371,7 @@ function selectMailbox(id) {
 }
 
 function selectMessage(id) {
-  mail.selectedMsgId = Number(id);
+  mail.selectedMsgId = mail.selected === ACCESS_ID ? String(id || '') : Number(id);
   // Opening a human notification marks it read, the way a mail client
   // does — the human is now looking at it. Scoped to the human folder:
   // its read-state means "the human has seen this". Agent + "all" folders
@@ -1433,17 +1476,67 @@ function accessOutcome(status) {
   }
 }
 
-// accessCardHTML renders one request as a self-contained card. A pending one
-// carries the action buttons + countdown; a handled one is dimmed and shows the
-// outcome + when it was decided (the recent-history view). Every agent-supplied
-// value (perm, path, body, titles) is esc()'d before it lands in the markup —
-// the body preview is untrusted agent output, the injection gate the old
-// server-rendered popup used html.EscapeString for.
-function accessCardHTML(r) {
+function accessRequests() {
+  return (lastSnapshot && Array.isArray(lastSnapshot.access_requests))
+    ? lastSnapshot.access_requests
+    : [];
+}
+
+function accessMatchesSearch(r, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return [
+    r.id, r.perm, r.conv_id, r.agent_id, r.conv_title, r.path, r.body,
+    r.body_label, r.target_group, r.target_conv_id, r.target_conv_title,
+    r.status,
+  ].some(v => String(v || '').toLowerCase().includes(q));
+}
+
+function accessRequestById(id) {
+  if (!id) return null;
+  return accessRequests().find(r => r.id === String(id)) || null;
+}
+
+function accessWho(r) {
+  return r.conv_title || shortAgentId(r.agent_id, r.conv_id) || wz('an agent', 'a familiar');
+}
+
+function accessSubject(r) {
+  const parts = [r.perm || wz('Access request', 'Petition')];
+  if (r.path) parts.push(r.path);
+  return parts.join(' · ');
+}
+
+function accessStatusText(r) {
+  if (accessIsPending(r)) return wz('pending', 'awaiting judgement');
+  return accessOutcome(r.status).txt;
+}
+
+// accessRowHTML renders one request as a selectable message-list row. Details
+// and decision buttons live in the reader pane, matching the Human / All mail
+// split: middle pane for scanning, right pane for the selected item.
+function accessRowHTML(r) {
   const handled = !accessIsPending(r);
-  const who = esc(r.conv_title || shortAgentId(r.agent_id, r.conv_id) || wz('an agent', 'a familiar'));
+  const active = String(mail.selectedMsgId || '') === r.id;
+  const attn = accessHighlightId === r.id ? ' access-attn' : '';
   const idHover = idTooltip(r.agent_id, r.conv_id);
-  const attn = accessHighlightId === r.id ? ' attn' : '';
+  const when = handled ? (r.decided_at || r.created_at) : r.created_at;
+  const status = accessStatusText(r);
+  return `<div class="mail-row-wrap access-row-wrap${handled ? ' handled' : ''}" data-key="${esc(r.id)}" data-kind="decree">
+    <button class="mail-row access-row-item${active ? ' active' : ''}${!handled ? ' unread' : ''}${attn}"
+      data-act="access-open" data-id="${esc(r.id)}">
+      <span class="mail-row-top">
+        ${!handled ? '<span class="mail-row-dot" title="pending">●</span>' : ''}
+        <span class="mail-row-party"${idHover ? ` title="${esc(idHover)}"` : ''}>${esc(accessWho(r))}</span>
+        <span class="mail-row-group">${status}</span>
+        <span class="mail-row-time">${esc(relTime(when))}</span>
+      </span>
+      <span class="mail-row-subject">${esc(accessSubject(r))}</span>
+    </button>
+  </div>`;
+}
+
+function accessMetaHTML(r) {
   let meta = `<div class="access-row"><span class="access-k">${wz('Permission', 'Boon')}</span><span class="access-v mono">${esc(r.perm)}</span></div>`;
   if (r.path) meta += `<div class="access-row"><span class="access-k">${wz('Endpoint', 'Rite')}</span><span class="access-v mono">${esc(r.path)}</span></div>`;
   if (r.target_group) meta += `<div class="access-row"><span class="access-k">${wz('Group', 'Party')}</span><span class="access-v">${esc(r.target_group)}</span></div>`;
@@ -1451,45 +1544,46 @@ function accessCardHTML(r) {
   if (r.body) {
     meta += `<div class="access-row access-body-row"><span class="access-k">${esc(r.body_label || 'Body')}</span><pre class="access-body">${esc(r.body)}</pre></div>`;
   }
-  let foot;
+  return meta;
+}
+
+function accessActionsHTML(r) {
+  const handled = !accessIsPending(r);
   if (handled) {
     const o = accessOutcome(r.status);
     const when = r.decided_at ? relTime(r.decided_at) : '';
-    foot = `<span class="access-outcome ${o.cls}">${o.txt}</span>${when ? `<span class="access-decided-at">${esc(when)}</span>` : ''}`;
-  } else {
-    const always = r.auto_grantable
-      ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
-      : '';
-    foot = `<span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
-      <span class="grow"></span>
-      <button class="access-btn extend" data-act="access-extend" data-id="${esc(r.id)}" title="Push the auto-decline back 5 minutes">+5m</button>
-      ${always}
-      <button class="access-btn deny" data-act="access-deny" data-id="${esc(r.id)}">${wz('Decline', 'Refuse')}</button>
-      <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>`;
+    return `<div class="mail-reader-actions access-reader-actions">
+      <span class="access-outcome ${o.cls}">${o.txt}</span>${when ? `<span class="access-decided-at">${esc(when)}</span>` : ''}
+    </div>`;
   }
-  return `<div class="access-card${handled ? ' handled' : ''}${attn}" data-key="${esc(r.id)}">
-    <div class="access-head">
-      <span class="access-sigil">🔐</span>
-      <span class="access-who"${idHover ? ` title="${esc(idHover)}"` : ''}>${who}</span>
-      <span class="access-verb">${handled ? wz('requested access', 'begged a boon') : wz('is requesting access', 'begs a boon')}</span>
-    </div>
-    <div class="access-meta">${meta}</div>
-    <div class="access-foot">${foot}</div>
+  const always = r.auto_grantable
+    ? `<button class="access-btn always" data-act="access-always" data-id="${esc(r.id)}" title="Approve now AND remember this permission for this agent, so it won't ask again">${wz('Always allow', 'Grant ever after')}</button>`
+    : '';
+  return `<div class="mail-reader-actions access-reader-actions">
+    <span class="access-countdown" title="If you don't decide, this request is automatically declined.">${esc(accessCountdown(r.deadline))}</span>
+    <span class="grow"></span>
+    <button class="access-btn extend" data-act="access-extend" data-id="${esc(r.id)}" title="Push the auto-decline back 5 minutes">+5m</button>
+    ${always}
+    <button class="access-btn deny" data-act="access-deny" data-id="${esc(r.id)}">${wz('Decline', 'Refuse')}</button>
+    <button class="access-btn approve" data-act="access-approve" data-id="${esc(r.id)}">${wz('Approve', 'Grant')}</button>
   </div>`;
 }
 
-// paintAccessRequests renders the live approval cards into the message-list
+// paintAccessRequests renders the live approval rows into the message-list
 // pane (#mail-list): the pending (actionable) ones first, then a "recently
-// handled" history section. Keyed by request id so morph keeps a button focus /
+// handled" history section. Keyed by request id so morph keeps selection /
 // the deep-link highlight across the 2s repaint.
 function paintAccessRequests(el) {
-  const all = (lastSnapshot && lastSnapshot.access_requests) || [];
-  const pending = all.filter(accessIsPending);
-  const handled = all.filter(r => !accessIsPending(r));
+  const all = accessRequests();
+  const q = currentSearch();
+  const visible = all.filter(r => accessMatchesSearch(r, q));
+  const pending = visible.filter(accessIsPending);
+  const handled = visible.filter(r => !accessIsPending(r));
   const countEl = $('#filter-messages-count');
   if (countEl) {
     const parts = [pending.length ? `${pending.length} pending` : wz('none pending', 'no petitions')];
     if (handled.length) parts.push(`${handled.length} handled`);
+    if (q) parts.push(`${visible.length} / ${all.length}`);
     countEl.textContent = parts.join(' · ');
   }
   if (!all.length) {
@@ -1500,17 +1594,21 @@ function paintAccessRequests(el) {
       'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.')}</div>`;
     return;
   }
-  let html = pending.map(accessCardHTML).join('');
+  if (!visible.length) {
+    el.innerHTML = `<div class="empty">${wz('No access requests match the filter.', 'No petitions match your seeking.')}</div>`;
+    return;
+  }
+  let html = pending.map(accessRowHTML).join('');
   if (handled.length) {
-    // Keyed divider so morph treats it as a stable node between the keyed cards.
+    // Keyed divider so morph treats it as a stable node between the keyed rows.
     html += `<div class="access-divider" data-key="__access_handled__">${wz('Recently handled', 'Judgements past')}</div>`;
-    html += handled.map(accessCardHTML).join('');
+    html += handled.map(accessRowHTML).join('');
   }
   morphInto(el, html);
-  // Consume the one-shot deep-link highlight: scroll the flagged card in view.
+  // Consume the one-shot deep-link highlight: scroll the flagged row in view.
   if (accessHighlightId) {
-    const card = [...el.querySelectorAll('.access-card')].find(c => c.dataset.key === accessHighlightId);
-    if (card) card.scrollIntoView({ block: 'nearest' });
+    const row = [...el.querySelectorAll('.access-row-wrap')].find(c => c.dataset.key === accessHighlightId);
+    if (row) row.scrollIntoView({ block: 'nearest' });
     accessHighlightId = null;
   }
 }
@@ -1544,7 +1642,10 @@ async function decideAccess(id, decision) {
       renderAccessRequests(lastSnapshot.access_requests, lastSnapshot.access_requests_pending);
     }
     paintSidebar();
-    if (mail.selected === ACCESS_ID) paintList();
+    if (mail.selected === ACCESS_ID) {
+      paintList();
+      paintReader();
+    }
   } catch {
     toast(wz('That request could not be recorded — it may have just been decided or timed out.',
       'The petition slipped away — already judged, or the sands ran out.'), true);
@@ -1578,6 +1679,10 @@ function focusAccessRequest(id) {
   const navBtn = $('nav button[data-tab="messages"]');
   if (navBtn) navBtn.click();
   selectMailbox(ACCESS_ID);
+  if (id) {
+    mail.selectedMsgId = id;
+    paintMail();
+  }
 }
 
 // --- mutations ------------------------------------------------------
@@ -1831,6 +1936,8 @@ function initMail() {
       const act = btn.getAttribute('data-act');
       if (act === 'mailbox-select') {
         selectMailbox(btn.getAttribute('data-id'));
+      } else if (act === 'access-open') {
+        selectMessage(btn.getAttribute('data-id'));
       } else if (act === 'access-approve') {
         decideAccess(btn.getAttribute('data-id'), 'approve');
       } else if (act === 'access-deny') {
