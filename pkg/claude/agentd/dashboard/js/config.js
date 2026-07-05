@@ -566,6 +566,8 @@ function populateConfigForm(cfg) {
 
   const a = cfg.agent || {};
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
+  $('#cfg-agent-access-autoopen').checked = !!a.access_request_auto_open_browser;
+  $('#cfg-agent-access-notify').checked = !!a.access_request_system_notification;
   $('#cfg-agent-notray').checked = !!a.disable_tray;
   $('#cfg-agent-persisttoken').checked = !!a.persist_operator_token;
   // 0 and absent both mean "random free port", so show a stored 0 as
@@ -849,6 +851,10 @@ function assembleConfig() {
   // block stays genuinely empty (see the empty-agent drop below).
   if ($('#cfg-agent-autolaunch').checked) a.auto_launch_dashboard = true;
   else delete a.auto_launch_dashboard;
+  if ($('#cfg-agent-access-autoopen').checked) a.access_request_auto_open_browser = true;
+  else delete a.access_request_auto_open_browser;
+  if ($('#cfg-agent-access-notify').checked) a.access_request_system_notification = true;
+  else delete a.access_request_system_notification;
   if ($('#cfg-agent-notray').checked) a.disable_tray = true;
   else delete a.disable_tray;
   if ($('#cfg-agent-persisttoken').checked) a.persist_operator_token = true;

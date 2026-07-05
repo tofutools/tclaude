@@ -93,8 +93,10 @@ slug, add `--ask-human <duration>`:
 tclaude agent notify-human --ask-human 60s "<message>"
 ```
 
-That pops a browser approval in front of the human. Timeout = deny. Do
-not retry in a loop if denied.
+That creates an access request in the dashboard Messages tab. Timeout =
+deny. Do not retry in a loop if denied. A browser auto-open or OS banner
+only happens when the human has opted into those extra access-request
+alerts in tclaude config.
 
 ## How the human reads it
 

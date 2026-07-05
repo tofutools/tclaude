@@ -258,7 +258,8 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	}
 
 	// GET surfaces the master switch, the per-type checklist (all five
-	// defaults on) and the human-message intent (default on).
+	// defaults on), the human-message intent (default on), and the
+	// access-request OS-banner intent (default off).
 	state := getState()
 	assert.Equal(t, true, state["enabled"], "master on after enableNotificationsForTest")
 	types, _ := state["types"].(map[string]any)
@@ -267,6 +268,7 @@ func TestNotificationFilters_PerType(t *testing.T) {
 		assert.Equal(t, true, types[ty], "default type %q on", ty)
 	}
 	assert.Equal(t, true, state["human_messages"], "human messages default on")
+	assert.Equal(t, false, state["access_requests"], "access-request notification default off")
 
 	// Baseline: an exit transition notifies.
 	assert.True(t, notifiedTransition(t, "pt-exit-1", conv, "working", "exited"),
@@ -302,6 +304,10 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	off := postState(map[string]any{"human_messages": false})
 	assert.Equal(t, false, off["human_messages"], "human messages off echoed")
 	assert.Equal(t, false, getState()["human_messages"], "and persisted")
+
+	accessOn := postState(map[string]any{"access_requests": true})
+	assert.Equal(t, true, accessOn["access_requests"], "access-request notifications on echoed")
+	assert.Equal(t, true, getState()["access_requests"], "and persisted")
 }
 
 // A corrupt config.json must NOT be silently overwritten with defaults by

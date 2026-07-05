@@ -1440,15 +1440,20 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 // transition rules) and the human-messages intent. The Config tab edits
 // the same underlying config.notifications block through the full-config
 // save path; both views agree because both read these helpers.
-func notificationsStateJSON(n *config.NotificationConfig) map[string]any {
+func notificationsStateJSON(cfg *config.Config) map[string]any {
+	var n *config.NotificationConfig
+	if cfg != nil {
+		n = cfg.Notifications
+	}
 	types := make(map[string]bool, len(config.NotifyTypes))
 	for _, ty := range config.NotifyTypes {
 		types[ty] = n.NotifyTypeEnabled(ty)
 	}
 	return map[string]any{
-		"enabled":        n != nil && n.Enabled,
-		"types":          types,
-		"human_messages": n.HumanMessagesIntent(),
+		"enabled":         n != nil && n.Enabled,
+		"types":           types,
+		"human_messages":  n.HumanMessagesIntent(),
+		"access_requests": cfg.AccessRequestSystemNotification(),
 	}
 }
 
@@ -1456,8 +1461,8 @@ func notificationsStateJSON(n *config.NotificationConfig) map[string]any {
 // the lightweight twin of the Config tab's full-config editor for the
 // notifications block in ~/.tclaude/config.json).
 //
-//	GET  → {enabled, types{state:bool…}, human_messages}
-//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?};
+//	GET  → {enabled, types{state:bool…}, human_messages, access_requests}
+//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?, access_requests?};
 //	       only the provided fields change, response echoes the new state.
 //
 // The master `enabled` sits ABOVE the per-group/per-agent filters — off
@@ -1465,7 +1470,8 @@ func notificationsStateJSON(n *config.NotificationConfig) map[string]any {
 // wildcard transition rules ({from:"*", to:state}); from-specific or
 // non-canonical "advanced" rules are preserved untouched (see
 // config.SetNotifyType). `human_messages` is the notify-human OS-banner
-// knob, default-on within an enabled block.
+// knob, default-on within an enabled block. `access_requests` is the
+// --ask-human OS-banner knob under agent config, default-off.
 func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -1477,19 +1483,20 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, notificationsStateJSON(cfg.Notifications))
+		writeJSON(w, http.StatusOK, notificationsStateJSON(cfg))
 	case http.MethodPost:
 		var body struct {
-			Enabled       *bool           `json:"enabled"`
-			Types         map[string]bool `json:"types"`
-			HumanMessages *bool           `json:"human_messages"`
+			Enabled        *bool           `json:"enabled"`
+			Types          map[string]bool `json:"types"`
+			HumanMessages  *bool           `json:"human_messages"`
+			AccessRequests *bool           `json:"access_requests"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "expected body {enabled?, types?, human_messages?}", http.StatusBadRequest)
+			http.Error(w, "expected body {enabled?, types?, human_messages?, access_requests?}", http.StatusBadRequest)
 			return
 		}
-		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil {
-			http.Error(w, "no recognised field; expected one of enabled, types, human_messages", http.StatusBadRequest)
+		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil && body.AccessRequests == nil {
+			http.Error(w, "no recognised field; expected one of enabled, types, human_messages, access_requests", http.StatusBadRequest)
 			return
 		}
 		// Validate every type key up front so a typo is a clean 400 rather
@@ -1532,6 +1539,15 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 					n.HumanMessages = &off
 				}
 			}
+			if body.AccessRequests != nil {
+				if cfg.Agent == nil {
+					if *body.AccessRequests {
+						cfg.Agent = &config.AgentConfig{AccessRequestSystemNotification: true}
+					}
+				} else {
+					cfg.Agent.AccessRequestSystemNotification = *body.AccessRequests
+				}
+			}
 			return nil
 		})
 		if errors.Is(err, errNotifConfigMalformed) {
@@ -1542,7 +1558,7 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, notificationsStateJSON(saved.Notifications))
+		writeJSON(w, http.StatusOK, notificationsStateJSON(saved))
 	default:
 		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
 	}

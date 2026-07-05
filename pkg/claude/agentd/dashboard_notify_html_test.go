@@ -66,7 +66,8 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 
 	// The master bell now OPENS a popover (notify-menu.js) instead of
 	// being a one-click toggle: the master on/off + per-type checklist +
-	// human-message knob live inside it, all backed by /api/notifications.
+	// human-message + access-request knobs live inside it, all backed by
+	// /api/notifications.
 	mustNot("case 'toggle-global-notify':", "the blind one-click master toggle is gone")
 	must("function bindNotifyMenu()", "the bell popover binder is defined")
 	must("bindNotifyMenu();", "the popover binder is wired into bootstrap")
@@ -75,6 +76,8 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	must(`data-notify-type="exited"`, "the per-type checklist carries the exited type")
 	must(`data-notify-type="awaiting_permission"`, "the per-type checklist carries the awaiting_permission type")
 	must(`id="notify-pop-human"`, "the human-message knob exists in the popover")
+	must(`id="notify-pop-access"`, "the access-request knob exists in the popover")
+	must("access_requests: access.checked", "the access-request knob posts its state")
 	must("'/api/notifications'", "the popover reads/writes /api/notifications")
 	must(`nav button[data-tab="config"]`, "the 'Config tab ↗' link jumps to the Config tab")
 

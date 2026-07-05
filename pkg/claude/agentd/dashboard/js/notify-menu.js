@@ -11,6 +11,8 @@
 //     exited). Each box is one wildcard transition rule server-side;
 //   • the human-message knob (a `tclaude agent notify-human` ping also
 //     raising a desktop banner — it always lands in the Messages tab).
+//   • the access-request knob (an agent `--ask-human` request also raising
+//     a desktop banner — it always lands in the Messages tab).
 //
 // All of it is backed by GET/POST /api/notifications — the lightweight
 // twin of the Config tab's full-config editor for the same notifications
@@ -58,6 +60,8 @@ function paint(state) {
   // human_messages defaults ON within an enabled block — only an explicit
   // false unchecks it.
   if (human) human.checked = state.human_messages !== false;
+  const access = $('#notify-pop-access');
+  if (access) access.checked = !!state.access_requests;
 
   // With the master off nothing notifies; dim the per-type rows so the
   // popover reads honestly, but leave them editable — you can arrange the
@@ -135,6 +139,12 @@ export function bindNotifyMenu() {
   const human = $('#notify-pop-human');
   if (human) human.addEventListener('change', () => {
     post({ human_messages: human.checked });
+  });
+
+  // Access-request desktop banner.
+  const access = $('#notify-pop-access');
+  if (access) access.addEventListener('change', () => {
+    post({ access_requests: access.checked });
   });
 
   // "Config tab ↗" — jump to the full editor. Clicking its nav button

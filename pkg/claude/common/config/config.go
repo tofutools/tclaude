@@ -1374,16 +1374,18 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 // append run regardless of this flag — neither ever shells out to gh;
 // only the PR stamp is gated. See branchlinks.go.
 type AgentConfig struct {
-	DefaultPermissions        []string            `json:"default_permissions,omitempty"`
-	Sudo                      *SudoConfig         `json:"sudo,omitempty"`
-	ContextNudge              *ContextNudgeConfig `json:"context_nudge,omitempty"`
-	AutoLaunchDashboard       bool                `json:"auto_launch_dashboard,omitempty"`
-	DisableTray               bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
-	BranchHistoryPREnrichment bool                `json:"branch_history_pr_enrichment,omitempty"`
-	CloneCooldown             string              `json:"clone_cooldown,omitempty"`
-	SpawnGroupRestriction     *bool               `json:"spawn_group_restriction,omitempty"`
-	SpawnAllowedGroups        []string            `json:"spawn_allowed_groups,omitempty"`
-	SpawnMaxPerHour           *int                `json:"spawn_max_per_hour,omitempty"`
+	DefaultPermissions              []string            `json:"default_permissions,omitempty"`
+	Sudo                            *SudoConfig         `json:"sudo,omitempty"`
+	ContextNudge                    *ContextNudgeConfig `json:"context_nudge,omitempty"`
+	AutoLaunchDashboard             bool                `json:"auto_launch_dashboard,omitempty"`
+	AccessRequestAutoOpenBrowser    bool                `json:"access_request_auto_open_browser,omitempty"`
+	AccessRequestSystemNotification bool                `json:"access_request_system_notification,omitempty"`
+	DisableTray                     bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
+	BranchHistoryPREnrichment       bool                `json:"branch_history_pr_enrichment,omitempty"`
+	CloneCooldown                   string              `json:"clone_cooldown,omitempty"`
+	SpawnGroupRestriction           *bool               `json:"spawn_group_restriction,omitempty"`
+	SpawnAllowedGroups              []string            `json:"spawn_allowed_groups,omitempty"`
+	SpawnMaxPerHour                 *int                `json:"spawn_max_per_hour,omitempty"`
 
 	// RetiredCleanup is the opt-in long-horizon auto-cleanup that fully
 	// DELETES agents/conversations that have been retired for a very long
@@ -1492,6 +1494,21 @@ type AgentConfig struct {
 	// agent sandbox already denies reads to ~/.tclaude (so the file
 	// fallback keeps the same threat model as the in-memory token).
 	PersistOperatorToken bool `json:"persist_operator_token,omitempty"`
+}
+
+// AccessRequestAutoOpenBrowser reports whether an agent-triggered
+// --ask-human approval request should raise/open the local browser. Off by
+// default: pending requests already surface inside the dashboard's Messages tab.
+func (c *Config) AccessRequestAutoOpenBrowser() bool {
+	return c != nil && c.Agent != nil && c.Agent.AccessRequestAutoOpenBrowser
+}
+
+// AccessRequestSystemNotification reports whether a pending --ask-human
+// approval request should also raise an OS notification. This is an opt-in
+// request-specific knob; the global notifications.enabled master switch is
+// still enforced by the notification sender.
+func (c *Config) AccessRequestSystemNotification() bool {
+	return c != nil && c.Agent != nil && c.Agent.AccessRequestSystemNotification
 }
 
 // DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)
