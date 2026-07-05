@@ -46,7 +46,7 @@ neither is refused. See [Identity](#identity).
 - **Delegate capabilities.** Per-agent permissions live in SQLite;
   you (the human) decide which agents can rename themselves, manage
   group membership, etc. Agents can request one-off escalation via a
-  browser approval popup, or a bounded `sudo` elevation.
+  dashboard access request, or a bounded `sudo` elevation.
 - **Operate it from a browser.** The [agent dashboard](dashboard.md)
   is a full operations console for everything above.
 
@@ -907,26 +907,29 @@ descriptions — it is the source of truth; this table can drift.
 
 Most mutating commands take `--ask-human <duration>` (e.g. `30s`,
 `2m`, or a bare integer for seconds; capped at 300s). On permission
-denial, the daemon opens a browser popup with **Approve / Deny /
-+5min** buttons:
+denial, the daemon creates an access request in the dashboard Messages
+tab with **Approve / Deny / +5min** buttons:
 
 ```bash
 tclaude agent groups create foo --ask-human 30s
 # → CLI prints "Waiting up to 30s for human approval..."
-# → browser popup opens, shows the requester / target / body
+# → dashboard Messages → Access requests shows the requester / target / body
 # → human clicks Approve → CLI proceeds
 # → human clicks Deny or timeout fires → CLI fails with 403
 ```
 
-**Timeout = Deny** so an unattended popup never silently grants. The
-popup is loopback-only and authenticated by the same init-token
-exchange the [dashboard](dashboard.md#auth) uses.
+**Timeout = Deny** so an unattended request never silently grants. The
+request surface is authenticated by the same init-token exchange the
+[dashboard](dashboard.md#auth) uses. By default no browser is opened and
+no OS banner is sent; opt into those extra alerts with
+`agent.access_request_auto_open_browser` and
+`agent.access_request_system_notification`.
 
 **Always allow for this agent.** For a small allowlist of low-blast-radius
-slugs (today `human.clipboard` and `human.notify`), the popup shows a
+slugs (today `human.clipboard` and `human.notify`), the access-request card shows a
 fourth button — **Always allow for this agent**. It approves the pending
 request *and* persists an allow override, so the agent's future calls skip
-the popup entirely. The grant is keyed on the agent's **stable identity**
+the approval request entirely. The grant is keyed on the agent's **stable identity**
 (agent-id), so it follows the agent through `/clear` conv-rotation and
 reincarnation — "this agent", not "this one conversation". It shows up in
 the [dashboard](dashboard.md) permission editor as a normal allow override
@@ -1000,8 +1003,8 @@ embeds.
   see [The operator token](#the-operator-token).
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
-- The popup and the dashboard share the daemon's loopback port;
-  closing the daemon closes both listeners.
+- Access requests and the dashboard share the daemon's loopback port;
+  closing the daemon closes both surfaces.
 
 ## Troubleshooting
 
@@ -1013,7 +1016,7 @@ embeds.
 | `Error: caller is not granted permission "<slug>"`                       | Grant via `permissions grant`, retry with `--ask-human`, or `sudo request`. |
 | `Error: unconfirmed caller: not a known agent, and no valid operator token` | You're the human: `export TCLAUDE_HUMAN_TOKEN=…` from the agentd startup banner. See [Identity](#identity). |
 | Dashboard shows `403` on `GET /`                                         | Open it via `tclaude agent dashboard` — the cookie is only issued by the init-token exchange. |
-| Popup didn't open / opened wrong browser                                 | On WSL, the daemon shells out to `/mnt/c/Windows/System32/cmd.exe /c start`. Check `tclaude agentd serve` logs. |
+| Access request did not open a browser                                    | Browser auto-open is off by default. Set `agent.access_request_auto_open_browser` to `true` if you want that extra alert. |
 | `no_tmux` 503 on `agent rename`                                          | Caller has no live tmux session for the daemon to inject into.  |
 
 ## See also

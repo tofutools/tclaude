@@ -1,6 +1,12 @@
 package agentd
 
-import "testing"
+import (
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
+)
 
 // TestEscapeForCmdExe pins the cmd.exe metachar escaping that makes
 // --slop survive the cmd /c start "" URL path on WSL and native
@@ -28,5 +34,106 @@ func TestEscapeForCmdExe(t *testing.T) {
 				t.Fatalf("escapeForCmdExe(%q)\n got: %q\nwant: %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRequestHumanApproval_DefaultDoesNotOpenBrowserOrNotify(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ResetApprovalsForTest()
+	requireConfigSave(t, &config.Config{
+		Notifications: &config.NotificationConfig{Enabled: true},
+	})
+
+	var opened, notified atomic.Int32
+	prevOpen := approvalBrowserOpener
+	approvalBrowserOpener = func(string) error {
+		opened.Add(1)
+		return nil
+	}
+	t.Cleanup(func() { approvalBrowserOpener = prevOpen })
+	prevNotify := accessRequestNotify
+	accessRequestNotify = func(_, _, _, _, _ string) {
+		notified.Add(1)
+	}
+	t.Cleanup(func() { accessRequestNotify = prevNotify })
+
+	req := testApprovalRequest()
+	done := make(chan bool, 1)
+	go func() { done <- realRequestHumanApproval(req, "http://127.0.0.1:1234") }()
+	req.decision <- outcomeDeny
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("approval waiter did not finish")
+	}
+	if got := opened.Load(); got != 0 {
+		t.Fatalf("default config opened browser %d time(s), want 0", got)
+	}
+	if got := notified.Load(); got != 0 {
+		t.Fatalf("default config sent access-request notification %d time(s), want 0", got)
+	}
+}
+
+func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ResetApprovalsForTest()
+	requireConfigSave(t, &config.Config{
+		Notifications: &config.NotificationConfig{Enabled: true},
+		Agent: &config.AgentConfig{
+			AccessRequestAutoOpenBrowser:    true,
+			AccessRequestSystemNotification: true,
+		},
+	})
+
+	var opened, notified atomic.Int32
+	prevOpen := approvalBrowserOpener
+	approvalBrowserOpener = func(string) error {
+		opened.Add(1)
+		return nil
+	}
+	t.Cleanup(func() { approvalBrowserOpener = prevOpen })
+	prevNotify := accessRequestNotify
+	accessRequestNotify = func(_, _, _, _, _ string) {
+		notified.Add(1)
+	}
+	t.Cleanup(func() { accessRequestNotify = prevNotify })
+
+	req := testApprovalRequest()
+	done := make(chan bool, 1)
+	go func() { done <- realRequestHumanApproval(req, "http://127.0.0.1:1234") }()
+	req.decision <- outcomeDeny
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("approval waiter did not finish")
+	}
+	if got := opened.Load(); got != 1 {
+		t.Fatalf("opt-in config opened browser %d time(s), want 1", got)
+	}
+	if got := notified.Load(); got != 1 {
+		t.Fatalf("opt-in config sent access-request notification %d time(s), want 1", got)
+	}
+}
+
+func testApprovalRequest() *approvalRequest {
+	return &approvalRequest{
+		id:        newApprovalID(),
+		perm:      "human.notify",
+		convID:    "conv-access",
+		convTitle: "access tester",
+		path:      "POST /v1/notify-human",
+		timeout:   time.Second,
+		createdAt: time.Now(),
+		decision:  make(chan approvalOutcome, 1),
+		extend:    make(chan time.Duration, 1),
+	}
+}
+
+func requireConfigSave(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
 	}
 }

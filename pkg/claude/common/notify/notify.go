@@ -267,6 +267,39 @@ func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
 	dispatch(senderSessionID, title, notifBody)
 }
 
+// SendAccessRequest raises an optional OS notification for an agent
+// --ask-human approval request. It no-ops unless notifications.enabled and
+// agent.access_request_system_notification are both true; the dashboard's
+// Messages tab remains the primary surface either way.
+func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
+	cfg, err := config.Load()
+	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled || !cfg.AccessRequestSystemNotification() {
+		return
+	}
+	who := strings.TrimSpace(fromTitle)
+	if who == "" {
+		who = "An agent"
+	}
+	title := truncate("Claude: access request", notifyTitleMaxLen)
+	var b strings.Builder
+	b.WriteString(who)
+	if p := strings.TrimSpace(perm); p != "" {
+		b.WriteString(" requests ")
+		b.WriteString(p)
+	} else {
+		b.WriteString(" is requesting access")
+	}
+	if endpoint := strings.TrimSpace(path); endpoint != "" {
+		b.WriteString("\n")
+		b.WriteString(endpoint)
+	}
+	if g := strings.TrimSpace(group); g != "" {
+		b.WriteString("\n")
+		b.WriteString(g)
+	}
+	dispatch(senderSessionID, title, truncate(b.String(), notifyBodyMaxLen))
+}
+
 // formatHumanMessage builds the title/body of a human-message
 // notification. The title carries the subject (or a "messaged you"
 // attribution when there is none); the body carries the message, prefixed

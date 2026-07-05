@@ -54,9 +54,11 @@ To copy just this once without the grant, add `--ask-human <duration>`:
 tclaude agent clipboard --ask-human 60s "text to copy"
 ```
 
-That pops a browser approval in front of the human, showing a **preview of
-exactly what would be copied** before they Approve / Deny. Timeout = deny.
-Do not retry in a loop if denied.
+That creates an access request in the dashboard Messages tab, showing a
+**preview of exactly what would be copied** before they Approve / Deny.
+Timeout = deny. Do not retry in a loop if denied. A browser auto-open or
+OS banner only happens when the human has opted into those extra
+access-request alerts in tclaude config.
 
 ## When to use this — and when not to
 

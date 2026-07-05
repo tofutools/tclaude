@@ -18,7 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
@@ -252,6 +254,11 @@ func (a *approvalRegistry) snapshot() []pendingApprovalSummary {
 // assignment.
 var RequestHumanApprovalImpl = realRequestHumanApproval
 
+var (
+	approvalBrowserOpener = openBrowser
+	accessRequestNotify   = notify.SendAccessRequest
+)
+
 // requestHumanApproval blocks until the human approves, denies, or
 // timeout fires. Returns true on approve, false on deny/timeout.
 //
@@ -273,34 +280,29 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		approvals.mu.Unlock()
 	}()
 
-	// Auto-raise the operator's LOCAL browser to the dashboard (the "redirect
-	// it into the dashboard" nicety). It deliberately lands on the DEFAULT view
-	// — NOT deep-linked to this request — so a busy operator isn't yanked to the
-	// approval mid-task: the blinking Messages badge + the "N requesting access"
-	// banner signal it passively, and they click Review to go there when ready.
-	// A remote operator sees the same signals in their already-open dashboard on
-	// the next 2s poll (the daemon can't launch a browser on their phone).
-	//
-	// SCOPE NOTE: the old loopback popup minted a token scoped to THIS one
-	// approval (initScopeApprove); this mints a full-dashboard init token, the
-	// same one autoLaunchDashboard / the tray's "Open dashboard" already put on
-	// the browser-launcher argv. So the accepted /proc-scrape residual (see
-	// inittoken.go) now carries a full-dashboard capability on an
-	// agent-triggered event, not just "approve this request". We accept it:
-	// it's the same residual class the dashboard already lives with, sandboxed
-	// agents run in a PID namespace that hides the host browser's argv, and a
-	// non-sandboxed same-uid process can already read ~/.tclaude directly — so
-	// this is no new boundary against either. Best-effort: a headless /
-	// no-browser host just relies on the dashboard surface + the OS notification.
-	url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
-	go func() {
-		if err := openBrowser(url); err != nil {
-			slog.Warn("popup: failed to open browser", "err", err, "url", url)
-		}
-	}()
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		slog.Warn("popup: failed to load config for access-request alerting", "err", cfgErr)
+	}
+	if cfgErr == nil && cfg.AccessRequestSystemNotification() {
+		accessRequestNotify(notifyHumanSenderSessionID(req.convID), req.convTitle, req.targetGroup, req.perm, req.path)
+	}
+	if cfgErr == nil && cfg.AccessRequestAutoOpenBrowser() {
+		// Optional compatibility path for operators who still want the old
+		// auto-raise behavior. By default the dashboard's Messages badge and
+		// access-request banner are the attention surface.
+		url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+		go func() {
+			if err := approvalBrowserOpener(url); err != nil {
+				slog.Warn("popup: failed to open browser", "err", err, "url", url)
+			}
+		}()
+		slog.Info("popup: auto-opening dashboard for access request",
+			"id", req.id, "perm", req.perm, "conv", req.convID, "url", url)
+	}
 	slog.Info("popup: awaiting human decision",
 		"id", req.id, "perm", req.perm, "conv", req.convID,
-		"path", req.path, "timeout", req.timeout, "url", url)
+		"path", req.path, "timeout", req.timeout)
 
 	// timer fires the auto-deny. "+N" extensions reset it so the human
 	// can buy more time mid-review without leaving the popup unattended

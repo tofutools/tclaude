@@ -1395,12 +1395,14 @@ async function openMailbox(id) {
 
 // --- access requests (human approvals) ------------------------------
 
-// accessRequestsMailbox is the synthetic sidebar folder for pending approvals.
-// It carries no server mailbox — its badge is the live pending count and its
-// rows are lastSnapshot.access_requests (rendered by paintAccessRequests).
+// accessRequestsMailbox is the synthetic sidebar folder for approvals. It
+// carries no server mailbox: unread is the live pending count (attention/bold),
+// total is pending + recently handled history, and rows are
+// lastSnapshot.access_requests (rendered by paintAccessRequests).
 function accessRequestsMailbox() {
   const pending = (lastSnapshot && lastSnapshot.access_requests_pending) || 0;
-  return { id: ACCESS_ID, kind: 'access-requests', unread: pending, total: pending, in: 0, out: 0 };
+  const total = (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) ? lastSnapshot.access_requests.length : pending;
+  return { id: ACCESS_ID, kind: 'access-requests', unread: pending, total, in: 0, out: 0 };
 }
 
 // accessCountdown renders "auto-declines in Xm Ys" from an ISO deadline.

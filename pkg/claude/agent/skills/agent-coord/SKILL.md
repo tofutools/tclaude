@@ -260,11 +260,11 @@ one.
   tclaude agent groups create foo --ask-human 30s
   ```
 
-  This pops a browser window in front of the human with Approve / Deny
-  buttons. The CLI blocks until they click or the timeout fires.
-  **Timeout = Deny** so an unattended popup never silently grants. Cap
-  is 300s. If denied or timed out, accept the answer; don't retry in a
-  loop.
+  This creates an access request in the dashboard Messages tab with
+  Approve / Deny buttons. The CLI blocks until the human decides or the
+  timeout fires. **Timeout = Deny** so an unattended request never
+  silently grants. Cap is 300s. If denied or timed out, accept the
+  answer; don't retry in a loop.
 
 ## Troubleshooting
 

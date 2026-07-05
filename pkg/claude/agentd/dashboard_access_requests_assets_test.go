@@ -15,6 +15,8 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"const ACCESS_ID = 'access-requests';",
 		"function accessRequestsMailbox(",
 		"lastSnapshot.access_requests_pending",
+		"lastSnapshot.access_requests.length",
+		"return { id: ACCESS_ID, kind: 'access-requests', unread: pending, total",
 		// The decision endpoint call + the four decisions.
 		"/api/access-requests/${encodeURIComponent(id)}/decision",
 		`data-act="access-approve"`,
