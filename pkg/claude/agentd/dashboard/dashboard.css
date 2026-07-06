@@ -2489,10 +2489,29 @@ details[data-group-key][open] > summary .group-default-model {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.profile-import-conflict select { width: auto; }
+.profile-import-conflict select,
+.profile-import-conflict input[type=text] {
+  min-width: 0;
+  background: #0d1117;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #c9d1d9;
+  font-family: inherit;
+}
+.profile-import-conflict select {
+  width: auto;
+  text-overflow: ellipsis;
+}
 .profile-import-conflict input[type=text] {
   width: min(220px, 36vw);
   min-width: 140px;
+}
+.profile-import-conflict select:focus,
+.profile-import-conflict input[type=text]:focus {
+  outline: none;
+  border-color: #58a6ff;
 }
 @media (max-width: 720px) {
   .profile-transfer-row {
