@@ -587,6 +587,7 @@ func TestDashboardMailboxMarkRead_RequiresAuth(t *testing.T) {
 type mailboxPageResp struct {
 	ID              string       `json:"id"`
 	Kind            string       `json:"kind"`
+	Title           string       `json:"title"`
 	Messages        []mailboxMsg `json:"messages"`
 	Page            int          `json:"page"`
 	PageSize        int          `json:"page_size"`
@@ -810,6 +811,38 @@ func TestDashboardMailbox_SearchMatchesCounterpartTitle(t *testing.T) {
 	require.Equal(t, 1, p.Total, "only the carol message matches the title search")
 	require.Len(t, p.Messages, 1)
 	assert.Equal(t, "from carol", p.Messages[0].Subject)
+}
+
+// Scenario: a freshly-started Codex agent can be registered before its
+// conv_index title exists. The Groups tab names it from agents.pending_name;
+// the Messages tab must use the same fallback for the folder title, row
+// titles, and title search instead of showing only the stable agent id.
+func TestDashboardMailbox_PendingNameTitlesUnindexedAgent(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("team")
+	const codexConv = "mbox-code-1111-2222-333333333306"
+	f.HaveMember("team", mbAlice)
+	f.HaveMember("team", codexConv)
+	f.HaveConvWithTitle(mbAlice, "alice")
+	f.HavePendingName(codexConv, "codex-worker")
+	_, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: g.ID, FromConv: mbAlice, ToConv: codexConv,
+		Subject: "startup", Body: "brief", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	dash := dashHandlerForTest(t)
+
+	folder := getMailboxPage(t, dash, codexConv, "", 0, 0)
+	assert.Equal(t, "codex-worker", folder.Title, "agent folder title uses the pending-name fallback")
+	require.Len(t, folder.Messages, 1)
+	assert.Equal(t, "codex-worker", folder.Messages[0].ToTitle,
+		"message row recipient title uses the pending-name fallback")
+
+	search := getMailboxPage(t, dash, "all", "codex-worker", 0, 0)
+	require.Equal(t, 1, search.Total, "title search includes pending-name matches")
+	require.Len(t, search.Messages, 1)
+	assert.Equal(t, "startup", search.Messages[0].Subject)
+	assert.Equal(t, "codex-worker", search.Messages[0].ToTitle)
 }
 
 // Scenario: the human folder paginates + searches in Go over its
