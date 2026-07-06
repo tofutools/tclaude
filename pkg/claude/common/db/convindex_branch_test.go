@@ -98,3 +98,37 @@ func TestConvIndexBranchSnapshotSeedsCreatedOnce(t *testing.T) {
 	assert.Equal(t, first.Format(time.RFC3339), row.Created, "created remains first-seen")
 	assert.Equal(t, "feature-x", row.GitBranch, "branch still updates")
 }
+
+func TestConvIndexBranchSnapshotMetadataOnlyDoesNotClobberBranch(t *testing.T) {
+	setupTestDB(t)
+
+	convID := "44444444-aaaa-bbbb-cccc-444444444444"
+	first := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, UpsertConvIndexBranchSnapshot(&ConvIndexRow{
+		ConvID:           convID,
+		ProjectDir:       "/tmp/proj",
+		FullPath:         "/tmp/proj/rollout.jsonl",
+		GitBranch:        "main",
+		GitBranchStartup: "main",
+		IndexedAt:        first,
+		Harness:          "codex",
+	}), "initial branch snapshot should insert")
+
+	later := first.Add(time.Hour)
+	require.NoError(t, UpsertConvIndexBranchSnapshot(&ConvIndexRow{
+		ConvID:     convID,
+		ProjectDir: "/tmp/other",
+		FullPath:   "/tmp/other/rollout.jsonl",
+		IndexedAt:  later,
+		Harness:    "codex",
+	}), "metadata-only snapshot should update safe fields")
+
+	row, err := GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "main", row.GitBranch, "empty branch observations must not clobber current branch")
+	assert.Equal(t, "main", row.GitBranchStartup, "empty branch observations must not clobber startup branch")
+	assert.Equal(t, first.Format(time.RFC3339), row.Created, "metadata-only update keeps first-created time")
+	assert.Equal(t, "/tmp/proj", row.ProjectDir, "metadata-only update does not overwrite existing project_dir")
+	assert.Equal(t, "/tmp/proj/rollout.jsonl", row.FullPath, "metadata-only update does not overwrite existing path")
+}

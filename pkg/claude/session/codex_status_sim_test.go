@@ -96,6 +96,55 @@ func TestApplyHook_CodexLiveStatusPipeline(t *testing.T) {
 	assert.Equal(t, "high", snap.EffortLevel, "Codex rollout effort is surfaced like statusline effort")
 }
 
+func TestApplyHook_CodexLateHookBackfillsMissedLaunchState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	cwd := filepath.Join(home, "plain-project")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4159010"
+	const sessionID = "agent-codex-late"
+	cx := testharness.NewCodexSimWithID(t, home, convID, cwd)
+	require.NoError(t, cx.Start())
+
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:          sessionID,
+		TmuxSession: sessionID,
+		Status:      session.StatusRunning,
+		Harness:     "codex",
+		Cwd:         cwd,
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "UserPromptSubmit",
+		ConvID:         convID,
+		Cwd:            cwd,
+		TranscriptPath: cx.RolloutPath,
+		Model:          "gpt-5-codex",
+	}, sessionID))
+
+	got, err := session.LoadSessionState(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, convID, got.ConvID, "late hook backfills the session conv-id")
+	assert.Equal(t, session.StatusWorking, got.Status, "late modeled hook updates live status")
+	assert.False(t, got.LastHook.IsZero(), "late hook stamps last activity")
+	assert.Equal(t, "codex", got.Harness, "harness tag survives the repair write")
+
+	state, err := db.AgentState(convID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state, "late Codex hook enrolls a missed-start launched session")
+
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row, "late Codex hook seeds conv_index so dashboard Age has data")
+	assert.NotEmpty(t, row.Created, "created timestamp is backfilled")
+	assert.Equal(t, cx.RolloutPath, row.FullPath)
+	assert.Equal(t, "codex", row.Harness)
+}
+
 func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
