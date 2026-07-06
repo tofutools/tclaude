@@ -497,9 +497,11 @@ export async function refresh(opts = {}) {
     // write recreated the whole text node every 2s, so selecting the URL to
     // copy it died on the next tick; now the URL span is isEqualNode-identical
     // across ticks and skipped, so a selection anchored in it survives.
+    const dashboardVersion = data.version || 'unknown';
     morphInto($('#meta'),
-      `<span class="meta-base">${esc(data.popup_base)}</span>`
-      + ` · refreshed <span class="meta-time">${esc(new Date(data.generated_at).toLocaleTimeString())}</span>`);
+      `<span class="meta-version">tclaude version ${esc(dashboardVersion)}</span>`
+      + `<span class="meta-sep"> · </span><span class="meta-base">${esc(data.popup_base)}</span>`
+      + `<span class="meta-sep"> · </span>refreshed <span class="meta-time">${esc(new Date(data.generated_at).toLocaleTimeString())}</span>`);
     // Refresh the proactive-grant blocklist hint from the snapshot
     // when present; falls back to the v1 hardcoded pair otherwise.
     // (Snapshot doesn't carry the resolved blocklist directly; the
