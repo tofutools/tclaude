@@ -406,6 +406,13 @@ func recordApprovalRequest(req *approvalRequest) {
 	if label == "" {
 		label = short8(req.convID)
 	}
+	// Same fallback for the target (the cross-agent path sets targetConvID):
+	// never leave a resolvable conv with a blank label, matching
+	// resolveAuditTarget's convention.
+	targetLabel := strings.TrimSpace(req.targetConvTitle)
+	if targetLabel == "" && req.targetConvID != "" {
+		targetLabel = short8(req.targetConvID)
+	}
 	detail := strings.TrimSpace(req.perm)
 	if action := strings.TrimSpace(req.method + " " + req.path); action != "" {
 		if detail != "" {
@@ -420,7 +427,7 @@ func recordApprovalRequest(req *approvalRequest) {
 		ActorLabel:  label,
 		Verb:        "approval.request",
 		TargetConv:  req.targetConvID,
-		TargetLabel: req.targetConvTitle,
+		TargetLabel: targetLabel,
 		GroupName:   req.targetGroup,
 		Detail:      auditClip(detail, 120),
 		Method:      req.method,
