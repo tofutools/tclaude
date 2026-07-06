@@ -19,6 +19,10 @@ When all tasks are done, a desktop notification is sent.
 - **tmux** - Required for the task runner session
 - **Run setup** - For notifications: `tclaude setup`
 
+## Try it: a runnable demo
+
+A small, self-contained demo lives in [`examples/task-runner-demo/`](../examples/task-runner-demo/). It defines four harmless tasks (create an empty file, write a greeting, run a noop command, append to a log) that you can run end-to-end in a throwaway directory. See its [README](../examples/task-runner-demo/README.md) for copy-paste instructions.
+
 ## TODO.md Format
 
 Tasks are defined as `##` headers followed by the prompt text:

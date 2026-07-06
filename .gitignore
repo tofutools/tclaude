@@ -42,6 +42,8 @@ go.work.sum
 TODO.md
 DOING.md
 DONE.md
+# ...but keep the checked-in task-runner demo definition
+!examples/task-runner-demo/TODO.md
 
 # macOS Finder metadata
 .DS_Store
