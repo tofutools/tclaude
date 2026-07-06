@@ -328,14 +328,26 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	}
 
 	// A requester with no resolved title falls back to the short conv-id so
-	// the actor column is never blank.
+	// the actor column is never blank. Assert the label directly — a Search
+	// term would also match the full actor_conv and pass even if the label
+	// were left empty.
 	req.convTitle = ""
 	recordApprovalRequest(req)
-	rows, err = db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request", Search: short8(req.convID)})
+	rows, err = db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request"})
 	if err != nil {
 		t.Fatalf("list fallback rows: %v", err)
 	}
-	if len(rows) == 0 {
-		t.Fatalf("want a fallback-labeled approval.request row for %q", short8(req.convID))
+	var fallback *db.AuditLogEntry
+	for i := range rows {
+		if rows[i].ActorLabel != "worker" {
+			fallback = &rows[i]
+			break
+		}
+	}
+	if fallback == nil {
+		t.Fatalf("want a fallback-labeled approval.request row distinct from the titled one")
+	}
+	if fallback.ActorLabel != short8(req.convID) {
+		t.Errorf("fallback actor label = %q, want %q (short conv-id)", fallback.ActorLabel, short8(req.convID))
 	}
 }
