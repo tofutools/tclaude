@@ -66,6 +66,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`function inspectProfileImportSource(`, "profile import inspect wiring")
 	present(`function profileImportDecisions(`, "profile import per-row decisions")
 	present(`exportProfiles, inspectProfileImport, importProfiles`, "profile transfer data helpers are exported")
+	present(`.profile-import-conflict select,`, "profile import conflict select/input controls get dark modal styling")
 
 	// 3. Group default-profile picker: the 🧠 badge is clickable.
 	present(`data-act="set-group-profile"`, "the group default-profile picker action")
