@@ -151,6 +151,35 @@ func TestLatestCodexUsage_NewestRolloutAcrossFilesWins(t *testing.T) {
 	assert.Equal(t, 88.0, u.FiveHour.UsedPercent, "the newest rollout's snapshot wins")
 }
 
+func TestLatestCodexUsageForConvs_IgnoresNonTargetRollouts(t *testing.T) {
+	home := codexTestHome(t)
+
+	target := testharness.NewCodexSim(t, home, "/home/u/live")
+	require.NoError(t, target.Start())
+	require.NoError(t, target.WriteTokenCountRateLimits(
+		testharness.CodexTokenUsage{TotalTokens: 100},
+		testharness.CodexTokenUsage{TotalTokens: 100},
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 12, WindowMinutes: 300, ResetsAt: futureReset(time.Hour)},
+		nil,
+	))
+	time.Sleep(10 * time.Millisecond)
+
+	newerNonTarget := testharness.NewCodexSim(t, home, "/home/u/offline")
+	require.NoError(t, newerNonTarget.Start())
+	require.NoError(t, newerNonTarget.WriteTokenCountRateLimits(
+		testharness.CodexTokenUsage{TotalTokens: 100},
+		testharness.CodexTokenUsage{TotalTokens: 100},
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 91, WindowMinutes: 300, ResetsAt: futureReset(time.Hour)},
+		nil,
+	))
+
+	u, err := harness.LatestCodexUsageForConvs(home, []string{target.ConvID}, time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, u)
+	require.NotNil(t, u.FiveHour)
+	assert.Equal(t, 12.0, u.FiveHour.UsedPercent, "targeted repair reads only the supplied live conv ids")
+}
+
 // A rollout whose file mtime predates `since` is skipped — the caller bounds
 // the scan to recently-active sessions, so a long-idle session can't keep
 // feeding stale figures into the readout.

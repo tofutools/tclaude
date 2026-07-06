@@ -1105,6 +1105,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	if stopped || input.HookEventName == "SessionStart" {
 		persistCodexContextTelemetry(state, input)
 	}
+	persistCodexUsageFromHook(state, input)
 
 	// Refresh usage cache when user is likely looking at the status bar.
 	// Runs synchronously — hook callbacks are separate processes so this
@@ -1320,6 +1321,45 @@ func persistCodexContextTelemetry(state *SessionState, input HookCallbackInput) 
 			slog.Warn("codex-telemetry: failed to update session effort",
 				"session_id", state.ID, "error", err, "module", "hooks")
 		}
+	}
+}
+
+// persistCodexUsageFromHook updates the shared Codex account-usage cache from
+// the exact rollout path Codex supplied in hook stdin. Codex does not include
+// the rate-limit windows directly in hook payloads; they live in the rollout's
+// token_count.rate_limits block. Unlike the daemon's repair poller, this path
+// does no rollout-tree discovery and fires at useful turn boundaries only.
+func persistCodexUsageFromHook(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.Harness != harness.CodexName {
+		return
+	}
+	switch input.HookEventName {
+	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
+	default:
+		return
+	}
+	p := input.TranscriptPath
+	if p == "" || !harness.IsCodexRolloutPath(p) {
+		return
+	}
+	u, err := harness.CodexUsageFromRollout(p)
+	if err != nil {
+		slog.Warn("codex-usage: failed to read rollout usage",
+			"session_id", state.ID, "path", p, "error", err, "module", "hooks")
+		return
+	}
+	if u == nil || u.Observed.IsZero() {
+		return
+	}
+	data, err := json.Marshal(u)
+	if err != nil {
+		slog.Warn("codex-usage: failed to marshal usage snapshot",
+			"session_id", state.ID, "error", err, "module", "hooks")
+		return
+	}
+	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, p); err != nil {
+		slog.Warn("codex-usage: failed to persist usage snapshot",
+			"session_id", state.ID, "error", err, "module", "hooks")
 	}
 }
 

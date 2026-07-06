@@ -127,7 +127,7 @@ func LatestCodexUsage(home string, since time.Time) (*CodexUsage, error) {
 		if best != nil && !st.mtime.After(best.Observed) {
 			break
 		}
-		u, err := latestCodexUsageInRollout(st.path)
+		u, err := CodexUsageFromRollout(st.path)
 		if err != nil {
 			continue // tolerate one unreadable rollout, keep scanning siblings
 		}
@@ -141,13 +141,72 @@ func LatestCodexUsage(home string, since time.Time) (*CodexUsage, error) {
 	return best, nil
 }
 
-// latestCodexUsageInRollout reads rolloutPath (transparently decompressing
+// LatestCodexUsageForConvs scans the rollout directory enough to locate the
+// provided Codex session ids, then reads only those rollout files for the
+// newest rate-limit snapshot. It is the repair-poller path: hooks update from
+// transcript_path directly, while this narrows fallback work to tclaude's live
+// Codex sessions instead of reading every recent rollout on every interval.
+func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*CodexUsage, error) {
+	if len(convIDs) == 0 {
+		return nil, nil
+	}
+	want := make(map[string]struct{}, len(convIDs))
+	for _, id := range convIDs {
+		if id != "" {
+			want[id] = struct{}{}
+		}
+	}
+	if len(want) == 0 {
+		return nil, nil
+	}
+
+	paths, err := scanCodexRollouts(home)
+	if err != nil {
+		return nil, err
+	}
+	byID := dedupCodexRollouts(paths)
+
+	type rolloutStat struct {
+		path  string
+		mtime time.Time
+	}
+	var stats []rolloutStat
+	for id := range want {
+		p := byID[id]
+		if p == "" {
+			continue
+		}
+		fi, statErr := os.Stat(p)
+		if statErr != nil || fi.ModTime().Before(since) {
+			continue
+		}
+		stats = append(stats, rolloutStat{path: p, mtime: fi.ModTime()})
+	}
+	sort.Slice(stats, func(i, j int) bool { return stats[i].mtime.After(stats[j].mtime) })
+
+	var best *CodexUsage
+	for _, st := range stats {
+		if best != nil && !st.mtime.After(best.Observed) {
+			break
+		}
+		u, err := CodexUsageFromRollout(st.path)
+		if err != nil || u == nil {
+			continue
+		}
+		if best == nil || u.Observed.After(best.Observed) {
+			best = u
+		}
+	}
+	return best, nil
+}
+
+// CodexUsageFromRollout reads rolloutPath (transparently decompressing
 // `.zst`) and returns the LAST token_count event whose rate_limits block
 // resolves to at least one known window. Returns (nil, nil) when the rollout
 // carries no such event — a session that has not yet received rate-limit
 // headers. A malformed line is skipped; only an I/O / scanner error is
 // returned.
-func latestCodexUsageInRollout(rolloutPath string) (*CodexUsage, error) {
+func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
 		return nil, err

@@ -1,12 +1,15 @@
 package session_test
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -102,6 +105,53 @@ func TestApplyHook_CodexStopUsesTranscriptPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 25.0, snap.ContextPct, 0.001)
 	assert.Equal(t, int64(200000), snap.ContextWindowSize)
+}
+
+func TestApplyHook_CodexStopPersistsUsageCache(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4170173"
+	const sessionID = "agent-codex-usage"
+
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      sessionID,
+		ConvID:  convID,
+		Status:  session.StatusWorking,
+		Harness: "codex",
+		Cwd:     "/home/u/proj",
+	}))
+
+	cx := testharness.NewCodexSimWithID(t, dir, convID, "/home/u/proj")
+	require.NoError(t, cx.Start())
+	reset5h := time.Now().Add(2 * time.Hour)
+	reset7d := time.Now().Add(5 * 24 * time.Hour)
+	usage := testharness.CodexTokenUsage{InputTokens: 100, OutputTokens: 10, TotalTokens: 110}
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 31, WindowMinutes: 300, ResetsAt: reset5h},
+		&testharness.CodexRateLimitWindowSeed{UsedPercent: 45, WindowMinutes: 10080, ResetsAt: reset7d},
+	))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "Stop",
+		ConvID:         convID,
+		Cwd:            "/home/u/proj",
+		TranscriptPath: cx.RolloutPath,
+	}, sessionID))
+
+	row, err := db.LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row, "Stop hook writes Codex usage cache")
+	assert.Equal(t, cx.RolloutPath, row.Source)
+
+	var got harness.CodexUsage
+	require.NoError(t, json.Unmarshal(row.Data, &got))
+	require.NotNil(t, got.FiveHour)
+	assert.Equal(t, 31.0, got.FiveHour.UsedPercent)
+	require.NotNil(t, got.Weekly)
+	assert.Equal(t, 45.0, got.Weekly.UsedPercent)
 }
 
 // Telemetry is refreshed at turn boundaries, not on every hook: a

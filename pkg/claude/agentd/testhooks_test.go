@@ -228,7 +228,7 @@ func SetPopupBaseURLForTest(url string) func() {
 // test $HOME, then assert the result on /api/snapshot without standing up
 // the poller goroutine.
 func RefreshCodexUsageForTest() {
-	refreshCodexUsage()
+	refreshCodexUsage(true)
 }
 
 // StubApprovalForTest swaps the human-approval popup with a stub that
