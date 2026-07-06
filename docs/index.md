@@ -139,7 +139,6 @@ tclaude conv watch
 | `session watch`    | Interactive session browser (shortcut for `session ls -w`) |
 | `session attach`   | Attach to a session                                        |
 | `session kill`     | Kill sessions                                              |
-| `web`              | Serve a session via web terminal (deprecated)              |
 | `conv ls`          | List conversations (`-w` for interactive, `-g` for global) |
 | `conv watch`       | Interactive conversation browser (shortcut for `conv ls -w`) |
 | `conv search`      | Search conversation text                                   |
@@ -185,6 +184,5 @@ Session watch also supports:
 - [Git Worktrees](worktrees.md) - Parallel development with multiple branches
 - [OS Notifications](notifications.md) - Get notified when sessions need attention
 - [Status Bar](status-bar.md) - Rich status bar for Claude Code's statusline
-- [Web Terminal](web-terminal.md) - Access sessions from your phone or browser (deprecated)
 - [Semantic Search](semantic-search.md) - Search conversations by meaning
 - [Task Management](tasks.md) - Run multiple tasks automatically
