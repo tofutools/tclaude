@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/common/buildversion"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -15,6 +16,7 @@ import (
 // without importing the unexported type. Adding fields here is cheap
 // when more assertions need them.
 type dashSnapshot struct {
+	Version              string             `json:"version"`
 	Groups               []dashGroup        `json:"groups"`
 	Agents               []dashAgent        `json:"agents"`
 	Ungrouped            []dashAgent        `json:"ungrouped"`
@@ -197,6 +199,16 @@ func fetchDashSnapshot(t *testing.T, mux http.Handler) dashSnapshot {
 	snap.Retired = fetchListRows[dashRetired](t, mux, "/api/retired?limit=0")
 	snap.Replaced = fetchListRows[dashReplaced](t, mux, "/api/replaced?limit=0")
 	return snap
+}
+
+func TestDashboardSnapshot_VersionSurfaced(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(buildversion.SetStampedVersion("v9.8.7-test"))
+
+	newFlow(t)
+
+	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
+	assert.Equal(t, "v9.8.7-test", snap.Version)
 }
 
 // Scenario: an ENROLLED agent has a live tmux session but is NOT a

@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/common/buildversion"
 )
 
 // The dashboard single-page UI lives under the embedded dashboard/
@@ -568,6 +569,7 @@ func dashboardAuthResult(r *http.Request) (ok bool, code int, msg string) {
 // re-fetches on a 2s timer.
 type snapshotPayload struct {
 	GeneratedAt string           `json:"generated_at"`
+	Version     string           `json:"version"`
 	Groups      []dashboardGroup `json:"groups"`
 	Agents      []dashboardAgent `json:"agents"`
 	// Ungrouped: every active agent that is NOT a member of any group,
@@ -1014,8 +1016,8 @@ type dashboardGroup struct {
 	// instantiated/deployed from. Both "" for a group not created from a
 	// template — the Task Forces framing on the Templates tab renders a group
 	// as a deployed force only when SourceTemplate is set.
-	Mission        string            `json:"mission,omitempty"`
-	SourceTemplate string            `json:"source_template,omitempty"`
+	Mission        string `json:"mission,omitempty"`
+	SourceTemplate string `json:"source_template,omitempty"`
 	// Parent is the NAME of the group this one is nested under (n-level
 	// groups-in-groups, JOH-392); "" = top-level. Resolved from the row's
 	// parent_id against the same snapshot's group set — name-keyed to match
@@ -1032,7 +1034,7 @@ type dashboardGroup struct {
 	// current wave + how many waves/agents are still pending. nil once the
 	// choreography is complete (or for a single-wave deploy) — the "wave N/M
 	// pending" chip renders only while set.
-	Waves   *waveStatusJSON  `json:"waves,omitempty"`
+	Waves *waveStatusJSON `json:"waves,omitempty"`
 	// Scribe marks the group as a daemon-created scribe's eponymous system
 	// group (descr == scribeGroupDescr — the circle-scribe machinery, JOH-361).
 	// The Groups tab hides these by default, surfacing them only when the
@@ -1542,6 +1544,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
+		Version:              buildversion.AppVersion(),
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     readUserDefaultModel(),
 		Harnesses:            buildHarnessCatalog(),

@@ -60,6 +60,22 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 	}
 }
 
+// TestDashboardFooterVersionWired guards the footer's status line: it should
+// show the running tclaude version alongside the dashboard URL and refresh
+// heartbeat. The JSON field itself is covered by the snapshot flow test; this
+// pins the client-side render contract.
+func TestDashboardFooterVersionWired(t *testing.T) {
+	for _, needle := range []string{
+		`class="meta-version">tclaude version ${esc(dashboardVersion)}</span>`,
+		`class="meta-base">${esc(data.popup_base)}</span>`,
+		`refreshed <span class="meta-time">`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard footer missing %q", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_SlopMachineWired guards the slop-mode slot
 // machine: a JS helper (slopMachine) emits a .slop-machine widget with
 // three .slop-reel children, and CSS swaps the regular .state-pill out
