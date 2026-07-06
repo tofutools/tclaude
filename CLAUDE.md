@@ -3,7 +3,7 @@
 ## What is tclaude?
 
 `tclaude` is a cross-platform CLI tool written in Go that extends agentic coding CLIs with session management, conversation utilities, and developer workflow features.
-It wraps a coding harness's sessions in tmux for detach/reattach, provides conversation search/management, usage tracking, a web terminal,
+It wraps a coding harness's sessions in tmux for detach/reattach, provides conversation search/management, usage tracking,
 and a custom status bar.
 
 It is **harness-agnostic**: Claude Code is the default harness and OpenAI Codex CLI is the second supported one, selected per session via `--harness claude|codex` and persisted per conversation. The pluggable seam lives in `pkg/claude/harness` (see the [Harnesses](#harnesses) section). Much of the codebase still carries historical `Claude`/`claude`/`TCLAUDE_` prefixes in identifiers and on-disk env vars even though the code behind them is harness-agnostic — this is deliberate (see the naming note below), so do not read those names as "Claude-Code-only".
@@ -42,7 +42,6 @@ CI runs `go test ./...` and `golangci-lint run ./...` across Linux and macOS (am
 | `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
 | `usage`     | Standalone subscription usage limits via Anthropic OAuth API.                                                                                                                     |
 | `statusbar` | Status bar output for Claude Code's statusline feature (hidden command, reads JSON from stdin). Uses rate limits from Claude Code's statusline input (>= 2.1.80).                 |
-| `web`       | **Deprecated.** Web terminal server - serves tmux sessions via xterm.js + WebSocket. Claude Code now has built-in remote access.                                                    |
 | `setup`     | One-time setup: installs hooks in `~/.claude/settings.json`, registers protocol handler, configures notifications.                                                                |
 | `selftest`  | Hidden integration tests for manual verification of credentials and API access.                                                                                                   |
 

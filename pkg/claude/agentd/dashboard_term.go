@@ -28,16 +28,16 @@ import (
 // dashboard at one of the WS routes below, which stream a real PTY
 // straight into the page (js/modal-term.js + vendored xterm.js).
 //
-// Ported from the deprecated pkg/claude/web package's handleWS
-// (server.go), generalised to run an arbitrary `sh -c` command instead
-// of a hardcoded tmux attach — see runPTYOverWS.
+// Ported from the former standalone `tclaude web` handleWS implementation,
+// generalised to run an arbitrary `sh -c` command instead of a hardcoded tmux
+// attach — see runPTYOverWS.
 
 // termWSUpgrader upgrades the dashboard's terminal WebSocket requests.
 // CheckOrigin always passes: checkDashboardAuth has already pinned the
 // cookie + Origin (or accepted a pre-authed remote-mTLS request)
 // before either WS handler reaches the upgrade, so a second Origin
 // check here would only duplicate that logic — mirrors the equally
-// permissive CheckOrigin in pkg/claude/web/server.go.
+// permissive CheckOrigin in the former standalone `tclaude web` server.
 var termWSUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -282,7 +282,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // termResizeMsg is sent from the browser when the xterm instance
-// resizes. Mirrors pkg/claude/web/server.go's resizeMsg.
+// resizes. Mirrors the former standalone `tclaude web` resize payload.
 type termResizeMsg struct {
 	Type string `json:"type"`
 	Cols int    `json:"cols"`
@@ -345,7 +345,7 @@ func hangupProcessGroup(proc *os.Process) {
 // running `sh -c shellCommand` over it: PTY output → binary WS
 // messages, WS messages → PTY input, except a {"type":"resize",...}
 // JSON text message, which resizes the PTY instead of being written to
-// it. Ported from the deprecated pkg/claude/web package's handleWS,
+// it. Ported from the former standalone `tclaude web` handleWS implementation,
 // generalised to take an arbitrary command instead of a hardcoded
 // `tmux attach-session`. Callers must call checkDashboardAuth before
 // reaching here — this function performs no auth of its own.
