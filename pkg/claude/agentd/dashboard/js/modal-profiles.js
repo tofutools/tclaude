@@ -22,6 +22,7 @@ import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
   loadProfiles, createProfile, updateProfile, deleteProfile, profileSummary,
+  exportProfiles, inspectProfileImport, importProfiles,
 } from './profiles.js';
 import { openSpawnPermEditor } from './modal-message.js';
 // wizWord swaps the profile vocabulary for 🧙 wizard mode: in wizard mode we
@@ -50,6 +51,9 @@ let profileEditorOnSaved = null;
 // The last list the manage overlay fetched — the filter box re-paints from
 // this without a re-fetch; a create/edit/delete reloads it.
 let lastProfiles = [];
+
+let profileImportEnvelope = null;
+let profileImportPreview = null;
 
 // ---- harness catalog (snapshot-driven, like the spawn dialog) -----------
 
@@ -284,6 +288,200 @@ function profilesByName() {
   return m;
 }
 
+// ---- Export / import -----------------------------------------------------
+
+function openProfileExportModal() {
+  $('#profile-export-error').textContent = '';
+  const list = $('#profile-export-list');
+  if (!lastProfiles.length) {
+    list.innerHTML = `<div class="template-empty">${wizWord('No profiles to export.', 'No familiar patterns to inscribe.')}</div>`;
+  } else {
+    list.innerHTML = lastProfiles.map(p => `<label class="profile-transfer-row">
+      <input type="checkbox" data-profile-export-name="${esc(p.name)}" checked />
+      <span class="profile-transfer-main">
+        <span class="profile-transfer-name">${esc(p.name)}</span>
+        ${profileSummary(p) ? `<span class="profile-transfer-summary">${esc(profileSummary(p))}</span>` : ''}
+      </span>
+    </label>`).join('');
+  }
+  $('#profile-export-submit').disabled = !lastProfiles.length;
+  $('#profile-export-modal').classList.add('show');
+}
+
+function closeProfileExportModal() { $('#profile-export-modal').classList.remove('show'); }
+
+function selectedExportProfileNames() {
+  return [...$('#profile-export-list').querySelectorAll('[data-profile-export-name]')]
+    .filter(el => el.checked)
+    .map(el => el.dataset.profileExportName);
+}
+
+function downloadJSON(name, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function submitProfileExport() {
+  const errEl = $('#profile-export-error');
+  errEl.textContent = '';
+  const names = selectedExportProfileNames();
+  if (!names.length) { errEl.textContent = 'select at least one profile'; return; }
+  const btn = $('#profile-export-submit');
+  btn.disabled = true;
+  try {
+    const bundle = await exportProfiles(names);
+    downloadJSON('spawn-profiles.json', bundle);
+    closeProfileExportModal();
+    toast(`${names.length} profile${names.length === 1 ? '' : 's'} exported`);
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetProfileImportPreview() {
+  profileImportEnvelope = null;
+  profileImportPreview = null;
+  $('#profile-import-preview').innerHTML = '';
+  $('#profile-import-preview').hidden = true;
+  $('#profile-import-submit').disabled = true;
+}
+
+function openProfileImportModal() {
+  $('#profile-import-file').value = '';
+  $('#profile-import-paste').value = '';
+  $('#profile-import-error').textContent = '';
+  resetProfileImportPreview();
+  $('#profile-import-modal').classList.add('show');
+  setTimeout(() => $('#profile-import-paste').focus(), 0);
+}
+
+function closeProfileImportModal() { $('#profile-import-modal').classList.remove('show'); }
+
+async function readProfileImportSource() {
+  const fileInput = $('#profile-import-file');
+  const file = fileInput.files && fileInput.files[0];
+  if (file) return (await file.text()).trim();
+  return $('#profile-import-paste').value.trim();
+}
+
+function importProfileByName(name) {
+  return (profileImportEnvelope && profileImportEnvelope.profiles || []).find(p => p.name === name) || null;
+}
+
+function profileImportRowHTML(prev) {
+  const source = importProfileByName(prev.name);
+  const summary = source ? profileSummary(source) : '';
+  const disabled = prev.valid ? '' : ' disabled';
+  const checked = prev.valid ? ' checked' : '';
+  const conflictControls = prev.exists && prev.valid ? `<span class="profile-import-conflict">
+      <select data-profile-import-action="${esc(prev.name)}" title="How to handle this existing local profile">
+        <option value="rename" selected>Rename</option>
+        <option value="overwrite">Overwrite</option>
+      </select>
+      <input type="text" data-profile-import-as="${esc(prev.name)}" value="${esc(prev.default_name || (prev.name + '-copy'))}" autocomplete="off" spellcheck="false" />
+    </span>` : '';
+  return `<div class="profile-transfer-row profile-import-row${prev.exists ? ' conflict' : ''}${prev.valid ? '' : ' invalid'}">
+    <input type="checkbox" data-profile-import-include="${esc(prev.name)}"${checked}${disabled} />
+    <span class="profile-transfer-main">
+      <span class="profile-transfer-name">${esc(prev.name)}</span>
+      ${summary ? `<span class="profile-transfer-summary">${esc(summary)}</span>` : ''}
+      ${prev.exists ? '<span class="profile-transfer-note">already exists locally</span>' : ''}
+      ${prev.error ? `<span class="profile-transfer-error">${esc(prev.error)}</span>` : ''}
+    </span>
+    ${conflictControls}
+  </div>`;
+}
+
+function renderProfileImportPreview() {
+  const host = $('#profile-import-preview');
+  const rows = (profileImportPreview && profileImportPreview.profiles) || [];
+  if (!rows.length) {
+    host.innerHTML = '<div class="template-empty">The export contains no profiles.</div>';
+    host.hidden = false;
+    $('#profile-import-submit').disabled = true;
+    return;
+  }
+  host.innerHTML = rows.map(profileImportRowHTML).join('');
+  host.hidden = false;
+  $('#profile-import-submit').disabled = rows.every(r => !r.valid);
+}
+
+async function inspectProfileImportSource() {
+  const errEl = $('#profile-import-error');
+  errEl.textContent = '';
+  resetProfileImportPreview();
+  const btn = $('#profile-import-inspect');
+  btn.disabled = true;
+  try {
+    const raw = await readProfileImportSource();
+    if (!raw) { errEl.textContent = 'pick a file or paste the profile JSON'; return; }
+    try {
+      profileImportEnvelope = JSON.parse(raw);
+    } catch (e) {
+      errEl.textContent = 'not valid JSON: ' + ((e && e.message) || String(e));
+      return;
+    }
+    profileImportPreview = await inspectProfileImport(profileImportEnvelope);
+    renderProfileImportPreview();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function profileImportDecisions() {
+  return [...$('#profile-import-preview').querySelectorAll('[data-profile-import-include]')].map(cb => {
+    const name = cb.dataset.profileImportInclude;
+    const actionEl = $(`[data-profile-import-action="${CSS.escape(name)}"]`);
+    const asEl = $(`[data-profile-import-as="${CSS.escape(name)}"]`);
+    const action = cb.checked ? (actionEl ? actionEl.value : 'create') : 'skip';
+    const out = {
+      name,
+      include: cb.checked,
+      action,
+    };
+    if (action === 'rename' && asEl) out.as = asEl.value.trim();
+    return out;
+  });
+}
+
+async function submitProfileImport() {
+  const errEl = $('#profile-import-error');
+  errEl.textContent = '';
+  if (!profileImportEnvelope || !profileImportPreview) {
+    errEl.textContent = 'preview the import first';
+    return;
+  }
+  const btn = $('#profile-import-submit');
+  btn.disabled = true;
+  try {
+    const res = await importProfiles(profileImportEnvelope, profileImportDecisions());
+    closeProfileImportModal();
+    const imported = (res && res.imported) || [];
+    const skipped = (res && res.skipped) || [];
+    const updated = imported.filter(p => p.updated).length;
+    let msg = `${imported.length} profile${imported.length === 1 ? '' : 's'} imported`;
+    if (updated) msg += ` (${updated} overwritten)`;
+    if (skipped.length) msg += `, ${skipped.length} skipped`;
+    toast(msg);
+    reloadProfilesList();
+  } catch (err) {
+    errEl.textContent = (err && err.message) || String(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---- Profile editor modal -----------------------------------------------
 
 // openProfileEditor opens the editor, populated from `seed` (a profile-shaped
@@ -496,6 +694,8 @@ function bindProfilesUI() {
   $('#profiles-manage-close').addEventListener('click', closeProfilesManageModal);
   bindManageOverlayDismiss('profiles-manage-modal', closeProfilesManageModal);
   $('#profile-create-open').addEventListener('click', () => openProfileEditor(null));
+  $('#profile-export-open').addEventListener('click', openProfileExportModal);
+  $('#profile-import-open').addEventListener('click', openProfileImportModal);
 
   // Filter box — re-paints from the already-fetched list (no re-fetch per
   // keystroke). The profiles overlay isn't snapshot-backed, so this is wired
@@ -538,6 +738,28 @@ function bindProfilesUI() {
     syncCustomModelRow('profile-editor-model', { focus: true });
   });
   bindBackdropDiscard('profile-editor-modal', closeProfileEditor);
+
+  // Export / import modals.
+  $('#profile-export-cancel').addEventListener('click', closeProfileExportModal);
+  $('#profile-export-submit').addEventListener('click', submitProfileExport);
+  $('#profile-export-list').addEventListener('change', () => {
+    $('#profile-export-submit').disabled = !selectedExportProfileNames().length;
+  });
+  bindBackdropDiscard('profile-export-modal', closeProfileExportModal);
+
+  $('#profile-import-cancel').addEventListener('click', closeProfileImportModal);
+  $('#profile-import-inspect').addEventListener('click', inspectProfileImportSource);
+  $('#profile-import-submit').addEventListener('click', submitProfileImport);
+  $('#profile-import-file').addEventListener('change', inspectProfileImportSource);
+  $('#profile-import-paste').addEventListener('input', resetProfileImportPreview);
+  $('#profile-import-preview').addEventListener('change', e => {
+    const action = e.target.closest('[data-profile-import-action]');
+    if (!action) return;
+    const name = action.dataset.profileImportAction;
+    const asEl = $(`[data-profile-import-as="${CSS.escape(name)}"]`);
+    if (asEl) asEl.disabled = action.value !== 'rename';
+  });
+  bindBackdropDiscard('profile-import-modal', closeProfileImportModal);
 }
 
 // removeProfile is exported so the palette dock's card ⚙ → Delete menu item can

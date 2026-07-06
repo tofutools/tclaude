@@ -101,6 +101,51 @@ async function deleteProfile(name) {
   invalidateProfiles();
 }
 
+async function parseAPIError(r) {
+  const txt = await r.text();
+  if (!txt) return `HTTP ${r.status}`;
+  try {
+    const j = JSON.parse(txt);
+    if (j && j.error) return j.error;
+  } catch (_) {}
+  return txt;
+}
+
+// exportProfiles downloads a portable profile bundle for the given profile
+// names. An empty names list means "all profiles" (the server default).
+async function exportProfiles(names = []) {
+  const q = new URLSearchParams();
+  (names || []).forEach(n => {
+    if (n) q.append('name', n);
+  });
+  const qs = q.toString();
+  const r = await fetch(`${API}/export${qs ? '?' + qs : ''}`, { credentials: 'same-origin' });
+  if (!r.ok) throw new Error(await parseAPIError(r));
+  return r.json();
+}
+
+async function inspectProfileImport(envelope) {
+  const r = await fetch(`${API}/import/inspect`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  if (!r.ok) throw new Error(await parseAPIError(r));
+  return r.json();
+}
+
+async function importProfiles(envelope, decisions) {
+  const body = { ...envelope, decisions: decisions || [] };
+  const r = await fetch(`${API}/import`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await parseAPIError(r));
+  invalidateProfiles();
+  return r.json().catch(() => ({}));
+}
+
 // getDashDefaultProfile reads the dashboard-level default profile name from
 // dashPrefs ("" when none). Used as the spawn dialog's pre-fill fallback
 // (after a group's own default_profile).
@@ -153,6 +198,7 @@ function profileSummary(p) {
 export {
   loadProfiles, cachedProfiles, invalidateProfiles, getProfile,
   createProfile, updateProfile, deleteProfile,
+  exportProfiles, inspectProfileImport, importProfiles,
   getDashDefaultProfile, setDashDefaultProfile,
   DASH_DEFAULT_PROFILE_KEY, profileSummary,
 };

@@ -15,14 +15,20 @@ import "net/http"
 //	GET    /api/spawn-profiles              → list profiles
 //	POST   /api/spawn-profiles              → create a profile
 //	POST   /api/spawn-profiles/from-agent   → capture a live agent's config into an unsaved seed
+//	GET    /api/spawn-profiles/export       → export selected/all profiles as a portable bundle
+//	POST   /api/spawn-profiles/import/inspect → preview a portable profile bundle
+//	POST   /api/spawn-profiles/import       → import a portable profile bundle
 //	GET    /api/spawn-profiles/{name}       → fetch one profile
 //	PATCH  /api/spawn-profiles/{name}       → replace a profile
 //	DELETE /api/spawn-profiles/{name}       → delete a profile
 func registerDashboardSpawnProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-profiles", dashboardSpawnProfilesRoute(handleSpawnProfiles))
-	// The literal from-agent segment is more specific than {name}, so the mux
-	// picks it unambiguously (mirrors /api/templates/from-group).
+	// Literal segments are more specific than {name}, so the mux picks them
+	// unambiguously (mirrors /api/templates/from-group/import/export).
 	mux.HandleFunc("POST /api/spawn-profiles/from-agent", dashboardSpawnProfilesRoute(handleSpawnProfileFromAgent))
+	mux.HandleFunc("GET /api/spawn-profiles/export", dashboardSpawnProfilesRoute(handleSpawnProfilesExport))
+	mux.HandleFunc("POST /api/spawn-profiles/import/inspect", dashboardSpawnProfilesRoute(handleSpawnProfilesImportInspect))
+	mux.HandleFunc("POST /api/spawn-profiles/import", dashboardSpawnProfilesRoute(handleSpawnProfilesImport))
 	mux.HandleFunc("/api/spawn-profiles/{name}", dashboardSpawnProfilesRoute(handleSpawnProfileByName))
 }
 
