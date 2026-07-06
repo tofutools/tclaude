@@ -543,3 +543,11 @@ CREATE TABLE access_requests (
 CREATE INDEX idx_access_requests_status_decided
 			ON access_requests(status, decided_at, created_at);
 
+CREATE TABLE codex_usage_cache (
+			id          INTEGER PRIMARY KEY,
+			data        TEXT NOT NULL DEFAULT '{}',
+			observed_at TEXT NOT NULL DEFAULT '',
+			updated_at  TEXT NOT NULL DEFAULT '',
+			source      TEXT NOT NULL DEFAULT ''
+		);
+

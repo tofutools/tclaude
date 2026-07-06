@@ -13,6 +13,15 @@ type UsageCacheRow struct {
 	LastAttemptAt time.Time
 }
 
+// CodexUsageCacheRow represents the latest Codex rate-limit snapshot lifted
+// from a rollout token_count event.
+type CodexUsageCacheRow struct {
+	Data       json.RawMessage // full harness.CodexUsage JSON blob
+	ObservedAt time.Time
+	UpdatedAt  time.Time
+	Source     string
+}
+
 // SaveUsageCache upserts the usage cache row (single-row table, key=1).
 func SaveUsageCache(data json.RawMessage, fetchedAt, lastAttemptAt time.Time) error {
 	db, err := Open()
@@ -58,6 +67,76 @@ func DeleteUsageCache() error {
 	}
 	_, err = db.Exec(`DELETE FROM usage_cache WHERE id = 1`)
 	return err
+}
+
+// SaveCodexUsageCacheIfNewer stores a Codex usage snapshot when its rollout
+// observation timestamp is newer than the current cache row. Equal or older
+// observations are ignored so concurrent hook callbacks cannot regress the
+// account-wide readout.
+func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, source string) (bool, error) {
+	if observedAt.IsZero() {
+		return false, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var observedStr string
+	err = tx.QueryRow(`SELECT observed_at FROM codex_usage_cache WHERE id = 1`).Scan(&observedStr)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	if err == nil {
+		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil && !observedAt.After(existing) {
+			return false, nil
+		}
+	}
+
+	now := time.Now()
+	_, err = tx.Exec(`INSERT OR REPLACE INTO codex_usage_cache (id, data, observed_at, updated_at, source)
+		VALUES (1, ?, ?, ?, ?)`,
+		string(data),
+		observedAt.UTC().Format(time.RFC3339Nano),
+		now.UTC().Format(time.RFC3339Nano),
+		source)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// LoadCodexUsageCache returns the cached Codex usage snapshot, or nil if none
+// has been observed yet.
+func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var dataStr, observedStr, updatedStr, source string
+	err = db.QueryRow(`SELECT data, observed_at, updated_at, source FROM codex_usage_cache WHERE id = 1`).
+		Scan(&dataStr, &observedStr, &updatedStr, &source)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	row := &CodexUsageCacheRow{
+		Data:   json.RawMessage(dataStr),
+		Source: source,
+	}
+	row.ObservedAt, _ = time.Parse(time.RFC3339Nano, observedStr)
+	row.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr)
+	return row, nil
 }
 
 // TryClaimUsageFetch atomically checks whether a fetch is needed (last_attempt_at

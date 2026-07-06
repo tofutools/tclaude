@@ -1,21 +1,24 @@
 package agentd
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Codex subscription-usage readout for the dashboard top bar (JOH-214). The Claude side
 // (usage.go) polls the Anthropic usage API into a SQLite cache; Codex has no
 // such endpoint wired in, so the figures are lifted off the rollout files
-// Codex writes locally (harness.LatestCodexUsage). The poller below keeps a
-// last-known snapshot in memory so the 2-second /api/snapshot tick never has
-// to walk ~/.codex/sessions itself, and the snapshot collector applies the
-// same staleness cap the Claude readout uses.
+// Codex writes locally. Hook callbacks refresh the shared SQLite cache from
+// Codex's transcript_path at turn boundaries; the poller below is a repair
+// path so a missed hook or daemon restart still discovers a last-known
+// snapshot without making the 2-second /api/snapshot tick walk
+// ~/.codex/sessions.
 
 // codexUsageMaxAge bounds how far back a rollout snapshot may be observed and
 // still feed the readout. The Claude usage cap (config.ResolvedUsageIdleTimeout,
@@ -32,11 +35,6 @@ import (
 // and each window drops out exactly when it resets.
 const codexUsageMaxAge = 8 * 24 * time.Hour
 
-var (
-	codexUsageMu   sync.RWMutex
-	codexUsageData *harness.CodexUsage // last successful scan; nil = none known
-)
-
 // codexDashboardUsage is the /api/snapshot view of the Codex account's
 // subscription rate limits — a sibling of the Claude figures under
 // dashboardUsage.Codex. Shapes match the Claude windows (usageWindow) so the
@@ -49,13 +47,13 @@ type codexDashboardUsage struct {
 	SevenDay  *usageWindow `json:"seven_day,omitempty"`
 }
 
-// startCodexUsagePoller refreshes the in-memory Codex usage snapshot on the
-// same cadence as the Claude poller, until stop closes. The first refresh
-// fires immediately so a freshly started daemon has data without waiting a
-// full interval. Mirrors startUsagePoller.
+// startCodexUsagePoller refreshes the Codex usage cache on the same cadence as
+// the Claude poller, until stop closes. The first refresh is a broad startup
+// repair scan; later ticks only consider live Codex session ids known to
+// tclaude. Mirrors startUsagePoller.
 func startCodexUsagePoller(stop <-chan struct{}) {
 	go func() {
-		refreshCodexUsage()
+		refreshCodexUsage(true)
 		t := time.NewTicker(usagePollInterval)
 		defer t.Stop()
 		for {
@@ -63,32 +61,82 @@ func startCodexUsagePoller(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-t.C:
-				refreshCodexUsage()
+				refreshCodexUsage(false)
 			}
 		}
 	}()
 }
 
-// refreshCodexUsage scans recent Codex rollouts for the latest rate-limit
-// snapshot and stores it for collectCodexUsageSnapshot to read. Only rollouts
-// touched within codexUsageMaxAge are read (an older one can only describe
-// already-reset windows), bounding the scan to sessions recent enough to still
-// matter. A failed scan is expected when Codex isn't installed and never
-// surfaces beyond a debug log; the snapshot just omits the Codex line.
-func refreshCodexUsage() {
+// refreshCodexUsage scans Codex rollouts for the latest rate-limit snapshot
+// and stores it in the SQLite cache collectCodexUsageSnapshot reads. The
+// startup pass is broad; steady-state repair is narrowed to live Codex
+// conversations known to tclaude. A failed scan is expected when Codex isn't
+// installed and never surfaces beyond a debug log; the snapshot just omits the
+// Codex line.
+func refreshCodexUsage(broad bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Debug("codex usage poller: home dir unresolved; skipping", "error", err)
 		return
 	}
-	u, err := harness.LatestCodexUsage(home, time.Now().Add(-codexUsageMaxAge))
+	since := time.Now().Add(-codexUsageMaxAge)
+	var u *harness.CodexUsage
+	if broad {
+		u, err = harness.LatestCodexUsage(home, since)
+	} else {
+		u, err = harness.LatestCodexUsageForConvs(home, liveCodexConvIDs(), since)
+	}
 	if err != nil {
 		slog.Debug("codex usage poller: scan failed; dashboard omits the codex line", "error", err)
 		return
 	}
-	codexUsageMu.Lock()
-	codexUsageData = u
-	codexUsageMu.Unlock()
+	if u == nil || u.Observed.IsZero() {
+		return
+	}
+	saveCodexUsageSnapshot(u, "poller")
+}
+
+func saveCodexUsageSnapshot(u *harness.CodexUsage, source string) {
+	if u == nil || u.Observed.IsZero() {
+		return
+	}
+	data, err := json.Marshal(u)
+	if err != nil {
+		slog.Debug("codex usage: marshal failed", "error", err)
+		return
+	}
+	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, source); err != nil {
+		slog.Debug("codex usage: cache write failed", "error", err)
+	}
+}
+
+func liveCodexConvIDs() []string {
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		slog.Debug("codex usage poller: tmux liveness unavailable; skipping targeted repair", "error", err)
+		return nil
+	}
+	rows, err := db.ListSessions()
+	if err != nil {
+		slog.Debug("codex usage poller: session list unavailable; skipping targeted repair", "error", err)
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var ids []string
+	for _, r := range rows {
+		if r == nil || r.Harness != harness.CodexName || r.ConvID == "" || r.TmuxSession == "" {
+			continue
+		}
+		if _, ok := alive[r.TmuxSession]; !ok {
+			continue
+		}
+		if _, ok := seen[r.ConvID]; ok {
+			continue
+		}
+		seen[r.ConvID] = struct{}{}
+		ids = append(ids, r.ConvID)
+	}
+	return ids
 }
 
 // collectCodexUsageSnapshot formats the last-known Codex rate limits for
@@ -98,10 +146,15 @@ func refreshCodexUsage() {
 // codexUsageWindowFor); the Observed-age check here is only a backstop for a
 // window that arrived without a reset timestamp, so it can't linger forever.
 func collectCodexUsageSnapshot() *codexDashboardUsage {
-	codexUsageMu.RLock()
-	u := codexUsageData
-	codexUsageMu.RUnlock()
-	if u == nil || u.Observed.IsZero() || time.Since(u.Observed) > codexUsageMaxAge {
+	row, err := db.LoadCodexUsageCache()
+	if err != nil || row == nil {
+		return nil
+	}
+	var u harness.CodexUsage
+	if err := json.Unmarshal(row.Data, &u); err != nil {
+		return nil
+	}
+	if u.Observed.IsZero() || time.Since(u.Observed) > codexUsageMaxAge {
 		return nil
 	}
 	fh := codexUsageWindowFor(u.FiveHour)

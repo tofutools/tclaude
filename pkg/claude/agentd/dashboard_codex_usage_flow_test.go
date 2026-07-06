@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -8,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -55,6 +58,32 @@ func TestDashboardCodexUsage_SurfacedInSnapshot(t *testing.T) {
 	assert.Equal(t, 7.0, snap.Usage.Codex.SevenDay.Pct, "codex weekly percent")
 	assert.Regexp(t, `^\d+d\d+h$`, snap.Usage.Codex.SevenDay.Remaining, "codex weekly remaining format")
 	assert.NotEmpty(t, snap.Usage.Codex.SevenDay.ResetsAt, "codex weekly resets_at populated")
+}
+
+func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	_ = newFlow(t)
+	now := time.Now()
+	u := harness.CodexUsage{
+		FiveHour: &harness.CodexRateLimitWindow{UsedPercent: 18, ResetsAt: now.Add(90 * time.Minute)},
+		Weekly:   &harness.CodexRateLimitWindow{UsedPercent: 40, ResetsAt: now.Add(4 * 24 * time.Hour)},
+		Observed: now,
+	}
+	data, err := json.Marshal(u)
+	require.NoError(t, err)
+	stored, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, "hook-rollout.jsonl")
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.NotNil(t, snap.Usage.Codex, "dashboard reads Codex usage from SQLite cache")
+	require.NotNil(t, snap.Usage.Codex.FiveHour)
+	assert.Equal(t, 18.0, snap.Usage.Codex.FiveHour.Pct)
+	require.NotNil(t, snap.Usage.Codex.SevenDay)
+	assert.Equal(t, 40.0, snap.Usage.Codex.SevenDay.Pct)
 }
 
 // Scenario: Codex usage must NOT vanish just because Codex has been idle a
