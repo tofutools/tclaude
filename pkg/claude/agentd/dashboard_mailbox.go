@@ -566,9 +566,9 @@ func writeMailboxPage(w http.ResponseWriter, head map[string]any, p mailboxPage)
 // resolveMailboxSearch turns the search box text into the two id-sets
 // MailboxFilter can't derive from agent_messages alone: convs whose
 // resolved display title contains q (matched the same way the reading
-// pane renders from_title/to_title — via agent.TitleFor over the small
-// set of convs that appear in any message), and groups whose name
-// contains q. Returns (nil, nil) for an empty query.
+// pane renders from_title/to_title — via the dashboard's cache-backed
+// title helper over the small set of convs that appear in any message),
+// and groups whose name contains q. Returns (nil, nil) for an empty query.
 func resolveMailboxSearch(q string) (titleConvs []string, groupIDs []int64) {
 	if q == "" {
 		return nil, nil
@@ -576,7 +576,7 @@ func resolveMailboxSearch(q string) (titleConvs []string, groupIDs []int64) {
 	lq := strings.ToLower(q)
 	if convs, err := db.DistinctAgentMessageConvs(); err == nil {
 		for _, c := range convs {
-			t := agent.TitleFor(c)
+			t := mailboxDisplayTitle(c)
 			if t != "" && strings.Contains(strings.ToLower(t), lq) {
 				titleConvs = append(titleConvs, c)
 			}
@@ -644,8 +644,25 @@ func (d *mailboxDecorator) titleOf(c string) string {
 	if t, ok := d.titleCache[c]; ok {
 		return t
 	}
-	t := agent.TitleFor(c)
+	t := mailboxDisplayTitle(c)
 	d.titleCache[c] = t
+	return t
+}
+
+func mailboxDisplayTitle(id string) string {
+	if id == "" {
+		return ""
+	}
+	conv := id
+	if strings.HasPrefix(id, db.AgentIDPrefix) {
+		if cur, err := db.CurrentConvForAgent(id); err == nil && cur != "" {
+			conv = cur
+		}
+	}
+	t := agent.CachedTitle(conv)
+	if t == agent.UnknownTitle {
+		return ""
+	}
 	return t
 }
 
