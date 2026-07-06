@@ -220,6 +220,21 @@ target group instead, leaving the original in place. A hint pill follows the
 cursor and the drop target's outline flips colour to show which effect is
 armed.
 
+### Spawn Profiles
+
+Reusable launch presets for agents. A spawn profile can carry the harness,
+model, effort, sandbox / permission-mode defaults, agent name, role, description,
+initial message, dialog toggles, owner default, and per-slug permission
+overrides. It deliberately does **not** carry a working directory or worktree:
+those stay per-spawn.
+
+Open the manager from the Groups tab cog (**⚙ → ⧉ profiles…**). The manager can
+create/edit/delete profiles and now also **⇪ export** / **⤒ import** portable
+profile bundles. Export opens a checklist of saved profiles so you can uncheck
+anything that should not travel. Import reads a bundle, previews every profile,
+lets you uncheck rows, and handles existing-name conflicts per profile by
+renaming or overwriting.
+
 ### Templates
 
 Reusable **group blueprints**. A template describes a whole team that does not

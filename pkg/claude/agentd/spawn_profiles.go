@@ -25,6 +25,9 @@ import (
 //	GET    /v1/spawn-profiles              → list profiles
 //	POST   /v1/spawn-profiles              → create a profile
 //	POST   /v1/spawn-profiles/from-agent   → capture a live agent's config into an unsaved seed
+//	GET    /v1/spawn-profiles/export       → export selected/all profiles as a portable bundle
+//	POST   /v1/spawn-profiles/import/inspect → preview a portable profile bundle
+//	POST   /v1/spawn-profiles/import       → import a portable profile bundle
 //	GET    /v1/spawn-profiles/{name}       → fetch one profile
 //	PATCH  /v1/spawn-profiles/{name}       → replace a profile (full state)
 //	DELETE /v1/spawn-profiles/{name}       → delete a profile
@@ -345,6 +348,371 @@ func handleSpawnProfileFromAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, seedProfileFromConv(res.ConvID))
+}
+
+const (
+	profileExportFormat  = "tclaude-spawn-profiles"
+	profileExportVersion = 1
+)
+
+type profileExportEnvelope struct {
+	Format        string             `json:"format"`
+	FormatVersion int                `json:"format_version"`
+	ExportedAt    string             `json:"exported_at,omitempty"`
+	Profiles      []spawnProfileJSON `json:"profiles"`
+}
+
+type profileImportInspectResult struct {
+	Format        string                 `json:"format"`
+	FormatVersion int                    `json:"format_version"`
+	ExportedAt    string                 `json:"exported_at,omitempty"`
+	Profiles      []profileImportPreview `json:"profiles"`
+}
+
+type profileImportPreview struct {
+	Name        string `json:"name"`
+	Exists      bool   `json:"exists"`
+	Valid       bool   `json:"valid"`
+	Error       string `json:"error,omitempty"`
+	DefaultName string `json:"default_name,omitempty"`
+}
+
+type profileImportDecision struct {
+	Name    string `json:"name"`
+	Include *bool  `json:"include,omitempty"`
+	Action  string `json:"action,omitempty"` // create | overwrite | rename | skip
+	As      string `json:"as,omitempty"`
+}
+
+type profileImportRequest struct {
+	Format        string                  `json:"format"`
+	FormatVersion int                     `json:"format_version"`
+	ExportedAt    string                  `json:"exported_at,omitempty"`
+	Profiles      []spawnProfileJSON      `json:"profiles"`
+	Decisions     []profileImportDecision `json:"decisions,omitempty"`
+}
+
+type profileImportResult struct {
+	Imported []profileImportApplied `json:"imported"`
+	Skipped  []string               `json:"skipped"`
+	Warnings []string               `json:"warnings"`
+}
+
+type profileImportApplied struct {
+	Source  string `json:"source"`
+	Name    string `json:"name"`
+	Updated bool   `json:"updated"`
+}
+
+func profileImportRequestEnvelope(req profileImportRequest) profileExportEnvelope {
+	return profileExportEnvelope{
+		Format:        req.Format,
+		FormatVersion: req.FormatVersion,
+		ExportedAt:    req.ExportedAt,
+		Profiles:      req.Profiles,
+	}
+}
+
+func stripProfileExportLocalFields(p spawnProfileJSON) spawnProfileJSON {
+	p.CreatedAt = ""
+	p.UpdatedAt = ""
+	return p
+}
+
+func validateProfileEnvelope(env profileExportEnvelope) *spawnFailure {
+	if strings.TrimSpace(env.Format) != profileExportFormat {
+		return &spawnFailure{http.StatusBadRequest, "invalid_format", fmt.Sprintf(
+			"not a tclaude spawn-profile export (format=%q, expected %q)", env.Format, profileExportFormat)}
+	}
+	if env.FormatVersion < 1 {
+		return &spawnFailure{http.StatusBadRequest, "invalid_format",
+			"missing or invalid format_version — not a valid spawn-profile export"}
+	}
+	if env.FormatVersion > profileExportVersion {
+		return &spawnFailure{http.StatusBadRequest, "version_too_new", fmt.Sprintf(
+			"this export is format_version %d, but this tclaude supports up to %d — upgrade tclaude to import it",
+			env.FormatVersion, profileExportVersion)}
+	}
+	seen := map[string]bool{}
+	for i, p := range env.Profiles {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile #%d has no name", i+1)}
+		}
+		if seen[name] {
+			return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile %q appears more than once in the export", name)}
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func requestedProfileExportNames(r *http.Request) []string {
+	q := r.URL.Query()
+	names := append([]string{}, q["name"]...)
+	for _, chunk := range q["names"] {
+		names = append(names, strings.Split(chunk, ",")...)
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// handleSpawnProfilesExport serves GET /v1/spawn-profiles/export. With no
+// name= query parameters it exports every profile; otherwise it exports the
+// selected names in query order. Export is open/read-only, like GET profiles.
+func handleSpawnProfilesExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+		return
+	}
+	names := requestedProfileExportNames(r)
+	out := []spawnProfileJSON{}
+	if len(names) == 0 {
+		profiles, err := db.ListSpawnProfiles()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		for _, p := range profiles {
+			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
+		}
+	} else {
+		for _, name := range names {
+			p, err := db.GetSpawnProfile(name)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
+			}
+			if p == nil {
+				writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no such profile %q", name))
+				return
+			}
+			out = append(out, stripProfileExportLocalFields(profileToJSON(p)))
+		}
+	}
+	writeJSON(w, http.StatusOK, profileExportEnvelope{
+		Format:        profileExportFormat,
+		FormatVersion: profileExportVersion,
+		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
+		Profiles:      out,
+	})
+}
+
+func nextProfileImportName(name string) string {
+	base := strings.TrimSpace(name)
+	if base == "" {
+		base = "imported-profile"
+	}
+	for i := 1; ; i++ {
+		candidate := base + "-copy"
+		if i > 1 {
+			candidate = fmt.Sprintf("%s-copy-%d", base, i)
+		}
+		existing, err := db.GetSpawnProfile(candidate)
+		if err != nil {
+			return candidate
+		}
+		if existing == nil {
+			return candidate
+		}
+	}
+}
+
+func inspectProfileEnvelope(env profileExportEnvelope) (profileImportInspectResult, *spawnFailure) {
+	if fail := validateProfileEnvelope(env); fail != nil {
+		return profileImportInspectResult{}, fail
+	}
+	res := profileImportInspectResult{
+		Format:        env.Format,
+		FormatVersion: env.FormatVersion,
+		ExportedAt:    env.ExportedAt,
+		Profiles:      []profileImportPreview{},
+	}
+	for _, pj := range env.Profiles {
+		name := strings.TrimSpace(pj.Name)
+		existing, err := db.GetSpawnProfile(name)
+		if err != nil {
+			return profileImportInspectResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		prev := profileImportPreview{
+			Name:        name,
+			Exists:      existing != nil,
+			Valid:       true,
+			DefaultName: name,
+		}
+		if existing != nil {
+			prev.DefaultName = nextProfileImportName(name)
+		}
+		if _, fail := buildProfileFromJSON(pj); fail != nil {
+			prev.Valid = false
+			prev.Error = fail.Msg
+		}
+		res.Profiles = append(res.Profiles, prev)
+	}
+	return res, nil
+}
+
+func handleSpawnProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		return
+	}
+	var env profileExportEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())
+		return
+	}
+	res, fail := inspectProfileEnvelope(env)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func includeDecision(d profileImportDecision) bool {
+	return d.Include == nil || *d.Include
+}
+
+func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
+		return
+	}
+	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		return
+	}
+	var req profileImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())
+		return
+	}
+	res, fail := importProfiles(profileImportRequestEnvelope(req), req.Decisions)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func importProfiles(env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
+	if fail := validateProfileEnvelope(env); fail != nil {
+		return profileImportResult{}, fail
+	}
+	byName := make(map[string]spawnProfileJSON, len(env.Profiles))
+	for _, p := range env.Profiles {
+		byName[strings.TrimSpace(p.Name)] = p
+	}
+	if len(decisions) == 0 {
+		decisions = make([]profileImportDecision, 0, len(env.Profiles))
+		for _, p := range env.Profiles {
+			decisions = append(decisions, profileImportDecision{Name: p.Name, Action: "create"})
+		}
+	}
+
+	result := profileImportResult{Imported: []profileImportApplied{}, Skipped: []string{}, Warnings: []string{}}
+	plannedNames := map[string]string{}
+	type importPlan struct {
+		source  string
+		target  string
+		action  string
+		profile spawnProfileJSON
+	}
+	plans := []importPlan{}
+
+	for _, d := range decisions {
+		source := strings.TrimSpace(d.Name)
+		if source == "" {
+			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", "import decision is missing name"}
+		}
+		pj, ok := byName[source]
+		if !ok {
+			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("import decision references unknown profile %q", source)}
+		}
+		action := strings.ToLower(strings.TrimSpace(d.Action))
+		if action == "" {
+			action = "create"
+		}
+		if !includeDecision(d) || action == "skip" {
+			result.Skipped = append(result.Skipped, source)
+			continue
+		}
+		target := source
+		switch action {
+		case "create", "overwrite":
+		case "rename":
+			target = strings.TrimSpace(d.As)
+			if target == "" {
+				return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile %q: rename requires as", source)}
+			}
+		default:
+			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profile %q: unsupported import action %q", source, action)}
+		}
+		if prior, dup := plannedNames[target]; dup {
+			return profileImportResult{}, &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf("profiles %q and %q both import as %q", prior, source, target)}
+		}
+		plannedNames[target] = source
+		pj = stripProfileExportLocalFields(pj)
+		pj.Name = target
+		if _, fail := buildProfileFromJSON(pj); fail != nil {
+			return profileImportResult{}, fail
+		}
+		plans = append(plans, importPlan{source: source, target: target, action: action, profile: pj})
+	}
+
+	for _, plan := range plans {
+		existing, err := db.GetSpawnProfile(plan.target)
+		if err != nil {
+			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if existing != nil && (plan.action == "create" || plan.action == "rename") {
+			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", fmt.Sprintf(
+				"a spawn profile named %q already exists — choose overwrite or rename", plan.target)}
+		}
+	}
+
+	for _, plan := range plans {
+		p, fail := buildProfileFromJSON(plan.profile)
+		if fail != nil {
+			return profileImportResult{}, fail
+		}
+		existing, err := db.GetSpawnProfile(plan.target)
+		if err != nil {
+			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		switch plan.action {
+		case "overwrite":
+			if existing != nil {
+				p.ID = existing.ID
+				if err := db.UpdateSpawnProfile(p); errors.Is(err, db.ErrSpawnProfileNameTaken) {
+					return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", err.Error()}
+				} else if err != nil {
+					return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+				}
+				result.Imported = append(result.Imported, profileImportApplied{Source: plan.source, Name: plan.target, Updated: true})
+				continue
+			}
+		}
+		if _, err := db.CreateSpawnProfile(p); errors.Is(err, db.ErrSpawnProfileNameTaken) {
+			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", err.Error()}
+		} else if err != nil {
+			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		result.Imported = append(result.Imported, profileImportApplied{Source: plan.source, Name: plan.target})
+	}
+	return result, nil
 }
 
 // seedProfileFromConv traces a live conv's observable launch config + granted

@@ -1786,12 +1786,52 @@
       <span class="filter-count" id="filter-profiles-count"></span>
       <button class="clear-filter" id="filter-profiles-clear" title="Clear filter">×</button>
       <span class="spacer"></span>
+      <button id="profile-export-open" class="tool" title="Export selected spawn profiles as a portable JSON bundle"><span class="profiles-word-regular">⇪ export</span><span class="profiles-word-wizard">📜 inscribe</span></button>
+      <button id="profile-import-open" class="tool" title="Import spawn profiles from a portable JSON bundle, with per-profile conflict choices"><span class="profiles-word-regular">⤒ import</span><span class="profiles-word-wizard">📜 read</span></button>
       <button id="profile-create-open" class="primary" title="Define a new spawn profile"><span class="profiles-word-regular">+ new profile</span><span class="profiles-word-wizard">+ new pattern</span></button>
     </div>
     <div id="profiles-list"></div>
     <div class="modal-buttons">
       <span class="spacer"></span>
       <button id="profiles-manage-close" type="button">Close</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="profile-export-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="profile-export-title">
+    <h3 id="profile-export-title"><span class="profiles-word-regular">Export spawn profiles</span><span class="profiles-word-wizard">📜 Inscribe familiar patterns</span></h3>
+    <div class="modal-meta"><span class="profiles-word-regular">Choose which saved profiles to include in the portable JSON bundle.</span><span class="profiles-word-wizard">Choose which familiar patterns to bind into the scroll.</span></div>
+    <div id="profile-export-list" class="profile-transfer-list"></div>
+    <div class="cron-create-error" id="profile-export-error"></div>
+    <div class="modal-buttons">
+      <button id="profile-export-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="profile-export-submit" class="primary" type="button">Export</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="profile-import-modal">
+  <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="profile-import-title">
+    <h3 id="profile-import-title"><span class="profiles-word-regular">Import spawn profiles</span><span class="profiles-word-wizard">📜 Read familiar patterns</span></h3>
+    <div class="modal-meta"><span class="profiles-word-regular">Pick a profile bundle or paste its JSON, preview the profiles, then choose which ones to import. Conflicts can be renamed or overwritten per profile.</span><span class="profiles-word-wizard">Pick a scroll or transcribe its runes, inspect each pattern, then choose what enters the library. Name clashes can be renamed or overwritten one by one.</span></div>
+    <label class="cron-create-row">
+      <span class="cron-create-label">File</span>
+      <input id="profile-import-file" type="file" accept=".json,application/json" />
+    </label>
+    <label class="cron-create-row" style="align-items:flex-start">
+      <span class="cron-create-label">or paste</span>
+      <textarea id="profile-import-paste" rows="6" placeholder="… or paste the spawn-profile JSON here" autocomplete="off" spellcheck="false" style="flex:1;font-family:monospace;font-size:12px"></textarea>
+    </label>
+    <div class="modal-buttons compact">
+      <span class="spacer"></span>
+      <button id="profile-import-inspect" type="button">Preview</button>
+    </div>
+    <div id="profile-import-preview" class="profile-transfer-list" hidden></div>
+    <div class="cron-create-error" id="profile-import-error"></div>
+    <div class="modal-buttons">
+      <button id="profile-import-cancel" type="button">Cancel</button>
+      <span class="spacer"></span>
+      <button id="profile-import-submit" class="primary" type="button" disabled>Import selected</button>
     </div>
   </div>
 </div>
