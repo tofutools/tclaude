@@ -583,6 +583,24 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 	}
 
+	// A tclaude-spawned Codex pane can miss its earliest hooks while it is
+	// behind a startup gate or a transient hook-install race. As soon as any
+	// later hook carries the first conv-id, persist it immediately, before
+	// event-specific early returns (unknown events, PostCompact, etc.) can skip
+	// the normal SaveSessionState tail. This is also the exact signal the
+	// pending-spawn sweeper waits on.
+	if envSessionID != "" && state.ConvID == "" && input.ConvID != "" {
+		if err := db.SetSessionConvID(state.ID, input.ConvID); err != nil {
+			slog.Warn("failed to backfill session conv-id from hook",
+				"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+		} else {
+			state.ConvID = input.ConvID
+		}
+	}
+	if state.Cwd == "" && input.Cwd != "" {
+		state.Cwd = input.Cwd
+	}
+
 	// Capture previous status for notification
 	prevStatus := state.Status
 
@@ -1037,8 +1055,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// keeps the migration machinery from firing regardless.) The task
 	// runner needs only the session row + Stop-hook signal. See
 	// inTaskRunnerHook.
-	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) &&
-		envSessionID != "" && state.ConvID != "" && !inTaskRunnerHook() {
+	//
+	// Codex has one extra repair path: if the launch/start hooks were missed,
+	// a later modeled hook from a non-pending spawned session still proves the
+	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
+	// here because agentd's sweeper owns their group/name/briefing intent.
+	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID) {
 		if _, _, err := db.EnsureAgentForConv(state.ConvID, "session-start"); err != nil {
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
@@ -1121,6 +1143,38 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	return nil
+}
+
+func shouldEnrollLaunchedSessionFromHook(state *SessionState, input HookCallbackInput, envSessionID string) bool {
+	if state == nil || envSessionID == "" || state.ConvID == "" || inTaskRunnerHook() {
+		return false
+	}
+	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) {
+		return true
+	}
+	if state.Harness != harness.CodexName {
+		return false
+	}
+	if input.AgentID != "" || (input.ConvID != "" && input.ConvID != state.ConvID) {
+		return false
+	}
+	// Pending dashboard spawns carry group/name/briefing intent that only
+	// agentd's pending-spawn sweeper can finish safely. Leave those for the
+	// sweeper; the hook's job is to persist the conv-id and status it consumes.
+	if ps, err := db.GetPendingSpawn(state.ID); err != nil {
+		slog.Warn("failed to check pending spawn before hook enrollment",
+			"session_id", state.ID, "error", err, "module", "hooks")
+		return false
+	} else if ps != nil {
+		return false
+	}
+	switch input.HookEventName {
+	case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+		"PermissionRequest", "Stop", "StopFailure":
+		return true
+	default:
+		return false
+	}
 }
 
 // TaskSignal is the JSON structure written to the task signal file.
@@ -1302,9 +1356,6 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 		slog.Warn("codex-workspace: failed to upsert agent_workspace",
 			"conv_id", state.ConvID, "error", err, "module", "hooks")
 	}
-	if branch == "" {
-		return
-	}
 
 	projectDir := worktreeRoot
 	if projectDir == "" {
@@ -1333,6 +1384,9 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 	}); err != nil {
 		slog.Warn("codex-workspace: failed to upsert conv_index branch snapshot",
 			"conv_id", state.ConvID, "branch", branch, "error", err, "module", "hooks")
+	}
+	if branch == "" {
+		return
 	}
 	if err := db.AppendConvBranchHistoryHook(state.ConvID, branch, worktreeRoot); err != nil {
 		slog.Warn("codex-workspace: failed to record branch history",

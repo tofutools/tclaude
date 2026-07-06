@@ -891,11 +891,11 @@ func TestRunHookCallback_SubagentSessionStartDoesNotEnroll(t *testing.T) {
 		"a subagent SessionStart (agent_id set) must not enroll the main conv on its own")
 }
 
-// Instant enrollment is gated to SessionStart so the per-hook subprocess
-// does not attempt an enrollment write on every tool event. A mid-turn
-// hook (here UserPromptSubmit) on a not-yet-enrolled conv must not enroll
-// it — the reaper's online sweep is the backstop for any session that
-// somehow never fired a SessionStart.
+// For Claude/default sessions, instant enrollment is gated to SessionStart so
+// the per-hook subprocess does not attempt an enrollment write on every tool
+// event. A mid-turn hook (here UserPromptSubmit) on a not-yet-enrolled conv
+// must not enroll it — the reaper's online sweep is the backstop for any
+// session that somehow never fired a SessionStart.
 func TestRunHookCallback_NonSessionStartDoesNotEnroll(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

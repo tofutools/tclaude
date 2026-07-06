@@ -122,14 +122,16 @@ func SetConvIndexCustomTitle(convID, title, harness string) error {
 	return err
 }
 
-// UpsertConvIndexBranchSnapshot records an out-of-band branch observation for
-// a conversation without clobbering title/prompt metadata owned by the normal
+// UpsertConvIndexBranchSnapshot records an out-of-band live observation for a
+// conversation without clobbering title/prompt metadata owned by the normal
 // conversation scanners. This is used by harnesses whose live branch is not
-// stamped into every turn (Codex stores it outside the rollout file): the
-// latest observation updates git_branch, while git_branch_startup is filled
-// only once so the dashboard's immutable "init" branch stays stable.
+// stamped into every turn (Codex stores it outside the rollout file): a
+// non-empty branch updates git_branch, while git_branch_startup is filled only
+// once so the dashboard's immutable "init" branch stays stable. A metadata-only
+// observation (empty GitBranch) is still useful: it can seed created/full_path
+// for a conv whose first indexing pass was missed.
 func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
-	if row == nil || row.ConvID == "" || row.GitBranch == "" {
+	if row == nil || row.ConvID == "" {
 		return nil
 	}
 	conn, err := Open()
@@ -154,9 +156,14 @@ func UpsertConvIndexBranchSnapshot(row *ConvIndexRow) error {
 		 git_branch, project_path, indexed_at, git_branch_startup, created, harness)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conv_id) DO UPDATE SET
-		 git_branch=excluded.git_branch,
+		 git_branch=CASE
+		   WHEN excluded.git_branch <> ''
+		   THEN excluded.git_branch
+		   ELSE conv_index.git_branch
+		 END,
 		 git_branch_startup=CASE
-		   WHEN conv_index.git_branch_startup = '' OR conv_index.git_branch_startup IS NULL
+		   WHEN (conv_index.git_branch_startup = '' OR conv_index.git_branch_startup IS NULL)
+		     AND excluded.git_branch_startup <> ''
 		   THEN excluded.git_branch_startup
 		   ELSE conv_index.git_branch_startup
 		 END,
