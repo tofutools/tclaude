@@ -281,3 +281,73 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 		t.Fatalf("want 1 approval.approve-always row, got %d", len(always))
 	}
 }
+
+// recordApprovalRequest writes one agent-attributed audit row naming the
+// requester as the actor, the requested permission in the detail, and the
+// surface (cli/dashboard) as the source — the counterpart to the operator's
+// decision row (JOH-392).
+func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	req := &approvalRequest{
+		perm:        "human.clipboard",
+		convID:      "019ec010-2222-2222-2222-222222222222",
+		convTitle:   "worker",
+		method:      http.MethodPost,
+		path:        "/v1/clipboard",
+		targetGroup: "crew",
+	}
+	recordApprovalRequest(req)
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request"})
+	if err != nil {
+		t.Fatalf("list audit log: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 approval.request row, got %d", len(rows))
+	}
+	row := rows[0]
+	// The actor is the requesting AGENT, not the operator — this is the
+	// gap the decision-only trail left (JOH-392).
+	if row.ActorKind != db.AuditActorAgent || row.ActorConv != req.convID || row.ActorLabel != "worker" {
+		t.Errorf("actor = (%q,%q,%q), want (agent,%q,worker)", row.ActorKind, row.ActorConv, row.ActorLabel, req.convID)
+	}
+	if row.GroupName != "crew" {
+		t.Errorf("group = %q, want crew", row.GroupName)
+	}
+	// Source reflects the surface the agent's call arrived on (/v1 → cli),
+	// not the popup surface the human decides on.
+	if row.Source != db.AuditSourceCLI {
+		t.Errorf("source = %q, want %q", row.Source, db.AuditSourceCLI)
+	}
+	if !strings.Contains(row.Detail, "human.clipboard") {
+		t.Errorf("detail should name the permission, got %q", row.Detail)
+	}
+
+	// A requester with no resolved title falls back to the short conv-id so
+	// the actor column is never blank. Assert the label directly — a Search
+	// term would also match the full actor_conv and pass even if the label
+	// were left empty.
+	req.convTitle = ""
+	recordApprovalRequest(req)
+	rows, err = db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request"})
+	if err != nil {
+		t.Fatalf("list fallback rows: %v", err)
+	}
+	var fallback *db.AuditLogEntry
+	for i := range rows {
+		if rows[i].ActorLabel != "worker" {
+			fallback = &rows[i]
+			break
+		}
+	}
+	if fallback == nil {
+		t.Fatalf("want a fallback-labeled approval.request row distinct from the titled one")
+	}
+	if fallback.ActorLabel != short8(req.convID) {
+		t.Errorf("fallback actor label = %q, want %q (short conv-id)", fallback.ActorLabel, short8(req.convID))
+	}
+}

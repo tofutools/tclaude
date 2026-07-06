@@ -533,6 +533,12 @@ func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) 
 	approvals.pending[id] = req
 	approvals.mu.Unlock()
 
+	// Mirror realRequestHumanApproval's request-raise side-effect: the
+	// agent-attributed approval.request audit row (JOH-392) is written at
+	// registration, before any decision, so a flow test observes the same
+	// request→decision pair production writes.
+	recordApprovalRequest(req)
+
 	done := make(chan bool, 1)
 	go func() {
 		timer := time.NewTimer(req.timeout)

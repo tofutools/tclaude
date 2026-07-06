@@ -262,6 +262,14 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		approvals.mu.Unlock()
 	}()
 
+	// Record the request itself the moment it is raised — an
+	// agent-attributed "approval.request" row that pairs with the operator's
+	// later "approval.approve"/"approval.deny" decision (JOH-392). Without
+	// it the trail showed decisions with no matching request, and a request
+	// that TIMED OUT (whose auto-deny is intentionally not a recorded
+	// decision) left no approval-verb trace at all.
+	recordApprovalRequest(req)
+
 	cfg, cfgErr := config.Load()
 	if cfgErr != nil {
 		slog.Warn("popup: failed to load config for access-request alerting", "err", cfgErr)
@@ -373,6 +381,75 @@ func persistAlwaysAllowGrant(req *approvalRequest) {
 	if err := db.SetAgentPermissionOverride(req.convID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
 		slog.Warn("popup: failed to persist always-allow grant",
 			"perm", req.perm, "conv", req.convID, "err", err)
+	}
+}
+
+// recordApprovalRequest writes an audit row for the moment an agent RAISES
+// a human-approval request (the `--ask-human` / X-Tclaude-Ask-Human escape
+// hatch). It is the agent-attributed counterpart to recordApprovalDecision:
+// this row names the requester as the actor, the eventual decision row names
+// the operator. Recording the request closes two gaps (JOH-392): decisions
+// no longer appear with no matching request, and a request that later TIMES
+// OUT — whose auto-deny is deliberately not a recorded decision — still
+// leaves an approval-verb trace of what was asked.
+//
+// The actor is always an agent: humans bypass the permission gates before
+// ever reaching a popup. Source is derived from the original request path
+// (the surface the agent's call arrived on), so the request row is tagged
+// cli/dashboard like the underlying command rather than popup (which is the
+// human's decision surface). Status is 200 — the request was successfully
+// placed; its outcome is carried by the separate decision/command rows.
+// Best-effort: a logging failure is warned and swallowed so it can never
+// affect the request the agent just made.
+func recordApprovalRequest(req *approvalRequest) {
+	label := strings.TrimSpace(req.convTitle)
+	if label == "" {
+		label = short8(req.convID)
+	}
+	// Same fallback for the target (the cross-agent path sets targetConvID):
+	// never leave a resolvable conv with a blank label, matching
+	// resolveAuditTarget's convention.
+	targetLabel := strings.TrimSpace(req.targetConvTitle)
+	if targetLabel == "" && req.targetConvID != "" {
+		targetLabel = short8(req.targetConvID)
+	}
+	detail := strings.TrimSpace(req.perm)
+	if action := strings.TrimSpace(req.method + " " + req.path); action != "" {
+		if detail != "" {
+			detail += " — " + action
+		} else {
+			detail = action
+		}
+	}
+	if _, err := db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind:   db.AuditActorAgent,
+		ActorConv:   req.convID,
+		ActorLabel:  label,
+		Verb:        "approval.request",
+		TargetConv:  req.targetConvID,
+		TargetLabel: targetLabel,
+		GroupName:   req.targetGroup,
+		Detail:      auditClip(detail, 120),
+		Method:      req.method,
+		Path:        req.path,
+		Status:      http.StatusOK,
+		Source:      auditSourceForPath(req.path),
+	}); err != nil {
+		slog.Warn("audit: failed to record approval request", "perm", req.perm, "err", err)
+	}
+}
+
+// auditSourceForPath maps a request path to the audit source of the surface
+// it arrived on: /v1/* is the CLI, /api/* is the dashboard. Anything else
+// falls back to popup (the approval subsystem's own surface).
+func auditSourceForPath(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/v1/"):
+		return db.AuditSourceCLI
+	case strings.HasPrefix(path, "/api/"):
+		return db.AuditSourceDashboard
+	default:
+		return db.AuditSourcePopup
 	}
 }
 
