@@ -413,7 +413,8 @@ always uses the post-connect inbox pointer.
 **Spawn guardrails.** `groups.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
-explosion), an **agent** caller is bound by three checks — a human
+explosion) or minting a less-confined child, an **agent** caller is
+bound by four checks — a human
 bypasses the agent-only ones, exactly as humans bypass every other
 permission gate:
 
@@ -421,12 +422,28 @@ permission gate:
 |-----------|---------|---------|
 | **Group restriction** — an agent may only spawn into a group it is a member or owner of | on | `403 group_restricted` |
 | **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
+| **Sandbox lineage** — the child may not have a weaker launch sandbox than the spawning agent | on | `403 sandbox_restricted` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
 
 The first two are tuned in `~/.tclaude/config.json` under `agent`
 (`spawn_group_restriction`, `spawn_allowed_groups`, `spawn_max_per_hour`);
 the member cap is a per-group property — `groups set-max-members`, or the
 👥 chip on the dashboard's Groups tab. See [Permission model](#permission-model).
+
+The sandbox lineage guard compares the spawning agent's recorded harness /
+sandbox mode with the fully resolved child launch shape, after any group
+default spawn profile has filled blank fields. In short:
+
+- Claude `off` or Codex `danger-full-access` parents can spawn any sandbox.
+- Claude `inherit`/`on` parents can spawn sandboxed Codex children
+  (`tclaude-agent`, `workspace-write`, `read-only`) but not
+  `danger-full-access`; `inherit` may spawn Claude `inherit`/`on`, while
+  `on` may spawn Claude `on`.
+- Codex `tclaude-agent` parents can spawn Codex children up to
+  `tclaude-agent`, and Claude `inherit`/`on` children.
+- Raw Codex `workspace-write` parents can spawn only raw Codex
+  `workspace-write` or `read-only`; raw Codex `read-only` parents can spawn
+  only raw Codex `read-only`.
 
 ### clone / reincarnate / compact / context-info
 

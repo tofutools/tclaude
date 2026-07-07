@@ -1533,6 +1533,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			h.Name, cwd, sandboxMode, harness.SandboxDangerFull))
 		return
 	}
+	if !checkSpawnSandboxLineage(w, spawnerConvID, h.Name, sandboxMode) {
+		return
+	}
 
 	// Resolve the approval/permission posture for the chosen harness: a Codex
 	// agent gets its non-escalating default (never) when unset, a Claude agent
