@@ -37,6 +37,14 @@ func TestResolvedUsageIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestPollAnthropicUsageAPI(t *testing.T) {
+	assert.False(t, (*Config)(nil).PollAnthropicUsageAPI())
+	assert.False(t, (&Config{}).PollAnthropicUsageAPI())
+	assert.False(t, (&Config{Usage: &UsageConfig{}}).PollAnthropicUsageAPI())
+	assert.False(t, DefaultConfig().PollAnthropicUsageAPI())
+	assert.True(t, (&Config{Usage: &UsageConfig{PollAnthropicAPI: true}}).PollAnthropicUsageAPI())
+}
+
 // Validate reports an unparseable or non-positive usage.idle_timeout (so the
 // Config tab tells the human) but accepts a valid one and stays silent when
 // the block is absent — the resolver, not Validate, owns the runtime

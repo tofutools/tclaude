@@ -10,12 +10,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
 
-// usagePollInterval is how often agentd refreshes the subscription
-// usage figures. The dashboard snapshot reads a cached blob (see
-// collectUsageSnapshot); this poller's only job is to keep that blob
-// fresh via usageapi.GetCached — which itself only hits the network
-// when its own 5-minute cache is stale — so the readout stays current
-// even when no Claude Code statusbar is running to populate it.
+// usagePollInterval is how often agentd checks whether it should refresh the
+// Claude subscription usage figures. The Anthropic API refresh itself is
+// opt-in (config usage.poll_anthropic_api); by default the dashboard relies on
+// Claude Code's statusline callback plus the cached last-known reading.
 const usagePollInterval = 3 * time.Minute
 
 // usageStaleAfter is the fallback cap on how old a cached usage reading may
@@ -25,15 +23,16 @@ const usagePollInterval = 3 * time.Minute
 // config.ResolvedUsageIdleTimeout, default config.DefaultUsageIdleTimeout
 // (3 days).
 //
-// The cap can't be tiny: the Claude readout is fed by Claude Code's
-// statusline callback (only while a session runs) and a periodic Anthropic
-// usage-API poll — and that poll commonly starts failing a few hours after
-// the last session, once the OAuth token has rotated. A failed poll keeps
-// the cached figures but does NOT advance their FetchedAt clock (see
-// usageapi.stampLastAttempt), so an aggressive cap would hide a perfectly
-// good weekly reading the same night, leaving only Codex on the top bar —
-// the "hiding too soon" the grace window fixes.
+// The cap can't be tiny: the Claude readout is fed by Claude Code's statusline
+// callback (only while a session runs) and, when explicitly enabled, a periodic
+// Anthropic usage-API poll. A failed poll keeps the cached figures but does NOT
+// advance their FetchedAt clock (see usageapi.stampLastAttempt), so an
+// aggressive cap would hide a perfectly good weekly reading the same night,
+// leaving only Codex on the top bar — the "hiding too soon" the grace window
+// fixes.
 const usageStaleAfter = config.DefaultUsageIdleTimeout
+
+var usageGetCached = usageapi.GetCached
 
 // dashboardUsage is the /api/snapshot view of the account's
 // subscription usage limits — one readout for the whole dashboard, not
@@ -80,13 +79,13 @@ type usageWindow struct {
 	Remaining string  `json:"remaining"`
 }
 
-// startUsagePoller refreshes the subscription-usage cache on a timer
-// until stop closes (the daemon-wide quit channel). The first refresh
-// fires immediately so a freshly started daemon has data without
-// waiting a full interval.
+// startUsagePoller conditionally refreshes the Claude subscription-usage cache
+// on a timer until stop closes (the daemon-wide quit channel). The first check
+// fires immediately; no Anthropic usage API call is made unless
+// usage.poll_anthropic_api is true in config.json.
 func startUsagePoller(stop <-chan struct{}) {
 	go func() {
-		refreshUsage()
+		maybeRefreshUsage()
 		t := time.NewTicker(usagePollInterval)
 		defer t.Stop()
 		for {
@@ -94,10 +93,25 @@ func startUsagePoller(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-t.C:
-				refreshUsage()
+				maybeRefreshUsage()
 			}
 		}
 	}()
+}
+
+// maybeRefreshUsage reloads the config and performs the Anthropic usage API
+// refresh only when the user has explicitly opted in. Reloading here lets the
+// dashboard Config tab enable/disable polling without restarting agentd.
+func maybeRefreshUsage() {
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Debug("usage poller: config load failed; skipping Anthropic usage API refresh", "error", err)
+		return
+	}
+	if !cfg.PollAnthropicUsageAPI() {
+		return
+	}
+	refreshUsage()
 }
 
 // refreshUsage calls usageapi.GetCached purely for its side effect:
@@ -108,7 +122,7 @@ func startUsagePoller(stop <-chan struct{}) {
 // failed refresh is expected ("sometimes not available") and never
 // surfaces beyond a debug log; the snapshot just reports available=false.
 func refreshUsage() {
-	if _, err := usageapi.GetCached(); err != nil {
+	if _, err := usageGetCached(); err != nil {
 		slog.Debug("usage poller: refresh failed; dashboard falls back to n/a", "error", err)
 	}
 }

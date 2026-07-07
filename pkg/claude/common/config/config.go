@@ -99,10 +99,8 @@ type Config struct {
 	TUI *TUIConfig `json:"tui,omitempty"`
 
 	// Usage tunes the dashboard's subscription-usage readout (the top-bar
-	// 5h/7d bars) — currently just how long the last-known Claude reading
-	// stays visible after the live source goes dark. Absent / blank falls
-	// back to the built-in default (DefaultUsageIdleTimeout); see
-	// ResolvedUsageIdleTimeout.
+	// 5h/7d bars). Absent / blank falls back to the built-in defaults; see
+	// ResolvedUsageIdleTimeout and PollAnthropicUsageAPI.
 	Usage *UsageConfig `json:"usage,omitempty"`
 }
 
@@ -706,27 +704,32 @@ type UsageConfig struct {
 	// IdleTimeout is how long the last-known Claude usage reading stays
 	// visible after fresh data stops arriving, as a Go duration string
 	// ("72h", "30m", "2h30m"). The Claude readout is fed by two sources:
-	// Claude Code's statusline callback (only while a session runs) and a
-	// periodic Anthropic usage-API poll — and that poll commonly starts
-	// failing a few hours after the last session, when the OAuth token has
-	// rotated. A failed poll preserves the cached figures but does NOT
-	// advance their freshness clock, so a short cap would hide a perfectly
-	// good 7d (weekly) reading the same night, leaving only Codex on the top
-	// bar. This is the grace window: keep showing the last-known reading for
-	// this long since the last successful update, then degrade to
-	// "usage: n/a". Empty / absent → DefaultUsageIdleTimeout; a value that
-	// doesn't parse, or is ≤ 0, is rejected by Validate. See
-	// ResolvedUsageIdleTimeout.
+	// Claude Code's statusline callback (only while a session runs) and,
+	// only when PollAnthropicAPI is enabled, a periodic Anthropic usage-API
+	// poll. A failed poll preserves the cached figures but does NOT advance
+	// their freshness clock, so a short cap would hide a perfectly good 7d
+	// (weekly) reading the same night, leaving only Codex on the top bar.
+	// This is the grace window: keep showing the last-known reading for this
+	// long since the last successful update, then degrade to "usage: n/a".
+	// Empty / absent → DefaultUsageIdleTimeout; a value that doesn't parse,
+	// or is ≤ 0, is rejected by Validate. See ResolvedUsageIdleTimeout.
 	IdleTimeout string `json:"idle_timeout,omitempty"`
+
+	// PollAnthropicAPI opts agentd into periodically refreshing the Claude
+	// subscription usage cache via Anthropic's OAuth usage API. Disabled by
+	// default: Claude Code's statusline callback already supplies the same
+	// data while sessions run, and background API polling can hit 429 rate
+	// limits on otherwise idle machines. Enable only when you want dashboard
+	// usage bars refreshed while no Claude Code statusline callback is active.
+	PollAnthropicAPI bool `json:"poll_anthropic_api,omitempty"`
 }
 
 // DefaultUsageIdleTimeout is how long a last-known Claude usage reading
 // stays on the dashboard after its live source goes dark, when config.json
 // pins no usage.idle_timeout. Three days comfortably outlives an overnight
-// idle spell plus a rotated OAuth token (the common reason the usage poll
-// stops refreshing), so the 5h/7d bars persist off the last good reading
-// instead of collapsing to "usage: n/a" — while still eventually clearing a
-// genuinely dead source.
+// idle spell where no Claude Code statusline callback is running, so the 5h/7d
+// bars persist off the last good reading instead of collapsing to "usage: n/a"
+// — while still eventually clearing a genuinely dead source.
 const DefaultUsageIdleTimeout = 72 * time.Hour
 
 // ResolvedUsageIdleTimeout returns the effective grace window for the
@@ -744,6 +747,14 @@ func (c *Config) ResolvedUsageIdleTimeout() time.Duration {
 		return DefaultUsageIdleTimeout
 	}
 	return d
+}
+
+// PollAnthropicUsageAPI reports whether agentd should periodically call the
+// Anthropic OAuth usage API to refresh Claude subscription usage. The default
+// is false so the dashboard relies on Claude Code's statusline callback and
+// cached figures unless the user explicitly opts into background API polling.
+func (c *Config) PollAnthropicUsageAPI() bool {
+	return c != nil && c.Usage != nil && c.Usage.PollAnthropicAPI
 }
 
 // ConvWatchConfig holds the watch view's persisted UI preferences.

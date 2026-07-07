@@ -482,6 +482,13 @@ build of tclaude recognises. Edits are staged in the form until you press
 settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
 
+The **Usage readout** section controls the top-bar Claude subscription bars.
+By default agentd does **not** periodically call Anthropic's usage API; it uses
+Claude Code's statusline callback when sessions run and otherwise shows the
+last cached reading for `usage.idle_timeout` (default `72h`). Enable
+`usage.poll_anthropic_api` there only if you want background API refreshes while
+no statusline callback is active.
+
 The **Window focus** field also holds a **set the `tclaude:<id>` window/tab
 title** toggle (`focus.window_title`, on by default). tclaude normally stamps
 a `tclaude:<id>` title on each agent's terminal so it can find that window
