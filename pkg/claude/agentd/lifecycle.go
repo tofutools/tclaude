@@ -1533,9 +1533,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			h.Name, cwd, sandboxMode, harness.SandboxDangerFull))
 		return
 	}
-	if !checkSpawnSandboxLineage(w, spawnerConvID, h.Name, sandboxMode) {
-		return
-	}
 
 	// Resolve the approval/permission posture for the chosen harness: a Codex
 	// agent gets its non-escalating default (never) when unset, a Claude agent
@@ -2117,6 +2114,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// executeSpawn with a profile-carrying group, keeping a Codex spawn
 	// sandboxed. A value invalid for the harness is a typed failure.
 	if fail := applyDefaultProfile(g, &p); fail != nil {
+		return nil, fail
+	}
+	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
 		return nil, fail
 	}
 

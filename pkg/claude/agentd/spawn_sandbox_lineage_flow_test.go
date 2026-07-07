@@ -140,6 +140,68 @@ func TestSpawnSandboxLineage_ProfileDerivedWeakSandboxRejected(t *testing.T) {
 	assert.Contains(t, string(resp.Raw), "sandbox_restricted")
 }
 
+func TestSpawnSandboxLineage_TemplateInstantiateRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-tpl1-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+
+	createBody := map[string]any{
+		"name": "weak-template",
+		"agents": []map[string]any{
+			{"name": "worker", "harness": harness.DefaultName, "sandbox": harness.ClaudeSandboxOff},
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/weak-template/instantiate",
+		map[string]any{"group_name": "weak-cast"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 0, res.Spawned, "template child with looser sandbox must not spawn")
+	assert.Equal(t, 1, res.Failed, "template spawn reports the lineage refusal per agent")
+	require.Len(t, res.Agents, 1)
+	assert.Contains(t, res.Agents[0].Error, "may not spawn")
+	assert.Equal(t, 0, memberCount(t, "weak-cast"), "refused template child was not enrolled")
+}
+
+func TestSpawnSandboxLineage_StagedTemplateWaveRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-wave-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+
+	createBody := map[string]any{
+		"name": "staged-weak",
+		"agents": []map[string]any{
+			{"name": "lead", "role": "lead", "wave": 0},
+			{"name": "dev", "role": "dev", "wave": 1, "harness": harness.DefaultName, "sandbox": harness.ClaudeSandboxOff},
+		},
+	}
+	require.Equalf(t, http.StatusCreated,
+		humanReq(t, f, http.MethodPost, "/v1/templates", createBody).Code, "create template")
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/templates/staged-weak/deploy",
+		map[string]any{"group_name": "staged-cast", "mission": "exercise delayed wave guard"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res waveDeployResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 1, res.Spawned, "wave 0 still spawns")
+	assert.Equal(t, 1, res.PendingAgents, "wave 1 is deferred")
+
+	leadConv := memberByRole(t, "staged-cast", "lead")
+	require.NotEmpty(t, leadConv)
+	settleWaveMember(t, f, leadConv)
+
+	assert.Empty(t, memberByRole(t, "staged-cast", "dev"), "looser delayed-wave child must not spawn")
+	assert.Equal(t, 1, memberCount(t, "staged-cast"), "only the allowed first wave is enrolled")
+}
+
 func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, convID, h, sandbox string) {
 	t.Helper()
 	f.HaveMember(group, convID)

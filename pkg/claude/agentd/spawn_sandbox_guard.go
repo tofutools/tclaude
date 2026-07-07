@@ -9,30 +9,28 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-// checkSpawnSandboxLineage prevents an agent that holds groups.spawn from
+// spawnSandboxLineageFailure prevents an agent that can spawn peers from
 // minting a child with a looser launch sandbox than the caller currently has.
 // Humans bypass this check: they are the trust root everywhere else in agentd.
-func checkSpawnSandboxLineage(w http.ResponseWriter, parentConvID, childHarness, childSandbox string) bool {
+func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string) *spawnFailure {
 	if parentConvID == "" {
-		return true
+		return nil
 	}
 	parent, err := spawnLineageParentSandbox(parentConvID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"spawn sandbox guard: "+err.Error())
-		return false
+		return &spawnFailure{http.StatusInternalServerError, "io",
+			"spawn sandbox guard: " + err.Error()}
 	}
 	child := spawnLineageSandbox{
 		Harness: harnessOrDefault(childHarness),
 		Mode:    strings.TrimSpace(childSandbox),
 	}
 	if !spawnSandboxLineageAllowed(parent, child) {
-		writeError(w, http.StatusForbidden, "sandbox_restricted",
+		return &spawnFailure{http.StatusForbidden, "sandbox_restricted",
 			fmt.Sprintf("agent %s was launched as %s sandbox %q and may not spawn a %s child with sandbox %q",
-				short8(parentConvID), parent.Harness, parent.Mode, child.Harness, child.Mode))
-		return false
+				short8(parentConvID), parent.Harness, parent.Mode, child.Harness, child.Mode)}
 	}
-	return true
+	return nil
 }
 
 type spawnLineageSandbox struct {
