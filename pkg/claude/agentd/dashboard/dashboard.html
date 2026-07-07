@@ -423,9 +423,14 @@
     <div class="cfg-section">
       <h3>Usage readout</h3>
       <div class="cfg-field">
+        <span class="cfg-label">Poll Anthropic usage API</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-usage-poll-anthropic-api" /> refresh Claude usage in the background</label>
+        <span class="cfg-hint">Off by default. The top-bar <strong>Claude</strong> subscription usage bars are normally refreshed by Claude Code's statusline callback while sessions run, then kept from the last cached reading. Enable this only if you want agentd to periodically call Anthropic's usage API while no statusline callback is active. Stored as <code>usage.poll_anthropic_api</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Idle timeout</span>
         <input type="text" id="cfg-usage-idle-timeout" placeholder="72h" aria-label="Usage readout idle timeout" style="min-width:120px" />
-        <span class="cfg-hint">How long the top-bar <strong>Claude</strong> subscription usage bars (5h / 7d) keep showing their last-known reading after the live source goes quiet. That source is Claude Code's statusline (only while a session runs) plus a periodic Anthropic usage-API poll — and the poll commonly starts failing a few hours after your last session, once its OAuth token has rotated. A failed poll keeps the figures but stops refreshing them, so a short cap would blank a perfectly good weekly reading the same night (leaving only Codex). A Go duration — e.g. <code>72h</code> (3 days, the default), <code>30m</code>, <code>2h30m</code>. Blank = default. Stored as <code>usage.idle_timeout</code>.</span>
+        <span class="cfg-hint">How long the top-bar <strong>Claude</strong> subscription usage bars (5h / 7d) keep showing their last-known reading after fresh data stops arriving. Fresh data comes from Claude Code's statusline callback, and optionally from the Anthropic usage API poll above. A Go duration — e.g. <code>72h</code> (3 days, the default), <code>30m</code>, <code>2h30m</code>. Blank = default. Stored as <code>usage.idle_timeout</code>.</span>
       </div>
     </div>
 

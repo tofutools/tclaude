@@ -122,7 +122,7 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 	assert.Nil(t, snap.Usage.SevenDay, "no 7d window when unavailable")
 
 	// Case 2: a cached reading older than the idle-timeout grace — a truly
-	// dead source (no statusline, the usage poll failing for days) must
+	// dead source (no statusline, no successful opt-in API poll for days) must
 	// eventually stop showing days-old figures. Just past the default 3-day
 	// window (config.DefaultUsageIdleTimeout).
 	stale := time.Now().Add(-config.DefaultUsageIdleTimeout - time.Hour)
@@ -137,9 +137,9 @@ func TestDashboardUsage_UnavailableDegradesGracefully(t *testing.T) {
 
 	// Case 2b: the same reading, but only a few hours old — well within the
 	// 3-day grace. It must STILL show, off the last-known figures, even
-	// though the live source (statusline + usage poll) has gone quiet. This
-	// is the "hiding too soon" fix: an overnight idle spell plus a rotated
-	// OAuth token used to blank the readout within 30 minutes.
+	// though the live source (statusline plus any opt-in API poll) has gone
+	// quiet. This is the "hiding too soon" fix: an overnight idle spell used
+	// to blank the readout within 30 minutes.
 	fresh := time.Now().Add(-6 * time.Hour)
 	seedUsageCache(t, usageapi.CachedUsage{
 		FiveHour:      &usageapi.CachedBucket{Pct: 50, ResetsAt: time.Now().Add(time.Hour)},

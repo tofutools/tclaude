@@ -615,25 +615,28 @@ func TestDashboardAssets_TUIColorSchemeWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_UsageIdleTimeoutWired guards the usage-readout idle
-// timeout knob (config usage.idle_timeout), whose Config-tab pieces span
-// dashboard.html + config.js and must stay in lockstep — there's no JS render
-// test, so we assert on the embedded concatenation at `go test ./...`. The Go
-// resolver + round-trip is covered separately by
-// config.TestResolvedUsageIdleTimeout. A rename in either file silently breaks
-// the field only in the browser:
-//   - dashboard.html — the Config-tab text input;
-//   - config.js — load (fill) + gather (save) the value.
-func TestDashboardAssets_UsageIdleTimeoutWired(t *testing.T) {
+// TestDashboardAssets_UsageReadoutWired guards the usage-readout knobs
+// (config usage.idle_timeout + usage.poll_anthropic_api), whose Config-tab
+// pieces span dashboard.html + config.js and must stay in lockstep — there's
+// no JS render test, so we assert on the embedded concatenation at
+// `go test ./...`. The Go resolver + round-trip is covered separately by
+// config.TestResolvedUsageIdleTimeout / config.TestPollAnthropicUsageAPI. A
+// rename in either file silently breaks the fields only in the browser:
+//   - dashboard.html — the Config-tab controls;
+//   - config.js — load (fill) + gather (save) the values.
+func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 	for _, needle := range []string{
-		// dashboard.html — the Config-tab control.
+		// dashboard.html — the Config-tab controls.
+		`id="cfg-usage-poll-anthropic-api"`,
 		`id="cfg-usage-idle-timeout"`,
-		// config.js — load + gather the value (the key that actually writes).
+		// config.js — load + gather the values (the keys that actually write).
+		"#cfg-usage-poll-anthropic-api",
+		"usage.poll_anthropic_api = true",
 		"#cfg-usage-idle-timeout",
 		"usage.idle_timeout = uitRaw",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard assets missing %q — usage idle-timeout knob broken", needle)
+			t.Errorf("dashboard assets missing %q — usage readout config broken", needle)
 		}
 	}
 }

@@ -475,10 +475,12 @@ function populateConfigForm(cfg) {
   // Default off (auto-hide on subscription).
   $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
 
-  // Usage readout idle timeout — how long the Claude 5h/7d bars keep their
-  // last-known reading after the source goes quiet. Blank when unset (the Go
-  // default, 72h). A stored value shows as-is so the human sees exactly
-  // what's on disk.
+  // Usage readout — statusline/cached by default, with an explicit opt-in for
+  // periodic Anthropic usage API polling. Idle timeout is how long the Claude
+  // 5h/7d bars keep their last-known reading after the source goes quiet.
+  // Blank when unset (the Go default, 72h). A stored value shows as-is so the
+  // human sees exactly what's on disk.
+  $('#cfg-usage-poll-anthropic-api').checked = !!(cfg.usage && cfg.usage.poll_anthropic_api);
   const uit = cfg.usage && cfg.usage.idle_timeout;
   $('#cfg-usage-idle-timeout').value = (uit != null && uit !== '') ? uit : '';
 
@@ -679,13 +681,15 @@ function assembleConfig() {
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
 
   // usage is an optional block. Clone the existing one so a future sub-field
-  // with no widget round-trips, then set the one form-owned key. A blank
-  // idle_timeout is the omitempty default (the Go default applies) — drop the
-  // field, and the block when it's all that's left, so an all-default config
-  // doesn't marshal a spurious "usage": {} diff. A non-empty value is written
-  // verbatim (even if unparseable) so the server's Validate surfaces the
-  // error rather than the value silently vanishing.
+  // with no widget round-trips, then set the form-owned keys. poll_anthropic_api
+  // is false by default, so drop it when unchecked. A blank idle_timeout is the
+  // omitempty default (the Go default applies) — drop the field, and the block
+  // when it's all that's left, so an all-default config doesn't marshal a
+  // spurious "usage": {} diff. A non-empty value is written verbatim (even if
+  // unparseable) so the server's Validate surfaces the error rather than the
+  // value silently vanishing.
   const usage = (cfg.usage && typeof cfg.usage === 'object') ? cfg.usage : {};
+  if ($('#cfg-usage-poll-anthropic-api').checked) usage.poll_anthropic_api = true; else delete usage.poll_anthropic_api;
   const uitRaw = $('#cfg-usage-idle-timeout').value.trim();
   if (uitRaw !== '') usage.idle_timeout = uitRaw; else delete usage.idle_timeout;
   if (Object.keys(usage).length) cfg.usage = usage; else delete cfg.usage;

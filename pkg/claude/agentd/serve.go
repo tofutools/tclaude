@@ -308,11 +308,11 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
-	// Subscription-usage poller. Keeps the SQLite usage_cache row fresh
-	// so the dashboard's top-bar 5h/7d readout stays current even when
-	// no Claude Code statusbar is running to populate it. Side-effect
-	// only and cheap — usageapi.GetCached's own TTL keeps API hits rare.
-	// Shares the daemon-wide stop channel.
+	// Subscription-usage poller. Disabled by default; when
+	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache
+	// row fresh via the Anthropic usage API even when no Claude Code
+	// statusbar is running to populate it. Shares the daemon-wide stop
+	// channel.
 	startUsagePoller(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into

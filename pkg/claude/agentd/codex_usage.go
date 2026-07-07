@@ -11,28 +11,29 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// Codex subscription-usage readout for the dashboard top bar (JOH-214). The Claude side
-// (usage.go) polls the Anthropic usage API into a SQLite cache; Codex has no
-// such endpoint wired in, so the figures are lifted off the rollout files
-// Codex writes locally. Hook callbacks refresh the shared SQLite cache from
-// Codex's transcript_path at turn boundaries; the poller below is a repair
-// path so a missed hook or daemon restart still discovers a last-known
+// Codex subscription-usage readout for the dashboard top bar (JOH-214). The
+// Claude side (usage.go) reads a SQLite cache populated by Claude Code's
+// statusline callback and, only when opted in, the Anthropic usage API. Codex
+// has no such endpoint wired in, so the figures are lifted off the rollout
+// files Codex writes locally. Hook callbacks refresh the shared SQLite cache
+// from Codex's transcript_path at turn boundaries; the poller below is a
+// repair path so a missed hook or daemon restart still discovers a last-known
 // snapshot without making the 2-second /api/snapshot tick walk
 // ~/.codex/sessions.
 
 // codexUsageMaxAge bounds how far back a rollout snapshot may be observed and
 // still feed the readout. The Claude usage cap (config.ResolvedUsageIdleTimeout,
-// default 3 days) measures staleness from FetchedAt, which a network poller —
-// or Claude Code's statusline — advances independently of activity. Codex
-// usage instead comes from rollouts that update ONLY when Codex runs, so its
-// cap is measured from the last rollout write and must be generous: too short
-// and the Codex line would vanish that long after the last Codex turn, hiding
-// a weekly figure that is still entirely valid. So the cap is the weekly
-// window length plus margin: a snapshot older than
-// that can only describe windows that have themselves already reset (caught
-// per-window by codexUsageWindowFor). Within that span, each window's own
-// resets_at is the real expiry, so the readout persists across idle periods
-// and each window drops out exactly when it resets.
+// default 3 days) measures staleness from FetchedAt, which Claude Code's
+// statusline — or the opt-in network poller — advances independently of
+// activity. Codex usage instead comes from rollouts that update ONLY when
+// Codex runs, so its cap is measured from the last rollout write and must be
+// generous: too short and the Codex line would vanish that long after the last
+// Codex turn, hiding a weekly figure that is still entirely valid. So the cap
+// is the weekly window length plus margin: a snapshot older than that can only
+// describe windows that have themselves already reset (caught per-window by
+// codexUsageWindowFor). Within that span, each window's own resets_at is the
+// real expiry, so the readout persists across idle periods and each window
+// drops out exactly when it resets.
 const codexUsageMaxAge = 8 * 24 * time.Hour
 
 // codexDashboardUsage is the /api/snapshot view of the Codex account's
