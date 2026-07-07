@@ -2116,6 +2116,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
 	}
+	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
+		return nil, fail
+	}
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs: crypto-random hex (like GenerateSessionID()), with
