@@ -1,14 +1,19 @@
 package store_test
 
 import (
+	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
@@ -37,6 +42,33 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	}
 	if tmpl.ID != "demo" || tmpl.Start != "implement" {
 		t.Fatalf("template = %#v", tmpl)
+	}
+}
+
+func TestTemplateGetRejectsTamperedContent(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := splitTemplateRef(record.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "templates", "demo", "sha256-"+hash, "template.json")
+	tampered := storetest.Template()
+	tampered.Nodes["extra"] = model.Node{Type: model.NodeTypeTask}
+	data, err := model.CanonicalSemanticJSON(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.GetTemplate(ctx, record.Ref); !errors.Is(err, store.ErrContentMismatch) {
+		t.Fatalf("expected content mismatch, got %v", err)
 	}
 }
 
@@ -110,6 +142,38 @@ func TestCreateRunConflictIsSerialized(t *testing.T) {
 	}
 }
 
+func TestCreateRunStateOnlyLeftoverIsRetriable(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run_half_created"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{{ID: "implement"}})
+	data, err := state.Encode(&st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := filepath.Join(root, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "state.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.GetRun(ctx, runID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("state-only run should be invisible, got %v", err)
+	}
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref}, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.LoadRun(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStoreRoundTripVerifiesEvidenceAndStateAnchors(t *testing.T) {
 	ctx := t.Context()
 	fs, runID := initializedRun(t)
@@ -137,6 +201,21 @@ func TestStoreRoundTripVerifiesEvidenceAndStateAnchors(t *testing.T) {
 	}
 	if snapshot.State.LastLogSeq != 1 || snapshot.State.LogChecksum != snapshot.Manifest[0].Checksum {
 		t.Fatalf("state anchors = seq %d checksum %q", snapshot.State.LastLogSeq, snapshot.State.LogChecksum)
+	}
+}
+
+func TestEmptyAppendReturnsCurrentStateAndValidatesRun(t *testing.T) {
+	ctx := t.Context()
+	fs, runID := initializedRun(t)
+	result, err := fs.Append(ctx, runID, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State == nil || result.State.RunID != runID {
+		t.Fatalf("empty append state = %#v", result.State)
+	}
+	if _, err := fs.Append(ctx, "../x", 0, nil); err == nil {
+		t.Fatal("expected invalid run id error")
 	}
 }
 
@@ -271,6 +350,80 @@ func TestArtifactsAndLeases(t *testing.T) {
 	}
 }
 
+func TestArtifactGetRejectsTamperedContent(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+	artifact, err := fs.PutArtifact(ctx, runID, "note.txt", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runs", runID, "artifacts", artifact.SHA256), []byte("EVIL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := fs.GetArtifact(ctx, runID, artifact.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(r)
+	closeErr := r.Close()
+	if !errors.Is(readErr, store.ErrContentMismatch) && !errors.Is(closeErr, store.ErrContentMismatch) {
+		t.Fatalf("expected content mismatch, data=%q readErr=%v closeErr=%v", data, readErr, closeErr)
+	}
+}
+
+func TestAcquireRunLeaseRequiresExistingRun(t *testing.T) {
+	fs := newStore(t)
+	_, err := fs.AcquireRunLease(t.Context(), "missing_run", "agent-a", time.Minute)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected missing run, got %v", err)
+	}
+}
+
+func TestRunLockHonorsContextWhileFlockHeld(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+	lockPath := filepath.Join(root, ".locks", runID+".lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fl := flock.New(lockPath)
+	if err := fl.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fl.Unlock() }()
+
+	lockCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond)
+	defer cancel()
+	_, err := fs.AcquireRunLease(lockCtx, runID, "agent-a", time.Minute)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+}
+
+func TestNewFSAnchorsRelativeRoot(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	if err := os.Chdir(base); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	fs, runID := initializedRunAt(t, "relative-store")
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.GetRun(t.Context(), runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "relative-store", "runs", runID, "run.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPublicRunMethodsRejectUnsafeRunIDs(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)
@@ -342,8 +495,13 @@ func TestConcurrentAppendHammer(t *testing.T) {
 
 func initializedRun(t *testing.T) (*store.FS, string) {
 	t.Helper()
+	return initializedRunAt(t, t.TempDir())
+}
+
+func initializedRunAt(t *testing.T, root string) (*store.FS, string) {
+	t.Helper()
 	ctx := t.Context()
-	fs := newStore(t)
+	fs := newStoreAt(t, root)
 	record, err := fs.PutTemplate(ctx, storetest.Template())
 	if err != nil {
 		t.Fatal(err)
@@ -358,11 +516,24 @@ func initializedRun(t *testing.T) (*store.FS, string) {
 
 func newStore(t *testing.T) *store.FS {
 	t.Helper()
-	fs, err := store.NewFS(t.TempDir())
+	return newStoreAt(t, t.TempDir())
+}
+
+func newStoreAt(t *testing.T, root string) *store.FS {
+	t.Helper()
+	fs, err := store.NewFS(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return fs
+}
+
+func splitTemplateRef(ref string) (string, string, error) {
+	id, hash, ok := strings.Cut(ref, "@sha256:")
+	if !ok {
+		return "", "", errors.New("invalid template ref")
+	}
+	return id, hash, nil
 }
 
 func hasDiagnostic(diagnostics evidence.Diagnostics, code string) bool {

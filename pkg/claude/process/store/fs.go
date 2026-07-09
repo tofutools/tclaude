@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,10 +36,14 @@ func NewFS(root string) (*FS, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("process store root is required")
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve absolute process store root: %w", err)
+	}
+	if err := os.MkdirAll(absRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create process store root: %w", err)
 	}
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve process store root: %w", err)
 	}
@@ -111,6 +116,13 @@ func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, erro
 	if err := dec.Decode(&tmpl); err != nil {
 		return nil, fmt.Errorf("decode template: %w", err)
 	}
+	semanticHash, err := model.SemanticHash(&tmpl)
+	if err != nil {
+		return nil, err
+	}
+	if semanticHash != hash {
+		return nil, fmt.Errorf("%w: template ref %q points at semantic hash %q", ErrContentMismatch, ref, semanticHash)
+	}
 	return &tmpl, nil
 }
 
@@ -124,7 +136,7 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if strings.TrimSpace(run.TemplateRef) == "" {
 		return RunRecord{}, fmt.Errorf("templateRef is required")
 	}
-	unlock, err := s.lockRun(run.ID)
+	unlock, err := s.lockRun(ctx, run.ID)
 	if err != nil {
 		return RunRecord{}, err
 	}
@@ -136,8 +148,22 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 		run.UpdatedAt = run.CreatedAt
 	}
 	dir := s.runDir(run.ID)
+	runsDir := filepath.Dir(dir)
+	_, runsStatErr := os.Stat(runsDir)
+	runsDirCreated := errors.Is(runsStatErr, os.ErrNotExist)
+	if runsStatErr != nil && !runsDirCreated {
+		return RunRecord{}, fmt.Errorf("stat runs dir: %w", runsStatErr)
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "nodes"), 0o755); err != nil {
 		return RunRecord{}, fmt.Errorf("create run dirs: %w", err)
+	}
+	if runsDirCreated {
+		if err := syncDir(s.root); err != nil {
+			return RunRecord{}, fmt.Errorf("sync store root: %w", err)
+		}
+	}
+	if err := syncDir(runsDir); err != nil {
+		return RunRecord{}, fmt.Errorf("sync runs dir: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "artifacts"), 0o755); err != nil {
 		return RunRecord{}, fmt.Errorf("create artifacts dir: %w", err)
@@ -157,19 +183,19 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if initial.CurrentTemplateRef == "" {
 		initial.CurrentTemplateRef = run.TemplateRef
 	}
+	stateData, err := state.Encode(&initial)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	if err := writeFileAtomic(filepath.Join(dir, "state.json"), stateData, 0o644); err != nil {
+		return RunRecord{}, err
+	}
 	runData, err := json.MarshalIndent(run, "", "  ")
 	if err != nil {
 		return RunRecord{}, fmt.Errorf("encode run: %w", err)
 	}
 	runData = append(runData, '\n')
 	if err := writeFileAtomic(runPath, runData, 0o644); err != nil {
-		return RunRecord{}, err
-	}
-	stateData, err := state.Encode(&initial)
-	if err != nil {
-		return RunRecord{}, err
-	}
-	if err := writeFileAtomic(filepath.Join(dir, "state.json"), stateData, 0o644); err != nil {
 		return RunRecord{}, err
 	}
 	return run, nil
@@ -217,9 +243,17 @@ func (s *FS) Append(ctx context.Context, runID string, expectedSeq int64, entrie
 		return AppendResult{}, err
 	}
 	if len(entries) == 0 {
-		return AppendResult{}, nil
+		run, err := s.readRun(runID)
+		if err != nil {
+			return AppendResult{}, err
+		}
+		st, err := s.readState(run.ID)
+		if err != nil {
+			return AppendResult{}, err
+		}
+		return AppendResult{State: st}, nil
 	}
-	unlock, err := s.lockRun(runID)
+	unlock, err := s.lockRun(ctx, runID)
 	if err != nil {
 		return AppendResult{}, err
 	}
@@ -428,11 +462,64 @@ func (s *FS) GetArtifact(ctx context.Context, runID, ref string) (io.ReadCloser,
 	if err != nil {
 		return nil, fmt.Errorf("open artifact: %w", err)
 	}
-	return f, nil
+	return &verifyingReadCloser{
+		rc:       f,
+		hash:     sha256.New(),
+		expected: sum,
+	}, nil
+}
+
+type verifyingReadCloser struct {
+	rc       io.ReadCloser
+	hash     hash.Hash
+	expected string
+	checked  bool
+	err      error
+}
+
+func (r *verifyingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.rc.Read(p)
+	if n > 0 {
+		_, _ = r.hash.Write(p[:n])
+	}
+	if errors.Is(err, io.EOF) {
+		if verifyErr := r.verify(); verifyErr != nil {
+			return n, verifyErr
+		}
+	}
+	return n, err
+}
+
+func (r *verifyingReadCloser) Close() error {
+	if !r.checked {
+		if _, err := io.Copy(io.Discard, r); err != nil && !errors.Is(err, io.EOF) {
+			r.err = err
+		}
+	}
+	closeErr := r.rc.Close()
+	if r.err != nil {
+		return r.err
+	}
+	return closeErr
+}
+
+func (r *verifyingReadCloser) verify() error {
+	if r.checked {
+		return r.err
+	}
+	r.checked = true
+	got := hex.EncodeToString(r.hash.Sum(nil))
+	if got != r.expected {
+		r.err = fmt.Errorf("%w: artifact ref sha256:%s points at sha256:%s", ErrContentMismatch, r.expected, got)
+	}
+	return r.err
 }
 
 func (s *FS) AcquireRunLease(ctx context.Context, runID, holder string, ttl time.Duration) (LeaseRecord, error) {
 	if err := ctx.Err(); err != nil {
+		return LeaseRecord{}, err
+	}
+	if _, err := s.readRun(runID); err != nil {
 		return LeaseRecord{}, err
 	}
 	if strings.TrimSpace(holder) == "" {
@@ -441,7 +528,7 @@ func (s *FS) AcquireRunLease(ctx context.Context, runID, holder string, ttl time
 	if ttl <= 0 {
 		return LeaseRecord{}, fmt.Errorf("lease ttl must be positive")
 	}
-	unlock, err := s.lockRun(runID)
+	unlock, err := s.lockRun(ctx, runID)
 	if err != nil {
 		return LeaseRecord{}, err
 	}
@@ -471,7 +558,7 @@ func (s *FS) ReleaseRunLease(ctx context.Context, runID, holder string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	unlock, err := s.lockRun(runID)
+	unlock, err := s.lockRun(ctx, runID)
 	if err != nil {
 		return err
 	}
@@ -579,8 +666,12 @@ func (s *FS) appendLogEntry(runID string, entry evidence.LogEntry) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
+	}
+	if err := syncDir(filepath.Dir(dir)); err != nil {
+		return fmt.Errorf("sync log parent dir: %w", err)
 	}
 	return appendJSONL(path, func(w io.Writer) error { return evidence.AppendLogEntry(w, entry) })
 }
@@ -592,6 +683,11 @@ func (s *FS) appendManifestEntry(runID string, entry evidence.ManifestEntry) err
 }
 
 func appendJSONL(path string, write func(io.Writer) error) error {
+	_, statErr := os.Stat(path)
+	created := errors.Is(statErr, os.ErrNotExist)
+	if statErr != nil && !created {
+		return fmt.Errorf("stat append file: %w", statErr)
+	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open append file: %w", err)
@@ -606,6 +702,11 @@ func appendJSONL(path string, write func(io.Writer) error) error {
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close append file: %w", err)
+	}
+	if created {
+		if err := syncDir(filepath.Dir(path)); err != nil {
+			return fmt.Errorf("sync append dir: %w", err)
+		}
 	}
 	return nil
 }
@@ -652,27 +753,63 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-func (s *FS) lockRun(runID string) (func(), error) {
+func (s *FS) lockRun(ctx context.Context, runID string) (func(), error) {
 	if err := safeSegment(runID); err != nil {
 		return func() {}, fmt.Errorf("invalid run id: %w", err)
 	}
-	mutexValue, _ := processLocks.LoadOrStore(s.root+"\x00"+runID, &sync.Mutex{})
-	mutex := mutexValue.(*sync.Mutex)
-	mutex.Lock()
+	lockValue, _ := processLocks.LoadOrStore(s.root+"\x00"+runID, newLocalRunLock())
+	localLock := lockValue.(*localRunLock)
+	if err := localLock.Lock(ctx); err != nil {
+		return func() {}, err
+	}
 	lockDir := filepath.Join(s.root, ".locks")
 	if err := os.MkdirAll(lockDir, 0o755); err != nil {
-		mutex.Unlock()
+		localLock.Unlock()
 		return func() {}, fmt.Errorf("create lock dir: %w", err)
 	}
 	fl := flock.New(filepath.Join(lockDir, runID+".lock"))
-	if err := fl.Lock(); err != nil {
-		mutex.Unlock()
+	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		localLock.Unlock()
 		return func() {}, fmt.Errorf("lock run: %w", err)
+	}
+	if !locked {
+		localLock.Unlock()
+		if err := ctx.Err(); err != nil {
+			return func() {}, err
+		}
+		return func() {}, fmt.Errorf("lock run: lock not acquired")
 	}
 	return func() {
 		_ = fl.Unlock()
-		mutex.Unlock()
+		localLock.Unlock()
 	}, nil
+}
+
+type localRunLock struct {
+	ch chan struct{}
+}
+
+func newLocalRunLock() *localRunLock {
+	lock := &localRunLock{ch: make(chan struct{}, 1)}
+	lock.ch <- struct{}{}
+	return lock
+}
+
+func (l *localRunLock) Lock(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-l.ch:
+		return nil
+	}
+}
+
+func (l *localRunLock) Unlock() {
+	select {
+	case l.ch <- struct{}{}:
+	default:
+	}
 }
 
 func (s *FS) runDir(runID string) string {
