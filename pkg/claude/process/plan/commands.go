@@ -20,6 +20,8 @@ const (
 	CommandKindStartAttempt   = state.CommandKindStartAttempt
 	CommandKindSettleAttempt  = state.CommandKindSettleAttempt
 	CommandKindRecordDecision = state.CommandKindRecordDecision
+	CommandKindShortCircuit   = state.CommandKindShortCircuit
+	CommandKindGateFeedback   = state.CommandKindGateFeedback
 	CommandKindBlockNode      = state.CommandKindBlockNode
 	CommandKindSetTimer       = state.CommandKindSetTimer
 	CommandKindWaitSignal     = state.CommandKindWaitSignal
@@ -50,6 +52,20 @@ type Command struct {
 	Children []state.NodeInit `json:"children,omitempty"`
 	Reason   string           `json:"reason,omitempty"`
 	Owner    string           `json:"owner,omitempty"`
+
+	// Gate feedback loops (TCL-276 PR2). RetryMode is the adapter-visible
+	// on-fail policy axis for work-stage attempts; Feedback/FeedbackFrom
+	// carry the gate payload a work attempt answers; EvidenceHash rides
+	// short-circuit commands; WorkEvidenceHash rides gate settle commands;
+	// Gates/ResetCounters/EvidenceRef ride gate_feedback commands.
+	RetryMode        string   `json:"retryMode,omitempty"`
+	Feedback         string   `json:"feedback,omitempty"`
+	FeedbackFrom     string   `json:"feedbackFrom,omitempty"`
+	EvidenceRef      string   `json:"evidenceRef,omitempty"`
+	EvidenceHash     string   `json:"evidenceHash,omitempty"`
+	WorkEvidenceHash string   `json:"workEvidenceHash,omitempty"`
+	Gates            []string `json:"gates,omitempty"`
+	ResetCounters    []string `json:"resetCounters,omitempty"`
 }
 
 func (c Command) OutstandingCommand(createdAt time.Time) (state.OutstandingCommand, error) {

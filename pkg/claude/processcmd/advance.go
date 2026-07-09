@@ -18,12 +18,14 @@ import (
 )
 
 type advanceParams struct {
-	RunID       string `pos:"true" help:"Process run id to advance"`
-	NodeID      string `pos:"true" help:"Node id to advance"`
-	StoreRoot   string `long:"store-root" help:"Filesystem process store root"`
-	Verdict     string `long:"verdict" help:"Manual verdict: pass or fail, or a decision edge label"`
-	EvidenceRef string `long:"evidence" optional:"true" help:"Evidence artifact/reference to attach to the event"`
-	Actor       string `long:"actor" optional:"true" help:"Actor ref, e.g. human:johan, agent:agt_..., program:cmd@exit0"`
+	RunID        string `pos:"true" help:"Process run id to advance"`
+	NodeID       string `pos:"true" help:"Node id to advance"`
+	StoreRoot    string `long:"store-root" help:"Filesystem process store root"`
+	Verdict      string `long:"verdict" help:"Manual verdict: pass or fail, or a decision edge label"`
+	EvidenceRef  string `long:"evidence" optional:"true" help:"Evidence artifact/reference to attach to the event"`
+	EvidenceHash string `long:"evidence-hash" optional:"true" help:"Content hash of the evidence; powers the evidence-unchanged gate short-circuit"`
+	Feedback     string `long:"feedback" optional:"true" help:"Gate feedback payload routed to the next work attempt on a fail verdict"`
+	Actor        string `long:"actor" optional:"true" help:"Actor ref, e.g. human:johan, agent:agt_..., program:cmd@exit0"`
 }
 
 func advanceCmd() *cobra.Command {
@@ -77,7 +79,11 @@ func runAdvance(cmd *cobra.Command, p *advanceParams, out io.Writer) error {
 	if !state.ValidateActorRef(actor) {
 		return fmt.Errorf("invalid actor %q; use human:<id>, agent:agt_<id>, or program:<cmd>@exit<code>", actor)
 	}
-	entries, err := planAdvance(snapshot, tmpl, p.NodeID, strings.TrimSpace(p.Verdict), actor, strings.TrimSpace(p.EvidenceRef))
+	entries, err := planAdvance(snapshot, tmpl, p.NodeID, strings.TrimSpace(p.Verdict), actor, advanceInputs{
+		EvidenceRef:  strings.TrimSpace(p.EvidenceRef),
+		EvidenceHash: strings.TrimSpace(p.EvidenceHash),
+		Feedback:     strings.TrimSpace(p.Feedback),
+	})
 	if err != nil {
 		return err
 	}
@@ -92,7 +98,16 @@ func runAdvance(cmd *cobra.Command, p *advanceParams, out io.Writer) error {
 	return nil
 }
 
-func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict string, actor state.ActorRef, evidenceRef string) ([]evidence.LogEntry, error) {
+// advanceInputs carries the optional evidence and feedback inputs of a manual
+// advance.
+type advanceInputs struct {
+	EvidenceRef  string
+	EvidenceHash string
+	Feedback     string
+}
+
+func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict string, actor state.ActorRef, inputs advanceInputs) ([]evidence.LogEntry, error) {
+	evidenceRef := inputs.EvidenceRef
 	node, ok := snapshot.State.Nodes[nodeID]
 	if !ok {
 		return nil, fmt.Errorf("node %q is not in run state", nodeID)
@@ -105,7 +120,7 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 	}
 	at := processNow().UTC()
 	if node.Parent != "" {
-		return planStageAdvance(snapshot, tmpl, nodeID, node, verdict, actor, evidenceRef, at)
+		return planStageAdvance(snapshot, tmpl, nodeID, node, verdict, actor, evidenceRef, inputs.EvidenceHash, inputs.Feedback, at)
 	}
 	templateNode, ok := tmpl.Nodes[nodeID]
 	if !ok {
@@ -159,7 +174,7 @@ func planExpandAdvance(nodeID string, templateNode model.Node, verdict string, a
 	}, nil
 }
 
-func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID string, node state.NodeState, verdict string, actor state.ActorRef, evidenceRef string, at time.Time) ([]evidence.LogEntry, error) {
+func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID string, node state.NodeState, verdict string, actor state.ActorRef, evidenceRef, evidenceHash, feedback string, at time.Time) ([]evidence.LogEntry, error) {
 	if node.Status != state.NodeStatusReady {
 		return nil, fmt.Errorf("stage child %q is %s; only ready nodes can be advanced manually", nodeID, node.Status)
 	}
@@ -193,23 +208,58 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 			Attempt: attempt,
 		}, "", at),
 	}
-	transition, err := processplan.NextAfterStage(node.Parent, parent.Children, specs, nodeID, normalized, attempt)
+	settleEvent := state.Event{
+		Type:         state.EventNodeAttemptSettled,
+		Outcome:      normalized,
+		EvidenceHash: evidenceHash,
+		Feedback:     feedback,
+	}
+	if spec.Stage.IsGateStage() {
+		settleEvent.WorkEvidenceHash = processplan.WorkEvidenceHash(parent.Children, specs, snapshot.State.Nodes, nodeID)
+	}
+	settle := processplan.StageSettle{
+		ChildID:     nodeID,
+		Outcome:     normalized,
+		Attempt:     attempt,
+		FailCount:   node.FailCount,
+		Feedback:    feedback,
+		EvidenceRef: evidenceRef,
+	}
+	if normalized == "fail" && spec.Stage.IsGateStage() {
+		// The reducer increments the gate counter as part of this settle;
+		// count the settling failure when deciding the transition.
+		settle.FailCount++
+	}
+	transition, err := processplan.NextAfterStage(node.Parent, parent.Children, specs, snapshot.State.Nodes, settle)
 	if err != nil {
 		return nil, err
 	}
 	switch transition.Kind {
 	case processplan.TransitionRetryChild:
-		return append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
-			Type:       state.EventNodeAttemptSettled,
-			Outcome:    "fail",
+		settleEvent.NodeStatus = state.NodeStatusReady
+		return append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at)), nil
+	case processplan.TransitionFeedbackLoop:
+		settleEvent.NodeStatus = state.NodeStatusFailed
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(transition.TargetStageID, evidence.EntryKindGate, state.Event{
+			Type:        state.EventFeedbackRecorded,
+			FromNodeID:  nodeID,
+			Feedback:    transition.Feedback,
+			EvidenceRef: transition.EvidenceRef,
+		}, "", at))
+		entries = append(entries, nodeLogEntry(node.Parent, evidence.EntryKindGate, state.Event{
+			Type:          state.EventGateLoopReset,
+			Gates:         transition.ResetGates,
+			ResetCounters: transition.ResetCounters,
+			Reason:        transition.Reason,
+		}, "", at))
+		return append(entries, nodeLogEntry(transition.TargetStageID, evidence.EntryKindGate, state.Event{
+			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusReady,
-		}, evidenceRef, at)), nil
+		}, "", at)), nil
 	case processplan.TransitionPoison:
-		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
-			Type:       state.EventNodeAttemptSettled,
-			Outcome:    "fail",
-			NodeStatus: state.NodeStatusFailed,
-		}, evidenceRef, at))
+		settleEvent.NodeStatus = state.NodeStatusFailed
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
 			Type:   state.EventNodeBlocked,
 			Reason: transition.Reason,
@@ -222,19 +272,13 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 		}, evidenceRef, at))
 		return entries, nil
 	case processplan.TransitionActivateChild:
-		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
-			Type:    state.EventNodeAttemptSettled,
-			Outcome: "pass",
-		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
 		return append(entries, nodeLogEntry(transition.NextChildID, evidence.EntryKindGate, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusReady,
 		}, "", at)), nil
 	case processplan.TransitionCompleteParent:
-		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
-			Type:    state.EventNodeAttemptSettled,
-			Outcome: "pass",
-		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
 		// Completing the done marker completes the parent in the same reducer
 		// event; no separate parent status entry exists to forge or skip.
 		entries = append(entries, nodeLogEntry(transition.DoneChildID, evidence.EntryKindGate, state.Event{
