@@ -86,6 +86,12 @@ tclaude process runs ls --store-root "$STORE"
 - All state changes go through `store.Append`, the manifest, and reducer events.
 - Template params are validated and stored on the run record; interpolation is
   not executed by this phase.
+- Retry support is node-level `retry.maxAttempts`; broader engine scheduling,
+  automatic command execution, and repair are later phases.
+- Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
+  AND-join semantics are deferred until the engine can track live paths.
+- End nodes default to completed runs; set `result: failed` on a failure
+  terminal node when that path should fail the run.
 
 ## Param templating surface
 
@@ -105,11 +111,7 @@ authoring time. References in prose fields (`name`/`description`/`doc`) are only
 checked for pointing at a declared param.
 
 Duration-ish fields (`wait.duration`, `retry.backoff`, `performer.timeout`) are
-parsed with Go's `time.ParseDuration` at authoring time, so `5m`/`1h30m`/`500ms`
-are valid but `banana` fails validation rather than surfacing at runtime.
-- Retry support is node-level `retry.maxAttempts`; broader engine scheduling,
-  automatic command execution, and repair are later phases.
-- Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
-  AND-join semantics are deferred until the engine can track live paths.
-- End nodes default to completed runs; set `result: failed` on a failure
-  terminal node when that path should fail the run.
+parsed with Go's `time.ParseDuration` at authoring time and must be positive, so
+`5m`/`1h30m`/`500ms` are valid but `banana`, `-5s`, and `0s` fail validation
+rather than surfacing at runtime. Because these fields are not templatable, a
+`{{ params.x }}` reference is likewise an authoring-time error.

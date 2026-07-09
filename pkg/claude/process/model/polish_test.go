@@ -80,8 +80,8 @@ nodes:
     type: task
     performer: { kind: agent, prompt: "Do it", timeout: 30s }
     retry: { maxAttempts: 2, backoff: 1h30m }
-    next: done
-  wait-node:
+    next: waiter
+  waiter:
     type: wait
     wait: { duration: 500ms }
     next: done
@@ -91,13 +91,113 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasDiagnostic(parsed.Diagnostics, SeverityError, "invalid_duration") {
-		t.Fatalf("unexpected invalid_duration for valid durations: %#v", parsed.Diagnostics.Errors())
+	if parsed.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected errors for valid durations: %#v", parsed.Diagnostics.Errors())
 	}
 }
 
-// TestInertParamRefWarnings documents the templating surface: refs outside
-// prompt/ask/run/args are inert and warn rather than silently doing nothing.
+// TestNonPositiveDurations pins that zero and negative durations are rejected
+// (F2) — they parse cleanly but are authoring nonsense.
+func TestNonPositiveDurations(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "negative timeout",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: neg-timeout
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: "Do it", timeout: -5s }
+    next: done
+  done: { type: end }
+`,
+		},
+		{
+			name: "zero backoff",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: zero-backoff
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: "Do it" }
+    retry: { maxAttempts: 2, backoff: 0s }
+    next: done
+  done: { type: end }
+`,
+		},
+		{
+			name: "negative wait duration",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: neg-wait
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: -1m }
+    next: done
+  done: { type: end }
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(parsed.Diagnostics, SeverityError, "invalid_duration") {
+				t.Fatalf("expected invalid_duration for non-positive duration, got %#v", parsed.Diagnostics)
+			}
+		})
+	}
+}
+
+// TestParamRefInDurationIsError pins F1: a param reference in a non-templatable
+// duration field is a hard error (it can never parse), not merely an inert
+// warning.
+func TestParamRefInDurationIsError(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: param-ref-duration
+params:
+  d:
+    type: string
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: "{{ params.d }}" }
+    next: done
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnosticPath(parsed.Diagnostics, "invalid_duration", "nodes.a.wait.duration") {
+		t.Fatalf("expected invalid_duration for param ref in duration, got %#v", parsed.Diagnostics)
+	}
+	// The inert warning should also fire, explaining why interpolation won't run.
+	if !hasDiagnosticPath(parsed.Diagnostics, "inert_param_ref", "nodes.a.wait.duration") {
+		t.Fatalf("expected inert_param_ref alongside invalid_duration, got %#v", parsed.Diagnostics)
+	}
+}
+
+// TestInertParamRefWarnings documents the templating surface: refs in inert
+// (non-templatable, non-duration) fields warn rather than silently doing
+// nothing, and do not by themselves make the template invalid.
 func TestInertParamRefWarnings(t *testing.T) {
 	data := `
 apiVersion: tclaude.dev/v1alpha1
@@ -114,15 +214,10 @@ nodes:
       kind: agent
       prompt: "Use {{ params.slow }}"
       profile: "{{ params.slow }}"
-      timeout: "{{ params.slow }}"
-    retry:
-      maxAttempts: 2
-      backoff: "{{ params.slow }}"
     next: waiter
   waiter:
     type: wait
     wait:
-      duration: "{{ params.slow }}"
       until: "{{ params.slow }}"
       signal: "{{ params.slow }}"
     next: done
@@ -132,16 +227,13 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The declared param is referenced only in inert fields plus a valid prompt,
-	// so there must be no errors at all (no undeclared refs, no invalid_duration).
+	// profile/until/signal are inert but not duration fields, so the only
+	// diagnostics are inert warnings — no errors.
 	if parsed.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected errors: %#v", parsed.Diagnostics.Errors())
 	}
 	wantPaths := []string{
 		"nodes.a.performer.profile",
-		"nodes.a.performer.timeout",
-		"nodes.a.retry.backoff",
-		"nodes.waiter.wait.duration",
 		"nodes.waiter.wait.until",
 		"nodes.waiter.wait.signal",
 	}
@@ -188,6 +280,40 @@ nodes:
 	}
 }
 
+// TestMergeKeyOutsideNextIsDiagnostic verifies a merge key in a schema-checked
+// mapping (here a node) is reported as merge_key_unsupported, not the misleading
+// "unknown field" it produced before (F3). Decode silently applies such a merge,
+// so the correct message matters.
+func TestMergeKeyOutsideNextIsDiagnostic(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: merge-outside-next
+start: a
+nodes:
+  a:
+    type: task
+    performer: &p
+      kind: agent
+      prompt: "Do it"
+    next: done
+  b:
+    <<: *p
+    type: end
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnosticPath(parsed.Diagnostics, "merge_key_unsupported", "nodes.b.<<") {
+		t.Fatalf("expected merge_key_unsupported at nodes.b.<<, got %#v", parsed.Diagnostics)
+	}
+	if hasDiagnosticPath(parsed.Diagnostics, "unknown_field", "nodes.b.<<") {
+		t.Fatalf("merge key should not be reported as unknown_field: %#v", parsed.Diagnostics)
+	}
+}
+
 // TestDuplicateKeyLastWins verifies duplicate mapping keys resolve last-wins, so
 // the decoded template (and its semantic hash) match standard YAML semantics.
 func TestDuplicateKeyLastWins(t *testing.T) {
@@ -218,9 +344,19 @@ nodes:
 // the same string — 1 (!!int) and "1" (!!str) — collide as duplicate keys and
 // surface a clean duplicate_key diagnostic rather than hard-failing Decode. The
 // model is string-keyed, so the two keys cannot coexist; last-wins pruning keeps
-// one and Parse still succeeds.
+// one and Parse still succeeds. Both orders are covered: when the surviving key
+// is the int scalar, yaml.v3 stringifies it into the map[string]any target.
 func TestScalarKeyCollisionIsCleanDiagnostic(t *testing.T) {
-	data := `
+	tests := []struct {
+		name    string
+		keyPair string
+	}{
+		{name: "int first, str last", keyPair: "      1: intkey\n      \"1\": strkey"},
+		{name: "str first, int last", keyPair: "      \"1\": strkey\n      1: intkey"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := `
 apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: scalar-key-tags
@@ -230,17 +366,18 @@ nodes:
     type: wait
     wait: { duration: 1m }
     metadata:
-      1: intkey
-      "1": strkey
+` + tt.keyPair + `
     next: done
   done: { type: end }
 `
-	parsed, err := Parse([]byte(data))
-	if err != nil {
-		t.Fatalf("scalar key collision should not hard-fail Parse: %v", err)
-	}
-	if !hasDiagnostic(parsed.Diagnostics, SeverityError, "duplicate_key") {
-		t.Fatalf("expected duplicate_key diagnostic for 1 vs \"1\": %#v", parsed.Diagnostics)
+			parsed, err := Parse([]byte(data))
+			if err != nil {
+				t.Fatalf("scalar key collision should not hard-fail Parse: %v", err)
+			}
+			if !hasDiagnostic(parsed.Diagnostics, SeverityError, "duplicate_key") {
+				t.Fatalf("expected duplicate_key diagnostic for 1 vs \"1\": %#v", parsed.Diagnostics)
+			}
+		})
 	}
 }
 

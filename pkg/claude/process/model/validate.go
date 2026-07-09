@@ -102,7 +102,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 			}
 			if node.Wait != nil {
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.duration", node.Wait.Duration)...)
-				diagnostics = append(diagnostics, validateDuration(node.Wait.Duration, path+".wait.duration")...)
+				diagnostics = append(diagnostics, validateDuration(path+".wait.duration", node.Wait.Duration)...)
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.until", node.Wait.Until)...)
 				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.signal", node.Wait.Signal)...)
 			}
@@ -173,7 +173,7 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 	}
 	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
-	diagnostics = append(diagnostics, validateDuration(performer.Timeout, path+".timeout")...)
+	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
 	return diagnostics
 }
 
@@ -186,24 +186,27 @@ func validateRetry(retry *RetryPolicy, path string) Diagnostics {
 		diagnostics = append(diagnostics, diagError("invalid_retry_budget", path+".maxAttempts", "retry policy requires maxAttempts greater than zero"))
 	}
 	diagnostics = append(diagnostics, checkInertParamRef(path+".backoff", retry.Backoff)...)
-	diagnostics = append(diagnostics, validateDuration(retry.Backoff, path+".backoff")...)
+	diagnostics = append(diagnostics, validateDuration(path+".backoff", retry.Backoff)...)
 	return diagnostics
 }
 
 // validateDuration rejects duration-ish fields that Go's time.ParseDuration
-// cannot parse, so authoring-time failure beats runtime failure. Blank values
-// are optional. Values carrying a param reference are left to the engine (and
-// flagged separately as inert), since their literal form is not the final one.
-func validateDuration(value, path string) Diagnostics {
+// cannot parse or that are not strictly positive, so authoring-time failure
+// beats runtime failure. Blank values are optional. Duration fields are never
+// interpolated (see checkInertParamRef), so a `{{ params.x }}` reference is a
+// literal that fails to parse here rather than being skipped.
+func validateDuration(path, value string) Diagnostics {
 	if isBlank(value) {
 		return nil
 	}
-	if paramRefPattern.MatchString(value) {
-		return nil
-	}
-	if _, err := time.ParseDuration(strings.TrimSpace(value)); err != nil {
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
 		return Diagnostics{diagError("invalid_duration", path,
 			fmt.Sprintf("must be a Go duration such as 30s, 5m, or 1h30m; got %q", value))}
+	}
+	if d <= 0 {
+		return Diagnostics{diagError("invalid_duration", path,
+			fmt.Sprintf("must be a positive duration; got %q", value))}
 	}
 	return nil
 }

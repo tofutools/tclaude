@@ -106,11 +106,18 @@ func nextSchema(node *yaml.Node, path string) Diagnostics {
 	for i := 0; i < len(node.Content); i += 2 {
 		key := node.Content[i]
 		if key.ShortTag() == mergeTag {
-			diagnostics = append(diagnostics, diagErrorAt("merge_key_unsupported", joinPath(path, "<<"),
-				"merge keys (<<) are not supported in next; list outcome edges explicitly", key))
+			diagnostics = append(diagnostics, mergeKeyDiag(key, path))
 		}
 	}
 	return diagnostics
+}
+
+// mergeKeyDiag reports a `<<` merge key. The model supports merge keys in no
+// mapping: Decode would silently apply the merge (or drop it, for next), so the
+// walk rejects it explicitly rather than mislabeling it an unknown field.
+func mergeKeyDiag(key *yaml.Node, path string) Diagnostic {
+	return diagErrorAt("merge_key_unsupported", joinPath(path, "<<"),
+		"merge keys (<<) are not supported; declare fields explicitly", key)
 }
 
 func stepChildSchema(key string) schemaFunc {
@@ -149,6 +156,10 @@ func mapValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc)
 		for i := 0; i < len(node.Content); i += 2 {
 			key := node.Content[i]
 			value := node.Content[i+1]
+			if key.ShortTag() == mergeTag {
+				diagnostics = append(diagnostics, mergeKeyDiag(key, path))
+				continue
+			}
 			diagnostics = append(diagnostics, checkKnownFields(value, joinPath(path, key.Value), allowed, child)...)
 		}
 		return diagnostics
@@ -182,6 +193,10 @@ func checkKnownFields(node *yaml.Node, path string, allowed map[string]struct{},
 	for i := 0; i < len(node.Content); i += 2 {
 		key := node.Content[i]
 		value := node.Content[i+1]
+		if key.ShortTag() == mergeTag {
+			diagnostics = append(diagnostics, mergeKeyDiag(key, path))
+			continue
+		}
 		keyPath := joinPath(path, key.Value)
 		if _, ok := allowed[key.Value]; !ok {
 			diagnostics = append(diagnostics, diagErrorAt("unknown_field", keyPath, fmt.Sprintf("unknown field %q", key.Value), key))

@@ -53,13 +53,15 @@ const mergeTag = "!!merge"
 
 // mappingKeyID identifies a mapping key for duplicate detection and pruning.
 //
-// The process model is entirely string-keyed: schema maps decode into
-// map[string]... and freeform maps normalize any non-string key to its string
-// form. So scalars that render to the same string — e.g. `1` (!!int) and `"1"`
-// (!!str) — deliberately collide here and resolve last-wins. Distinguishing
-// them by tag would let both survive pruning and then hard-fail Decode on the
-// string-keyed target, replacing a clean duplicate_key diagnostic with a raw
-// YAML error, so we key on the scalar value alone.
+// The process model is string-keyed: schema maps decode into map[string]... and
+// freeform maps normalize non-string scalar keys to their string form. So
+// scalars that render to the same string — e.g. `1` (!!int) and `"1"` (!!str) —
+// deliberately collide here and resolve last-wins. Distinguishing them by tag
+// would let both survive pruning and then hard-fail Decode on the string-keyed
+// target, replacing a clean duplicate_key diagnostic with a raw YAML error, so
+// we key on the scalar value alone. Non-scalar (complex) keys have an empty
+// Value; they are exotic, unsupported by the model, and rejected by Decode
+// regardless.
 func mappingKeyID(node *yaml.Node) string {
 	if node == nil {
 		return ""
