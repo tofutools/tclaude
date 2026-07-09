@@ -32,7 +32,7 @@ func repairCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *repairParams, _ *cobra.Command, _ []string) {
-			fmt.Fprintf(os.Stderr, "process repair for run %q is not implemented yet; run `tclaude process verify %q --store-root %q` for diagnostics and wait for the TCL-271 repair flow.\n", p.RunID, p.RunID, p.StoreRoot)
+			fmt.Fprintf(os.Stderr, "process repair for run %q is not implemented yet; run `tclaude process verify %q --store-root %q` for diagnostics and use a future repair flow.\n", p.RunID, p.RunID, p.StoreRoot)
 			os.Exit(1)
 		},
 	}.ToCobra()

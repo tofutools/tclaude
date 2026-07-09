@@ -43,6 +43,13 @@ func TestTemplatePutGetIsContentAddressed(t *testing.T) {
 	if tmpl.ID != "demo" || tmpl.Start != "implement" {
 		t.Fatalf("template = %#v", tmpl)
 	}
+	records, err := fs.ListTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Ref != record.Ref {
+		t.Fatalf("template records = %#v", records)
+	}
 }
 
 func TestTemplateGetRejectsTamperedContent(t *testing.T) {
@@ -139,6 +146,57 @@ func TestCreateRunConflictIsSerialized(t *testing.T) {
 	}
 	if wins != 1 || failures != 1 {
 		t.Fatalf("wins=%d failures=%d", wins, failures)
+	}
+}
+
+func TestListRuns(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range []string{"run_b", "run_a"} {
+		st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{{ID: "implement"}})
+		if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref, Params: map[string]string{"name": runID}}, st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs, err := fs.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].ID != "run_a" || runs[1].ID != "run_b" || runs[0].Params["name"] != "run_a" {
+		t.Fatalf("runs = %#v", runs)
+	}
+}
+
+func TestListRunsToleratesBadRunJSON(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := state.New("run_good", record.Ref, record.Ref, []state.NodeInit{{ID: "implement"}})
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: "run_good", TemplateRef: record.Ref}, st); err != nil {
+		t.Fatal(err)
+	}
+	badDir := filepath.Join(root, "runs", "run_bad")
+	if err := os.MkdirAll(badDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "run.json"), []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := fs.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].ID != "run_bad" || runs[1].ID != "run_good" {
+		t.Fatalf("runs = %#v", runs)
 	}
 }
 

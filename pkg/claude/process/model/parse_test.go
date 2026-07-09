@@ -449,6 +449,37 @@ nodes:
 			yaml: strings.Replace(validTemplateYAML, "  implement:", "  \"\":", 1),
 			code: "invalid_id",
 		},
+		{
+			name: "invalid end result",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: invalid-end-result
+start: done
+nodes:
+  done:
+    type: end
+    result: failled
+`,
+			code: "invalid_end_result",
+		},
+		{
+			name: "result on non-end node",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: non-end-result
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    result: failed
+    next: done
+  done: { type: end }
+`,
+			code: "result_on_non_end_node",
+		},
 	}
 
 	for _, tt := range tests {

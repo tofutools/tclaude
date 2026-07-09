@@ -19,6 +19,11 @@ func Cmd() *cobra.Command {
 		Long:        "Inspect repeatable process templates and instantiated runs.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
+			templatesCmd(),
+			runsCmd(),
+			runCmd(),
+			showCmd(),
+			advanceCmd(),
 			verifyCmd(),
 			repairCmd(),
 		},

@@ -63,6 +63,9 @@ func validateNodes(tmpl *Template) Diagnostics {
 		if !idPattern.MatchString(nodeID) {
 			diagnostics = append(diagnostics, diagError("invalid_id", path, "node id must match "+idPattern.String()))
 		}
+		if node.Type != NodeTypeEnd && !isBlank(node.Result) {
+			diagnostics = append(diagnostics, diagError("result_on_non_end_node", path+".result", "result is only valid on end nodes"))
+		}
 		switch node.Type {
 		case NodeTypeTask:
 			if node.Performer == nil {
@@ -108,6 +111,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 			if len(node.Next) > 0 {
 				diagnostics = append(diagnostics, diagError("end_has_next", path+".next", "end node must not have outgoing edges"))
 			}
+			diagnostics = append(diagnostics, validateEndResult(node.Result, path+".result")...)
 		default:
 			diagnostics = append(diagnostics, diagError("invalid_node_type", path+".type", fmt.Sprintf("unsupported node type %q", node.Type)))
 		}
@@ -116,6 +120,20 @@ func validateNodes(tmpl *Template) Diagnostics {
 		diagnostics = append(diagnostics, diagError("multiple_start_nodes", "nodes", "at most one node may have type start"))
 	}
 	return diagnostics
+}
+
+func validateEndResult(result string, path string) Diagnostics {
+	if isBlank(result) {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(result)) {
+	case "success", "succeeded", "complete", "completed", "done", "pass", "passed", "ok",
+		"fail", "failed", "failure", "error",
+		"cancel", "canceled", "cancelled":
+		return nil
+	default:
+		return Diagnostics{diagError("invalid_end_result", path, fmt.Sprintf("end node result must be success, failed, or canceled; got %q", result))}
+	}
 }
 
 func validateStep(step Step, path string) Diagnostics {

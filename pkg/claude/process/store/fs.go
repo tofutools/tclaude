@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ import (
 )
 
 const artifactRefPrefix = "artifact:sha256:"
+
+var safeSegmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type FS struct {
 	root string
@@ -124,6 +127,59 @@ func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, erro
 		return nil, fmt.Errorf("%w: template ref %q points at semantic hash %q", ErrContentMismatch, ref, semanticHash)
 	}
 	return &tmpl, nil
+}
+
+func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	templatesDir := filepath.Join(s.root, "templates")
+	idEntries, err := os.ReadDir(templatesDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read templates dir: %w", err)
+	}
+	var records []TemplateRecord
+	for _, idEntry := range idEntries {
+		if !idEntry.IsDir() {
+			continue
+		}
+		id := idEntry.Name()
+		hashEntries, err := os.ReadDir(filepath.Join(templatesDir, id))
+		if err != nil {
+			return nil, fmt.Errorf("read template hashes for %q: %w", id, err)
+		}
+		for _, hashEntry := range hashEntries {
+			if !hashEntry.IsDir() {
+				continue
+			}
+			hash, ok := strings.CutPrefix(hashEntry.Name(), "sha256-")
+			if !ok || !isHexSHA256(hash) {
+				continue
+			}
+			bodyPath := filepath.Join(templatesDir, id, hashEntry.Name(), "template.json")
+			if _, err := os.Stat(bodyPath); errors.Is(err, os.ErrNotExist) {
+				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("stat template %q: %w", model.TemplateRef(id, hash), err)
+			}
+			records = append(records, TemplateRecord{
+				ID:           id,
+				Ref:          model.TemplateRef(id, hash),
+				SemanticHash: hash,
+				StoredAt:     fileModTime(bodyPath),
+			})
+		}
+	}
+	slices.SortFunc(records, func(a, b TemplateRecord) int {
+		if a.ID != b.ID {
+			return strings.Compare(a.ID, b.ID)
+		}
+		return strings.Compare(a.Ref, b.Ref)
+	})
+	return records, nil
 }
 
 func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) (RunRecord, error) {
@@ -229,6 +285,39 @@ func (s *FS) LoadRun(ctx context.Context, runID string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return Snapshot{Run: run, State: st, Manifest: manifest, NodeLogs: nodeLogs}, nil
+}
+
+func (s *FS) ListRuns(ctx context.Context) ([]RunRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	runsDir := filepath.Join(s.root, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read runs dir: %w", err)
+	}
+	records := make([]RunRecord, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		run, err := s.readRun(entry.Name())
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			records = append(records, RunRecord{ID: entry.Name()})
+			continue
+		}
+		records = append(records, run)
+	}
+	slices.SortFunc(records, func(a, b RunRecord) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return records, nil
 }
 
 // Append serializes one run-global compare-and-append transaction. It validates
@@ -607,7 +696,6 @@ func (s *FS) readRun(runID string) (RunRecord, error) {
 	}
 	var run RunRecord
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&run); err != nil {
 		return RunRecord{}, fmt.Errorf("decode run: %w", err)
 	}
@@ -879,6 +967,9 @@ func safeSegment(value string) error {
 	}
 	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
 		return fmt.Errorf("unsafe path segment %q", value)
+	}
+	if !safeSegmentPattern.MatchString(value) {
+		return fmt.Errorf("path segment %q must match %s", value, safeSegmentPattern.String())
 	}
 	return nil
 }

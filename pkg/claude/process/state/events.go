@@ -13,6 +13,7 @@ type EventType string
 const (
 	EventRunInitialized           EventType = "run_initialized"
 	EventRunStatusSet             EventType = "run_status_set"
+	EventNodeStatusSet            EventType = "node_status_set"
 	EventNodeAttemptStarted       EventType = "node_attempt_started"
 	EventNodeAttemptSettled       EventType = "node_attempt_settled"
 	EventDecisionRecorded         EventType = "decision_recorded"
@@ -131,12 +132,31 @@ func applyEvent(st *State, event Event) error {
 		}
 		st.Status = event.RunStatus
 		return nil
+	case EventNodeStatusSet:
+		node, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if event.NodeStatus == "" {
+			return fmt.Errorf("node_status_set requires nodeStatus")
+		}
+		if !event.NodeStatus.IsValid() {
+			return fmt.Errorf("invalid node status %q", event.NodeStatus)
+		}
+		switch event.NodeStatus {
+		case NodeStatusReady, NodeStatusCompleted, NodeStatusSkipped:
+		default:
+			return fmt.Errorf("node_status_set cannot set status %q", event.NodeStatus)
+		}
+		node.Status = event.NodeStatus
+		st.Nodes[event.NodeID] = node
+		return nil
 	case EventNodeAttemptStarted:
 		node, err := getNode(st, event.NodeID)
 		if err != nil {
 			return err
 		}
-		if node.Status == NodeStatusRunning || node.ActiveAttempt != nil {
+		if node.Status == NodeStatusRunning || (node.ActiveAttempt != nil && node.ActiveAttempt.SettledAt.IsZero() && node.ActiveAttempt.Outcome == "") {
 			return fmt.Errorf("node %q already has an active attempt", event.NodeID)
 		}
 		attempt := event.Attempt
@@ -177,6 +197,9 @@ func applyEvent(st *State, event Event) error {
 		status := event.NodeStatus
 		if status != "" && !status.IsValid() {
 			return fmt.Errorf("invalid node status %q", status)
+		}
+		if status != "" && !canSetNodeStatusDirectly(status) {
+			return fmt.Errorf("node_attempt_settled cannot set status %q", status)
 		}
 		if status == "" {
 			status = NodeStatusCompleted
@@ -447,6 +470,15 @@ func applyEvent(st *State, event Event) error {
 		return nil
 	default:
 		return fmt.Errorf("unsupported process state event type %q", event.Type)
+	}
+}
+
+func canSetNodeStatusDirectly(status NodeStatus) bool {
+	switch status {
+	case NodeStatusReady, NodeStatusCompleted, NodeStatusFailed, NodeStatusSkipped:
+		return true
+	default:
+		return false
 	}
 }
 
