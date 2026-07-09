@@ -2095,6 +2095,7 @@ func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[st
 	for i := range out {
 		a := &out[i]
 		configured := strings.TrimSpace(a.SpawnProfile) != "" ||
+			a.ProfileInline != nil ||
 			strings.TrimSpace(a.RoleRef) != "" ||
 			strings.TrimSpace(a.Harness) != "" || strings.TrimSpace(a.Model) != "" ||
 			strings.TrimSpace(a.Effort) != "" || strings.TrimSpace(a.Sandbox) != "" ||
