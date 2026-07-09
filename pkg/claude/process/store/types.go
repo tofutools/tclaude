@@ -5,12 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
+
+// DefaultRoot is the filesystem store shared by the agentd engine and manual
+// process CLI inspection. Commands may still accept an explicit root for
+// portable stores and tests.
+func DefaultRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".tclaude", "processes")
+}
 
 var (
 	ErrNotFound         = errors.New("process store record not found")
@@ -50,6 +63,7 @@ type Templates interface {
 type Runs interface {
 	CreateRun(ctx context.Context, run RunRecord, initial state.State) (RunRecord, error)
 	GetRun(ctx context.Context, runID string) (RunRecord, error)
+	LoadRunState(ctx context.Context, runID string) (*state.State, error)
 	LoadRun(ctx context.Context, runID string) (Snapshot, error)
 	ListRuns(ctx context.Context) ([]RunRecord, error)
 }

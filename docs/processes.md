@@ -1,9 +1,9 @@
 # Processes
 
 Processes are an experimental, feature-flagged surface for BPMN-lite repeatable
-workflows. There is not yet a continuously running engine host: a human can
-advance runs from the CLI, and the executor is currently a Go library for
-engine integrations and tests.
+workflows. With the feature enabled, `tclaude agentd` continuously advances
+runs in the filesystem store at `~/.tclaude/processes`. The manual CLI remains
+available for instantiation, inspection, verification, and repair workflows.
 
 Enable the feature:
 
@@ -15,10 +15,11 @@ Enable the feature:
 }
 ```
 
-Every command currently needs an explicit filesystem store:
+Every command currently needs an explicit filesystem store. Use the agentd
+default when you want the daemon to host the run:
 
 ```bash
-STORE=.tclaude-processes
+STORE="$HOME/.tclaude/processes"
 mkdir -p "$STORE"
 ```
 
@@ -71,6 +72,14 @@ tclaude process advance demo-1 implement --store-root "$STORE" --verdict pass --
 tclaude process advance demo-1 decide --store-root "$STORE" --verdict approve --actor human:$USER
 tclaude process show demo-1 --store-root "$STORE"
 tclaude process show demo-1 --store-root "$STORE" --mermaid
+```
+
+If a daemon restart parks an issued performer command as
+`needs_reconcile`, record the human-confirmed external result without rerunning
+the side effect:
+
+```bash
+tclaude process observe demo-1 cmd_... --store-root "$STORE" --verdict pass --actor human:$USER --evidence artifact:...
 ```
 
 ## Program performers
@@ -178,8 +187,13 @@ tclaude process advance demo-1 implement.do --store-root "$STORE" --verdict pass
 - All state changes go through `store.Append`, the manifest, and reducer events.
 - Template params are validated and stored on the run record; interpolation is
   not executed by this phase.
-- Retry support is node-level `retry.maxAttempts`; broader engine scheduling,
-  a continuously running host/tick loop, and repair are later phases.
+- Retry support is node-level `retry.maxAttempts`; repair remains a later
+  phase. The daemon host verifies and leases every run before advancing it,
+  persists timer and rate-limit waits, and parks commands whose external side
+  effect cannot be safely rediscovered after a restart.
+- A manual `advance` of another ready node while a run is paused is an
+  intentional human override; the paused command's own running node remains
+  protected from manual advancement.
 - Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
   AND-join semantics are deferred until the engine can track live paths.
 - End nodes default to completed runs; set `result: failed` on a failure

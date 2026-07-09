@@ -863,6 +863,68 @@ func TestJSONRoundTripStrictUnknownAndSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestEnginePauseAndResumeAreDurableReducerState(t *testing.T) {
+	st := stateWithNodes(map[string]NodeState{"work": {Type: model.NodeTypeTask, Status: NodeStatusRunning, ActiveAttempt: &AttemptState{Attempt: 1, CommandID: "cmd_work"}}})
+	st.RunID = "run_pause"
+	st.OutstandingCommands["cmd_work"] = OutstandingCommand{ID: "cmd_work", NodeID: "work", Attempt: 1, Kind: CommandKindStartAttempt, Status: CommandStatusIssued}
+	until := time.Date(2026, 7, 9, 22, 0, 0, 0, time.UTC)
+	paused, err := Apply(st, Event{Type: EventRunPaused, Pause: &PauseState{
+		Kind: PauseKindRateLimited, Reason: "rate limited until 22:00", CommandID: "cmd_work", Until: until,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.Status != RunStatusPaused || paused.Pause == nil || !paused.Pause.Until.Equal(until) {
+		t.Fatalf("paused state = %#v", paused)
+	}
+	if diagnostics := CheckInvariants(&paused); diagnostics.HasErrors() {
+		t.Fatalf("pause invariants = %#v", diagnostics)
+	}
+	body, err := Encode(&paused)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Pause == nil || decoded.Pause.CommandID != "cmd_work" {
+		t.Fatalf("decoded pause = %#v", decoded.Pause)
+	}
+	resumed, err := Apply(*decoded, Event{Type: EventRunResumed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Status != RunStatusRunning || resumed.Pause != nil {
+		t.Fatalf("resumed state = %#v", resumed)
+	}
+	repaired, err := Apply(paused, Event{Type: EventAdminRepairRecorded, RunStatus: RunStatusRunning, Actor: "human:test", Reason: "reviewed pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.Status != RunStatusRunning || repaired.Pause != nil {
+		t.Fatalf("repaired state retained pause = %#v", repaired)
+	}
+}
+
+func TestEnginePauseValidation(t *testing.T) {
+	st := stateWithNodes(map[string]NodeState{"work": {Type: model.NodeTypeTask, Status: NodeStatusRunning}})
+	for name, pause := range map[string]PauseState{
+		"rate limit without deadline": {Kind: PauseKindRateLimited, Reason: "quota", CommandID: "cmd"},
+		"reconcile without owner":     {Kind: PauseKindNeedsReconcile, Reason: "lost result", CommandID: "cmd"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Apply(st, Event{Type: EventRunPaused, Pause: &pause}); err == nil {
+				t.Fatal("expected pause validation error")
+			}
+		})
+	}
+	valid := PauseState{Kind: PauseKindNeedsReconcile, Reason: "lost result", CommandID: "missing", Owner: "human:test"}
+	if _, err := Apply(st, Event{Type: EventRunPaused, Pause: &valid}); err == nil || !strings.Contains(err.Error(), "is not outstanding") {
+		t.Fatalf("unknown pause command error = %v", err)
+	}
+}
+
 func TestActorRefValidation(t *testing.T) {
 	valid := []ActorRef{"human:johan", "agent:agt_123abc", "program:go test ./...@exit0", "program:script@exit-1"}
 	for _, actor := range valid {

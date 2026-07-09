@@ -239,8 +239,19 @@ func runServe(p *serveParams) error {
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.
 	cronStop := make(chan struct{})
-	defer close(cronStop)
+	var processEngineDone <-chan struct{}
+	defer func() {
+		close(cronStop)
+		if processEngineDone != nil {
+			<-processEngineDone
+		}
+	}()
 	startCronScheduler(cronStop)
+
+	// Feature-gated BPMN-lite process engine. The supervisor reloads
+	// features.processes every tick, so toggling the flag starts or cancels
+	// automation without restarting agentd.
+	processEngineDone = startProcessEngine(cronStop)
 
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are
@@ -722,6 +733,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
+	// Experimental process engine surfaces remain registered so off means a
+	// stable 404 rather than a different mux shape. processRoute reloads the
+	// feature flag per request.
+	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	return logRequest(auditRequests(mux))
 }
 

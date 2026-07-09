@@ -2,6 +2,10 @@ package state
 
 func Clone(st State) State {
 	out := st
+	if st.Pause != nil {
+		pause := *st.Pause
+		out.Pause = &pause
+	}
 	if st.TemplateDivergence != nil {
 		divergence := *st.TemplateDivergence
 		out.TemplateDivergence = &divergence

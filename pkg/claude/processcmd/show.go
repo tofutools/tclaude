@@ -69,6 +69,9 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	fmt.Fprintf(out, "Run: %s\n", snapshot.Run.ID)
 	fmt.Fprintf(out, "Template: %s\n", snapshot.Run.TemplateRef)
 	fmt.Fprintf(out, "Status: %s\n", report.EffectiveStatus)
+	if snapshot.State.Pause != nil {
+		fmt.Fprintf(out, "Waiting: %s\n", snapshot.State.Pause.Reason)
+	}
 	fmt.Fprintf(out, "Last seq: %d\n", snapshot.State.LastLogSeq)
 	fmt.Fprintln(out, "\nNodes:")
 	tw := newTable(out)

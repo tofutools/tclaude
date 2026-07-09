@@ -17,6 +17,15 @@ func (s RunStatus) IsValid() bool {
 	}
 }
 
+func (k PauseKind) IsValid() bool {
+	switch k {
+	case PauseKindRateLimited, PauseKindNeedsReconcile:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s NodeStatus) IsValid() bool {
 	switch s {
 	case NodeStatusPending,

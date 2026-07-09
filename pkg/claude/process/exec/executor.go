@@ -20,12 +20,18 @@ import (
 
 const maxDriveRounds = 1000
 
+const DefaultReconcileDelay = 30 * time.Second
+
 const maxObservationCASAttempts = 8
 
 type Executor struct {
 	Store    store.Store
 	Adapters map[model.PerformerKind]Adapter
 	Now      func() time.Time
+	// ReconcileDelay is the grace period before an issued performer command is
+	// considered abandoned by its original worker. Zero uses the production
+	// default; a negative value makes the command immediately reconcilable.
+	ReconcileDelay time.Duration
 }
 
 type Result struct {
@@ -232,6 +238,89 @@ func (e *Executor) RecordOutstandingObservation(ctx context.Context, runID, comm
 	return e.RecordObservation(ctx, command, observation)
 }
 
+// ReconcileOutstanding asks a discoverable performer adapter to locate an
+// issued command's external side effect by its durable idempotency key. It
+// never invokes Perform and therefore never duplicates an unknown side effect.
+func (e *Executor) ReconcileOutstanding(ctx context.Context, runID, commandID string) (*state.State, bool, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return nil, false, err
+	}
+	if command.Performer == nil || (command.Kind != plan.CommandKindStartAttempt && command.Kind != plan.CommandKindRecordDecision) {
+		return nil, false, fmt.Errorf("process command %q is not a performer command", commandID)
+	}
+	snapshot, err := e.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return nil, false, err
+	}
+	adapter := e.Adapters[command.Performer.Kind]
+	if adapter == nil {
+		return snapshot.State, false, nil
+	}
+	reconciler, ok := adapter.(ReconcileAdapter)
+	if !ok {
+		return snapshot.State, false, nil
+	}
+	request := performerRequest(snapshot.Run, command)
+	if err := adapter.Validate(request); err != nil {
+		return nil, false, err
+	}
+	observation, found, err := reconciler.Reconcile(ctx, request)
+	if err != nil || !found {
+		return snapshot.State, false, err
+	}
+	finished, err := e.RecordObservation(ctx, command, observation)
+	return finished, err == nil, err
+}
+
+// RetryOutstanding re-invokes an issued performer command only when the host
+// has positive knowledge that the previous attempt stopped before its side
+// effect (currently the RateLimitError contract). Generic crash recovery must
+// use ReconcileOutstanding instead.
+func (e *Executor) RetryOutstanding(ctx context.Context, runID, commandID string) (*state.State, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	if command.Performer == nil || (command.Kind != plan.CommandKindStartAttempt && command.Kind != plan.CommandKindRecordDecision) {
+		return nil, fmt.Errorf("process command %q is not a performer command", commandID)
+	}
+	snapshot, err := e.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if !plan.AllowsExecution(snapshot.State.Status) {
+		return nil, fmt.Errorf("process run %q is %s and command %q cannot be retried", runID, snapshot.State.Status, commandID)
+	}
+	outstanding := snapshot.State.OutstandingCommands[commandID]
+	if outstanding.Status != state.CommandStatusIssued {
+		return nil, fmt.Errorf("process command %q is %s and cannot be retried", commandID, outstanding.Status)
+	}
+	if command.Performer.Kind == model.PerformerProgram && (!snapshot.Run.AllowPrograms || !programExecutionAudited(snapshot.State)) {
+		return nil, fmt.Errorf("process run %q does not allow program performers; instantiate it with --allow-programs", runID)
+	}
+	adapter := e.Adapters[command.Performer.Kind]
+	if adapter == nil {
+		return nil, fmt.Errorf("no process performer adapter registered for kind %q", command.Performer.Kind)
+	}
+	request := performerRequest(snapshot.Run, command)
+	if err := adapter.Validate(request); err != nil {
+		return nil, err
+	}
+	observation, err := adapter.Perform(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("perform process command %q: %w", command.ID, err)
+	}
+	observation, err = e.persistPerformerObservation(ctx, command, observation)
+	if err != nil {
+		return nil, err
+	}
+	if observation.ExternalRef == "" {
+		observation.ExternalRef = observation.EvidenceRef
+	}
+	return e.appendObservation(ctx, command, observation)
+}
+
 // ResumeIssued completes an already-issued internal command. Internal commands
 // have no external side effect, so recovery only appends their deterministic
 // observation and reducer transition; it never invokes a performer adapter.
@@ -336,6 +425,13 @@ func (e *Executor) claim(ctx context.Context, snapshot store.Snapshot, command p
 	outstanding, err := command.OutstandingCommand(at)
 	if err != nil {
 		return false, nil, err
+	}
+	if command.Performer != nil {
+		delay := e.ReconcileDelay
+		if delay == 0 {
+			delay = DefaultReconcileDelay
+		}
+		outstanding.ReconcileAfter = at.Add(delay)
 	}
 	entries := []evidence.LogEntry{commandEntry(command, state.Event{
 		Type:    state.EventCommandIssued,
