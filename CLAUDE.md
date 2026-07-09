@@ -119,7 +119,10 @@ independent fresh-agent review even if CodeRabbit commented.
 
 An independent review must be done by a fresh agent that sees the PR diff cold:
 give it the diff and a review instruction, not the design backstory or how the
-change was built. Triage its findings like CodeRabbit's: fix valid issues and
+change was built. When practical, prefer a reviewer from a different
+harness/vendor than the implementer (for example Codex reviewing Claude Code
+work, or vice versa); otherwise use the freshest independent reviewer
+available. Triage its findings like CodeRabbit's: fix valid issues and
 document any deliberate skips. Record the review status in the PR description or
 a PR comment, including who reviewed and any important follow-up.
 
@@ -130,3 +133,7 @@ Do not `git add -A`; stage specific paths.
 The external tracker and private board details are not stored in this repo. Use
 operator-provided startup context or private project memory when it is available,
 and do not add private tracker URLs or credentials to committed docs.
+
+Design intent, plans, and roadmaps live in the external tracker, not in this
+repo — do not commit plan or roadmap documents. The repo carries code, the user
+docs under `docs/`, and inline rationale in code comments.

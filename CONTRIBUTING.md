@@ -72,6 +72,11 @@ When adding a new scenario:
    `conv.ListSessions`) — not at the simulator's `.jsonl`. The
    simulator writes the file so the real production read path has
    something realistic to walk; the test verifies the surface.
+5. When a new Claude Code or tmux quirk bites in production, encode
+   it in the simulator (`cc.OnInput` for behavior,
+   `cc.SetCommandDelay` for timing) so the regression fails the
+   relevant flow test. Over time the sims accrete the institutional
+   knowledge of "things that have surprised us".
 
 ## Code conventions
 
