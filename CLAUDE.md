@@ -1,173 +1,139 @@
-# tclaude
+# tclaude agent instructions
 
-## What is tclaude?
+`AGENTS.md` is a symlink to this file. Keep this file short, durable, and
+useful as startup context for coding agents. Do not use it as a changelog,
+implementation diary, roadmap, or project-management scratchpad.
 
-`tclaude` is a cross-platform CLI tool written in Go that extends agentic coding CLIs with session management, conversation utilities, and developer workflow features.
-It wraps a coding harness's sessions in tmux for detach/reattach, provides conversation search/management, usage tracking,
-and a custom status bar.
+## What tclaude is
 
-It is **harness-agnostic**: Claude Code is the default harness and OpenAI Codex CLI is the second supported one, selected per session via `--harness claude|codex` and persisted per conversation. The pluggable seam lives in `pkg/claude/harness` (see the [Harnesses](#harnesses) section). Much of the codebase still carries historical `Claude`/`claude`/`TCLAUDE_` prefixes in identifiers and on-disk env vars even though the code behind them is harness-agnostic — this is deliberate (see the naming note below), so do not read those names as "Claude-Code-only".
+`tclaude` is a Go CLI that wraps agentic coding harnesses in tmux and adds
+session management, conversation search, usage/status reporting, worktree
+helpers, and multi-agent coordination.
 
-## Build & Test
+The project is harness-agnostic. Claude Code is the default harness and OpenAI
+Codex CLI is also supported via `--harness claude|codex`; the selected harness
+is persisted per conversation. The harness seam lives in `pkg/claude/harness`.
+
+Many identifiers still contain historical `Claude`/`claude`/`TCLAUDE_` names
+even when the code is now harness-agnostic. Treat those names as historical,
+not Claude-Code-only. Do not opportunistically mass-rename them; only rename at
+a clean, contained rewrite point.
+
+## Build and test
 
 ```bash
-go build ./...                    # Build all packages
-go test ./...                     # Run all tests
-go test ./pkg/claude/conv/...     # Run tests for a specific package
-golangci-lint run ./...           # Lint
-go install .                      # Install locally
+go build ./...
+go test ./...
+go test ./pkg/claude/conv/...
+golangci-lint run ./...
+go install .
 ```
 
-CI runs `go test ./...` and `golangci-lint run ./...` across Linux and macOS (amd64 + arm64).
+CI runs `go test ./...` and `golangci-lint run ./...`. For local pre-flight,
+prefer the full build/test/lint set before opening or updating a PR.
 
-**Platform support:** tclaude supports Linux and macOS only. **Windows is not a supported target, and there are no plans to support it outside of WSL** — on Windows, run tclaude inside a WSL distribution (where it behaves as Linux). Some `*_windows.go` build-tagged files survive from earlier Windows support; they are vestigial and unmaintained — don't rely on them or treat Windows as a live target.
+Platform target: Linux and macOS. WSL is treated as Linux for practical use.
+Native Windows is not a supported development target; do not design new
+features around native Windows behavior unless the operator explicitly asks.
 
-## Architecture
+## Where to look
 
-**Entry point:** `main.go` - call `pkg/claude.Cmd()` which builds the cobra command tree.
+- Entry point: `main.go`, which calls `pkg/claude.Cmd()`.
+- Root command wiring: `pkg/claude/claude.go`.
+- Harness design and capability matrix: `docs/harnesses.md`.
+- Adding another harness: `docs/adding-a-harness.md`.
+- Agent coordination: `docs/agent.md`.
+- Dashboard: `docs/dashboard.md`.
+- Sessions, conversations, worktrees, tasks, status bar, notifications:
+  corresponding files under `docs/`.
+- Flow-test helpers and simulators: `pkg/testharness/`.
+- Contributing and flow-test style: `CONTRIBUTING.md`.
 
-**Command framework:** Uses [cobra](https://github.com/spf13/cobra) via [boa](https://github.com/GiGurra/boa) (type-safe param wrappers). All commands use `boa.CmdT[ParamType]` with `common.DefaultParamEnricher()`.
+Avoid maintaining exhaustive package inventories here. They drift quickly; use
+the code tree and focused docs as the source of truth.
 
-**Package layout under `pkg/claude/`:**
+## Architecture guardrails
 
-| Package     | Purpose                                                                                                                                                                           |
-|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `session`   | Core tmux-based session management (new, list, attach, kill, watch). Sessions stored in SQLite (`~/.tclaude/db.sqlite`). Hook callbacks update session status. |
-| `conv`      | Conversation management (list, search, AI search, resume, copy, move, delete, prune). Reads Claude's `.jsonl` conversation files; SQLite (`conv_index`) is the source-of-truth cache. The legacy `sessions-index.json` file is written-but-never-read for external-tooling compatibility. |
-| `harness`   | The harness-agnostic seam. A `Harness` descriptor composes capability-segregated contracts (`Spawner`, `ModelCatalog`, `Lifecycle`, `ConvStore`, `HookInstaller`, `SandboxCatalog`, `ApprovalCatalog`) + `Supports*`/`Can*` flags; a registry (`Register`/`Resolve`/`ResolveSpawnable`/`Names`) keyed by name. `claude.go` + `codex*.go` are the two implementations. Default = `claude`. See the [Harnesses](#harnesses) section. |
-| `agent`     | `tclaude agent` CLI — a thin client that talks to `agentd` over the Unix socket: messaging, groups, lifecycle (spawn/clone/reincarnate), cron, permissions, export (`export show`/`submit` — deliver a dashboard-requested shareable artifact), dashboard launch. Bundled skills live under `agent/skills/`. |
-| `agentd`    | `tclaude agentd` daemon — HTTP-over-Unix-socket server that owns the DB, tmux nudges, permission gating, the approval popup, the browser dashboard, the cron scheduler, per-agent export jobs (`export.go` — the async, agent-produced "📋 summary…" export, distinct from the group's synchronous `groups_export.go`), and the system tray. Identity from socket peer credentials. Flow tests in `*_flow_test.go`. |
-| `worktree`  | Git worktree management for parallel Claude sessions on different branches.                                                                                                       |
-| `memoryfiles` | `tclaude memory-files` — inspect/clean Claude's per-project memory markdown (`~/.claude/projects/<encoded>/memory/`, top-level `.md` only). Sibling-scan strategy: default = target repo's live git worktrees (precise); `--prefix` = encoded-name-prefix scan (catches removed-worktree leftovers, may over-match child/dotted dirs); `--no-siblings` = exact dir. Subcmds: `ls` (sizes/mtimes), `cat` (full contents, MEMORY.md first, separator banners), `clean` (delete with `--include`/`--exclude` globs, `--dry-run`/`-y`, to-delete/to-keep preview + confirm; also prunes the MEMORY.md index entries for the files it deletes), `prune-index` (sweep ALL dangling MEMORY.md entries — list items linking to a now-missing memory file, e.g. files deleted by hand or by Claude — without deleting any files; same scan flags + `--dry-run`/`-y` preview + confirm). |
-| `stats`     | Activity statistics from Claude's `~/.claude/stats-cache.json`.                                                                                                                   |
-| `usage`     | Standalone subscription usage limits via Anthropic OAuth API.                                                                                                                     |
-| `statusbar` | Status bar output for Claude Code's statusline feature (hidden command, reads JSON from stdin). Uses rate limits from Claude Code's statusline input (>= 2.1.80).                 |
-| `setup`     | One-time setup: installs hooks in `~/.claude/settings.json`, registers protocol handler, configures notifications.                                                                |
-| `selftest`  | Hidden integration tests for manual verification of credentials and API access.                                                                                                   |
+- Commands use Cobra through Boa (`boa.CmdT[...]`) with
+  `common.DefaultParamEnricher()` unless nearby code establishes another
+  pattern.
+- Session and conversation state lives in SQLite under `~/.tclaude/db.sqlite`.
+  Legacy JSON files may still be written for compatibility, but SQLite is the
+  source of truth for tclaude.
+- Harness support is capability-based. Callers should gate behavior on the
+  harness descriptor (`Supports*` / `Can*`) and degrade gracefully when a
+  contract is absent.
+- In-pane slash-command delivery via tmux `send-keys` is an injection sink.
+  Lifecycle command tokens must be compile-time constants from the harness
+  lifecycle, never interpolated user input. User-controlled titles or text sent
+  toward these paths must pass the existing charset/length gates.
+- Platform-specific code should use Go build tags such as `_linux.go`,
+  `_darwin.go`, and `_unix.go`. Treat old `_windows.go` files as vestigial
+  unless the task explicitly concerns them.
 
-**Shared utilities under `pkg/claude/common/`:**
+## Testing guidance
 
-| Package     | Purpose                                                                               |
-|-------------|---------------------------------------------------------------------------------------|
-| `config`    | tclaude config file (`~/.tclaude/config.json`)                                        |
-| `convops`   | Shared conversation operations (used by both `conv` and `convindex`)                  |
-| `convindex` | Conversation index management                                                         |
-| `db`        | SQLite store (`~/.tclaude/db.sqlite`) for session state and notification cooldown. WAL mode, pure-Go via `modernc.org/sqlite`. Auto-migrates legacy JSON files on first open. |
-| `notify`    | Desktop notifications (D-Bus on Linux, terminal-notifier on macOS, PowerShell on WSL) |
-| `table`     | Interactive sortable table UI using bubbletea                                         |
-| `terminal`  | Terminal detection and window focus (platform-specific)                               |
-| `usageapi`  | Anthropic OAuth usage API client (used by `usage` command and `selftest`, no longer used by statusbar) |
-| `wsl`       | WSL detection and PowerShell path resolution                                          |
+Unit tests live next to the code they cover. Flow tests live under
+`pkg/claude/agentd/*_flow_test.go` and run under plain `go test ./...`.
 
-**`pkg/common/`:** Shared utilities (dirs, file locking, size parsing, slog setup + size-based log rotation).
+Flow tests exercise production paths through the daemon HTTP mux. Only the
+external subprocess boundaries are swapped:
 
-## Key patterns
+- `clcommon.Default` for tmux.
+- `agentd.Spawn` for `tclaude session new`.
+- `agentd.runPluginShell` for plugin shell execution when needed.
 
-- Platform-specific code uses Go build tags: `_linux.go`, `_darwin.go`, `_unix.go` (plus vestigial `_windows.go` files — Windows is not a supported target; see Build & Test)
-- Session state is stored in SQLite with WAL mode for concurrent access from hook callbacks
-- Interactive list views (sessions, conversations) use bubbletea with the shared `table` package
-- The status bar command is hidden (`cmd.Hidden = true`) - it's invoked by Claude Code's statusline feature, not directly by users
+Keep new tests focused on user-visible surfaces such as CLI/API results,
+conversation listings, and dashboard snapshots. Avoid asserting on simulator
+internals when a production read path can be exercised instead.
 
-## Harnesses
+For manual dashboard visual smoke, first check that Linux-side Chrome/Chromium
+exists, then run:
 
-tclaude drives more than one coding harness. **Claude Code** is the default; **OpenAI Codex CLI** is the second. User docs: `docs/harnesses.md` (overview + capability matrix) and `docs/adding-a-harness.md` (contributor recipe). Design + research live in the `tclaude-harness-independence` Linear project.
-
-**The seam (`pkg/claude/harness`)** is deliberately *not* one monolithic interface — the same feature is distributed differently per harness (a rename is `/rename` → `.jsonl` turn for CC, but an out-of-band title-store write for Codex). So it models focused, capability-segregated contracts composed by a `Harness` descriptor with `Supports*`/`Can*` capability flags (a `nil` sub-contract = "unsupported"; callers gate on the flag and degrade gracefully). Contracts: `Spawner` (launch/resume command), `ModelCatalog` (validate model/effort), `Lifecycle` (in-pane slash tokens — `RenameCommand`/`CompactCommand`/`SoftExitCommand`, `""` = unsupported), `ConvStore` (assemble conversations from the harness's full storage model — *not* "parse the one file"), `HookInstaller` (install/check/repair the callback + trust), `SandboxCatalog` + `ApprovalCatalog` (Codex launch-time `--sandbox` / `--ask-for-approval`, both `nil` for CC).
-
-**Key facts for working in this area:**
-- The harness is **persisted per conversation** (`harness TEXT NOT NULL DEFAULT 'claude'` on `sessions` + `conv_index`). Every lifecycle op resolves the conv's recorded harness via `harnessForConv` / `harness.Resolve` and does the right thing; spawn tags the row, everything else reads it.
-- **CC's `HookInstaller` is attached in the `session` package** (`session/hook_installer.go`, via an `init()` that sets `Default().Hooks = ccHookInstaller{}`), not in `claude.go` — it wraps `InstallHooks`/`CheckHooksInstalled`/`ClaudeSettingsPath`, kept in `session` to avoid an import cycle. Codex's installer lives in the harness package (`codex_hooks.go`).
-- **send-keys is an injection sink.** In-pane slash injections (`/rename`, `/compact`, `/exit`, `/quit`) go through `agentd`'s `deliverRename` / `injectSlashCommand`, gated on the `Supports*` flag *and* charset-gated (titles via `isValidRenameTitle` / the length-exempt `isValidRenameSink`). Lifecycle tokens are compile-time constants — never interpolate user input into them. Cold-review any PR touching this path.
-- **The hook callback (`HookCallbackInput`) is already harness-agnostic** — it parses CC's and Codex's snake_case stdin field-for-field, so live status + notifications are a shared pipeline.
-- **`SpawnBinaries()`** drives the process-tree walk that recognises a hook callback's harness ancestor, so a newly-registered spawnable harness is matched without editing that walk.
-
-### Naming: historical `Claude`/`claude`/`TCLAUDE_` prefixes are intentional
-
-A deliberate decision (JOH-163): identifiers like `buildClaudeCmd`, `FindClaudePID`, `ClaudeProjectsDir`, and env vars like `TCLAUDE_SESSION_ID` keep their `Claude`-flavored names even though the code behind them is harness-agnostic. They are **historical, not Claude-Code-specific** — they operate on whatever harness a conversation records. A mass rename was rejected as high-churn / low-value / half-rename-risk. **Rule:** only rename one at a *clean, contained, natural* rewrite point; a broader rename belongs in its own focused PR + review, never smuggled into a feature change. Don't "fix" these prefixes opportunistically.
-
-## Testing
-
-Two layers, both run under bare `go test ./...`:
-
-- **Unit tests** sit next to the code they cover and exercise individual functions / handlers / DB ops in isolation.
-- **Flow tests** live in `pkg/claude/agentd/*_flow_test.go` and exercise multi-step coordination (spawn → /rename → resume, reincarnate-of-r-N, clone title derivation, delete cleanup) via the daemon's HTTP mux. The daemon, conv, agent, session — all production code paths run unchanged. Only the two subprocess boundaries are mocked.
-
-**The subprocess boundaries** (and only these) are swappable vars in production source:
-
-- `clcommon.Default Tmux` — the tmux command builder. `LiveTmux{}` runs real `tmux -L tclaude …`; tests assign a `*testharness.TmuxSim` that routes `send-keys` to a simulated CC instance.
-- `agentd.Spawn Spawner` — `tclaude session new` invocations. `LiveSpawner{}` forks the real subprocess; tests assign a `simSpawner` that builds a `CCSim` + writes the SessionRow the production hook callback would have written.
-- `agentd.runPluginShell` — the Plugins tab's step executor (`sh -c <check/run>`). Production runs the human's own shell commands; tests stub it only when a test would otherwise execute real external tools (e.g. the catalog's `docker`/`claude` probes) — hermetic commands like `true`/`touch` go through the real path.
-
-Tests swap these in `flow_setup_test.go` with `t.Cleanup` restoration:
-
-```go
-prevTmux := clcommon.Default
-clcommon.Default = m.Tmux
-t.Cleanup(func() { clcommon.Default = prevTmux })
+```bash
+TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s
 ```
 
-**In-process `session` seams (a distinct, narrow category).** The "(and only these)" rule above scopes the *subprocess* boundaries. The `session` package additionally exports a couple of in-process `…ForTest` swaps — `SetRotateAgentConvForTest` (inject a one-shot transient `db.RotateAgentConv` failure to drive the post-`/clear` identity-migration retry path) and `SetClearInjectTimingsForTest` (shrink the `/clear` readiness-poll knobs so flow tests don't sit on the production delay). They live in a regular `.go` file (not `_test.go`) only because `_test.go` exports reach just the same package's test binary, and these are exercised from `agentd` flow tests in another package. They are **fault-injection / timing knobs, not subprocess mocks**, and are sanctioned for that use — keep any new ones rare, `…ForTest`-suffixed, and production-unreachable.
+The visual smoke harness is optional and environment-dependent; it is not wired
+into CI.
 
-**Simulators** under `pkg/testharness/`:
+## Git, commits, and PRs
 
-- **`CCSim`** owns a real `.jsonl` under `~/.claude/projects/<encoded-cwd>/<convID>.jsonl`. Receives keystrokes via `Receive(text)`, buffers until `"Enter"` arrives, then dispatches through a handler list. Default handlers cover `/rename` (writes a `customTitle` turn), `/exit` (final user turn + flips alive=false), `/compact` (summary turn), and a fallback that writes a user turn. Tests register custom behaviors via `cc.OnInput(prefix, handler)` and async-process delays via `cc.SetCommandDelay(prefix, dur)`. Zero DB writes — CC's job is the `.jsonl`; the daemon owns SQLite.
-- **`TmuxSim`** is a pure tmux substitute. `Command(args ...)` answers `has-session` against an alive flag, routes `send-keys` to the attached `CCSim.Receive`, models `kill-session`. Zero DB writes.
-- **`Flow`** wraps a `World` with a Given/When/Then DSL — `HaveGroup`, `HaveAliveSession`, `Spawn`, `Reincarnate`, `Clone`, `Delete`, plus surface assertions like `AssertGroupMember`, `AssertSentContains`.
+When making feature or fix changes as an agent, use a git worktree and open a
+PR unless the operator gives different instructions. It is fine to force-push a
+feature branch; never force-push `main`.
 
-**Assertion philosophy:** verify at real surfaces — `GET /v1/groups/{name}/members` (what `tclaude agent groups members` would render), `conv.ListSessions(projectDir)` (what `tclaude conv ls` walks), `agent.FreshConvRowResolved` (what the dashboard refreshes through). The simulator's `.jsonl` is impl detail of the mock layer; the production read path is the system under test. New scenarios should reach for these surfaces, not poke `.jsonl` files directly.
+Do not include remote-access/session links in commits, PR descriptions, or PR
+comments. In particular, do not add `Claude-Session:` trailers or
+`https://claude.ai/code/...` URLs. A plain `Co-Authored-By` trailer is fine.
 
-When discovering a new CC or tmux quirk that bites in production, **encode it in the simulator** — `cc.OnInput` for behavior, `cc.SetCommandDelay` for timing — so the regression fails the relevant flow test. Over time the sims accrete the institutional knowledge of "things that have surprised us."
+PR descriptions should start with a short `Background / Purpose` section that
+explains why the PR exists. Then summarize the implementation and list tests or
+verification.
 
-### Visual smoke harness (dashsnap) — *if a headless Chrome is available*
+Before presenting a PR to the operator as ready, make sure it has had a real
+cold review. CodeRabbit is enough for small/routine PRs only when it produced
+actual review feedback; a green CodeRabbit check that skipped because of quota
+is not a review. Larger, riskier, or more judgment-heavy PRs should get an
+independent fresh-agent review even if CodeRabbit commented.
 
-A manually-run **visual smoke harness** for the agentd dashboard (JOH-386): it drives a real headless Chrome over the **real dashboard handler** against a canned fixture, screenshots a both-skins state matrix (`{default, wizard}` × `{groups, dock open/collapsed, summon normal/reinforce/copy}`), and writes an `index.html` contact sheet. It gives a sandboxed agent **eyes** on the CSS cascade / rendering that string pins and `node --check` cannot see (the palette epic's only real visual blockers were caught solely by a human reading CSS).
+An independent review must be done by a fresh agent that sees the PR diff cold:
+give it the diff and a review instruction, not the design backstory or how the
+change was built. When practical, prefer a reviewer from a different
+harness/vendor than the implementer (for example Codex reviewing Claude Code
+work, or vice versa); otherwise use the freshest independent reviewer
+available. Triage its findings like CodeRabbit's: fix valid issues and
+document any deliberate skips. Record the review status in the PR description or
+a PR comment, including who reviewed and any important follow-up.
 
-- **Run:** `TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s`. Output lands in `dashsnap-out/<timestamp>/` (gitignored) — open its `index.html`.
-- **Probe availability FIRST.** It needs a **Linux-side** headless Chrome/Chromium (default `/usr/bin/google-chrome`, override `TCLAUDE_DASHSNAP_CHROME`, else `$PATH`; a Windows Chrome under `/mnt/c/...` does **not** count). If none is found the run fails with a clear message — that's an *environment* limitation, not a code failure. `stat` the default path (or `command -v google-chrome`) before relying on it.
-- **Never CI-wired.** With `TCLAUDE_DASHSNAP` unset the test **skips**, so `go test ./...` compiles it (no bit-rot) but never launches a browser. The browser driver (`github.com/go-rod/rod`) stays **out of the tclaude binary's dep graph** — `pkg/claude/agentd/dashsnap` is its only importer, reached only by the driver test (`go list -deps ./` is rod-free). No pixel-diff gating; a tool run on demand.
-- Full runtime prerequisites (`--no-sandbox`, the harmless crashpad/dbus stderr noise) and known traps (headless `(hover: hover)`, emoji-tofu) live in the `pkg/claude/agentd/dashsnap` package header.
-
-## Commits & PRs
-
-**Never include remote-access/session links in commit messages or PR descriptions** — no `Claude-Session:` trailers and no `https://claude.ai/code/...` session URLs, even where a harness's default footer instructions ask for them (this file overrides those). Those links point at the operator's live remote-access sessions and don't belong in the repo. A plain `Co-Authored-By` attribution trailer is fine.
-
-PR descriptions should start with a short **Background / Purpose** section before the usual implementation summary. State why the PR exists, what problem it is solving, and any context a cold reviewer needs to judge the shape of the change. After that, keep the normal contents: summary of what changed, how it is implemented when that matters, and tests or verification notes.
-
-Before presenting a PR to the operator, always make sure it has had a real cold review. A real cold review means CodeRabbit actually produced review feedback, or an independent fresh-agent review completed. Record the cold-review status either in the PR description or in a PR comment: which reviewer ran, whether it was CodeRabbit or an independent fresh-agent review, and any important follow-up from that review. For draft or WIP PRs that are not ready to present yet, say explicitly when no cold review has run so merge readiness is not ambiguous.
-
-## Code review
-
-CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
-
-CodeRabbit is usually sufficient for small or routine PRs when it has actually produced a real review. For larger, riskier, or more judgment-heavy PRs, run an **independent fresh-agent review** even if CodeRabbit has reviewed it.
-
-When CodeRabbit has not produced a real review, or when the PR warrants an additional review, do an **independent review** before presenting or merging:
-
-- The reviewer must be a **fresh agent** — a local sub-agent, or a spawned review agent — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
-- Prefer a reviewer from a different harness/vendor than the implementer when practical, for example Codex reviewing Claude Code work or Claude Code reviewing Codex work. This usually requires group-owner permissions to spawn the cross-harness review agent through `tclaude agent`; if that is not available, use the freshest independent reviewer you can.
-- Triage its findings the same way CodeRabbit's would be: fix the valid ones, document any deliberate skips.
-
-## Agent group / worker policy
-
-`tclaude` is built by a multi-agent group ("tclaude-dev"): a human operator, a PO (product-owner) coordinating agent, and dev/worker agents. The worker policy:
-
-- **One dev/worker agent per feature.** Each worker owns a single feature and stays focused on it.
-- **Same-feature follow-ups reuse that agent.** Follow-up work on the same feature — or something very similar — goes back to the agent that did the original task; it still has the context.
-- **Unrelated work goes to a fresh agent.** A different feature, or a more unrelated task, gets a new agent with its own brief — never an existing agent carrying foreign context.
-- **Idle agents are cheap.** A finished worker can sit idle in the group at low cost; there is no need to retire it promptly.
-- **The operator prunes idle agents.** Retiring/removing agents from the group is the human operator's call. The PO may *recommend* cleanups or work-org changes at any time, but does not retire agents on its own initiative.
+Do not `git add -A`; stage specific paths.
 
 ## Work tracking
 
-tclaude-dev's work tracker is an external Linear board, not this repo. The actual
-board/team and access details live in the operator's **private Claude Code project
-memory** (deliberately not committed here, to avoid leaking internal locations). A
-fresh agent picking up coordination should read its memory for the current Linear
-setup, and keep the board current as work ships.
+The external tracker and private board details are not stored in this repo. Use
+operator-provided startup context or private project memory when it is available,
+and do not add private tracker URLs or credentials to committed docs.
 
-Design intent, research, and roadmaps live in Linear (e.g. the
-`tclaude-harness-independence` project), not in-repo — this repo carries code,
-the user docs under `docs/`, and inline rationale in code comments. Referencing a
-Linear issue ID in a comment is welcome when a relevant one happens to exist, but
-it is **optional** — not a requirement, and never a review blocker. (This is a
-personal project; don't treat occasional Linear references as a coding guideline.)
+Design intent, plans, and roadmaps live in the external tracker, not in this
+repo — do not commit plan or roadmap documents. The repo carries code, the user
+docs under `docs/`, and inline rationale in code comments.

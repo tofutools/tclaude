@@ -72,6 +72,11 @@ When adding a new scenario:
    `conv.ListSessions`) — not at the simulator's `.jsonl`. The
    simulator writes the file so the real production read path has
    something realistic to walk; the test verifies the surface.
+5. When a new Claude Code or tmux quirk bites in production, encode
+   it in the simulator (`cc.OnInput` for behavior,
+   `cc.SetCommandDelay` for timing) so the regression fails the
+   relevant flow test. Over time the sims accrete the institutional
+   knowledge of "things that have surprised us".
 
 ## Code conventions
 
@@ -99,10 +104,14 @@ When adding a new scenario:
 
 ## Layout
 
-See `CLAUDE.md` for the full architecture map. High-level:
+High-level:
 
-- `pkg/claude/` — main packages (session, conv, agent, agentd, …).
+- `pkg/claude/` — main packages (session, conv, agent, agentd, etc.).
 - `pkg/claude/common/` — shared utilities (config, db, tmux,
-  notify, …).
+  notify, etc.).
 - `pkg/testharness/` — flow-test DSL (CCSim + TmuxSim + Given/When/Then).
 - `pkg/common/` — generic utilities (dirs, locking, size parsing).
+
+For feature-level architecture, prefer the focused docs under `docs/` and the
+package comments near the code. `CLAUDE.md` / `AGENTS.md` is intentionally only
+agent startup context, not a complete architecture inventory.
