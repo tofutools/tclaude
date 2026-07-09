@@ -76,6 +76,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set/clear own task-reference link — the Task column's Linear/GitHub/ticket URL (tclaude agent task set/clear). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug:        PermSelfPR,
+		Description: "Present own pull request to the operator dashboard (tclaude agent present-pr). Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
 		Slug:        PermSelfTags,
 		Description: "Set own agent tags — the short labels rendered as chips in the Description column (tclaude agent tags set/add/rm). Default-granted, mirroring the self-lifecycle slugs.",
 	},
@@ -108,6 +112,11 @@ var permissionRegistry = []PermSlug{
 		Slug:         PermAgentTask,
 		OwnerImplied: true,
 		Description:  "Set/clear ANOTHER agent's task-reference link (tclaude agent task set/clear --target). Group owners can set the task link on members of groups they own without this slug.",
+	},
+	{
+		Slug:         PermAgentPR,
+		OwnerImplied: true,
+		Description:  "Present or handle ANOTHER agent's pull request (tclaude agent present-pr --target). Group owners can present PRs for members of groups they own without this slug.",
 	},
 	{
 		Slug:         PermAgentTags,
