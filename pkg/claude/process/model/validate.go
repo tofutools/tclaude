@@ -93,7 +93,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "decision node requires outcome edges"))
 			}
 		case NodeTypeWait:
-			if node.Wait == nil || (node.Wait.Duration == "" && node.Wait.Until == "" && node.Wait.Signal == "") {
+			if node.Wait == nil || (isBlank(node.Wait.Duration) && isBlank(node.Wait.Until) && isBlank(node.Wait.Signal)) {
 				diagnostics = append(diagnostics, diagError("missing_wait", path+".wait", "wait node requires duration, until, or signal"))
 			}
 			if len(node.Next) == 0 {
@@ -132,15 +132,15 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 	var diagnostics Diagnostics
 	switch performer.Kind {
 	case PerformerAgent:
-		if performer.Prompt == "" {
+		if isBlank(performer.Prompt) {
 			diagnostics = append(diagnostics, diagError("missing_prompt", path+".prompt", "agent performer requires prompt"))
 		}
 	case PerformerHuman:
-		if performer.Ask == "" && performer.Prompt == "" {
+		if isBlank(performer.Ask) && isBlank(performer.Prompt) {
 			diagnostics = append(diagnostics, diagError("missing_prompt", path+".ask", "human performer requires ask or prompt"))
 		}
 	case PerformerProgram:
-		if performer.Run == "" {
+		if isBlank(performer.Run) {
 			diagnostics = append(diagnostics, diagError("missing_run", path+".run", "program performer requires run"))
 		}
 	default:
@@ -157,6 +157,10 @@ func validateRetry(retry *RetryPolicy, path string) Diagnostics {
 		return Diagnostics{diagError("invalid_retry_budget", path+".maxAttempts", "retry policy requires maxAttempts greater than zero")}
 	}
 	return nil
+}
+
+func isBlank(value string) bool {
+	return strings.TrimSpace(value) == ""
 }
 
 func validateEdges(tmpl *Template, edges []Edge) Diagnostics {

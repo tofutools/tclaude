@@ -594,6 +594,22 @@ nodes:
 			code: "missing_wait",
 		},
 		{
+			name: "blank wait",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: blank-wait
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: "   " }
+    next: done
+  done: { type: end }
+`,
+			code: "missing_wait",
+		},
+		{
 			name: "end has next",
 			yaml: `
 apiVersion: tclaude.dev/v1alpha1
@@ -635,6 +651,54 @@ nodes:
   done: { type: end }
 `,
 			code: "invalid_performer_kind",
+		},
+		{
+			name: "blank agent prompt",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: blank-agent-prompt
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: "   " }
+    next: done
+  done: { type: end }
+`,
+			code: "missing_prompt",
+		},
+		{
+			name: "blank human ask",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: blank-human-ask
+start: a
+nodes:
+  a:
+    type: decision
+    performer: { kind: human, ask: "   " }
+    next: { approve: done }
+  done: { type: end }
+`,
+			code: "missing_prompt",
+		},
+		{
+			name: "blank program run",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: blank-program-run
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: program, run: "   " }
+    next: done
+  done: { type: end }
+`,
+			code: "missing_run",
 		},
 		{
 			name: "missing step id",
