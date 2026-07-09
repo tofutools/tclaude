@@ -180,6 +180,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// conv-id exists. enrollSpawnedConv reads these off spawnParams.
 		IsOwner:             ps.IsOwner,
 		PermissionOverrides: ps.PermissionOverrides,
+		ProcessCommandID:    ps.ProcessCommandID,
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 		if err := db.InsertPendingSpawn(ps); err != nil {

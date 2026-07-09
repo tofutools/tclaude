@@ -57,6 +57,85 @@ type Adapter interface {
 	Perform(context.Context, Request) (Observation, error)
 }
 
+// DispatchResult describes the durable wait created by an asynchronous
+// performer. ExternalRef is the spawned agent id or obligation id; the
+// executor records it on the issued command before returning control.
+type DispatchResult struct {
+	ExternalRef      string
+	Assignee         string
+	Summary          string
+	AvailableActions []string
+	DueAt            time.Time
+	CreateObligation bool
+}
+
+type DeferredStatus string
+
+const (
+	DeferredMissing  DeferredStatus = "missing"
+	DeferredInFlight DeferredStatus = "in_flight"
+	DeferredObserved DeferredStatus = "observed"
+)
+
+// DeferredAdapter starts a durable external performer and later polls it.
+// Dispatch must be idempotent by request.Command.ID. ReconcileDeferred must
+// distinguish a discoverable in-flight side effect from a genuinely missing
+// one; that distinction is what prevents resume from pausing healthy agents.
+type DeferredAdapter interface {
+	Adapter
+	Dispatch(context.Context, Request) (DispatchResult, error)
+	ReconcileDeferred(context.Context, Request) (Observation, DeferredStatus, error)
+}
+
+type Activity struct {
+	Recovered       bool
+	HumanInteracted bool
+	// AutomatedDelivery identifies a UserPromptSubmit caused by tclaude's own
+	// inbox delivery rather than a human typing in the performer pane.
+	AutomatedDelivery bool
+	At                time.Time
+}
+
+// ContactAdapter is the optional nudge/preemption surface for a deferred
+// performer. Implementations route through existing agent-message or
+// notify-human machinery; the engine only owns schedule state.
+type ContactAdapter interface {
+	Contact(context.Context, Request, bool) error
+	Activity(context.Context, Request, time.Time) (Activity, error)
+}
+
+const (
+	DefaultHumanContactCadence = 30 * time.Minute
+	DefaultHumanContactBudget  = 5
+	DefaultAgentContactCadence = 5 * time.Minute
+	DefaultAgentContactBudget  = 3
+)
+
+func ContactScheduleFor(performer model.Performer) (time.Duration, int, string, error) {
+	cadence := DefaultAgentContactCadence
+	budget := DefaultAgentContactBudget
+	if performer.Kind == model.PerformerHuman {
+		cadence = DefaultHumanContactCadence
+		budget = DefaultHumanContactBudget
+	}
+	escalation := "human:operator"
+	if performer.Contact == nil {
+		return cadence, budget, escalation, nil
+	}
+	parsed, err := time.ParseDuration(strings.TrimSpace(performer.Contact.Cadence))
+	if err != nil || parsed <= 0 {
+		return 0, 0, "", fmt.Errorf("invalid contact cadence %q", performer.Contact.Cadence)
+	}
+	if performer.Contact.Budget <= 0 {
+		return 0, 0, "", fmt.Errorf("invalid contact budget %d", performer.Contact.Budget)
+	}
+	escalation = strings.TrimSpace(performer.Contact.EscalationTarget)
+	if escalation == "" {
+		return 0, 0, "", fmt.Errorf("contact escalation target is required")
+	}
+	return parsed, performer.Contact.Budget, escalation, nil
+}
+
 // ReconcileAdapter is implemented by performer adapters whose external side
 // effect can be rediscovered by the command idempotency key after a host
 // restart. found=false means the adapter completed its lookup but cannot prove

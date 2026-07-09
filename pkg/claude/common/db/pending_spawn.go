@@ -56,6 +56,7 @@ type PendingSpawn struct {
 	// = no overrides); nil/empty here means none.
 	IsOwner             bool
 	PermissionOverrides map[string]string
+	ProcessCommandID    string
 	// CreatedAt is the RFC3339Nano spawn time, stamped by InsertPendingSpawn.
 	CreatedAt string
 }
@@ -79,11 +80,11 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 		INSERT OR REPLACE INTO pending_spawns
 			(label, group_id, role, descr, name, initial_message, group_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			 worktree_path, worktree_branch, is_owner, permission_overrides, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?)`,
+			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?)`,
 		p.Label, p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
-		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
+		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
 		time.Now().Format(time.RFC3339Nano))
 	return err
 }
@@ -133,7 +134,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 	row := db.QueryRow(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, is_owner, permission_overrides, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -152,7 +153,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 	rows, err := db.Query(`
 		SELECT label, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
-			worktree_path, worktree_branch, is_owner, permission_overrides, created_at
+			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -212,7 +213,7 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	if err := s.Scan(&p.Label, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
-		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.CreatedAt); err != nil {
+		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	p.IsOwner = isOwner != 0

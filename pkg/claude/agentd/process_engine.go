@@ -10,13 +10,16 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
@@ -118,6 +121,8 @@ func newProcessEngineHost(root string) (*processengine.Host, error) {
 	}
 	host := processengine.New(fs, processEngineHolder(), map[model.PerformerKind]processexec.Adapter{
 		model.PerformerProgram: processexec.ProgramAdapter{},
+		model.PerformerAgent:   processAgentAdapter{},
+		model.PerformerHuman:   processHumanAdapter{},
 	})
 	return host, nil
 }
@@ -201,6 +206,70 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type processReportRequest struct {
+	CommandID   string `json:"command_id"`
+	Verdict     string `json:"verdict"`
+	EvidenceRef string `json:"evidence_ref"`
+	Feedback    string `json:"feedback"`
+}
+
+func handleProcessReport(w http.ResponseWriter, r *http.Request) {
+	callerConv, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return
+	}
+	if isHuman || callerConv == "" {
+		writeError(w, http.StatusForbidden, "forbidden", "agent process reports require an authenticated agent pane")
+		return
+	}
+	var body processReportRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	body.CommandID = strings.TrimSpace(body.CommandID)
+	body.Verdict = strings.TrimSpace(body.Verdict)
+	body.EvidenceRef = strings.TrimSpace(body.EvidenceRef)
+	if !processCommandIDPattern.MatchString(body.CommandID) || body.Verdict == "" || body.EvidenceRef == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "command_id, verdict, and evidence_ref are required")
+		return
+	}
+	agentRow, err := db.AgentForProcessCommand(body.CommandID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	callerAgent := peerAgentID(callerConv)
+	if agentRow == nil || callerAgent == "" || agentRow.AgentID != callerAgent {
+		writeError(w, http.StatusForbidden, "forbidden", "caller does not own this process command")
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	snapshot, err := fs.LoadRun(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "process_run", err.Error())
+		return
+	}
+	outstanding, exists := snapshot.State.OutstandingCommands[body.CommandID]
+	if !exists || outstanding.NodeID != r.PathValue("node") {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "command does not belong to the requested run/node")
+		return
+	}
+	executor := processexec.New(fs, nil)
+	actor := state.ActorRef("agent:" + callerAgent)
+	if _, err := executor.RecordOutstandingObservation(r.Context(), snapshot.Run.ID, body.CommandID, processexec.Observation{
+		Actor: actor, Verdict: body.Verdict, Feedback: strings.TrimSpace(body.Feedback), EvidenceRef: body.EvidenceRef,
+	}); err != nil {
+		writeError(w, http.StatusConflict, "process_report", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+}
+
 func writeProcessJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -226,6 +295,13 @@ func SetProcessStoreRootForTest(root string) func() {
 // leaving clock and adapter construction under the flow test's control.
 func RunProcessEngineTickForTest(ctx context.Context, host *processengine.Host) ([]processengine.RunResult, error) {
 	return host.Tick(ctx)
+}
+
+// NewProcessEngineHostForTest builds the production adapter set against a
+// test-owned process store. Flow tests use it to exercise real spawn/message
+// choreography while still replacing only tmux and session-new boundaries.
+func NewProcessEngineHostForTest(root string) (*processengine.Host, error) {
+	return newProcessEngineHost(root)
 }
 
 // StartProcessEngineForTest starts the dynamic feature supervisor with a

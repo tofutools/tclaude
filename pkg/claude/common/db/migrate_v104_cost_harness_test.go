@@ -18,7 +18,7 @@ func TestMigrateV103toV104_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 104, currentVersion, "tripwire: bump this and add a v104->v105 test when you add a migration")
+	require.Equal(t, 105, currentVersion, "tripwire: bump this and add the next migration test when you add a migration")
 
 	var have int
 	require.NoError(t, d.QueryRow(

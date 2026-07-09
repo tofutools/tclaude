@@ -738,6 +738,7 @@ func buildMux() http.Handler {
 	// feature flag per request.
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
+	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))
 	return logRequest(auditRequests(mux))
 }
 

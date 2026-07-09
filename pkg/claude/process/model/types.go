@@ -79,13 +79,24 @@ type Step struct {
 }
 
 type Performer struct {
-	Kind    PerformerKind `json:"kind" yaml:"kind"`
-	Profile string        `json:"profile,omitempty" yaml:"profile,omitempty"`
-	Prompt  string        `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	Ask     string        `json:"ask,omitempty" yaml:"ask,omitempty"`
-	Run     string        `json:"run,omitempty" yaml:"run,omitempty"`
-	Args    []string      `json:"args,omitempty" yaml:"args,omitempty"`
-	Timeout string        `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Kind    PerformerKind    `json:"kind" yaml:"kind"`
+	Profile string           `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Prompt  string           `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Ask     string           `json:"ask,omitempty" yaml:"ask,omitempty"`
+	Run     string           `json:"run,omitempty" yaml:"run,omitempty"`
+	Args    []string         `json:"args,omitempty" yaml:"args,omitempty"`
+	Timeout string           `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Contact *ContactSchedule `json:"contact,omitempty" yaml:"contact,omitempty"`
+}
+
+// ContactSchedule controls follow-up for an asynchronous performer slot. A
+// nil schedule uses the performer kind's runtime default. Programs currently
+// execute synchronously, but the shape is deliberately uniform so a future
+// polling program adapter can use the same contract.
+type ContactSchedule struct {
+	Cadence          string `json:"cadence,omitempty" yaml:"cadence,omitempty"`
+	Budget           int    `json:"budget,omitempty" yaml:"budget,omitempty"`
+	EscalationTarget string `json:"escalationTarget,omitempty" yaml:"escalationTarget,omitempty"`
 }
 
 type RetryPolicy struct {

@@ -26,15 +26,18 @@ import (
 // ReadAt is the zero time while the message is unread, and the time the
 // human marked it read otherwise.
 type HumanMessage struct {
-	ID        int64
-	FromConv  string
-	FromAgent string
-	FromTitle string
-	GroupName string
-	Subject   string
-	Body      string
-	CreatedAt time.Time
-	ReadAt    time.Time
+	ID               int64
+	FromConv         string
+	FromAgent        string
+	FromTitle        string
+	GroupName        string
+	Subject          string
+	Body             string
+	CreatedAt        time.Time
+	ReadAt           time.Time
+	ProcessRunID     string
+	ProcessNodeID    string
+	ProcessCommandID string
 }
 
 // IsRead reports whether the message has been marked read.
@@ -63,10 +66,11 @@ func InsertHumanMessage(m *HumanMessage) (int64, error) {
 	// truth, so the denormalised ref can never drift from it.
 	res, err := d.Exec(`
 		INSERT INTO human_messages
-			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at)
-		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?)`,
+			(from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
+			 process_run_id, process_node_id, process_command_id)
+		VALUES (?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.FromConv, m.FromConv, m.FromTitle, m.GroupName, m.Subject, m.Body,
-		created.Format(time.RFC3339Nano), readAt)
+		created.Format(time.RFC3339Nano), readAt, m.ProcessRunID, m.ProcessNodeID, m.ProcessCommandID)
 	if err != nil {
 		return 0, fmt.Errorf("insert human message: %w", err)
 	}
@@ -92,7 +96,8 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at
+		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
+		       process_run_id, process_node_id, process_command_id
 		FROM human_messages
 		ORDER BY id DESC`)
 	if err != nil {
@@ -105,7 +110,7 @@ func ListHumanMessages() ([]*HumanMessage, error) {
 		var m HumanMessage
 		var created, readAt string
 		if err := rows.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
-			&m.Subject, &m.Body, &created, &readAt); err != nil {
+			&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); err != nil {
 			return nil, err
 		}
 		if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
@@ -141,13 +146,14 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at
+		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
+		       process_run_id, process_node_id, process_command_id
 		FROM human_messages
 		WHERE id = ?`, id)
 	var m HumanMessage
 	var created, readAt string
 	switch err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
-		&m.Subject, &m.Body, &created, &readAt); {
+		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
@@ -166,6 +172,33 @@ func GetHumanMessage(id int64) (*HumanMessage, error) {
 			slog.Warn("human_messages: unparseable read_at, leaving zero",
 				"id", m.ID, "value", readAt, "error", err)
 		}
+	}
+	return &m, nil
+}
+
+// FindHumanMessageForProcessCommand returns the first matching process
+// notification. Deferred human dispatch uses it as an idempotency lookup after
+// a restart between notification persistence and process-state append.
+func FindHumanMessageForProcessCommand(commandID, subject string) (*HumanMessage, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(`
+		SELECT id, from_conv, from_agent, from_title, group_name, subject, body, created_at, read_at,
+		       process_run_id, process_node_id, process_command_id
+		FROM human_messages WHERE process_command_id = ? AND subject = ? ORDER BY id ASC LIMIT 1`, commandID, subject)
+	var m HumanMessage
+	var created, readAt string
+	if err := row.Scan(&m.ID, &m.FromConv, &m.FromAgent, &m.FromTitle, &m.GroupName,
+		&m.Subject, &m.Body, &created, &readAt, &m.ProcessRunID, &m.ProcessNodeID, &m.ProcessCommandID); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	if readAt != "" {
+		m.ReadAt, _ = time.Parse(time.RFC3339Nano, readAt)
 	}
 	return &m, nil
 }

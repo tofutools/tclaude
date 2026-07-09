@@ -7,11 +7,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-// StateSchemaVersion 3 added the gate feedback-loop fields (NodeState
-// FailCount/LastEvidenceHash/PendingFeedback, AttemptState EvidenceHash/
-// Feedback); older binaries must see ErrNewerSchemaVersion instead of a
+// StateSchemaVersion 4 adds durable performer obligations and contact/nudge
+// state. Older binaries must see ErrNewerSchemaVersion instead of a
 // DisallowUnknownFields decode error.
-const StateSchemaVersion = 3
+const StateSchemaVersion = 4
 
 type RunStatus string
 
@@ -114,6 +113,8 @@ type State struct {
 	OutstandingCommands map[string]OutstandingCommand `json:"outstandingCommands,omitempty"`
 	Waits               map[string]WaitRecord         `json:"waits,omitempty"`
 	Timers              map[string]TimerRecord        `json:"timers,omitempty"`
+	Obligations         map[string]ObligationRecord   `json:"obligations,omitempty"`
+	Contacts            map[string]ContactState       `json:"contacts,omitempty"`
 	AdminRecords        []AdminRecord                 `json:"adminRecords,omitempty"`
 
 	LastLogSeq  int64  `json:"lastLogSeq"`
@@ -209,6 +210,47 @@ type OutstandingCommand struct {
 	Feedback       string        `json:"feedback,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt,omitzero"`
 	ReconcileAfter time.Time     `json:"reconcileAfter,omitzero"`
+}
+
+// ObligationRecord is the durable work-item shape consumed by process show
+// now and by the phase-3 worklist UI later. Human performer slots always
+// create one; the shape also supports agent and external-system waits.
+type ObligationRecord struct {
+	ID               string     `json:"id"`
+	RunID            string     `json:"runId"`
+	NodeID           string     `json:"nodeId"`
+	Attempt          int        `json:"attempt,omitempty"`
+	CommandID        string     `json:"commandId"`
+	Kind             WaitKind   `json:"kind"`
+	Assignee         string     `json:"assignee"`
+	Status           WaitStatus `json:"status"`
+	DueAt            time.Time  `json:"dueAt,omitzero"`
+	Summary          string     `json:"summary"`
+	AvailableActions []string   `json:"availableActions,omitempty"`
+	NodeLink         string     `json:"nodeLink,omitempty"`
+	EvidenceRef      string     `json:"evidenceRef,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt,omitzero"`
+	ResolvedAt       time.Time  `json:"resolvedAt,omitzero"`
+}
+
+// ContactState makes a stalled slot unambiguous: who is waiting, when they
+// were last/next contacted, how much budget is used, and whether escalation
+// or human preemption paused automation.
+type ContactState struct {
+	CommandID         string    `json:"commandId"`
+	Kind              WaitKind  `json:"kind"`
+	Assignee          string    `json:"assignee,omitempty"`
+	Cadence           string    `json:"cadence"`
+	Budget            int       `json:"budget"`
+	Used              int       `json:"used,omitempty"`
+	EscalationTarget  string    `json:"escalationTarget"`
+	LastContactedAt   time.Time `json:"lastContactedAt,omitzero"`
+	NextContactAt     time.Time `json:"nextContactAt,omitzero"`
+	LastRecoveredAt   time.Time `json:"lastRecoveredAt,omitzero"`
+	EscalatedAt       time.Time `json:"escalatedAt,omitzero"`
+	Paused            bool      `json:"paused,omitempty"`
+	PauseReason       string    `json:"pauseReason,omitempty"`
+	HumanInteractedAt time.Time `json:"humanInteractedAt,omitzero"`
 }
 
 type WaitRecord struct {

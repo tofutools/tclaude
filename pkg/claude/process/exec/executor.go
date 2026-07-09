@@ -161,6 +161,19 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	}
 	result := Result{Command: command, Claimed: true, State: claimState}
 
+	if deferred, ok := adapter.(DeferredAdapter); ok {
+		dispatched, dispatchErr := deferred.Dispatch(ctx, request)
+		if dispatchErr != nil {
+			return result, fmt.Errorf("dispatch process command %q: %w", command.ID, dispatchErr)
+		}
+		finished, dispatchErr := e.appendDispatch(ctx, command, dispatched)
+		if dispatchErr != nil {
+			return result, dispatchErr
+		}
+		result.State = finished
+		return result, nil
+	}
+
 	observation := Observation{Verdict: "pass"}
 	if adapter != nil {
 		observation, err = adapter.Perform(ctx, request)
@@ -182,6 +195,128 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	result.Observation = &observation
 	result.State = finished
 	return result, nil
+}
+
+func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dispatched DispatchResult) (*state.State, error) {
+	if command.Performer == nil {
+		return nil, fmt.Errorf("process command %q has no deferred performer", command.ID)
+	}
+	externalRef := strings.TrimSpace(dispatched.ExternalRef)
+	if externalRef == "" {
+		return nil, fmt.Errorf("dispatch process command %q: external ref is required", command.ID)
+	}
+	cadence, budget, escalation, err := ContactScheduleFor(*command.Performer)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch process command %q: %w", command.ID, err)
+	}
+	actions, err := e.obligationActions(ctx, command, dispatched.AvailableActions)
+	if err != nil {
+		return nil, err
+	}
+	at := e.now()
+	waitKind := state.WaitKindAgent
+	if command.Performer.Kind == model.PerformerHuman {
+		waitKind = state.WaitKindHuman
+	}
+	contact := state.ContactState{
+		CommandID:        command.ID,
+		Kind:             waitKind,
+		Assignee:         strings.TrimSpace(dispatched.Assignee),
+		Cadence:          cadence.String(),
+		Budget:           budget,
+		EscalationTarget: escalation,
+		NextContactAt:    at.Add(cadence),
+	}
+	entries := []evidence.LogEntry{commandEntry(command, state.Event{
+		Type:        state.EventCommandDispatched,
+		CommandID:   command.ID,
+		ExternalRef: externalRef,
+	}, "", at)}
+	if dispatched.CreateObligation {
+		dueAt := dispatched.DueAt
+		if dueAt.IsZero() {
+			dueAt = contact.NextContactAt
+		}
+		obligation := state.ObligationRecord{
+			ID:               "obl_" + strings.TrimPrefix(command.ID, "cmd_"),
+			RunID:            command.RunID,
+			NodeID:           command.NodeID,
+			Attempt:          command.Attempt,
+			CommandID:        command.ID,
+			Kind:             waitKind,
+			Assignee:         strings.TrimSpace(dispatched.Assignee),
+			Status:           state.WaitStatusPending,
+			DueAt:            dueAt,
+			Summary:          strings.TrimSpace(dispatched.Summary),
+			AvailableActions: actions,
+			NodeLink:         command.RunID + "/" + command.NodeID,
+			CreatedAt:        at,
+		}
+		if obligation.Assignee == "" {
+			obligation.Assignee = externalRef
+		}
+		if obligation.Summary == "" {
+			obligation.Summary = "Complete process node " + command.NodeID
+		}
+		entries = append(entries, commandEntry(command, state.Event{Type: state.EventObligationCreated, Obligation: &obligation}, "", at))
+	}
+	entries = append(entries, commandEntry(command, state.Event{Type: state.EventContactScheduled, Contact: &contact}, "", at))
+
+	for attempt := 0; attempt < maxObservationCASAttempts; attempt++ {
+		snapshot, loadErr := e.Store.LoadRun(ctx, command.RunID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		outstanding, ok := snapshot.State.OutstandingCommands[command.ID]
+		if !ok {
+			return nil, fmt.Errorf("process command %q disappeared before dispatch record", command.ID)
+		}
+		if outstanding.ExternalRef != "" {
+			if outstanding.ExternalRef != externalRef {
+				return nil, fmt.Errorf("process command %q dispatched as both %q and %q", command.ID, outstanding.ExternalRef, externalRef)
+			}
+			return snapshot.State, nil
+		}
+		appended, appendErr := e.Store.Append(ctx, command.RunID, snapshot.State.LastLogSeq, entries)
+		if appendErr == nil {
+			return appended.State, nil
+		}
+		if !store.IsConflict(appendErr) {
+			return nil, fmt.Errorf("record process command %q dispatch: %w", command.ID, appendErr)
+		}
+	}
+	return nil, fmt.Errorf("record process command %q dispatch: exceeded %d CAS attempts", command.ID, maxObservationCASAttempts)
+}
+
+// obligationActions makes decision obligations advertise the pinned
+// template's real edge vocabulary. Task obligations keep the adapter's action
+// vocabulary, whose approve/reject forms are normalized to pass/fail when the
+// observation is recorded.
+func (e *Executor) obligationActions(ctx context.Context, command plan.Command, fallback []string) ([]string, error) {
+	if command.Kind != plan.CommandKindRecordDecision {
+		return append([]string(nil), fallback...), nil
+	}
+	run, err := e.Store.GetRun(ctx, command.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("load run %q for decision actions: %w", command.RunID, err)
+	}
+	tmpl, err := e.Store.GetTemplate(ctx, run.TemplateRef)
+	if err != nil {
+		return nil, fmt.Errorf("load template %q for decision actions: %w", run.TemplateRef, err)
+	}
+	node, ok := tmpl.Nodes[command.NodeID]
+	if !ok {
+		return nil, fmt.Errorf("decision node %q is missing from template %q", command.NodeID, run.TemplateRef)
+	}
+	actions := make([]string, 0, len(node.Next))
+	for action := range node.Next {
+		actions = append(actions, action)
+	}
+	slices.Sort(actions)
+	if len(actions) == 0 {
+		return nil, fmt.Errorf("decision node %q has no available actions", command.NodeID)
+	}
+	return actions, nil
 }
 
 // RecordObservation reconciles an already-issued performer command without
@@ -217,6 +352,10 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 	if outstanding.Status != state.CommandStatusIssued {
 		return nil, fmt.Errorf("process command %q is %s and cannot be reconciled", command.ID, outstanding.Status)
 	}
+	observation, err = normalizeObligationObservation(snapshot, command, observation)
+	if err != nil {
+		return nil, err
+	}
 	observation, err = e.persistPerformerObservation(ctx, command, observation)
 	if err != nil {
 		return nil, err
@@ -225,6 +364,62 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 		observation.ExternalRef = observation.EvidenceRef
 	}
 	return e.appendObservation(ctx, command, observation)
+}
+
+func normalizeObligationObservation(snapshot store.Snapshot, command plan.Command, observation Observation) (Observation, error) {
+	for _, id := range sortedObligationIDs(snapshot.State.Obligations) {
+		obligation := snapshot.State.Obligations[id]
+		if obligation.CommandID != command.ID || obligation.Status != state.WaitStatusPending {
+			continue
+		}
+		raw := strings.ToLower(strings.TrimSpace(observation.Verdict))
+		allowed := make([]string, 0, len(obligation.AvailableActions)+2)
+		allowedSet := map[string]struct{}{}
+		addAllowed := func(value string) {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				return
+			}
+			if _, exists := allowedSet[value]; exists {
+				return
+			}
+			allowedSet[value] = struct{}{}
+			allowed = append(allowed, value)
+		}
+		for _, action := range obligation.AvailableActions {
+			addAllowed(action)
+		}
+		if command.Kind != plan.CommandKindRecordDecision {
+			addAllowed("pass")
+			addAllowed("fail")
+		}
+		if _, ok := allowedSet[raw]; !ok {
+			return Observation{}, fmt.Errorf("verdict %q is not allowed for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
+		}
+		if command.Kind == plan.CommandKindRecordDecision {
+			observation.Verdict = raw
+			return observation, nil
+		}
+		switch raw {
+		case "pass", "approve":
+			observation.Verdict = "pass"
+		case "fail", "reject", "ask-changes":
+			observation.Verdict = "fail"
+		default:
+			return Observation{}, fmt.Errorf("action %q has no pass/fail semantics for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
+		}
+		return observation, nil
+	}
+	return observation, nil
+}
+
+func sortedObligationIDs(obligations map[string]state.ObligationRecord) []string {
+	ids := make([]string, 0, len(obligations))
+	for id := range obligations {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // RecordOutstandingObservation recovers a performer command directly from its
@@ -242,35 +437,84 @@ func (e *Executor) RecordOutstandingObservation(ctx context.Context, runID, comm
 // issued command's external side effect by its durable idempotency key. It
 // never invokes Perform and therefore never duplicates an unknown side effect.
 func (e *Executor) ReconcileOutstanding(ctx context.Context, runID, commandID string) (*state.State, bool, error) {
+	st, status, err := e.ReconcileDeferredOutstanding(ctx, runID, commandID)
+	return st, status == DeferredObserved, err
+}
+
+// ReconcileDeferredOutstanding preserves the three-way state required by
+// asynchronous agents and humans. The legacy ReconcileOutstanding wrapper
+// intentionally collapses in-flight and missing for older callers.
+func (e *Executor) ReconcileDeferredOutstanding(ctx context.Context, runID, commandID string) (*state.State, DeferredStatus, error) {
 	command, err := e.outstandingCommand(ctx, runID, commandID)
 	if err != nil {
-		return nil, false, err
+		return nil, DeferredMissing, err
 	}
 	if command.Performer == nil || (command.Kind != plan.CommandKindStartAttempt && command.Kind != plan.CommandKindRecordDecision) {
-		return nil, false, fmt.Errorf("process command %q is not a performer command", commandID)
+		return nil, DeferredMissing, fmt.Errorf("process command %q is not a performer command", commandID)
 	}
 	snapshot, err := e.Store.LoadRun(ctx, runID)
 	if err != nil {
-		return nil, false, err
+		return nil, DeferredMissing, err
+	}
+	if outstanding := snapshot.State.OutstandingCommands[commandID]; outstanding.Status == state.CommandStatusObserved {
+		return snapshot.State, DeferredObserved, nil
 	}
 	adapter := e.Adapters[command.Performer.Kind]
 	if adapter == nil {
-		return snapshot.State, false, nil
-	}
-	reconciler, ok := adapter.(ReconcileAdapter)
-	if !ok {
-		return snapshot.State, false, nil
+		return snapshot.State, DeferredMissing, nil
 	}
 	request := performerRequest(snapshot.Run, command)
 	if err := adapter.Validate(request); err != nil {
-		return nil, false, err
+		return nil, DeferredMissing, err
+	}
+	if deferred, ok := adapter.(DeferredAdapter); ok {
+		observation, status, reconcileErr := deferred.ReconcileDeferred(ctx, request)
+		if reconcileErr != nil {
+			return snapshot.State, status, reconcileErr
+		}
+		if status == DeferredInFlight && snapshot.State.OutstandingCommands[commandID].ExternalRef == "" {
+			dispatched, dispatchErr := deferred.Dispatch(ctx, request)
+			if dispatchErr != nil {
+				return snapshot.State, status, dispatchErr
+			}
+			attached, dispatchErr := e.appendDispatch(ctx, command, dispatched)
+			return attached, status, dispatchErr
+		}
+		if status != DeferredObserved {
+			return snapshot.State, status, nil
+		}
+		finished, recordErr := e.RecordObservation(ctx, command, observation)
+		return finished, DeferredObserved, recordErr
+	}
+	reconciler, ok := adapter.(ReconcileAdapter)
+	if !ok {
+		return snapshot.State, DeferredMissing, nil
 	}
 	observation, found, err := reconciler.Reconcile(ctx, request)
 	if err != nil || !found {
-		return snapshot.State, false, err
+		return snapshot.State, DeferredMissing, err
 	}
 	finished, err := e.RecordObservation(ctx, command, observation)
-	return finished, err == nil, err
+	return finished, DeferredObserved, err
+}
+
+func (e *Executor) DeferredRequest(ctx context.Context, runID, commandID string) (Request, Adapter, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return Request{}, nil, err
+	}
+	snapshot, err := e.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return Request{}, nil, err
+	}
+	if command.Performer == nil {
+		return Request{}, nil, fmt.Errorf("process command %q has no performer", commandID)
+	}
+	adapter := e.Adapters[command.Performer.Kind]
+	if adapter == nil {
+		return Request{}, nil, fmt.Errorf("no process performer adapter registered for kind %q", command.Performer.Kind)
+	}
+	return performerRequest(snapshot.Run, command), adapter, nil
 }
 
 // RetryOutstanding re-invokes an issued performer command only when the host
@@ -579,6 +823,21 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		Feedback:     observation.Feedback,
 		ExternalRef:  observation.ExternalRef,
 	}, observation.EvidenceRef, at)}
+	for id, obligation := range snapshot.State.Obligations {
+		if obligation.CommandID == command.ID && obligation.Status == state.WaitStatusPending {
+			entries = append(entries, commandEntry(command, state.Event{
+				Type:         state.EventObligationResolved,
+				ObligationID: id,
+				EvidenceRef:  observation.EvidenceRef,
+			}, observation.EvidenceRef, at))
+		}
+	}
+	if contact, ok := snapshot.State.Contacts[command.ID]; ok {
+		contact.Paused = true
+		contact.PauseReason = "performer observed"
+		contact.NextContactAt = time.Time{}
+		entries = append(entries, commandEntry(command, state.Event{Type: state.EventContactUpdated, Contact: &contact}, "", at))
+	}
 
 	switch command.Kind {
 	case plan.CommandKindStartAttempt:

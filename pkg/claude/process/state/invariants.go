@@ -27,6 +27,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
 	diagnostics = append(diagnostics, PendingFeedbackIsValid(st)...)
 	diagnostics = append(diagnostics, ShortCircuitDecisionsAreConsistent(st)...)
+	diagnostics = append(diagnostics, ObligationsAndContactsAreWellFormed(st)...)
 	return diagnostics
 }
 
@@ -434,6 +435,49 @@ func EnumFieldsAreValid(st *State) Diagnostics {
 			diagnostics = append(diagnostics, diagError("invalid_timer_status", "timers."+timerID+".status", fmt.Sprintf("invalid timer status %q", timer.Status)))
 		}
 	}
+	for _, obligationID := range sortedKeys(st.Obligations) {
+		obligation := st.Obligations[obligationID]
+		if !obligation.Kind.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_obligation_kind", "obligations."+obligationID+".kind", fmt.Sprintf("invalid obligation kind %q", obligation.Kind)))
+		}
+		if !obligation.Status.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_obligation_status", "obligations."+obligationID+".status", fmt.Sprintf("invalid obligation status %q", obligation.Status)))
+		}
+	}
+	return diagnostics
+}
+
+func ObligationsAndContactsAreWellFormed(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, id := range sortedKeys(st.Obligations) {
+		obligation := st.Obligations[id]
+		path := "obligations." + id
+		if obligation.ID != id || obligation.RunID != st.RunID || obligation.NodeID == "" || obligation.CommandID == "" {
+			diagnostics = append(diagnostics, diagError("malformed_obligation", path, fmt.Sprintf("obligation %q does not identify this run, a node, and a command", id)))
+		}
+		if _, ok := st.Nodes[obligation.NodeID]; !ok {
+			diagnostics = append(diagnostics, diagError("obligation_unknown_node", path+".nodeId", fmt.Sprintf("obligation %q references unknown node %q", id, obligation.NodeID)))
+		}
+		if _, ok := st.OutstandingCommands[obligation.CommandID]; !ok {
+			diagnostics = append(diagnostics, diagError("obligation_unknown_command", path+".commandId", fmt.Sprintf("obligation %q references unknown command %q", id, obligation.CommandID)))
+		}
+		if strings.TrimSpace(obligation.Assignee) == "" || strings.TrimSpace(obligation.Summary) == "" {
+			diagnostics = append(diagnostics, diagError("obligation_missing_work_item_fields", path, fmt.Sprintf("obligation %q requires assignee and summary", id)))
+		}
+	}
+	for _, commandID := range sortedKeys(st.Contacts) {
+		contact := st.Contacts[commandID]
+		path := "contacts." + commandID
+		if contact.CommandID != commandID || strings.TrimSpace(contact.Cadence) == "" || contact.Budget <= 0 || contact.Used < 0 || contact.Used > contact.Budget || strings.TrimSpace(contact.EscalationTarget) == "" {
+			diagnostics = append(diagnostics, diagError("malformed_contact_state", path, fmt.Sprintf("contact state for command %q is incomplete or outside budget", commandID)))
+		}
+		if _, ok := st.OutstandingCommands[commandID]; !ok {
+			diagnostics = append(diagnostics, diagError("contact_unknown_command", path+".commandId", fmt.Sprintf("contact references unknown command %q", commandID)))
+		}
+	}
 	return diagnostics
 }
 
@@ -600,6 +644,11 @@ func isWaitingStatus(status NodeStatus) bool {
 }
 
 func waitingRecordExists(st *State, nodeID string, status NodeStatus) bool {
+	for _, obligation := range st.Obligations {
+		if obligation.NodeID == nodeID && obligation.Status == WaitStatusPending && waitKindMatchesStatus(obligation.Kind, status) {
+			return true
+		}
+	}
 	for _, wait := range st.Waits {
 		if wait.NodeID == nodeID && wait.Status == WaitStatusPending && waitKindMatchesStatus(wait.Kind, status) {
 			return true

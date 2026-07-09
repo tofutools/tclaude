@@ -82,6 +82,71 @@ the side effect:
 tclaude process observe demo-1 cmd_... --store-root "$STORE" --verdict pass --actor human:$USER --evidence artifact:...
 ```
 
+## Agent and human performers
+
+Agent performers resolve `performer.profile` against the saved agent spawn
+profiles managed by `tclaude agent profiles`. The daemon launches a
+process-owned, ungrouped agent and records the deterministic process command id
+on its stable agent metadata. On restart, that metadata is used to rediscover
+the live attempt rather than spawning it again.
+
+Process agents currently start in the agentd daemon's working directory. The
+template and saved spawn profile do not yet provide a per-slot cwd/worktree
+override.
+
+The agent receives a fixed reporting protocol in its startup brief. A
+successful result must include an evidence reference:
+
+```bash
+tclaude process report RUN NODE \
+  --command cmd_... \
+  --verdict pass \
+  --evidence commit:abc123
+```
+
+The daemon authenticates the calling pane and derives `agent:agt_...` itself;
+the report cannot claim another actor identity.
+
+A human performer creates a durable obligation in run state. Obligations carry
+the run/node/attempt, assignee, due time, summary, available actions, evidence
+link, and visible contact schedule. Resolve one from the CLI:
+
+```bash
+tclaude process resolve RUN NODE \
+  --verdict pass \
+  --actor human:johan \
+  --evidence approval:change-42
+```
+
+The obligation also appears in the dashboard Messages channel. Replying to its
+message starts with an advertised action. On task obligations, `approve` maps
+to `pass`, while `reject` and `ask-changes` map to `fail`; decision obligations
+advertise and preserve their actual edge names. Unknown actions are rejected
+instead of silently settling the wrong edge. The dashboard reply is recorded
+as approval evidence. `process show` renders both the obligation and its nudge
+state.
+
+Asynchronous performer slots use kind defaults (humans: every 30 minutes, five
+nudges; agents: every five minutes, three nudges) or a per-slot override:
+
+```yaml
+performer:
+  kind: human
+  profile: johan
+  ask: Approve merge?
+  contact:
+    cadence: 15m
+    budget: 4
+    escalationTarget: human:operator
+```
+
+Nudge exhaustion sends one human escalation, names the configured escalation
+target in that dashboard message, and leaves the node waiting; it never fails
+the node. The budget resets when an agent becomes active again.
+If the human interacts directly with a live process agent, automation for that
+node pauses after the same five-second grace used by the task runner, so an
+automated nudge never competes with the human for the session.
+
 ## Program performers
 
 Program performers execute local commands and therefore require an explicit
