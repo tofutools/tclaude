@@ -241,17 +241,9 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 		return []Command{cmd}, nil
 	case state.NodeStatusCompleted:
 		if spec.Stage == model.StageDone {
-			if parent.Status != state.NodeStatusRunning {
-				return nil, nil
-			}
-			cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", node.Parent)
-			cmd.NodeID = nodeID
-			cmd.TargetNodeID = node.Parent
-			cmd.NodeStatus = state.NodeStatusCompleted
-			if commandOutstanding(st, cmd.ID) {
-				return nil, nil
-			}
-			return []Command{cmd}, nil
+			// The reducer completes the parent atomically with the done stage;
+			// a completed done marker needs no further stage commands.
+			return nil, nil
 		}
 		return planSettledStageTransition(st, nodeID, node, parent, specs, EffectiveStageOutcome(node))
 	case state.NodeStatusFailed:
@@ -315,27 +307,23 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 	}
 }
 
+// poisonCommands emits ONE block command covering the failed stage child and
+// its parent mirror (TargetNodeID). A single command keeps both node_blocked
+// events in one atomic append: a child-only intermediate state would violate
+// the blocked-mirror invariant and stall a replanning executor.
 func poisonCommands(st *state.State, nodeID string, node state.NodeState, transition StageTransition) []Command {
-	var out []Command
-	if node.Status != state.NodeStatusBlocked {
-		block := newCommand(CommandKindBlockNode, st.RunID, nodeID, "block", fmt.Sprintf("attempt-%d", node.Attempt))
-		block.NodeID = nodeID
-		block.Reason = transition.Reason
-		block.Owner = transition.Owner
-		if !commandOutstanding(st, block.ID) {
-			out = append(out, block)
-		}
+	if node.Status == state.NodeStatusBlocked {
+		return nil
 	}
-	if parent, ok := st.Nodes[node.Parent]; ok && parent.Status != state.NodeStatusBlocked {
-		block := newCommand(CommandKindBlockNode, st.RunID, node.Parent, "block", "poison", nodeID, fmt.Sprintf("attempt-%d", node.Attempt))
-		block.NodeID = node.Parent
-		block.Reason = transition.Reason
-		block.Owner = transition.Owner
-		if !commandOutstanding(st, block.ID) {
-			out = append(out, block)
-		}
+	block := newCommand(CommandKindBlockNode, st.RunID, nodeID, "block", fmt.Sprintf("attempt-%d", node.Attempt))
+	block.NodeID = nodeID
+	block.TargetNodeID = node.Parent
+	block.Reason = transition.Reason
+	block.Owner = transition.Owner
+	if commandOutstanding(st, block.ID) {
+		return nil
 	}
-	return out
+	return []Command{block}
 }
 
 // StageSpecFor finds the template-derived spec for a stage child id.

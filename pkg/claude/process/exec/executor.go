@@ -508,6 +508,30 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: command.NodeStatus,
 		}, "", at))
+	case plan.CommandKindExpandNode:
+		// The children come from the command's durable payload, so a crashed
+		// host resumes the exact expansion the planner derived; the reducer
+		// validates their shape and verify re-derives them from the template.
+		entries = append(entries, commandEntry(command, state.Event{
+			Type:  state.EventNodeExpanded,
+			Nodes: command.Children,
+		}, "", at))
+	case plan.CommandKindBlockNode:
+		// Block the poisoned stage child and its parent mirror in one atomic
+		// batch: the blocked-mirror invariant does not allow an intermediate
+		// child-blocked/parent-running checkpoint.
+		entries = append(entries, commandEntry(command, state.Event{
+			Type:   state.EventNodeBlocked,
+			Reason: command.Reason,
+			Owner:  command.Owner,
+		}, "", at))
+		if command.TargetNodeID != "" {
+			entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
+				Type:   state.EventNodeBlocked,
+				Reason: command.Reason,
+				Owner:  command.Owner,
+			}, "", at))
+		}
 	case plan.CommandKindCompleteRun:
 		entries = append(entries, runEntry(state.Event{
 			Type:      state.EventRunStatusSet,
@@ -592,6 +616,8 @@ func commandEntry(command plan.Command, event state.Event, evidenceRef string, a
 		kind = evidence.EntryKindAttempt
 	case plan.CommandKindRecordDecision:
 		kind = evidence.EntryKindDecision
+	case plan.CommandKindExpandNode:
+		kind = evidence.EntryKindExpansion
 	}
 	if command.NodeID == "" {
 		return runEntryWithKind(kind, event, evidenceRef, at)

@@ -235,11 +235,9 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 			Type:    state.EventNodeAttemptSettled,
 			Outcome: "pass",
 		}, evidenceRef, at))
+		// Completing the done marker completes the parent in the same reducer
+		// event; no separate parent status entry exists to forge or skip.
 		entries = append(entries, nodeLogEntry(transition.DoneChildID, evidence.EntryKindGate, state.Event{
-			Type:       state.EventNodeStatusSet,
-			NodeStatus: state.NodeStatusCompleted,
-		}, evidenceRef, at))
-		entries = append(entries, nodeLogEntry(node.Parent, evidence.EntryKindGate, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusCompleted,
 		}, evidenceRef, at))

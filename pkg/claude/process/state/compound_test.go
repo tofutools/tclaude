@@ -320,6 +320,37 @@ func TestNodeStatusSetGuardsStageChain(t *testing.T) {
 	}
 }
 
+func TestDoneStageCompletionCompletesParentAtomically(t *testing.T) {
+	st := expandedState(t)
+	events := []Event{
+		{Type: EventNodeAttemptStarted, Seq: 3, NodeID: "implement.plan", Actor: "human:johan", Attempt: 1},
+		{Type: EventNodeAttemptSettled, Seq: 4, NodeID: "implement.plan", Outcome: "pass", EvidenceRef: "e1"},
+		{Type: EventNodeStatusSet, Seq: 5, NodeID: "implement.do", NodeStatus: NodeStatusReady},
+		{Type: EventNodeAttemptStarted, Seq: 6, NodeID: "implement.do", Actor: "human:johan", Attempt: 1},
+		{Type: EventNodeAttemptSettled, Seq: 7, NodeID: "implement.do", Outcome: "pass", EvidenceRef: "e2"},
+		{Type: EventNodeStatusSet, Seq: 8, NodeID: "implement.test.tests", NodeStatus: NodeStatusReady},
+		{Type: EventNodeAttemptStarted, Seq: 9, NodeID: "implement.test.tests", Actor: "human:johan", Attempt: 1},
+		{Type: EventNodeAttemptSettled, Seq: 10, NodeID: "implement.test.tests", Outcome: "pass", EvidenceRef: "e3"},
+		{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement.review", NodeStatus: NodeStatusReady},
+		{Type: EventNodeAttemptStarted, Seq: 12, NodeID: "implement.review", Actor: "human:johan", Attempt: 1},
+		{Type: EventNodeAttemptSettled, Seq: 13, NodeID: "implement.review", Outcome: "pass", EvidenceRef: "e4"},
+		{Type: EventNodeStatusSet, Seq: 14, NodeID: "implement.done", NodeStatus: NodeStatusCompleted},
+	}
+	st, err := ApplyAll(st, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Nodes["implement.done"].Status != NodeStatusCompleted {
+		t.Fatalf("done = %#v", st.Nodes["implement.done"])
+	}
+	if st.Nodes["implement"].Status != NodeStatusCompleted {
+		t.Fatalf("done completion must complete the parent atomically: %#v", st.Nodes["implement"])
+	}
+	if diags := CheckInvariants(&st); diags.HasErrors() {
+		t.Fatalf("completed compound must satisfy invariants: %#v", diags.Errors())
+	}
+}
+
 func TestCompletedStageChildrenHaveEvidence(t *testing.T) {
 	st := expandedState(t)
 	child := st.Nodes["implement.do"]

@@ -157,6 +157,17 @@ func applyEvent(st *State, event Event) error {
 		}
 		node.Status = event.NodeStatus
 		st.Nodes[event.NodeID] = node
+		// Completing the done marker IS completing the compound parent: one
+		// event, so no checkpoint ever shows a completed done stage under a
+		// still-running parent (the invariant treats that shape as forgery).
+		if node.Parent != "" && node.Stage == model.StageDone && event.NodeStatus == NodeStatusCompleted {
+			parent, err := getNode(st, node.Parent)
+			if err != nil {
+				return err
+			}
+			parent.Status = NodeStatusCompleted
+			st.Nodes[node.Parent] = parent
+		}
 		return nil
 	case EventNodeExpanded:
 		node, err := getNode(st, event.NodeID)

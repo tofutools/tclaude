@@ -152,7 +152,9 @@ func TestPlanCompletesParentAfterLastGate(t *testing.T) {
 	})
 }
 
-func TestPlanCompletesParentWhenDoneCompleted(t *testing.T) {
+func TestPlanCompletedCompoundActivatesParentPassEdge(t *testing.T) {
+	// The reducer completes the parent atomically with the done stage, so the
+	// planner's next round sees a completed parent and fires its pass edge.
 	st := expandedPlannerState(map[string]state.NodeState{
 		"implement.plan":       {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
 		"implement.do":         {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2"}},
@@ -160,12 +162,16 @@ func TestPlanCompletesParentWhenDoneCompleted(t *testing.T) {
 		"implement.review":     {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e4"}},
 		"implement.done":       {Status: state.NodeStatusCompleted},
 	})
+	parent := st.Nodes["implement"]
+	parent.Status = state.NodeStatusCompleted
+	st.Nodes["implement"] = parent
 	got, err := Plan(st, compoundTemplate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertCommands(t, got, []commandWant{
-		{Kind: CommandKindActivateNode, NodeID: "implement.done", TargetNodeID: "implement", NodeStatus: state.NodeStatusCompleted, Key: "run_1/activate_node/implement.done/to/implement"},
+		{Kind: CommandKindActivateNode, NodeID: "implement", TargetNodeID: "end", SourceNodeStatus: state.NodeStatusCompleted, NodeStatus: state.NodeStatusCompleted, Key: "run_1/activate_node/implement/to/end"},
+		{Kind: CommandKindCompleteRun, NodeID: "end", RunStatus: state.RunStatusCompleted, Key: "run_1/complete_run/end/completed"},
 	})
 }
 
@@ -190,16 +196,14 @@ func TestPlanPoisonsExhaustedWorkStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Kind != CommandKindBlockNode || got[1].Kind != CommandKindBlockNode {
+	if len(got) != 1 || got[0].Kind != CommandKindBlockNode {
 		t.Fatalf("commands = %#v", got)
 	}
-	if got[0].NodeID != "implement.do" || got[1].NodeID != "implement" {
-		t.Fatalf("block targets = %s, %s", got[0].NodeID, got[1].NodeID)
+	if got[0].NodeID != "implement.do" || got[0].TargetNodeID != "implement" {
+		t.Fatalf("block command = %#v", got[0])
 	}
-	for _, cmd := range got {
-		if !strings.Contains(cmd.Reason, "exhausted its budget of 2 attempts") || cmd.Owner != DefaultBlockedOwner {
-			t.Fatalf("block command = %#v", cmd)
-		}
+	if !strings.Contains(got[0].Reason, "exhausted its budget of 2 attempts") || got[0].Owner != DefaultBlockedOwner {
+		t.Fatalf("block command = %#v", got[0])
 	}
 }
 
@@ -211,7 +215,7 @@ func TestPlanPoisonsFailedGateImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].NodeID != "implement.test.tests" || got[1].NodeID != "implement" {
+	if len(got) != 1 || got[0].NodeID != "implement.test.tests" || got[0].TargetNodeID != "implement" {
 		t.Fatalf("commands = %#v", got)
 	}
 	if !strings.Contains(got[0].Reason, `gate "implement.test.tests" failed`) {
@@ -229,7 +233,7 @@ func TestPlanClaimedDoneFlipRoutesAsFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Kind != CommandKindBlockNode {
+	if len(got) != 1 || got[0].Kind != CommandKindBlockNode || got[0].TargetNodeID != "implement" {
 		t.Fatalf("commands = %#v", got)
 	}
 }
