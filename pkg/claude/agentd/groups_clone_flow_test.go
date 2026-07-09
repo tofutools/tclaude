@@ -184,11 +184,11 @@ func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	assert.Equal(t, "shared startup context\nsecond line", newGroup.DefaultContext, "startup context copied verbatim")
 }
 
-// Scenario: --no-agents (no_clone_members) clones the group's settings +
-// owners but skips the member-agent clone loop entirely. The new group
-// comes up with zero members and the source's owner(s), and the source
-// is left untouched.
-func TestGroupsClone_NoAgents_SkipsMembersKeepsOwners(t *testing.T) {
+// Scenario: legacy --no-agents (no_clone_members without copy_owners)
+// keeps the historical API/CLI behaviour: settings + owners are copied,
+// but the member-agent clone loop is skipped entirely. Dashboard callers
+// that want settings-only send copy_owners explicitly (pinned below).
+func TestGroupsClone_NoAgents_OmittedCopyOwnersKeepsOwners(t *testing.T) {
 	f := newFlow(t)
 
 	const memberConv = "mem-aaaa-bbbb-cccc-1111"
@@ -215,6 +215,44 @@ func TestGroupsClone_NoAgents_SkipsMembersKeepsOwners(t *testing.T) {
 	// Source untouched: still has its one member.
 	srcMembers, _ := db.ListAgentGroupMembers(src.ID)
 	assert.Len(t, srcMembers, 1, "source group keeps its member")
+}
+
+// Scenario: dashboard settings-only mode sends no_clone_members plus
+// copy_owners:false. That skips both the member-agent clone loop and
+// the source ownership grants, so old agents are not made owners of a
+// group they were not moved/cloned into.
+func TestGroupsClone_NoAgents_CopyOwnersFalseSkipsOwners(t *testing.T) {
+	f := newFlow(t)
+
+	const memberConv = "mem-aaaa-bbbb-cccc-1111"
+	const ownerConv = "own-aaaa-bbbb-cccc-2222"
+	f.HaveConvWithTitle(memberConv, "worker")
+	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", "/tmp/work")
+	src := f.HaveGroup("team")
+	f.HaveMember("team", memberConv)
+	require.NoError(t, db.AddAgentGroupOwner(src.ID, ownerConv, "test"), "AddAgentGroupOwner")
+
+	resp := groupCloneRequest(t, f, "team", map[string]any{
+		"no_clone_members": true,
+		"copy_owners":      false,
+	})
+	assert.Empty(t, resp.Members, "no member clones in settings-only mode")
+	assert.Equal(t, 0, resp.OwnersCopied, "owners not copied without opt-in")
+
+	newGroup, _ := db.GetAgentGroupByName(resp.Group)
+	require.NotNil(t, newGroup, "new group should exist")
+	newMembers, _ := db.ListAgentGroupMembers(newGroup.ID)
+	assert.Empty(t, newMembers, "new group should have no members")
+	owners, _ := db.ListAgentGroupOwners(newGroup.ID)
+	assert.Empty(t, owners, "new group should have no copied owners")
+
+	// Source untouched: still has its one member and owner.
+	srcMembers, _ := db.ListAgentGroupMembers(src.ID)
+	assert.Len(t, srcMembers, 1, "source group keeps its member")
+	srcOwners, _ := db.ListAgentGroupOwners(src.ID)
+	if assert.Len(t, srcOwners, 1, "source group keeps its owner") {
+		assert.Equal(t, ownerConv, srcOwners[0].ConvID, "source owner conv")
+	}
 }
 
 // Scenario: clone-of-clone strips the existing -c-<N> suffix when

@@ -2533,15 +2533,18 @@
   <div class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-clone-title">
     <h3 id="group-clone-title"><span class="tpl-word-regular">Clone group</span><span class="tpl-word-wizard">⧉ Mirror the party</span></h3>
     <div class="modal-meta" id="group-clone-meta" style="display:none"></div>
-    <p class="modal-hint">Creates a new group from the source. The source group is left untouched. Review what it carries below, set a name and choose whether the member agents come along.</p>
+    <p class="modal-hint">Creates a new group from the source. The source group is left untouched. Review what it carries below, set a name and choose what else comes along.</p>
     <label class="cron-create-row">
       <span class="cron-create-label">New name</span>
       <input id="group-clone-name" type="text" placeholder="leave blank for &lt;source&gt;-c-N" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-enabled" title="Checked: clone every member agent into the new group (full conversation history). Unchecked: copy only the group's settings + owners — the new group comes up with no members.">
-      <input id="group-clone-with-agents" type="checkbox" checked /> Clone member agents too
+    <label class="cron-create-enabled" title="Checked: clone every member agent into the new group (full conversation history). Unchecked: copy only the group's settings.">
+      <input id="group-clone-with-agents" type="checkbox" /> Clone member agents too
     </label>
-    <p class="modal-hint modal-hint-small">Unchecked → settings &amp; owners only; no agents are cloned.</p>
+    <label class="cron-create-enabled" title="Checked: grant the source group's owner agents ownership of the new group too. Unchecked: leave the new group with no copied owners.">
+      <input id="group-clone-copy-owners" type="checkbox" /> Copy source owners too
+    </label>
+    <p class="modal-hint modal-hint-small">Defaults to settings only. Agents and owner grants are copied only when selected.</p>
     <div class="group-clone-preview" id="group-clone-preview"></div>
     <div class="cron-create-error" id="group-clone-error"></div>
     <div class="modal-buttons">
