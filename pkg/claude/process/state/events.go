@@ -103,6 +103,8 @@ func ApplyAll(st State, events []Event) (State, error) {
 }
 
 func applyEvent(st *State, event Event) error {
+	// Reducer transitions should preserve core invariants by construction:
+	// a nil error means the resulting checkpoint is suitable for verify.
 	switch event.Type {
 	case EventRunInitialized:
 		if st.RunID != "" || len(st.Nodes) > 0 {
@@ -214,6 +216,9 @@ func applyEvent(st *State, event Event) error {
 		if decision.EvidenceRef == "" {
 			decision.EvidenceRef = event.EvidenceRef
 		}
+		if event.ChosenEdge != "" && decision.Verdict != "" && event.ChosenEdge != decision.Verdict {
+			return fmt.Errorf("decision node %q chosenEdge %q must match verdict %q", event.NodeID, event.ChosenEdge, decision.Verdict)
+		}
 		node.Decisions = append(node.Decisions, decision)
 		node.ChosenEdge = event.ChosenEdge
 		if node.ChosenEdge == "" {
@@ -226,6 +231,9 @@ func applyEvent(st *State, event Event) error {
 		node, err := getNode(st, event.NodeID)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(event.Reason) == "" || strings.TrimSpace(event.Owner) == "" {
+			return fmt.Errorf("node_blocked requires reason and owner")
 		}
 		node.Status = NodeStatusBlocked
 		node.BlockedReason = event.Reason

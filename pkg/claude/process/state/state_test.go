@@ -281,6 +281,41 @@ func TestReducerSequences(t *testing.T) {
 	}
 }
 
+func TestSuccessfulReducerEventsPreserveInvariants(t *testing.T) {
+	for _, events := range [][]Event{
+		{
+			initEvent(),
+			{Type: EventNodeAttemptStarted, Seq: 2, NodeID: "implement", Actor: "agent:agt_dev123"},
+			{Type: EventNodeAttemptSettled, Seq: 3, NodeID: "implement", Outcome: "pass"},
+		},
+		{
+			initEvent(),
+			{Type: EventDecisionRecorded, Seq: 2, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "approve"}},
+		},
+		{
+			initEvent(),
+			{Type: EventWaitCreated, Seq: 2, Wait: &WaitRecord{ID: "wait_1", NodeID: "wait-human", Kind: WaitKindHuman, Status: WaitStatusPending}},
+			{Type: EventWaitSatisfied, Seq: 3, WaitID: "wait_1"},
+		},
+		{
+			initEvent(),
+			{Type: EventNodeBlocked, Seq: 2, NodeID: "implement", Reason: "needs credentials", Owner: "human:johan"},
+		},
+	} {
+		st := State{}
+		for _, event := range events {
+			next, err := Apply(st, event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diagnostics := CheckInvariants(&next); diagnostics.HasErrors() {
+				t.Fatalf("event %#v produced invariant errors: %#v", event, diagnostics.Errors())
+			}
+			st = next
+		}
+	}
+}
+
 func TestReducerDoesNotMutateInput(t *testing.T) {
 	st, err := Apply(State{}, initEvent())
 	if err != nil {
@@ -383,6 +418,9 @@ func TestReducerErrors(t *testing.T) {
 		{name: "settle without outcome", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement"}, want: "requires outcome"},
 		{name: "invalid node status override", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement", Outcome: "pass", NodeStatus: "bogus"}, want: "invalid node status"},
 		{name: "second decision", st: decisionDone, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already completed"},
+		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
+		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
+		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
 		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
 		{name: "invalid wait status", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: WaitKindHuman, Status: "bogus"}}, want: "invalid wait status"},
