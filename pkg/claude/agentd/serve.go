@@ -242,6 +242,11 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 
+	// Feature-gated BPMN-lite process engine. The supervisor reloads
+	// features.processes every tick, so toggling the flag starts or cancels
+	// automation without restarting agentd.
+	startProcessEngine(cronStop)
+
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are
 	// up and idle (or a per-template max-wait cap fires). Restart-safe — the
@@ -722,6 +727,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
+	// Experimental process engine surfaces remain registered so off means a
+	// stable 404 rather than a different mux shape. processRoute reloads the
+	// feature flag per request.
+	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	return logRequest(auditRequests(mux))
 }
 

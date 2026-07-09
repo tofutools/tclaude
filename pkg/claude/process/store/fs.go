@@ -53,6 +53,14 @@ func NewFS(root string) (*FS, error) {
 	return &FS{root: resolved, now: time.Now}, nil
 }
 
+// SetNowForTest swaps the filesystem store clock and returns a restore
+// function. Callers must install it before using the store concurrently.
+func (s *FS) SetNowForTest(now func() time.Time) func() {
+	previous := s.now
+	s.now = now
+	return func() { s.now = previous }
+}
+
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return TemplateRecord{}, err

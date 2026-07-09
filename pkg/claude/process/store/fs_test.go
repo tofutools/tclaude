@@ -538,6 +538,26 @@ func TestAcquireRunLeaseRequiresExistingRun(t *testing.T) {
 	}
 }
 
+func TestAcquireRunLeaseExpiredHolderCanBeReplaced(t *testing.T) {
+	fs, runID := initializedRun(t)
+	now := time.Date(2026, 7, 9, 20, 0, 0, 0, time.UTC)
+	t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+	if _, err := fs.AcquireRunLease(t.Context(), runID, "agent-a", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	lease, err := fs.AcquireRunLease(t.Context(), runID, "agent-b", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Holder != "agent-b" {
+		t.Fatalf("lease holder = %q", lease.Holder)
+	}
+	if err := fs.ReleaseRunLease(t.Context(), runID, "agent-a"); !errors.Is(err, store.ErrLeaseHeld) {
+		t.Fatalf("stale holder release = %v", err)
+	}
+}
+
 func TestRunLockHonorsContextWhileFlockHeld(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()

@@ -7,7 +7,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-const StateSchemaVersion = 1
+const StateSchemaVersion = 2
 
 type RunStatus string
 
@@ -21,6 +21,13 @@ const (
 	RunStatusCanceled     RunStatus = "canceled"
 	RunStatusInconsistent RunStatus = "inconsistent"
 	RunStatusDirty        RunStatus = "dirty"
+)
+
+type PauseKind string
+
+const (
+	PauseKindRateLimited    PauseKind = "rate_limited"
+	PauseKindNeedsReconcile PauseKind = "needs_reconcile"
 )
 
 type NodeStatus string
@@ -88,9 +95,10 @@ const (
 )
 
 type State struct {
-	StateSchemaVersion int       `json:"stateSchemaVersion"`
-	RunID              string    `json:"runId,omitempty"`
-	Status             RunStatus `json:"status"`
+	StateSchemaVersion int         `json:"stateSchemaVersion"`
+	RunID              string      `json:"runId,omitempty"`
+	Status             RunStatus   `json:"status"`
+	Pause              *PauseState `json:"pause,omitempty"`
 
 	OriginalTemplateRef string              `json:"originalTemplateRef"`
 	CurrentTemplateRef  string              `json:"currentTemplateRef"`
@@ -104,6 +112,17 @@ type State struct {
 
 	LastLogSeq  int64  `json:"lastLogSeq"`
 	LogChecksum string `json:"logChecksum"`
+}
+
+// PauseState is scheduler-owned durable state. It distinguishes an automatic
+// pause from an operator pause and gives a restarted host everything it needs
+// to decide whether it may resume without replaying evidence logs.
+type PauseState struct {
+	Kind      PauseKind `json:"kind"`
+	Reason    string    `json:"reason"`
+	CommandID string    `json:"commandId,omitempty"`
+	Owner     ActorRef  `json:"owner,omitempty"`
+	Until     time.Time `json:"until,omitzero"`
 }
 
 type TemplateDivergence struct {

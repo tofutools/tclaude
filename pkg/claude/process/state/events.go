@@ -13,6 +13,8 @@ type EventType string
 const (
 	EventRunInitialized           EventType = "run_initialized"
 	EventRunStatusSet             EventType = "run_status_set"
+	EventRunPaused                EventType = "run_paused"
+	EventRunResumed               EventType = "run_resumed"
 	EventNodeStatusSet            EventType = "node_status_set"
 	EventNodeExpanded             EventType = "node_expanded"
 	EventNodeAttemptStarted       EventType = "node_attempt_started"
@@ -40,6 +42,7 @@ type Event struct {
 
 	RunID               string              `json:"runId,omitempty"`
 	RunStatus           RunStatus           `json:"runStatus,omitempty"`
+	Pause               *PauseState         `json:"pause,omitempty"`
 	OriginalTemplateRef string              `json:"originalTemplateRef,omitempty"`
 	CurrentTemplateRef  string              `json:"currentTemplateRef,omitempty"`
 	TemplateDivergence  *TemplateDivergence `json:"templateDivergence,omitempty"`
@@ -133,6 +136,40 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("invalid run status %q", event.RunStatus)
 		}
 		st.Status = event.RunStatus
+		if event.RunStatus != RunStatusPaused {
+			st.Pause = nil
+		}
+		return nil
+	case EventRunPaused:
+		if event.Pause == nil {
+			return fmt.Errorf("run_paused requires pause")
+		}
+		if !event.Pause.Kind.IsValid() {
+			return fmt.Errorf("invalid pause kind %q", event.Pause.Kind)
+		}
+		if strings.TrimSpace(event.Pause.Reason) == "" {
+			return fmt.Errorf("run_paused requires reason")
+		}
+		if event.Pause.Kind == PauseKindRateLimited && event.Pause.Until.IsZero() {
+			return fmt.Errorf("rate-limited run pause requires until")
+		}
+		if strings.TrimSpace(event.Pause.CommandID) == "" {
+			return fmt.Errorf("run_paused requires command id")
+		}
+		if event.Pause.Kind == PauseKindNeedsReconcile && !ValidateActorRef(event.Pause.Owner) {
+			return fmt.Errorf("needs-reconcile run pause requires a valid owner")
+		}
+		pause := *event.Pause
+		st.StateSchemaVersion = StateSchemaVersion
+		st.Status = RunStatusPaused
+		st.Pause = &pause
+		return nil
+	case EventRunResumed:
+		if st.Status != RunStatusPaused || st.Pause == nil {
+			return fmt.Errorf("run_resumed requires an engine-paused run")
+		}
+		st.Status = RunStatusRunning
+		st.Pause = nil
 		return nil
 	case EventNodeStatusSet:
 		node, err := getNode(st, event.NodeID)

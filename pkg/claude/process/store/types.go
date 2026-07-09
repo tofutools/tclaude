@@ -5,12 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
+
+// DefaultRoot is the filesystem store shared by the agentd engine and manual
+// process CLI inspection. Commands may still accept an explicit root for
+// portable stores and tests.
+func DefaultRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join(".tclaude", "processes")
+	}
+	return filepath.Join(home, ".tclaude", "processes")
+}
 
 var (
 	ErrNotFound         = errors.New("process store record not found")

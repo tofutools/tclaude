@@ -284,6 +284,28 @@ func EnumFieldsAreValid(st *State) Diagnostics {
 	if !st.Status.IsValid() {
 		diagnostics = append(diagnostics, diagError("invalid_run_status", "status", fmt.Sprintf("invalid run status %q", st.Status)))
 	}
+	if st.Pause != nil {
+		if st.Status != RunStatusPaused {
+			diagnostics = append(diagnostics, diagError("pause_on_unpaused_run", "pause", "process pause requires run status paused"))
+		}
+		if !st.Pause.Kind.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_pause_kind", "pause.kind", fmt.Sprintf("invalid pause kind %q", st.Pause.Kind)))
+		}
+		if strings.TrimSpace(st.Pause.Reason) == "" {
+			diagnostics = append(diagnostics, diagError("missing_pause_reason", "pause.reason", "process pause reason is required"))
+		}
+		if strings.TrimSpace(st.Pause.CommandID) == "" {
+			diagnostics = append(diagnostics, diagError("missing_pause_command", "pause.commandId", "process pause command id is required"))
+		} else if _, ok := st.OutstandingCommands[st.Pause.CommandID]; !ok {
+			diagnostics = append(diagnostics, diagError("pause_unknown_command", "pause.commandId", fmt.Sprintf("pause command %q is not outstanding", st.Pause.CommandID)))
+		}
+		if st.Pause.Kind == PauseKindRateLimited && st.Pause.Until.IsZero() {
+			diagnostics = append(diagnostics, diagError("rate_limit_without_until", "pause.until", "rate-limited process pause requires until"))
+		}
+		if st.Pause.Kind == PauseKindNeedsReconcile && !ValidateActorRef(st.Pause.Owner) {
+			diagnostics = append(diagnostics, diagError("invalid_pause_owner", "pause.owner", fmt.Sprintf("needs-reconcile pause owner %q is invalid", st.Pause.Owner)))
+		}
+	}
 	for _, nodeID := range sortedKeys(st.Nodes) {
 		node := st.Nodes[nodeID]
 		if !node.Status.IsValid() {
