@@ -49,6 +49,21 @@ func (s CommandStatus) IsValid() bool {
 	}
 }
 
+func (k CommandKind) IsValid() bool {
+	switch k {
+	case CommandKindActivateNode,
+		CommandKindStartAttempt,
+		CommandKindSettleAttempt,
+		CommandKindRecordDecision,
+		CommandKindSetTimer,
+		CommandKindWaitSignal,
+		CommandKindCompleteRun:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s WaitStatus) IsValid() bool {
 	switch s {
 	case WaitStatusPending,

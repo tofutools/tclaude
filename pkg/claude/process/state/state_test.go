@@ -38,7 +38,7 @@ func TestReducerSequences(t *testing.T) {
 						ID:      "cmd_1",
 						NodeID:  "implement",
 						Attempt: 1,
-						Kind:    "agent.spawn",
+						Kind:    CommandKindStartAttempt,
 					},
 				},
 				{
@@ -359,6 +359,99 @@ func TestSuccessfulReducerEventsPreserveInvariants(t *testing.T) {
 	}
 }
 
+func TestCommandIssuedOnlyStartAttemptClaimsActiveAttempt(t *testing.T) {
+	st, err := ApplyAll(State{}, []Event{
+		initEvent(),
+		{Type: EventNodeAttemptStarted, Seq: 2, NodeID: "implement", Actor: "agent:agt_dev123"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Nodes["implement"].ActiveAttempt == nil || st.Nodes["implement"].ActiveAttempt.CommandID != "" {
+		t.Fatalf("unexpected active attempt before command: %#v", st.Nodes["implement"].ActiveAttempt)
+	}
+
+	next, err := Apply(st, Event{
+		Type: EventCommandIssued,
+		Seq:  3,
+		Command: &OutstandingCommand{
+			ID:     "cmd_activate",
+			NodeID: "implement",
+			Kind:   CommandKindActivateNode,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := next.Nodes["implement"].ActiveAttempt.CommandID; got != "" {
+		t.Fatalf("non-start command claimed active attempt command id %q", got)
+	}
+}
+
+func TestCommandIssuedCanReuseInactiveCommandSlot(t *testing.T) {
+	for _, status := range []CommandStatus{CommandStatusCanceled, CommandStatusReconciled} {
+		t.Run(string(status), func(t *testing.T) {
+			st, err := Apply(State{}, initEvent())
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.OutstandingCommands["cmd_retry"] = OutstandingCommand{
+				ID:        "cmd_retry",
+				NodeID:    "implement",
+				Kind:      CommandKindStartAttempt,
+				Status:    status,
+				CreatedAt: testTime.Add(-time.Hour),
+			}
+
+			next, err := Apply(st, Event{
+				Type: EventCommandIssued,
+				Seq:  2,
+				At:   testTime,
+				Command: &OutstandingCommand{
+					ID:      "cmd_retry",
+					NodeID:  "implement",
+					Kind:    CommandKindStartAttempt,
+					Attempt: 2,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := next.OutstandingCommands["cmd_retry"]
+			if command.Status != CommandStatusIssued || command.Attempt != 2 || command.CreatedAt != testTime {
+				t.Fatalf("command = %#v", command)
+			}
+		})
+	}
+}
+
+func TestSettleNodeStatusUsesSharedOutcomeVocabularyAndRetryBudget(t *testing.T) {
+	retry := &model.RetryPolicy{MaxAttempts: 2}
+	tests := []struct {
+		name    string
+		outcome string
+		attempt int
+		want    NodeStatus
+	}{
+		{name: "pass completes", outcome: "done", attempt: 1, want: NodeStatusCompleted},
+		{name: "failure retries within budget", outcome: "cancelled", attempt: 1, want: NodeStatusReady},
+		{name: "failure exhausts budget", outcome: "cancelled", attempt: 2, want: NodeStatusFailed},
+		{name: "unknown outcome fails without retry", outcome: "unknown", attempt: 1, want: NodeStatusFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var policy *model.RetryPolicy
+			if tt.outcome != "unknown" {
+				policy = retry
+			}
+			if got := SettleNodeStatus(tt.outcome, tt.attempt, policy); got != tt.want {
+				t.Fatalf("status = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestReducerDoesNotMutateInput(t *testing.T) {
 	st, err := Apply(State{}, initEvent())
 	if err != nil {
@@ -400,7 +493,7 @@ func TestCloneDeepCopiesState(t *testing.T) {
 		{
 			Type:    EventCommandIssued,
 			Seq:     4,
-			Command: &OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: "agent.spawn"},
+			Command: &OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: CommandKindStartAttempt},
 		},
 	})
 	if err != nil {
@@ -410,7 +503,7 @@ func TestCloneDeepCopiesState(t *testing.T) {
 	clone := Clone(st)
 	clone.Nodes["implement"].ActiveAttempt.Actor = "agent:agt_other"
 	clone.Waits["wait_1"] = WaitRecord{ID: "wait_1", NodeID: "wait-human", Kind: WaitKindAgent, Status: WaitStatusCanceled}
-	clone.OutstandingCommands["cmd_1"] = OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: "changed"}
+	clone.OutstandingCommands["cmd_1"] = OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: CommandKindCompleteRun}
 
 	if st.Nodes["implement"].ActiveAttempt.Actor != "agent:agt_dev123" {
 		t.Fatal("node active attempt aliased")
@@ -418,7 +511,7 @@ func TestCloneDeepCopiesState(t *testing.T) {
 	if st.Waits["wait_1"].Kind != WaitKindHuman {
 		t.Fatal("wait map aliased")
 	}
-	if st.OutstandingCommands["cmd_1"].Kind != "agent.spawn" {
+	if st.OutstandingCommands["cmd_1"].Kind != CommandKindStartAttempt {
 		t.Fatal("command map aliased")
 	}
 }
@@ -439,6 +532,22 @@ func TestReducerErrors(t *testing.T) {
 		ChosenEdge: "approve",
 		Decision:   &DecisionRecord{Actor: "human:johan", Verdict: "approve"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandIssued, err := Apply(base, Event{
+		Type: EventCommandIssued,
+		Seq:  2,
+		Command: &OutstandingCommand{
+			ID:     "cmd_1",
+			NodeID: "implement",
+			Kind:   CommandKindStartAttempt,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandObserved, err := Apply(commandIssued, Event{Type: EventCommandObserved, Seq: 3, CommandID: "cmd_1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,9 +582,14 @@ func TestReducerErrors(t *testing.T) {
 		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
 		{name: "invalid wait status", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: WaitKindHuman, Status: "bogus"}}, want: "invalid wait status"},
 		{name: "unknown timer", st: base, event: Event{Type: EventTimerSatisfied, Seq: 11, TimerID: "missing"}, want: "not declared"},
-		{name: "command without id", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{NodeID: "implement", Kind: "agent.spawn"}}, want: "command id"},
-		{name: "invalid command status", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: "agent.spawn", Status: "bogus"}}, want: "invalid command status"},
+		{name: "command without id", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{NodeID: "implement", Kind: CommandKindStartAttempt}}, want: "command id"},
+		{name: "invalid command kind", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: "agent.spawn"}}, want: "invalid command kind"},
+		{name: "invalid command status", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: CommandKindStartAttempt, Status: "bogus"}}, want: "invalid command status"},
+		{name: "command issued observed status", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: CommandKindStartAttempt, Status: CommandStatusObserved}}, want: "requires issued status"},
+		{name: "command negative attempt", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: CommandKindStartAttempt, Attempt: -1}}, want: "non-negative"},
+		{name: "duplicate command issued", st: commandIssued, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: CommandKindStartAttempt}}, want: "already outstanding"},
 		{name: "unknown command observed", st: base, event: Event{Type: EventCommandObserved, Seq: 11, CommandID: "missing"}, want: "not outstanding"},
+		{name: "observed command observed again", st: commandObserved, event: Event{Type: EventCommandObserved, Seq: 11, CommandID: "cmd_1"}, want: "cannot be observed"},
 	}
 
 	for _, tt := range tests {
@@ -528,10 +642,37 @@ func TestInvariants(t *testing.T) {
 			name: "invalid command status",
 			st: func() State {
 				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
-				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "cmd", NodeID: "a", Kind: "agent.spawn", Status: "bogus_command_status"}
+				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "cmd", NodeID: "a", Kind: CommandKindStartAttempt, Status: "bogus_command_status"}
 				return st
 			}(),
 			code: "invalid_command_status",
+		},
+		{
+			name: "invalid command kind",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "cmd", NodeID: "a", Kind: "agent.spawn", Status: CommandStatusIssued}
+				return st
+			}(),
+			code: "invalid_command_kind",
+		},
+		{
+			name: "command id mismatch",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "other", NodeID: "a", Kind: CommandKindStartAttempt, Status: CommandStatusIssued}
+				return st
+			}(),
+			code: "command_id_key_mismatch",
+		},
+		{
+			name: "command unknown node",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "cmd", NodeID: "missing", Kind: CommandKindStartAttempt, Status: CommandStatusIssued}
+				return st
+			}(),
+			code: "command_unknown_node",
 		},
 		{
 			name: "invalid wait kind",

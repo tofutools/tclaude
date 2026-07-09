@@ -16,6 +16,7 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, EnumFieldsAreValid(st)...)
 	diagnostics = append(diagnostics, WaitingNodesHaveWaitRecords(st)...)
 	diagnostics = append(diagnostics, RunningAttemptsHaveCommandOrActor(st)...)
+	diagnostics = append(diagnostics, OutstandingCommandsAreWellFormed(st)...)
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
@@ -103,6 +104,34 @@ func RunningAttemptsHaveCommandOrActor(st *State) Diagnostics {
 			"nodes."+nodeID+".activeAttempt",
 			fmt.Sprintf("running node %q must have an active attempt with commandId or actor", nodeID),
 		))
+	}
+	return diagnostics
+}
+
+func OutstandingCommandsAreWellFormed(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, commandID := range sortedKeys(st.OutstandingCommands) {
+		command := st.OutstandingCommands[commandID]
+		path := "outstandingCommands." + commandID
+		if strings.TrimSpace(command.ID) == "" {
+			diagnostics = append(diagnostics, diagError("missing_command_id", path+".id", "outstanding command id is required"))
+		} else if command.ID != commandID {
+			diagnostics = append(diagnostics, diagError("command_id_key_mismatch", path+".id", fmt.Sprintf("command id %q does not match map key %q", command.ID, commandID)))
+		}
+		if !command.Kind.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_command_kind", path+".kind", fmt.Sprintf("invalid command kind %q", command.Kind)))
+		}
+		if command.NodeID != "" {
+			if _, ok := st.Nodes[command.NodeID]; !ok {
+				diagnostics = append(diagnostics, diagError("command_unknown_node", path+".nodeId", fmt.Sprintf("command node %q is not declared", command.NodeID)))
+			}
+		}
+		if command.Attempt < 0 {
+			diagnostics = append(diagnostics, diagError("invalid_command_attempt", path+".attempt", "command attempt must be non-negative"))
+		}
 	}
 	return diagnostics
 }

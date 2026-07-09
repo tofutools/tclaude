@@ -1,0 +1,290 @@
+package plan
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
+)
+
+func Plan(st *state.State, tmpl *model.Template) ([]Command, error) {
+	if st == nil {
+		return nil, fmt.Errorf("process state is nil")
+	}
+	if tmpl == nil {
+		return nil, fmt.Errorf("process template is nil")
+	}
+	switch st.Status {
+	case state.RunStatusCompleted,
+		state.RunStatusFailed,
+		state.RunStatusCanceled,
+		state.RunStatusPaused,
+		state.RunStatusDirty,
+		state.RunStatusInconsistent:
+		return nil, nil
+	}
+
+	var commands []Command
+	for _, nodeID := range sortedNodeIDs(st.Nodes) {
+		node := st.Nodes[nodeID]
+		templateNode, ok := tmpl.Nodes[nodeID]
+		if !ok {
+			return nil, fmt.Errorf("node %q is not in template", nodeID)
+		}
+		nodeCommands, err := planNode(st, tmpl, nodeID, node, templateNode)
+		if err != nil {
+			return nil, err
+		}
+		commands = append(commands, nodeCommands...)
+	}
+	return commands, nil
+}
+
+func planNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
+	switch node.Status {
+	case state.NodeStatusReady:
+		return planReadyNode(st, tmpl, nodeID, node, templateNode)
+	case state.NodeStatusRunning:
+		return planRunningNode(st, nodeID, node, templateNode)
+	case state.NodeStatusCompleted:
+		return planCompletedNode(st, tmpl, nodeID, node, templateNode)
+	case state.NodeStatusFailed:
+		return planFailedNode(st, tmpl, nodeID, templateNode)
+	default:
+		return nil, nil
+	}
+}
+
+func planRunningNode(st *state.State, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
+	if node.ActiveAttempt == nil || strings.TrimSpace(node.ActiveAttempt.CommandID) == "" {
+		return nil, nil
+	}
+	source, ok := st.OutstandingCommands[node.ActiveAttempt.CommandID]
+	if !ok || source.Status != state.CommandStatusObserved {
+		return nil, nil
+	}
+	attempt := node.ActiveAttempt.Attempt
+	if attempt <= 0 {
+		attempt = node.Attempt
+	}
+	cmd := newCommand(CommandKindSettleAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "settle")
+	cmd.NodeID = nodeID
+	cmd.Attempt = attempt
+	cmd.MaxAttempts = maxAttempts(templateNode.Retry)
+	cmd.SourceCommandID = source.ID
+	if commandOutstanding(st, cmd.ID) {
+		return nil, nil
+	}
+	return []Command{cmd}, nil
+}
+
+func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
+	switch templateNode.Type {
+	case model.NodeTypeTask:
+		attempt := node.Attempt + 1
+		cmd := newCommand(CommandKindStartAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "start")
+		cmd.NodeID = nodeID
+		cmd.Attempt = attempt
+		cmd.Performer = templateNode.Performer
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case model.NodeTypeDecision:
+		cmd := newCommand(CommandKindRecordDecision, st.RunID, nodeID, "decision")
+		cmd.NodeID = nodeID
+		cmd.Performer = templateNode.Performer
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case model.NodeTypeWait:
+		if waitSatisfied(st, nodeID) {
+			return activationCommand(st, tmpl, nodeID, ResolvePassEdge(templateNode.Next, "pass"))
+		}
+		cmd := waitCommand(st.RunID, nodeID, templateNode.Wait)
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case model.NodeTypeStart:
+		return activationCommand(st, tmpl, nodeID, ResolvePassEdge(templateNode.Next, "pass"))
+	case model.NodeTypeEnd:
+		return completeRunCommands(st, nodeID, TerminalRunStatus(templateNode)), nil
+	default:
+		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
+	}
+}
+
+func planCompletedNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
+	switch templateNode.Type {
+	case model.NodeTypeTask:
+		outcome := "pass"
+		if node.ActiveAttempt != nil && strings.TrimSpace(node.ActiveAttempt.Outcome) != "" {
+			outcome = strings.ToLower(strings.TrimSpace(node.ActiveAttempt.Outcome))
+		}
+		if IsFailOutcome(outcome) {
+			return planFailedNode(st, tmpl, nodeID, templateNode)
+		}
+		return activationCommand(st, tmpl, nodeID, ResolvePassEdge(templateNode.Next, outcome))
+	case model.NodeTypeDecision:
+		if strings.TrimSpace(node.ChosenEdge) == "" {
+			return nil, nil
+		}
+		target, ok := DecisionEdge(templateNode.Next, node.ChosenEdge)
+		if !ok {
+			return nil, fmt.Errorf("decision node %q has no edge for verdict %q; available edges: %s", nodeID, node.ChosenEdge, strings.Join(sortedEdgeKeys(templateNode.Next), ", "))
+		}
+		return activationCommand(st, tmpl, nodeID, target)
+	case model.NodeTypeStart, model.NodeTypeWait:
+		return activationCommand(st, tmpl, nodeID, ResolvePassEdge(templateNode.Next, "pass"))
+	case model.NodeTypeEnd:
+		return completeRunCommands(st, nodeID, TerminalRunStatus(templateNode)), nil
+	default:
+		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
+	}
+}
+
+func planFailedNode(st *state.State, tmpl *model.Template, nodeID string, templateNode model.Node) ([]Command, error) {
+	node := st.Nodes[nodeID]
+	if SettleNodeStatus("fail", node.Attempt, templateNode.Retry) == state.NodeStatusReady {
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "retry", fmt.Sprintf("attempt-%d", node.Attempt+1))
+		cmd.NodeID = nodeID
+		cmd.TargetNodeID = nodeID
+		cmd.NodeStatus = state.NodeStatusReady
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	}
+	target := ResolveFailEdge(templateNode.Next, templateNode.Retry)
+	if target == "" {
+		return completeRunCommands(st, nodeID, state.RunStatusFailed), nil
+	}
+	return activationCommand(st, tmpl, nodeID, target)
+}
+
+func activationCommand(st *state.State, tmpl *model.Template, fromNodeID, targetNodeID string) ([]Command, error) {
+	if strings.TrimSpace(targetNodeID) == "" {
+		return nil, nil
+	}
+	target, ok := st.Nodes[targetNodeID]
+	if !ok {
+		return nil, fmt.Errorf("target node %q is not in state", targetNodeID)
+	}
+	targetTemplate, ok := tmpl.Nodes[targetNodeID]
+	if !ok {
+		return nil, fmt.Errorf("target node %q is not in template", targetNodeID)
+	}
+	if target.Status != state.NodeStatusPending {
+		return nil, nil
+	}
+	status := state.NodeStatusReady
+	if targetTemplate.Type == model.NodeTypeEnd {
+		status = state.NodeStatusCompleted
+	}
+	cmd := newCommand(CommandKindActivateNode, st.RunID, fromNodeID, "to", targetNodeID)
+	cmd.NodeID = fromNodeID
+	cmd.TargetNodeID = targetNodeID
+	cmd.SourceNodeStatus = state.NodeStatusCompleted
+	cmd.NodeStatus = status
+	if commandOutstanding(st, cmd.ID) {
+		return nil, nil
+	}
+	out := []Command{cmd}
+	if targetTemplate.Type == model.NodeTypeEnd {
+		out = append(out, completeRunCommands(st, targetNodeID, TerminalRunStatus(targetTemplate))...)
+	}
+	return out, nil
+}
+
+func waitSatisfied(st *state.State, nodeID string) bool {
+	for _, wait := range st.Waits {
+		if wait.NodeID == nodeID && wait.Status == state.WaitStatusSatisfied {
+			return true
+		}
+	}
+	for _, timer := range st.Timers {
+		if timer.NodeID == nodeID && timer.Status == state.WaitStatusSatisfied {
+			return true
+		}
+	}
+	return false
+}
+
+func completeRunCommands(st *state.State, nodeID string, status state.RunStatus) []Command {
+	cmd := completeRunCommand(st.RunID, nodeID, status)
+	if commandOutstanding(st, cmd.ID) {
+		return nil
+	}
+	return []Command{cmd}
+}
+
+func completeRunCommand(runID, nodeID string, status state.RunStatus) Command {
+	cmd := newCommand(CommandKindCompleteRun, runID, nodeID, string(status))
+	cmd.NodeID = nodeID
+	cmd.RunStatus = status
+	return cmd
+}
+
+func waitCommand(runID, nodeID string, wait *model.WaitConfig) Command {
+	if wait != nil && strings.TrimSpace(wait.Signal) != "" && strings.TrimSpace(wait.Duration) == "" && strings.TrimSpace(wait.Until) == "" {
+		cmd := newCommand(CommandKindWaitSignal, runID, nodeID, "signal", wait.Signal)
+		cmd.NodeID = nodeID
+		cmd.Signal = wait.Signal
+		cmd.WaitKind = state.WaitKindSignal
+		cmd.WaitID = deterministicSlotID(CommandKindWaitSignal, runID, nodeID, "signal", wait.Signal)
+		return cmd
+	}
+	cmd := newCommand(CommandKindSetTimer, runID, nodeID, "timer")
+	cmd.NodeID = nodeID
+	cmd.WaitKind = state.WaitKindTimer
+	cmd.WaitID = deterministicSlotID(CommandKindSetTimer, runID, nodeID, "timer")
+	if wait != nil {
+		cmd.Duration = wait.Duration
+		cmd.Until = wait.Until
+		cmd.Signal = wait.Signal
+	}
+	return cmd
+}
+
+func maxAttempts(retry *model.RetryPolicy) int {
+	if retry != nil && retry.MaxAttempts > 0 {
+		return retry.MaxAttempts
+	}
+	return 1
+}
+
+func deterministicSlotID(kind CommandKind, runID, nodeID string, parts ...string) string {
+	keyParts := append([]string{nodeID}, parts...)
+	cmd := newCommand(kind, runID, keyParts...)
+	return "slot_" + strings.TrimPrefix(cmd.ID, "cmd_")
+}
+
+func commandOutstanding(st *state.State, commandID string) bool {
+	command, ok := st.OutstandingCommands[commandID]
+	if !ok {
+		return false
+	}
+	return command.Status == state.CommandStatusIssued || command.Status == state.CommandStatusObserved
+}
+
+func sortedNodeIDs(nodes map[string]state.NodeState) []string {
+	keys := make([]string, 0, len(nodes))
+	for key := range nodes {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func sortedEdgeKeys(next model.Next) []string {
+	keys := make([]string, 0, len(next))
+	for key := range next {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
