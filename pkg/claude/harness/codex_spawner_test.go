@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -145,6 +146,19 @@ func TestCodexModels(t *testing.T) {
 	if len(c.EffortLevels()) == 0 {
 		t.Fatalf("codex now exposes tclaude's effort levels")
 	}
+	wantModels := []string{
+		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+		"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
+	}
+	if got := c.Models(); !slices.Equal(got, wantModels) {
+		t.Fatalf("Models() = %v, want %v", got, wantModels)
+	}
+	// The returned catalog must not expose the package-level slice to callers.
+	got := c.Models()
+	got[0] = "mutated"
+	if c.Models()[0] != wantModels[0] {
+		t.Fatal("Models() must return a defensive copy")
+	}
 }
 
 // TestCodexReasoningEffort pins the tclaude-effort → Codex-reasoning map.
@@ -152,9 +166,15 @@ func TestCodexReasoningEffort(t *testing.T) {
 	for in, want := range map[string]string{
 		"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh",
 	} {
-		if got := codexReasoningEffort(in); got != want {
+		if got := codexReasoningEffort("", in); got != want {
 			t.Fatalf("codexReasoningEffort(%q) = %q, want %q", in, got, want)
 		}
+	}
+	if got := codexReasoningEffort("gpt-5.6-terra", "max"); got != "max" {
+		t.Fatalf("codexReasoningEffort(GPT-5.6, max) = %q, want max", got)
+	}
+	if got := codexReasoningEffort("gpt-5.6", "max"); got != "max" {
+		t.Fatalf("codexReasoningEffort(gpt-5.6 alias, max) = %q, want max", got)
 	}
 }
 
@@ -175,6 +195,10 @@ func TestCodexSpawner_Effort(t *testing.T) {
 	got = codexBuild("", "", "max", "", nil)
 	if !strings.Contains(got, `model_reasoning_effort="xhigh"`) {
 		t.Fatalf("effort max must map to xhigh, got %q", got)
+	}
+	got = codexBuild("", "", "max", "gpt-5.6-sol", nil)
+	if !strings.Contains(got, `model_reasoning_effort="max"`) {
+		t.Fatalf("GPT-5.6 max effort must remain distinct, got %q", got)
 	}
 }
 

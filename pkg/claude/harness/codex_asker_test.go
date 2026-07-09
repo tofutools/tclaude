@@ -62,6 +62,14 @@ func TestCodexAsker_BuildAskArgv(t *testing.T) {
 		}),
 		[]string{"codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
 			"-c", `model_reasoning_effort="xhigh"`, "--", "q"})
+
+	// GPT-5.6 supports max as a distinct level rather than aliasing it to xhigh.
+	eq("GPT-5.6 effort max stays max",
+		codexAsker{}.BuildAskArgv(AskSpec{
+			Print: true, Model: "gpt-5.6-sol", Effort: "max", Prompt: "q",
+		}),
+		[]string{"codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+			"--model", "gpt-5.6-sol", "-c", `model_reasoning_effort="max"`, "--", "q"})
 }
 
 // TestCodexAsker_IgnoresSessionID locks in that Codex does NOT pre-mint: a

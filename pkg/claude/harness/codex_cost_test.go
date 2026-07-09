@@ -42,6 +42,9 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 		contextWindow int
 		want          float64
 	}{
+		{name: "gpt-5.6-sol", model: "gpt-5.6-sol", contextWindow: 372000, want: 0.0000355},
+		{name: "gpt-5.6-terra", model: "gpt-5.6-terra", contextWindow: 372000, want: 0.00001775},
+		{name: "gpt-5.6-luna", model: "gpt-5.6-luna", contextWindow: 372000, want: 0.0000071},
 		{name: "gpt-5.5 short", model: "gpt-5.5", contextWindow: 272000, want: 0.0000355},
 		{name: "gpt-5.5 long", model: "gpt-5.5", contextWindow: 1000000, want: 0.0000560},
 		{name: "gpt-5.5-pro short", model: "gpt-5.5-pro", contextWindow: 200000, want: 0.0002400},
@@ -73,6 +76,20 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 			assert.InDelta(t, tc.want, cost.CostUSD, 1e-12)
 		})
 	}
+}
+
+func TestCodexVirtualCostFromRollout_ResearchPreviewWithoutFinalRate(t *testing.T) {
+	home := codexTestHome(t)
+	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
+	cx.Model = "gpt-5.3-codex-spark"
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteUserInput("price it"))
+	usage := testharness.CodexTokenUsage{InputTokens: 1000, CachedInputTokens: 100, OutputTokens: 100, TotalTokens: 1100}
+	require.NoError(t, cx.WriteTokenCount(usage, usage))
+
+	_, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
+	require.NoError(t, err)
+	assert.False(t, ok, "research-preview model without a final rate must stay unestimated")
 }
 
 func TestCodexVirtualCostFromRollout_UnknownModelNoEstimate(t *testing.T) {

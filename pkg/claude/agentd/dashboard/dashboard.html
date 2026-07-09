@@ -1874,10 +1874,10 @@
       <span class="cron-create-label">Harness</span>
       <select id="profile-editor-harness"></select>
     </label>
-    <label class="cron-create-row" id="profile-editor-model-claude-row" title="Claude model. Blank leaves the model unset — the spawn inherits the group / user / claude default at launch.">
+    <label class="cron-create-row" id="profile-editor-model-claude-row" title="Model suggested by the selected harness. Blank leaves the model unset; Custom model id accepts an out-of-catalog model supported by that harness.">
       <span class="cron-create-label">Model</span>
-      <!-- Curated Claude aliases — mirrors the spawn dialog's Model select.
-           Keep in sync with ValidModels in pkg/claude/common/model.go. -->
+      <!-- Pre-snapshot Claude fallback. JS rebuilds this from the selected
+           harness's model catalog once the dashboard snapshot is available. -->
       <select id="profile-editor-model">
         <option value="">Default (unset)</option>
         <option value="fable">fable</option>
@@ -1891,16 +1891,14 @@
         <option value="__custom__">Custom model id…</option>
       </select>
     </label>
-    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
-         human type any Claude model id/alias the presets don't list. Validated
-         against the profile's harness at save. -->
-    <label class="cron-create-row" id="profile-editor-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the profile is saved.">
+    <!-- Revealed when the catalog <select> is on "Custom model id…". -->
+    <label class="cron-create-row" id="profile-editor-model-custom-row" style="display:none" title="Type any model id or alias accepted by the selected harness. Validated when the profile is saved.">
       <span class="cron-create-label"></span>
-      <input id="profile-editor-model-custom" type="text" aria-label="Custom model id" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
+      <input id="profile-editor-model-custom" type="text" aria-label="Custom model id" placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row" id="profile-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
+    <label class="cron-create-row" id="profile-editor-model-codex-row" style="display:none" title="Free-text model id for a harness with no curated suggestions. Blank leaves it unset.">
       <span class="cron-create-label">Model</span>
-      <input id="profile-editor-model-codex" type="text" placeholder="blank = unset; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+      <input id="profile-editor-model-codex" type="text" placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" title="Reasoning effort. Default leaves it unset (the harness's own setting).">
       <span class="cron-create-label">Effort</span>
@@ -2048,10 +2046,10 @@
       <span class="cron-create-label">Harness</span>
       <select id="role-editor-harness"></select>
     </label>
-    <label class="cron-create-row" id="role-editor-model-claude-row" title="Claude model. Blank leaves it unset — a referencing agent inherits the group / harness default at launch.">
+    <label class="cron-create-row" id="role-editor-model-claude-row" title="Model suggested by the selected harness. Blank leaves it unset; Custom model id accepts an out-of-catalog model supported by that harness.">
       <span class="cron-create-label">Model</span>
-      <!-- Curated Claude aliases — mirrors the spawn/profile Model select.
-           Keep in sync with ValidModels in pkg/claude/common/model.go. -->
+      <!-- Pre-snapshot Claude fallback. JS rebuilds this from the selected
+           harness's model catalog once the dashboard snapshot is available. -->
       <select id="role-editor-model">
         <option value="">Default (unset)</option>
         <option value="fable">fable</option>
@@ -2065,16 +2063,14 @@
         <option value="__custom__">Custom model id…</option>
       </select>
     </label>
-    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
-         human type any Claude model id/alias the presets don't list. Validated
-         against the role's harness at save. -->
-    <label class="cron-create-row" id="role-editor-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the role is saved.">
+    <!-- Revealed when the catalog <select> is on "Custom model id…". -->
+    <label class="cron-create-row" id="role-editor-model-custom-row" style="display:none" title="Type any model id or alias accepted by the selected harness. Validated when the role is saved.">
       <span class="cron-create-label"></span>
-      <input id="role-editor-model-custom" type="text" aria-label="Custom model id" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
+      <input id="role-editor-model-custom" type="text" aria-label="Custom model id" placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row" id="role-editor-model-codex-row" style="display:none" title="Codex model (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Free text — Codex validates it itself. Blank leaves it unset.">
+    <label class="cron-create-row" id="role-editor-model-codex-row" style="display:none" title="Free-text model id for a harness with no curated suggestions. Blank leaves it unset.">
       <span class="cron-create-label">Model</span>
-      <input id="role-editor-model-codex" type="text" placeholder="blank = unset; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+      <input id="role-editor-model-codex" type="text" placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" title="Reasoning effort. Default leaves it unset (the harness's own setting).">
       <span class="cron-create-label">Effort</span>
@@ -2734,7 +2730,7 @@
       <select id="agent-spawn-harness"></select>
     </label>
     <div class="spawn-inline-fields">
-      <label class="cron-create-row" id="agent-spawn-model-claude-row" title="Claude model for the new agent. The [1m] variants select the 1M-token context window; opusplan runs Opus in plan mode and Sonnet otherwise. Default passes no --model, so the spawn inherits the group's default model, then the user-level settings.json model, then claude's own default — the Default label shows what that resolves to.">
+      <label class="cron-create-row" id="agent-spawn-model-claude-row" title="Model suggested by the selected harness. Default passes no --model; Custom model id accepts an out-of-catalog model supported by that harness.">
         <span class="cron-create-label">Model</span>
         <select id="agent-spawn-model">
           <option value="">Default (claude's own)</option>
@@ -2749,9 +2745,9 @@
           <option value="__custom__">Custom model id…</option>
         </select>
       </label>
-      <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Codex model for the new agent (an OpenAI model id, e.g. gpt-5 or gpt-5-codex). Codex's model set changes per release and Codex validates it itself, so this is free text rather than a fixed list. Blank passes no --model, leaving Codex on its own default.">
+      <label class="cron-create-row" id="agent-spawn-model-codex-row" style="display:none" title="Free-text model id for a harness with no curated suggestions. Blank passes no --model.">
         <span class="cron-create-label">Model</span>
-        <input id="agent-spawn-model-codex" type="text" placeholder="blank = Codex default; e.g. gpt-5, gpt-5-codex" autocomplete="off" spellcheck="false" />
+        <input id="agent-spawn-model-codex" type="text" placeholder="blank = harness default; model id or alias" autocomplete="off" spellcheck="false" />
       </label>
       <label class="cron-create-row" title="Reasoning effort for the new agent. Default leaves the harness on its own setting (no --effort passed). For Codex, the level maps onto its reasoning-effort scale (max → xhigh).">
         <!-- Pre-snapshot fallback; populateSpawnEffortSelect() rebuilds these
@@ -2766,13 +2762,10 @@
         </select>
       </label>
     </div>
-    <!-- Revealed when the curated <select> is on "Custom model id…" — lets the
-         human type any Claude model id/alias the presets don't list (a full id
-         like claude-opus-4-8[1m], or a new alias). The daemon validates it at
-         spawn. -->
-    <label class="cron-create-row" id="agent-spawn-model-custom-row" style="display:none" title="Type any Claude model id or alias — e.g. a full id like claude-opus-4-8[1m], or an alias claude accepts. Validated when the agent spawns.">
+    <!-- Revealed when the catalog <select> is on "Custom model id…". -->
+    <label class="cron-create-row" id="agent-spawn-model-custom-row" style="display:none" title="Type any model id or alias accepted by the selected harness. Validated when the agent spawns.">
       <span class="cron-create-label"></span>
-      <input id="agent-spawn-model-custom" type="text" aria-label="Custom model id" placeholder="e.g. claude-opus-4-8[1m]" autocomplete="off" spellcheck="false" />
+      <input id="agent-spawn-model-custom" type="text" aria-label="Custom model id" placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
     <label class="cron-create-row" id="agent-spawn-sandbox-row" style="display:none" title="Launch containment for the new agent. The modes are per-harness. Codex: tclaude-agent (recommended) runs under tclaude's managed permission profile — workspace-write containment PLUS agentd-socket access so the agent can still coordinate via `tclaude agent`; the raw --sandbox modes (workspace-write / read-only) drop that socket access; danger-full-access turns the sandbox OFF. Claude Code: inherit (recommended) leaves your settings.json sandbox config as-is; on forces the OS sandbox on for this session (keeping the agentd socket reachable); off forces it off. The live hint below explains the selected mode.">
       <span class="cron-create-label">Sandbox</span>

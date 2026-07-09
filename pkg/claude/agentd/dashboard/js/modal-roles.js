@@ -13,7 +13,7 @@
 // the chosen harness. Because the server's PATCH is a FULL replace, the editor
 // surfaces every stored field.
 
-import { $, $$, esc, bindSelectTitles, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
+import { $, $$, esc, bindSelectTitles, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import { loadRoles, createRole, updateRole, deleteRole, roleSummary } from './roles.js';
@@ -42,12 +42,12 @@ function roleHarnessByName(name) {
 
 // roleActiveModelEl returns the Model control in play for the selected harness —
 // the curated <select> for a harness with a model list, its revealed "Custom…"
-// free-text input when the select sits on that sentinel, or the Codex free-text
+// free-text input when the select sits on that sentinel, or the fallback free-text
 // <input> for a harness without a model list. Mirrors profileActiveModelEl.
 function roleActiveModelEl() {
   const h = roleHarnessByName($('#role-editor-harness').value);
-  const codexStyle = h && (!h.models || h.models.length === 0);
-  if (codexStyle) return $('#role-editor-model-codex');
+  const freeTextStyle = h && (!h.models || h.models.length === 0);
+  if (freeTextStyle) return $('#role-editor-model-codex');
   const sel = $('#role-editor-model');
   return sel.value === MODEL_CUSTOM_VALUE ? $('#role-editor-model-custom') : sel;
 }
@@ -85,8 +85,9 @@ function applyRoleEditorHarness(harnessName) {
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#role-editor-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#role-editor-model-codex-row').style.display = hasModelList ? 'none' : '';
+  if (hasModelList && h) populateModelSelect($('#role-editor-model'), h.models);
   // The free-text "Custom…" row belongs to the curated <select>; reconcile it
-  // with the select for Claude, hide it for a free-text harness (Codex).
+  // with the selector, or hide it for a harness with no suggestions.
   if (hasModelList) syncCustomModelRow('role-editor-model');
   else $('#role-editor-model-custom-row').style.display = 'none';
 

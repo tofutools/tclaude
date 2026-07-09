@@ -17,7 +17,7 @@
 // wipe it, so submit carries those forward from the original (guarded on an
 // unchanged harness).
 
-import { $, esc, bindSelectTitles, bindModalSubmitHotkey, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
+import { $, esc, bindSelectTitles, bindModalSubmitHotkey, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE } from './helpers.js';
 import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast, bindBackdropDiscard, bindManageOverlayDismiss } from './refresh.js';
 import {
@@ -86,12 +86,12 @@ function profileHarnessByName(name) {
 
 // profileActiveModelEl returns the Model control in play for the selected
 // harness — the curated <select> for a harness with a model list, its revealed
-// "Custom…" free-text input when the select sits on that sentinel, or the Codex
+// "Custom…" free-text input when the select sits on that sentinel, or a
 // free-text <input> for a harness without a model list. Mirrors activeSpawnModelEl.
 function profileActiveModelEl() {
   const h = profileHarnessByName($('#profile-editor-harness').value);
-  const codexStyle = h && (!h.models || h.models.length === 0);
-  if (codexStyle) return $('#profile-editor-model-codex');
+  const freeTextStyle = h && (!h.models || h.models.length === 0);
+  if (freeTextStyle) return $('#profile-editor-model-codex');
   const sel = $('#profile-editor-model');
   return sel.value === MODEL_CUSTOM_VALUE ? $('#profile-editor-model-custom') : sel;
 }
@@ -129,8 +129,9 @@ function applyProfileEditorHarness(harnessName) {
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#profile-editor-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#profile-editor-model-codex-row').style.display = hasModelList ? 'none' : '';
+  if (hasModelList && h) populateModelSelect($('#profile-editor-model'), h.models);
   // The free-text "Custom…" row belongs to the curated <select>; reconcile it
-  // with the select for Claude, hide it for a free-text harness (Codex).
+  // with the selector, or hide it for a harness with no suggestions.
   if (hasModelList) syncCustomModelRow('profile-editor-model');
   else $('#profile-editor-model-custom-row').style.display = 'none';
 

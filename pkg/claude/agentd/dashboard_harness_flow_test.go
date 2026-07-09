@@ -70,10 +70,10 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	codex := findDashHarness(snap, "codex")
 	require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
 	assert.Equal(t, "Codex CLI", codex.DisplayName)
-	// Codex curates no model list (its set changes per release; validated
-	// server-side), so the dialog falls back to a free-text model entry.
-	assert.Empty(t, codex.Models, "codex curates no model list")
-	assert.NotNil(t, codex.Models, "codex models is [] not null for JS .map safety")
+	assert.Equal(t, []string{
+		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+		"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark",
+	}, codex.Models, "codex exposes the curated dropdown suggestions")
 	assert.NotEmpty(t, codex.EffortLevels, "codex offers effort/reasoning levels")
 	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
 	assert.True(t, codex.CanCompact, "codex supports /compact")

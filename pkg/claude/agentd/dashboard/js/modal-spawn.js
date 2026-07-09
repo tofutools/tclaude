@@ -3,7 +3,7 @@
 // Extracted from dashboard.js in the Stage 2 module split. The spawn and
 // clone modals embed the worktree picker from modal-link-wt.
 
-import { $, $$, esc, shortId, syncSelectTitle, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
+import { $, $$, esc, shortId, syncSelectTitle, populateModelSelect, setModelSelectValue, syncCustomModelRow, MODEL_CUSTOM_VALUE, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, pickDirectory } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { loadProfiles, getProfile, getDashDefaultProfile } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -26,6 +26,12 @@ import { openSpawnPermEditor } from './modal-message.js';
 // 'deny'; reset to {} on every modal open. The owner intent rides the
 // #agent-spawn-owner checkbox directly.
 let spawnPermOverrides = {};
+
+// The model select is shared by catalog-backed harnesses and rebuilt when the
+// harness changes. Remember which harness currently owns its options so a
+// same-harness re-apply (notably a sparse profile) can preserve the human's
+// model, while an actual namespace switch still clears it.
+let appliedSpawnHarness = '';
 
 
 // ---- Agent spawn modal --------------------------------------------------
@@ -65,8 +71,8 @@ function groupDefaultCwd(groupName) {
 // profile lookup may fetch — fire-and-forget; the label updates when it
 // settles. Called on modal open and whenever the group <select> changes.
 async function updateSpawnModelDefaultLabel(groupName) {
-  const opt = $('#agent-spawn-model').querySelector('option[value=""]');
-  if (!opt) return;
+  const harnessSel = $('#agent-spawn-harness');
+  if (harnessSel && harnessSel.value !== 'claude') return;
   const userModel = (lastSnapshot && lastSnapshot.user_default_model) || '';
   // Resolve the group's default profile to its model. Only a claude-harness
   // profile's model belongs in this (claude) Model dropdown's label — a
@@ -80,8 +86,12 @@ async function updateSpawnModelDefaultLabel(groupName) {
     } catch (_) { /* lookup failed — fall through to user/claude default */ }
     // The await yielded; bail if the group selection moved on under us.
     const sel = $('#agent-spawn-group');
-    if (sel && sel.value !== groupName) return;
+    if ((sel && sel.value !== groupName) || (harnessSel && harnessSel.value !== 'claude')) return;
   }
+  // applySpawnHarness may have rebuilt the <select> while the profile lookup
+  // awaited, so resolve the live Default option only after the async boundary.
+  const opt = $('#agent-spawn-model').querySelector('option[value=""]');
+  if (!opt) return;
   if (groupModel) {
     opt.textContent = `Default (${groupModel} — group default)`;
   } else if (userModel) {
@@ -99,9 +109,10 @@ async function updateSpawnModelDefaultLabel(groupName) {
 //
 // The spawn dialog drives its harness selector + per-harness Model / Effort
 // / Sandbox menus off the snapshot's `harnesses` catalog (JOH-162). The
-// default harness (Claude Code) keeps its curated Model <select>; a harness
-// with no curated model list (Codex) swaps in a free-text Model input. Both
-// harnesses expose a launch sandbox, so the Sandbox <select> shows for either
+// Every harness with model suggestions uses the same catalog-populated Model
+// <select> plus custom-ID entry; one with no suggestions swaps in a free-text
+// Model input. Both current harnesses expose a launch sandbox, so the Sandbox
+// <select> shows for either
 // — its mode set + recommended default come from the catalog (Codex's native
 // --sandbox modes; Claude Code's inherit/on/off --settings override).
 
@@ -135,12 +146,12 @@ function populateSpawnHarnessSelect() {
 // activeSpawnModelEl returns the Model control currently in play for the
 // selected harness — the curated <select> for a harness with a model list, its
 // revealed free-text "Custom…" input when the select sits on that sentinel, or
-// the Codex free-text <input> for a harness without a model list. Used so submit
+// a free-text <input> for a harness without a model list. Used so submit
 // + the per-model effort memory read whichever control actually holds the value.
 function activeSpawnModelEl() {
   const h = spawnHarnessByName($('#agent-spawn-harness').value);
-  const codexStyle = h && (!h.models || h.models.length === 0);
-  if (codexStyle) return $('#agent-spawn-model-codex');
+  const freeTextStyle = h && (!h.models || h.models.length === 0);
+  if (freeTextStyle) return $('#agent-spawn-model-codex');
   const sel = $('#agent-spawn-model');
   return sel.value === MODEL_CUSTOM_VALUE ? $('#agent-spawn-model-custom') : sel;
 }
@@ -173,16 +184,36 @@ function populateSpawnEffortSelect(h) {
 // for whatever Model control is now active.
 function applySpawnHarness(harnessName) {
   const h = spawnHarnessByName(harnessName);
+  let keepModel = '';
+  if (appliedSpawnHarness === harnessName) {
+    const prior = spawnHarnessByName(appliedSpawnHarness);
+    if (prior && (!prior.models || !prior.models.length)) {
+      keepModel = $('#agent-spawn-model-codex').value.trim();
+    } else {
+      const sel = $('#agent-spawn-model');
+      keepModel = (sel.value === MODEL_CUSTOM_VALUE
+        ? $('#agent-spawn-model-custom').value : sel.value).trim();
+    }
+  }
   // No catalog entry (snapshot not loaded, or unknown harness): fall back
   // to the default Claude-Code layout — curated model select; the sandbox
   // row is driven by can_sandbox below (hidden until the catalog loads).
   const hasModelList = !h || (h.models && h.models.length > 0);
   $('#agent-spawn-model-claude-row').style.display = hasModelList ? '' : 'none';
   $('#agent-spawn-model-codex-row').style.display = hasModelList ? 'none' : '';
+  // Rebuild the shared selector from this harness's suggestions. The static
+  // Claude options remain only as a pre-snapshot fallback when h is absent.
+  if (hasModelList && h) populateModelSelect($('#agent-spawn-model'), h.models);
+  if (keepModel) {
+    if (hasModelList) setModelSelectValue($('#agent-spawn-model'), keepModel);
+    else $('#agent-spawn-model-codex').value = keepModel;
+  }
+  appliedSpawnHarness = harnessName;
   // The free-text "Custom…" row belongs to the curated <select>; reconcile it
-  // with the select for Claude, hide it for a free-text harness (Codex).
+  // with the selector, or hide it for a harness with no suggestions.
   if (hasModelList) syncCustomModelRow('agent-spawn-model');
   else $('#agent-spawn-model-custom-row').style.display = 'none';
+  if (h && h.name === 'claude') void updateSpawnModelDefaultLabel($('#agent-spawn-group').value);
 
   // Reshape the catalog-driven launch selectors — sandbox / permission-mode /
   // question-timeout — for this harness. Each shares one shape (capability flag +
@@ -627,8 +658,8 @@ function applyProfileToSpawnForm(p) {
   // fields below.)
   if (p.model) {
     const hEntry = spawnHarnessByName($('#agent-spawn-harness').value);
-    const codexStyle = hEntry && (!hEntry.models || !hEntry.models.length);
-    if (codexStyle) {
+    const freeTextStyle = hEntry && (!hEntry.models || !hEntry.models.length);
+    if (freeTextStyle) {
       $('#agent-spawn-model-codex').value = p.model;
     } else {
       setModelSelectValue($('#agent-spawn-model'), p.model);
@@ -1220,19 +1251,18 @@ async function submitAgentSpawn() {
   const initMsg = $('#agent-spawn-init-msg').value;
   // Empty value = the "Default" option → omit effort/model entirely.
   // For model that means the daemon fills the blank field from the group's
-  // default spawn profile (JOH-210), and failing that claude resolves its
-  // own default (user settings.json, then built-in). A chosen value rides
-  // along in the POST body.
+  // default spawn profile (JOH-210), and failing that the selected harness
+  // resolves its own default. A chosen value rides along in the POST body.
   const effort = $('#agent-spawn-effort').value;
   // Harness drives which Model control is active (curated <select> vs the
-  // Codex free-text input) and whether a Sandbox was chosen.
+  // fallback free-text input) and whether a Sandbox was chosen.
   const harness = $('#agent-spawn-harness').value;
   const model = activeSpawnModelEl().value.trim();
   const harnessEntry = spawnHarnessByName(harness);
   const sandbox = (harnessEntry && harnessEntry.can_sandbox)
     ? $('#agent-spawn-sandbox').value : '';
   // Permission mode is read only for a harness that surfaces approval modes
-  // (Claude Code); a modeless harness (Codex) sends none.
+  // (Claude Code); Codex currently sends none.
   const approval = (harnessEntry && harnessEntry.can_approval
     && harnessEntry.approval_modes && harnessEntry.approval_modes.length)
     ? $('#agent-spawn-approval').value : '';
@@ -1498,7 +1528,7 @@ function bindAgentSpawnModal() {
   // Switching the Model re-applies that model's remembered effort (or
   // resets to Default when it has none), so each model carries its own
   // effort default — see rememberModelEffort. All three Model controls (the
-  // curated <select>, its "Custom…" free-text input, and the Codex free-text
+  // curated <select>, its "Custom…" free-text input, and the fallback free-text
   // <input>) feed it. Picking "Custom…" also reveals the free-text row and
   // focuses it (the sentinel has no remembered effort, so effort resets to
   // Default until an id is typed).
