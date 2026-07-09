@@ -641,6 +641,29 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_FeatureFlagsWired guards the experimental feature
+// flags (config features.*, currently features.processes), whose Config-tab
+// pieces span dashboard.html + config.js and must stay in lockstep — there's
+// no JS render test, so we assert on the embedded concatenation at
+// `go test ./...`. The Go accessor + round-trip is covered separately by
+// config.TestProcessesEnabled / config.TestFeaturesConfig_RoundTrips. A
+// rename in either file silently breaks the toggle only in the browser:
+//   - dashboard.html — the Config-tab checkbox;
+//   - config.js — load (fill) + gather (save) the flag.
+func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.html — the Config-tab checkbox.
+		`id="cfg-feature-processes"`,
+		// config.js — load + gather the flag (the key that actually writes).
+		"#cfg-feature-processes",
+		"feats.processes = true",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — experimental feature flags config broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

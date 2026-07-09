@@ -492,6 +492,10 @@ function populateConfigForm(cfg) {
   // lives in the slop block.
   $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
 
+  // Experimental feature flags — opt-in toggles for in-development features
+  // (config features.*). Default off.
+  $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
+
   // Activity bots — per-mode style of the deduped robot indicator.
   // Defaults: regular + wizard emoji, slop sprites (mirrors the Go resolvers).
   const ab = (cfg.dashboard && cfg.dashboard.activity_bots) || {};
@@ -693,6 +697,15 @@ function assembleConfig() {
   const uitRaw = $('#cfg-usage-idle-timeout').value.trim();
   if (uitRaw !== '') usage.idle_timeout = uitRaw; else delete usage.idle_timeout;
   if (Object.keys(usage).length) cfg.usage = usage; else delete cfg.usage;
+
+  // features is an optional block — opt-in flags for in-development features
+  // (config features.*). Clone the existing one so a future flag with no
+  // widget round-trips. false is the omitempty default — drop the key, and
+  // the block when it's all that's left, so an all-default config doesn't
+  // marshal a spurious "features": {} diff.
+  const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
+  if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
+  if (Object.keys(feats).length) cfg.features = feats; else delete cfg.features;
 
   // slop is an optional block — its volumes/channel (owned by the header
   // mixer + picker, no widget on this page) ride along in the clone. Set
