@@ -1558,6 +1558,16 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding-top: 3px;
 }
 .cost-amt { color: #6e9c7d; }
+.costs-harness-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-bar label.costs-harness-choice input {
+  flex: 0 0 auto;
+  max-width: none;
+  padding: 0;
+}
 /* Earlier-day slice of a multi-day conversation: a dim ↩ marker and a
    faintly recessed row, so a continued agent reads as belonging to the
    newer row above it rather than as a separate agent. */

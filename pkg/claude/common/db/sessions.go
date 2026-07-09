@@ -9,11 +9,11 @@ import (
 
 // SessionRow represents a session row in the database.
 type SessionRow struct {
-	ID             string
-	TmuxSession    string
-	PID            int
-	Cwd            string
-	ConvID         string
+	ID           string
+	TmuxSession  string
+	PID          int
+	Cwd          string
+	ConvID       string
 	Status       string
 	StatusDetail string
 	// SubagentCount is the number of sub-agents believed to be running
@@ -748,6 +748,31 @@ func SessionModels() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// SessionHarnesses returns the harness of every live session, keyed by session
+// id. Since v103 the harness is denormalised onto each session_cost_daily row,
+// so this is only the fallback for pre-v103 cost history that still has a live
+// sessions row.
+func SessionHarnesses() (map[string]string, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id, COALESCE(NULLIF(harness, ''), 'claude') FROM sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, harness string
+		if err := rows.Scan(&id, &harness); err != nil {
+			return nil, err
+		}
+		out[id] = harness
+	}
+	return out, rows.Err()
+}
+
 // UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
 // "high", "xhigh", "max") the session is currently running on. Claude
 // Code's statusline carries it as effort.level on every render (when the
@@ -840,10 +865,11 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// conv via agent_conversations — the persisted column survives a /clear or
 	// clone that moves the conv's actor mapping, which the live conv lookup alone
 	// would miss.
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, agent_id)
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, agent_id, harness)
 		SELECT id, ?, conv_id, ?, ?, model,
 		       COALESCE(NULLIF(sessions.agent_id, ''),
-		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+		       COALESCE(NULLIF(harness, ''), 'claude')
 		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
@@ -854,7 +880,9 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
 			                ELSE session_cost_daily.model END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
-			                ELSE session_cost_daily.agent_id END`,
+			                ELSE session_cost_daily.agent_id END,
+			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+			                ELSE session_cost_daily.harness END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
@@ -899,10 +927,11 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id)
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
 		SELECT id, ?, conv_id, ?, ?, model,
 		       COALESCE(NULLIF(sessions.agent_id, ''),
-		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), '')
+		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+		       COALESCE(NULLIF(harness, ''), 'claude')
 		FROM sessions WHERE id = ?
 		ON CONFLICT(session_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
@@ -913,7 +942,9 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
 			                ELSE session_cost_daily.model END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
-			                ELSE session_cost_daily.agent_id END`,
+			                ELSE session_cost_daily.agent_id END,
+			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+			                ELSE session_cost_daily.harness END`,
 		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
 	if err != nil {
 		return err
@@ -949,7 +980,8 @@ type CostDailyRow struct {
 	// tab's per-agent breakdown keeps naming a retired agent's model after
 	// its sessions row is deleted. "" for pre-v71 history of an
 	// already-deleted session, or a session that never reported a model.
-	Model string
+	Model   string
+	Harness string
 }
 
 // CostDelta is one recovered slice of actual spend: on this local day,
@@ -965,6 +997,7 @@ type CostDelta struct {
 	USD       float64
 	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 	Model     string // model display name denormalised onto the row; "" if unknown
+	Harness   string // harness denormalised onto the row; "" if unknown/pre-v103
 }
 
 // CostDeltas turns cumulative (conv, day) snapshots into per-day spend
@@ -1046,7 +1079,7 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 		prevKey = key
 		prevSession = r.SessionID
 		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAt: r.UpdatedAt, Model: r.Model})
+			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness})
 			baseline = val
 		}
 	}
@@ -1100,7 +1133,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model
+	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
 		FROM session_cost_daily
 		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
 	if err != nil {
@@ -1110,7 +1143,7 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 	var out []CostDailyRow
 	for rows.Next() {
 		var r CostDailyRow
-		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt, &r.Model); err != nil {
+		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &r.UpdatedAt, &r.Model, &r.Harness); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

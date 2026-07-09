@@ -38,6 +38,10 @@ let fillEmptyWeekdays = false;
 const INCLUDE_WEEKENDS_KEY = 'tclaude.dash.costs.includeWeekends';
 let includeWeekends = false;
 
+// Sticky harness subset for the breakdown table. Empty/missing means "all
+// currently present harnesses", so newly-added harnesses appear by default.
+const HARNESS_FILTER_KEY = 'tclaude.dash.costs.harnesses';
+
 // Sticky toggle for the per-agent cost badge on the Groups/Agents rows
 // (the 💲 button in the Groups filter bar). Default shown ('0' = not
 // hidden) so pay-per-token behaviour is unchanged; the human can hide the
@@ -93,6 +97,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 const COST_COLUMNS = [
   { label: 'Agent', sort: 'agent', text: true },
   { label: 'Cost', sort: 'cost', numeric: true },
+  { label: 'Harness', sort: 'harness', text: true },
   { label: 'Model', sort: 'model', text: true },
   { label: 'Last activity', sort: 'activity' },
 ];
@@ -429,6 +434,7 @@ function sortCostAgents(agents, key, dir) {
     switch (key) {
       case 'agent': c = (x.title || '').localeCompare(y.title || ''); break;
       case 'cost': c = (x.cost_usd || 0) - (y.cost_usd || 0); break;
+      case 'harness': c = (x.harness || '').localeCompare(y.harness || ''); break;
       case 'model': c = (x.model || '').localeCompare(y.model || ''); break;
       default: c = cmpStr(recencyKey(x), recencyKey(y)); break; // 'activity'
     }
@@ -446,6 +452,46 @@ function costHeaderHTML() {
     const arrow = active ? (costDir === 'asc' ? ' ▲' : ' ▼') : '';
     return `<th class="cost-sort${active ? ' active' : ''}" data-sort="${c.sort}" title="Sort by ${esc(c.label)}">${esc(c.label)}${arrow}</th>`;
   }).join('') + '</tr>';
+}
+
+function harnessLabel(h) {
+  return h || 'unknown';
+}
+
+function costHarnesses(agents) {
+  return [...new Set((agents || []).map(a => harnessLabel(a.harness)))].sort((a, b) => a.localeCompare(b));
+}
+
+function selectedCostHarnesses(harnesses) {
+  let saved = [];
+  try { saved = JSON.parse(dashPrefs.getItem(HARNESS_FILTER_KEY) || '[]') || []; } catch (_) { saved = []; }
+  const known = new Set(harnesses);
+  const selected = saved.filter(h => known.has(h));
+  return new Set(selected.length ? selected : harnesses);
+}
+
+function saveSelectedCostHarnesses(selected, allHarnesses) {
+  const all = selected.size === allHarnesses.length && allHarnesses.every(h => selected.has(h));
+  if (all) dashPrefs.removeItem(HARNESS_FILTER_KEY);
+  else dashPrefs.setItem(HARNESS_FILTER_KEY, JSON.stringify([...selected]));
+}
+
+function renderHarnessFilter(agents) {
+  const wrap = $('#filter-costs-harnesses');
+  if (!wrap) return { selected: new Set() };
+  const harnesses = costHarnesses(agents);
+  wrap.hidden = harnesses.length <= 1;
+  if (!harnesses.length) {
+    wrap.innerHTML = '';
+    return { selected: new Set() };
+  }
+  const selected = selectedCostHarnesses(harnesses);
+  wrap.innerHTML = harnesses.map(h =>
+    `<label class="filter-toggle costs-harness-choice" title="Show ${esc(h)} cost rows">`
+    + `<input type="checkbox" data-harness="${esc(h)}"${selected.has(h) ? ' checked' : ''} />`
+    + `<span>${esc(h)}</span></label>`
+  ).join('');
+  return { selected };
 }
 
 // renderTable draws the per-agent breakdown. The API splits a
@@ -497,13 +543,17 @@ function renderTable(data) {
   const sliceCount = {};
   for (const a of agents) sliceCount[a.conv_id] = (sliceCount[a.conv_id] || 0) + 1;
 
+  const { selected: harnessSelected } = renderHarnessFilter(agents);
   const q = ($('#filter-costs')?.value || '').trim().toLowerCase();
   const matches = a => !q
     || (a.title || '').toLowerCase().includes(q)
     || (a.agent_id || '').toLowerCase().includes(q)
     || (a.conv_id || '').toLowerCase().includes(q)
+    || (a.harness || '').toLowerCase().includes(q)
     || (a.model || '').toLowerCase().includes(q);
-  const visible = sortCostAgents(agents, costSort, costDir).filter(matches);
+  const visible = sortCostAgents(agents, costSort, costDir)
+    .filter(a => harnessSelected.has(harnessLabel(a.harness)))
+    .filter(matches);
   const filtered = visible.length !== agents.length;
   const shownConvs = new Set(visible.map(a => a.conv_id)).size;
   if (countEl) countEl.textContent = filtered ? `${shownConvs} / ${nAgents}` : '';
@@ -542,6 +592,7 @@ function renderTable(data) {
           <tr data-key="cost-${esc(a.conv_id)}-${esc(a.day)}"${cls.length ? ` class="${cls.join(' ')}"` : ''}${chain ? ` data-conv="${esc(a.conv_id)}"` : ''}>
             <td title="${esc(a.title || '(unknown)')}">${marker}<span class="rowname">${esc(a.title || '(unknown)')}</span> <span class="id" title="${esc(idTooltip(a.agent_id, a.conv_id))}">${esc(shortAgentId(a.agent_id, a.conv_id))}</span></td>
             <td><span class="cost-amt" title="$${(a.cost_usd || 0).toFixed(4)}">${esc(fmtUSD(a.cost_usd))}</span></td>
+            <td><span class="muted">${esc(harnessLabel(a.harness))}</span></td>
             <td><span class="muted">${esc(a.model || '')}</span></td>
             <td><span class="muted">${esc(fmtLastActivity(a))}</span></td>
           </tr>`;
@@ -549,6 +600,7 @@ function renderTable(data) {
         <tr class="cost-total-row">
           <td><span class="muted">${filtered ? 'matched' : 'total'} (${shownConvs} agent${shownConvs === 1 ? '' : 's'})</span></td>
           <td><span class="cost-amt">${esc(fmtUSD(footTotal))}</span></td>
+          <td></td>
           <td></td>
           <td></td>
         </tr>
@@ -666,6 +718,24 @@ function bindCostsFilter() {
       if (input) input.focus();
     });
   }
+}
+
+function bindCostsHarnessFilter() {
+  const wrap = $('#filter-costs-harnesses');
+  if (!wrap) return;
+  wrap.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox][data-harness]');
+    if (!cb) return;
+    const checks = [...wrap.querySelectorAll('input[type=checkbox][data-harness]')];
+    if (!checks.some(x => x.checked)) {
+      cb.checked = true;
+      return;
+    }
+    const all = checks.map(x => x.dataset.harness);
+    const selected = new Set(checks.filter(x => x.checked).map(x => x.dataset.harness));
+    saveSelectedCostHarnesses(selected, all);
+    reRenderCostTable();
+  });
 }
 
 async function loadCosts() {
@@ -921,6 +991,7 @@ function bindCostsTab() {
   bindCostsChartTip();
   bindCostsSort();
   bindCostsFilter();
+  bindCostsHarnessFilter();
   // Cost display multiplier: debounce typing so a few keystrokes settle
   // into one save+reload, but commit immediately on Enter / blur.
   const factorInput = $('#costs-factor');

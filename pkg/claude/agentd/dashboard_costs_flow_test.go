@@ -36,6 +36,7 @@ type costsRespConv struct {
 	LastDay      string  `json:"last_day"`
 	LastActivity string  `json:"last_activity"`
 	Model        string  `json:"model"`
+	Harness      string  `json:"harness"`
 }
 
 func fetchCosts(t *testing.T, mux http.Handler, query string) costsResp {
@@ -323,6 +324,38 @@ func TestDashboardCosts_ModelSurvivesSessionDeletion(t *testing.T) {
 	assert.InDelta(t, 3.50, out.Agents[0].CostUSD, 1e-9, "spend survives deletion")
 	assert.Equal(t, "Opus 4.8 (1M context)", out.Agents[0].Model,
 		"model denormalised onto cost history survives the session row's deletion")
+}
+
+// Scenario: the Costs tab's harness filter needs historical rows to stay
+// attributable after the live sessions row is deleted. session_cost_daily now
+// denormalises the harness at cost-write time, so /api/costs can still return
+// "codex" for retired Codex spend.
+func TestDashboardCosts_HarnessSurvivesSessionDeletion(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const convID = "wchd-1111-2222-3333-4444"
+	const sessionID = "wchd-s1"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          sessionID,
+		TmuxSession: "tmux-" + sessionID,
+		ConvID:      convID,
+		Cwd:         "/tmp/" + sessionID,
+		Status:      "idle",
+		Harness:     "codex",
+	}), "SaveSession")
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 3.50), "virtual cost")
+	require.NoError(t, db.DeleteSession(sessionID), "DeleteSession")
+
+	from := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from+"&whatif=1")
+
+	require.Len(t, out.Agents, 1, "one breakdown row for the retired conv")
+	assert.Equal(t, convID, out.Agents[0].ConvID)
+	assert.InDelta(t, 3.50, out.Agents[0].CostUSD, 1e-9, "virtual spend survives deletion")
+	assert.Equal(t, "codex", out.Agents[0].Harness,
+		"harness denormalised onto cost history survives the session row's deletion")
 }
 
 // Scenario: within a single day, the precise last-activity timestamp

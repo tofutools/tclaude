@@ -109,8 +109,10 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(".cost-tip", "cursor-following tooltip element styled")
 	must("function bindCostsChartTip", "cursor-following tooltip wired")
 
-	// Breakdown table: the per-agent model column, now rendered through
+	// Breakdown table: the per-agent harness + model columns, now rendered through
 	// the sortable-header builder rather than a static <th>.
+	must("{ label: 'Harness', sort: 'harness'", "harness column defined in the sortable header set")
+	must("a.harness", "harness field rendered from the API row")
 	must("{ label: 'Model', sort: 'model'", "model column defined in the sortable header set")
 	must("a.model", "model field rendered from the API row")
 
@@ -123,8 +125,12 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function bindCostsSort", "header-click sort wired")
 	must("#costs-table th.cost-sort { cursor: pointer", "sortable headers styled clickable")
 
-	// Breakdown filter: a client-side text narrowing of the table (matches
-	// name / id / model), with the matched/all count chip and clear button.
+	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
+	// the table (matches name / id / harness / model), with the matched/all
+	// count chip and clear button.
+	must(`id="filter-costs-harnesses"`, "harness filter mount present")
+	must("function bindCostsHarnessFilter", "harness checkbox filter wired")
+	must("tclaude.dash.costs.harnesses", "harness filter persisted")
 	must(`id="filter-costs"`, "breakdown filter input present")
 	must(`id="filter-costs-count"`, "filter match-count chip present")
 	must(`id="filter-costs-clear"`, "filter clear button present")

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 102
+const currentVersion = 103
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -81,7 +81,7 @@ func migrate(db *sql.DB) error {
 // re-adds a sub-agent whose Start was lost, the TTL ages out one whose Stop
 // was lost — and subagent_count becomes a derived cache of it.
 //
-// TEXT NOT NULL DEFAULT '' — a pre-existing row reads as "no ledger yet",
+// TEXT NOT NULL DEFAULT ” — a pre-existing row reads as "no ledger yet",
 // which the read side falls back from (see stateForConvIn). One transaction;
 // the ADD COLUMN is guarded by a sqlite_master table-existence probe AND a
 // pragma_table_info column probe (the migrateV65toV66 / migrateV56toV57
