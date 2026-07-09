@@ -2,7 +2,6 @@ package state
 
 import (
 	"regexp"
-	"strings"
 )
 
 var (
@@ -12,7 +11,7 @@ var (
 )
 
 func ValidateActorRef(actor ActorRef) bool {
-	value := strings.TrimSpace(string(actor))
+	value := string(actor)
 	return humanActorPattern.MatchString(value) ||
 		agentActorPattern.MatchString(value) ||
 		programActorPattern.MatchString(value)

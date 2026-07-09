@@ -69,6 +69,9 @@ type Event struct {
 }
 
 func Apply(st State, event Event) (State, error) {
+	if event.Seq > 0 && st.LastLogSeq > 0 && event.Seq <= st.LastLogSeq {
+		return State{}, fmt.Errorf("event seq %d must be greater than lastLogSeq %d", event.Seq, st.LastLogSeq)
+	}
 	next := Clone(st)
 	normalizeState(&next)
 
@@ -85,6 +88,9 @@ func Apply(st State, event Event) (State, error) {
 }
 
 func ApplyAll(st State, events []Event) (State, error) {
+	// This intentionally reuses Apply's clone-per-event semantics so replay has
+	// the same immutability contract as single-event application. Long-log
+	// executors can optimize this later behind the same reducer semantics.
 	next := st
 	for _, event := range events {
 		applied, err := Apply(next, event)
@@ -99,9 +105,15 @@ func ApplyAll(st State, events []Event) (State, error) {
 func applyEvent(st *State, event Event) error {
 	switch event.Type {
 	case EventRunInitialized:
+		if st.RunID != "" || len(st.Nodes) > 0 {
+			return fmt.Errorf("run is already initialized")
+		}
 		initialized := New(event.RunID, event.OriginalTemplateRef, event.CurrentTemplateRef, event.Nodes)
 		initialized.Status = RunStatusRunning
 		if event.RunStatus != "" {
+			if !event.RunStatus.IsValid() {
+				return fmt.Errorf("invalid run status %q", event.RunStatus)
+			}
 			initialized.Status = event.RunStatus
 		}
 		initialized.LastLogSeq = st.LastLogSeq
@@ -112,6 +124,9 @@ func applyEvent(st *State, event Event) error {
 		if event.RunStatus == "" {
 			return fmt.Errorf("run_status_set requires runStatus")
 		}
+		if !event.RunStatus.IsValid() {
+			return fmt.Errorf("invalid run status %q", event.RunStatus)
+		}
 		st.Status = event.RunStatus
 		return nil
 	case EventNodeAttemptStarted:
@@ -119,21 +134,28 @@ func applyEvent(st *State, event Event) error {
 		if err != nil {
 			return err
 		}
+		if node.Status == NodeStatusRunning || node.ActiveAttempt != nil {
+			return fmt.Errorf("node %q already has an active attempt", event.NodeID)
+		}
 		attempt := event.Attempt
 		if attempt <= 0 {
 			attempt = node.Attempt + 1
 		}
+		if attempt <= node.Attempt {
+			return fmt.Errorf("attempt %d for node %q must be greater than current attempt %d", attempt, event.NodeID, node.Attempt)
+		}
 		node.Status = NodeStatusRunning
 		node.Attempt = attempt
+		actor := normalizeActor(event.Actor)
 		node.Assignee = event.Assignee
 		if node.Assignee == "" {
-			node.Assignee = string(event.Actor)
+			node.Assignee = string(actor)
 		}
 		node.ActiveAttempt = &AttemptState{
 			Attempt:   attempt,
-			Actor:     event.Actor,
+			Actor:     actor,
 			CommandID: event.CommandID,
-			StartedAt: eventTime(event),
+			StartedAt: event.At,
 		}
 		st.Nodes[event.NodeID] = node
 		return nil
@@ -145,9 +167,15 @@ func applyEvent(st *State, event Event) error {
 		if node.ActiveAttempt == nil {
 			return fmt.Errorf("node %q has no active attempt", event.NodeID)
 		}
-		node.ActiveAttempt.SettledAt = eventTime(event)
+		if event.Outcome == "" && event.NodeStatus == "" {
+			return fmt.Errorf("node_attempt_settled requires outcome or nodeStatus")
+		}
+		node.ActiveAttempt.SettledAt = event.At
 		node.ActiveAttempt.Outcome = event.Outcome
 		status := event.NodeStatus
+		if status != "" && !status.IsValid() {
+			return fmt.Errorf("invalid node status %q", status)
+		}
 		if status == "" {
 			status = NodeStatusCompleted
 			if !isPassOutcome(event.Outcome) {
@@ -162,6 +190,9 @@ func applyEvent(st *State, event Event) error {
 		if err != nil {
 			return err
 		}
+		if node.Status == NodeStatusCompleted && (node.ChosenEdge != "" || len(node.Decisions) > 0) {
+			return fmt.Errorf("decision node %q is already completed", event.NodeID)
+		}
 		if node.Type == "" {
 			node.Type = model.NodeTypeDecision
 		}
@@ -170,10 +201,12 @@ func applyEvent(st *State, event Event) error {
 			decision = *event.Decision
 		}
 		if decision.Actor == "" {
-			decision.Actor = event.Actor
+			decision.Actor = normalizeActor(event.Actor)
+		} else {
+			decision.Actor = normalizeActor(decision.Actor)
 		}
 		if decision.Timestamp.IsZero() {
-			decision.Timestamp = eventTime(event)
+			decision.Timestamp = event.At
 		}
 		if decision.Verdict == "" {
 			decision.Verdict = event.Outcome
@@ -207,6 +240,9 @@ func applyEvent(st *State, event Event) error {
 		node.BlockedReason = ""
 		node.BlockedOwner = ""
 		node.Status = event.NodeStatus
+		if node.Status != "" && !node.Status.IsValid() {
+			return fmt.Errorf("invalid node status %q", node.Status)
+		}
 		if node.Status == "" || node.Status == NodeStatusBlocked {
 			node.Status = NodeStatusReady
 		}
@@ -226,8 +262,14 @@ func applyEvent(st *State, event Event) error {
 		if wait.Status == "" {
 			wait.Status = WaitStatusPending
 		}
+		if !wait.Status.IsValid() {
+			return fmt.Errorf("invalid wait status %q", wait.Status)
+		}
+		if !wait.Kind.IsValid() {
+			return fmt.Errorf("invalid wait kind %q", wait.Kind)
+		}
 		if wait.CreatedAt.IsZero() {
-			wait.CreatedAt = eventTime(event)
+			wait.CreatedAt = event.At
 		}
 		if wait.ID == "" || wait.NodeID == "" {
 			return fmt.Errorf("wait_created requires wait id and node id")
@@ -238,7 +280,9 @@ func applyEvent(st *State, event Event) error {
 			return err
 		}
 		node.Status = waitingStatus(wait.Kind)
-		node.Assignee = wait.Assignee
+		if wait.Assignee != "" {
+			node.Assignee = wait.Assignee
+		}
 		st.Nodes[wait.NodeID] = node
 		return nil
 	case EventWaitSatisfied:
@@ -247,13 +291,16 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("wait %q is not declared", event.WaitID)
 		}
 		wait.Status = WaitStatusSatisfied
-		wait.SatisfiedAt = eventTime(event)
+		wait.SatisfiedAt = event.At
 		st.Waits[event.WaitID] = wait
 		node, err := getNode(st, wait.NodeID)
 		if err != nil {
 			return err
 		}
 		node.Status = event.NodeStatus
+		if node.Status != "" && !node.Status.IsValid() {
+			return fmt.Errorf("invalid node status %q", node.Status)
+		}
 		if node.Status == "" {
 			node.Status = NodeStatusReady
 		}
@@ -273,8 +320,11 @@ func applyEvent(st *State, event Event) error {
 		if timer.Status == "" {
 			timer.Status = WaitStatusPending
 		}
+		if !timer.Status.IsValid() {
+			return fmt.Errorf("invalid timer status %q", timer.Status)
+		}
 		if timer.CreatedAt.IsZero() {
-			timer.CreatedAt = eventTime(event)
+			timer.CreatedAt = event.At
 		}
 		if timer.ID == "" || timer.NodeID == "" {
 			return fmt.Errorf("timer_created requires timer id and node id")
@@ -293,13 +343,16 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("timer %q is not declared", event.TimerID)
 		}
 		timer.Status = WaitStatusSatisfied
-		timer.SatisfiedAt = eventTime(event)
+		timer.SatisfiedAt = event.At
 		st.Timers[event.TimerID] = timer
 		node, err := getNode(st, timer.NodeID)
 		if err != nil {
 			return err
 		}
 		node.Status = event.NodeStatus
+		if node.Status != "" && !node.Status.IsValid() {
+			return fmt.Errorf("invalid node status %q", node.Status)
+		}
 		if node.Status == "" {
 			node.Status = NodeStatusReady
 		}
@@ -313,8 +366,11 @@ func applyEvent(st *State, event Event) error {
 		if command.Status == "" {
 			command.Status = CommandStatusIssued
 		}
+		if !command.Status.IsValid() {
+			return fmt.Errorf("invalid command status %q", command.Status)
+		}
 		if command.CreatedAt.IsZero() {
-			command.CreatedAt = eventTime(event)
+			command.CreatedAt = event.At
 		}
 		if command.ID == "" {
 			return fmt.Errorf("command_issued requires command id")
@@ -344,13 +400,16 @@ func applyEvent(st *State, event Event) error {
 		return nil
 	case EventAdminRepairRecorded:
 		record := AdminRecord{
-			Actor:       event.Actor,
+			Actor:       normalizeActor(event.Actor),
 			Reason:      event.Reason,
 			EvidenceRef: event.EvidenceRef,
-			Timestamp:   eventTime(event),
+			Timestamp:   event.At,
 		}
 		st.AdminRecords = append(st.AdminRecords, record)
 		if event.RunStatus != "" {
+			if !event.RunStatus.IsValid() {
+				return fmt.Errorf("invalid run status %q", event.RunStatus)
+			}
 			st.Status = event.RunStatus
 		}
 		return nil
@@ -363,10 +422,12 @@ func applyEvent(st *State, event Event) error {
 			divergence.Diverged = true
 		}
 		if divergence.At.IsZero() {
-			divergence.At = eventTime(event)
+			divergence.At = event.At
 		}
 		if divergence.Actor == "" {
-			divergence.Actor = event.Actor
+			divergence.Actor = normalizeActor(event.Actor)
+		} else {
+			divergence.Actor = normalizeActor(divergence.Actor)
 		}
 		if divergence.Reason == "" {
 			divergence.Reason = event.Reason
@@ -392,16 +453,13 @@ func getNode(st *State, nodeID string) (NodeState, error) {
 	return node, nil
 }
 
-func eventTime(event Event) time.Time {
-	if event.At.IsZero() {
-		return time.Time{}
-	}
-	return event.At
+func normalizeActor(actor ActorRef) ActorRef {
+	return ActorRef(strings.TrimSpace(string(actor)))
 }
 
 func isPassOutcome(outcome string) bool {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
-	case "", "pass", "passed", "success", "succeeded", "ok", "completed":
+	case "pass", "passed", "success", "succeeded", "ok", "completed":
 		return true
 	default:
 		return false

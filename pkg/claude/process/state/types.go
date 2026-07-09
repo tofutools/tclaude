@@ -36,14 +36,18 @@ const (
 	NodeStatusBlocked        NodeStatus = "blocked"
 	NodeStatusCompleted      NodeStatus = "completed"
 	NodeStatusFailed         NodeStatus = "failed"
-	NodeStatusSkipped        NodeStatus = "skipped"
+	// Skipped is reserved for manual advancement/repair flows in later process
+	// PRs; the phase-1 reducer validates but does not currently emit it.
+	NodeStatusSkipped NodeStatus = "skipped"
 )
 
 type CommandStatus string
 
 const (
-	CommandStatusIssued     CommandStatus = "issued"
-	CommandStatusObserved   CommandStatus = "observed"
+	CommandStatusIssued   CommandStatus = "issued"
+	CommandStatusObserved CommandStatus = "observed"
+	// Reconciled and canceled are reserved for the engine/store layer that will
+	// own command lifecycle cleanup after this schema-only package.
 	CommandStatusReconciled CommandStatus = "reconciled"
 	CommandStatusCanceled   CommandStatus = "canceled"
 )
@@ -53,7 +57,9 @@ type WaitStatus string
 const (
 	WaitStatusPending   WaitStatus = "pending"
 	WaitStatusSatisfied WaitStatus = "satisfied"
-	WaitStatusCanceled  WaitStatus = "canceled"
+	// Canceled is reserved for the engine/store layer; the phase-1 reducer only
+	// creates and satisfies waits.
+	WaitStatusCanceled WaitStatus = "canceled"
 )
 
 type WaitKind string
@@ -89,7 +95,7 @@ type TemplateDivergence struct {
 	Diverged bool      `json:"diverged"`
 	Reason   string    `json:"reason,omitempty"`
 	Actor    ActorRef  `json:"actor,omitempty"`
-	At       time.Time `json:"at,omitempty"`
+	At       time.Time `json:"at,omitzero"`
 }
 
 type NodeState struct {
@@ -110,8 +116,8 @@ type AttemptState struct {
 	Attempt   int       `json:"attempt"`
 	Actor     ActorRef  `json:"actor,omitempty"`
 	CommandID string    `json:"commandId,omitempty"`
-	StartedAt time.Time `json:"startedAt,omitempty"`
-	SettledAt time.Time `json:"settledAt,omitempty"`
+	StartedAt time.Time `json:"startedAt,omitzero"`
+	SettledAt time.Time `json:"settledAt,omitzero"`
 	Outcome   string    `json:"outcome,omitempty"`
 }
 
@@ -122,8 +128,8 @@ type OutstandingCommand struct {
 	Kind           string        `json:"kind"`
 	Status         CommandStatus `json:"status"`
 	ExternalRef    string        `json:"externalRef,omitempty"`
-	CreatedAt      time.Time     `json:"createdAt,omitempty"`
-	ReconcileAfter time.Time     `json:"reconcileAfter,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt,omitzero"`
+	ReconcileAfter time.Time     `json:"reconcileAfter,omitzero"`
 }
 
 type WaitRecord struct {
@@ -133,18 +139,18 @@ type WaitRecord struct {
 	Status      WaitStatus `json:"status"`
 	Assignee    string     `json:"assignee,omitempty"`
 	CommandID   string     `json:"commandId,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt,omitempty"`
-	DueAt       time.Time  `json:"dueAt,omitempty"`
-	SatisfiedAt time.Time  `json:"satisfiedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt,omitzero"`
+	DueAt       time.Time  `json:"dueAt,omitzero"`
+	SatisfiedAt time.Time  `json:"satisfiedAt,omitzero"`
 }
 
 type TimerRecord struct {
 	ID          string     `json:"id"`
 	NodeID      string     `json:"nodeId"`
 	Status      WaitStatus `json:"status"`
-	CreatedAt   time.Time  `json:"createdAt,omitempty"`
-	DueAt       time.Time  `json:"dueAt"`
-	SatisfiedAt time.Time  `json:"satisfiedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt,omitzero"`
+	DueAt       time.Time  `json:"dueAt,omitzero"`
+	SatisfiedAt time.Time  `json:"satisfiedAt,omitzero"`
 }
 
 type ActorRef string
@@ -153,14 +159,14 @@ type DecisionRecord struct {
 	Actor       ActorRef  `json:"actor"`
 	Verdict     string    `json:"verdict"`
 	EvidenceRef string    `json:"evidenceRef,omitempty"`
-	Timestamp   time.Time `json:"timestamp"`
+	Timestamp   time.Time `json:"timestamp,omitzero"`
 }
 
 type AdminRecord struct {
 	Actor       ActorRef  `json:"actor"`
 	Reason      string    `json:"reason"`
 	EvidenceRef string    `json:"evidenceRef,omitempty"`
-	Timestamp   time.Time `json:"timestamp"`
+	Timestamp   time.Time `json:"timestamp,omitzero"`
 }
 
 type NodeInit struct {

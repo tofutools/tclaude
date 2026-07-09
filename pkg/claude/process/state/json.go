@@ -14,6 +14,17 @@ var (
 )
 
 func Decode(data []byte) (*State, error) {
+	var header struct {
+		StateSchemaVersion int `json:"stateSchemaVersion"`
+	}
+	headerDec := json.NewDecoder(bytes.NewReader(data))
+	if err := headerDec.Decode(&header); err != nil {
+		return nil, fmt.Errorf("decode process state schema version: %w", err)
+	}
+	if err := CheckSchemaVersion(header.StateSchemaVersion); err != nil {
+		return nil, err
+	}
+
 	var st State
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -26,9 +37,6 @@ func Decode(data []byte) (*State, error) {
 			return nil, fmt.Errorf("decode process state: trailing JSON: %w", err)
 		}
 		return nil, fmt.Errorf("decode process state: multiple JSON values")
-	}
-	if err := CheckSchemaVersion(st.StateSchemaVersion); err != nil {
-		return nil, err
 	}
 	normalizeState(&st)
 	return &st, nil

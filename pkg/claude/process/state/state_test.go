@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,82 @@ func TestReducerSequences(t *testing.T) {
 			},
 		},
 		{
+			name: "timer created and satisfied",
+			events: []Event{
+				initEvent(),
+				{
+					Type: EventTimerCreated,
+					Seq:  2,
+					Timer: &TimerRecord{
+						ID:     "timer_1",
+						NodeID: "timer",
+						DueAt:  testTime.Add(time.Hour),
+					},
+				},
+				{
+					Type:    EventTimerSatisfied,
+					Seq:     3,
+					At:      testTime,
+					TimerID: "timer_1",
+				},
+			},
+			assert: func(t *testing.T, st State) {
+				if st.Timers["timer_1"].Status != WaitStatusSatisfied {
+					t.Fatalf("timer = %#v", st.Timers["timer_1"])
+				}
+				if st.Nodes["timer"].Status != NodeStatusReady {
+					t.Fatalf("node = %#v", st.Nodes["timer"])
+				}
+			},
+		},
+		{
+			name: "failed outcome settles failed",
+			events: []Event{
+				initEvent(),
+				{
+					Type:   EventNodeAttemptStarted,
+					Seq:    2,
+					NodeID: "implement",
+					Actor:  "agent:agt_dev123",
+				},
+				{
+					Type:    EventNodeAttemptSettled,
+					Seq:     3,
+					NodeID:  "implement",
+					Outcome: "fail",
+				},
+			},
+			assert: func(t *testing.T, st State) {
+				if st.Nodes["implement"].Status != NodeStatusFailed {
+					t.Fatalf("node = %#v", st.Nodes["implement"])
+				}
+			},
+		},
+		{
+			name: "explicit settled status override",
+			events: []Event{
+				initEvent(),
+				{
+					Type:   EventNodeAttemptStarted,
+					Seq:    2,
+					NodeID: "implement",
+					Actor:  "agent:agt_dev123",
+				},
+				{
+					Type:       EventNodeAttemptSettled,
+					Seq:        3,
+					NodeID:     "implement",
+					NodeStatus: NodeStatusBlocked,
+					Outcome:    "needs-human",
+				},
+			},
+			assert: func(t *testing.T, st State) {
+				if st.Nodes["implement"].Status != NodeStatusBlocked {
+					t.Fatalf("node = %#v", st.Nodes["implement"])
+				}
+			},
+		},
+		{
 			name: "blocked unblocked and admin repair",
 			events: []Event{
 				initEvent(),
@@ -209,9 +286,10 @@ func TestReducerDoesNotMutateInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := st
+	original := Clone(st)
 	_, err = Apply(st, Event{
 		Type:   EventNodeBlocked,
+		Seq:    2,
 		NodeID: "implement",
 		Reason: "blocked",
 		Owner:  "human:johan",
@@ -219,8 +297,108 @@ func TestReducerDoesNotMutateInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if original.Nodes["implement"].Status != st.Nodes["implement"].Status {
+	if !reflect.DeepEqual(original, st) {
 		t.Fatal("input state mutated")
+	}
+	if st.Nodes["implement"].Status != NodeStatusPending {
+		t.Fatalf("pre-state changed to %q", st.Nodes["implement"].Status)
+	}
+}
+
+func TestCloneDeepCopiesState(t *testing.T) {
+	st, err := ApplyAll(State{}, []Event{
+		initEvent(),
+		{
+			Type:   EventNodeAttemptStarted,
+			Seq:    2,
+			NodeID: "implement",
+			Actor:  "agent:agt_dev123",
+		},
+		{
+			Type: EventWaitCreated,
+			Seq:  3,
+			Wait: &WaitRecord{ID: "wait_1", NodeID: "wait-human", Kind: WaitKindHuman, Status: WaitStatusPending},
+		},
+		{
+			Type:    EventCommandIssued,
+			Seq:     4,
+			Command: &OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: "agent.spawn"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clone := Clone(st)
+	clone.Nodes["implement"].ActiveAttempt.Actor = "agent:agt_other"
+	clone.Waits["wait_1"] = WaitRecord{ID: "wait_1", NodeID: "wait-human", Kind: WaitKindAgent, Status: WaitStatusCanceled}
+	clone.OutstandingCommands["cmd_1"] = OutstandingCommand{ID: "cmd_1", NodeID: "implement", Kind: "changed"}
+
+	if st.Nodes["implement"].ActiveAttempt.Actor != "agent:agt_dev123" {
+		t.Fatal("node active attempt aliased")
+	}
+	if st.Waits["wait_1"].Kind != WaitKindHuman {
+		t.Fatal("wait map aliased")
+	}
+	if st.OutstandingCommands["cmd_1"].Kind != "agent.spawn" {
+		t.Fatal("command map aliased")
+	}
+}
+
+func TestReducerErrors(t *testing.T) {
+	base, err := Apply(State{}, initEvent())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := Apply(base, Event{Type: EventNodeAttemptStarted, Seq: 2, NodeID: "implement", Actor: "agent:agt_dev123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionDone, err := Apply(base, Event{
+		Type:       EventDecisionRecorded,
+		Seq:        2,
+		NodeID:     "decide",
+		ChosenEdge: "approve",
+		Decision:   &DecisionRecord{Actor: "human:johan", Verdict: "approve"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name  string
+		st    State
+		event Event
+		want  string
+	}{
+		{name: "reinit", st: base, event: Event{Type: EventRunInitialized, Seq: 11, RunID: "run_2", OriginalTemplateRef: "demo@sha256:old", CurrentTemplateRef: "demo@sha256:old"}, want: "already initialized"},
+		{name: "seq regression", st: withLastSeq(base, 10), event: Event{Type: EventRunStatusSet, Seq: 3, RunStatus: RunStatusRunning}, want: "must be greater"},
+		{name: "duplicate seq", st: withLastSeq(base, 10), event: Event{Type: EventRunStatusSet, Seq: 10, RunStatus: RunStatusRunning}, want: "must be greater"},
+		{name: "unknown event type", st: base, event: Event{Type: "future", Seq: 11}, want: "unsupported"},
+		{name: "status set without status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11}, want: "requires runStatus"},
+		{name: "invalid run status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11, RunStatus: "bogus"}, want: "invalid run status"},
+		{name: "undeclared node", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "missing"}, want: "not declared"},
+		{name: "start while running", st: running, event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Actor: "agent:agt_dev123"}, want: "active attempt"},
+		{name: "attempt regression", st: baseWithAttempt(2), event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Attempt: 1, Actor: "agent:agt_dev123"}, want: "must be greater"},
+		{name: "settle without outcome", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement"}, want: "requires outcome"},
+		{name: "invalid node status override", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement", Outcome: "pass", NodeStatus: "bogus"}, want: "invalid node status"},
+		{name: "second decision", st: decisionDone, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already completed"},
+		{name: "unknown wait", st: base, event: Event{Type: EventWaitSatisfied, Seq: 11, WaitID: "missing"}, want: "not declared"},
+		{name: "invalid wait kind", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: "bogus"}}, want: "invalid wait kind"},
+		{name: "invalid wait status", st: base, event: Event{Type: EventWaitCreated, Seq: 11, Wait: &WaitRecord{ID: "wait", NodeID: "wait-human", Kind: WaitKindHuman, Status: "bogus"}}, want: "invalid wait status"},
+		{name: "unknown timer", st: base, event: Event{Type: EventTimerSatisfied, Seq: 11, TimerID: "missing"}, want: "not declared"},
+		{name: "command without id", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{NodeID: "implement", Kind: "agent.spawn"}}, want: "command id"},
+		{name: "invalid command status", st: base, event: Event{Type: EventCommandIssued, Seq: 11, Command: &OutstandingCommand{ID: "cmd", NodeID: "implement", Kind: "agent.spawn", Status: "bogus"}}, want: "invalid command status"},
+		{name: "unknown command observed", st: base, event: Event{Type: EventCommandObserved, Seq: 11, CommandID: "missing"}, want: "not outstanding"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Apply(tt.st, tt.event)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -270,6 +448,29 @@ func TestInvariants(t *testing.T) {
 			}),
 			code: "invalid_decision_actor",
 		},
+		{
+			name: "waiting human with timer wait",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{
+					"a": {Status: NodeStatusWaitingHuman},
+				})
+				st.Waits["wait"] = WaitRecord{ID: "wait", NodeID: "a", Kind: WaitKindTimer, Status: WaitStatusPending}
+				return st
+			}(),
+			code: "waiting_node_without_wait",
+		},
+		{
+			name: "completed decision with mismatched chosen edge",
+			st: stateWithNodes(map[string]NodeState{
+				"a": {
+					Type:       model.NodeTypeDecision,
+					Status:     NodeStatusCompleted,
+					ChosenEdge: "approve",
+					Decisions:  []DecisionRecord{{Actor: "human:johan", Verdict: "reject"}},
+				},
+			}),
+			code: "completed_decision_without_one_chosen_edge",
+		},
 	}
 
 	for _, tt := range tests {
@@ -314,6 +515,13 @@ func TestInvariantsPassForValidState(t *testing.T) {
 	}
 }
 
+func TestCheckInvariantsNilStateReportsOnce(t *testing.T) {
+	diagnostics := CheckInvariants(nil)
+	if len(diagnostics) != 1 || diagnostics[0].Code != "nil_state" {
+		t.Fatalf("expected one nil_state diagnostic, got %#v", diagnostics)
+	}
+}
+
 func TestJSONRoundTripStrictUnknownAndSchemaVersion(t *testing.T) {
 	st, err := Apply(State{}, initEvent())
 	if err != nil {
@@ -334,6 +542,9 @@ func TestJSONRoundTripStrictUnknownAndSchemaVersion(t *testing.T) {
 	if roundTrip.LogChecksum != st.LogChecksum {
 		t.Fatalf("log checksum = %q", roundTrip.LogChecksum)
 	}
+	if strings.Contains(string(data), "0001-01-01") {
+		t.Fatalf("encoded state contains zero time noise:\n%s", data)
+	}
 
 	_, err = Decode([]byte(`{"stateSchemaVersion":1,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{},"lastLogSeq":0,"logChecksum":"","extra":true}`))
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
@@ -345,9 +556,24 @@ func TestJSONRoundTripStrictUnknownAndSchemaVersion(t *testing.T) {
 		t.Fatalf("expected newer schema error, got %v", err)
 	}
 
+	_, err = Decode([]byte(`{"stateSchemaVersion":999,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{},"lastLogSeq":0,"logChecksum":"","futureField":true}`))
+	if !errors.Is(err, ErrNewerSchemaVersion) {
+		t.Fatalf("expected newer schema error before unknown-field error, got %v", err)
+	}
+
 	_, err = Decode([]byte(`{"stateSchemaVersion":0,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{},"lastLogSeq":0,"logChecksum":""}`))
 	if !errors.Is(err, ErrInvalidSchemaVersion) {
 		t.Fatalf("expected invalid schema error, got %v", err)
+	}
+
+	_, err = Decode([]byte(`{"stateSchemaVersion":1,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{"a":{"status":"pending","extra":true}},"lastLogSeq":0,"logChecksum":""}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected nested unknown field error, got %v", err)
+	}
+
+	_, err = Decode([]byte(`{"stateSchemaVersion":1,"status":"running","originalTemplateRef":"a","currentTemplateRef":"a","nodes":{},"lastLogSeq":0,"logChecksum":""} {}`))
+	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("expected multiple JSON values error, got %v", err)
 	}
 }
 
@@ -358,11 +584,24 @@ func TestActorRefValidation(t *testing.T) {
 			t.Fatalf("expected actor %q to be valid", actor)
 		}
 	}
-	invalid := []ActorRef{"", "human:", "agent:123", "program:cmd", "other:x"}
+	invalid := []ActorRef{"", " human:johan ", "human:", "agent:123", "program:cmd", "other:x"}
 	for _, actor := range invalid {
 		if ValidateActorRef(actor) {
 			t.Fatalf("expected actor %q to be invalid", actor)
 		}
+	}
+}
+
+func TestApplyNormalizesActorRefs(t *testing.T) {
+	st, err := ApplyAll(State{}, []Event{
+		initEvent(),
+		{Type: EventNodeAttemptStarted, Seq: 2, NodeID: "implement", Actor: " agent:agt_dev123 "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Nodes["implement"].ActiveAttempt.Actor != "agent:agt_dev123" {
+		t.Fatalf("actor = %q", st.Nodes["implement"].ActiveAttempt.Actor)
 	}
 }
 
@@ -377,8 +616,25 @@ func initEvent() Event {
 			{ID: "implement", Type: model.NodeTypeTask},
 			{ID: "decide", Type: model.NodeTypeDecision},
 			{ID: "wait-human", Type: model.NodeTypeWait},
+			{ID: "timer", Type: model.NodeTypeWait},
 		},
 	}
+}
+
+func withLastSeq(st State, seq int64) State {
+	st.LastLogSeq = seq
+	return st
+}
+
+func baseWithAttempt(attempt int) State {
+	st, err := Apply(State{}, initEvent())
+	if err != nil {
+		panic(err)
+	}
+	node := st.Nodes["implement"]
+	node.Attempt = attempt
+	st.Nodes["implement"] = node
+	return st
 }
 
 func stateWithNodes(nodes map[string]NodeState) State {

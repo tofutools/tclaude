@@ -9,6 +9,9 @@ import (
 )
 
 func CheckInvariants(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
 	var diagnostics Diagnostics
 	diagnostics = append(diagnostics, WaitingNodesHaveWaitRecords(st)...)
 	diagnostics = append(diagnostics, RunningAttemptsHaveCommandOrActor(st)...)
@@ -72,7 +75,7 @@ func CompletedDecisionsHaveOneChosenEdge(st *State) Diagnostics {
 		if node.Type != model.NodeTypeDecision || node.Status != NodeStatusCompleted {
 			continue
 		}
-		if strings.TrimSpace(node.ChosenEdge) != "" && len(node.Decisions) == 1 {
+		if strings.TrimSpace(node.ChosenEdge) != "" && len(node.Decisions) == 1 && node.Decisions[0].Verdict == node.ChosenEdge {
 			continue
 		}
 		diagnostics = append(diagnostics, diagError(
@@ -133,7 +136,7 @@ func isWaitingStatus(status NodeStatus) bool {
 
 func waitingRecordExists(st *State, nodeID string, status NodeStatus) bool {
 	for _, wait := range st.Waits {
-		if wait.NodeID == nodeID && wait.Status == WaitStatusPending {
+		if wait.NodeID == nodeID && wait.Status == WaitStatusPending && waitKindMatchesStatus(wait.Kind, status) {
 			return true
 		}
 	}
@@ -146,6 +149,23 @@ func waitingRecordExists(st *State, nodeID string, status NodeStatus) bool {
 		}
 	}
 	return false
+}
+
+func waitKindMatchesStatus(kind WaitKind, status NodeStatus) bool {
+	switch status {
+	case NodeStatusWaitingHuman:
+		return kind == WaitKindHuman
+	case NodeStatusWaitingAgent:
+		return kind == WaitKindAgent
+	case NodeStatusWaitingProgram:
+		return kind == WaitKindProgram
+	case NodeStatusWaitingTimer:
+		return kind == WaitKindTimer
+	case NodeStatusWaitingSignal:
+		return kind == WaitKindSignal
+	default:
+		return false
+	}
 }
 
 func sortedKeys[V any](m map[string]V) []string {
