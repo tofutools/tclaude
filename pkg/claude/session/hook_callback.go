@@ -1105,6 +1105,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	if stopped || input.HookEventName == "SessionStart" {
 		persistCodexContextTelemetry(state, input)
 	}
+	persistCodexVirtualCostFromHook(state, input)
 	persistCodexUsageFromHook(state, input)
 
 	// Refresh usage cache when user is likely looking at the status bar.
@@ -1360,6 +1361,38 @@ func persistCodexUsageFromHook(state *SessionState, input HookCallbackInput) {
 	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, p); err != nil {
 		slog.Warn("codex-usage: failed to persist usage snapshot",
 			"session_id", state.ID, "error", err, "module", "hooks")
+	}
+}
+
+// persistCodexVirtualCostFromHook lifts Codex's cumulative token usage from
+// the rollout and writes the pay-per-token-equivalent estimate into
+// sessions.virtual_cost_usd, the same WHAT-IF column Claude Code subscription
+// sessions populate from statusline cost.total_cost_usd.
+func persistCodexVirtualCostFromHook(state *SessionState, input HookCallbackInput) {
+	if state == nil || state.Harness != harness.CodexName {
+		return
+	}
+	switch input.HookEventName {
+	case "Stop", "SubagentStop", "SessionStart", "PostCompact":
+	default:
+		return
+	}
+	p := input.TranscriptPath
+	if p == "" || !harness.IsCodexRolloutPath(p) {
+		return
+	}
+	cost, ok, err := harness.CodexVirtualCostFromRollout(p, input.Model)
+	if err != nil {
+		slog.Warn("codex-cost: failed to read rollout cost",
+			"session_id", state.ID, "path", p, "error", err, "module", "hooks")
+		return
+	}
+	if !ok {
+		return
+	}
+	if err := db.UpdateSessionVirtualCost(state.ID, cost.CostUSD); err != nil {
+		slog.Warn("codex-cost: failed to update session virtual cost",
+			"session_id", state.ID, "model", cost.Model, "error", err, "module", "hooks")
 	}
 }
 
