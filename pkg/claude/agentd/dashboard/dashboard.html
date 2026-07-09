@@ -715,6 +715,21 @@
     </div>
 
     <div class="cfg-section">
+      <h3>Experimental features</h3>
+      <p class="cfg-hint" style="padding-left:0">
+        Opt-in flags for features under active development. Such features ship dark on
+        <code>main</code> — off by default and invisible in normal use — so they can land in
+        small increments without a long-lived feature branch. Expect rough edges while a
+        flag is listed here; when a feature graduates, its flag disappears.
+      </p>
+      <div class="cfg-field">
+        <span class="cfg-label">Processes</span>
+        <label class="cfg-inline"><input type="checkbox" id="cfg-feature-processes" /> enable the in-development <strong>Processes</strong> feature</label>
+        <span class="cfg-hint">BPMN-lite repeatable process graphs — a drag-and-drop template editor, long-running instantiated runs, and a live process viewer. In development: surfaces appear as they land, and may change or break between versions. Stored as <code>features.processes</code>.</span>
+      </div>
+    </div>
+
+    <div class="cfg-section">
       <h3>Remote access</h3>
       <p class="cfg-hint" style="padding-left:0">
         Expose this <strong>dashboard</strong> to your phone or another machine over the

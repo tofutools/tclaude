@@ -1050,3 +1050,32 @@ func TestMatchSudoOverride_Keying(t *testing.T) {
 		assert.Equal(t, "full", ov.MaxDuration)
 	})
 }
+
+// ProcessesEnabled must be nil-safe and default to FALSE: a nil Config, an
+// absent features block, and an unset flag all keep the in-development
+// Processes feature dark; only an explicit features.processes:true enables it.
+func TestProcessesEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.ProcessesEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).ProcessesEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).ProcessesEnabled(), "features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
+}
+
+// features.processes round-trips through the config file, and an absent
+// block stays absent (omitempty) so it never shows as a spurious diff.
+func TestFeaturesConfig_RoundTrips(t *testing.T) {
+	in := &Config{Features: &FeaturesConfig{Processes: true}}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"features":{"processes":true}`)
+
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.True(t, out.ProcessesEnabled())
+
+	// A default config marshals without a features key at all.
+	none, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(none), "features")
+}

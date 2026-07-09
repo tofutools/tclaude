@@ -102,6 +102,31 @@ type Config struct {
 	// 5h/7d bars). Absent / blank falls back to the built-in defaults; see
 	// ResolvedUsageIdleTimeout and PollAnthropicUsageAPI.
 	Usage *UsageConfig `json:"usage,omitempty"`
+
+	// Features holds opt-in flags for features under active development —
+	// see FeaturesConfig. Absent → everything off.
+	Features *FeaturesConfig `json:"features,omitempty"`
+}
+
+// FeaturesConfig holds opt-in flags for features under active development.
+// Big features are built as dark increments on main behind these flags
+// (rather than on long-lived feature branches), so regular users see nothing
+// until a feature graduates and its flag is removed. Every flag defaults to
+// off; flip it here or in the dashboard Config tab to test locally.
+type FeaturesConfig struct {
+	// Processes enables the in-development Processes feature — BPMN-lite
+	// repeatable process graphs (drag-and-drop template editor, long-running
+	// instantiated runs, live viewer). While in development the flag gates the
+	// feature's user-visible surfaces (dashboard tab, CLI command, daemon
+	// routes) as they land.
+	Processes bool `json:"processes,omitempty"`
+}
+
+// ProcessesEnabled reports whether the opt-in Processes feature flag is set.
+// Nil-safe on both the config and the features block, so callers can gate on
+// a bare Load() result without nil checks.
+func (c *Config) ProcessesEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.Processes
 }
 
 // TUI color schemes — config tui.color_scheme. Picks the color palette the
