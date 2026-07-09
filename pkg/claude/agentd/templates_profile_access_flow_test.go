@@ -281,6 +281,10 @@ func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
 			{"name": "guest"},
 			{"name": "observer", "spawn_profile": "boss-kit",
 				"profile_inline": map[string]any{"is_owner": false}},
+			// Legacy flag raises past an explicit inline false (highest tier) —
+			// the derived bit must show what deploy actually grants.
+			{"name": "captain", "is_owner": true,
+				"profile_inline": map[string]any{"is_owner": false}},
 		},
 	}).Code, "create template")
 
@@ -294,13 +298,14 @@ func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
 		} `json:"agents"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
-	require.Len(t, got.Agents, 3)
+	require.Len(t, got.Agents, 4)
 	byName := map[string]bool{}
 	for _, a := range got.Agents {
 		byName[a.Name] = a.EffectiveIsOwner
-		assert.False(t, a.IsOwner, "no agent carries the legacy flag in this scenario")
+		assert.Equal(t, a.Name == "captain", a.IsOwner, "only captain carries the legacy flag")
 	}
 	assert.True(t, byName["chair"], "ref profile's owner default surfaces as effective_is_owner")
 	assert.False(t, byName["guest"], "plain member is not an owner")
 	assert.False(t, byName["observer"], "explicit profile_inline.is_owner=false wins over the ref default")
+	assert.True(t, byName["captain"], "the legacy flag's raise over an inline false is reflected, not hidden")
 }

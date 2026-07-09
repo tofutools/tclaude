@@ -189,6 +189,22 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 	if !t.UpdatedAt.IsZero() {
 		out.UpdatedAt = t.UpdatedAt.Format(time.RFC3339)
 	}
+	// Batch the registry reads behind the derived effective_is_owner bits: one
+	// lazy ListSpawnProfiles per template (and none for ref-free rosters)
+	// instead of a GetSpawnProfile per roster agent — templateToJSON runs for
+	// every template on every recurring dashboard poll.
+	var profByName map[string]*db.SpawnProfile
+	lookupProfile := func(name string) *db.SpawnProfile {
+		if profByName == nil {
+			profByName = map[string]*db.SpawnProfile{}
+			if all, err := db.ListSpawnProfiles(); err == nil {
+				for _, p := range all {
+					profByName[p.Name] = p
+				}
+			}
+		}
+		return profByName[name]
+	}
 	for _, a := range t.Agents {
 		perms := a.Permissions
 		if perms == nil {
@@ -209,7 +225,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			Sandbox:          a.Sandbox,
 			Approval:         a.Approval,
 			Wave:             a.Wave,
-			EffectiveIsOwner: effectiveTemplateAgentOwner(a),
+			EffectiveIsOwner: effectiveTemplateAgentOwner(a, lookupProfile),
 		}
 		if a.ProfileInline != nil {
 			pj := profileToJSON(a.ProfileInline)
@@ -1829,6 +1845,30 @@ type permOverride struct {
 	Effect string // db.PermEffectGrant | db.PermEffectDeny
 }
 
+// effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
+// would grant — resolveTemplateAgentAccess's owner tiers (referenced profile's
+// default → profile_inline tri-state → legacy flag raise), for DISPLAY
+// (templateToJSON's effective_is_owner). lookupProfile resolves a registry
+// profile by name; a nil result (dangling/unreadable ref) leaves that tier
+// silent instead of failing, because a GET must render the template either way
+// (the deploy path keeps its strict failure). Callers rendering many agents
+// feed a batch map, not a per-call DB read.
+func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(string) *db.SpawnProfile) bool {
+	owner := false
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
+		if prof := lookupProfile(ref); prof != nil && prof.IsOwner != nil {
+			owner = *prof.IsOwner
+		}
+	}
+	if p := a.ProfileInline; p != nil && p.IsOwner != nil {
+		owner = *p.IsOwner
+	}
+	if a.IsOwner {
+		owner = true
+	}
+	return owner
+}
+
 // resolveTemplateAgentAccess computes the effective birth-time access controls
 // for one instantiated template agent (JOH-350 / JOH-354): whether it is a
 // group owner, and its ordered per-slug permission overrides. Ownership and
@@ -1860,28 +1900,6 @@ type permOverride struct {
 // never denies or ownership) and keeps the access seam a single, obvious
 // profile: the one the AGENT picks. Widening it to role profiles would let a
 // role silently deny/own through an indirection, which is deliberately not done.
-// effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
-// would grant — resolveTemplateAgentAccess's owner tiers (referenced profile's
-// default → profile_inline tri-state → legacy flag raise), for DISPLAY
-// (templateToJSON's effective_is_owner): a dangling or unreadable profile ref
-// degrades to "tier silent" instead of failing, because a GET must render the
-// template either way (the deploy path keeps its strict failure).
-func effectiveTemplateAgentOwner(a db.GroupTemplateAgent) bool {
-	owner := false
-	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
-		if prof, err := db.GetSpawnProfile(ref); err == nil && prof != nil && prof.IsOwner != nil {
-			owner = *prof.IsOwner
-		}
-	}
-	if p := a.ProfileInline; p != nil && p.IsOwner != nil {
-		owner = *p.IsOwner
-	}
-	if a.IsOwner {
-		owner = true
-	}
-	return owner
-}
-
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
 	eff := map[string]string{}

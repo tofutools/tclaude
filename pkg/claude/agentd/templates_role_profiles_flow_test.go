@@ -232,6 +232,35 @@ func TestGroupTemplate_RoleProfileHarnessFeedsSaveValidation(t *testing.T) {
 	require.Equalf(t, http.StatusBadRequest, rec.Code,
 		"claude model over a codex role profile must fail at save, not deploy: %s", rec.Body.String())
 
+	// The role's DIRECT harness field feeds the chain too (one tier above its
+	// profile): a role that says harness=codex itself rejects the same shape.
+	require.Equalf(t, http.StatusCreated,
+		createRole(t, f, map[string]any{"name": "cx-direct", "harness": "codex"}).Code,
+		"create role with a direct harness")
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "doomed-direct",
+		"agents": []map[string]any{
+			{"name": "a", "model": "opus", "role_ref": "cx-direct"},
+		},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"claude model over a role's DIRECT codex harness must fail at save: %s", rec.Body.String())
+
+	// The profile_inline revalidation composes with the role tiers as well: a
+	// blank-harness custom config whose model is Claude-only over the
+	// role-resolved codex harness is rejected at save, naming the offending
+	// tier.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "doomed-inline",
+		"agents": []map[string]any{
+			{"name": "a", "role_ref": "cx-dev",
+				"profile_inline": map[string]any{"model": "opus"}},
+		},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"blank-harness profile_inline over a role-resolved codex harness must fail at save: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "profile_inline", "error names the offending tier")
+
 	// Codex model in the same shape: saves (no more false rejection) and the
 	// deploy spawns with it.
 	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
