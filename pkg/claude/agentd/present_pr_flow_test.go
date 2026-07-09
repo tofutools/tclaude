@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +62,10 @@ func TestPresentPR_SelfPresentsAndDashboardRenders(t *testing.T) {
 func TestPresentPR_DedupesByURLAndCanMarkHandled(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPresentedPRInfoResolverForTest(
+		func(rawURL string) (int, string, string, bool) {
+			return 124, rawURL, "open", true
+		}))
 	const worker = "pprd-aaaa-bbbb-cccc-dddd"
 
 	f.HaveGroup("alpha")
@@ -91,6 +96,53 @@ func TestPresentPR_DedupesByURLAndCanMarkHandled(t *testing.T) {
 	assert.Empty(t, m.PresentedPRs, "handled PRs are hidden from dashboard")
 }
 
+func TestPresentPR_DashboardRefreshesAndExpiresTerminalState(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPresentedPRInfoResolverForTest(
+		func(rawURL string) (int, string, string, bool) {
+			return 126, rawURL, "merged", true
+		}))
+	const worker = "pprx-aaaa-bbbb-cccc-dddd"
+	const prURL = "https://github.com/tofutools/tclaude/pull/126"
+
+	f.HaveGroup("alpha")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprx", "tmux-pprx", "/tmp/pprx")
+	f.HaveMember("alpha", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": prURL, "summary": "ready", "state": "open"}), worker))
+	require.Equalf(t, http.StatusOK, rec.Code, "present self: body=%s", rec.Body.String())
+
+	agentID, err := db.AgentIDForConv(worker)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	agePresentedPR(t, agentID, prURL, 5*time.Minute)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+
+	snap := fetchDashSnapshot(t, mux)
+	m := findDashMember(snap, "alpha", worker)
+	require.NotNil(t, m)
+	require.Len(t, m.PresentedPRs, 1, "freshly terminal PR remains visible for the grace window")
+	assert.Equal(t, "merged", m.PresentedPRs[0].State)
+
+	agePresentedPR(t, agentID, prURL, 5*time.Minute)
+	snap = fetchDashSnapshot(t, mux)
+	m = findDashMember(snap, "alpha", worker)
+	require.NotNil(t, m)
+	assert.Empty(t, m.PresentedPRs, "old terminal PRs are omitted from dashboard rows")
+
+	row, err := db.GetAgentPR(agentID, prURL)
+	require.NoError(t, err)
+	assert.Equal(t, "handled", row.State)
+}
+
 func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 	f := newFlow(t)
 	const lead = "pprl-aaaa-bbbb-cccc-dddd"
@@ -110,4 +162,13 @@ func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	assert.Equal(t, lead, resp.CallerConv)
 	assert.Equal(t, 125, resp.PR.Number)
+}
+
+func agePresentedPR(t *testing.T, agentID, prURL string, age time.Duration) {
+	t.Helper()
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_prs SET updated_at = ? WHERE agent_id = ? AND pr_url = ?`,
+		time.Now().Add(-age).UTC().Format(time.RFC3339Nano), agentID, prURL)
+	require.NoError(t, err)
 }

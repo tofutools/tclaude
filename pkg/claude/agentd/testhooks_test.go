@@ -417,6 +417,22 @@ func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, default
 	return func() { gitInfoResolver = prev }
 }
 
+// SetPresentedPRInfoResolverForTest swaps the GitHub PR-by-URL resolver used
+// for explicitly presented PRs. The dashboard snapshot still performs the real
+// preload/cache/singleflight path; only the `gh pr view <url>` boundary is
+// replaced.
+func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resolvedURL, state string, ok bool)) func() {
+	prev := presentedPRInfoResolver
+	presentedPRInfoResolver = func(rawURL string) (presentedPRInfo, bool) {
+		number, resolvedURL, state, ok := fn(rawURL)
+		if !ok {
+			return presentedPRInfo{}, false
+		}
+		return presentedPRInfo{Number: number, URL: resolvedURL, State: state}, true
+	}
+	return func() { presentedPRInfoResolver = prev }
+}
+
 // SetAsyncSpawnInlineGraceForTest shrinks the non-blocking spawn's
 // conv-id inline grace so a flow test can drive the JOH-205 inc2 pending
 // path — a spawn whose conv-id never materialises returns PENDING and
