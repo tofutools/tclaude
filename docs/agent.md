@@ -970,7 +970,7 @@ with care.
 
 ## Bundled skills
 
-Nine skills ship with the binary and install to `~/.claude/skills/`
+The bundled skills ship with the binary and install to `~/.claude/skills/`
 for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 (default `~/.codex/skills`) for Codex CLI, via
 `tclaude setup --install-agent-skills`:
@@ -984,6 +984,11 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   (the clickable URL in the dashboard's Task column).
 - **`agent-lifecycle`** — context-window self-management: `compact`,
   `reincarnate`, `clone`, `context-info`.
+- **`reincarnate`** — the do-it-now sibling of `agent-lifecycle`:
+  invocable as `/reincarnate`, it carries the checkpoint-then-hand-off
+  procedure (write a handoff notes file, run
+  `tclaude agent reincarnate --file …`). `agent-lifecycle` stays the
+  full reference.
 - **`agent-dir`** — report or open a terminal in an agent's working
   directory.
 - **`agent-schedule`** — set up and manage recurring `cron` nudges.
