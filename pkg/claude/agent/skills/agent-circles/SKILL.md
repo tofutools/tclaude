@@ -114,7 +114,8 @@ Each roster agent (`templateAgentJSON`):
 | `permissions` | array of slug strings | Per-agent grants; each validated against the slug registry. |
 | `role_ref` | string | By-name reference into the role library; the agent inherits that role's defaults beneath its own fields. Must exist at save. |
 | `spawn_profile` | string | By-name reference to a saved spawn profile (launch shape + birth-time permissions/owner). Must exist at save. |
-| `harness` `model` `effort` `sandbox` `approval` | string | Inline launch overrides that win over the referenced profile/role. Validated against the resolved harness catalog. Leave blank to inherit. |
+| `profile_inline` | object | A template-LOCAL spawn profile: the spawn-profile shape (`harness`/`model`/`effort`/`sandbox`/`approval`/`ask_user_question_timeout`/`auto_review`/`trust_dir`/`remote_control`/`is_owner`/`permission_overrides`) embedded in the template — a bespoke per-agent launch config with no registry entry, carried along on export/import. No `name`, no identity fields (`agent_name`/`role`/`descr`/`initial_message` — those live on the roster agent), no dialog-only toggles (`sync_worktree`/`auto_focus`/`include_group_default_context`); all rejected at save. Sits between the legacy inline fields and `spawn_profile` in launch resolution. |
+| `harness` `model` `effort` `sandbox` `approval` | string | Legacy inline launch overrides that win over every profile tier. Validated against the resolved harness catalog. Leave blank to inherit — prefer `profile_inline` for new configs. |
 | `wave` | int (0–64) | Staged-spawn wave. All-zero (default) = one synchronous spawn pass; higher waves spawn later, in ascending order. |
 
 `work_pattern` entry (`workPatternEntryJSON`):

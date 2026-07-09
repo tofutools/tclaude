@@ -48,6 +48,26 @@ let profileEditorEditing = null;
 // the new profile as a default. Reset on every open/close.
 let profileEditorOnSaved = null;
 
+// LOCAL mode (template-local per-agent launch config): non-null while the
+// editor edits an unnamed, unstored profile object owned by the caller — the
+// template editor's "✎ custom…" per-agent launch config. Holds the caller's
+// onSave(payload) callback; submit hands the built profile-shaped payload back
+// instead of POST/PATCHing the registry. The name row, the identity rows
+// (agent_name / role / descr / initial_message — those live on the template
+// agent itself) and the spawn-dialog-only toggles (sync_worktree / auto_focus /
+// include_group_default_context) are hidden: the server rejects them on a
+// template-local profile. Reset on every open/close.
+let profileEditorLocal = null;
+
+// profileEditorLocalHiddenRows returns the field rows local mode hides.
+function profileEditorLocalHiddenRows() {
+  return [
+    $('#profile-editor-name'), $('#profile-editor-agent-name'), $('#profile-editor-role'),
+    $('#profile-editor-descr'), $('#profile-editor-init-msg'), $('#profile-editor-sync-worktree'),
+    $('#profile-editor-auto-focus'), $('#profile-editor-group-context'),
+  ].map(el => el && el.closest('.cron-create-row')).filter(Boolean);
+}
+
 // The last list the manage overlay fetched — the filter box re-paints from
 // this without a re-fetch; a create/edit/delete reloads it.
 let lastProfiles = [];
@@ -492,15 +512,27 @@ async function submitProfileImport() {
 //     profile"): submit CREATES a fresh profile and the name field starts
 //     blank so the human names it.
 //   - onSaved(name): fired after a successful submit (see profileEditorOnSaved).
+//   - local: {onSave(payload)} — LOCAL mode (see profileEditorLocal): edit an
+//     unnamed profile object for the caller instead of the registry. `seed`
+//     pre-fills the form (the current inline config, or a registry profile to
+//     fork from); submit builds the payload and hands it to onSave — no REST.
 // The manage modal's existing callers pass one argument, so they keep the
 // edit-existing behaviour (openProfileEditor(null) = blank create,
 // openProfileEditor(p) = edit p).
-function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
-  profileEditorEditing = (editExisting && seed) ? seed : null;
+function openProfileEditor(seed, { editExisting = true, onSaved = null, local = null } = {}) {
+  profileEditorEditing = (!local && editExisting && seed) ? seed : null;
   profileEditorOnSaved = onSaved;
-  $('#profile-editor-title').textContent = profileEditorEditing
-    ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`)
-    : wizWord('New spawn profile', 'New familiar pattern');
+  // Remember the seed in local mode so buildProfilePayload's carry-forward of
+  // un-surfaced fields (Codex approval, auto_review) works for a re-edit of an
+  // existing inline config too, not only for registry edits.
+  profileEditorLocal = local ? { ...local, seed: seed || null } : null;
+  for (const row of profileEditorLocalHiddenRows()) row.hidden = !!local;
+  $('#profile-editor-title').textContent = local
+    ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only')
+    : profileEditorEditing
+      ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`)
+      : wizWord('New spawn profile', 'New familiar pattern');
+  $('#profile-editor-submit').textContent = local ? 'Apply' : 'Save profile';
   $('#profile-editor-error').textContent = '';
   // Name field carries the existing name only when editing in place; a
   // pre-filled create starts blank so the human gives the new profile a name.
@@ -552,12 +584,14 @@ function openProfileEditor(seed, { editExisting = true, onSaved = null } = {}) {
 
   $('#profile-editor-modal').classList.add('show');
   bindSelectTitles($('#profile-editor-modal'));
-  setTimeout(() => $('#profile-editor-name').focus(), 0);
+  // Local mode hides the name row, so land the focus on the first visible field.
+  setTimeout(() => $(local ? '#profile-editor-harness' : '#profile-editor-name').focus(), 0);
 }
 
 function closeProfileEditor() {
   $('#profile-editor-modal').classList.remove('show');
   profileEditorOnSaved = null;
+  profileEditorLocal = null;
 }
 
 // buildProfilePayload assembles the full desired state from the editor. The
@@ -637,17 +671,31 @@ function buildProfilePayload(name) {
   //     — carrying forward would clobber a just-cleared/changed choice.
   //   - auto_review: never surfaced anywhere, so always carried forward.
   const norm = (h) => h || 'claude';
-  if (profileEditorEditing && norm(profileEditorEditing.harness) === norm(harness)) {
-    if (!surfacesApproval && profileEditorEditing.approval) body.approval = profileEditorEditing.approval;
-    if (profileEditorEditing.auto_review != null) body.auto_review = profileEditorEditing.auto_review;
+  const carrySrc = profileEditorEditing || (profileEditorLocal && profileEditorLocal.seed) || null;
+  if (carrySrc && norm(carrySrc.harness) === norm(harness)) {
+    if (!surfacesApproval && carrySrc.approval) body.approval = carrySrc.approval;
+    if (carrySrc.auto_review != null) body.auto_review = carrySrc.auto_review;
   }
   return body;
 }
 
 async function submitProfileEditor() {
-  const name = $('#profile-editor-name').value.trim();
   const errEl = $('#profile-editor-error');
   errEl.textContent = '';
+  // LOCAL mode: build the profile-shaped payload, strip everything a
+  // template-local profile can't carry (the hidden rows + the name), and hand
+  // it back to the caller — the template save is where the server validates it.
+  if (profileEditorLocal) {
+    const p = buildProfilePayload('');
+    delete p.name;
+    delete p.agent_name; delete p.role; delete p.descr; delete p.initial_message;
+    delete p.sync_worktree; delete p.auto_focus; delete p.include_group_default_context;
+    const onSave = profileEditorLocal.onSave;
+    closeProfileEditor();
+    if (onSave) onSave(p);
+    return;
+  }
+  const name = $('#profile-editor-name').value.trim();
   if (!name) { errEl.textContent = 'profile name is required'; return; }
   const payload = buildProfilePayload(name);
   const editing = profileEditorEditing ? profileEditorEditing.name : null;

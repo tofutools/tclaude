@@ -193,6 +193,15 @@ async function summonScribe(brief) {
 // confirm before it closes the editor to hand off (JOH-361).
 let templateEditorDiscard = null;
 
+// markTemplateEditorDirty flags a model-only edit the editor's own DOM
+// listeners can't see — a mutation applied from a stacked modal (a custom
+// launch config Apply, a profile created for an agent) or a button-click
+// mutation (remove legacy inline). Without it, Escape after such an edit
+// would close the editor silently and lose the work.
+function markTemplateEditorDirty() {
+  if (templateEditorDiscard) templateEditorDiscard.markDirty();
+}
+
 // summonScribeFromEditor hands the open editor off to a scribe. Handling dirty
 // state first is a correctness requirement: `edit` is a full replace, so an
 // editor left open with unsaved changes would overwrite the scribe's work on
@@ -213,13 +222,32 @@ function templateWaveCount(t) {
   return waves.size;
 }
 
+// templateAgentIsOwner mirrors the server's owner resolution
+// (resolveTemplateAgentAccess): the referenced registry profile's owner
+// default, overridden by an explicit profile_inline.is_owner (tri-state — an
+// explicit false really turns it off), raised by the legacy per-agent flag.
+// Registry lookups ride the profiles cache; before it loads, a ref-only owner
+// star may lag one render, same as the deploy-default preview.
+function templateAgentIsOwner(a) {
+  let owner = false;
+  const ref = a.spawn_profile && cachedProfiles().find(p => p.name === a.spawn_profile);
+  if (ref && typeof ref.is_owner === 'boolean') owner = ref.is_owner;
+  const inline = a.profile_inline;
+  if (inline && typeof inline.is_owner === 'boolean') owner = inline.is_owner;
+  if (a.is_owner) owner = true;
+  return owner;
+}
+
 function templateCardHTML(t) {
   const agents = (t.agents || []).map(a => {
-    const owner = a.is_owner ? '<span class="tc-owner" title="group owner">★</span> ' : '';
+    const inlineOverrides = (a.profile_inline && a.profile_inline.permission_overrides) || {};
+    const owner = templateAgentIsOwner(a)
+      ? '<span class="tc-owner" title="group owner">★</span> ' : '';
     const role = a.role ? ` <span class="tc-role">${esc(a.role)}</span>` : '';
-    const np = (a.permissions || []).length;
-    const perms = np
-      ? ` <span class="tc-role" title="${esc((a.permissions || []).join(', '))}">+${np}🔑</span>`
+    // A slug in both the legacy list and the custom config counts once.
+    const slugs = [...new Set((a.permissions || []).concat(Object.keys(inlineOverrides)))];
+    const perms = slugs.length
+      ? ` <span class="tc-role" title="${esc(slugs.join(', '))}">+${slugs.length}🔑</span>`
       : '';
     return `<span class="tc-agent">${owner}${esc(a.name)}${role}${perms}</span>`;
   }).join('');
@@ -328,22 +356,32 @@ export function templateRosterRowsHTML(t, prefix, defaultProfile) {
     // its own (no profile, no role, no inline field) — the same eligibility the
     // deploy submit uses, so the preview matches what will be sent per-member.
     const adoptsDefault = !!dp && !a.spawn_profile && agentInheritsDeployDefault(a);
-    // Owner / perm chips reflect the member's OWN access PLUS, when it adopts the
-    // default profile, that profile's owner default + override count — so the
-    // birth-time permissions/ownership the default carries is visible, not silent.
-    const owner = (a.is_owner || (adoptsDefault && dp.is_owner))
+    // Owner / perm chips reflect the member's effective access — the referenced
+    // registry profile's owner default, a template-local custom config's
+    // tri-state owner/overrides, the legacy flag (templateAgentIsOwner mirrors
+    // the server) — PLUS, when it adopts the default profile, that profile's
+    // owner default + override count — so the birth-time permissions/ownership
+    // the launch config carries is visible, not silent.
+    const inline = a.profile_inline || null;
+    const owner = (templateAgentIsOwner(a) || (adoptsDefault && dp.is_owner))
       ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
     let np = (a.permissions || []).length;
+    if (inline && inline.permission_overrides) np += Object.keys(inline.permission_overrides).length;
     if (adoptsDefault && dp.permission_overrides) np += Object.keys(dp.permission_overrides).length;
-    // Per-role launch hint (JOH-239): the profile ref or the most telling inline
-    // override so the human sees each role's launch shape before spawning. A member
-    // with no config of its own falls back to the deploy default (if the dialog
-    // resolved one), flagged so it's clear the value came from the default.
-    const launch = a.spawn_profile
-      ? `⚙ ${esc(a.spawn_profile)}`
-      : adoptsDefault
-        ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile — applies its launch config and birth-time permissions/ownership">(default)</span>`
-        : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
+    // Per-role launch hint (JOH-239): the template-local custom config (which
+    // wins over a ref, so it leads — with the ref named when one sits beneath),
+    // the profile ref, or the most telling inline override, so the human sees
+    // each role's launch shape before spawning. A member with no config of its
+    // own falls back to the deploy default (if the dialog resolved one),
+    // flagged so it's clear the value came from the default.
+    const launch = inline
+      ? `⚙ <span title="${esc(profileSummary(inline) || 'custom launch config')}">${wizWord('custom', 'bespoke')}</span>`
+        + (a.spawn_profile ? ` <span class="tp-default-tag" title="fields the custom config leaves blank fall through to this profile">(over ${esc(a.spawn_profile)})</span>` : '')
+      : a.spawn_profile
+        ? `⚙ ${esc(a.spawn_profile)}`
+        : adoptsDefault
+          ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile — applies its launch config and birth-time permissions/ownership">(default)</span>`
+          : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
     const meta = [a.role ? esc(a.role) : '', launch, np ? `+${np}🔑` : '', owner]
       .filter(Boolean).join(' · ');
     return `<div class="tp-row"><span class="tp-name">${esc(shown)}-${esc(a.name)}</span>`
@@ -355,6 +393,7 @@ function blankTemplateAgent() {
   return {
     name: '', role: '', descr: '', initial_message: '', is_owner: false, permissions: [],
     role_ref: '', spawn_profile: '', harness: '', model: '', effort: '', sandbox: '', approval: '',
+    profile_inline: null,
     wave: 0,
   };
 }
@@ -387,6 +426,7 @@ function openTemplateEditor(tmpl, { asNew = false } = {}) {
         role_ref: a.role_ref || '',
         spawn_profile: a.spawn_profile || '', harness: a.harness || '',
         model: a.model || '', effort: a.effort || '', sandbox: a.sandbox || '', approval: a.approval || '',
+        profile_inline: a.profile_inline ? { ...a.profile_inline } : null,
         wave: a.wave || 0,
       }))
     : [blankTemplateAgent()];
@@ -438,7 +478,7 @@ function renderEditorAgents() {
 // deploy client (deployAgentProfiles) and server (applyAgentProfileOverrides) use.
 function agentInheritsDeployDefault(a) {
   const hasInline = [a.harness, a.model, a.effort, a.sandbox, a.approval].some(Boolean);
-  return !a.role_ref && !hasInline;
+  return !a.role_ref && !hasInline && !a.profile_inline;
 }
 
 // profileRefOptionsHTML builds the <option> list for an agent's launch-profile
@@ -510,9 +550,24 @@ function agentLegacyInline(a) {
 function legacyInlineNoticeHTML(a) {
   const parts = agentLegacyInline(a);
   if (!parts.length) return '';
-  return `<div class="ta-legacy-note" title="These inline launch/permission settings predate the profile picker (JOH-350). They still apply when you deploy this template and are preserved when you save, but can no longer be edited inline. Extract them into a reusable spawn profile to manage them going forward — the owner flag stays here (it is structural).">
+  return `<div class="ta-legacy-note" title="These inline launch/permission settings predate the profile picker (JOH-350). They still apply when you deploy this template and are preserved when you save, but can no longer be edited inline. Extract them into a reusable spawn profile (or remove them with ✕) to manage launch config going forward — the owner flag stays here (it is structural).">
     <span class="ta-legacy-text">⚠ legacy inline: ${esc(parts.join(' · '))}</span>
     <button type="button" class="tool ta-extract-profile">Extract to profile…</button>
+    <button type="button" class="tool ta-legacy-remove" title="Remove these legacy inline settings — the agent falls back to its profile / the defaults on the next save">✕</button>
+  </div>`;
+}
+
+// customLaunchNoticeHTML renders the agent's template-local custom launch
+// config line (profile_inline): its summary plus the ✕ that removes it. The
+// config RIDES ON TOP of the picked profile — the server's resolution tiers —
+// so this renders alongside (not instead of) the profile picker; "" when the
+// agent carries none.
+function customLaunchNoticeHTML(a) {
+  if (!a.profile_inline) return '';
+  const s = profileSummary(a.profile_inline);
+  return `<div class="ta-legacy-note ta-custom-note" title="A template-local launch config for THIS agent only, stored inside the template (no registry profile). Fields it sets win over the picked launch profile; fields it leaves blank still fall through to it. Edit via ✎, remove via ✕.">
+    <span class="ta-legacy-text">✎ ${wizWord('custom', 'bespoke')}: ${s ? esc(s) : '(sets no launch fields)'}</span>
+    <button type="button" class="tool ta-custom-remove" title="Remove this custom launch config — the agent falls back to its picked profile / the defaults on the next save">✕</button>
   </div>`;
 }
 
@@ -576,10 +631,12 @@ function editorAgentRowHTML(a, idx) {
         <select class="ta-profile-select">${profileRefOptionsHTML(a)}</select>
       </label>
       <div class="ta-launch-actions">
+        <button type="button" class="tool ta-custom-launch" title="Edit this agent's FULL launch config (harness, model, effort, sandbox, permission mode, ask-timeout, remote control, owner, birth-time permissions, …) as a template-local custom config — stored inside the template, no registry profile needed. Opens seeded from the current custom config, or forked from the picked profile. Fields it sets win over the picked profile; fields it leaves blank still fall through to it.">${a.profile_inline ? '✎ edit custom…' : '✎ custom…'}</button>
         <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
         <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
       </div>
       <div class="ta-profile-summary">${profileSummaryHTML(a)}</div>
+      ${customLaunchNoticeHTML(a)}
       ${legacyInlineNoticeHTML(a)}
     </div>
   </div>`;
@@ -703,6 +760,10 @@ function scrapeEditorAgents() {
       effort: prev.effort || '',
       sandbox: prev.sandbox || '',
       approval: prev.approval || '',
+      // The custom launch config (profile_inline) rides the in-memory model —
+      // no DOM control carries it — so it survives every scrape unchanged.
+      // It is edited via "✎ custom…" and removed only via its own ✕.
+      profile_inline: prev.profile_inline || null,
       permissions: (prev.permissions || []).slice(),
       wave: parseInt($('.ta-wave', row).value, 10) || 0,
     };
@@ -741,17 +802,103 @@ function onManageProfilesClosed() {
 }
 
 // newProfileForAgent opens a blank profile editor; on save the fresh profile is
-// selected for the agent at `idx`.
+// selected for the agent at `idx`. An existing custom launch config stays —
+// it rides on top of the reference, exactly as at deploy.
 function newProfileForAgent(idx) {
   scrapeEditorAgents();
   openProfileEditor(null, {
     editExisting: false,
     onSaved: (name) => {
       scrapeEditorAgents();
-      if (templateEditorAgents[idx]) templateEditorAgents[idx].spawn_profile = name;
+      const cur = templateEditorAgents[idx];
+      if (cur) {
+        cur.spawn_profile = name;
+        markTemplateEditorDirty();
+      }
       reloadProfilesAndRender();
     },
   });
+}
+
+// customLaunchForAgent opens the REAL profile editor in LOCAL mode on the
+// agent's template-local launch config: the full spawn-profile field set
+// (minus identity + dialog-only toggles), applied back into the in-memory
+// agent on Apply — stored inside the template, no registry profile created.
+// Seeded from the current custom config when one exists, else forked from the
+// picked registry profile (a "customize this profile for this agent" start),
+// else blank. The custom config RIDES ON TOP of the picked profile — exactly
+// the server's resolution tiers — so a field it leaves blank still falls
+// through to the reference; the picked profile stays picked.
+function customLaunchForAgent(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a) return;
+  const seed = a.profile_inline
+    ? { ...a.profile_inline }
+    : (a.spawn_profile && cachedProfiles().find(p => p.name === a.spawn_profile)) || null;
+  openProfileEditor(seed ? { ...seed } : null, {
+    local: {
+      onSave: (payload) => {
+        scrapeEditorAgents();
+        const cur = templateEditorAgents[idx];
+        if (cur) {
+          cur.profile_inline = payload;
+          markTemplateEditorDirty();
+        }
+        renderEditorAgents();
+      },
+    },
+  });
+}
+
+// removeAgentCustomLaunch discards the agent's template-local custom launch
+// config after a confirm — launch resolution falls back to the picked profile
+// / role / defaults. Takes effect in the stored template on the next save.
+async function removeAgentCustomLaunch(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a || !a.profile_inline) return;
+  const ok = await confirmModal({
+    title: 'Remove custom launch config?',
+    body: 'Discard this agent\u2019s template-local launch config? It is not saved anywhere else — the agent falls back to its picked profile / role / the defaults. Applies to the stored template when you save.',
+    meta: a.name || `agent #${idx + 1}`,
+    okLabel: 'Remove custom config',
+  });
+  if (!ok) return;
+  const cur = templateEditorAgents[idx];
+  if (cur) {
+    cur.profile_inline = null;
+    markTemplateEditorDirty();
+  }
+  renderEditorAgents();
+}
+
+// removeAgentLegacyInline discards the agent's pre-cutover inline launch
+// fields + inline permission grants (the read-only "legacy inline" notice)
+// after a confirm — the agent falls back to its picked profile / the defaults.
+// Takes effect in the stored template on the next save, like every other edit.
+async function removeAgentLegacyInline(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a) return;
+  const parts = agentLegacyInline(a);
+  if (!parts.length) return;
+  const ok = await confirmModal({
+    title: 'Remove legacy inline settings?',
+    body: `Discard ${parts.join(' · ')} from this agent? It will use its picked launch profile — or the deploy defaults — instead. `
+      + '(“Extract to profile…” keeps these values in a reusable profile instead of discarding them.) '
+      + 'Applies to the stored template when you save.',
+    meta: a.name || `agent #${idx + 1}`,
+    okLabel: 'Remove',
+  });
+  if (!ok) return;
+  const cur = templateEditorAgents[idx];
+  if (cur) {
+    cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
+    cur.permissions = [];
+    markTemplateEditorDirty();
+  }
+  renderEditorAgents();
 }
 
 // extractAgentToProfile materializes the agent's legacy inline launch fields +
@@ -779,6 +926,7 @@ function extractAgentToProfile(idx) {
         cur.spawn_profile = name;
         cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
         cur.permissions = [];
+        markTemplateEditorDirty();
       }
       reloadProfilesAndRender();
     },
@@ -2137,6 +2285,8 @@ function bindTemplatesUI() {
       renderEditorPattern();
     } else if (e.target.closest('.ta-profile-new')) {
       newProfileForAgent(idx);
+    } else if (e.target.closest('.ta-custom-launch')) {
+      customLaunchForAgent(idx);
     } else if (e.target.closest('.ta-profile-manage')) {
       // Preserve typed values before the overlay steals focus; its edits are
       // picked up when it closes (bindProfilesOverlayRefresh below).
@@ -2144,6 +2294,10 @@ function bindTemplatesUI() {
       openProfilesManageModal();
     } else if (e.target.closest('.ta-extract-profile')) {
       extractAgentToProfile(idx);
+    } else if (e.target.closest('.ta-legacy-remove')) {
+      removeAgentLegacyInline(idx);
+    } else if (e.target.closest('.ta-custom-remove')) {
+      removeAgentCustomLaunch(idx);
     }
   });
   // Owner is a plain per-agent checkbox — a group can have several owners, so

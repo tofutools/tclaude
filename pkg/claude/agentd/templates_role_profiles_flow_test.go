@@ -190,9 +190,14 @@ func TestGroupTemplate_FromGroupRetracesLaunchAndKeepsProfileRef(t *testing.T) {
 	require.Len(t, tmpl.Agents, 1)
 	lead := tmpl.Agents[0]
 	assert.Equal(t, "lead", lead.Name, "member title round-trips to its template-agent name")
-	// Observable launch fields re-traced from the live session.
-	assert.Equal(t, "claude-fable-5", lead.Model, "the model the agent is actually running re-traces")
-	assert.Equal(t, "high", lead.Effort, "the running effort re-traces")
+	// Observable launch fields re-trace into the template-LOCAL profile
+	// (profile_inline) — first-class in the editor, unlike the read-only legacy
+	// inline fields, which a snapshot no longer writes.
+	require.NotNil(t, lead.ProfileInline, "re-traced launch fields land in the template-local profile")
+	assert.Equal(t, "claude-fable-5", lead.ProfileInline.Model, "the model the agent is actually running re-traces")
+	assert.Equal(t, "high", lead.ProfileInline.Effort, "the running effort re-traces")
+	assert.Empty(t, lead.Model, "the legacy inline model stays unwritten")
+	assert.Empty(t, lead.Effort, "the legacy inline effort stays unwritten")
 	// The curated profile reference is preserved by name-match (blueprint
 	// curation, not observable) — like the brief.
 	assert.Equal(t, "cheap", lead.SpawnProfile, "curated profile reference survives the re-snapshot")

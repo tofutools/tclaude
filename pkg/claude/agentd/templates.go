@@ -75,6 +75,17 @@ type templateAgentJSON struct {
 	Sandbox      string `json:"sandbox,omitempty"`
 	Approval     string `json:"approval,omitempty"`
 
+	// ProfileInline is the agent's template-LOCAL spawn profile: the full
+	// spawn-profile shape (launch fields, ask-timeout, trust_dir / auto_review /
+	// remote_control toggles, birth-time owner + permission overrides) embedded
+	// in the template instead of referenced from the registry. It gives one
+	// roster agent a bespoke launch config without polluting the shared profile
+	// library, and travels with the template on export/import. Identity fields
+	// (name/agent_name/role/descr/initial_message) and the spawn-dialog-only
+	// toggles are rejected at save — those live on the template agent itself.
+	// Resolution: the five inline fields above → profile_inline → spawn_profile.
+	ProfileInline *spawnProfileJSON `json:"profile_inline,omitempty"`
+
 	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
 	// in ascending order; a template whose every agent is wave 0 spawns in one
 	// synchronous pass (today's behaviour). The party's marching order.
@@ -174,7 +185,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		if perms == nil {
 			perms = []string{}
 		}
-		out.Agents = append(out.Agents, templateAgentJSON{
+		aj := templateAgentJSON{
 			Name:           a.Name,
 			Role:           a.Role,
 			Descr:          a.Descr,
@@ -189,7 +200,12 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 			Sandbox:        a.Sandbox,
 			Approval:       a.Approval,
 			Wave:           a.Wave,
-		})
+		}
+		if a.ProfileInline != nil {
+			pj := profileToJSON(a.ProfileInline)
+			aj.ProfileInline = &pj
+		}
+		out.Agents = append(out.Agents, aj)
 	}
 	return out
 }
@@ -366,15 +382,29 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			perms = append(perms, slug)
 		}
 
+		// Template-local spawn profile: validated with the registry profiles'
+		// own field validation (name-less, non-deploy fields rejected) so an
+		// inline config can never store a value a registry profile couldn't.
+		var inline *db.SpawnProfile
+		if a.ProfileInline != nil {
+			p, fail := buildInlineProfileFromJSON(*a.ProfileInline)
+			if fail != nil {
+				return nil, &spawnFailure{fail.Status, fail.Kind,
+					fmt.Sprintf("agent %q: %s", an, fail.Msg)}
+			}
+			inline = p
+		}
+
 		// Per-role launch profile (JOH-239). Validate the referenced spawn
 		// profile exists and the inline overrides against the harness they will
 		// launch on. The validation harness mirrors the instantiate-time
-		// resolution — the agent's inline harness wins, else the referenced
-		// profile's harness, else the default (Claude Code) — so a value accepted
-		// here is checked against the same catalog the spawn will use. Blank
-		// fields stay blank (Validate*, not Resolve*): the launch boundary applies
-		// its own defaults at instantiate.
-		launch, fail := validateTemplateAgentLaunch(an, a)
+		// resolution — the agent's inline harness wins, else the template-local
+		// profile's harness, else the referenced profile's harness, else the
+		// default (Claude Code) — so a value accepted here is checked against the
+		// same catalog the spawn will use. Blank fields stay blank (Validate*,
+		// not Resolve*): the launch boundary applies its own defaults at
+		// instantiate.
+		launch, fail := validateTemplateAgentLaunch(an, a, inline)
 		if fail != nil {
 			return nil, fail
 		}
@@ -422,6 +452,7 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			Effort:         launch.Effort,
 			Sandbox:        launch.Sandbox,
 			Approval:       launch.Approval,
+			ProfileInline:  inline,
 			Wave:           a.Wave,
 		})
 	}
@@ -649,6 +680,12 @@ type templateAgentLaunch struct {
 	// path). Off by default; only a referenced profile turns them on.
 	TrustDir   bool
 	AutoReview bool
+	// RemoteControl / AskUserQuestionTimeout are the remaining launch fields a
+	// spawn profile (template-local or referenced) carries, resolved from the
+	// profile tiers like TrustDir/AutoReview and threaded into spawnParams so a
+	// template deploy honours them. Both default off/"".
+	RemoteControl          bool
+	AskUserQuestionTimeout string
 }
 
 // validateTemplateAgentLaunch validates one template agent's per-role launch
@@ -660,7 +697,7 @@ type templateAgentLaunch struct {
 // spawn will use. Blank fields stay blank (Validate*, not Resolve*): the launch
 // boundary applies its own secure defaults at instantiate. Mirrors
 // buildProfileFromJSON's harness-scoped validation.
-func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templateAgentLaunch, *spawnFailure) {
+func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *db.SpawnProfile) (templateAgentLaunch, *spawnFailure) {
 	profRef := strings.TrimSpace(a.SpawnProfile)
 	var refProfile *db.SpawnProfile
 	if profRef != "" {
@@ -678,6 +715,9 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templat
 	}
 	inlineHarness := strings.TrimSpace(a.Harness)
 	valHarness := inlineHarness
+	if valHarness == "" && inline != nil {
+		valHarness = inline.Harness
+	}
 	if valHarness == "" && refProfile != nil {
 		valHarness = refProfile.Harness
 	}
@@ -706,6 +746,24 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templat
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval",
 			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
 	}
+	// The template-local profile's fields were validated against its OWN
+	// harness by buildInlineProfileFromJSON (blank = the Claude default). When
+	// the agent's harness and the inline profile's harness are both blank, the
+	// instantiate-time overlay leaves the accumulator's harness OPEN, so a
+	// referenced spawn profile beneath can still impose a different harness —
+	// and the inline fields (validated as Claude) would ride onto it, making
+	// the template saveable but never instantiable (e.g. profile_inline.model
+	// "opus" over a Codex spawn_profile ref). Revalidate the inline fields
+	// against the effective harness resolved above so that shape is rejected
+	// at save, with a message that names the actual conflict. (When the inline
+	// profile's harness IS set, valHarness already picked it up — or, if the
+	// agent's own harness mismatches it, the overlay drops the whole inline
+	// tier at instantiate, so there is nothing to revalidate.)
+	if inline != nil && inlineHarness == "" && harnessOrDefault(inline.Harness) != h.Name {
+		if fail := validateInlineProfileForHarness(agentName, h, inline); fail != nil {
+			return templateAgentLaunch{}, fail
+		}
+	}
 	// Store the inline harness as typed (blank stays blank so it falls through to
 	// the profile at instantiate), NOT the resolved validation harness.
 	return templateAgentLaunch{
@@ -718,21 +776,86 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON) (templat
 	}, nil
 }
 
+// validateInlineProfileForHarness re-checks a template-local profile's launch
+// fields against a harness other than the one they were validated under at
+// buildInlineProfileFromJSON time — the harness the instantiate-time overlay
+// will actually adopt (see the call site in validateTemplateAgentLaunch). The
+// per-field checks mirror buildProfileFromJSON's; blank fields stay no-ops.
+func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db.SpawnProfile) *spawnFailure {
+	wrap := func(kind, msg string) *spawnFailure {
+		return &spawnFailure{http.StatusBadRequest, kind, fmt.Sprintf(
+			"agent %q: profile_inline: %s — the custom config has no harness of its own, so its fields "+
+				"apply on the %q launch this agent resolves to; align them with that harness or set "+
+				"profile_inline.harness explicitly", agentName, msg, h.Name)}
+	}
+	if _, err := h.Models.ValidateModel(p.Model); err != nil {
+		return wrap("invalid_model", err.Error())
+	}
+	if _, err := h.Models.ValidateEffort(p.Effort); err != nil {
+		return wrap("invalid_effort", err.Error())
+	}
+	if _, err := harness.ValidateSandboxMode(h, p.Sandbox); err != nil {
+		return wrap("invalid_sandbox", err.Error())
+	}
+	if _, err := harness.ValidateApprovalPolicy(h, p.Approval); err != nil {
+		return wrap("invalid_approval", err.Error())
+	}
+	if _, err := harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
+		return wrap("invalid_ask_user_question_timeout", err.Error())
+	}
+	if p.AutoReview != nil {
+		if _, err := harness.ResolveAutoReview(h, *p.AutoReview); err != nil {
+			return wrap("invalid_auto_review", err.Error())
+		}
+	}
+	if p.TrustDir != nil {
+		if _, err := harness.ResolveTrustDir(h, *p.TrustDir); err != nil {
+			return wrap("invalid_trust_dir", err.Error())
+		}
+	}
+	if p.RemoteControl != nil {
+		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
+			return wrap("invalid_remote_control", err.Error())
+		}
+	}
+	return nil
+}
+
 // launchAccum accumulates the effective launch fields as tiers overlay onto
 // it, highest priority first. A blank field is still open to a lower tier.
 type launchAccum struct {
-	harness  string
-	model    string
-	effort   string
-	sandbox  string
-	approval string
-	// trustDir / autoReview are tri-state (*bool): nil = no tier has spoken yet
-	// (still open to a lower-priority source), non-nil = a higher-priority
-	// profile already decided. Mirrors the string fields' "first non-blank
-	// wins", but nil-vs-set is the "still open" test since false is a real
-	// decision here (an explicit trust_dir=false in a profile).
-	trustDir   *bool
-	autoReview *bool
+	harness    string
+	model      string
+	effort     string
+	sandbox    string
+	approval   string
+	askTimeout string
+	// trustDir / autoReview / remoteControl are tri-state (*bool): nil = no
+	// tier has spoken yet (still open to a lower-priority source), non-nil = a
+	// higher-priority profile already decided. Mirrors the string fields'
+	// "first non-blank wins", but nil-vs-set is the "still open" test since
+	// false is a real decision here (an explicit trust_dir=false in a profile).
+	trustDir      *bool
+	autoReview    *bool
+	remoteControl *bool
+}
+
+// launchSource is one tier's contribution to the launch resolution — a spawn
+// profile's fields (see profileLaunchSource) or a role's inline defaults
+// (strings only; the *bool toggles and the ask-timeout ride profiles).
+type launchSource struct {
+	harness, model, effort, sandbox, approval, askTimeout string
+	trustDir, autoReview, remoteControl                   *bool
+}
+
+// profileLaunchSource projects a spawn profile (registry-referenced or
+// template-local) onto a launch source.
+func profileLaunchSource(p *db.SpawnProfile) launchSource {
+	return launchSource{
+		harness: p.Harness, model: p.Model, effort: p.Effort,
+		sandbox: p.Sandbox, approval: p.Approval, askTimeout: p.AskUserQuestionTimeout,
+		trustDir: p.TrustDir, autoReview: p.AutoReview, remoteControl: p.RemoteControl,
+	}
 }
 
 // overlay fills this accumulator's still-blank fields from a lower-priority
@@ -741,12 +864,12 @@ type launchAccum struct {
 // resolving harness is still unset (then it adopts the source's harness) or
 // already matches the source's harness — so a source tuned for one harness
 // never bleeds its model/effort into a spawn on another.
-// srcTrustDir / srcAutoReview are the source's *bool launch toggles (only a
-// spawn profile carries them; a role's inline defaults pass nil,nil). Filled on
-// the same harness-compatible gate as the string fields, and only while still
-// unset (nil) so the highest-priority profile that sets one wins.
-func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcApproval string, srcTrustDir, srcAutoReview *bool) {
-	srcHarness = strings.TrimSpace(srcHarness)
+// The source's *bool launch toggles (only a spawn profile carries them; a
+// role's inline defaults pass nil) are filled on the same harness-compatible
+// gate as the string fields, and only while still unset (nil) so the
+// highest-priority profile that sets one wins.
+func (l *launchAccum) overlay(src launchSource) {
+	srcHarness := strings.TrimSpace(src.harness)
 	if l.harness != "" && harnessOrDefault(l.harness) != harnessOrDefault(srcHarness) {
 		return
 	}
@@ -754,22 +877,28 @@ func (l *launchAccum) overlay(srcHarness, srcModel, srcEffort, srcSandbox, srcAp
 		l.harness = srcHarness
 	}
 	if l.model == "" {
-		l.model = strings.TrimSpace(srcModel)
+		l.model = strings.TrimSpace(src.model)
 	}
 	if l.effort == "" {
-		l.effort = strings.TrimSpace(srcEffort)
+		l.effort = strings.TrimSpace(src.effort)
 	}
 	if l.sandbox == "" {
-		l.sandbox = strings.TrimSpace(srcSandbox)
+		l.sandbox = strings.TrimSpace(src.sandbox)
 	}
 	if l.approval == "" {
-		l.approval = strings.TrimSpace(srcApproval)
+		l.approval = strings.TrimSpace(src.approval)
+	}
+	if l.askTimeout == "" {
+		l.askTimeout = strings.TrimSpace(src.askTimeout)
 	}
 	if l.trustDir == nil {
-		l.trustDir = srcTrustDir
+		l.trustDir = src.trustDir
 	}
 	if l.autoReview == nil {
-		l.autoReview = srcAutoReview
+		l.autoReview = src.autoReview
+	}
+	if l.remoteControl == nil {
+		l.remoteControl = src.remoteControl
 	}
 }
 
@@ -803,6 +932,13 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 		approval: strings.TrimSpace(a.Approval),
 	}
 
+	// Tier 1.5: the agent's template-local spawn profile — more specific than
+	// any registry reference (it exists for exactly this roster slot), beneath
+	// only the legacy inline fields above.
+	if a.ProfileInline != nil {
+		acc.overlay(profileLaunchSource(a.ProfileInline))
+	}
+
 	// Tier 2: the agent's own referenced spawn profile.
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
 		prof, err := db.GetSpawnProfile(ref)
@@ -813,7 +949,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval, prof.TrustDir, prof.AutoReview)
+		acc.overlay(profileLaunchSource(prof))
 	}
 
 	// Tier 3 + 4: the referenced role's inline defaults, then the role's own
@@ -821,7 +957,10 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	// blank (agent overrides win); the role's spawn profile fills what the
 	// role's inline fields left open.
 	if role != nil {
-		acc.overlay(role.Harness, role.Model, role.Effort, role.Sandbox, role.Approval, nil, nil)
+		acc.overlay(launchSource{
+			harness: role.Harness, model: role.Model, effort: role.Effort,
+			sandbox: role.Sandbox, approval: role.Approval,
+		})
 		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
 			prof, err := db.GetSpawnProfile(ref)
 			if err != nil {
@@ -831,7 +970,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
 			}
-			acc.overlay(prof.Harness, prof.Model, prof.Effort, prof.Sandbox, prof.Approval, prof.TrustDir, prof.AutoReview)
+			acc.overlay(profileLaunchSource(prof))
 		}
 	}
 
@@ -872,6 +1011,18 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	if err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
 	}
+	// Remote control + AskUserQuestion timeout resolve on the same pattern —
+	// harness-gated, off/"" unless a profile tier explicitly set them — so a
+	// template-local or referenced profile's value actually reaches the spawn
+	// (pre-profile_inline these two never made it past the profile row).
+	remoteControl, err := harness.ResolveRemoteControl(h, acc.remoteControl != nil && *acc.remoteControl)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
+	}
+	askTimeout, err := harness.ResolveAskTimeoutMode(h, acc.askTimeout)
+	if err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -882,13 +1033,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	}
 
 	return templateAgentLaunch{
-		Harness:    h.Name,
-		Model:      model,
-		Effort:     effort,
-		Sandbox:    sandbox,
-		Approval:   approval,
-		TrustDir:   trustDir,
-		AutoReview: autoReview,
+		Harness:                h.Name,
+		Model:                  model,
+		Effort:                 effort,
+		Sandbox:                sandbox,
+		Approval:               approval,
+		TrustDir:               trustDir,
+		AutoReview:             autoReview,
+		RemoteControl:          remoteControl,
+		AskUserQuestionTimeout: askTimeout,
 	}, nil
 }
 
@@ -1317,6 +1470,28 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			}
 			a.Permissions = kept
 		}
+		// The template-local profile's overrides degrade the same way the legacy
+		// list does: a slug this machine doesn't know (a template exported from a
+		// newer tclaude) is dropped with a warning instead of 400ing the whole
+		// import in buildInlineProfileFromJSON's slug validation.
+		if a.ProfileInline != nil && len(a.ProfileInline.PermissionOverrides) > 0 {
+			kept := map[string]string{}
+			for slug, effect := range a.ProfileInline.PermissionOverrides {
+				s := strings.TrimSpace(slug)
+				if s == "" {
+					continue
+				}
+				if !IsKnownPermSlug(s) {
+					warnings = append(warnings, fmt.Sprintf(
+						"agent %q: unknown permission slug %q in its custom launch config — dropped", label, s))
+					continue
+				}
+				kept[s] = effect
+			}
+			pi := *a.ProfileInline
+			pi.PermissionOverrides = kept
+			a.ProfileInline = &pi
+		}
 		agents[i] = a
 	}
 	body.Agents = agents
@@ -1664,7 +1839,14 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			set(s, db.PermEffectGrant)
 		}
 	}
-	owner := a.IsOwner
+	// Ownership composes tri-state up the tiers, most specific last: the
+	// referenced profile's owner default, then an explicit
+	// profile_inline.is_owner — true OR false, so a template-local "not an
+	// owner" really does override the registry profile's default, the same
+	// more-specific-wins rule the per-slug overrides below follow — then the
+	// legacy per-agent flag, which is a plain bool and can only grant (false
+	// just means "unset" there).
+	owner := false
 	// Tier 2: the agent's referenced spawn profile — its owner default + its
 	// grant/deny overrides. Profile slugs are applied in sorted order so a
 	// deploy's per-agent grant report is deterministic (the map itself is not).
@@ -1677,8 +1859,8 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			return false, nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		if prof.IsOwner != nil && *prof.IsOwner {
-			owner = true
+		if prof.IsOwner != nil {
+			owner = *prof.IsOwner
 		}
 		slugs := make([]string, 0, len(prof.PermissionOverrides))
 		for slug := range prof.PermissionOverrides {
@@ -1689,7 +1871,26 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			set(slug, prof.PermissionOverrides[slug])
 		}
 	}
-	// Tier 3: the agent's own inline grants (legacy per-agent list) — highest.
+	// Tier 2.5: the agent's template-local profile — more specific than the
+	// registry reference, so its owner default + overrides apply on top of it.
+	if p := a.ProfileInline; p != nil {
+		if p.IsOwner != nil {
+			owner = *p.IsOwner
+		}
+		slugs := make([]string, 0, len(p.PermissionOverrides))
+		for slug := range p.PermissionOverrides {
+			slugs = append(slugs, slug)
+		}
+		sort.Strings(slugs)
+		for _, slug := range slugs {
+			set(slug, p.PermissionOverrides[slug])
+		}
+	}
+	// Tier 3: the agent's own legacy inline access — highest. The owner flag
+	// is a plain bool (no "explicit false"), so it can only raise.
+	if a.IsOwner {
+		owner = true
+	}
 	for _, s := range a.Permissions {
 		set(s, db.PermEffectGrant)
 	}
@@ -1990,6 +2191,7 @@ func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[st
 	for i := range out {
 		a := &out[i]
 		configured := strings.TrimSpace(a.SpawnProfile) != "" ||
+			a.ProfileInline != nil ||
 			strings.TrimSpace(a.RoleRef) != "" ||
 			strings.TrimSpace(a.Harness) != "" || strings.TrimSpace(a.Model) != "" ||
 			strings.TrimSpace(a.Effort) != "" || strings.TrimSpace(a.Sandbox) != "" ||
@@ -2964,6 +3166,13 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			if prev.RoleRef != "" {
 				t.Agents[i].RoleRef = prev.RoleRef
 			}
+			// The template-local profile splits the same way: its OBSERVABLE
+			// fields (harness/model/effort/sandbox + live permission grants) are
+			// re-traced above (the live group wins, exactly like the legacy
+			// inline overrides used to be), while its NON-observable fields
+			// (approval, ask-timeout, the launch toggles, deny overrides) are
+			// blueprint curation and carry forward on name-match.
+			t.Agents[i].ProfileInline = mergeSnapshotInlineProfile(prev.ProfileInline, t.Agents[i].ProfileInline)
 		}
 		removed := []string{}
 		for _, n := range prevOrder {
@@ -3007,6 +3216,53 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// mergeSnapshotInlineProfile combines a stored template agent's template-local
+// profile (prev) with the freshly re-traced one (traced) for an update-mode
+// from-group re-snapshot. The traced profile's OBSERVABLE fields win (harness /
+// model / effort / sandbox + the member's live permission grants); prev's
+// NON-observable, curated fields carry forward: approval (never recorded on a
+// session row), the ask-timeout, the trust_dir / auto_review / remote_control
+// toggles, and any deny permission overrides (only grants are observable).
+// prev's is_owner is deliberately dropped — ownership IS observable and rides
+// the agent row's own owner flag. Returns nil when neither side carries
+// anything.
+func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile {
+	if prev == nil {
+		return traced
+	}
+	out := &db.SpawnProfile{}
+	if traced != nil {
+		cp := *traced
+		out = &cp
+	}
+	if out.Approval == "" {
+		out.Approval = prev.Approval
+	}
+	if out.AskUserQuestionTimeout == "" {
+		out.AskUserQuestionTimeout = prev.AskUserQuestionTimeout
+	}
+	out.AutoReview = prev.AutoReview
+	out.TrustDir = prev.TrustDir
+	out.RemoteControl = prev.RemoteControl
+	for slug, effect := range prev.PermissionOverrides {
+		if effect != db.PermEffectGrant {
+			if out.PermissionOverrides == nil {
+				out.PermissionOverrides = map[string]string{}
+			}
+			if _, ok := out.PermissionOverrides[slug]; !ok {
+				out.PermissionOverrides[slug] = effect
+			}
+		}
+	}
+	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
+		out.Approval == "" && out.AskUserQuestionTimeout == "" &&
+		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil &&
+		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
+		return nil
+	}
+	return out
+}
+
 // snapshotGroupTemplate builds the template a from-group snapshot of
 // this roster would store: one agent per group member, pure owners
 // appended, descr/context taken from the group verbatim (the update
@@ -3042,25 +3298,39 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			name = deriveTemplateAgentName(convID, role, len(t.Agents)+1, usedNames)
 		}
 		perms, _ := db.ListAgentPermissionsForConv(convID)
-		if perms == nil {
-			perms = []string{}
-		}
 		// Re-trace the member's OBSERVABLE launch fields (JOH-239) so a round-trip
 		// preserves each role's launch shape. The spawn-profile REFERENCE is
 		// blueprint curation, not observable — it is preserved by name-match in the
 		// update path (handleTemplateFromGroup), like the per-agent brief.
+		//
+		// The traced fields + the member's live permission grants land in a
+		// template-LOCAL profile (profile_inline), NOT the five legacy inline
+		// fields + the legacy permissions list: the local profile is first-class
+		// in the editor (viewable, editable, removable), so a fresh snapshot never
+		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
+		var inline *db.SpawnProfile
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || len(perms) > 0 {
+			po := map[string]string{}
+			for _, s := range perms {
+				po[s] = db.PermEffectGrant
+			}
+			inline = &db.SpawnProfile{
+				Harness:             launch.Harness,
+				Model:               launch.Model,
+				Effort:              launch.Effort,
+				Sandbox:             launch.Sandbox,
+				PermissionOverrides: po,
+			}
+		}
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{
-			Ordinal:     len(t.Agents),
-			Name:        name,
-			Role:        role,
-			Descr:       descr,
-			IsOwner:     owner,
-			Permissions: perms,
-			Harness:     launch.Harness,
-			Model:       launch.Model,
-			Effort:      launch.Effort,
-			Sandbox:     launch.Sandbox,
+			Ordinal:       len(t.Agents),
+			Name:          name,
+			Role:          role,
+			Descr:         descr,
+			IsOwner:       owner,
+			Permissions:   []string{},
+			ProfileInline: inline,
 		})
 	}
 	for _, m := range members {

@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,4 +466,72 @@ func TestRunTaskForceDeploy_PrintsStagedSpawn(t *testing.T) {
 	assert.Contains(t, out, "1 spawned, 0 failed")
 	assert.Contains(t, out, "staged spawn: wave 1/2 spawned; 4 more agent(s)")
 	assert.Contains(t, out, "rhythms: 1 recurring nudge armed")
+}
+
+// stubDaemonGetRaw makes the daemon look "available" and serves body for
+// every DaemonGetRaw call, recording the requested path. t.Cleanup restores
+// the production indirection vars.
+func stubDaemonGetRaw(t *testing.T, gotPath *string, body string) {
+	t.Helper()
+	prevAvail, prevRaw := DaemonAvailableImpl, DaemonGetRawImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonGetRawImpl = prevAvail, prevRaw })
+	DaemonAvailableImpl = func() bool { return true }
+	DaemonGetRawImpl = func(path string) ([]byte, http.Header, error) {
+		*gotPath = path
+		return []byte(body), nil, nil
+	}
+}
+
+// exportEnvelopeWire is a daemon-side export envelope carrying everything the
+// CLI must not strip: the embedded `profiles` array (referenced registry
+// profiles travel with the export) and an unknown future envelope field.
+const exportEnvelopeWire = `{"format":"tclaude-task-force","format_version":3,` +
+	`"template":{"name":"crew","agents":[{"name":"lead","permissions":[]}]},` +
+	`"roles":[{"name":"dev"}],` +
+	`"profiles":[{"name":"lead-kit","is_owner":true,"permission_overrides":{"groups.spawn":"grant"}}],` +
+	`"some_future_envelope_field":"must-survive"}`
+
+// runTemplatesExport must pass the daemon's export bytes through VERBATIM
+// (re-indented only): decoding into a CLI-side mirror struct silently strips
+// every envelope field the mirror doesn't carry — the embedded `profiles`
+// array was lost exactly that way, breaking profile portability of a
+// CLI-produced export.
+func TestRunTemplatesExport_PassesDaemonEnvelopeThroughVerbatim(t *testing.T) {
+	var gotPath string
+	stubDaemonGetRaw(t, &gotPath, exportEnvelopeWire)
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesExport(&templatesExportParams{Name: "crew"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.Equal(t, "/v1/templates/crew/export", gotPath)
+
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &back))
+	profiles, isArr := back["profiles"].([]any)
+	require.True(t, isArr, "embedded profiles survive the CLI export")
+	require.Len(t, profiles, 1)
+	assert.Equal(t, "lead-kit", profiles[0].(map[string]any)["name"])
+	assert.Equal(t, "must-survive", back["some_future_envelope_field"],
+		"unknown daemon-side envelope fields pass through untouched")
+	assert.Len(t, back["roles"], 1, "roles still travel too")
+}
+
+// The --file branch writes the same verbatim bytes and reports the agent
+// count from a minimal, throwaway decode of the envelope.
+func TestRunTemplatesExport_FileBranchKeepsEnvelopeAndCountsAgents(t *testing.T) {
+	var gotPath string
+	stubDaemonGetRaw(t, &gotPath, exportEnvelopeWire)
+
+	file := filepath.Join(t.TempDir(), "crew.task-force.json")
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesExport(&templatesExportParams{Name: "crew", File: file}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+
+	raw, err := os.ReadFile(file)
+	require.NoError(t, err)
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(raw, &back))
+	_, isArr := back["profiles"].([]any)
+	assert.True(t, isArr, "embedded profiles land in the file")
+	assert.Contains(t, stderr.String(), "(1 agent)", "agent count decoded for the confirmation line")
 }
