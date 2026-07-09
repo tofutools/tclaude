@@ -261,6 +261,53 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	}, nil
 }
 
+// buildInlineProfileFromJSON validates a template-agent's template-LOCAL spawn
+// profile (profile_inline) and converts it to a name-less db.SpawnProfile for
+// embedding in the template. It reuses buildProfileFromJSON's field validation
+// wholesale (launch fields against the profile's own harness, permission
+// overrides against the slug registry) but rejects the fields the template
+// deploy path does not honour — identity fields live on the template agent row
+// itself, and the spawn-dialog-only toggles have no meaning at deploy — so a
+// value can never be stored and then silently ignored.
+func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailure) {
+	reject := func(field string) *spawnFailure {
+		return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
+			"profile_inline: %q is not supported on a template-local profile — identity fields "+
+				"(agent_name/role/descr/initial_message) belong on the template agent itself, and the "+
+				"spawn-dialog toggles (sync_worktree/auto_focus/include_group_default_context) do not "+
+				"apply to a template deploy", field)}
+	}
+	if strings.TrimSpace(body.Name) != "" {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"profile_inline: a template-local profile has no name — use spawn_profile to reference a registry profile by name"}
+	}
+	switch {
+	case strings.TrimSpace(body.AgentName) != "":
+		return nil, reject("agent_name")
+	case strings.TrimSpace(body.Role) != "":
+		return nil, reject("role")
+	case strings.TrimSpace(body.Descr) != "":
+		return nil, reject("descr")
+	case strings.TrimSpace(body.InitialMessage) != "":
+		return nil, reject("initial_message")
+	case body.SyncWorktree != nil:
+		return nil, reject("sync_worktree")
+	case body.AutoFocus != nil:
+		return nil, reject("auto_focus")
+	case body.IncludeGroupDefaultContext != nil:
+		return nil, reject("include_group_default_context")
+	}
+	// A placeholder name satisfies buildProfileFromJSON's name rule; the stored
+	// inline profile is name-less by definition.
+	body.Name = "inline"
+	p, fail := buildProfileFromJSON(body)
+	if fail != nil {
+		return nil, fail
+	}
+	p.Name = ""
+	return p, nil
+}
+
 // handleSpawnProfiles dispatches the collection endpoint /v1/spawn-profiles:
 // GET lists every profile (open, read-only), POST creates one (gated on
 // profiles.manage).

@@ -10,8 +10,9 @@ import (
 )
 
 // TestMigrateV100toV101_FreshSchema builds a fresh DB through the full migrate()
-// chain and asserts it lands at currentVersion. v101 is head, so the literal
-// currentVersion tripwire lives here.
+// chain and asserts it reaches at least v101. The literal currentVersion
+// tripwire moved forward to the v102 head test
+// (migrate_v102_template_agent_profile_inline_test.go).
 func TestMigrateV100toV101_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
@@ -19,8 +20,7 @@ func TestMigrateV100toV101_FreshSchema(t *testing.T) {
 
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 101, currentVersion, "tripwire: bump this and add a v101->v102 test when you add a migration")
+	require.GreaterOrEqual(t, ver, 101, "fresh DB migrates through v101")
 
 	var have int
 	require.NoError(t, d.QueryRow(

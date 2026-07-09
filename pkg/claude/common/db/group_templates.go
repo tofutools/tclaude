@@ -72,7 +72,7 @@ type WorkPatternEntry struct {
 // workPatternToJSON marshals a work pattern for the
 // group_templates.work_pattern TEXT column. An empty pattern stores as
 // "[]" (the permsToJSON convention) so a reader can json.Unmarshal it
-// unconditionally; legacy rows hold '' and read back as empty.
+// unconditionally; legacy rows hold ” and read back as empty.
 func workPatternToJSON(entries []WorkPatternEntry) string {
 	if len(entries) == 0 {
 		return "[]"
@@ -85,7 +85,7 @@ func workPatternToJSON(entries []WorkPatternEntry) string {
 }
 
 // workPatternFromJSON parses the work_pattern TEXT column back into a
-// slice. A blank ('' — pre-v87 rows) or malformed value yields an empty
+// slice. A blank (” — pre-v87 rows) or malformed value yields an empty
 // (non-nil) slice.
 func workPatternFromJSON(s string) []WorkPatternEntry {
 	out := []WorkPatternEntry{}
@@ -145,12 +145,98 @@ type GroupTemplateAgent struct {
 	Sandbox      string
 	Approval     string
 
+	// ProfileInline is the agent's template-LOCAL spawn profile (nil = none),
+	// stored as a JSON object in the profile_inline column. It carries the same
+	// launch + birth-time-access shape as a spawn_profiles row but lives inside
+	// the template: a bespoke per-agent launch config that doesn't pollute the
+	// shared profile registry and travels with the template on export/import.
+	// Only the fields the template deploy path honours are persisted (launch
+	// fields, ask-timeout, trust_dir/auto_review/remote_control toggles, owner +
+	// permission overrides) — see inlineProfileToJSON. Resolution order at
+	// instantiate: the five legacy inline fields above → ProfileInline →
+	// SpawnProfile (the registry reference) → role tiers → harness default.
+	ProfileInline *SpawnProfile
+
 	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
 	// in ascending order: wave N+1 starts only once wave N's agents are up and
 	// have gone idle (or a per-template max-wait cap fires). A template whose
 	// every agent is wave 0 spawns in a single synchronous pass — today's exact
 	// behaviour.
 	Wave int
+}
+
+// templateInlineProfileJSON is the serialized shape of a template-local spawn
+// profile (the group_template_agents.profile_inline column). snake_case field
+// names deliberately mirror the daemon's spawn-profile wire shape so the
+// column, the template wire JSON and a template export envelope all agree.
+// Restricted to the fields the template deploy path honours — identity fields
+// (agent_name/role/descr/initial_message) live on the template-agent row
+// itself, and the spawn-dialog-only toggles (sync_worktree/auto_focus/
+// include_group_default_context) have no meaning for a template deploy.
+type templateInlineProfileJSON struct {
+	Harness                string            `json:"harness,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	Effort                 string            `json:"effort,omitempty"`
+	Sandbox                string            `json:"sandbox,omitempty"`
+	Approval               string            `json:"approval,omitempty"`
+	AskUserQuestionTimeout string            `json:"ask_user_question_timeout,omitempty"`
+	AutoReview             *bool             `json:"auto_review,omitempty"`
+	TrustDir               *bool             `json:"trust_dir,omitempty"`
+	RemoteControl          *bool             `json:"remote_control,omitempty"`
+	IsOwner                *bool             `json:"is_owner,omitempty"`
+	PermissionOverrides    map[string]string `json:"permission_overrides,omitempty"`
+}
+
+// inlineProfileToJSON marshals a template-local profile for the
+// profile_inline TEXT column. nil stores as "" (no inline profile), the
+// permsToJSON convention for "absent".
+func inlineProfileToJSON(p *SpawnProfile) string {
+	if p == nil {
+		return ""
+	}
+	b, err := json.Marshal(templateInlineProfileJSON{
+		Harness:                p.Harness,
+		Model:                  p.Model,
+		Effort:                 p.Effort,
+		Sandbox:                p.Sandbox,
+		Approval:               p.Approval,
+		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
+		AutoReview:             p.AutoReview,
+		TrustDir:               p.TrustDir,
+		RemoteControl:          p.RemoteControl,
+		IsOwner:                p.IsOwner,
+		PermissionOverrides:    p.PermissionOverrides,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// inlineProfileFromJSON parses the profile_inline column back into a
+// *SpawnProfile (nil for blank/malformed — no inline profile). The returned
+// profile has no Name/ID: it is template-local by definition.
+func inlineProfileFromJSON(s string) *SpawnProfile {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var j templateInlineProfileJSON
+	if err := json.Unmarshal([]byte(s), &j); err != nil {
+		return nil
+	}
+	return &SpawnProfile{
+		Harness:                j.Harness,
+		Model:                  j.Model,
+		Effort:                 j.Effort,
+		Sandbox:                j.Sandbox,
+		Approval:               j.Approval,
+		AskUserQuestionTimeout: j.AskUserQuestionTimeout,
+		AutoReview:             j.AutoReview,
+		TrustDir:               j.TrustDir,
+		RemoteControl:          j.RemoteControl,
+		IsOwner:                j.IsOwner,
+		PermissionOverrides:    j.PermissionOverrides,
+	}
 }
 
 // permsToJSON marshals a permission-slug list for the
@@ -275,11 +361,12 @@ func insertTemplateAgents(tx *sql.Tx, templateID int64, agents []GroupTemplateAg
 		if _, err := tx.Exec(
 			`INSERT INTO group_template_agents
 			   (template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-			    role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			templateID, a.Ordinal, a.Name, a.Role, a.Descr, a.InitialMessage,
 			owner, permsToJSON(a.Permissions),
-			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval, a.Wave); err != nil {
+			a.RoleRef, a.SpawnProfile, a.Harness, a.Model, a.Effort, a.Sandbox, a.Approval, a.Wave,
+			inlineProfileToJSON(a.ProfileInline)); err != nil {
 			return err
 		}
 	}
@@ -340,7 +427,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 	// an N+1 query when the editor list is rendered.
 	agentRows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline
 		 FROM group_template_agents ORDER BY template_id, ordinal, id`)
 	if err != nil {
 		return nil, err
@@ -380,7 +467,7 @@ func DeleteGroupTemplate(name string) (int64, error) {
 func listTemplateAgents(d *sql.DB, templateID int64) ([]GroupTemplateAgent, error) {
 	rows, err := d.Query(
 		`SELECT id, template_id, ordinal, name, role, descr, initial_message, is_owner, permissions,
-		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave
+		        role_ref, spawn_profile, harness, model, effort, sandbox, approval, wave, profile_inline
 		 FROM group_template_agents WHERE template_id = ? ORDER BY ordinal, id`, templateID)
 	if err != nil {
 		return nil, err
@@ -415,14 +502,16 @@ func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 func scanGroupTemplateAgent(s rowScanner) (*GroupTemplateAgent, error) {
 	var a GroupTemplateAgent
 	var owner int
-	var perms string
+	var perms, profileInline string
 	if err := s.Scan(&a.ID, &a.TemplateID, &a.Ordinal, &a.Name, &a.Role,
 		&a.Descr, &a.InitialMessage, &owner, &perms,
-		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval, &a.Wave); err != nil {
+		&a.RoleRef, &a.SpawnProfile, &a.Harness, &a.Model, &a.Effort, &a.Sandbox, &a.Approval, &a.Wave,
+		&profileInline); err != nil {
 		return nil, err
 	}
 	a.IsOwner = owner != 0
 	a.Permissions = permsFromJSON(perms)
+	a.ProfileInline = inlineProfileFromJSON(profileInline)
 	return &a, nil
 }
 
