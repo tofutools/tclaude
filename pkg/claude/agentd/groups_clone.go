@@ -13,8 +13,8 @@ import (
 
 // handleGroupClone clones an entire group: snapshots source members +
 // owners, creates a new group, clones each member into the new group
-// using the same spawn machinery as `agent clone`, then copies owners
-// (same conv-id, no clone) onto the new group.
+// using the same spawn machinery as `agent clone`, then optionally
+// copies owners (same conv-id, no clone) onto the new group.
 //
 // Permission slug: groups.clone (default human-only). Same dispatcher
 // as the other groups.* verbs.
@@ -38,12 +38,14 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		NewName    string `json:"new_name,omitempty"`
 		NoCopyConv bool   `json:"no_copy_conv,omitempty"`
 		// NoCloneMembers skips the per-member clone loop entirely: the new
-		// group is created with every source setting + the source owners,
-		// but no member agents. The "clone the group config, not the
-		// workers" mode. Owners still copy (group governance is a setting,
-		// not a worker agent). Default false = clone members (the original
-		// behaviour).
+		// group is created with every source setting but no member agents.
+		// The "clone the group config, not the workers" mode. Default false
+		// = clone members (the original behaviour).
 		NoCloneMembers bool `json:"no_clone_members,omitempty"`
+		// CopyOwners is pointer-valued for compatibility: omitted preserves
+		// the historical API/CLI default of copying owner rows, while the
+		// dashboard can explicitly opt out when it clones settings only.
+		CopyOwners *bool `json:"copy_owners,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -64,6 +66,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		writeError(w, http.StatusConflict, "exists",
 			"a group named \""+newName+"\" already exists")
 		return
+	}
+	copyOwners := true
+	if body.CopyOwners != nil {
+		copyOwners = *body.CopyOwners
 	}
 
 	// Snapshot source state. Read-only — partial reads here just mean
@@ -116,9 +122,8 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	results := make([]memberResult, 0, len(srcMembers))
 
 	// "Without agents" mode skips the per-member clone loop — the new
-	// group keeps the source settings + owners (copied below) but gets no
-	// member agents. results stays an empty slice, surfacing as 0 members
-	// in the response.
+	// group keeps the source settings but gets no member agents. results
+	// stays an empty slice, surfacing as 0 members in the response.
 	membersToClone := srcMembers
 	if body.NoCloneMembers {
 		membersToClone = nil
@@ -201,13 +206,15 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	// Owners stay as the same conv-id — they're separate from members.
 	// Same conv-id, same granted_by audit semantics as a manual grant.
 	ownersCopied := 0
-	for _, o := range srcOwners {
-		if err := db.AddAgentGroupOwner(newGroupID, o.ConvID, granter); err != nil {
-			slog.Warn("groups clone: add owner failed",
-				"group", newName, "owner", o.ConvID, "error", err)
-			continue
+	if copyOwners {
+		for _, o := range srcOwners {
+			if err := db.AddAgentGroupOwner(newGroupID, o.ConvID, granter); err != nil {
+				slog.Warn("groups clone: add owner failed",
+					"group", newName, "owner", o.ConvID, "error", err)
+				continue
+			}
+			ownersCopied++
 		}
-		ownersCopied++
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

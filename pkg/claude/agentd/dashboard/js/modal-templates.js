@@ -2690,8 +2690,9 @@ function bindGroupContextModal() {
 // ---- Group clone ------------------------------------------------------
 //
 // Clones an entire group via POST /api/groups/{name}/clone. The new
-// group carries every source setting + owners; the checkbox controls
-// whether the member agents are cloned too (no_clone_members).
+// group carries every source setting; the checkboxes control whether
+// member agents are cloned too (no_clone_members) and whether source
+// owners are copied as owners of the new group (copy_owners).
 
 // Strips a trailing -c-<N> / -clone-<N> suffix, mirroring the daemon's
 // cloneSuffixRegex so a clone-of-a-clone bumps N rather than nesting.
@@ -2727,9 +2728,9 @@ function groupSnapshot(groupName) {
 
 // renderGroupClonePreview builds the "what you'll get" panel from the
 // source group's snapshot: every setting the clone carries, plus owner
-// and member-agent counts. withAgents toggles how the member-agents row
-// reads (cloned vs skipped) so the preview tracks the checkbox live.
-function renderGroupClonePreview(g, withAgents) {
+// and member-agent counts. withAgents / copyOwners toggle how the
+// corresponding rows read so the preview tracks the checkboxes live.
+function renderGroupClonePreview(g, withAgents, copyOwners) {
   if (!g) return '<div class="gcp-title">Preview unavailable (group not in current snapshot)</div>';
   const rows = g.members || [];
   // The snapshot's members[] also carries pure-owner rows (owners who
@@ -2751,7 +2752,10 @@ function renderGroupClonePreview(g, withAgents) {
     ? 'none'
     : `${memberCount} (${onlineCount} online)` + (withAgents
       ? ' — cloned with history'
-      : ' — skipped (settings + owners only)');
+      : ' — skipped');
+  const ownerVal = ownerCount === 0
+    ? 'none'
+    : `${ownerCount}` + (copyOwners ? ' — copied' : ' — skipped');
   return '<div class="gcp-title">Clone will carry</div>'
     + orNone(g.default_cwd, '📁 directory')
     + orNone(g.descr, '📝 description')
@@ -2759,7 +2763,7 @@ function renderGroupClonePreview(g, withAgents) {
     + orNone(g.default_profile, '🧠 profile')
     + row('👥 max members', g.max_members ? String(g.max_members) : 'unlimited', !g.max_members)
     + row('🔔 notifications', g.notify_enabled ? 'on' : 'off')
-    + row('👤 owners', ownerCount > 0 ? `${ownerCount} (copied)` : 'none', ownerCount === 0)
+    + row('👤 owners', ownerVal, ownerCount === 0 || !copyOwners)
     + row('🤖 member agents', memberVal, memberCount === 0 || !withAgents);
 }
 
@@ -2768,7 +2772,8 @@ function renderGroupClonePreview(g, withAgents) {
 function refreshGroupClonePreview() {
   const g = groupSnapshot(groupCloneModalGroup);
   const withAgents = $('#group-clone-with-agents').checked;
-  $('#group-clone-preview').innerHTML = renderGroupClonePreview(g, withAgents);
+  const copyOwners = $('#group-clone-copy-owners').checked;
+  $('#group-clone-preview').innerHTML = renderGroupClonePreview(g, withAgents, copyOwners);
 }
 
 // The group being cloned + the prefilled default name, so submit can
@@ -2780,7 +2785,8 @@ function openGroupCloneModal(groupName) {
   groupCloneModalGroup = groupName;
   groupCloneDefaultName = defaultGroupCloneName(groupName);
   $('#group-clone-name').value = groupCloneDefaultName;
-  $('#group-clone-with-agents').checked = true;
+  $('#group-clone-with-agents').checked = false;
+  $('#group-clone-copy-owners').checked = false;
   $('#group-clone-error').textContent = '';
   const meta = $('#group-clone-meta');
   meta.textContent = `source: ${groupName}`;
@@ -2805,12 +2811,13 @@ async function submitGroupClone() {
   if (!group) { closeGroupCloneModal(); return; }
   const name = $('#group-clone-name').value.trim();
   const withAgents = $('#group-clone-with-agents').checked;
+  const copyOwners = $('#group-clone-copy-owners').checked;
   const errEl = $('#group-clone-error');
   errEl.textContent = '';
   const submitBtn = $('#group-clone-submit');
   submitBtn.disabled = true;
   try {
-    const body = { no_clone_members: !withAgents };
+    const body = { no_clone_members: !withAgents, copy_owners: copyOwners };
     // Only send an explicit name when the user overrode the default —
     // accepting the prefill sends nothing so the daemon picks the next
     // free -c-<N> itself, immune to a stale-snapshot collision.
@@ -2833,11 +2840,14 @@ async function submitGroupClone() {
     } catch (_) { /* non-JSON success — fall back to a generic toast */ }
     closeGroupCloneModal();
     const where = created ? `"${created}"` : 'new group';
+    const bits = [];
+    if (!withAgents) bits.push('no member agents');
+    if (!copyOwners) bits.push('no owners');
     toast(withAgents
       ? (failed > 0
-        ? `Cloned ${group} → ${where} (${failed} member(s) skipped — see CLI for detail)`
-        : `Cloned ${group} → ${where}`)
-      : `Cloned ${group} → ${where} (settings + owners only)`,
+        ? `Cloned ${group} → ${where} (${failed} member(s) skipped — see CLI for detail${bits.length ? `; ${bits.join(', ')}` : ''})`
+        : `Cloned ${group} → ${where}${bits.length ? ` (${bits.join(', ')})` : ''}`)
+      : `Cloned ${group} → ${where} (settings only${copyOwners ? ' + owners' : ''})`,
       failed > 0);
     refresh();
   } catch (err) {
@@ -2850,8 +2860,9 @@ async function submitGroupClone() {
 function bindGroupCloneModal() {
   $('#group-clone-cancel').addEventListener('click', closeGroupCloneModal);
   $('#group-clone-submit').addEventListener('click', submitGroupClone);
-  // Repaint the preview's member-agents line as the checkbox toggles.
+  // Repaint the preview as the clone-scope checkboxes toggle.
   $('#group-clone-with-agents').addEventListener('change', refreshGroupClonePreview);
+  $('#group-clone-copy-owners').addEventListener('change', refreshGroupClonePreview);
   bindBackdropDiscard('group-clone-modal', closeGroupCloneModal);
 }
 
