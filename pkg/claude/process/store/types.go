@@ -44,12 +44,14 @@ func IsConflict(err error) bool {
 type Templates interface {
 	PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, ref string) (*model.Template, error)
+	ListTemplates(ctx context.Context) ([]TemplateRecord, error)
 }
 
 type Runs interface {
 	CreateRun(ctx context.Context, run RunRecord, initial state.State) (RunRecord, error)
 	GetRun(ctx context.Context, runID string) (RunRecord, error)
 	LoadRun(ctx context.Context, runID string) (Snapshot, error)
+	ListRuns(ctx context.Context) ([]RunRecord, error)
 }
 
 type Events interface {
@@ -85,10 +87,11 @@ type TemplateRecord struct {
 }
 
 type RunRecord struct {
-	ID          string    `json:"id"`
-	TemplateRef string    `json:"templateRef"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          string            `json:"id"`
+	TemplateRef string            `json:"templateRef"`
+	Params      map[string]string `json:"params,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
 }
 
 type Snapshot struct {

@@ -184,6 +184,49 @@ func TestReducerSequences(t *testing.T) {
 			},
 		},
 		{
+			name: "settled retry can start next attempt",
+			events: []Event{
+				initEvent(),
+				{
+					Type:   EventNodeAttemptStarted,
+					Seq:    2,
+					NodeID: "implement",
+					Actor:  "agent:agt_dev123",
+				},
+				{
+					Type:       EventNodeAttemptSettled,
+					Seq:        3,
+					NodeID:     "implement",
+					Outcome:    "fail",
+					NodeStatus: NodeStatusReady,
+				},
+				{
+					Type:   EventNodeAttemptStarted,
+					Seq:    4,
+					NodeID: "implement",
+					Actor:  "agent:agt_dev123",
+				},
+			},
+			assert: func(t *testing.T, st State) {
+				node := st.Nodes["implement"]
+				if node.Status != NodeStatusRunning || node.Attempt != 2 {
+					t.Fatalf("node = %#v", node)
+				}
+			},
+		},
+		{
+			name: "node status set",
+			events: []Event{
+				initEvent(),
+				{Type: EventNodeStatusSet, Seq: 2, NodeID: "implement", NodeStatus: NodeStatusReady},
+			},
+			assert: func(t *testing.T, st State) {
+				if st.Nodes["implement"].Status != NodeStatusReady {
+					t.Fatalf("node = %#v", st.Nodes["implement"])
+				}
+			},
+		},
+		{
 			name: "explicit settled status override",
 			events: []Event{
 				initEvent(),
@@ -197,12 +240,12 @@ func TestReducerSequences(t *testing.T) {
 					Type:       EventNodeAttemptSettled,
 					Seq:        3,
 					NodeID:     "implement",
-					NodeStatus: NodeStatusBlocked,
-					Outcome:    "needs-human",
+					NodeStatus: NodeStatusReady,
+					Outcome:    "retry",
 				},
 			},
 			assert: func(t *testing.T, st State) {
-				if st.Nodes["implement"].Status != NodeStatusBlocked {
+				if st.Nodes["implement"].Status != NodeStatusReady {
 					t.Fatalf("node = %#v", st.Nodes["implement"])
 				}
 			},
@@ -412,11 +455,15 @@ func TestReducerErrors(t *testing.T) {
 		{name: "unknown event type", st: base, event: Event{Type: "future", Seq: 11}, want: "unsupported"},
 		{name: "status set without status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11}, want: "requires runStatus"},
 		{name: "invalid run status", st: base, event: Event{Type: EventRunStatusSet, Seq: 11, RunStatus: "bogus"}, want: "invalid run status"},
+		{name: "node status set without status", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement"}, want: "requires nodeStatus"},
+		{name: "invalid node status set", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: "bogus"}, want: "invalid node status"},
+		{name: "node status set cannot imply missing wait", st: base, event: Event{Type: EventNodeStatusSet, Seq: 11, NodeID: "implement", NodeStatus: NodeStatusWaitingHuman}, want: "cannot set status"},
 		{name: "undeclared node", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "missing"}, want: "not declared"},
 		{name: "start while running", st: running, event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Actor: "agent:agt_dev123"}, want: "active attempt"},
 		{name: "attempt regression", st: baseWithAttempt(2), event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Attempt: 1, Actor: "agent:agt_dev123"}, want: "must be greater"},
 		{name: "settle without outcome", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement"}, want: "requires outcome"},
 		{name: "invalid node status override", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement", Outcome: "pass", NodeStatus: "bogus"}, want: "invalid node status"},
+		{name: "settled status cannot imply missing wait", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement", Outcome: "waiting", NodeStatus: NodeStatusWaitingHuman}, want: "cannot set status"},
 		{name: "second decision", st: decisionDone, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already decided"},
 		{name: "redecision after unblock", st: unblockedDecision(t, decisionDone), event: Event{Type: EventDecisionRecorded, Seq: 12, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already decided"},
 		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
