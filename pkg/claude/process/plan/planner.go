@@ -16,13 +16,7 @@ func Plan(st *state.State, tmpl *model.Template) ([]Command, error) {
 	if tmpl == nil {
 		return nil, fmt.Errorf("process template is nil")
 	}
-	switch st.Status {
-	case state.RunStatusCompleted,
-		state.RunStatusFailed,
-		state.RunStatusCanceled,
-		state.RunStatusPaused,
-		state.RunStatusDirty,
-		state.RunStatusInconsistent:
+	if !AllowsExecution(st.Status) {
 		return nil, nil
 	}
 
@@ -40,6 +34,22 @@ func Plan(st *state.State, tmpl *model.Template) ([]Command, error) {
 		commands = append(commands, nodeCommands...)
 	}
 	return commands, nil
+}
+
+// AllowsExecution is the shared planner/executor lifecycle gate. Recovery may
+// finish issued commands only while the planner would allow new commands.
+func AllowsExecution(status state.RunStatus) bool {
+	switch status {
+	case state.RunStatusCompleted,
+		state.RunStatusFailed,
+		state.RunStatusCanceled,
+		state.RunStatusPaused,
+		state.RunStatusDirty,
+		state.RunStatusInconsistent:
+		return false
+	default:
+		return true
+	}
 }
 
 func planNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {

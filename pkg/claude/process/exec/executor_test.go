@@ -221,6 +221,86 @@ func TestExecuteRejectsForgedProgramCommand(t *testing.T) {
 	}
 }
 
+func TestDriveDoesNotResumeInternalCommandAfterCancellation(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	tmpl := mustTemplate(t, fs, snapshot.Run.TemplateRef)
+
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	running, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err = plan.Plan(running.State, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err = plan.Plan(completed.State, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var activate, complete plan.Command
+	for _, command := range commands {
+		switch command.Kind {
+		case plan.CommandKindActivateNode:
+			activate = command
+		case plan.CommandKindCompleteRun:
+			complete = command
+		}
+	}
+	if activate.ID == "" || complete.ID == "" {
+		t.Fatalf("terminal commands = %#v", commands)
+	}
+	if _, err := executor.Execute(t.Context(), activate); err != nil {
+		t.Fatal(err)
+	}
+	beforeClaim, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, claimState, err := executor.claim(t.Context(), beforeClaim, complete)
+	if err != nil || !claimed {
+		t.Fatalf("claim = %v, err = %v", claimed, err)
+	}
+	_, err = fs.Append(t.Context(), snapshot.Run.ID, claimState.LastLogSeq, []evidence.LogEntry{{
+		At:    executorTestTime.Add(time.Minute),
+		Scope: evidence.Scope{Kind: evidence.ScopeRun},
+		Kind:  evidence.EntryKindAdmin,
+		Event: &state.Event{
+			Type:      state.EventRunStatusSet,
+			At:        executorTestTime.Add(time.Minute),
+			RunStatus: state.RunStatusCanceled,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State.Status != state.RunStatusCanceled || finished.State.OutstandingCommands[complete.ID].Status != state.CommandStatusIssued {
+		t.Fatalf("canceled state = %#v", finished.State)
+	}
+	if _, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, complete.ID); err == nil || !strings.Contains(err.Error(), "cannot be resumed") {
+		t.Fatalf("expected canceled-run resume refusal, got %v", err)
+	}
+}
+
 func TestExecuteRefusesProgramWithoutRunOptIn(t *testing.T) {
 	fs, snapshot := executorFixture(t, false, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}

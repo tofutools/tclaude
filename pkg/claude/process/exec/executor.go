@@ -61,6 +61,9 @@ func (e *Executor) Drive(ctx context.Context, runID string) (store.Snapshot, err
 			return store.Snapshot{}, err
 		}
 		if len(commands) == 0 {
+			if !plan.AllowsExecution(snapshot.State.Status) {
+				return snapshot, nil
+			}
 			internal := issuedInternalCommandIDs(snapshot.State)
 			if len(internal) > 0 {
 				for _, commandID := range internal {
@@ -255,6 +258,9 @@ func (e *Executor) ResumeIssued(ctx context.Context, command plan.Command) (*sta
 	}
 	if outstanding.Status != state.CommandStatusIssued {
 		return nil, fmt.Errorf("process command %q is %s and cannot be resumed", command.ID, outstanding.Status)
+	}
+	if !plan.AllowsExecution(snapshot.State.Status) {
+		return nil, fmt.Errorf("process run %q is %s and command %q cannot be resumed", command.RunID, snapshot.State.Status, command.ID)
 	}
 	return e.appendObservation(ctx, command, Observation{Verdict: "pass"})
 }
