@@ -664,6 +664,30 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ClaudeCleanupPeriodWired guards the Claude Code
+// transcript-retention override (config claude_cleanup_period_days → Claude
+// Code's cleanupPeriodDays), whose Config-tab pieces span dashboard.html +
+// config.js and must stay in lockstep — there's no JS render test, so we assert
+// on the embedded concatenation at `go test ./...`. The Go accessor + round-trip
+// is covered separately by config.TestClaudeCleanupPeriodDaysOverride /
+// config.TestClaudeCleanupPeriodDays_JSONRoundTrip. A rename in either file
+// silently breaks the field only in the browser:
+//   - dashboard.html — the Config-tab number input;
+//   - config.js — load (fill) + gather (save) the value.
+func TestDashboardAssets_ClaudeCleanupPeriodWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.html — the Config-tab control.
+		`id="cfg-claude-cleanup-days"`,
+		// config.js — load + gather the value (the key that actually writes).
+		"#cfg-claude-cleanup-days",
+		"cfg.claude_cleanup_period_days = cfgInt",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — Claude cleanup-period config broken", needle)
+		}
+	}
+}
+
 // TestDashboardHTML_ReferencesStaticAssets pins that the served
 // dashboard.html loads the stylesheet and the ES-module entrypoint from
 // the /static/ route by absolute path (so it resolves the same whatever

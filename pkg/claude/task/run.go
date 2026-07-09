@@ -104,6 +104,11 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) erro
 	}
 	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
+	// Sync the configured Claude Code transcript-retention override
+	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
+	// set; logs and continues on failure.
+	_ = session.EnsureClaudeCleanupPeriod()
+
 	sessionID := "tasks-" + session.GenerateSessionID()
 	tmuxSession := sessionID
 
