@@ -133,15 +133,18 @@ A manually-run **visual smoke harness** for the agentd dashboard (JOH-386): it d
 
 PR descriptions should start with a short **Background / Purpose** section before the usual implementation summary. State why the PR exists, what problem it is solving, and any context a cold reviewer needs to judge the shape of the change. After that, keep the normal contents: summary of what changed, how it is implemented when that matters, and tests or verification notes.
 
-Every PR should also record the cold-review status, either in the PR description or in a PR comment: which reviewer ran, whether it was CodeRabbit or an independent fresh-agent review, and any important follow-up from that review. If no cold review has run yet, say that explicitly so merge readiness is not ambiguous.
+Before presenting a PR to the operator, always make sure it has had a real cold review. A real cold review means CodeRabbit actually produced review feedback, or an independent fresh-agent review completed. Record the cold-review status either in the PR description or in a PR comment: which reviewer ran, whether it was CodeRabbit or an independent fresh-agent review, and any important follow-up from that review. For draft or WIP PRs that are not ready to present yet, say explicitly when no cold review has run so merge readiness is not ambiguous.
 
 ## Code review
 
 CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
 
-When CodeRabbit has not produced a real review, do an **independent review** before merge:
+CodeRabbit is usually sufficient for small or routine PRs when it has actually produced a real review. For larger, riskier, or more judgment-heavy PRs, run an **independent fresh-agent review** even if CodeRabbit has reviewed it.
+
+When CodeRabbit has not produced a real review, or when the PR warrants an additional review, do an **independent review** before presenting or merging:
 
 - The reviewer must be a **fresh agent** — a local sub-agent, or a spawned review agent — that sees the PR diff **cold**: given only the diff and a review instruction, not the design backstory or how the change was built. The point is a review uncorrelated with the author's assumptions, so it catches what the author already rationalised away.
+- Prefer a reviewer from a different harness/vendor than the implementer when practical, for example Codex reviewing Claude Code work or Claude Code reviewing Codex work. This usually requires group-owner permissions to spawn the cross-harness review agent through `tclaude agent`; if that is not available, use the freshest independent reviewer you can.
 - Triage its findings the same way CodeRabbit's would be: fix the valid ones, document any deliberate skips.
 
 ## Agent group / worker policy
