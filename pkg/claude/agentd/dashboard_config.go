@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // dashboard_config.go backs the dashboard's "Config" tab — the visual
@@ -175,6 +176,14 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Apply the Claude Code transcript-retention override (claude_cleanup_period_days
+	// → ~/.claude/settings.json cleanupPeriodDays) right now, so a value set in the
+	// Config tab takes effect immediately rather than only on the next session
+	// start. No-op when the override is unset; a failure here is logged inside and
+	// must not fail the save the human already confirmed.
+	_ = session.SyncClaudeCleanupPeriod(cfg)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),

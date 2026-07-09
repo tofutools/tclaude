@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // assertErrorContains asserts at least one error mentions want, so a
@@ -384,4 +385,51 @@ func TestDashboardConfig_RejectsBadLogRotation(t *testing.T) {
 
 	_, statErr := os.Stat(config.ConfigPath())
 	assert.True(t, os.IsNotExist(statErr), "an invalid POST must not write the file")
+}
+
+// cleanupPeriodDaysOnDisk reads cleanupPeriodDays from ~/.claude/settings.json
+// under the test HOME, returning -1 when the file or key is absent.
+func cleanupPeriodDaysOnDisk(t *testing.T) int {
+	t.Helper()
+	data, err := os.ReadFile(session.ClaudeSettingsPath())
+	if os.IsNotExist(err) {
+		return -1
+	}
+	require.NoError(t, err)
+	var settings map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &settings))
+	raw, ok := settings["cleanupPeriodDays"]
+	if !ok {
+		return -1
+	}
+	var days int
+	require.NoError(t, json.Unmarshal(raw, &days))
+	return days
+}
+
+// A real POST that sets claude_cleanup_period_days must apply it to Claude
+// Code's settings.json immediately — the whole point of the fix, so a value set
+// in the Config tab takes effect without waiting for the next session start.
+func TestDashboardConfig_PostAppliesCleanupPeriodImmediately(t *testing.T) {
+	setupTestDB(t) // HOME → temp dir
+	withDashboardAuth(t)
+
+	require.Equal(t, -1, cleanupPeriodDaysOnDisk(t), "no settings.json yet")
+
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"claude_cleanup_period_days":365}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	assert.Equal(t, 365, cleanupPeriodDaysOnDisk(t), "save must sync cleanupPeriodDays into settings.json")
+}
+
+// A dry-run must NOT touch settings.json — it only previews, and the human
+// hasn't confirmed yet.
+func TestDashboardConfig_DryRunDoesNotApplyCleanupPeriod(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, _ := postConfig(t, "/api/config?dry_run=1", wrapBody(`{"claude_cleanup_period_days":365}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	assert.Equal(t, -1, cleanupPeriodDaysOnDisk(t), "dry-run must not write settings.json")
 }
