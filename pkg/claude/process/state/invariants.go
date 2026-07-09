@@ -132,6 +132,11 @@ func OutstandingCommandsAreWellFormed(st *State) Diagnostics {
 		if command.Attempt < 0 {
 			diagnostics = append(diagnostics, diagError("invalid_command_attempt", path+".attempt", "command attempt must be non-negative"))
 		}
+		if command.Status == CommandStatusObserved {
+			if command.Actor != "" && !ValidateActorRef(command.Actor) {
+				diagnostics = append(diagnostics, diagError("invalid_command_actor", path+".actor", fmt.Sprintf("invalid observed command actor %q", command.Actor)))
+			}
+		}
 	}
 	return diagnostics
 }

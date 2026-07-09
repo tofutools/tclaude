@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
@@ -20,10 +21,11 @@ import (
 var runIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type runParams struct {
-	Template  string   `pos:"true" help:"Template YAML path, or stored template ref id@sha256:<hash>"`
-	StoreRoot string   `long:"store-root" help:"Filesystem process store root"`
-	RunID     string   `long:"run-id" optional:"true" help:"Run id to create (default: template id plus timestamp)"`
-	Param     []string `long:"param" optional:"true" help:"Template parameter as key=value; may be repeated"`
+	Template      string   `pos:"true" help:"Template YAML path, or stored template ref id@sha256:<hash>"`
+	StoreRoot     string   `long:"store-root" help:"Filesystem process store root"`
+	RunID         string   `long:"run-id" optional:"true" help:"Run id to create (default: template id plus timestamp)"`
+	Param         []string `long:"param" optional:"true" help:"Template parameter as key=value; may be repeated"`
+	AllowPrograms bool     `long:"allow-programs" optional:"true" help:"Explicitly allow program performers to execute for this run"`
 }
 
 func runCmd() *cobra.Command {
@@ -83,12 +85,26 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 	}
 	initial := initialState(runID, templateRef, tmpl)
 	run, err := fs.CreateRun(cmd.Context(), store.RunRecord{
-		ID:          runID,
-		TemplateRef: templateRef,
-		Params:      params,
+		ID:            runID,
+		TemplateRef:   templateRef,
+		Params:        params,
+		AllowPrograms: p.AllowPrograms,
 	}, initial)
 	if err != nil {
 		return err
+	}
+	if p.AllowPrograms {
+		at := processNow().UTC()
+		_, err = fs.Append(cmd.Context(), run.ID, 0, []evidence.LogEntry{
+			runLogEntry(evidence.EntryKindAdmin, state.Event{
+				Type:   state.EventAdminProgramsAllowed,
+				Actor:  defaultActor(),
+				Reason: "program execution explicitly allowed at instantiation (--allow-programs)",
+			}, "", at),
+		})
+		if err != nil {
+			return fmt.Errorf("record --allow-programs audit entry for run %q: %w", run.ID, err)
+		}
 	}
 	fmt.Fprintf(out, "Created run %s\n", run.ID)
 	fmt.Fprintf(out, "Template: %s\n", run.TemplateRef)

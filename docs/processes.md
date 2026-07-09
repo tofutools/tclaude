@@ -1,9 +1,9 @@
 # Processes
 
 Processes are an experimental, feature-flagged surface for BPMN-lite repeatable
-workflows. Phase 1 has no engine: a human advances runs from the CLI, while the
-store, evidence log, reducer, and verifier exercise the same paths a later
-engine will use.
+workflows. There is not yet a continuously running engine host: a human can
+advance runs from the CLI, and the executor is currently a Go library for
+engine integrations and tests.
 
 Enable the feature:
 
@@ -73,6 +73,31 @@ tclaude process show demo-1 --store-root "$STORE"
 tclaude process show demo-1 --store-root "$STORE" --mermaid
 ```
 
+## Program performers
+
+Program performers execute local commands and therefore require an explicit
+opt-in on each run:
+
+```bash
+tclaude process run program-demo.yaml --store-root "$STORE" --run-id program-1 --allow-programs
+```
+
+The opt-in is stored on the run record and written to the run's admin evidence
+log. The executor refuses a program command when its run was instantiated
+without `--allow-programs`.
+
+`performer.run` is an executable name or path; `performer.args` is passed as a
+literal argument vector, without a shell. `performer.timeout` accepts a Go
+duration such as `30s` or `5m` and defaults to 10 minutes. Program commands
+receive `TCLAUDE_PROCESS_COMMAND_ID` and
+`TCLAUDE_PROCESS_IDEMPOTENCY_KEY` in their environment. Their exit code and
+bounded stdout/stderr tails are stored as an evidence artifact; exit code zero
+settles as pass and every other exit code settles as fail.
+
+This phase does not provide command allowlists or process sandboxing. Treat
+templates as untrusted input and only enable program execution when you have
+reviewed the commands. Allowlists and sandboxing are planned for a later phase.
+
 Inspect stored objects:
 
 ```bash
@@ -87,7 +112,7 @@ tclaude process runs ls --store-root "$STORE"
 - Template params are validated and stored on the run record; interpolation is
   not executed by this phase.
 - Retry support is node-level `retry.maxAttempts`; broader engine scheduling,
-  automatic command execution, and repair are later phases.
+  a continuously running host/tick loop, and repair are later phases.
 - Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
   AND-join semantics are deferred until the engine can track live paths.
 - End nodes default to completed runs; set `result: failed` on a failure

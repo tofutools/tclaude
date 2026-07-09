@@ -26,6 +26,7 @@ const (
 	EventCommandIssued            EventType = "command_issued"
 	EventCommandObserved          EventType = "command_observed"
 	EventAdminRepairRecorded      EventType = "admin_repair_recorded"
+	EventAdminProgramsAllowed     EventType = "admin_programs_allowed"
 	EventTemplateDivergenceMarked EventType = "template_divergence_marked"
 )
 
@@ -194,6 +195,12 @@ func applyEvent(st *State, event Event) error {
 		}
 		node.ActiveAttempt.SettledAt = event.At
 		node.ActiveAttempt.Outcome = event.Outcome
+		if event.Actor != "" {
+			node.ActiveAttempt.Actor = normalizeActor(event.Actor)
+		}
+		if event.EvidenceRef != "" {
+			node.ActiveAttempt.EvidenceRef = event.EvidenceRef
+		}
 		status := event.NodeStatus
 		if status != "" && !status.IsValid() {
 			return fmt.Errorf("invalid node status %q", status)
@@ -445,9 +452,18 @@ func applyEvent(st *State, event Event) error {
 		if event.ExternalRef != "" {
 			command.ExternalRef = event.ExternalRef
 		}
+		if event.Actor != "" {
+			command.Actor = normalizeActor(event.Actor)
+		}
+		if event.Outcome != "" {
+			command.Verdict = event.Outcome
+		}
+		if event.EvidenceRef != "" {
+			command.EvidenceRef = event.EvidenceRef
+		}
 		st.OutstandingCommands[event.CommandID] = command
 		return nil
-	case EventAdminRepairRecorded:
+	case EventAdminRepairRecorded, EventAdminProgramsAllowed:
 		record := AdminRecord{
 			Actor:       normalizeActor(event.Actor),
 			Reason:      event.Reason,

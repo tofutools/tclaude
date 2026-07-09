@@ -45,12 +45,13 @@ type Command struct {
 
 func (c Command) OutstandingCommand(createdAt time.Time) state.OutstandingCommand {
 	return state.OutstandingCommand{
-		ID:        c.ID,
-		NodeID:    c.NodeID,
-		Attempt:   c.Attempt,
-		Kind:      c.Kind,
-		Status:    state.CommandStatusIssued,
-		CreatedAt: createdAt,
+		ID:             c.ID,
+		IdempotencyKey: c.IdempotencyKey,
+		NodeID:         c.NodeID,
+		Attempt:        c.Attempt,
+		Kind:           c.Kind,
+		Status:         state.CommandStatusIssued,
+		CreatedAt:      createdAt,
 	}
 }
 
