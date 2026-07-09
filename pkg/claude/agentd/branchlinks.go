@@ -53,14 +53,15 @@ const branchLinkCmdTimeout = 12 * time.Second
 // omitempty: an agent outside a GitHub repo, or one whose links
 // haven't resolved yet, simply renders the branch as plain text.
 type repoLinksView struct {
-	BranchURL        string `json:"branch_url,omitempty"`         // web link for the current branch
-	BranchPRNumber   int    `json:"branch_pr_number,omitempty"`   // PR # for the current branch; 0 = none
-	BranchPRURL      string `json:"branch_pr_url,omitempty"`      // web link to that PR
-	BranchPRState    string `json:"branch_pr_state,omitempty"`    // open|merged|closed for the current branch's PR
-	StartupBranchURL string `json:"startup_branch_url,omitempty"` // web link for the startup branch
-	StartupPRNumber  int    `json:"startup_pr_number,omitempty"`  // PR # for the startup branch; 0 = none
-	StartupPRURL     string `json:"startup_pr_url,omitempty"`     // web link to that PR
-	StartupPRState   string `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
+	BranchURL        string            `json:"branch_url,omitempty"`         // web link for the current branch
+	BranchPRNumber   int               `json:"branch_pr_number,omitempty"`   // PR # for the current branch; 0 = none
+	BranchPRURL      string            `json:"branch_pr_url,omitempty"`      // web link to that PR
+	BranchPRState    string            `json:"branch_pr_state,omitempty"`    // open|merged|closed for the current branch's PR
+	StartupBranchURL string            `json:"startup_branch_url,omitempty"` // web link for the startup branch
+	StartupPRNumber  int               `json:"startup_pr_number,omitempty"`  // PR # for the startup branch; 0 = none
+	StartupPRURL     string            `json:"startup_pr_url,omitempty"`     // web link to that PR
+	StartupPRState   string            `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
+	PresentedPRs     []presentedPRView `json:"presented_prs,omitempty"`      // agent-authored PRs shown alongside branch PRs
 }
 
 // repoBranchInfo is the cached git/gh resolution for one

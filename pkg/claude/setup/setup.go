@@ -41,6 +41,7 @@ var selfPermsForBundledSkills = []string{
 	"self.schedule",
 	"self.remote-control",
 	"self.task",
+	"self.pr",
 	"self.tags",
 }
 

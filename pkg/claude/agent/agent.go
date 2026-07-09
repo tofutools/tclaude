@@ -19,6 +19,7 @@ func Cmd() *cobra.Command {
 			whoamiCmd(),
 			renameCmd(),
 			taskCmd(),
+			presentPRCmd(),
 			tagsCmd(),
 			compactCmd(),
 			remoteControlCmd(),

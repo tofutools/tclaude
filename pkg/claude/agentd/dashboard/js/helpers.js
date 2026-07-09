@@ -1462,7 +1462,20 @@ function branchCell(m) {
   };
   const startupEl = fmt(m.startup_branch || '', m.startup_branch_url || '', m.startup_pr_number || 0, m.startup_pr_url || '', m.startup_pr_state || '');
   const currentEl = fmt(m.branch || '', m.branch_url || '', m.branch_pr_number || 0, m.branch_pr_url || '', m.branch_pr_state || '');
-  return stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
+  const seenPRs = new Set([m.startup_pr_url || '', m.branch_pr_url || ''].filter(Boolean));
+  const extraPRs = Array.isArray(m.presented_prs) ? m.presented_prs : [];
+  const presented = extraPRs.map((pr) => {
+    const url = (pr.url || '').trim();
+    if (!url || seenPRs.has(url) || !/^https?:\/\//i.test(url)) return '';
+    seenPRs.add(url);
+    const state = pr.state || '';
+    const stateClass = ['open', 'merged', 'closed'].includes(state) ? `pr-state-${state}` : 'pr-state-unknown';
+    const label = pr.number ? `#${pr.number}` : (pr.summary || 'PR');
+    const title = pr.summary ? `${pr.summary} — ${url}` : `Presented pull request — ${url}`;
+    return `<a class="pr-link ${stateClass}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" draggable="false" title="${esc(title)}">${esc(label)}</a>`;
+  }).filter(Boolean).join(' ');
+  const body = stackedLoc(startupEl, currentEl, (m.startup_branch || '') !== (m.branch || ''));
+  return presented ? `${body} <span class="presented-prs">${presented}</span>` : body;
 }
 
 // taskCell renders the Task column: the agent's task-reference link

@@ -61,7 +61,8 @@ neither is refused. See [Identity](#identity).
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.reincarnate`, `self.clone`, `self.schedule`,
-  `self.remote-control`) as agent defaults. Idempotent; only adds missing slugs.
+  `self.remote-control`, `self.task`, `self.pr`, `self.tags`) as agent
+  defaults. Idempotent; only adds missing slugs.
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
   down — that's deliberate, so the auth model can't be bypassed by
@@ -982,6 +983,8 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   obvious in the skill list.
 - **`agent-task`** — set / clear / show an agent's task-reference link
   (the clickable URL in the dashboard's Task column).
+- **`present-pr-to-operator`** — present a PR intentionally in the
+  dashboard with `tclaude agent present-pr <url>`.
 - **`agent-lifecycle`** — context-window self-management: `compact`,
   `reincarnate`, `clone`, `context-info`.
 - **`reincarnate`** — the do-it-now sibling of `agent-lifecycle`:
