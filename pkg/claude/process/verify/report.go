@@ -55,6 +55,13 @@ func (r Report) DiagnosticsForLayer(layer Layer) []Diagnostic {
 }
 
 func Snapshot(snapshot store.Snapshot) Report {
+	return SnapshotWithTemplate(snapshot, nil)
+}
+
+// SnapshotWithTemplate verifies a run snapshot including template-aware
+// invariants (recorded compound expansions must match what the pinned
+// template derives). A nil template skips only the template-aware layer.
+func SnapshotWithTemplate(snapshot store.Snapshot, tmpl *model.Template) Report {
 	report := Report{RunID: snapshot.Run.ID}
 	if snapshot.State != nil {
 		report.StoredStatus = snapshot.State.Status
@@ -71,6 +78,9 @@ func Snapshot(snapshot store.Snapshot) Report {
 	report.Diagnostics = appendDiagnostics(report.Diagnostics, LayerEvidence, evidenceDiagnostics)
 
 	semanticDiagnostics := state.CheckInvariants(snapshot.State)
+	if tmpl != nil {
+		semanticDiagnostics = append(semanticDiagnostics, state.CheckTemplateInvariants(snapshot.State, tmpl)...)
+	}
 	report.Diagnostics = appendDiagnostics(report.Diagnostics, LayerSemantic, semanticDiagnostics)
 
 	sortReportDiagnostics(report.Diagnostics)

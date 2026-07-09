@@ -52,9 +52,11 @@ func (s CommandStatus) IsValid() bool {
 func (k CommandKind) IsValid() bool {
 	switch k {
 	case CommandKindActivateNode,
+		CommandKindExpandNode,
 		CommandKindStartAttempt,
 		CommandKindSettleAttempt,
 		CommandKindRecordDecision,
+		CommandKindBlockNode,
 		CommandKindSetTimer,
 		CommandKindWaitSignal,
 		CommandKindCompleteRun:

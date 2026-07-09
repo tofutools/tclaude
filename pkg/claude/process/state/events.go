@@ -14,6 +14,7 @@ const (
 	EventRunInitialized           EventType = "run_initialized"
 	EventRunStatusSet             EventType = "run_status_set"
 	EventNodeStatusSet            EventType = "node_status_set"
+	EventNodeExpanded             EventType = "node_expanded"
 	EventNodeAttemptStarted       EventType = "node_attempt_started"
 	EventNodeAttemptSettled       EventType = "node_attempt_settled"
 	EventDecisionRecorded         EventType = "decision_recorded"
@@ -149,13 +150,88 @@ func applyEvent(st *State, event Event) error {
 		default:
 			return fmt.Errorf("node_status_set cannot set status %q", event.NodeStatus)
 		}
+		if node.Parent != "" && event.NodeStatus != NodeStatusSkipped {
+			if err := requirePriorStagesCompleted(st, event.NodeID, node); err != nil {
+				return err
+			}
+		}
 		node.Status = event.NodeStatus
+		st.Nodes[event.NodeID] = node
+		// Completing the done marker IS completing the compound parent: one
+		// event, so no checkpoint ever shows a completed done stage under a
+		// still-running parent (the invariant treats that shape as forgery).
+		if node.Parent != "" && node.Stage == model.StageDone && event.NodeStatus == NodeStatusCompleted {
+			parent, err := getNode(st, node.Parent)
+			if err != nil {
+				return err
+			}
+			parent.Status = NodeStatusCompleted
+			st.Nodes[node.Parent] = parent
+		}
+		return nil
+	case EventNodeExpanded:
+		node, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if len(node.Children) > 0 {
+			return fmt.Errorf("node %q is already expanded", event.NodeID)
+		}
+		if node.Parent != "" {
+			return fmt.Errorf("stage child %q cannot expand", event.NodeID)
+		}
+		if node.Status != NodeStatusReady {
+			return fmt.Errorf("node %q is %s; only ready nodes can expand", event.NodeID, node.Status)
+		}
+		if len(event.Nodes) < 2 {
+			return fmt.Errorf("node_expanded requires at least one work stage and a done stage")
+		}
+		children := make([]string, 0, len(event.Nodes))
+		for i, child := range event.Nodes {
+			if !strings.HasPrefix(child.ID, event.NodeID+".") {
+				return fmt.Errorf("expanded child id %q must be prefixed with %q", child.ID, event.NodeID+".")
+			}
+			if _, exists := st.Nodes[child.ID]; exists {
+				return fmt.Errorf("expanded child %q is already declared", child.ID)
+			}
+			if !child.Stage.IsValid() {
+				return fmt.Errorf("expanded child %q has invalid stage %q", child.ID, child.Stage)
+			}
+			if (child.Stage == model.StageTest) != (child.StepID != "") {
+				return fmt.Errorf("expanded child %q stage %q and step id %q are inconsistent", child.ID, child.Stage, child.StepID)
+			}
+			if child.Parent != "" && child.Parent != event.NodeID {
+				return fmt.Errorf("expanded child %q parent %q must be %q", child.ID, child.Parent, event.NodeID)
+			}
+			if isLast := i == len(event.Nodes)-1; (child.Stage == model.StageDone) != isLast {
+				return fmt.Errorf("expanded child %q: exactly the last child must be the done stage", child.ID)
+			}
+			status := NodeStatusPending
+			if i == 0 {
+				status = NodeStatusReady
+			}
+			st.Nodes[child.ID] = NodeState{
+				Status: status,
+				Parent: event.NodeID,
+				Stage:  child.Stage,
+				StepID: child.StepID,
+			}
+			children = append(children, child.ID)
+		}
+		node.Status = NodeStatusRunning
+		node.Children = children
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventNodeAttemptStarted:
 		node, err := getNode(st, event.NodeID)
 		if err != nil {
 			return err
+		}
+		if node.Parent != "" && node.Stage == model.StageDone {
+			// The done marker settles automatically with its parent; an attempt
+			// on it could complete the done stage without the parent and forge
+			// the state expanded_parent_running_after_done exists to catch.
+			return fmt.Errorf("done stage %q settles automatically and cannot start attempts", event.NodeID)
 		}
 		if node.Status == NodeStatusRunning || (node.ActiveAttempt != nil && node.ActiveAttempt.SettledAt.IsZero() && node.ActiveAttempt.Outcome == "") {
 			return fmt.Errorf("node %q already has an active attempt", event.NodeID)
@@ -213,6 +289,12 @@ func applyEvent(st *State, event Event) error {
 			if !IsPassOutcome(event.Outcome) {
 				status = NodeStatusFailed
 			}
+		}
+		// Claimed done is not done: an expanded stage child may only settle as
+		// completed when an evidence ref backs the claim; otherwise it flips to
+		// failed (design doc section 4).
+		if node.Parent != "" && status == NodeStatusCompleted && strings.TrimSpace(node.ActiveAttempt.EvidenceRef) == "" {
+			status = NodeStatusFailed
 		}
 		node.Status = status
 		st.Nodes[event.NodeID] = node
@@ -506,6 +588,27 @@ func applyEvent(st *State, event Event) error {
 	default:
 		return fmt.Errorf("unsupported process state event type %q", event.Type)
 	}
+}
+
+// requirePriorStagesCompleted enforces the stage chain on activation: a stage
+// child may only be set ready or completed once every earlier sibling has
+// completed. This holds for retry loops too, which re-activate a stage whose
+// earlier siblings already completed.
+func requirePriorStagesCompleted(st *State, childID string, child NodeState) error {
+	parent, ok := st.Nodes[child.Parent]
+	if !ok {
+		return fmt.Errorf("stage child %q references undeclared parent %q", childID, child.Parent)
+	}
+	for _, siblingID := range parent.Children {
+		if siblingID == childID {
+			return nil
+		}
+		sibling, ok := st.Nodes[siblingID]
+		if !ok || sibling.Status != NodeStatusCompleted {
+			return fmt.Errorf("stage child %q cannot activate before earlier stage %q completes", childID, siblingID)
+		}
+	}
+	return fmt.Errorf("stage child %q is not listed in parent %q children", childID, child.Parent)
 }
 
 func commandIsActive(command OutstandingCommand) bool {

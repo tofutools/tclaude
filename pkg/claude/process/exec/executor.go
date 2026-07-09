@@ -508,6 +508,53 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: command.NodeStatus,
 		}, "", at))
+	case plan.CommandKindExpandNode:
+		// The children come from the command's durable payload, so a crashed
+		// host resumes the exact expansion the planner derived; the reducer
+		// validates their shape and verify re-derives them from the template.
+		//
+		// An issued expand may also be resumed AFTER the expansion already
+		// landed: a manual advance can expand the node between this command's
+		// claim and its observation (crash recovery, or a CAS retry race).
+		// Replaying node_expanded would then fail the reducer forever and
+		// wedge Drive, so a recorded expansion identical to the durable
+		// payload is idempotent success: mark observed, append nothing else.
+		// A differing recorded expansion stays a hard error.
+		if node, ok := snapshot.State.Nodes[command.NodeID]; ok && len(node.Children) > 0 {
+			if err := expansionMatchesCommand(snapshot.State, node, command); err != nil {
+				return nil, err
+			}
+			return entries, nil
+		}
+		entries = append(entries, commandEntry(command, state.Event{
+			Type:  state.EventNodeExpanded,
+			Nodes: command.Children,
+		}, "", at))
+	case plan.CommandKindBlockNode:
+		// Block the poisoned stage child and its parent mirror in one append
+		// batch: the blocked-mirror invariant does not allow an intermediate
+		// child-blocked/parent-running checkpoint. (CAS-level batching, not a
+		// crash guarantee — a torn write surfaces as dirty and needs repair.)
+		//
+		// A stale issued block resumed after the child already blocked is
+		// idempotent success and must not re-apply: replaying could overwrite
+		// a newer reason, and once PR2 adds an unblock flow it would silently
+		// re-block a deliberately released node.
+		if node, ok := snapshot.State.Nodes[command.NodeID]; ok && node.Status == state.NodeStatusBlocked {
+			return entries, nil
+		}
+		entries = append(entries, commandEntry(command, state.Event{
+			Type:   state.EventNodeBlocked,
+			Reason: command.Reason,
+			Owner:  command.Owner,
+		}, "", at))
+		if command.TargetNodeID != "" {
+			entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
+				Type:   state.EventNodeBlocked,
+				Reason: command.Reason,
+				Owner:  command.Owner,
+			}, "", at))
+		}
 	case plan.CommandKindCompleteRun:
 		entries = append(entries, runEntry(state.Event{
 			Type:      state.EventRunStatusSet,
@@ -544,6 +591,26 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		return nil, fmt.Errorf("unsupported process command kind %q", command.Kind)
 	}
 	return entries, nil
+}
+
+// expansionMatchesCommand reports whether a node's recorded expansion is
+// exactly the one an expand command's durable payload derives: same child ids
+// in the same order, each with the same parent linkage, stage, and step id.
+func expansionMatchesCommand(st *state.State, node state.NodeState, command plan.Command) error {
+	if len(node.Children) != len(command.Children) {
+		return fmt.Errorf("expand command %q payload derives %d children but node %q records %d", command.ID, len(command.Children), command.NodeID, len(node.Children))
+	}
+	for i, init := range command.Children {
+		childID := node.Children[i]
+		if childID != init.ID {
+			return fmt.Errorf("expand command %q child %q does not match recorded child %q", command.ID, init.ID, childID)
+		}
+		child, ok := st.Nodes[childID]
+		if !ok || child.Parent != command.NodeID || child.Stage != init.Stage || child.StepID != init.StepID {
+			return fmt.Errorf("expand command %q child %q does not match its recorded stage node", command.ID, childID)
+		}
+	}
+	return nil
 }
 
 func commandDueAt(command plan.Command, at time.Time) (time.Time, error) {
@@ -592,6 +659,8 @@ func commandEntry(command plan.Command, event state.Event, evidenceRef string, a
 		kind = evidence.EntryKindAttempt
 	case plan.CommandKindRecordDecision:
 		kind = evidence.EntryKindDecision
+	case plan.CommandKindExpandNode:
+		kind = evidence.EntryKindExpansion
 	}
 	if command.NodeID == "" {
 		return runEntryWithKind(kind, event, evidenceRef, at)

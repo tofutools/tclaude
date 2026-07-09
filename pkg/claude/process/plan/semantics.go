@@ -21,16 +21,10 @@ func ResolvePassEdge(next model.Next, verdict string) string {
 	return ""
 }
 
-func ResolveFailEdge(next model.Next, retry *model.RetryPolicy) string {
-	if retry != nil {
-		onFail := strings.TrimSpace(retry.OnFail)
-		if onFail != "" {
-			if target := next[onFail]; target != "" {
-				return target
-			}
-			return onFail
-		}
-	}
+// ResolveFailEdge resolves where a finally-failed node routes to. Fail edges
+// come only from next keys: retry.onFail is the retry-mode policy axis
+// (feedback-same-session | fresh-attempt), never an edge target.
+func ResolveFailEdge(next model.Next) string {
 	for _, key := range []string{"fail", "failed", "failure", "error"} {
 		if target := next[key]; target != "" {
 			return target
