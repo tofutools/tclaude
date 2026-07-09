@@ -28,8 +28,8 @@ var (
 	processStoreRootOverride string
 )
 
-func startProcessEngine(stop <-chan struct{}) {
-	startProcessEngineAtInterval(stop, processEngineTickInterval)
+func startProcessEngine(stop <-chan struct{}) <-chan struct{} {
+	return startProcessEngineAtInterval(stop, processEngineTickInterval)
 }
 
 func startProcessEngineAtInterval(stop <-chan struct{}, interval time.Duration) <-chan struct{} {
@@ -101,7 +101,7 @@ func startProcessEngineAtInterval(stop <-chan struct{}, interval time.Duration) 
 						if result.Error != "" && !result.LeaseContended {
 							slog.Warn("process engine: run tick failed", "run", result.RunID, "error", result.Error)
 						} else if result.Waiting != "" {
-							slog.Info("process engine: run waiting", "run", result.RunID, "reason", result.Waiting)
+							slog.Debug("process engine: run waiting", "run", result.RunID, "reason", result.Waiting)
 						}
 					}
 				}()

@@ -163,6 +163,15 @@ func (h *Host) Tick(ctx context.Context) ([]RunResult, error) {
 
 func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 	result := RunResult{RunID: runID}
+	checkpoint, err := h.Store.LoadRunState(ctx, runID)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.Status = checkpoint.Status
+	if isTerminal(checkpoint.Status) {
+		return result
+	}
 	ttl := h.LeaseTTL
 	if ttl <= 0 {
 		ttl = DefaultLeaseTTL
@@ -321,6 +330,8 @@ func (h *Host) resume(ctx context.Context, snapshot store.Snapshot) (bool, strin
 				return false, "", err
 			}
 			return true, "", h.unpause(ctx, latest)
+		default:
+			return false, st.Pause.Reason, nil
 		}
 	}
 

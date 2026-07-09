@@ -103,6 +103,15 @@ func TestProcessEngineDrivesProgramRunEndToEnd(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, rec, &view)
 	assert.Equal(t, state.RunStatusCompleted, view.State.Status)
+
+	counting := &countingProcessStore{Store: fs}
+	idleHost := processengine.New(counting, "agentd:terminal-scan", nil)
+	results, err = agentd.RunProcessEngineTickForTest(t.Context(), idleHost)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	loads, leases := counting.counts()
+	assert.Zero(t, loads, "terminal checkpoint must not load evidence")
+	assert.Zero(t, leases, "terminal checkpoint must not churn leases")
 }
 
 func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
@@ -480,4 +489,31 @@ func (a *errorAdapter) Validate(processexec.Request) error { return nil }
 
 func (a *errorAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	return processexec.Observation{}, errors.New("performer result lost")
+}
+
+type countingProcessStore struct {
+	store.Store
+	mu     sync.Mutex
+	loads  int
+	leases int
+}
+
+func (s *countingProcessStore) LoadRun(ctx context.Context, runID string) (store.Snapshot, error) {
+	s.mu.Lock()
+	s.loads++
+	s.mu.Unlock()
+	return s.Store.LoadRun(ctx, runID)
+}
+
+func (s *countingProcessStore) AcquireRunLease(ctx context.Context, runID, holder string, ttl time.Duration) (store.LeaseRecord, error) {
+	s.mu.Lock()
+	s.leases++
+	s.mu.Unlock()
+	return s.Store.AcquireRunLease(ctx, runID, holder, ttl)
+}
+
+func (s *countingProcessStore) counts() (loads, leases int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loads, s.leases
 }

@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
@@ -20,8 +19,8 @@ import (
 // portable stores and tests.
 func DefaultRoot() string {
 	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return filepath.Join(".tclaude", "processes")
+	if err != nil || home == "" {
+		return ""
 	}
 	return filepath.Join(home, ".tclaude", "processes")
 }
@@ -64,6 +63,7 @@ type Templates interface {
 type Runs interface {
 	CreateRun(ctx context.Context, run RunRecord, initial state.State) (RunRecord, error)
 	GetRun(ctx context.Context, runID string) (RunRecord, error)
+	LoadRunState(ctx context.Context, runID string) (*state.State, error)
 	LoadRun(ctx context.Context, runID string) (Snapshot, error)
 	ListRuns(ctx context.Context) ([]RunRecord, error)
 }

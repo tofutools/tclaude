@@ -898,6 +898,13 @@ func TestEnginePauseAndResumeAreDurableReducerState(t *testing.T) {
 	if resumed.Status != RunStatusRunning || resumed.Pause != nil {
 		t.Fatalf("resumed state = %#v", resumed)
 	}
+	repaired, err := Apply(paused, Event{Type: EventAdminRepairRecorded, RunStatus: RunStatusRunning, Actor: "human:test", Reason: "reviewed pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.Status != RunStatusRunning || repaired.Pause != nil {
+		t.Fatalf("repaired state retained pause = %#v", repaired)
+	}
 }
 
 func TestEnginePauseValidation(t *testing.T) {
@@ -911,6 +918,10 @@ func TestEnginePauseValidation(t *testing.T) {
 				t.Fatal("expected pause validation error")
 			}
 		})
+	}
+	valid := PauseState{Kind: PauseKindNeedsReconcile, Reason: "lost result", CommandID: "missing", Owner: "human:test"}
+	if _, err := Apply(st, Event{Type: EventRunPaused, Pause: &valid}); err == nil || !strings.Contains(err.Error(), "is not outstanding") {
+		t.Fatalf("unknown pause command error = %v", err)
 	}
 }
 

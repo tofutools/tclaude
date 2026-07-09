@@ -343,6 +343,15 @@ func (s *FS) GetRun(ctx context.Context, runID string) (RunRecord, error) {
 	return s.readRun(runID)
 }
 
+// LoadRunState reads only the materialized checkpoint. Schedulers use it for
+// cheap sticky-status filtering before taking a lease and loading evidence.
+func (s *FS) LoadRunState(ctx context.Context, runID string) (*state.State, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.readState(runID)
+}
+
 func (s *FS) LoadRun(ctx context.Context, runID string) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err

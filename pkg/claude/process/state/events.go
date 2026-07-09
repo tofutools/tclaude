@@ -156,6 +156,9 @@ func applyEvent(st *State, event Event) error {
 		if strings.TrimSpace(event.Pause.CommandID) == "" {
 			return fmt.Errorf("run_paused requires command id")
 		}
+		if _, ok := st.OutstandingCommands[event.Pause.CommandID]; !ok {
+			return fmt.Errorf("run_paused command %q is not outstanding", event.Pause.CommandID)
+		}
 		if event.Pause.Kind == PauseKindNeedsReconcile && !ValidateActorRef(event.Pause.Owner) {
 			return fmt.Errorf("needs-reconcile run pause requires a valid owner")
 		}
@@ -596,6 +599,9 @@ func applyEvent(st *State, event Event) error {
 				return fmt.Errorf("invalid run status %q", event.RunStatus)
 			}
 			st.Status = event.RunStatus
+			if event.RunStatus != RunStatusPaused {
+				st.Pause = nil
+			}
 		}
 		return nil
 	case EventTemplateDivergenceMarked:

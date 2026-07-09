@@ -292,6 +292,10 @@ func (e *Executor) RetryOutstanding(ctx context.Context, runID, commandID string
 	if !plan.AllowsExecution(snapshot.State.Status) {
 		return nil, fmt.Errorf("process run %q is %s and command %q cannot be retried", runID, snapshot.State.Status, commandID)
 	}
+	outstanding := snapshot.State.OutstandingCommands[commandID]
+	if outstanding.Status != state.CommandStatusIssued {
+		return nil, fmt.Errorf("process command %q is %s and cannot be retried", commandID, outstanding.Status)
+	}
 	if command.Performer.Kind == model.PerformerProgram && (!snapshot.Run.AllowPrograms || !programExecutionAudited(snapshot.State)) {
 		return nil, fmt.Errorf("process run %q does not allow program performers; instantiate it with --allow-programs", runID)
 	}

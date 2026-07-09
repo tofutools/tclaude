@@ -239,13 +239,19 @@ func runServe(p *serveParams) error {
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.
 	cronStop := make(chan struct{})
-	defer close(cronStop)
+	var processEngineDone <-chan struct{}
+	defer func() {
+		close(cronStop)
+		if processEngineDone != nil {
+			<-processEngineDone
+		}
+	}()
 	startCronScheduler(cronStop)
 
 	// Feature-gated BPMN-lite process engine. The supervisor reloads
 	// features.processes every tick, so toggling the flag starts or cancels
 	// automation without restarting agentd.
-	startProcessEngine(cronStop)
+	processEngineDone = startProcessEngine(cronStop)
 
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are

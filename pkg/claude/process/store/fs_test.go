@@ -602,6 +602,13 @@ func TestNewFSAnchorsRelativeRoot(t *testing.T) {
 	}
 }
 
+func TestDefaultRootFailsClosedWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if root := store.DefaultRoot(); root != "" {
+		t.Fatalf("default root without home = %q", root)
+	}
+}
+
 func TestPublicRunMethodsRejectUnsafeRunIDs(t *testing.T) {
 	ctx := t.Context()
 	fs := newStore(t)

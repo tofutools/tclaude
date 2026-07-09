@@ -161,6 +161,29 @@ func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	}
 }
 
+func TestRetryOutstandingRejectsObservedCommandWithoutPerforming(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	executor.Now = func() time.Time { return executorTestTime }
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil || len(commands) != 1 {
+		t.Fatalf("commands = %#v, err = %v", commands, err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requests) != 1 {
+		t.Fatalf("initial adapter calls = %d", len(adapter.requests))
+	}
+	if _, err := executor.RetryOutstanding(t.Context(), snapshot.Run.ID, commands[0].ID); err == nil || !strings.Contains(err.Error(), "observed and cannot be retried") {
+		t.Fatalf("retry observed error = %v", err)
+	}
+	if len(adapter.requests) != 1 {
+		t.Fatalf("retry performed duplicate side effect; calls = %d", len(adapter.requests))
+	}
+}
+
 func TestIssuedInternalCommandResumesFromDurablePayload(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
