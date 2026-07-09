@@ -28,7 +28,7 @@ func TestPlanAdvanceRefusesFailedNode(t *testing.T) {
 		},
 	}
 
-	_, err := planAdvance(snapshot, tmpl, "implement", "pass", "human:johan", "")
+	_, err := planAdvance(snapshot, tmpl, "implement", "pass", "human:johan", advanceInputs{})
 	if err == nil || !strings.Contains(err.Error(), "failed and cannot be advanced") {
 		t.Fatalf("expected failed-node refusal, got %v", err)
 	}
@@ -51,7 +51,7 @@ func TestPlanAdvanceRefusesPendingNode(t *testing.T) {
 		},
 	}
 
-	_, err := planAdvance(snapshot, tmpl, "decide", "approve", "human:johan", "")
+	_, err := planAdvance(snapshot, tmpl, "decide", "approve", "human:johan", advanceInputs{})
 	if err == nil || !strings.Contains(err.Error(), "only ready nodes can be advanced") {
 		t.Fatalf("expected pending-node refusal, got %v", err)
 	}
@@ -79,7 +79,7 @@ func TestPlanTaskFailDoesNotUsePassFallback(t *testing.T) {
 		},
 	}
 
-	entries, err := planAdvance(snapshot, tmpl, "implement", "fail", "human:johan", "")
+	entries, err := planAdvance(snapshot, tmpl, "implement", "fail", "human:johan", advanceInputs{})
 	if err != nil {
 		t.Fatal(err)
 	}

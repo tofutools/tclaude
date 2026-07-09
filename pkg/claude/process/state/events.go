@@ -19,6 +19,9 @@ const (
 	EventNodeExpanded             EventType = "node_expanded"
 	EventNodeAttemptStarted       EventType = "node_attempt_started"
 	EventNodeAttemptSettled       EventType = "node_attempt_settled"
+	EventFeedbackRecorded         EventType = "feedback_recorded"
+	EventGateLoopReset            EventType = "gate_loop_reset"
+	EventGateShortCircuited       EventType = "gate_short_circuited"
 	EventDecisionRecorded         EventType = "decision_recorded"
 	EventNodeBlocked              EventType = "node_blocked"
 	EventNodeUnblocked            EventType = "node_unblocked"
@@ -72,6 +75,17 @@ type Event struct {
 	Reason      string `json:"reason,omitempty"`
 	Owner       string `json:"owner,omitempty"`
 	EvidenceRef string `json:"evidenceRef,omitempty"`
+
+	// Gate feedback-loop fields. EvidenceHash is the hash of THIS settle's
+	// evidence; WorkEvidenceHash is the work-evidence hash a gate verdict
+	// evaluated; FromNodeID names the gate a feedback payload came from;
+	// Gates/ResetCounters drive gate_loop_reset re-entry.
+	Feedback         string   `json:"feedback,omitempty"`
+	EvidenceHash     string   `json:"evidenceHash,omitempty"`
+	WorkEvidenceHash string   `json:"workEvidenceHash,omitempty"`
+	FromNodeID       string   `json:"fromNodeId,omitempty"`
+	Gates            []string `json:"gates,omitempty"`
+	ResetCounters    []string `json:"resetCounters,omitempty"`
 }
 
 func Apply(st State, event Event) (State, error) {
@@ -296,6 +310,10 @@ func applyEvent(st *State, event Event) error {
 			CommandID: event.CommandID,
 			StartedAt: event.At,
 		}
+		// The attempt consumes any pending gate feedback: the planner already
+		// threaded the payload onto this attempt's command, and a stale marker
+		// would leak into the loop's NEXT window.
+		node.PendingFeedback = nil
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventNodeAttemptSettled:
@@ -317,6 +335,12 @@ func applyEvent(st *State, event Event) error {
 		if event.EvidenceRef != "" {
 			node.ActiveAttempt.EvidenceRef = event.EvidenceRef
 		}
+		if event.EvidenceHash != "" {
+			node.ActiveAttempt.EvidenceHash = event.EvidenceHash
+		}
+		if event.Feedback != "" {
+			node.ActiveAttempt.Feedback = event.Feedback
+		}
 		status := event.NodeStatus
 		if status != "" && !status.IsValid() {
 			return fmt.Errorf("invalid node status %q", status)
@@ -336,7 +360,130 @@ func applyEvent(st *State, event Event) error {
 		if node.Parent != "" && status == NodeStatusCompleted && strings.TrimSpace(node.ActiveAttempt.EvidenceRef) == "" {
 			status = NodeStatusFailed
 		}
+		// Gate verdicts are uniform decision records (design doc section 2),
+		// and gates track their loop window: failed verdicts consume the gate
+		// budget, and the work-evidence hash the verdict evaluated powers the
+		// evidence-unchanged short-circuit.
+		if node.Parent != "" && node.Stage.IsGateStage() {
+			verdict := "fail"
+			if status == NodeStatusCompleted {
+				verdict = "pass"
+			}
+			node.Decisions = append(node.Decisions, DecisionRecord{
+				Actor:       node.ActiveAttempt.Actor,
+				Verdict:     verdict,
+				EvidenceRef: node.ActiveAttempt.EvidenceRef,
+				Timestamp:   event.At,
+			})
+			if status == NodeStatusFailed {
+				node.FailCount++
+			}
+			// Assign unconditionally: LastEvidenceHash must describe what the
+			// LATEST verdict evaluated. Preserving a stale hash across a
+			// hashless settle would let a later re-entry short-circuit against
+			// a verdict that evaluated different, unhashed work (empty is
+			// ineligible for short-circuiting).
+			node.LastEvidenceHash = event.WorkEvidenceHash
+		}
 		node.Status = status
+		st.Nodes[event.NodeID] = node
+		return nil
+	case EventFeedbackRecorded:
+		node, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if node.Parent == "" || (node.Stage != model.StagePlan && node.Stage != model.StageDo) {
+			return fmt.Errorf("feedback_recorded target %q must be a plan or do stage child", event.NodeID)
+		}
+		from, err := getNode(st, event.FromNodeID)
+		if err != nil {
+			return err
+		}
+		if from.Parent != node.Parent || !from.Stage.IsGateStage() {
+			return fmt.Errorf("feedback_recorded source %q must be a sibling gate of %q", event.FromNodeID, event.NodeID)
+		}
+		node.PendingFeedback = &FeedbackRef{
+			FromNodeID:  event.FromNodeID,
+			FromAttempt: from.Attempt,
+			Feedback:    event.Feedback,
+			EvidenceRef: event.EvidenceRef,
+			At:          event.At,
+		}
+		st.Nodes[event.NodeID] = node
+		return nil
+	case EventGateLoopReset:
+		parent, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if len(parent.Children) == 0 {
+			return fmt.Errorf("gate_loop_reset parent %q is not expanded", event.NodeID)
+		}
+		if len(event.Gates) == 0 {
+			return fmt.Errorf("gate_loop_reset requires gates to reset")
+		}
+		for _, gateID := range event.Gates {
+			gate, err := getNode(st, gateID)
+			if err != nil {
+				return err
+			}
+			if gate.Parent != event.NodeID || !gate.Stage.IsGateStage() {
+				return fmt.Errorf("gate_loop_reset %q is not a gate child of %q", gateID, event.NodeID)
+			}
+			switch gate.Status {
+			case NodeStatusPending, NodeStatusCompleted, NodeStatusFailed:
+			default:
+				return fmt.Errorf("gate_loop_reset %q is %s; only settled or pending gates re-enter", gateID, gate.Status)
+			}
+			gate.Status = NodeStatusPending
+			st.Nodes[gateID] = gate
+		}
+		for _, gateID := range event.ResetCounters {
+			gate, err := getNode(st, gateID)
+			if err != nil {
+				return err
+			}
+			if gate.Parent != event.NodeID || !gate.Stage.IsGateStage() {
+				return fmt.Errorf("gate_loop_reset counter %q is not a gate child of %q", gateID, event.NodeID)
+			}
+			gate.FailCount = 0
+			st.Nodes[gateID] = gate
+		}
+		return nil
+	case EventGateShortCircuited:
+		node, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if node.Parent == "" || !node.Stage.IsGateStage() {
+			return fmt.Errorf("gate_short_circuited node %q is not a gate stage child", event.NodeID)
+		}
+		if node.Status != NodeStatusReady && node.Status != NodeStatusPending {
+			return fmt.Errorf("gate_short_circuited node %q is %s; only a re-entering gate can short-circuit", event.NodeID, node.Status)
+		}
+		if len(node.Decisions) == 0 {
+			return fmt.Errorf("gate_short_circuited node %q has no prior verdict to stand", event.NodeID)
+		}
+		prior := node.Decisions[len(node.Decisions)-1]
+		if event.EvidenceHash == "" || node.LastEvidenceHash == "" || event.EvidenceHash != node.LastEvidenceHash {
+			return fmt.Errorf("gate_short_circuited node %q evidence hash does not match the prior verdict's", event.NodeID)
+		}
+		actor := normalizeActor(event.Actor)
+		if !strings.HasPrefix(string(actor), "engine:") {
+			return fmt.Errorf("gate_short_circuited requires an engine actor, got %q", actor)
+		}
+		node.Decisions = append(node.Decisions, DecisionRecord{
+			Actor:       actor,
+			Verdict:     prior.Verdict,
+			EvidenceRef: prior.EvidenceRef,
+			Timestamp:   event.At,
+		})
+		node.Status = NodeStatusCompleted
+		if !IsPassOutcome(prior.Verdict) {
+			node.Status = NodeStatusFailed
+			node.FailCount++
+		}
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventDecisionRecorded:
@@ -582,6 +729,12 @@ func applyEvent(st *State, event Event) error {
 		}
 		if event.EvidenceRef != "" {
 			command.EvidenceRef = event.EvidenceRef
+		}
+		if event.EvidenceHash != "" {
+			command.EvidenceHash = event.EvidenceHash
+		}
+		if event.Feedback != "" {
+			command.Feedback = event.Feedback
 		}
 		st.OutstandingCommands[event.CommandID] = command
 		return nil

@@ -16,6 +16,10 @@ func Clone(st State) State {
 			attempt := *value.ActiveAttempt
 			value.ActiveAttempt = &attempt
 		}
+		if value.PendingFeedback != nil {
+			feedback := *value.PendingFeedback
+			value.PendingFeedback = &feedback
+		}
 		value.Children = append([]string(nil), value.Children...)
 		value.Decisions = append([]DecisionRecord(nil), value.Decisions...)
 		out.Nodes[key] = value

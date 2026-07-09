@@ -413,6 +413,15 @@ func (e *Executor) persistPerformerObservation(ctx context.Context, command plan
 			return Observation{}, fmt.Errorf("store evidence for process command %q: %w", command.ID, err)
 		}
 		observation.EvidenceRef = artifact.Ref
+		// The store-computed content hash always wins over an adapter-claimed
+		// one: silently keeping a supplied hash would let a constant claim on
+		// changing evidence bytes drive the evidence-unchanged short-circuit
+		// against work the gate never evaluated. A mismatching claim is an
+		// invalid observation, not something to correct quietly.
+		if observation.EvidenceHash != "" && observation.EvidenceHash != artifact.SHA256 {
+			return Observation{}, fmt.Errorf("record process command %q observation: supplied evidence hash %q does not match stored artifact sha256 %q", command.ID, observation.EvidenceHash, artifact.SHA256)
+		}
+		observation.EvidenceHash = artifact.SHA256
 	}
 	return observation, nil
 }
@@ -561,12 +570,14 @@ func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time
 
 func observationEntries(command plan.Command, observation Observation, snapshot store.Snapshot, at time.Time) ([]evidence.LogEntry, error) {
 	entries := []evidence.LogEntry{commandEntry(command, state.Event{
-		Type:        state.EventCommandObserved,
-		CommandID:   command.ID,
-		Actor:       observation.Actor,
-		Outcome:     observation.Verdict,
-		EvidenceRef: observation.EvidenceRef,
-		ExternalRef: observation.ExternalRef,
+		Type:         state.EventCommandObserved,
+		CommandID:    command.ID,
+		Actor:        observation.Actor,
+		Outcome:      observation.Verdict,
+		EvidenceRef:  observation.EvidenceRef,
+		EvidenceHash: observation.EvidenceHash,
+		Feedback:     observation.Feedback,
+		ExternalRef:  observation.ExternalRef,
 	}, observation.EvidenceRef, at)}
 
 	switch command.Kind {
@@ -579,12 +590,82 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		}
 		status := state.SettleNodeStatus(source.Verdict, command.Attempt, &model.RetryPolicy{MaxAttempts: command.MaxAttempts})
 		entries = append(entries, commandEntry(command, state.Event{
-			Type:        state.EventNodeAttemptSettled,
-			Actor:       source.Actor,
-			Outcome:     source.Verdict,
-			NodeStatus:  status,
-			EvidenceRef: source.EvidenceRef,
+			Type:             state.EventNodeAttemptSettled,
+			Actor:            source.Actor,
+			Outcome:          source.Verdict,
+			NodeStatus:       status,
+			EvidenceRef:      source.EvidenceRef,
+			EvidenceHash:     source.EvidenceHash,
+			Feedback:         source.Feedback,
+			WorkEvidenceHash: command.WorkEvidenceHash,
 		}, source.EvidenceRef, at))
+	case plan.CommandKindShortCircuit:
+		// A stale issued short-circuit resumed after the gate moved on must
+		// not re-apply: replaying gate_short_circuited against a settled (or
+		// loop-reset pending) gate fails the reducer forever and wedges
+		// Drive. Applicability mirrors what the planner required when it
+		// emitted the command — a READY re-entering gate holding a prior
+		// verdict whose recorded work-evidence hash still matches — AND the
+		// command must be bound to the exact loop generation it was issued
+		// for: the shape checks alone would also pass in a LATER window that
+		// reverted to the same evidence bytes, standing the wrong
+		// generation's verdict. Anything else, including a gate missing from
+		// state entirely, is idempotent success: mark observed, append
+		// nothing.
+		node, ok := snapshot.State.Nodes[command.NodeID]
+		applicable := ok && node.Status == state.NodeStatusReady &&
+			len(node.Decisions) > 0 &&
+			len(node.Decisions) == command.DecisionCount &&
+			node.LastEvidenceHash != "" && node.LastEvidenceHash == command.EvidenceHash
+		if !applicable {
+			return entries, nil
+		}
+		entries = append(entries, commandEntry(command, state.Event{
+			Type:         state.EventGateShortCircuited,
+			Actor:        state.ActorEvidenceUnchanged,
+			EvidenceHash: command.EvidenceHash,
+		}, "", at))
+	case plan.CommandKindGateFeedback:
+		// A stale issued feedback command resumed after the loop already
+		// re-entered (gate no longer failed, or the target work stage is no
+		// longer settled-completed) must not re-apply: it would re-ready the
+		// target mid-attempt and reset gates against work it has not seen.
+		// The command is additionally bound to the loop generation it was
+		// issued for (gate attempt AND verdict count): without that, a loop
+		// that manually cycled back to the same failed/completed shape would
+		// accept the replay and route the OLD window's payload against the
+		// NEW failure, losing the newer feedback. Idempotent success, same as
+		// the expand/block guards; a node missing from state entirely is also
+		// inapplicable.
+		gate, gok := snapshot.State.Nodes[command.NodeID]
+		target, tok := snapshot.State.Nodes[command.TargetNodeID]
+		applicable := gok && tok &&
+			gate.Status == state.NodeStatusFailed &&
+			gate.Attempt == command.Attempt &&
+			len(gate.Decisions) == command.DecisionCount &&
+			target.Status == state.NodeStatusCompleted
+		if !applicable {
+			return entries, nil
+		}
+		// One append batch routes the gate payload to its work stage, resets
+		// the re-entering gate span, and re-readies the work stage; splitting
+		// these would leave checkpoints mid-loop that replanning rejects.
+		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
+			Type:        state.EventFeedbackRecorded,
+			FromNodeID:  command.NodeID,
+			Feedback:    command.Feedback,
+			EvidenceRef: command.EvidenceRef,
+		}, "", at))
+		entries = append(entries, nodeEntry(nodeParentID(snapshot, command.NodeID), state.Event{
+			Type:          state.EventGateLoopReset,
+			Gates:         command.Gates,
+			ResetCounters: command.ResetCounters,
+			Reason:        command.Reason,
+		}, "", at))
+		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
+			Type:       state.EventNodeStatusSet,
+			NodeStatus: state.NodeStatusReady,
+		}, "", at))
 	case plan.CommandKindRecordDecision:
 		entries = append(entries, commandEntry(command, state.Event{
 			Type:        state.EventDecisionRecorded,
@@ -634,8 +715,8 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		//
 		// A stale issued block resumed after the child already blocked is
 		// idempotent success and must not re-apply: replaying could overwrite
-		// a newer reason, and once PR2 adds an unblock flow it would silently
-		// re-block a deliberately released node.
+		// a newer reason, and once the poison-resolution flow lands it would
+		// silently re-block a deliberately released node.
 		if node, ok := snapshot.State.Nodes[command.NodeID]; ok && node.Status == state.NodeStatusBlocked {
 			return entries, nil
 		}
@@ -687,6 +768,14 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		return nil, fmt.Errorf("unsupported process command kind %q", command.Kind)
 	}
 	return entries, nil
+}
+
+// nodeParentID resolves a stage child's recorded parent node id.
+func nodeParentID(snapshot store.Snapshot, nodeID string) string {
+	if node, ok := snapshot.State.Nodes[nodeID]; ok {
+		return node.Parent
+	}
+	return ""
 }
 
 // expansionMatchesCommand reports whether a node's recorded expansion is
@@ -776,14 +865,14 @@ func nodeEntry(nodeID string, event state.Event, evidenceRef string, at time.Tim
 	return evidence.LogEntry{
 		At:          at,
 		Scope:       evidence.Scope{Kind: evidence.ScopeNode, ID: nodeID},
-		Kind:        evidence.EntryKindGate,
+		Kind:        evidence.KindForEvent(event.Type),
 		Event:       &event,
 		EvidenceRef: evidenceRef,
 	}
 }
 
 func runEntry(event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {
-	return runEntryWithKind(evidence.EntryKindGate, event, evidenceRef, at)
+	return runEntryWithKind(evidence.KindForEvent(event.Type), event, evidenceRef, at)
 }
 
 func runEntryWithKind(kind evidence.EntryKind, event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {

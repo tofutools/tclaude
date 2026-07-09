@@ -163,7 +163,9 @@ func TestCompoundGateFailurePoisonsToBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertOutputContains(t, out.String(), "blocked")
-	assertOutputContains(t, out.String(), `gate "implement.test.tests" failed`)
+	// The strawman template declares no gate retry budget, so the default of
+	// one failed verdict is spent immediately.
+	assertOutputContains(t, out.String(), `gate "implement.test.tests" exhausted its budget of 1 failed verdicts`)
 	assertOutputContains(t, out.String(), "owner human:operator")
 
 	// Blocked nodes are not advanceable.

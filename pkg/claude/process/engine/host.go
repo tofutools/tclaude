@@ -391,7 +391,7 @@ func (h *Host) pause(ctx context.Context, snapshot store.Snapshot, pause state.P
 		SchemaVersion: evidence.LogEntrySchemaVersion,
 		At:            at,
 		Scope:         evidence.Scope{Kind: evidence.ScopeRun},
-		Kind:          evidence.EntryKindGate,
+		Kind:          evidence.KindForEvent(state.EventRunPaused),
 		Event:         &state.Event{Type: state.EventRunPaused, At: at, Pause: &pause},
 	}})
 	return err
@@ -403,7 +403,7 @@ func (h *Host) unpause(ctx context.Context, snapshot store.Snapshot) error {
 		SchemaVersion: evidence.LogEntrySchemaVersion,
 		At:            at,
 		Scope:         evidence.Scope{Kind: evidence.ScopeRun},
-		Kind:          evidence.EntryKindGate,
+		Kind:          evidence.KindForEvent(state.EventRunResumed),
 		Event:         &state.Event{Type: state.EventRunResumed, At: at},
 	}})
 	return err

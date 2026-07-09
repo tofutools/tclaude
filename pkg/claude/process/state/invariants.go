@@ -25,6 +25,8 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
 	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
 	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
+	diagnostics = append(diagnostics, PendingFeedbackIsValid(st)...)
+	diagnostics = append(diagnostics, ShortCircuitDecisionsAreConsistent(st)...)
 	return diagnostics
 }
 
@@ -104,8 +106,25 @@ func compareExpansion(st *State, nodeID string, node NodeState, specs []model.St
 				fmt.Sprintf("child %q has stage %q step %q; template derives stage %q step %q", childID, child.Stage, child.StepID, spec.Stage, spec.StepID),
 			))
 		}
+		// A gate's failed-verdict counter can never exceed the budget the
+		// pinned template grants it: the planner poisons the node at the
+		// budget, so a larger recorded count means the log was tampered with
+		// or a reducer regression let the loop overrun.
+		if spec.Stage.IsGateStage() && child.FailCount > gateBudget(spec) {
+			diagnostics = append(diagnostics, diagError(
+				"gate_fail_count_over_budget",
+				"nodes."+childID+".failCount",
+				fmt.Sprintf("gate %q records %d failed verdicts but its budget is %d", childID, child.FailCount, gateBudget(spec)),
+			))
+		}
 	}
 	return diagnostics
+}
+
+// gateBudget matches plan.GateBudget through the shared model helper (this
+// package cannot import plan: plan imports state).
+func gateBudget(spec model.StageSpec) int {
+	return model.RetryBudget(spec.Retry)
 }
 
 func nodeProgressedWithoutExpansion(status NodeStatus) bool {
@@ -272,6 +291,85 @@ func CompletedStageChildrenHaveEvidence(st *State) Diagnostics {
 			"nodes."+nodeID+".activeAttempt",
 			fmt.Sprintf("completed stage child %q has no settled attempt with an evidence ref", nodeID),
 		))
+	}
+	return diagnostics
+}
+
+// PendingFeedbackIsValid checks recorded gate feedback markers: only a plan
+// or do stage child may hold one, and it must come from a sibling gate.
+func PendingFeedbackIsValid(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.PendingFeedback == nil {
+			continue
+		}
+		path := "nodes." + nodeID + ".pendingFeedback"
+		if node.Parent == "" || (node.Stage != model.StagePlan && node.Stage != model.StageDo) {
+			diagnostics = append(diagnostics, diagError(
+				"pending_feedback_on_non_work_stage",
+				path,
+				fmt.Sprintf("node %q holds pending feedback but is not a plan or do stage child", nodeID),
+			))
+			continue
+		}
+		from, ok := st.Nodes[node.PendingFeedback.FromNodeID]
+		if !ok || from.Parent != node.Parent || !from.Stage.IsGateStage() {
+			diagnostics = append(diagnostics, diagError(
+				"pending_feedback_bad_source",
+				path+".fromNodeId",
+				fmt.Sprintf("pending feedback on %q must come from a sibling gate, got %q", nodeID, node.PendingFeedback.FromNodeID),
+			))
+		}
+	}
+	return diagnostics
+}
+
+// ShortCircuitDecisionsAreConsistent checks engine-synthesized decision
+// records: an engine actor never produces a verdict of its own, it only
+// stands a prior verdict on unchanged evidence — so an engine record needs a
+// predecessor and must copy its verdict and evidence ref, and it can only
+// appear on gate stage children.
+func ShortCircuitDecisionsAreConsistent(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		for i, decision := range node.Decisions {
+			if !strings.HasPrefix(string(decision.Actor), "engine:") {
+				continue
+			}
+			path := fmt.Sprintf("nodes.%s.decisions[%d]", nodeID, i)
+			if node.Parent == "" || !node.Stage.IsGateStage() {
+				diagnostics = append(diagnostics, diagError(
+					"engine_decision_on_non_gate",
+					path+".actor",
+					fmt.Sprintf("engine decision on node %q; engine actors only short-circuit gate stage children", nodeID),
+				))
+				continue
+			}
+			if i == 0 {
+				diagnostics = append(diagnostics, diagError(
+					"engine_decision_without_prior_verdict",
+					path,
+					fmt.Sprintf("engine decision on gate %q has no prior verdict to stand", nodeID),
+				))
+				continue
+			}
+			prior := node.Decisions[i-1]
+			if decision.Verdict != prior.Verdict || decision.EvidenceRef != prior.EvidenceRef {
+				diagnostics = append(diagnostics, diagError(
+					"engine_decision_diverges_from_prior",
+					path,
+					fmt.Sprintf("engine decision on gate %q must stand the prior verdict %q with evidence %q, got %q with %q", nodeID, prior.Verdict, prior.EvidenceRef, decision.Verdict, decision.EvidenceRef),
+				))
+			}
+		}
 	}
 	return diagnostics
 }

@@ -7,7 +7,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-const StateSchemaVersion = 2
+// StateSchemaVersion 3 added the gate feedback-loop fields (NodeState
+// FailCount/LastEvidenceHash/PendingFeedback, AttemptState EvidenceHash/
+// Feedback); older binaries must see ErrNewerSchemaVersion instead of a
+// DisallowUnknownFields decode error.
+const StateSchemaVersion = 3
 
 type RunStatus string
 
@@ -68,6 +72,8 @@ const (
 	CommandKindStartAttempt   CommandKind = "start_attempt"
 	CommandKindSettleAttempt  CommandKind = "settle_attempt"
 	CommandKindRecordDecision CommandKind = "record_decision"
+	CommandKindShortCircuit   CommandKind = "short_circuit_gate"
+	CommandKindGateFeedback   CommandKind = "gate_feedback"
 	CommandKindBlockNode      CommandKind = "block_node"
 	CommandKindSetTimer       CommandKind = "set_timer"
 	CommandKindWaitSignal     CommandKind = "wait_signal"
@@ -145,6 +151,15 @@ type NodeState struct {
 	StepID   string          `json:"stepId,omitempty"`
 	Children []string        `json:"children,omitempty"`
 
+	// Gate feedback-loop accounting on stage children. FailCount counts a
+	// gate's failed verdicts in the current loop window (cross-gate resets
+	// zero it); LastEvidenceHash is the work-evidence hash the gate's latest
+	// verdict evaluated (the evidence-unchanged short-circuit compares it);
+	// PendingFeedback is the gate payload a work stage's next attempt consumes.
+	FailCount        int          `json:"failCount,omitempty"`
+	LastEvidenceHash string       `json:"lastEvidenceHash,omitempty"`
+	PendingFeedback  *FeedbackRef `json:"pendingFeedback,omitempty"`
+
 	ActiveAttempt *AttemptState    `json:"activeAttempt,omitempty"`
 	Decisions     []DecisionRecord `json:"decisions,omitempty"`
 	ChosenEdge    string           `json:"chosenEdge,omitempty"`
@@ -153,14 +168,26 @@ type NodeState struct {
 	BlockedOwner  string `json:"blockedOwner,omitempty"`
 }
 
-type AttemptState struct {
-	Attempt     int       `json:"attempt"`
-	Actor       ActorRef  `json:"actor,omitempty"`
-	CommandID   string    `json:"commandId,omitempty"`
+// FeedbackRef records which gate verdict a work stage must answer on its next
+// attempt, and with what payload.
+type FeedbackRef struct {
+	FromNodeID  string    `json:"fromNodeId"`
+	FromAttempt int       `json:"fromAttempt,omitempty"`
+	Feedback    string    `json:"feedback,omitempty"`
 	EvidenceRef string    `json:"evidenceRef,omitempty"`
-	StartedAt   time.Time `json:"startedAt,omitzero"`
-	SettledAt   time.Time `json:"settledAt,omitzero"`
-	Outcome     string    `json:"outcome,omitempty"`
+	At          time.Time `json:"at,omitzero"`
+}
+
+type AttemptState struct {
+	Attempt      int       `json:"attempt"`
+	Actor        ActorRef  `json:"actor,omitempty"`
+	CommandID    string    `json:"commandId,omitempty"`
+	EvidenceRef  string    `json:"evidenceRef,omitempty"`
+	EvidenceHash string    `json:"evidenceHash,omitempty"`
+	Feedback     string    `json:"feedback,omitempty"`
+	StartedAt    time.Time `json:"startedAt,omitzero"`
+	SettledAt    time.Time `json:"settledAt,omitzero"`
+	Outcome      string    `json:"outcome,omitempty"`
 }
 
 type OutstandingCommand struct {
@@ -178,6 +205,8 @@ type OutstandingCommand struct {
 	Actor          ActorRef      `json:"actor,omitempty"`
 	Verdict        string        `json:"verdict,omitempty"`
 	EvidenceRef    string        `json:"evidenceRef,omitempty"`
+	EvidenceHash   string        `json:"evidenceHash,omitempty"`
+	Feedback       string        `json:"feedback,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt,omitzero"`
 	ReconcileAfter time.Time     `json:"reconcileAfter,omitzero"`
 }

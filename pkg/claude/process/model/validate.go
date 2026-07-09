@@ -95,7 +95,6 @@ func validateNodes(tmpl *Template) Diagnostics {
 				diagnostics = append(diagnostics, validateStep(*node.Review, path+".review", false)...)
 			}
 			diagnostics = append(diagnostics, validateRetry(node.Retry, path+".retry")...)
-			diagnostics = append(diagnostics, validateGateRetryWarnings(node, path)...)
 			if len(node.Next) == 0 {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "task node requires at least one next outcome"))
 			}
@@ -202,30 +201,6 @@ func validateExpansionCollisions(tmpl *Template) Diagnostics {
 				))
 			}
 		}
-	}
-	return diagnostics
-}
-
-// validateGateRetryWarnings surfaces that gate budgets (retry on checks and
-// review steps) are accepted by the schema but not honored yet: gates poison
-// on their first failure until the gate-feedback-loop phase lands.
-func validateGateRetryWarnings(node Node, path string) Diagnostics {
-	var diagnostics Diagnostics
-	for i, check := range node.Checks {
-		if check.Retry != nil {
-			diagnostics = append(diagnostics, diagWarning(
-				"gate_retry_not_yet_honored",
-				fmt.Sprintf("%s.checks[%d].retry", path, i),
-				"gate retry budgets are not honored yet; this gate poisons the node on its first failure",
-			))
-		}
-	}
-	if node.Review != nil && node.Review.Retry != nil {
-		diagnostics = append(diagnostics, diagWarning(
-			"gate_retry_not_yet_honored",
-			path+".review.retry",
-			"gate retry budgets are not honored yet; this gate poisons the node on its first failure",
-		))
 	}
 	return diagnostics
 }

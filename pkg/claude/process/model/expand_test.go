@@ -186,7 +186,7 @@ nodes:
 	}
 }
 
-func TestValidateWarnsOnUnhonoredGateRetry(t *testing.T) {
+func TestValidateAcceptsGateRetryBudgets(t *testing.T) {
 	node := compoundTestNode()
 	node.Checks[0].Retry = &RetryPolicy{MaxAttempts: 3}
 	node.Review.Retry = &RetryPolicy{MaxAttempts: 2}
@@ -205,14 +205,12 @@ func TestValidateWarnsOnUnhonoredGateRetry(t *testing.T) {
 	if diagnostics.HasErrors() {
 		t.Fatalf("gate retry must stay valid: %#v", diagnostics.Errors())
 	}
-	count := 0
+	// Gate budgets are honored by the feedback loop now; the old
+	// gate_retry_not_yet_honored warning must not resurface.
 	for _, diag := range diagnostics.Warnings() {
 		if diag.Code == "gate_retry_not_yet_honored" {
-			count++
+			t.Fatalf("stale gate retry warning resurfaced: %#v", diag)
 		}
-	}
-	if count != 2 {
-		t.Fatalf("want 2 gate retry warnings, got %d: %#v", count, diagnostics)
 	}
 }
 

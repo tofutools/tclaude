@@ -38,14 +38,18 @@ type Artifact struct {
 // Observation is the uniform result contract for human, agent, and program
 // performers. Feedback is intentionally adapter-neutral; phase 2 persists
 // program feedback inside its evidence artifact, while later engine work can
-// route it into retry prompts.
+// route it into retry prompts. EvidenceHash identifies the evidence content
+// (the executor stamps it from the stored artifact's sha256 when the adapter
+// provides evidence content); the evidence-unchanged gate short-circuit
+// compares work-stage hashes across attempts.
 type Observation struct {
-	Actor       state.ActorRef
-	Verdict     string
-	Feedback    string
-	Evidence    *Artifact
-	EvidenceRef string
-	ExternalRef string
+	Actor        state.ActorRef
+	Verdict      string
+	Feedback     string
+	Evidence     *Artifact
+	EvidenceRef  string
+	EvidenceHash string
+	ExternalRef  string
 }
 
 type Adapter interface {
@@ -89,6 +93,9 @@ func (e *RateLimitError) Unwrap() error {
 func validateObservation(observation Observation) error {
 	if !state.ValidateActorRef(observation.Actor) {
 		return fmt.Errorf("invalid performer observation actor %q", observation.Actor)
+	}
+	if state.IsEngineActor(observation.Actor) {
+		return fmt.Errorf("performer observation actor %q is reserved: engine actors mark engine-synthesized decisions, not performer results", observation.Actor)
 	}
 	if strings.TrimSpace(observation.Verdict) == "" {
 		return fmt.Errorf("performer observation verdict is required")

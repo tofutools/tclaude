@@ -209,11 +209,32 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 	}
 	switch node.Status {
 	case state.NodeStatusReady:
+		// A re-entering gate whose work evidence is unchanged short-circuits:
+		// the previous verdict stands as an engine decision, no performer runs.
+		if spec.Stage.IsGateStage() {
+			if hash, ok := ShortCircuitHash(parent.Children, specs, st.Nodes, nodeID); ok {
+				cmd := newCommand(CommandKindShortCircuit, st.RunID, nodeID, "short-circuit", settleGeneration(node), hash)
+				cmd.NodeID = nodeID
+				cmd.EvidenceHash = hash
+				cmd.DecisionCount = len(node.Decisions)
+				if commandOutstanding(st, cmd.ID) {
+					return nil, nil
+				}
+				return []Command{cmd}, nil
+			}
+		}
 		attempt := node.Attempt + 1
 		cmd := newCommand(CommandKindStartAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "start")
 		cmd.NodeID = nodeID
 		cmd.Attempt = attempt
 		cmd.Performer = spec.Performer
+		if !spec.Stage.IsGateStage() {
+			cmd.RetryMode = model.RetryMode(spec.Retry)
+			if node.PendingFeedback != nil {
+				cmd.Feedback = node.PendingFeedback.Feedback
+				cmd.FeedbackFrom = node.PendingFeedback.FromNodeID
+			}
+		}
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil
 		}
@@ -235,6 +256,9 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 		cmd.Attempt = attempt
 		cmd.MaxAttempts = StageMaxAttempts(spec)
 		cmd.SourceCommandID = source.ID
+		if spec.Stage.IsGateStage() {
+			cmd.WorkEvidenceHash = WorkEvidenceHash(parent.Children, specs, st.Nodes, nodeID)
+		}
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil
 		}
@@ -254,7 +278,17 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 }
 
 func planSettledStageTransition(st *state.State, nodeID string, node state.NodeState, parent state.NodeState, specs []model.StageSpec, outcome string) ([]Command, error) {
-	transition, err := NextAfterStage(node.Parent, parent.Children, specs, nodeID, outcome, node.Attempt)
+	settle := StageSettle{
+		ChildID:   nodeID,
+		Outcome:   outcome,
+		Attempt:   node.Attempt,
+		FailCount: node.FailCount,
+	}
+	if node.ActiveAttempt != nil {
+		settle.Feedback = node.ActiveAttempt.Feedback
+		settle.EvidenceRef = node.ActiveAttempt.EvidenceRef
+	}
+	transition, err := NextAfterStage(node.Parent, parent.Children, specs, st.Nodes, settle)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +301,7 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 		if next.Status != state.NodeStatusPending {
 			return nil, nil
 		}
-		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.NextChildID)
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.NextChildID, settleGeneration(node))
 		cmd.NodeID = nodeID
 		cmd.TargetNodeID = transition.NextChildID
 		cmd.NodeStatus = state.NodeStatusReady
@@ -283,7 +317,7 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 		if done.Status != state.NodeStatusPending {
 			return nil, nil
 		}
-		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.DoneChildID)
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.DoneChildID, settleGeneration(node))
 		cmd.NodeID = nodeID
 		cmd.TargetNodeID = transition.DoneChildID
 		cmd.NodeStatus = state.NodeStatusCompleted
@@ -300,6 +334,29 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 			return nil, nil
 		}
 		return []Command{cmd}, nil
+	case TransitionFeedbackLoop:
+		target, ok := st.Nodes[transition.TargetStageID]
+		if !ok {
+			return nil, fmt.Errorf("feedback target %q is not in state", transition.TargetStageID)
+		}
+		if target.Status != state.NodeStatusCompleted {
+			// The loop already re-entered (target re-readied or running again).
+			return nil, nil
+		}
+		cmd := newCommand(CommandKindGateFeedback, st.RunID, nodeID, "feedback", settleGeneration(node))
+		cmd.NodeID = nodeID
+		cmd.Attempt = node.Attempt
+		cmd.DecisionCount = len(node.Decisions)
+		cmd.TargetNodeID = transition.TargetStageID
+		cmd.Gates = transition.ResetGates
+		cmd.ResetCounters = transition.ResetCounters
+		cmd.Feedback = transition.Feedback
+		cmd.Reason = transition.Reason
+		cmd.EvidenceRef = transition.EvidenceRef
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
 	case TransitionPoison:
 		return poisonCommands(st, nodeID, node, transition), nil
 	default:
@@ -312,9 +369,9 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 // events in one append batch (CAS-level, not a crash guarantee): a child-only
 // intermediate checkpoint would violate the blocked-mirror invariant and
 // stall a replanning executor. The future unblock flow (poison resolution,
-// PR2) needs the same child+parent pairing in reverse — a child-only unblock
-// would trip blocked_parent_without_blocked_child, and auto-complete never
-// clears BlockedReason/BlockedOwner.
+// TCL-279) needs the same child+parent pairing in reverse — a child-only
+// unblock would trip blocked_parent_without_blocked_child, and auto-complete
+// never clears BlockedReason/BlockedOwner.
 func poisonCommands(st *state.State, nodeID string, node state.NodeState, transition StageTransition) []Command {
 	if node.Status == state.NodeStatusBlocked {
 		return nil
@@ -424,11 +481,20 @@ func waitCommand(runID, nodeID string, wait *model.WaitConfig) Command {
 	return cmd
 }
 
-func maxAttempts(retry *model.RetryPolicy) int {
-	if retry != nil && retry.MaxAttempts > 0 {
-		return retry.MaxAttempts
+// settleGeneration distinguishes successive settles of the same stage child
+// inside deterministic idempotency keys, so a loop re-entry plans fresh
+// commands instead of colliding with an observed slot from an earlier window:
+// attempts for work stages, verdict count for gates (a short-circuit settles
+// a gate without consuming an attempt, but always appends a verdict).
+func settleGeneration(node state.NodeState) string {
+	if node.Stage.IsGateStage() {
+		return fmt.Sprintf("decisions-%d", len(node.Decisions))
 	}
-	return 1
+	return fmt.Sprintf("attempt-%d", node.Attempt)
+}
+
+func maxAttempts(retry *model.RetryPolicy) int {
+	return model.RetryBudget(retry)
 }
 
 func deterministicSlotID(kind CommandKind, runID, nodeID string, parts ...string) string {

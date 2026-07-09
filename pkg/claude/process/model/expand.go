@@ -59,6 +59,17 @@ func RetryMode(retry *RetryPolicy) string {
 	return retry.OnFail
 }
 
+// RetryBudget resolves a retry policy's declared budget, default 1. For work
+// stages it bounds attempts; for gates it bounds failed verdicts in a loop
+// window. Planner and verify invariants must agree on this rule, so it lives
+// here as the single source of truth.
+func RetryBudget(retry *RetryPolicy) int {
+	if retry != nil && retry.MaxAttempts > 0 {
+		return retry.MaxAttempts
+	}
+	return 1
+}
+
 // StageSpec describes one derived child of a compound task node. ChildID is
 // the fully qualified state node id (parent id + "." + stage path).
 type StageSpec struct {

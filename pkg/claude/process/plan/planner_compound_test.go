@@ -3,6 +3,7 @@ package plan
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -25,6 +26,10 @@ func compoundTemplate() *model.Template {
 			"end": {Type: model.NodeTypeEnd},
 		},
 	}
+}
+
+func fixedTime() time.Time {
+	return time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC)
 }
 
 func compoundChildren() []string {
@@ -132,7 +137,7 @@ func TestPlanActivatesNextStageAfterPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCommands(t, got, []commandWant{
-		{Kind: CommandKindActivateNode, NodeID: "implement.plan", TargetNodeID: "implement.do", NodeStatus: state.NodeStatusReady, Key: "run_1/activate_node/implement.plan/to/implement.do"},
+		{Kind: CommandKindActivateNode, NodeID: "implement.plan", TargetNodeID: "implement.do", NodeStatus: state.NodeStatusReady, Key: "run_1/activate_node/implement.plan/to/implement.do/attempt-1"},
 	})
 }
 
@@ -141,14 +146,15 @@ func TestPlanCompletesParentAfterLastGate(t *testing.T) {
 		"implement.plan":       {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
 		"implement.do":         {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2"}},
 		"implement.test.tests": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e3"}},
-		"implement.review":     {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e4"}},
+		"implement.review": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e4"},
+			Decisions: []state.DecisionRecord{{Actor: "agent:agt_reviewer", Verdict: "pass", EvidenceRef: "e4"}}},
 	})
 	got, err := Plan(st, compoundTemplate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertCommands(t, got, []commandWant{
-		{Kind: CommandKindActivateNode, NodeID: "implement.review", TargetNodeID: "implement.done", NodeStatus: state.NodeStatusCompleted, Key: "run_1/activate_node/implement.review/to/implement.done"},
+		{Kind: CommandKindActivateNode, NodeID: "implement.review", TargetNodeID: "implement.done", NodeStatus: state.NodeStatusCompleted, Key: "run_1/activate_node/implement.review/to/implement.done/decisions-1"},
 	})
 }
 
@@ -207,27 +213,200 @@ func TestPlanPoisonsExhaustedWorkStage(t *testing.T) {
 	}
 }
 
-func TestPlanPoisonsFailedGateImmediately(t *testing.T) {
+func TestPlanPoisonsGateWithExhaustedBudget(t *testing.T) {
+	// Default gate budget is 1 failed verdict; the reducer already counted
+	// the settling failure, so FailCount 1 means the budget is spent.
 	st := expandedPlannerState(map[string]state.NodeState{
-		"implement.test.tests": {Status: state.NodeStatusFailed, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "fail"}},
+		"implement.test.tests": {Status: state.NodeStatusFailed, Attempt: 1, FailCount: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "fail"}},
 	})
 	got, err := Plan(st, compoundTemplate())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].NodeID != "implement.test.tests" || got[0].TargetNodeID != "implement" {
+	if len(got) != 1 || got[0].Kind != CommandKindBlockNode || got[0].NodeID != "implement.test.tests" || got[0].TargetNodeID != "implement" {
 		t.Fatalf("commands = %#v", got)
 	}
-	if !strings.Contains(got[0].Reason, `gate "implement.test.tests" failed`) {
+	if !strings.Contains(got[0].Reason, `gate "implement.test.tests" exhausted its budget of 1 failed verdicts`) {
 		t.Fatalf("reason = %q", got[0].Reason)
+	}
+}
+
+// compoundTemplateWithGateBudgets grants the tests gate 3 failed verdicts and
+// the review gate 2.
+func compoundTemplateWithGateBudgets() *model.Template {
+	tmpl := compoundTemplate()
+	node := tmpl.Nodes["implement"]
+	node.Checks = []model.Step{{ID: "tests", Retry: &model.RetryPolicy{MaxAttempts: 3}, Performer: model.Performer{Kind: model.PerformerProgram, Run: "go test ./..."}}}
+	node.Review = &model.Step{ID: "review", Retry: &model.RetryPolicy{MaxAttempts: 2}, Performer: model.Performer{Kind: model.PerformerAgent, Profile: "reviewer", Prompt: "Review it"}}
+	tmpl.Nodes["implement"] = node
+	return tmpl
+}
+
+func TestPlanEmitsGateFeedbackWithinBudget(t *testing.T) {
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do":   {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2", SettledAt: fixedTime()}},
+		"implement.test.tests": {
+			Status: state.NodeStatusFailed, Attempt: 1, FailCount: 1,
+			ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "fail", Feedback: "TestFoo fails", EvidenceRef: "artifact:test-log"},
+			Decisions:     []state.DecisionRecord{{Actor: "program:go test@exit1", Verdict: "fail", EvidenceRef: "artifact:test-log"}},
+		},
+	})
+	got, err := Plan(st, compoundTemplateWithGateBudgets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindGateFeedback {
+		t.Fatalf("commands = %#v", got)
+	}
+	cmd := got[0]
+	if cmd.NodeID != "implement.test.tests" || cmd.TargetNodeID != "implement.do" || cmd.Attempt != 1 {
+		t.Fatalf("feedback command = %#v", cmd)
+	}
+	if cmd.Feedback != "TestFoo fails" || cmd.EvidenceRef != "artifact:test-log" {
+		t.Fatalf("feedback payload = %#v", cmd)
+	}
+	if strings.Join(cmd.Gates, " ") != "implement.test.tests" || len(cmd.ResetCounters) != 0 {
+		t.Fatalf("reset span = gates %v counters %v", cmd.Gates, cmd.ResetCounters)
+	}
+	// The key is generation-scoped by the gate's verdict count so the next
+	// loop window plans a fresh command instead of colliding with this slot.
+	if cmd.IdempotencyKey != "run_1/gate_feedback/implement.test.tests/feedback/decisions-1" {
+		t.Fatalf("key = %q", cmd.IdempotencyKey)
+	}
+}
+
+func TestPlanReviewFailureResetsCrossKindGateCounters(t *testing.T) {
+	// A failed review re-enters do; the tests gate sits inside the reset span
+	// and is a different stage kind, so its fail counter resets too.
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan":       {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do":         {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2", SettledAt: fixedTime()}},
+		"implement.test.tests": {Status: state.NodeStatusCompleted, Attempt: 2, FailCount: 1, ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "pass", EvidenceRef: "e3"}},
+		"implement.review": {
+			Status: state.NodeStatusFailed, Attempt: 1, FailCount: 1,
+			ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "fail", Feedback: "needs a test for the edge case"},
+		},
+	})
+	got, err := Plan(st, compoundTemplateWithGateBudgets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindGateFeedback || got[0].TargetNodeID != "implement.do" {
+		t.Fatalf("commands = %#v", got)
+	}
+	if strings.Join(got[0].Gates, " ") != "implement.test.tests implement.review" {
+		t.Fatalf("reset gates = %v", got[0].Gates)
+	}
+	if strings.Join(got[0].ResetCounters, " ") != "implement.test.tests" {
+		t.Fatalf("reset counters = %v", got[0].ResetCounters)
+	}
+}
+
+func TestPlanPoisonsGateWhenWorkBudgetExhausted(t *testing.T) {
+	// The gate has verdicts left, but the do stage has already spent its two
+	// attempts, so the loop cannot re-enter and the node poisons.
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do":   {Status: state.NodeStatusCompleted, Attempt: 2, ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "pass", EvidenceRef: "e2", SettledAt: fixedTime()}},
+		"implement.test.tests": {
+			Status: state.NodeStatusFailed, Attempt: 2, FailCount: 2,
+			ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "fail"},
+		},
+	})
+	got, err := Plan(st, compoundTemplateWithGateBudgets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindBlockNode || got[0].TargetNodeID != "implement" {
+		t.Fatalf("commands = %#v", got)
+	}
+	if !strings.Contains(got[0].Reason, `stage "implement.do" has exhausted its budget of 2 attempts`) {
+		t.Fatalf("reason = %q", got[0].Reason)
+	}
+}
+
+func TestPlanShortCircuitsReenteredGateOnUnchangedEvidence(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do":   {Status: state.NodeStatusCompleted, Attempt: 2, ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "pass", EvidenceRef: "e2", EvidenceHash: hash, SettledAt: fixedTime()}},
+		"implement.test.tests": {
+			Status: state.NodeStatusReady, Attempt: 1, FailCount: 0, LastEvidenceHash: hash,
+			Decisions: []state.DecisionRecord{{Actor: "program:go test@exit0", Verdict: "pass", EvidenceRef: "e3"}},
+		},
+	})
+	got, err := Plan(st, compoundTemplateWithGateBudgets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindShortCircuit || got[0].NodeID != "implement.test.tests" {
+		t.Fatalf("commands = %#v", got)
+	}
+	if got[0].EvidenceHash != hash {
+		t.Fatalf("evidence hash = %q", got[0].EvidenceHash)
+	}
+	if got[0].Performer != nil {
+		t.Fatalf("short-circuit must not carry a performer: %#v", got[0].Performer)
+	}
+}
+
+func TestPlanReenteredGateWithChangedEvidenceStartsAttempt(t *testing.T) {
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do":   {Status: state.NodeStatusCompleted, Attempt: 2, ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "pass", EvidenceRef: "e2", EvidenceHash: "hash-new", SettledAt: fixedTime()}},
+		"implement.test.tests": {
+			Status: state.NodeStatusReady, Attempt: 1, LastEvidenceHash: "hash-old",
+			Decisions: []state.DecisionRecord{{Actor: "program:go test@exit1", Verdict: "fail"}},
+		},
+	})
+	got, err := Plan(st, compoundTemplateWithGateBudgets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindStartAttempt || got[0].NodeID != "implement.test.tests" {
+		t.Fatalf("commands = %#v", got)
+	}
+	if got[0].RetryMode != "" || got[0].Feedback != "" {
+		t.Fatalf("gate start must not carry retry mode or feedback: %#v", got[0])
+	}
+}
+
+func TestPlanStartAttemptCarriesRetryModeAndFeedback(t *testing.T) {
+	tmpl := compoundTemplate()
+	node := tmpl.Nodes["implement"]
+	node.Retry = &model.RetryPolicy{MaxAttempts: 2, OnFail: "feedback-same-session"}
+	tmpl.Nodes["implement"] = node
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.plan": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1"}},
+		"implement.do": {
+			Status: state.NodeStatusReady, Attempt: 1,
+			ActiveAttempt:   &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2", SettledAt: fixedTime()},
+			PendingFeedback: &state.FeedbackRef{FromNodeID: "implement.test.tests", Feedback: "TestFoo fails", EvidenceRef: "artifact:test-log"},
+		},
+	})
+	got, err := Plan(st, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindStartAttempt || got[0].NodeID != "implement.do" || got[0].Attempt != 2 {
+		t.Fatalf("commands = %#v", got)
+	}
+	if got[0].RetryMode != "feedback-same-session" {
+		t.Fatalf("retry mode = %q", got[0].RetryMode)
+	}
+	if got[0].Feedback != "TestFoo fails" || got[0].FeedbackFrom != "implement.test.tests" {
+		t.Fatalf("feedback threading = %#v", got[0])
 	}
 }
 
 func TestPlanClaimedDoneFlipRoutesAsFailure(t *testing.T) {
 	// A child whose status flipped to failed despite a recorded pass outcome
 	// (claimed done without evidence) must route through the failure path.
+	// The reducer counts the flip as a failed verdict, so FailCount is 1 and
+	// the default budget is spent.
 	st := expandedPlannerState(map[string]state.NodeState{
-		"implement.review": {Status: state.NodeStatusFailed, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass"}},
+		"implement.review": {Status: state.NodeStatusFailed, Attempt: 1, FailCount: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass"}},
 	})
 	got, err := Plan(st, compoundTemplate())
 	if err != nil {
@@ -256,16 +435,16 @@ func TestPlanBlockedCompoundEmitsNothing(t *testing.T) {
 	}
 }
 
-func TestPlanGateSettleDoesNotAdvertiseUnhonoredBudget(t *testing.T) {
-	// Gate stages poison on first failure in this phase, so the settle
-	// command must publish maxAttempts=1 even when the template declares a
-	// gate retry budget — otherwise a command executor and NextAfterStage
-	// would disagree.
-	tmpl := compoundTemplate()
-	node := tmpl.Nodes["implement"]
-	node.Review = &model.Step{ID: "review", Retry: &model.RetryPolicy{MaxAttempts: 3}, Performer: model.Performer{Kind: model.PerformerAgent, Prompt: "Review it"}}
-	tmpl.Nodes["implement"] = node
+func TestPlanGateSettleIsWindowTerminal(t *testing.T) {
+	// Gate settles always carry maxAttempts=1: a failed gate never re-readies
+	// itself — the feedback loop re-enters it via pending — so the settle must
+	// not advertise the gate's verdict budget as attempt retries. The settle
+	// also records the work-evidence hash the verdict evaluated, which powers
+	// the evidence-unchanged short-circuit.
+	tmpl := compoundTemplateWithGateBudgets()
 	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.do":         {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e2", EvidenceHash: "work-hash", SettledAt: fixedTime()}},
+		"implement.test.tests": {Status: state.NodeStatusCompleted, Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e3"}},
 		"implement.review": {
 			Status:        state.NodeStatusRunning,
 			Attempt:       1,
@@ -282,16 +461,57 @@ func TestPlanGateSettleDoesNotAdvertiseUnhonoredBudget(t *testing.T) {
 	if len(got) != 1 || got[0].Kind != CommandKindSettleAttempt || got[0].MaxAttempts != 1 {
 		t.Fatalf("commands = %#v", got)
 	}
+	if got[0].WorkEvidenceHash != "work-hash" {
+		t.Fatalf("work evidence hash = %q", got[0].WorkEvidenceHash)
+	}
+}
+
+func TestPlanApprovalFailureFeedsBackIntoPlanStage(t *testing.T) {
+	// The plan.approval gate re-enters the PLAN stage, not do. ExpandNode
+	// gives approval no retry knob today (budget 1, so template-derived
+	// approval failures poison before looping); hand-built specs exercise
+	// the routing so the mechanism is pinned for when a budget knob lands
+	// (TCL-280).
+	specs := []model.StageSpec{
+		{ChildID: "implement.plan", Stage: model.StagePlan, Retry: &model.RetryPolicy{MaxAttempts: 2}},
+		{ChildID: "implement.plan.approval", Stage: model.StagePlanApproval, Retry: &model.RetryPolicy{MaxAttempts: 2}},
+		{ChildID: "implement.do", Stage: model.StageDo},
+		{ChildID: "implement.done", Stage: model.StageDone},
+	}
+	children := []string{"implement.plan", "implement.plan.approval", "implement.do", "implement.done"}
+	nodes := map[string]state.NodeState{
+		"implement.plan": {Parent: "implement", Stage: model.StagePlan, Status: state.NodeStatusCompleted,
+			Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1", SettledAt: fixedTime()}},
+		"implement.plan.approval": {Parent: "implement", Stage: model.StagePlanApproval, Status: state.NodeStatusFailed,
+			Attempt: 1, FailCount: 1},
+		"implement.do":   {Parent: "implement", Stage: model.StageDo, Status: state.NodeStatusPending},
+		"implement.done": {Parent: "implement", Stage: model.StageDone, Status: state.NodeStatusPending},
+	}
+	transition, err := NextAfterStage("implement", children, specs, nodes, StageSettle{
+		ChildID: "implement.plan.approval", Outcome: "fail", Attempt: 1, FailCount: 1, Feedback: "plan misses the rollout step",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.Kind != TransitionFeedbackLoop || transition.TargetStageID != "implement.plan" {
+		t.Fatalf("transition = %#v", transition)
+	}
+	if strings.Join(transition.ResetGates, " ") != "implement.plan.approval" || len(transition.ResetCounters) != 0 {
+		t.Fatalf("reset span = %#v", transition)
+	}
+	if transition.Feedback != "plan misses the rollout step" {
+		t.Fatalf("feedback = %q", transition.Feedback)
+	}
 }
 
 func TestNextAfterStageRejectsDoneAndUnknownChildren(t *testing.T) {
 	tmplNode := compoundTemplate().Nodes["implement"]
 	specs := model.ExpandNode("implement", tmplNode)
 	children := compoundChildren()
-	if _, err := NextAfterStage("implement", children, specs, "implement.done", "pass", 1); err == nil {
+	if _, err := NextAfterStage("implement", children, specs, nil, StageSettle{ChildID: "implement.done", Outcome: "pass", Attempt: 1}); err == nil {
 		t.Fatal("done stage must not be advanceable")
 	}
-	if _, err := NextAfterStage("implement", children, specs, "implement.nope", "pass", 1); err == nil {
+	if _, err := NextAfterStage("implement", children, specs, nil, StageSettle{ChildID: "implement.nope", Outcome: "pass", Attempt: 1}); err == nil {
 		t.Fatal("unknown child must error")
 	}
 }

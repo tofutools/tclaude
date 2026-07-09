@@ -88,7 +88,7 @@ func resumeObservedRun(cmd *cobra.Command, fs *store.FS, runID, commandID string
 		}
 		at := processNow().UTC()
 		_, err := fs.Append(cmd.Context(), runID, current.LastLogSeq, []evidence.LogEntry{
-			runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunResumed}, "", at),
+			runLogEntry(evidence.EntryKindStatus, state.Event{Type: state.EventRunResumed}, "", at),
 		})
 		if err == nil {
 			return nil
