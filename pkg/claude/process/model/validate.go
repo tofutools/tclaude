@@ -2,12 +2,12 @@ package model
 
 import (
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 )
 
 var paramRefPattern = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
+var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	var diagnostics Diagnostics
@@ -35,6 +35,8 @@ func validateHeader(tmpl *Template) Diagnostics {
 	}
 	if strings.TrimSpace(tmpl.ID) == "" {
 		diagnostics = append(diagnostics, diagError("missing_id", "id", "template id is required"))
+	} else if !idPattern.MatchString(tmpl.ID) {
+		diagnostics = append(diagnostics, diagError("invalid_id", "id", "template id must match "+idPattern.String()))
 	}
 	if strings.TrimSpace(tmpl.Start) == "" {
 		diagnostics = append(diagnostics, diagError("missing_start", "start", "top-level start node is required"))
@@ -43,6 +45,11 @@ func validateHeader(tmpl *Template) Diagnostics {
 	}
 	if len(tmpl.Nodes) == 0 {
 		diagnostics = append(diagnostics, diagError("missing_nodes", "nodes", "at least one node is required"))
+	}
+	for _, paramID := range sortedKeys(tmpl.Params) {
+		if !idPattern.MatchString(paramID) {
+			diagnostics = append(diagnostics, diagError("invalid_id", "params."+paramID, "param id must match "+idPattern.String()))
+		}
 	}
 	return diagnostics
 }
@@ -53,6 +60,9 @@ func validateNodes(tmpl *Template) Diagnostics {
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
+		if !idPattern.MatchString(nodeID) {
+			diagnostics = append(diagnostics, diagError("invalid_id", path, "node id must match "+idPattern.String()))
+		}
 		switch node.Type {
 		case NodeTypeTask:
 			if node.Performer == nil {
@@ -221,7 +231,8 @@ func validateAcyclic(edges []Edge) Diagnostics {
 		}
 		state[id] = active
 		for _, to := range adj[id] {
-			visit(to, append(stack, id))
+			nextStack := append(append([]string(nil), stack...), id)
+			visit(to, nextStack)
 		}
 		state[id] = done
 	}
@@ -252,50 +263,81 @@ func validateParamRefs(tmpl *Template) Diagnostics {
 	}
 
 	var diagnostics Diagnostics
-	walkStrings(reflect.ValueOf(*tmpl), "", func(path, value string) {
-		if strings.HasPrefix(path, "Layout") {
-			return
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, "name", tmpl.Name)...)
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, "description", tmpl.Description)...)
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, "doc", tmpl.Doc)...)
+	for _, paramID := range sortedKeys(tmpl.Params) {
+		param := tmpl.Params[paramID]
+		path := "params." + paramID
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", param.Name)...)
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", param.Description)...)
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", param.Doc)...)
+	}
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		node := tmpl.Nodes[nodeID]
+		path := "nodes." + nodeID
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", node.Name)...)
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", node.Description)...)
+		diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", node.Doc)...)
+		if node.Performer != nil {
+			diagnostics = append(diagnostics, checkPerformerParamRefs(declared, path+".performer", *node.Performer)...)
 		}
-		for _, match := range paramRefPattern.FindAllStringSubmatch(value, -1) {
-			name := match[1]
-			if !declared[name] {
-				diagnostics = append(diagnostics, diagError("undeclared_param_ref", path, fmt.Sprintf("reference to undeclared param %q", name)))
-			}
+		if node.Plan != nil {
+			diagnostics = append(diagnostics, checkStepParamRefs(declared, path+".plan", *node.Plan)...)
 		}
-	})
+		for i, check := range node.Checks {
+			diagnostics = append(diagnostics, checkStepParamRefs(declared, fmt.Sprintf("%s.checks[%d]", path, i), check)...)
+		}
+		if node.Review != nil {
+			diagnostics = append(diagnostics, checkStepParamRefs(declared, path+".review", *node.Review)...)
+		}
+	}
 	return diagnostics
 }
 
-func walkStrings(value reflect.Value, path string, visit func(path, value string)) {
-	if !value.IsValid() {
-		return
+func checkStepParamRefs(declared map[string]bool, path string, step Step) Diagnostics {
+	var diagnostics Diagnostics
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".name", step.Name)...)
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".description", step.Description)...)
+	diagnostics = append(diagnostics, checkProseParamRefs(declared, path+".doc", step.Doc)...)
+	diagnostics = append(diagnostics, checkPerformerParamRefs(declared, path+".performer", step.Performer)...)
+	return diagnostics
+}
+
+func checkPerformerParamRefs(declared map[string]bool, path string, performer Performer) Diagnostics {
+	var diagnostics Diagnostics
+	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".prompt", performer.Prompt)...)
+	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".ask", performer.Ask)...)
+	diagnostics = append(diagnostics, checkExecutableParamRefs(declared, path+".run", performer.Run)...)
+	for i, arg := range performer.Args {
+		diagnostics = append(diagnostics, checkExecutableParamRefs(declared, fmt.Sprintf("%s.args[%d]", path, i), arg)...)
 	}
-	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
-		if value.IsNil() {
-			return
+	return diagnostics
+}
+
+func checkExecutableParamRefs(declared map[string]bool, path, value string) Diagnostics {
+	return checkParamRefs(declared, path, value, SeverityError)
+}
+
+func checkProseParamRefs(declared map[string]bool, path, value string) Diagnostics {
+	return checkParamRefs(declared, path, value, SeverityWarning)
+}
+
+func checkParamRefs(declared map[string]bool, path, value string, severity Severity) Diagnostics {
+	var diagnostics Diagnostics
+	for _, match := range paramRefPattern.FindAllStringSubmatch(value, -1) {
+		name := match[1]
+		if declared[name] {
+			continue
 		}
-		walkStrings(value.Elem(), path, visit)
-		return
+		message := fmt.Sprintf("reference to undeclared param %q", name)
+		if severity == SeverityWarning {
+			diagnostics = append(diagnostics, diagWarning("undeclared_param_ref", path, message))
+		} else {
+			diagnostics = append(diagnostics, diagError("undeclared_param_ref", path, message))
+		}
 	}
-	switch value.Kind() {
-	case reflect.String:
-		visit(path, value.String())
-	case reflect.Struct:
-		typ := value.Type()
-		for i := 0; i < value.NumField(); i++ {
-			field := typ.Field(i)
-			walkStrings(value.Field(i), joinPath(path, field.Name), visit)
-		}
-	case reflect.Map:
-		iter := value.MapRange()
-		for iter.Next() {
-			walkStrings(iter.Value(), joinPath(path, fmt.Sprint(iter.Key().Interface())), visit)
-		}
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < value.Len(); i++ {
-			walkStrings(value.Index(i), fmt.Sprintf("%s[%d]", path, i), visit)
-		}
-	}
+	return diagnostics
 }
 
 func validateLayout(tmpl *Template) Diagnostics {

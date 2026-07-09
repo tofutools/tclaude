@@ -18,6 +18,7 @@ func Parse(data []byte) (*ParsedTemplate, error) {
 	}
 
 	diagnostics := duplicateKeyDiagnostics(&root)
+	diagnostics = append(diagnostics, unknownFieldDiagnostics(&root)...)
 	pruneDuplicateKeys(&root)
 
 	var tmpl Template
@@ -26,6 +27,7 @@ func Parse(data []byte) (*ParsedTemplate, error) {
 	}
 
 	normalizeTemplate(&tmpl)
+	diagnostics = append(diagnostics, normalizeFreeform(&tmpl)...)
 	edges := NormalizeEdges(&tmpl)
 	diagnostics = append(diagnostics, Validate(&tmpl, edges)...)
 
@@ -218,6 +220,28 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func sortAnyValues(values []any) {
+	slices.SortFunc(values, func(a, b any) int {
+		typeA := fmt.Sprintf("%T", a)
+		typeB := fmt.Sprintf("%T", b)
+		if typeA < typeB {
+			return -1
+		}
+		if typeA > typeB {
+			return 1
+		}
+		valueA := fmt.Sprint(a)
+		valueB := fmt.Sprint(b)
+		if valueA < valueB {
+			return -1
+		}
+		if valueA > valueB {
+			return 1
+		}
+		return 0
+	})
 }
 
 func duplicateKeyDiagnostics(root *yaml.Node) Diagnostics {

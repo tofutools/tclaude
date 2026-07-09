@@ -111,6 +111,9 @@ type Edge struct {
 	To      string `json:"to"`
 }
 
+// ParsedTemplate is the result of parsing a process template source file.
+// Callers must reject templates when Diagnostics.HasErrors reports true; hashes
+// are still populated for invalid templates so tools can compare/edit sources.
 type ParsedTemplate struct {
 	Template     *Template
 	Edges        []Edge

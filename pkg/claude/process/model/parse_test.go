@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -120,6 +121,28 @@ func TestCanonicalYAMLRoundTripPreservesSemantics(t *testing.T) {
 	}
 }
 
+func TestCanonicalYAMLIsIdempotent(t *testing.T) {
+	parsed, err := Parse([]byte(validTemplateYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondParsed, err := Parse(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CanonicalYAML(secondParsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("canonical YAML is not byte-stable\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
 func TestSemanticHashIgnoresLayoutAndComments(t *testing.T) {
 	left, err := Parse([]byte(validTemplateYAML))
 	if err != nil {
@@ -138,6 +161,133 @@ func TestSemanticHashIgnoresLayoutAndComments(t *testing.T) {
 	}
 	if left.SourceHash == right.SourceHash {
 		t.Fatal("source hash should include raw bytes and differ")
+	}
+}
+
+func TestSemanticHashChangesForSemanticChanges(t *testing.T) {
+	left, err := Parse([]byte(validTemplateYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightYAML := strings.ReplaceAll(validTemplateYAML, "profile: dev", "profile: senior-dev")
+	right, err := Parse([]byte(rightYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.SemanticHash == right.SemanticHash {
+		t.Fatal("semantic hash should change when performer profile changes")
+	}
+}
+
+func TestScalarNextRoundTrip(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: scalar-next
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    next: done
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected errors: %#v", parsed.Diagnostics.Errors())
+	}
+	assertEdge(t, parsed.Edges, Edge{From: "a", Outcome: DefaultOutcome, To: "done"})
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(canonical), "next: done") {
+		t.Fatalf("canonical scalar next did not stay scalar:\n%s", canonical)
+	}
+}
+
+func TestFreeformRoundTrip(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: freeform
+params:
+  settings:
+    type: object
+    default:
+      enabled: true
+      threshold: 1.5
+      tags: [a, b]
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    metadata:
+      nested:
+        count: 2
+        none: null
+    next: done
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected errors: %#v", parsed.Diagnostics.Errors())
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.SemanticHash != parsed.SemanticHash {
+		t.Fatalf("semantic hash changed after freeform round trip: %s != %s", roundTrip.SemanticHash, parsed.SemanticHash)
+	}
+}
+
+func TestDiagnosticsOrderIsStable(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: stable-diagnostics
+start: a
+nodes:
+  a:
+    type: task
+    performer:
+      kind: agent
+      prompt: "{{ params.zed }} {{ params.alpha }}"
+      args: ["{{ params.mid }}"]
+    next: done
+  done: { type: end }
+`
+	var want []string
+	for i := 0; i < 50; i++ {
+		parsed, err := Parse([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, diag := range parsed.Diagnostics {
+			if diag.Code == "undeclared_param_ref" {
+				got = append(got, diag.Path+":"+diag.Message)
+			}
+		}
+		if i == 0 {
+			want = got
+			continue
+		}
+		if !slices.Equal(want, got) {
+			t.Fatalf("diagnostic order changed\nwant: %#v\ngot:  %#v", want, got)
+		}
 	}
 }
 
@@ -255,6 +405,50 @@ nodes:
 `,
 			code: "duplicate_key",
 		},
+		{
+			name: "unknown field",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: typo
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    nxet: done
+`,
+			code: "unknown_field",
+		},
+		{
+			name: "non-string freeform key",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: non-string-freeform-key
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    metadata:
+      nested:
+        1: one
+    next: done
+  done: { type: end }
+`,
+			code: "non_string_freeform_key",
+		},
+		{
+			name: "invalid template id",
+			yaml: strings.Replace(validTemplateYAML, "id: code-change-with-review", "id: bad id", 1),
+			code: "invalid_id",
+		},
+		{
+			name: "invalid node id",
+			yaml: strings.Replace(validTemplateYAML, "  implement:", "  \"\":", 1),
+			code: "invalid_id",
+		},
 	}
 
 	for _, tt := range tests {
@@ -267,6 +461,237 @@ nodes:
 				t.Fatalf("expected error code %q, got %#v", tt.code, parsed.Diagnostics)
 			}
 		})
+	}
+}
+
+func TestHeaderErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		code string
+	}{
+		{
+			name: "missing id",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+start: a
+nodes:
+  a: { type: end }
+`,
+			code: "missing_id",
+		},
+		{
+			name: "unknown start",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: unknown-start
+start: missing
+nodes:
+  a: { type: end }
+`,
+			code: "unknown_start",
+		},
+		{
+			name: "invalid api version",
+			yaml: `
+apiVersion: v0
+kind: ProcessTemplate
+id: invalid-api
+start: a
+nodes:
+  a: { type: end }
+`,
+			code: "invalid_api_version",
+		},
+		{
+			name: "invalid kind",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: SomethingElse
+id: invalid-kind
+start: a
+nodes:
+  a: { type: end }
+`,
+			code: "invalid_kind",
+		},
+		{
+			name: "missing nodes",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-nodes
+start: a
+`,
+			code: "missing_nodes",
+		},
+		{
+			name: "empty input",
+			yaml: ``,
+			code: "missing_id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(parsed.Diagnostics, SeverityError, tt.code) {
+				t.Fatalf("expected error code %q, got %#v", tt.code, parsed.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestNodeShapeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		code string
+	}{
+		{
+			name: "missing performer",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-performer
+start: a
+nodes:
+  a: { type: task, next: done }
+  done: { type: end }
+`,
+			code: "missing_performer",
+		},
+		{
+			name: "missing next",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-next
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: "Do it" }
+`,
+			code: "missing_next",
+		},
+		{
+			name: "missing wait",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-wait
+start: a
+nodes:
+  a: { type: wait, next: done }
+  done: { type: end }
+`,
+			code: "missing_wait",
+		},
+		{
+			name: "end has next",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: end-has-next
+start: a
+nodes:
+  a: { type: end, next: done }
+  done: { type: end }
+`,
+			code: "end_has_next",
+		},
+		{
+			name: "multiple start nodes",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: multiple-start
+start: a
+nodes:
+  a: { type: start, next: done }
+  b: { type: start, next: done }
+  done: { type: end }
+`,
+			code: "multiple_start_nodes",
+		},
+		{
+			name: "invalid performer kind",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: invalid-performer
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: robot, prompt: "Do it" }
+    next: done
+  done: { type: end }
+`,
+			code: "invalid_performer_kind",
+		},
+		{
+			name: "missing step id",
+			yaml: `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-step-id
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: "Do it" }
+    checks:
+      - performer: { kind: program, run: go test ./... }
+    next: done
+  done: { type: end }
+`,
+			code: "missing_step_id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(parsed.Diagnostics, SeverityError, tt.code) {
+				t.Fatalf("expected error code %q, got %#v", tt.code, parsed.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestProseParamRefsAreWarnings(t *testing.T) {
+	data := `
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: prose-param-ref
+description: "Use {{ params.example }} in prompts."
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    next: done
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected errors: %#v", parsed.Diagnostics.Errors())
+	}
+	if !hasDiagnostic(parsed.Diagnostics, SeverityWarning, "undeclared_param_ref") {
+		t.Fatalf("expected prose undeclared_param_ref warning, got %#v", parsed.Diagnostics)
 	}
 }
 
