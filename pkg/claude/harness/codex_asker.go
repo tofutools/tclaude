@@ -109,7 +109,7 @@ func appendCodexAskModelEffort(argv []string, spec AskSpec) []string {
 		argv = append(argv, "--model", spec.Model)
 	}
 	if spec.Effort != "" {
-		argv = append(argv, "-c", `model_reasoning_effort="`+codexReasoningEffort(spec.Effort)+`"`)
+		argv = append(argv, "-c", `model_reasoning_effort="`+codexReasoningEffort(spec.Model, spec.Effort)+`"`)
 	}
 	return argv
 }

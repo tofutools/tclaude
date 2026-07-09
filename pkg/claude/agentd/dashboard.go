@@ -805,10 +805,10 @@ type dashboardHarness struct {
 	Name string `json:"name"`
 	// DisplayName is the human label ("Claude Code", "Codex").
 	DisplayName string `json:"display_name"`
-	// Models is the curated model list for the spawn dialog's Model menu.
-	// Empty (e.g. Codex, whose model set changes per release and is
-	// validated server-side) means "no curated list" — the dialog offers a
-	// free-text model entry for that harness instead of a <select>.
+	// Models is the curated suggestion list for Model menus. It need not be an
+	// allow-list: harness validation remains authoritative and every populated
+	// dropdown includes a custom-ID entry. Empty means a harness has no
+	// suggestions, so the dashboard falls back to a free-text model field.
 	Models []string `json:"models"`
 	// EffortLevels is the reasoning-effort scale for the Effort menu, in
 	// ascending order. Both harnesses share tclaude's levels today.

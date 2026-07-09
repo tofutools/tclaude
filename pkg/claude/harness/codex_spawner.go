@@ -105,8 +105,8 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// TOML-quoted string (matching Codex's own `-c model="o3"`
 		// convention) and the whole `key="value"` is shell-quoted as one
 		// arg. spec.Effort is a validated tclaude level; codexReasoningEffort
-		// maps it onto Codex's scale.
-		cmd += " -c " + clcommon.ShellQuoteArg(`model_reasoning_effort="`+codexReasoningEffort(spec.Effort)+`"`)
+		// maps it onto the selected Codex model's scale.
+		cmd += " -c " + clcommon.ShellQuoteArg(`model_reasoning_effort="`+codexReasoningEffort(spec.Model, spec.Effort)+`"`)
 	}
 	if len(spec.ExtraArgs) > 0 {
 		quoted := make([]string, len(spec.ExtraArgs))
@@ -132,11 +132,27 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	return cmd
 }
 
-// codexModels is the ModelCatalog for Codex (JOH-154/155). It validates a
-// model is not a Claude Code slug (otherwise pass-through, since Codex
-// validates its own per-release model set) and accepts tclaude's effort
-// levels, which codexSpawner maps onto Codex's reasoning-effort scale.
+// codexModels is the ModelCatalog for Codex (JOH-154/155). It offers a small
+// curated set of current Codex models while still accepting models outside the
+// list: Codex owns the authoritative, per-release validation. It also rejects
+// Claude Code slugs and accepts tclaude's effort levels, which codexSpawner
+// maps onto Codex's reasoning-effort scale.
 type codexModels struct{}
+
+// codexKnownModels is deliberately a suggestion list, not an allow-list.
+// Keeping the current first-party choices here gives every ModelCatalog-driven
+// surface (spawn, profiles, roles, and template-local launch profiles) the same
+// dropdown while ValidateModel continues to pass future/custom OpenAI IDs
+// through to Codex.
+var codexKnownModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.3-codex-spark",
+}
 
 // ValidateModel rejects a Claude Code model slug/ID chosen for a Codex
 // session (a clear error beats forwarding e.g. "opus" or "claude-fable-5"
@@ -165,20 +181,21 @@ func (codexModels) ValidateEffort(s string) (string, error) {
 	return clcommon.ValidateEffort(s)
 }
 
-// Models returns no curated suggestions — Codex's model set changes per
-// release, so ValidateModel (reject-CC-slug, else pass-through) is the
-// authority. EffortLevels returns tclaude's levels, now valid for Codex.
-func (codexModels) Models() []string       { return nil }
+// Models returns a copy of the curated suggestions. ValidateModel remains the
+// authority and accepts custom OpenAI IDs outside this list.
+func (codexModels) Models() []string       { return slices.Clone(codexKnownModels) }
 func (codexModels) EffortLevels() []string { return slices.Clone(clcommon.ValidEffortLevels) }
 
-// codexReasoningEffort maps a validated tclaude effort level onto Codex's
-// reasoning-effort scale. Codex's ReasoningEffort is
-// none/minimal/low/medium/high/xhigh; tclaude's low/medium/high/xhigh pass
-// straight through, and "max" — which Codex has no separate level for —
-// maps to Codex's highest, "xhigh".
-func codexReasoningEffort(effort string) string {
-	if effort == "max" {
+// codexReasoningEffort maps a validated tclaude effort level onto the selected
+// Codex model's scale. GPT-5.6 has a distinct max level, while older models top
+// out at xhigh; all lower shared levels pass through unchanged. An unset/custom
+// model retains the backwards-compatible max → xhigh mapping because tclaude
+// cannot know whether that model accepts the newer level.
+func codexReasoningEffort(model, effort string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	isGPT56 := model == "gpt-5.6" || strings.HasPrefix(model, "gpt-5.6-")
+	if effort == "max" && !isGPT56 {
 		return "xhigh"
 	}
-	return effort // low / medium / high / xhigh map 1:1
+	return effort // low / medium / high / xhigh (and GPT-5.6 max) map 1:1
 }

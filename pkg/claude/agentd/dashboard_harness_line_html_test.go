@@ -129,12 +129,12 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 		}
 	}
 
-	// dashboard.html: the harness selector, the Codex free-text model row,
-	// and the sandbox selector row exist.
+	// dashboard.html: the harness selector, the catalog Model row, its fallback
+	// free-text row, and the sandbox selector row exist.
 	must(`id="agent-spawn-harness"`, "spawn dialog has a harness selector")
 	must(`class="spawn-inline-fields"`, "spawn dialog compacts Model and Effort onto one row")
-	must(`id="agent-spawn-model-claude-row"`, "the curated (claude) model row is identifiable for toggling")
-	must(`id="agent-spawn-model-codex"`, "spawn dialog has a Codex free-text model input")
+	must(`id="agent-spawn-model-claude-row"`, "the catalog model row is identifiable for toggling")
+	must(`id="agent-spawn-model-codex"`, "spawn dialog has a no-suggestions fallback model input")
 	must(`id="agent-spawn-effort" aria-label="Effort"`, "compact Effort select keeps an accessible label")
 	must(`id="agent-spawn-sandbox"`, "spawn dialog has a sandbox selector")
 	must(`#agent-spawn-modal .spawn-inline-fields`, "spawn dialog has scoped CSS for the compact launch row")
@@ -145,6 +145,7 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("lastSnapshot.harnesses", "the dialog reads the snapshot harness catalog")
 	must("function applySpawnHarness(harnessName)", "the dialog reshapes per harness")
 	must("function activeSpawnModelEl()", "submit reads whichever Model control is active")
+	must("populateModelSelect($('#agent-spawn-model'), h.models)", "the Model dropdown is rebuilt from the selected harness catalog")
 
 	// modal-spawn.js: the spawn POST body carries the chosen harness (only
 	// when non-default) and sandbox.

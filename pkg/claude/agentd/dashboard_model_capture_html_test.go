@@ -48,7 +48,7 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 	}
 }
 
-// The curated Claude Model <select> can't be typed into, so a human who wants a
+// A curated Model <select> can't be typed into, so a human who wants a
 // model the presets don't list (a brand-new alias, or a full id) had no way to
 // enter one by hand. Each editor's <select> now ends with a "Custom model id…"
 // sentinel <option> that reveals a free-text <input>; picking it routes submit
@@ -68,7 +68,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		}
 	}
 
-	// Every curated Claude Model <select> ends with the sentinel option, and
+	// Every curated Model <select> ends with the sentinel option, and
 	// each editor carries the revealed free-text input + its row. Missing any
 	// leg silently breaks the feature in that one editor.
 	for _, base := range []string{"agent-spawn-model", "profile-editor-model", "role-editor-model"} {
@@ -88,6 +88,22 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 				t.Errorf("dashboard JS/HTML missing %q — custom-model wiring broken for %s", needle, base)
 			}
 		}
+	}
+
+	// Each editor rebuilds that shared selector from the selected harness's
+	// catalog, so Codex and Claude receive the same preset + custom-ID behavior.
+	for _, call := range []string{
+		"populateModelSelect($('#agent-spawn-model'), h.models)",
+		"populateModelSelect($('#profile-editor-model'), h.models)",
+		"populateModelSelect($('#role-editor-model'), h.models)",
+	} {
+		if !strings.Contains(dashboardAssets, call) {
+			t.Errorf("dashboard JS missing %q — per-harness model catalog is not wired across every editor", call)
+		}
+	}
+	if !strings.Contains(dashboardAssets, "appliedSpawnHarness === harnessName") ||
+		!strings.Contains(dashboardAssets, "setModelSelectValue($('#agent-spawn-model'), keepModel)") {
+		t.Error("spawn harness re-apply must preserve a manual model when a sparse same-harness profile is applied")
 	}
 
 	// The sentinel <option> must appear once per editor (3 curated selects).

@@ -109,7 +109,7 @@ function syncSelectTitle(sel) {
   sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
 }
 
-// MODEL_CUSTOM_VALUE is the sentinel <option> value the curated Claude Model
+// MODEL_CUSTOM_VALUE is the sentinel <option> value the curated Model
 // <select>s end with ("Custom model id…"). Picking it reveals a free-text input
 // (id `${base}-custom`) so a human can type ANY model id/alias, not just the
 // curated presets — the daemon validates it at spawn (ValidateModel). It is not
@@ -117,10 +117,31 @@ function syncSelectTitle(sel) {
 // resolvers + syncCustomModelRow). Kept distinct from "" (Default/unset).
 const MODEL_CUSTOM_VALUE = '__custom__';
 
+// populateModelSelect rebuilds a curated Model <select> from the selected
+// harness's snapshot catalog. The catalog is a suggestion list rather than an
+// allow-list, so every harness gets the same trailing Custom model id… entry.
+// Callers seed an existing model afterwards through setModelSelectValue(),
+// which keeps an out-of-catalog value selectable as an exact ID.
+function populateModelSelect(sel, models, defaultLabel = 'Default (unset)') {
+  if (!sel) return;
+  sel.replaceChildren();
+  const add = (value, label) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  };
+  add('', defaultLabel);
+  for (const model of (models || [])) add(model, model);
+  add(MODEL_CUSTOM_VALUE, 'Custom model id…');
+  sel.value = '';
+  syncSelectTitle(sel);
+}
+
 // setModelSelectValue sets a model id into a Model control, the way the spawn
 // dialog and profile editor seed one from a saved profile / captured live
-// agent. The curated Claude Model control is a <select> whose <option>s are a
-// fixed preset list of aliases (opus, sonnet[1m], …); assigning `.value` a
+// agent. A curated Model control is a <select> whose <option>s are a preset
+// list of aliases; assigning `.value` a
 // model that isn't one of those options is a silent no-op — the box just keeps
 // its prior pick — so a full model id captured from a running agent (e.g.
 // "claude-opus-4-8[1m]", which ValidateModel accepts but the alias list never
@@ -131,7 +152,7 @@ const MODEL_CUSTOM_VALUE = '__custom__';
 // option is placed before the trailing "Custom model id…" sentinel so that
 // stays last. A previously injected option is removed on each call so re-opening
 // the form with a different model doesn't stack stale options. For a free-text
-// <input> (Codex has no fixed model list) any value is valid, so we set it
+// <input> (a harness with no suggestion list) any value is valid, so we set it
 // directly.
 function setModelSelectValue(el, value) {
   if (!el) return;
@@ -1808,7 +1829,7 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
+  $, $$, esc, linkify, shortId, shortAgentId, idTooltip, syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE, syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey, showModalError, onlineDot, agentStatusDot, harnessLine, sandboxBadge, remoteControlBadge, statePill, slopMachine, wizardPill, contextMeter, activityBadges,
   harnessCanRename, harnessCanRemoteControl,
   roleCell, descrCell, tagChips, memberActions, ungroupedMemberActions, actionCog, relTime, shortCwd,
   cwdCell, branchCell, taskCell, offlineDefault, groupOfflineOverride, groupShowOffline,

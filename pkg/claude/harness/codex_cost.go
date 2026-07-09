@@ -28,12 +28,24 @@ type codexModelPricing struct {
 	Long  *codexModelPrice
 }
 
-// codexModelPrices lists models whose token categories match Codex rollout
-// token_count fields. Rates are Standard USD per 1M tokens from OpenAI API
-// pricing. A nil Long means the pricing page does not list long-context rates
-// for that model. Pro rows list no cached-input discount, so cached input is
-// charged at the regular input rate.
+// codexModelPrices lists models whose ordinary-input, cached-read, and output
+// categories match Codex rollout token_count fields. Rates are Standard USD per
+// 1M tokens from OpenAI API pricing. GPT-5.6 also bills explicit cache writes at
+// 1.25x input, but the rollout exposes no cache-write token category; when such
+// a write occurs, this what-if estimate is therefore a lower bound. A nil Long
+// means the pricing page does not list long-context rates for that model. Pro
+// rows list no cached-input discount, so cached input is charged at the regular
+// input rate.
 var codexModelPrices = map[string]codexModelPricing{
+	"gpt-5.6-sol": {
+		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
+	},
+	"gpt-5.6-terra": {
+		Short: codexModelPrice{InputPerMTok: 2.50, CachedInputPerMTok: 0.25, OutputPerMTok: 15.00},
+	},
+	"gpt-5.6-luna": {
+		Short: codexModelPrice{InputPerMTok: 1.00, CachedInputPerMTok: 0.10, OutputPerMTok: 6.00},
+	},
 	"gpt-5.5": {
 		Short: codexModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, OutputPerMTok: 30.00},
 		Long:  &codexModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, OutputPerMTok: 45.00},
@@ -65,6 +77,9 @@ var codexModelPrices = map[string]codexModelPricing{
 	"gpt-5-codex": {
 		Short: codexModelPrice{InputPerMTok: 1.75, CachedInputPerMTok: 0.175, OutputPerMTok: 14.00},
 	},
+	// gpt-5.3-codex-spark is intentionally absent: it is a research preview
+	// whose rate is not final. Unknown prices remain unestimated rather than
+	// borrowing another model's rate.
 }
 
 // CodexVirtualCostFromRollout reads rolloutPath and estimates the latest
