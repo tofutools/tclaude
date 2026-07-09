@@ -47,6 +47,11 @@ func printDiagnostics(w io.Writer, diagnostics model.Diagnostics) {
 		if path == "" {
 			path = "-"
 		}
+		// Source positions are populated only for raw-node-walk diagnostics;
+		// append them as path:line:col when present.
+		if diag.Line > 0 {
+			path = fmt.Sprintf("%s:%d:%d", path, diag.Line, diag.Col)
+		}
 		fmt.Fprintf(w, "[%s] %s %s: %s\n", diag.Severity, diag.Code, path, diag.Message)
 	}
 }

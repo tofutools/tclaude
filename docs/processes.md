@@ -120,3 +120,26 @@ tclaude process runs ls --store-root "$STORE"
   AND-join semantics are deferred until the engine can track live paths.
 - End nodes default to completed runs; set `result: failed` on a failure
   terminal node when that path should fail the run.
+
+## Param templating surface
+
+Templates may reference params with `{{ params.<name> }}`. Only these performer
+fields are templatable — the engine interpolates them before dispatch:
+
+- `performer.prompt`
+- `performer.ask`
+- `performer.run`
+- `performer.args[]`
+
+Everywhere else a `{{ params.x }}` reference is used **literally** and is never
+interpolated. In particular `performer.profile`, `performer.timeout`,
+`retry.backoff`, and `wait.duration`/`until`/`signal` are config values, not
+templates; a param reference there raises an `inert_param_ref` warning at
+authoring time. References in prose fields (`name`/`description`/`doc`) are only
+checked for pointing at a declared param.
+
+Duration-ish fields (`wait.duration`, `retry.backoff`, `performer.timeout`) are
+parsed with Go's `time.ParseDuration` at authoring time and must be positive, so
+`5m`/`1h30m`/`500ms` are valid but `banana`, `-5s`, and `0s` fail validation
+rather than surfacing at runtime. Because these fields are not templatable, a
+`{{ params.x }}` reference is likewise an authoring-time error.

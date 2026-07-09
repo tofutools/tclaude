@@ -36,10 +36,21 @@ func unknownFieldDiagnostics(root *yaml.Node) Diagnostics {
 		}
 		root = root.Content[0]
 	}
-	if root.Kind != yaml.MappingNode {
+	root = resolveAlias(root)
+	if root == nil || root.Kind != yaml.MappingNode {
 		return nil
 	}
 	return checkKnownFields(root, "", templateFields, templateChildSchema)
+}
+
+// resolveAlias follows YAML alias nodes to the anchored node they reference.
+// The raw-node walk runs before Decode, where aliases are still unresolved, so
+// alias-defined mappings/sequences would otherwise slip past the schema check.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
 }
 
 func templateChildSchema(key string) schemaFunc {
@@ -74,11 +85,39 @@ func nodeChildSchema(key string) schemaFunc {
 		return namedSchema(retryFields, nil)
 	case "wait":
 		return namedSchema(waitFields, nil)
-	case "next", "metadata":
+	case "next":
+		return nextSchema
+	case "metadata":
 		return freeformSchema
 	default:
 		return nil
 	}
+}
+
+// nextSchema flags YAML constructs the next-edge decoder cannot represent. Merge
+// keys (`<<`) are the notable case: Next.UnmarshalYAML skips them, so without a
+// diagnostic they would silently drop outcome edges.
+func nextSchema(node *yaml.Node, path string) Diagnostics {
+	node = resolveAlias(node)
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	var diagnostics Diagnostics
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if key.ShortTag() == mergeTag {
+			diagnostics = append(diagnostics, mergeKeyDiag(key, path))
+		}
+	}
+	return diagnostics
+}
+
+// mergeKeyDiag reports a `<<` merge key. The model supports merge keys in no
+// mapping: Decode would silently apply the merge (or drop it, for next), so the
+// walk rejects it explicitly rather than mislabeling it an unknown field.
+func mergeKeyDiag(key *yaml.Node, path string) Diagnostic {
+	return diagErrorAt("merge_key_unsupported", joinPath(path, "<<"),
+		"merge keys (<<) are not supported; declare fields explicitly", key)
 }
 
 func stepChildSchema(key string) schemaFunc {
@@ -109,13 +148,18 @@ func namedSchema(allowed map[string]struct{}, child func(string) schemaFunc) sch
 
 func mapValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc) schemaFunc {
 	return func(node *yaml.Node, path string) Diagnostics {
-		if node.Kind != yaml.MappingNode {
+		node = resolveAlias(node)
+		if node == nil || node.Kind != yaml.MappingNode {
 			return nil
 		}
 		var diagnostics Diagnostics
 		for i := 0; i < len(node.Content); i += 2 {
 			key := node.Content[i]
 			value := node.Content[i+1]
+			if key.ShortTag() == mergeTag {
+				diagnostics = append(diagnostics, mergeKeyDiag(key, path))
+				continue
+			}
 			diagnostics = append(diagnostics, checkKnownFields(value, joinPath(path, key.Value), allowed, child)...)
 		}
 		return diagnostics
@@ -124,7 +168,8 @@ func mapValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc)
 
 func sequenceValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc) schemaFunc {
 	return func(node *yaml.Node, path string) Diagnostics {
-		if node.Kind != yaml.SequenceNode {
+		node = resolveAlias(node)
+		if node == nil || node.Kind != yaml.SequenceNode {
 			return nil
 		}
 		var diagnostics Diagnostics
@@ -140,6 +185,7 @@ func freeformSchema(_ *yaml.Node, _ string) Diagnostics {
 }
 
 func checkKnownFields(node *yaml.Node, path string, allowed map[string]struct{}, child func(string) schemaFunc) Diagnostics {
+	node = resolveAlias(node)
 	if node == nil || node.Kind != yaml.MappingNode {
 		return nil
 	}
@@ -147,9 +193,13 @@ func checkKnownFields(node *yaml.Node, path string, allowed map[string]struct{},
 	for i := 0; i < len(node.Content); i += 2 {
 		key := node.Content[i]
 		value := node.Content[i+1]
+		if key.ShortTag() == mergeTag {
+			diagnostics = append(diagnostics, mergeKeyDiag(key, path))
+			continue
+		}
 		keyPath := joinPath(path, key.Value)
 		if _, ok := allowed[key.Value]; !ok {
-			diagnostics = append(diagnostics, diagError("unknown_field", keyPath, fmt.Sprintf("unknown field %q", key.Value)))
+			diagnostics = append(diagnostics, diagErrorAt("unknown_field", keyPath, fmt.Sprintf("unknown field %q", key.Value), key))
 			continue
 		}
 		if child != nil {

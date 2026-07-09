@@ -26,7 +26,13 @@ func (n *Next) UnmarshalYAML(value *yaml.Node) error {
 	case yaml.MappingNode:
 		out := make(Next, len(value.Content)/2)
 		for i := 0; i < len(value.Content); i += 2 {
-			key := value.Content[i].Value
+			keyNode := value.Content[i]
+			// Merge keys (`<<`) are not supported inside next. Skip them here so
+			// Parse does not hard-fail; nextSchema reports them as a diagnostic.
+			if keyNode.ShortTag() == mergeTag {
+				continue
+			}
+			key := keyNode.Value
 			var target string
 			if err := value.Content[i+1].Decode(&target); err != nil {
 				return fmt.Errorf("next.%s: %w", key, err)
@@ -37,9 +43,10 @@ func (n *Next) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	case yaml.SequenceNode:
 		return fmt.Errorf("next must be a target string or outcome map")
-	case yaml.AliasNode, yaml.DocumentNode:
-		return fmt.Errorf("next must be a target string or outcome map")
 	default:
+		// yaml.v3 resolves aliases before invoking custom unmarshalers, so an
+		// alias to a scalar/mapping arrives as its resolved kind above; only
+		// genuinely empty/unsupported nodes reach here.
 		*n = nil
 		return nil
 	}

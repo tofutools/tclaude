@@ -48,6 +48,27 @@ func Parse(data []byte) (*ParsedTemplate, error) {
 	return parsed, nil
 }
 
+// mergeTag is the resolved short tag yaml.v3 assigns to a `<<` merge key.
+const mergeTag = "!!merge"
+
+// mappingKeyID identifies a mapping key for duplicate detection and pruning.
+//
+// The process model is string-keyed: schema maps decode into map[string]... and
+// freeform maps normalize non-string scalar keys to their string form. So
+// scalars that render to the same string — e.g. `1` (!!int) and `"1"` (!!str) —
+// deliberately collide here and resolve last-wins. Distinguishing them by tag
+// would let both survive pruning and then hard-fail Decode on the string-keyed
+// target, replacing a clean duplicate_key diagnostic with a raw YAML error, so
+// we key on the scalar value alone. Non-scalar (complex) keys have an empty
+// Value; they are exotic, unsupported by the model, and rejected by Decode
+// regardless.
+func mappingKeyID(node *yaml.Node) string {
+	if node == nil {
+		return ""
+	}
+	return node.Value
+}
+
 func pruneDuplicateKeys(root *yaml.Node) {
 	var walk func(node *yaml.Node)
 	walk = func(node *yaml.Node) {
@@ -59,17 +80,20 @@ func pruneDuplicateKeys(root *yaml.Node) {
 			return
 		}
 		if node.Kind == yaml.MappingNode {
-			seen := map[string]struct{}{}
+			// YAML convention is last-wins for duplicate keys; keep each key at
+			// its final occurrence so the decoded template (and its semantic
+			// hash) match standard YAML semantics.
+			lastIndex := map[string]int{}
+			for i := 0; i < len(node.Content); i += 2 {
+				lastIndex[mappingKeyID(node.Content[i])] = i
+			}
 			pruned := make([]*yaml.Node, 0, len(node.Content))
 			for i := 0; i < len(node.Content); i += 2 {
-				key := node.Content[i]
-				value := node.Content[i+1]
-				if _, ok := seen[key.Value]; ok {
+				if lastIndex[mappingKeyID(node.Content[i])] != i {
 					continue
 				}
-				seen[key.Value] = struct{}{}
-				pruned = append(pruned, key, value)
-				walk(value)
+				pruned = append(pruned, node.Content[i], node.Content[i+1])
+				walk(node.Content[i+1])
 			}
 			node.Content = pruned
 			return
@@ -260,11 +284,12 @@ func duplicateKeyDiagnostics(root *yaml.Node) Diagnostics {
 			for i := 0; i < len(node.Content); i += 2 {
 				key := node.Content[i]
 				value := node.Content[i+1]
+				id := mappingKeyID(key)
 				keyPath := joinPath(path, key.Value)
-				if _, ok := seen[key.Value]; ok {
-					diagnostics = append(diagnostics, diagError("duplicate_key", keyPath, "duplicate YAML mapping key"))
+				if _, ok := seen[id]; ok {
+					diagnostics = append(diagnostics, diagErrorAt("duplicate_key", keyPath, "duplicate YAML mapping key", key))
 				}
-				seen[key.Value] = struct{}{}
+				seen[id] = struct{}{}
 				walk(value, keyPath)
 			}
 			return
@@ -284,4 +309,17 @@ func joinPath(parent, child string) string {
 		return child
 	}
 	return parent + "." + child
+}
+
+// withPos carries a yaml.Node's 1-based source position onto a diagnostic.
+func withPos(d Diagnostic, node *yaml.Node) Diagnostic {
+	if node != nil {
+		d.Line = node.Line
+		d.Col = node.Column
+	}
+	return d
+}
+
+func diagErrorAt(code, path, message string, node *yaml.Node) Diagnostic {
+	return withPos(diagError(code, path, message), node)
 }

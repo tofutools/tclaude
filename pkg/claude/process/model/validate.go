@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var paramRefPattern = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
@@ -99,6 +100,12 @@ func validateNodes(tmpl *Template) Diagnostics {
 			if node.Wait == nil || (isBlank(node.Wait.Duration) && isBlank(node.Wait.Until) && isBlank(node.Wait.Signal)) {
 				diagnostics = append(diagnostics, diagError("missing_wait", path+".wait", "wait node requires duration, until, or signal"))
 			}
+			if node.Wait != nil {
+				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.duration", node.Wait.Duration)...)
+				diagnostics = append(diagnostics, validateDuration(path+".wait.duration", node.Wait.Duration)...)
+				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.until", node.Wait.Until)...)
+				diagnostics = append(diagnostics, checkInertParamRef(path+".wait.signal", node.Wait.Signal)...)
+			}
 			if len(node.Next) == 0 {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "wait node requires a next target"))
 			}
@@ -164,6 +171,9 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 	default:
 		diagnostics = append(diagnostics, diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind)))
 	}
+	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
+	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
+	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
 	return diagnostics
 }
 
@@ -171,8 +181,43 @@ func validateRetry(retry *RetryPolicy, path string) Diagnostics {
 	if retry == nil {
 		return nil
 	}
+	var diagnostics Diagnostics
 	if retry.MaxAttempts <= 0 {
-		return Diagnostics{diagError("invalid_retry_budget", path+".maxAttempts", "retry policy requires maxAttempts greater than zero")}
+		diagnostics = append(diagnostics, diagError("invalid_retry_budget", path+".maxAttempts", "retry policy requires maxAttempts greater than zero"))
+	}
+	diagnostics = append(diagnostics, checkInertParamRef(path+".backoff", retry.Backoff)...)
+	diagnostics = append(diagnostics, validateDuration(path+".backoff", retry.Backoff)...)
+	return diagnostics
+}
+
+// validateDuration rejects duration-ish fields that Go's time.ParseDuration
+// cannot parse or that are not strictly positive, so authoring-time failure
+// beats runtime failure. Blank values are optional. Duration fields are never
+// interpolated (see checkInertParamRef), so a `{{ params.x }}` reference is a
+// literal that fails to parse here rather than being skipped.
+func validateDuration(path, value string) Diagnostics {
+	if isBlank(value) {
+		return nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return Diagnostics{diagError("invalid_duration", path,
+			fmt.Sprintf("must be a Go duration such as 30s, 5m, or 1h30m; got %q", value))}
+	}
+	if d <= 0 {
+		return Diagnostics{diagError("invalid_duration", path,
+			fmt.Sprintf("must be a positive duration; got %q", value))}
+	}
+	return nil
+}
+
+// checkInertParamRef warns when a param reference appears in a field that is not
+// interpolated. Only performer prompt/ask/run/args are templatable; references
+// elsewhere (profile, timeout, backoff, wait fields) are used literally.
+func checkInertParamRef(path, value string) Diagnostics {
+	if paramRefPattern.MatchString(value) {
+		return Diagnostics{diagWarning("inert_param_ref", path,
+			"param references are only interpolated in performer prompt, ask, run, and args; this field is used literally")}
 	}
 	return nil
 }
