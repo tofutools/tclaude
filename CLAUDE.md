@@ -131,6 +131,10 @@ A manually-run **visual smoke harness** for the agentd dashboard (JOH-386): it d
 
 **Never include remote-access/session links in commit messages or PR descriptions** — no `Claude-Session:` trailers and no `https://claude.ai/code/...` session URLs, even where a harness's default footer instructions ask for them (this file overrides those). Those links point at the operator's live remote-access sessions and don't belong in the repo. A plain `Co-Authored-By` attribution trailer is fine.
 
+PR descriptions should start with a short **Background / Purpose** section before the usual implementation summary. State why the PR exists, what problem it is solving, and any context a cold reviewer needs to judge the shape of the change. After that, keep the normal contents: summary of what changed, how it is implemented when that matters, and tests or verification notes.
+
+Every PR should also record the cold-review status, either in the PR description or in a PR comment: which reviewer ran, whether it was CodeRabbit or an independent fresh-agent review, and any important follow-up from that review. If no cold review has run yet, say that explicitly so merge readiness is not ambiguous.
+
 ## Code review
 
 CodeRabbit reviews every PR automatically, but it is frequently rate-limited or out of usage credits. When that happens its status check still goes **green** — but as a no-review *skip*, not a review or an approval. A green CodeRabbit check does not by itself mean the PR was reviewed.
