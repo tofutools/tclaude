@@ -445,6 +445,12 @@ function populateConfigForm(cfg) {
   $('#cfg-resume-minutes').value = cr.threshold_minutes != null ? cr.threshold_minutes : '';
   $('#cfg-resume-tokens').value = cr.token_threshold != null ? cr.token_threshold : '';
 
+  // claude_cleanup_period_days — the Claude Code cleanupPeriodDays override
+  // tclaude feeds into ~/.claude/settings.json. Blank when unset (Claude Code's
+  // own 30-day default stands); a stored value shows as-is.
+  $('#cfg-claude-cleanup-days').value = (cfg.claude_cleanup_period_days != null && cfg.claude_cleanup_period_days !== 0)
+    ? cfg.claude_cleanup_period_days : '';
+
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
 
   // tui.color_scheme — the interactive watch views' palette. Absent/unknown
@@ -657,6 +663,14 @@ function assembleConfig() {
   const crTokRaw = $('#cfg-resume-tokens').value.trim();
   if (crTokRaw !== '') cr.token_threshold = cfgInt('cfg-resume-tokens', 0); else delete cr.token_threshold;
   if (Object.keys(cr).length) cfg.claude_resume = cr; else delete cfg.claude_resume;
+
+  // claude_cleanup_period_days is a top-level scalar (the Claude Code
+  // cleanupPeriodDays override). Blank / 0 is the omitempty default — drop the
+  // key so an all-default config doesn't marshal it. A non-empty value is
+  // written verbatim so the server's Validate surfaces a bad one (e.g. a
+  // negative) rather than it silently vanishing.
+  const ccdRaw = $('#cfg-claude-cleanup-days').value.trim();
+  if (ccdRaw !== '') cfg.claude_cleanup_period_days = cfgInt('cfg-claude-cleanup-days', 0); else delete cfg.claude_cleanup_period_days;
 
   cfg.record_hooks = $('#cfg-record-hooks').checked;
 

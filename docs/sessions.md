@@ -258,6 +258,20 @@ That writes a large `threshold_minutes` (≈1000 years) so a resumed session's a
 
 Omit a field to leave that threshold on Claude Code's own default; set a small value (e.g. `0`) to make the prompt *always* show. The thresholds are undocumented, version-specific Claude Code knobs (verified against CC 2.1.187), so tclaude treats them as best-effort — if a future CC build renames or drops them the override simply becomes a no-op rather than an error.
 
+## Transcript retention
+
+Claude Code sweeps its local storage at startup and **deletes any conversation transcript** (plus other stale session data and orphaned worktrees) that has been *inactive* longer than its `cleanupPeriodDays` setting — **30 days by default**. So a session you haven't touched in a month is gone, and with it tclaude's ability to resume or inspect that conversation.
+
+To keep transcripts longer, set `claude_cleanup_period_days` in `~/.tclaude/config.json` (or via the dashboard **Config** tab, under *General → Transcript retention*):
+
+```json
+{
+  "claude_cleanup_period_days": 99999
+}
+```
+
+Unlike the resume-threshold overrides above, this **is** written into `~/.claude/settings.json` (as `cleanupPeriodDays`) — tclaude syncs the value there on every session start, before the `claude` process that would run the sweep launches. Because it lands in the real settings file, it also protects transcripts from your own plain `claude` runs, not just tclaude-spawned panes. Set a large value like `99999` to effectively keep transcripts forever (Claude Code rejects `0` and has no dedicated "never" option). Leave the key unset (or `0`) to let Claude Code's default — or whatever you've set in `settings.json` by hand — stand; tclaude then never touches the key.
+
 ## Tmux Integration
 
 tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 

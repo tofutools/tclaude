@@ -153,6 +153,11 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// Check if hooks are installed (warn if not)
 	session.EnsureHooksInstalled(false, stdout, stderr)
 
+	// Sync the configured Claude Code transcript-retention override
+	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
+	// set; logs and continues on failure.
+	_ = session.EnsureClaudeCleanupPeriod()
+
 	// The session PK carries the FULL conversation identity — never a
 	// truncation (two conversations sharing an 8-char prefix would collide on
 	// the PK; SaveSession's ON CONFLICT silently overwrites). The tmux name is

@@ -84,6 +84,22 @@ type Config struct {
 	// nil keeps Claude Code's own defaults.
 	ClaudeResume *ClaudeResumeConfig `json:"claude_resume,omitempty"`
 
+	// ClaudeCleanupPeriodDays overrides Claude Code's own cleanupPeriodDays
+	// retention setting — the number of days of inactivity after which Claude
+	// Code deletes a conversation transcript (and other stale session data /
+	// orphaned worktrees) at startup. Claude Code's built-in default is 30
+	// days. When > 0, tclaude writes this value into the operator's
+	// ~/.claude/settings.json on every session start, so tclaude-managed
+	// transcripts survive far longer (set a large value like 99999 to
+	// effectively keep them forever — Claude Code rejects 0 and has no
+	// "never" sentinel). 0 / absent means tclaude leaves the key alone, so
+	// Claude Code's default, or whatever the operator set by hand, stands.
+	// Unlike the claude_resume overrides (env vars on tclaude panes only),
+	// this IS persisted to ~/.claude/settings.json, so it also protects
+	// transcripts from your own plain `claude` runs. See
+	// ClaudeCleanupPeriodDaysOverride.
+	ClaudeCleanupPeriodDays int `json:"claude_cleanup_period_days,omitempty"`
+
 	// Dashboard holds display toggles for the agentd web dashboard that
 	// don't belong to the slop / cost / notification blocks — see
 	// DashboardConfig. Absent → all defaults.
@@ -442,6 +458,20 @@ func (c *Config) ClaudeResumeEnv() map[string]string {
 		env[EnvResumeTokenThreshold] = strconv.Itoa(*c.ClaudeResume.TokenThreshold)
 	}
 	return env
+}
+
+// ClaudeCleanupPeriodDaysOverride returns the tclaude-configured Claude Code
+// transcript-retention override (config claude_cleanup_period_days) and whether
+// tclaude should manage Claude Code's cleanupPeriodDays key at all. ok is false
+// when the override is unset / non-positive, in which case Claude Code's own
+// default (30 days) or the operator's hand-set settings.json value stands. When
+// ok, days is the value tclaude writes into ~/.claude/settings.json. Nil-safe on
+// the receiver.
+func (c *Config) ClaudeCleanupPeriodDaysOverride() (days int, ok bool) {
+	if c == nil || c.ClaudeCleanupPeriodDays <= 0 {
+		return 0, false
+	}
+	return c.ClaudeCleanupPeriodDays, true
 }
 
 // AuditConfig configures the agentd audit log — the persistent trail of
@@ -2138,6 +2168,14 @@ func Validate(c *Config) []string {
 		if v := c.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
 			errs = append(errs, fmt.Sprintf("ratelimit.seven_day_percent_max_used %g is out of range (>0 and ≤100)", v))
 		}
+	}
+
+	// claude_cleanup_period_days maps to Claude Code's cleanupPeriodDays, which
+	// Claude Code requires to be ≥ 1. 0 / absent is our "leave the key alone"
+	// sentinel; a negative value is a typo we reject so it never silently
+	// becomes a no-op or reaches settings.json.
+	if c.ClaudeCleanupPeriodDays < 0 {
+		errs = append(errs, fmt.Sprintf("claude_cleanup_period_days %d must not be negative (0 = leave Claude Code's default; a positive day count overrides it)", c.ClaudeCleanupPeriodDays))
 	}
 
 	// Only validate the bind when the listener is actually enabled: a

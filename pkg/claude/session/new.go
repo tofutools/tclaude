@@ -447,6 +447,11 @@ func runNew(params *NewParams) error {
 	// Check if hooks are installed (warn if not)
 	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
 
+	// Sync the configured Claude Code transcript-retention override
+	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
+	// set; logs and continues on failure.
+	_ = EnsureClaudeCleanupPeriod()
+
 	// Determine working directory
 	cwd, err := resolveSessionDir(params.Dir)
 	if err != nil {
