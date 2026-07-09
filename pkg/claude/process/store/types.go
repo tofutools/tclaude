@@ -15,6 +15,7 @@ import (
 var (
 	ErrNotFound         = errors.New("process store record not found")
 	ErrTemplateConflict = errors.New("process template content conflict")
+	ErrContentMismatch  = errors.New("process store content does not match its ref")
 	ErrLeaseHeld        = errors.New("process run lease is held")
 	ErrRunInconsistent  = errors.New("process run state is inconsistent with evidence")
 )
@@ -37,6 +38,9 @@ func IsConflict(err error) bool {
 	return errors.As(err, &conflict)
 }
 
+// Templates stores immutable, content-addressed process template semantics.
+// Implementations may persist only model.CanonicalSemanticJSON: callers should
+// treat Layout as source/editor metadata, not as part of the run-pinned copy.
 type Templates interface {
 	PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, ref string) (*model.Template, error)
