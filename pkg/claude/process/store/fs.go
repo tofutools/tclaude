@@ -356,7 +356,8 @@ func (s *FS) ReadManifest(ctx context.Context, runID string) ([]evidence.Manifes
 		return nil, fmt.Errorf("open manifest: %w", err)
 	}
 	defer f.Close()
-	return evidence.ReadManifest(f)
+	entries, err := evidence.ReadManifest(f)
+	return entries, annotateReadError(err, "manifest.jsonl")
 }
 
 func (s *FS) ReadNodeLog(ctx context.Context, runID, nodeID string) ([]evidence.LogEntry, error) {
@@ -377,7 +378,8 @@ func (s *FS) ReadNodeLog(ctx context.Context, runID, nodeID string) ([]evidence.
 		return nil, fmt.Errorf("open node log: %w", err)
 	}
 	defer f.Close()
-	return evidence.ReadNodeLog(nodeID, f)
+	entries, err := evidence.ReadNodeLog(nodeID, f)
+	return entries, annotateReadError(err, filepath.ToSlash(filepath.Join("nodes", nodeID, "log.jsonl")))
 }
 
 func (s *FS) ReadRunLog(ctx context.Context, runID string) ([]evidence.LogEntry, error) {
@@ -395,7 +397,19 @@ func (s *FS) ReadRunLog(ctx context.Context, runID string) ([]evidence.LogEntry,
 		return nil, fmt.Errorf("open run log: %w", err)
 	}
 	defer f.Close()
-	return evidence.ReadNodeLog("", f)
+	entries, err := evidence.ReadNodeLog("", f)
+	return entries, annotateReadError(err, filepath.ToSlash(filepath.Join("run", "log.jsonl")))
+}
+
+func annotateReadError(err error, file string) error {
+	if err == nil {
+		return nil
+	}
+	var readErr *evidence.ReadError
+	if errors.As(err, &readErr) && readErr.File == "" {
+		readErr.File = file
+	}
+	return err
 }
 
 func (s *FS) PutArtifact(ctx context.Context, runID, name string, r io.Reader) (ArtifactRecord, error) {

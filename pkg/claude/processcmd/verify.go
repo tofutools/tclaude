@@ -2,6 +2,7 @@ package processcmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ type verifyParams struct {
 
 func verifyCmd() *cobra.Command {
 	return boa.CmdT[verifyParams]{
-		Use:         "verify <run>",
+		Use:         "verify",
 		Short:       "Verify a process run without modifying it",
 		Long:        "Verify a process run's evidence integrity and semantic state invariants without modifying the run.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -46,6 +47,9 @@ func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
+	if err := preflightStoreRoot(p.StoreRoot); err != nil {
+		return err
+	}
 	fs, err := store.NewFS(p.StoreRoot)
 	if err != nil {
 		return err
@@ -54,6 +58,20 @@ func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {
 	renderReport(out, report)
 	if report.HasErrors() {
 		return fmt.Errorf("process run %q failed verification", p.RunID)
+	}
+	return nil
+}
+
+func preflightStoreRoot(root string) error {
+	info, err := os.Stat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("process store root does not exist: %s", root)
+	}
+	if err != nil {
+		return fmt.Errorf("stat process store root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("process store root is not a directory: %s", root)
 	}
 	return nil
 }

@@ -313,6 +313,9 @@ func TestCrashFixturesAreDetectable(t *testing.T) {
 		if !errors.As(err, &readErr) || readErr.Kind != evidence.ReadErrorTornTail {
 			t.Fatalf("expected torn-tail read error, got %#v", err)
 		}
+		if readErr.File != "nodes/implement/log.jsonl" {
+			t.Fatalf("read error file = %q", readErr.File)
+		}
 	})
 }
 

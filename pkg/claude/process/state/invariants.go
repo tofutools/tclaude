@@ -13,11 +13,53 @@ func CheckInvariants(st *State) Diagnostics {
 		return Diagnostics{diagError("nil_state", "", "process state is nil")}
 	}
 	var diagnostics Diagnostics
+	diagnostics = append(diagnostics, EnumFieldsAreValid(st)...)
 	diagnostics = append(diagnostics, WaitingNodesHaveWaitRecords(st)...)
 	diagnostics = append(diagnostics, RunningAttemptsHaveCommandOrActor(st)...)
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
+	return diagnostics
+}
+
+func EnumFieldsAreValid(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	if !st.Status.IsValid() {
+		diagnostics = append(diagnostics, diagError("invalid_run_status", "status", fmt.Sprintf("invalid run status %q", st.Status)))
+	}
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if !node.Status.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_node_status", "nodes."+nodeID+".status", fmt.Sprintf("invalid node status %q", node.Status)))
+		}
+		if node.Type != "" && !nodeTypeIsValid(node.Type) {
+			diagnostics = append(diagnostics, diagError("invalid_node_type", "nodes."+nodeID+".type", fmt.Sprintf("invalid node type %q", node.Type)))
+		}
+	}
+	for _, commandID := range sortedKeys(st.OutstandingCommands) {
+		command := st.OutstandingCommands[commandID]
+		if !command.Status.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_command_status", "outstandingCommands."+commandID+".status", fmt.Sprintf("invalid command status %q", command.Status)))
+		}
+	}
+	for _, waitID := range sortedKeys(st.Waits) {
+		wait := st.Waits[waitID]
+		if !wait.Kind.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_wait_kind", "waits."+waitID+".kind", fmt.Sprintf("invalid wait kind %q", wait.Kind)))
+		}
+		if !wait.Status.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_wait_status", "waits."+waitID+".status", fmt.Sprintf("invalid wait status %q", wait.Status)))
+		}
+	}
+	for _, timerID := range sortedKeys(st.Timers) {
+		timer := st.Timers[timerID]
+		if !timer.Status.IsValid() {
+			diagnostics = append(diagnostics, diagError("invalid_timer_status", "timers."+timerID+".status", fmt.Sprintf("invalid timer status %q", timer.Status)))
+		}
+	}
 	return diagnostics
 }
 
@@ -163,6 +205,15 @@ func waitKindMatchesStatus(kind WaitKind, status NodeStatus) bool {
 		return kind == WaitKindTimer
 	case NodeStatusWaitingSignal:
 		return kind == WaitKindSignal
+	default:
+		return false
+	}
+}
+
+func nodeTypeIsValid(nodeType model.NodeType) bool {
+	switch nodeType {
+	case model.NodeTypeTask, model.NodeTypeDecision, model.NodeTypeWait, model.NodeTypeStart, model.NodeTypeEnd:
+		return true
 	default:
 		return false
 	}

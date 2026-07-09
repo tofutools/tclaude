@@ -78,6 +78,7 @@ const (
 
 type ReadError struct {
 	Kind ReadErrorKind
+	File string
 	Line int
 	Err  error
 }
@@ -90,7 +91,11 @@ func (e *ReadError) Error() string {
 	if e.Err != nil {
 		message = e.Err.Error()
 	}
-	return string(e.Kind) + " at line " + itoa(e.Line) + ": " + message
+	location := "line " + itoa(e.Line)
+	if e.File != "" {
+		location = e.File + ":" + location
+	}
+	return string(e.Kind) + " at " + location + ": " + message
 }
 
 func (e *ReadError) Unwrap() error {

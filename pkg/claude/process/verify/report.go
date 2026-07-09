@@ -74,11 +74,14 @@ func Snapshot(snapshot store.Snapshot) Report {
 	report.Diagnostics = appendDiagnostics(report.Diagnostics, LayerSemantic, semanticDiagnostics)
 
 	sortReportDiagnostics(report.Diagnostics)
-	if report.HasErrors() {
-		report.EffectiveStatus = state.RunStatusInconsistent
-	}
 	if !evidenceDiagnostics.HasErrors() && semanticDiagnostics.HasErrors() {
 		report.Dirty = true
+	}
+	if report.HasErrors() {
+		report.EffectiveStatus = state.RunStatusInconsistent
+		if report.Dirty {
+			report.EffectiveStatus = state.RunStatusDirty
+		}
 	}
 	return report
 }
@@ -121,7 +124,7 @@ func diagnosticForLoadError(err error) Diagnostic {
 				Layer:    LayerEvidence,
 				Severity: model.SeverityError,
 				Code:     "read_torn_tail",
-				Path:     fmt.Sprintf("jsonl.line.%d", readErr.Line),
+				Path:     readErrorPath(readErr),
 				Message:  fmt.Sprintf("evidence JSONL final line is torn at line %d: %s; likely crash or truncation during append, repair required", readErr.Line, readErrorCause(readErr)),
 			}
 		case evidence.ReadErrorMalformed:
@@ -129,7 +132,7 @@ func diagnosticForLoadError(err error) Diagnostic {
 				Layer:    LayerEvidence,
 				Severity: model.SeverityError,
 				Code:     "read_malformed",
-				Path:     fmt.Sprintf("jsonl.line.%d", readErr.Line),
+				Path:     readErrorPath(readErr),
 				Message:  fmt.Sprintf("evidence JSONL is malformed at line %d: %s; file content is corrupt or was edited, repair required", readErr.Line, readErrorCause(readErr)),
 			}
 		default:
@@ -137,7 +140,7 @@ func diagnosticForLoadError(err error) Diagnostic {
 				Layer:    LayerEvidence,
 				Severity: model.SeverityError,
 				Code:     "read_error",
-				Path:     fmt.Sprintf("jsonl.line.%d", readErr.Line),
+				Path:     readErrorPath(readErr),
 				Message:  fmt.Sprintf("evidence JSONL read error at line %d: %v", readErr.Line, err),
 			}
 		}
@@ -148,6 +151,17 @@ func diagnosticForLoadError(err error) Diagnostic {
 		Code:     "load_error",
 		Message:  fmt.Sprintf("could not load run snapshot: %v; this is a store/load error, not evidence corruption", err),
 	}
+}
+
+func readErrorPath(readErr *evidence.ReadError) string {
+	if readErr == nil {
+		return "jsonl.line.0"
+	}
+	line := fmt.Sprintf("line.%d", readErr.Line)
+	if readErr.File != "" {
+		return readErr.File + ":" + line
+	}
+	return "jsonl." + line
 }
 
 func readErrorCause(readErr *evidence.ReadError) string {
