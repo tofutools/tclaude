@@ -186,6 +186,9 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if err := ctx.Err(); err != nil {
 		return RunRecord{}, err
 	}
+	if run.AllowPrograms {
+		return RunRecord{}, fmt.Errorf("allowPrograms must be enabled after an admin audit entry")
+	}
 	if err := safeSegment(run.ID); err != nil {
 		return RunRecord{}, fmt.Errorf("invalid run id: %w", err)
 	}
@@ -252,6 +255,53 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	}
 	runData = append(runData, '\n')
 	if err := writeFileAtomic(runPath, runData, 0o644); err != nil {
+		return RunRecord{}, err
+	}
+	return run, nil
+}
+
+// SetProgramsAllowed enables program performers only after the run evidence
+// log contains the explicit admin opt-in event. The audit is therefore durable
+// before run.json becomes executable; a crash between the two leaves the run
+// safely disabled and the operation can be retried.
+func (s *FS) SetProgramsAllowed(ctx context.Context, runID string) (RunRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return RunRecord{}, err
+	}
+	unlock, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	defer unlock()
+	run, err := s.readRun(runID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	entries, err := s.ReadRunLog(ctx, runID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	audited := false
+	for _, entry := range entries {
+		if entry.Event != nil && entry.Event.Type == state.EventAdminProgramsAllowed {
+			audited = true
+			break
+		}
+	}
+	if !audited {
+		return RunRecord{}, fmt.Errorf("process run %q has no admin program opt-in audit entry", runID)
+	}
+	if run.AllowPrograms {
+		return run, nil
+	}
+	run.AllowPrograms = true
+	run.UpdatedAt = s.now().UTC()
+	data, err := json.MarshalIndent(run, "", "  ")
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("encode run: %w", err)
+	}
+	data = append(data, '\n')
+	if err := writeFileAtomic(filepath.Join(s.runDir(runID), "run.json"), data, 0o644); err != nil {
 		return RunRecord{}, err
 	}
 	return run, nil

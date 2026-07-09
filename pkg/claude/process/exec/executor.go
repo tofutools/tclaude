@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -93,6 +94,12 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	if err := validateCommand(snapshot, command); err != nil {
 		return Result{}, err
 	}
+	if commandIsClaimed(snapshot.State, command) {
+		return Result{Command: command, State: snapshot.State}, nil
+	}
+	if err := validateCurrentPlan(ctx, e.Store, snapshot, command); err != nil {
+		return Result{}, err
+	}
 
 	var adapter Adapter
 	var request Request
@@ -125,27 +132,68 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 		if err != nil {
 			return result, fmt.Errorf("perform process command %q: %w", command.ID, err)
 		}
-		if err := validateObservation(observation); err != nil {
-			return result, fmt.Errorf("perform process command %q: %w", command.ID, err)
-		}
-		if observation.Evidence != nil {
-			artifact, err := e.Store.PutArtifact(ctx, command.RunID, observation.Evidence.Name, bytes.NewReader(observation.Evidence.Data))
-			if err != nil {
-				return result, fmt.Errorf("store evidence for process command %q: %w", command.ID, err)
-			}
-			observation.EvidenceRef = artifact.Ref
+		observation, err = e.persistPerformerObservation(ctx, command, observation)
+		if err != nil {
+			return result, err
 		}
 	}
 	if observation.ExternalRef == "" {
 		observation.ExternalRef = observation.EvidenceRef
 	}
-	finished, err := e.observe(ctx, command, observation)
+	finished, err := e.appendObservation(ctx, command, observation)
 	if err != nil {
 		return result, err
 	}
 	result.Observation = &observation
 	result.State = finished
 	return result, nil
+}
+
+// RecordObservation reconciles an already-issued performer command without
+// performing it again. Engine hosts can use the command identity embedded in an
+// external side effect to recover the actor, verdict, and evidence after a
+// crash between command_issued and command_observed.
+func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, observation Observation) (*state.State, error) {
+	if e == nil || e.Store == nil {
+		return nil, fmt.Errorf("process executor store is required")
+	}
+	snapshot, err := e.Store.LoadRun(ctx, command.RunID)
+	if err != nil {
+		return nil, err
+	}
+	outstanding, ok := snapshot.State.OutstandingCommands[command.ID]
+	if !ok || outstanding.Status != state.CommandStatusIssued {
+		return nil, fmt.Errorf("process command %q is not issued and cannot be reconciled", command.ID)
+	}
+	if outstanding.Kind != command.Kind || outstanding.NodeID != command.NodeID || outstanding.Attempt != command.Attempt ||
+		(outstanding.IdempotencyKey != "" && outstanding.IdempotencyKey != command.IdempotencyKey) {
+		return nil, fmt.Errorf("process command %q does not match its issued command record", command.ID)
+	}
+	if command.Performer == nil {
+		return nil, fmt.Errorf("process command %q is not a performer command", command.ID)
+	}
+	observation, err = e.persistPerformerObservation(ctx, command, observation)
+	if err != nil {
+		return nil, err
+	}
+	if observation.ExternalRef == "" {
+		observation.ExternalRef = observation.EvidenceRef
+	}
+	return e.appendObservation(ctx, command, observation)
+}
+
+func (e *Executor) persistPerformerObservation(ctx context.Context, command plan.Command, observation Observation) (Observation, error) {
+	if err := validateObservation(observation); err != nil {
+		return Observation{}, fmt.Errorf("record process command %q observation: %w", command.ID, err)
+	}
+	if observation.Evidence != nil {
+		artifact, err := e.Store.PutArtifact(ctx, command.RunID, observation.Evidence.Name, bytes.NewReader(observation.Evidence.Data))
+		if err != nil {
+			return Observation{}, fmt.Errorf("store evidence for process command %q: %w", command.ID, err)
+		}
+		observation.EvidenceRef = artifact.Ref
+	}
+	return observation, nil
 }
 
 func (e *Executor) claim(ctx context.Context, snapshot store.Snapshot, command plan.Command) (bool, *state.State, error) {
@@ -178,7 +226,7 @@ func (e *Executor) claim(ctx context.Context, snapshot store.Snapshot, command p
 	return true, appended.State, nil
 }
 
-func (e *Executor) observe(ctx context.Context, command plan.Command, observation Observation) (*state.State, error) {
+func (e *Executor) appendObservation(ctx context.Context, command plan.Command, observation Observation) (*state.State, error) {
 	for attempt := 0; attempt < maxObservationCASAttempts; attempt++ {
 		snapshot, err := e.Store.LoadRun(ctx, command.RunID)
 		if err != nil {
@@ -207,6 +255,23 @@ func (e *Executor) observe(ctx context.Context, command plan.Command, observatio
 		}
 	}
 	return nil, fmt.Errorf("observe process command %q: exceeded %d CAS attempts", command.ID, maxObservationCASAttempts)
+}
+
+func validateCurrentPlan(ctx context.Context, st store.Store, snapshot store.Snapshot, command plan.Command) error {
+	tmpl, err := st.GetTemplate(ctx, snapshot.Run.TemplateRef)
+	if err != nil {
+		return err
+	}
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil {
+		return err
+	}
+	for _, current := range commands {
+		if reflect.DeepEqual(current, command) {
+			return nil
+		}
+	}
+	return fmt.Errorf("process command %q is not a current planner output for run %q", command.ID, command.RunID)
 }
 
 func commandIsClaimed(st *state.State, command plan.Command) bool {

@@ -171,6 +171,48 @@ func TestListRuns(t *testing.T) {
 	}
 }
 
+func TestSetProgramsAllowedRequiresDurableAdminAudit(t *testing.T) {
+	ctx := t.Context()
+	fs := newStore(t)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run_programs"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{{ID: "implement"}})
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref, AllowPrograms: true}, st); err == nil || !strings.Contains(err.Error(), "admin audit") {
+		t.Fatalf("expected create-time opt-in refusal, got %v", err)
+	}
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref}, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.SetProgramsAllowed(ctx, runID); err == nil || !strings.Contains(err.Error(), "no admin") {
+		t.Fatalf("expected unaudited opt-in refusal, got %v", err)
+	}
+	at := time.Date(2026, 7, 9, 20, 0, 0, 0, time.UTC)
+	_, err = fs.Append(ctx, runID, 0, []evidence.LogEntry{{
+		At:    at,
+		Scope: evidence.Scope{Kind: evidence.ScopeRun},
+		Kind:  evidence.EntryKindAdmin,
+		Event: &state.Event{
+			Type:   state.EventAdminProgramsAllowed,
+			At:     at,
+			Actor:  "human:test",
+			Reason: "explicit test opt-in",
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := fs.SetProgramsAllowed(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.AllowPrograms {
+		t.Fatal("audited program opt-in was not persisted")
+	}
+}
+
 func TestListRunsToleratesBadRunJSON(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()

@@ -80,6 +80,7 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 	stderr := newTailBuffer(a.tailBytes())
 	commandName := strings.TrimSpace(request.Performer.Run)
 	command := osexec.CommandContext(runCtx, commandName, request.Performer.Args...)
+	configureProgramCommand(command)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	command.Env = append(os.Environ(),

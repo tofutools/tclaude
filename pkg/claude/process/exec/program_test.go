@@ -53,12 +53,13 @@ func TestProgramAdapterRejectsInvalidTimeoutBeforeExecution(t *testing.T) {
 
 func TestProgramAdapterTimesOutCommand(t *testing.T) {
 	adapter := ProgramAdapter{}
+	startedAt := time.Now()
 	observation, err := adapter.Perform(t.Context(), Request{
 		Command: plan.Command{ID: "cmd_timeout", IdempotencyKey: "run/timeout", RunID: "run"},
 		Performer: model.Performer{
 			Kind:    model.PerformerProgram,
 			Run:     "/bin/sh",
-			Args:    []string{"-c", "while :; do :; done"},
+			Args:    []string{"-c", "(sleep 1) & wait"},
 			Timeout: "20ms",
 		},
 	})
@@ -74,5 +75,8 @@ func TestProgramAdapterTimesOutCommand(t *testing.T) {
 	}
 	if !evidence.TimedOut || evidence.ExitCode == 0 {
 		t.Fatalf("timeout evidence = %#v", evidence)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("process descendants outlived timeout: %s", elapsed)
 	}
 }

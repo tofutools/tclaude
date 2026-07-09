@@ -85,10 +85,9 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 	}
 	initial := initialState(runID, templateRef, tmpl)
 	run, err := fs.CreateRun(cmd.Context(), store.RunRecord{
-		ID:            runID,
-		TemplateRef:   templateRef,
-		Params:        params,
-		AllowPrograms: p.AllowPrograms,
+		ID:          runID,
+		TemplateRef: templateRef,
+		Params:      params,
 	}, initial)
 	if err != nil {
 		return err
@@ -104,6 +103,10 @@ func runRun(cmd *cobra.Command, p *runParams, out io.Writer) error {
 		})
 		if err != nil {
 			return fmt.Errorf("record --allow-programs audit entry for run %q: %w", run.ID, err)
+		}
+		run, err = fs.SetProgramsAllowed(cmd.Context(), run.ID)
+		if err != nil {
+			return fmt.Errorf("enable programs for run %q after audit: %w", run.ID, err)
 		}
 	}
 	fmt.Fprintf(out, "Created run %s\n", run.ID)

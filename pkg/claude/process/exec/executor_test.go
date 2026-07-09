@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -115,6 +116,50 @@ func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	if command := loaded.State.OutstandingCommands[commands[0].ID]; command.Status != state.CommandStatusIssued || command.IdempotencyKey != commands[0].IdempotencyKey {
 		t.Fatalf("outstanding command = %#v", command)
 	}
+	reconciled, err := executor.RecordObservation(t.Context(), commands[0], Observation{
+		Actor:   "program:fake@exit0",
+		Verdict: "pass",
+		Evidence: &Artifact{
+			Name: "recovered.json",
+			Data: []byte("recovered after crash"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.OutstandingCommands[commands[0].ID].Status != state.CommandStatusObserved {
+		t.Fatalf("reconciled command = %#v", reconciled.OutstandingCommands[commands[0].ID])
+	}
+	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State.Status != state.RunStatusCompleted || len(adapter.requests) != 0 {
+		t.Fatalf("finished status = %s, adapter calls = %d", finished.State.Status, len(adapter.requests))
+	}
+}
+
+func TestExecuteRejectsForgedProgramCommand(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/reviewed"})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:forged@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := commands[0]
+	forged.Performer = &model.Performer{Kind: model.PerformerProgram, Run: "/forged"}
+	_, err = executor.Execute(t.Context(), forged)
+	if err == nil || !strings.Contains(err.Error(), "not a current planner output") {
+		t.Fatalf("expected forged-command refusal, got %v", err)
+	}
+	loaded, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requests) != 0 || len(loaded.State.OutstandingCommands) != 0 {
+		t.Fatalf("adapter calls = %d, outstanding = %#v", len(adapter.requests), loaded.State.OutstandingCommands)
+	}
 }
 
 func TestExecuteRefusesProgramWithoutRunOptIn(t *testing.T) {
@@ -210,13 +255,31 @@ func executorFixture(t *testing.T, allowPrograms bool, performer model.Performer
 	})
 	initial.Status = state.RunStatusRunning
 	_, err = fs.CreateRun(t.Context(), store.RunRecord{
-		ID:            runID,
-		TemplateRef:   record.Ref,
-		Params:        map[string]string{"ticket": "TCL-274"},
-		AllowPrograms: allowPrograms,
+		ID:          runID,
+		TemplateRef: record.Ref,
+		Params:      map[string]string{"ticket": "TCL-274"},
 	}, initial)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if allowPrograms {
+		_, err = fs.Append(t.Context(), runID, 0, []evidence.LogEntry{{
+			At:    executorTestTime,
+			Scope: evidence.Scope{Kind: evidence.ScopeRun},
+			Kind:  evidence.EntryKindAdmin,
+			Event: &state.Event{
+				Type:   state.EventAdminProgramsAllowed,
+				At:     executorTestTime,
+				Actor:  "human:test",
+				Reason: "test program opt-in",
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fs.SetProgramsAllowed(t.Context(), runID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	snapshot, err := fs.LoadRun(t.Context(), runID)
 	if err != nil {
