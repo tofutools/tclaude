@@ -467,11 +467,9 @@ func TestPlanGateSettleIsWindowTerminal(t *testing.T) {
 }
 
 func TestPlanApprovalFailureFeedsBackIntoPlanStage(t *testing.T) {
-	// The plan.approval gate re-enters the PLAN stage, not do. ExpandNode
-	// gives approval no retry knob today (budget 1, so template-derived
-	// approval failures poison before looping); hand-built specs exercise
-	// the routing so the mechanism is pinned for when a budget knob lands
-	// (TCL-280).
+	// The plan.approval gate re-enters the PLAN stage, not do. Hand-built
+	// specs keep this unit test focused on the routing; the CLI flow tests
+	// exercise the template-derived approval retry budget end to end.
 	specs := []model.StageSpec{
 		{ChildID: "implement.plan", Stage: model.StagePlan, Retry: &model.RetryPolicy{MaxAttempts: 2}},
 		{ChildID: "implement.plan.approval", Stage: model.StagePlanApproval, Retry: &model.RetryPolicy{MaxAttempts: 2}},

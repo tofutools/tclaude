@@ -168,7 +168,15 @@ func validateStep(step Step, path string, allowApproval bool) Diagnostics {
 	case step.Approval != PlanApprovalHuman && step.Approval != PlanApprovalAuto:
 		diagnostics = append(diagnostics, diagError("invalid_plan_approval", path+".approval", fmt.Sprintf("plan approval must be %s or %s; got %q", PlanApprovalHuman, PlanApprovalAuto, step.Approval)))
 	}
+	switch {
+	case step.ApprovalRetry == nil:
+	case !allowApproval:
+		diagnostics = append(diagnostics, diagError("approval_retry_on_non_plan_step", path+".approvalRetry", "approvalRetry is only valid on plan steps"))
+	case step.Approval != PlanApprovalHuman:
+		diagnostics = append(diagnostics, diagError("approval_retry_without_human_approval", path+".approvalRetry", "approvalRetry requires approval: human"))
+	}
 	diagnostics = append(diagnostics, validatePerformer(step.Performer, path+".performer")...)
+	diagnostics = append(diagnostics, validateRetry(step.ApprovalRetry, path+".approvalRetry")...)
 	diagnostics = append(diagnostics, validateRetry(step.Retry, path+".retry")...)
 	return diagnostics
 }

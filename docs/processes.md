@@ -140,7 +140,11 @@ nodes:
     plan:
       id: plan
       approval: human            # human | auto (default auto)
+      approvalRetry:
+        maxAttempts: 3           # approval gate failed-verdict budget
       performer: { kind: agent, prompt: "Plan it" }
+      retry:
+        maxAttempts: 3           # plan attempts, including approval rework
     checks:
       - id: tests
         performer: { kind: program, run: "go test ./..." }
@@ -173,6 +177,13 @@ Rules that make compound runs trustworthy:
   a different stage kind inside the reset span get their counters zeroed too
   (a review failure restarts the testing window). The feedback loop is also
   bounded by the work stage's `retry.maxAttempts`.
+- **Gate retry policies use `maxAttempts` only.** Gate stages ignore the
+  `onFail` and `backoff` fields in `plan.approvalRetry` and in the `retry`
+  policy on authored check and review steps.
+- **Plan approval has its own gate budget.** `plan.approvalRetry.maxAttempts`
+  controls how many failed approval verdicts are allowed (default 1). A live
+  approval feedback loop also needs enough `plan.retry.maxAttempts` for the
+  plan stage to revise and re-propose.
 - **Exhausted budgets poison, they never auto-fail the run.** When a gate's
   budget (or the target work stage's attempt budget) is spent, the gate blocks
   itself and its parent with a reason and owner; the run keeps running and a

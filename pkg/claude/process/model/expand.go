@@ -110,6 +110,7 @@ func ExpandNode(nodeID string, node Node) []StageSpec {
 					Kind: PerformerHuman,
 					Ask:  fmt.Sprintf("Approve the plan for node %q?", nodeID),
 				},
+				Retry: plan.ApprovalRetry,
 			})
 		}
 	}

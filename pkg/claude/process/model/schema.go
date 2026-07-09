@@ -10,7 +10,7 @@ var (
 	templateFields  = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
 	paramFields     = stringSet("type", "name", "description", "doc", "required", "default")
 	nodeFields      = stringSet("type", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "metadata")
-	stepFields      = stringSet("id", "name", "description", "doc", "performer", "approval", "retry")
+	stepFields      = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
 	performerFields = stringSet(
 		"kind",
 		"profile",
@@ -124,7 +124,7 @@ func stepChildSchema(key string) schemaFunc {
 	switch key {
 	case "performer":
 		return namedSchema(performerFields, nil)
-	case "retry":
+	case "approvalRetry", "retry":
 		return namedSchema(retryFields, nil)
 	default:
 		return nil
