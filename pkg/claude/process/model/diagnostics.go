@@ -12,6 +12,12 @@ type Diagnostic struct {
 	Code     string   `json:"code"`
 	Path     string   `json:"path,omitempty"`
 	Message  string   `json:"message"`
+	// Line and Col are 1-based source positions carried from the YAML node that
+	// produced the diagnostic. They are only populated for diagnostics raised
+	// during the raw-node walk (unknown fields, duplicate keys, merge keys);
+	// semantic diagnostics computed from the decoded template leave them zero.
+	Line int `json:"line,omitempty"`
+	Col  int `json:"col,omitempty"`
 }
 
 type Diagnostics []Diagnostic

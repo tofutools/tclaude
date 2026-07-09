@@ -86,6 +86,27 @@ tclaude process runs ls --store-root "$STORE"
 - All state changes go through `store.Append`, the manifest, and reducer events.
 - Template params are validated and stored on the run record; interpolation is
   not executed by this phase.
+
+## Param templating surface
+
+Templates may reference params with `{{ params.<name> }}`. Only these performer
+fields are templatable — the engine interpolates them before dispatch:
+
+- `performer.prompt`
+- `performer.ask`
+- `performer.run`
+- `performer.args[]`
+
+Everywhere else a `{{ params.x }}` reference is used **literally** and is never
+interpolated. In particular `performer.profile`, `performer.timeout`,
+`retry.backoff`, and `wait.duration`/`until`/`signal` are config values, not
+templates; a param reference there raises an `inert_param_ref` warning at
+authoring time. References in prose fields (`name`/`description`/`doc`) are only
+checked for pointing at a declared param.
+
+Duration-ish fields (`wait.duration`, `retry.backoff`, `performer.timeout`) are
+parsed with Go's `time.ParseDuration` at authoring time, so `5m`/`1h30m`/`500ms`
+are valid but `banana` fails validation rather than surfacing at runtime.
 - Retry support is node-level `retry.maxAttempts`; broader engine scheduling,
   automatic command execution, and repair are later phases.
 - Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
