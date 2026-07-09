@@ -16,7 +16,3 @@ const (
 func diagError(code, path, message string) Diagnostic {
 	return Diagnostic{Severity: SeverityError, Code: code, Path: path, Message: message}
 }
-
-func diagWarning(code, path, message string) Diagnostic {
-	return Diagnostic{Severity: SeverityWarning, Code: code, Path: path, Message: message}
-}
