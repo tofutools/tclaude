@@ -584,7 +584,7 @@ func checkHooksForHarness(h *harness.Harness) {
 	}
 }
 
-// installAgentSkills writes the bundled agent-* skills into user-scope skill
+// installAgentSkills writes the bundled skills into user-scope skill
 // directories for supported agent harnesses. Idempotent: overwrites existing
 // installs.
 // The CLI prints each destination so the user knows where to look if

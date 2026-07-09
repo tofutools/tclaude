@@ -14,6 +14,11 @@ description: >-
 
 # Self-lifecycle: keep yourself fresh on long tasks
 
+This is the full lifecycle *reference*. The bundled **`reincarnate`**
+skill is the imperative sibling — the checkpoint-then-hand-off
+procedure a `/reincarnate` invocation triggers. Keep the two consistent
+when editing either.
+
 You have three commands for managing your own context window:
 
 | Command                                            | What it does                                                                                                                              |
