@@ -203,3 +203,55 @@ func TestGroupTemplate_FromGroupRetracesLaunchAndKeepsProfileRef(t *testing.T) {
 	assert.Equal(t, "cheap", lead.SpawnProfile, "curated profile reference survives the re-snapshot")
 	assert.Equal(t, "Lead the crew.", lead.InitialMessage, "curated brief survives too")
 }
+
+// Scenario: the save-time validation harness follows the ROLE tiers when the
+// template-side chain (agent inline / profile_inline / spawn_profile) is all
+// blank. An agent whose only launch config is a Claude-only model over a role
+// whose profile is Codex used to save fine (validated against the Claude
+// catalog) and then fail every deploy; it must be a 400 at save. Conversely a
+// Codex model in the same shape used to be FALSELY rejected at save (validated
+// against Claude) even though the deploy resolves to Codex and works — it must
+// save and spawn.
+func TestGroupTemplate_RoleProfileHarnessFeedsSaveValidation(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		createProfile(t, f, map[string]any{"name": "cx-kit", "harness": "codex", "model": "gpt-5-codex"}).Code,
+		"create codex profile")
+	require.Equalf(t, http.StatusCreated,
+		createRole(t, f, map[string]any{"name": "cx-dev", "spawn_profile": "cx-kit"}).Code,
+		"create role referencing it")
+
+	// Claude-only model over the role's codex profile: rejected at save.
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "doomed",
+		"agents": []map[string]any{
+			{"name": "a", "model": "opus", "role_ref": "cx-dev"},
+		},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"claude model over a codex role profile must fail at save, not deploy: %s", rec.Body.String())
+
+	// Codex model in the same shape: saves (no more false rejection) and the
+	// deploy spawns with it.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "cx-team",
+		"agents": []map[string]any{
+			{"name": "a", "model": "gpt-5", "role_ref": "cx-dev"},
+		},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "codex model validates against the role-resolved harness: %s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/cx-team/instantiate",
+		map[string]any{"group_name": "cx-crew"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Equal(t, 0, res.Failed, "no spawn failures: %+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	model, ok := f.World.SpawnModel(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-5", model, "the agent's codex model reaches the spawn")
+}

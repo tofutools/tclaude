@@ -262,3 +262,45 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	assert.Contains(t, ir.Warnings, `spawn profile "shipped-kit" already exists here — kept the local version (import never overwrites a profile)`,
 		"existing profile kept local + warned")
 }
+
+// Scenario: templateToJSON derives effective_is_owner — the owner bit a deploy
+// would grant across the tiers (ref profile default → profile_inline tri-state
+// → legacy flag) — so thin clients (the CLI's owner column) see profile-granted
+// ownership without re-resolving registry refs. Ref-granted = true; explicit
+// inline false over the same ref = false; plain member = false.
+func TestGroupTemplate_EffectiveIsOwnerDerivedInWire(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		createProfile(t, f, map[string]any{"name": "boss-kit", "is_owner": true}).Code, "create owner profile")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "board",
+		"agents": []map[string]any{
+			{"name": "chair", "spawn_profile": "boss-kit"},
+			{"name": "guest"},
+			{"name": "observer", "spawn_profile": "boss-kit",
+				"profile_inline": map[string]any{"is_owner": false}},
+		},
+	}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodGet, "/v1/templates/board", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Agents []struct {
+			Name             string `json:"name"`
+			IsOwner          bool   `json:"is_owner"`
+			EffectiveIsOwner bool   `json:"effective_is_owner"`
+		} `json:"agents"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Agents, 3)
+	byName := map[string]bool{}
+	for _, a := range got.Agents {
+		byName[a.Name] = a.EffectiveIsOwner
+		assert.False(t, a.IsOwner, "no agent carries the legacy flag in this scenario")
+	}
+	assert.True(t, byName["chair"], "ref profile's owner default surfaces as effective_is_owner")
+	assert.False(t, byName["guest"], "plain member is not an owner")
+	assert.False(t, byName["observer"], "explicit profile_inline.is_owner=false wins over the ref default")
+}
