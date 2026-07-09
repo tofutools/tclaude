@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,6 +79,15 @@ type templateAgentJSON struct {
 	Effort       string `json:"effort,omitempty"`
 	Sandbox      string `json:"sandbox,omitempty"`
 	Approval     string `json:"approval,omitempty"`
+
+	// ProfileInline is the agent's template-LOCAL spawn profile (a spawn-profile
+	// shaped object: launch fields, ask-timeout, launch toggles, birth-time
+	// owner + permission overrides), embedded in the template instead of
+	// referenced from the registry. Kept as raw JSON: the CLI is a thin client
+	// and must round-trip the daemon's shape losslessly through the
+	// show --json → edit --file loop (edit is a FULL REPLACE — a field this
+	// mirror struct didn't carry would be silently destroyed on save).
+	ProfileInline json.RawMessage `json:"profile_inline,omitempty"`
 
 	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
 	// in ascending order; all-wave-0 = one synchronous pass (today's behaviour).
@@ -245,6 +255,66 @@ func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// inlineProfileTag renders a compact human-readable tag for an agent's
+// template-local spawn profile (profile_inline) so `templates show` surfaces
+// the launch config AND the access bits (owner default, permission overrides)
+// it carries — an operator auditing a template must see those. The raw JSON is
+// parsed loosely (unknown fields ignored); "" when absent/unparsable.
+func inlineProfileTag(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var p struct {
+		Harness             string            `json:"harness"`
+		Model               string            `json:"model"`
+		Effort              string            `json:"effort"`
+		Sandbox             string            `json:"sandbox"`
+		Approval            string            `json:"approval"`
+		AskTimeout          string            `json:"ask_user_question_timeout"`
+		TrustDir            *bool             `json:"trust_dir"`
+		AutoReview          *bool             `json:"auto_review"`
+		RemoteControl       *bool             `json:"remote_control"`
+		IsOwner             *bool             `json:"is_owner"`
+		PermissionOverrides map[string]string `json:"permission_overrides"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return "custom-launch=(unparsable)"
+	}
+	parts := []string{}
+	add := func(k, v string) {
+		if v != "" {
+			parts = append(parts, k+" "+v)
+		}
+	}
+	addBool := func(k string, v *bool) {
+		if v != nil {
+			parts = append(parts, fmt.Sprintf("%s %v", k, *v))
+		}
+	}
+	add("harness", p.Harness)
+	add("model", p.Model)
+	add("effort", p.Effort)
+	add("sandbox", p.Sandbox)
+	add("approval", p.Approval)
+	add("ask-timeout", p.AskTimeout)
+	addBool("trust-dir", p.TrustDir)
+	addBool("auto-review", p.AutoReview)
+	addBool("remote-control", p.RemoteControl)
+	addBool("owner", p.IsOwner)
+	if len(p.PermissionOverrides) > 0 {
+		slugs := make([]string, 0, len(p.PermissionOverrides))
+		for s := range p.PermissionOverrides {
+			slugs = append(slugs, s+":"+p.PermissionOverrides[s])
+		}
+		sort.Strings(slugs)
+		parts = append(parts, "perms "+strings.Join(slugs, ","))
+	}
+	if len(parts) == 0 {
+		return "custom-launch=(empty)"
+	}
+	return "custom-launch={" + strings.Join(parts, ", ") + "}"
+}
+
 // renderTemplateHuman prints a template's human-readable view — its context,
 // per-agent specs, work pattern, process, and rhythms. Shared by `templates
 // show` and `templates starters show` so a starter renders identically to a
@@ -294,6 +364,9 @@ func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 		}
 		if a.Approval != "" {
 			tags = append(tags, "approval="+a.Approval)
+		}
+		if tag := inlineProfileTag(a.ProfileInline); tag != "" {
+			tags = append(tags, tag)
 		}
 		if a.Wave > 0 {
 			tags = append(tags, fmt.Sprintf("wave=%d", a.Wave))

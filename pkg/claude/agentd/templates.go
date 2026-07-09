@@ -1407,6 +1407,28 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			}
 			a.Permissions = kept
 		}
+		// The template-local profile's overrides degrade the same way the legacy
+		// list does: a slug this machine doesn't know (a template exported from a
+		// newer tclaude) is dropped with a warning instead of 400ing the whole
+		// import in buildInlineProfileFromJSON's slug validation.
+		if a.ProfileInline != nil && len(a.ProfileInline.PermissionOverrides) > 0 {
+			kept := map[string]string{}
+			for slug, effect := range a.ProfileInline.PermissionOverrides {
+				s := strings.TrimSpace(slug)
+				if s == "" {
+					continue
+				}
+				if !IsKnownPermSlug(s) {
+					warnings = append(warnings, fmt.Sprintf(
+						"agent %q: unknown permission slug %q in its custom launch config — dropped", label, s))
+					continue
+				}
+				kept[s] = effect
+			}
+			pi := *a.ProfileInline
+			pi.PermissionOverrides = kept
+			a.ProfileInline = &pi
+		}
 		agents[i] = a
 	}
 	body.Agents = agents

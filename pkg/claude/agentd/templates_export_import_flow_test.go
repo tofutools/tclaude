@@ -245,6 +245,52 @@ func TestTemplateImport_UnknownPermSlugDegrades(t *testing.T) {
 	assert.Equal(t, []string{"groups.spawn"}, got.Agents[0].Permissions, "known slug kept, unknown dropped")
 }
 
+// TestTemplateImport_UnknownSlugInInlineProfileDegrades: an unknown slug
+// inside a template-local profile's permission_overrides degrades exactly like
+// the legacy list — dropped with a warning, never a whole-import failure (a
+// template exported from a newer tclaude with a new slug must still import).
+func TestTemplateImport_UnknownSlugInInlineProfileDegrades(t *testing.T) {
+	f := newFlow(t)
+
+	tmpl := map[string]any{
+		"name": "perms2",
+		"agents": []map[string]any{
+			{"name": "worker", "profile_inline": map[string]any{
+				"model": "haiku",
+				"permission_overrides": map[string]any{
+					"groups.spawn":  "grant",
+					"made.up.slug2": "grant",
+				},
+			}},
+		},
+	}
+	env := map[string]any{"format": "tclaude-task-force", "format_version": 1, "template": tmpl}
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", env)
+	require.Equalf(t, http.StatusCreated, rec.Code, "import degrades on unknown inline-profile slug: %s", rec.Body.String())
+	var ir tmplImportResult
+	testharness.DecodeJSON(t, rec, &ir)
+	require.Len(t, ir.Warnings, 1, "one warning for the bad slug")
+	assert.Contains(t, ir.Warnings[0], "made.up.slug2")
+
+	rec = humanReq(t, f, http.MethodGet, "/v1/templates/perms2", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Agents []struct {
+			ProfileInline *struct {
+				Model               string            `json:"model"`
+				PermissionOverrides map[string]string `json:"permission_overrides"`
+			} `json:"profile_inline"`
+		} `json:"agents"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Agents, 1)
+	require.NotNil(t, got.Agents[0].ProfileInline, "inline profile survives the import")
+	assert.Equal(t, "haiku", got.Agents[0].ProfileInline.Model)
+	assert.Equal(t, map[string]string{"groups.spawn": "grant"},
+		got.Agents[0].ProfileInline.PermissionOverrides, "known slug kept, unknown dropped")
+}
+
 // TestTemplateImport_VersionTooNewRejected: an envelope whose
 // format_version exceeds this build's is rejected with an upgrade
 // message.

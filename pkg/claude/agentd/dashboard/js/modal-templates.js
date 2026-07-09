@@ -228,7 +228,8 @@ function templateCardHTML(t) {
     const owner = (a.is_owner || (a.profile_inline && a.profile_inline.is_owner))
       ? '<span class="tc-owner" title="group owner">★</span> ' : '';
     const role = a.role ? ` <span class="tc-role">${esc(a.role)}</span>` : '';
-    const slugs = (a.permissions || []).concat(Object.keys(inlineOverrides));
+    // A slug in both the legacy list and the custom config counts once.
+    const slugs = [...new Set((a.permissions || []).concat(Object.keys(inlineOverrides)))];
     const perms = slugs.length
       ? ` <span class="tc-role" title="${esc(slugs.join(', '))}">+${slugs.length}🔑</span>`
       : '';
@@ -349,15 +350,17 @@ export function templateRosterRowsHTML(t, prefix, defaultProfile) {
     let np = (a.permissions || []).length;
     if (inline && inline.permission_overrides) np += Object.keys(inline.permission_overrides).length;
     if (adoptsDefault && dp.permission_overrides) np += Object.keys(dp.permission_overrides).length;
-    // Per-role launch hint (JOH-239): the profile ref, the template-local custom
-    // config, or the most telling inline override so the human sees each role's
-    // launch shape before spawning. A member with no config of its own falls back
-    // to the deploy default (if the dialog resolved one), flagged so it's clear
-    // the value came from the default.
-    const launch = a.spawn_profile
-      ? `⚙ ${esc(a.spawn_profile)}`
-      : inline
-        ? `⚙ <span title="${esc(profileSummary(inline) || 'custom launch config')}">${wizWord('custom', 'bespoke')}</span>`
+    // Per-role launch hint (JOH-239): the template-local custom config (which
+    // wins over a ref, so it leads — with the ref named when one sits beneath),
+    // the profile ref, or the most telling inline override, so the human sees
+    // each role's launch shape before spawning. A member with no config of its
+    // own falls back to the deploy default (if the dialog resolved one),
+    // flagged so it's clear the value came from the default.
+    const launch = inline
+      ? `⚙ <span title="${esc(profileSummary(inline) || 'custom launch config')}">${wizWord('custom', 'bespoke')}</span>`
+        + (a.spawn_profile ? ` <span class="tp-default-tag" title="fields the custom config leaves blank fall through to this profile">(over ${esc(a.spawn_profile)})</span>` : '')
+      : a.spawn_profile
+        ? `⚙ ${esc(a.spawn_profile)}`
         : adoptsDefault
           ? `⚙ ${esc(dflt)} <span class="tp-default-tag" title="from the deploy default profile — applies its launch config and birth-time permissions/ownership">(default)</span>`
           : [a.harness, a.model, a.effort].filter(Boolean).map(esc).join('/');
@@ -376,11 +379,6 @@ function blankTemplateAgent() {
     wave: 0,
   };
 }
-
-// TA_CUSTOM is the launch-profile dropdown's sentinel value for "this agent
-// carries a template-local custom launch config (profile_inline)" — mutually
-// exclusive with a registry profile reference.
-const TA_CUSTOM = '__custom__';
 
 // ---- Template editor modal --------------------------------------------
 
@@ -476,19 +474,12 @@ function agentInheritsDeployDefault(a) {
 // the picker shows what blank will yield WITHOUT baking the default into the
 // stored template — the value stays "" and the template stays portable.
 function profileRefOptionsHTML(a) {
-  const custom = !!a.profile_inline;
-  const current = custom ? '' : (a.spawn_profile || '');
+  const current = a.spawn_profile || '';
   const names = cachedProfiles().map(p => p.name);
   const dflt = getDashDefaultProfile();
   const blankLabel = (dflt && names.includes(dflt) && agentInheritsDeployDefault(a))
     ? `(default → ${esc(dflt)})` : '(none)';
-  const opts = [`<option value=""${current || custom ? '' : ' selected'}>${blankLabel}</option>`];
-  // A template-local custom launch config (profile_inline) shows as a selected
-  // sentinel entry — mutually exclusive with a registry reference. Picking any
-  // other option offers to discard the custom config (see the change handler).
-  if (custom) {
-    opts.push(`<option value="${TA_CUSTOM}" selected>${wizWord('(custom — this agent only)', '(bespoke — this familiar only)')}</option>`);
-  }
+  const opts = [`<option value=""${current ? '' : ' selected'}>${blankLabel}</option>`];
   for (const n of names) {
     opts.push(`<option value="${esc(n)}"${n === current ? ' selected' : ''}>${esc(n)}</option>`);
   }
@@ -503,12 +494,6 @@ function profileRefOptionsHTML(a) {
 // profiles.js summariser the manage cards use. Empty when no profile is picked;
 // a "not found here" note when the ref dangles.
 function profileSummaryHTML(a) {
-  // A template-local custom launch config renders its own summary — same
-  // summariser the profile cards use, so custom and referenced read alike.
-  if (a.profile_inline) {
-    const s = profileSummary(a.profile_inline);
-    return s ? esc(s) : '<span class="ta-profile-summary-empty">(custom config sets no launch fields)</span>';
-  }
   const current = a.spawn_profile || '';
   if (!current) {
     // A blank member inherits the dashboard default profile at deploy — but only
@@ -551,6 +536,20 @@ function legacyInlineNoticeHTML(a) {
     <span class="ta-legacy-text">⚠ legacy inline: ${esc(parts.join(' · '))}</span>
     <button type="button" class="tool ta-extract-profile">Extract to profile…</button>
     <button type="button" class="tool ta-legacy-remove" title="Remove these legacy inline settings — the agent falls back to its profile / the defaults on the next save">✕</button>
+  </div>`;
+}
+
+// customLaunchNoticeHTML renders the agent's template-local custom launch
+// config line (profile_inline): its summary plus the ✕ that removes it. The
+// config RIDES ON TOP of the picked profile — the server's resolution tiers —
+// so this renders alongside (not instead of) the profile picker; "" when the
+// agent carries none.
+function customLaunchNoticeHTML(a) {
+  if (!a.profile_inline) return '';
+  const s = profileSummary(a.profile_inline);
+  return `<div class="ta-legacy-note ta-custom-note" title="A template-local launch config for THIS agent only, stored inside the template (no registry profile). Fields it sets win over the picked launch profile; fields it leaves blank still fall through to it. Edit via ✎, remove via ✕.">
+    <span class="ta-legacy-text">✎ ${wizWord('custom', 'bespoke')}: ${s ? esc(s) : '(sets no launch fields)'}</span>
+    <button type="button" class="tool ta-custom-remove" title="Remove this custom launch config — the agent falls back to its picked profile / the defaults on the next save">✕</button>
   </div>`;
 }
 
@@ -614,11 +613,12 @@ function editorAgentRowHTML(a, idx) {
         <select class="ta-profile-select">${profileRefOptionsHTML(a)}</select>
       </label>
       <div class="ta-launch-actions">
-        <button type="button" class="tool ta-custom-launch" title="Edit this agent's FULL launch config (harness, model, effort, sandbox, permission mode, ask-timeout, remote control, owner, birth-time permissions, …) as a template-local custom config — stored inside the template, no registry profile needed. Opens seeded from the current custom config, or forked from the picked profile.">${a.profile_inline ? '✎ edit custom…' : '✎ custom…'}</button>
+        <button type="button" class="tool ta-custom-launch" title="Edit this agent's FULL launch config (harness, model, effort, sandbox, permission mode, ask-timeout, remote control, owner, birth-time permissions, …) as a template-local custom config — stored inside the template, no registry profile needed. Opens seeded from the current custom config, or forked from the picked profile. Fields it sets win over the picked profile; fields it leaves blank still fall through to it.">${a.profile_inline ? '✎ edit custom…' : '✎ custom…'}</button>
         <button type="button" class="tool ta-profile-new" title="Create a new spawn profile and use it for this agent">＋ new</button>
         <button type="button" class="tool ta-profile-manage" title="Open the spawn-profiles manager to create or edit profiles">⧉ manage…</button>
       </div>
       <div class="ta-profile-summary">${profileSummaryHTML(a)}</div>
+      ${customLaunchNoticeHTML(a)}
       ${legacyInlineNoticeHTML(a)}
     </div>
   </div>`;
@@ -729,12 +729,6 @@ function scrapeEditorAgents() {
     // render-time index) so a re-save never silently drops them; "Extract to
     // profile…" is the migration path that clears them into a profile.
     const prev = templateEditorAgents[parseInt(row.dataset.idx, 10)] || {};
-    // The launch-profile dropdown carries either a registry-profile name or the
-    // TA_CUSTOM sentinel (the agent's template-local custom config, held in the
-    // in-memory model, not the DOM). The two are mutually exclusive: a custom
-    // selection keeps profile_inline and no registry ref; any other selection
-    // drops the custom config (the change handler confirms that first).
-    const sel = $('.ta-profile-select', row).value.trim();
     return {
       name: $('.ta-name', row).value.trim(),
       role: $('.ta-role', row).value.trim(),
@@ -742,13 +736,16 @@ function scrapeEditorAgents() {
       initial_message: $('.ta-initmsg', row).value,
       is_owner: $('.ta-owner', row).checked,
       role_ref: $('.ta-role-ref', row).value.trim(),
-      spawn_profile: sel === TA_CUSTOM ? '' : sel,
+      spawn_profile: $('.ta-profile-select', row).value.trim(),
       harness: prev.harness || '',
       model: prev.model || '',
       effort: prev.effort || '',
       sandbox: prev.sandbox || '',
       approval: prev.approval || '',
-      profile_inline: sel === TA_CUSTOM ? (prev.profile_inline || null) : null,
+      // The custom launch config (profile_inline) rides the in-memory model —
+      // no DOM control carries it — so it survives every scrape unchanged.
+      // It is edited via "✎ custom…" and removed only via its own ✕.
+      profile_inline: prev.profile_inline || null,
       permissions: (prev.permissions || []).slice(),
       wave: parseInt($('.ta-wave', row).value, 10) || 0,
     };
@@ -787,8 +784,8 @@ function onManageProfilesClosed() {
 }
 
 // newProfileForAgent opens a blank profile editor; on save the fresh profile is
-// selected for the agent at `idx` (displacing a custom launch config — the two
-// are mutually exclusive).
+// selected for the agent at `idx`. An existing custom launch config stays —
+// it rides on top of the reference, exactly as at deploy.
 function newProfileForAgent(idx) {
   scrapeEditorAgents();
   openProfileEditor(null, {
@@ -798,7 +795,6 @@ function newProfileForAgent(idx) {
       const cur = templateEditorAgents[idx];
       if (cur) {
         cur.spawn_profile = name;
-        cur.profile_inline = null;
         markTemplateEditorDirty();
       }
       reloadProfilesAndRender();
@@ -812,7 +808,9 @@ function newProfileForAgent(idx) {
 // agent on Apply — stored inside the template, no registry profile created.
 // Seeded from the current custom config when one exists, else forked from the
 // picked registry profile (a "customize this profile for this agent" start),
-// else blank. Applying displaces the registry reference (mutually exclusive).
+// else blank. The custom config RIDES ON TOP of the picked profile — exactly
+// the server's resolution tiers — so a field it leaves blank still falls
+// through to the reference; the picked profile stays picked.
 function customLaunchForAgent(idx) {
   scrapeEditorAgents();
   const a = templateEditorAgents[idx];
@@ -827,13 +825,34 @@ function customLaunchForAgent(idx) {
         const cur = templateEditorAgents[idx];
         if (cur) {
           cur.profile_inline = payload;
-          cur.spawn_profile = '';
           markTemplateEditorDirty();
         }
         renderEditorAgents();
       },
     },
   });
+}
+
+// removeAgentCustomLaunch discards the agent's template-local custom launch
+// config after a confirm — launch resolution falls back to the picked profile
+// / role / defaults. Takes effect in the stored template on the next save.
+async function removeAgentCustomLaunch(idx) {
+  scrapeEditorAgents();
+  const a = templateEditorAgents[idx];
+  if (!a || !a.profile_inline) return;
+  const ok = await confirmModal({
+    title: 'Remove custom launch config?',
+    body: 'Discard this agent\u2019s template-local launch config? It is not saved anywhere else — the agent falls back to its picked profile / role / the defaults. Applies to the stored template when you save.',
+    meta: a.name || `agent #${idx + 1}`,
+    okLabel: 'Remove custom config',
+  });
+  if (!ok) return;
+  const cur = templateEditorAgents[idx];
+  if (cur) {
+    cur.profile_inline = null;
+    markTemplateEditorDirty();
+  }
+  renderEditorAgents();
 }
 
 // removeAgentLegacyInline discards the agent's pre-cutover inline launch
@@ -887,7 +906,6 @@ function extractAgentToProfile(idx) {
       const cur = templateEditorAgents[idx];
       if (cur) {
         cur.spawn_profile = name;
-        cur.profile_inline = null;
         cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
         cur.permissions = [];
         markTemplateEditorDirty();
@@ -2260,6 +2278,8 @@ function bindTemplatesUI() {
       extractAgentToProfile(idx);
     } else if (e.target.closest('.ta-legacy-remove')) {
       removeAgentLegacyInline(idx);
+    } else if (e.target.closest('.ta-custom-remove')) {
+      removeAgentCustomLaunch(idx);
     }
   });
   // Owner is a plain per-agent checkbox — a group can have several owners, so
@@ -2273,24 +2293,6 @@ function bindTemplatesUI() {
       scrapeEditorPattern();
       renderEditorPattern();
     } else if (e.target.classList.contains('ta-profile-select')) {
-      // Switching away from "(custom — this agent only)" discards the agent's
-      // template-local config — confirm first; a decline restores the pick.
-      const row = e.target.closest('.template-agent-row');
-      const idx = parseInt(row.dataset.idx, 10);
-      const cur = templateEditorAgents[idx];
-      if (cur && cur.profile_inline && e.target.value !== TA_CUSTOM) {
-        confirmModal({
-          title: 'Discard custom launch config?',
-          body: 'This agent carries a template-local custom launch config. Picking a profile (or none) discards it — the config is not saved anywhere else.',
-          meta: cur.name || `agent #${idx + 1}`,
-          okLabel: 'Discard custom config',
-        }).then(ok => {
-          if (!ok) { e.target.value = TA_CUSTOM; return; }
-          scrapeEditorAgents();
-          renderEditorAgents();
-        });
-        return;
-      }
       scrapeEditorAgents();
       renderEditorAgents();
     } else if (e.target.classList.contains('ta-role-ref')) {
