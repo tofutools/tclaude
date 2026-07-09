@@ -417,7 +417,8 @@ func TestReducerErrors(t *testing.T) {
 		{name: "attempt regression", st: baseWithAttempt(2), event: Event{Type: EventNodeAttemptStarted, Seq: 11, NodeID: "implement", Attempt: 1, Actor: "agent:agt_dev123"}, want: "must be greater"},
 		{name: "settle without outcome", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement"}, want: "requires outcome"},
 		{name: "invalid node status override", st: running, event: Event{Type: EventNodeAttemptSettled, Seq: 11, NodeID: "implement", Outcome: "pass", NodeStatus: "bogus"}, want: "invalid node status"},
-		{name: "second decision", st: decisionDone, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already completed"},
+		{name: "second decision", st: decisionDone, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already decided"},
+		{name: "redecision after unblock", st: unblockedDecision(t, decisionDone), event: Event{Type: EventDecisionRecorded, Seq: 12, NodeID: "decide", ChosenEdge: "reject", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "already decided"},
 		{name: "decision chosen edge verdict mismatch", st: base, event: Event{Type: EventDecisionRecorded, Seq: 11, NodeID: "decide", ChosenEdge: "approve", Decision: &DecisionRecord{Actor: "human:johan", Verdict: "reject"}}, want: "must match verdict"},
 		{name: "block without reason", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Owner: "human:johan"}, want: "requires reason and owner"},
 		{name: "block without owner", st: base, event: Event{Type: EventNodeBlocked, Seq: 11, NodeID: "implement", Reason: "blocked"}, want: "requires reason and owner"},
@@ -452,6 +453,65 @@ func TestInvariants(t *testing.T) {
 				"a": {Status: NodeStatusWaitingHuman},
 			}),
 			code: "waiting_node_without_wait",
+		},
+		{
+			name: "invalid run status",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.Status = "bogus_run_status"
+				return st
+			}(),
+			code: "invalid_run_status",
+		},
+		{
+			name: "invalid node status",
+			st: stateWithNodes(map[string]NodeState{
+				"a": {Status: "bogus_node_status"},
+			}),
+			code: "invalid_node_status",
+		},
+		{
+			name: "invalid node type",
+			st: stateWithNodes(map[string]NodeState{
+				"a": {Type: "bogus_node_type", Status: NodeStatusPending},
+			}),
+			code: "invalid_node_type",
+		},
+		{
+			name: "invalid command status",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.OutstandingCommands["cmd"] = OutstandingCommand{ID: "cmd", NodeID: "a", Kind: "agent.spawn", Status: "bogus_command_status"}
+				return st
+			}(),
+			code: "invalid_command_status",
+		},
+		{
+			name: "invalid wait kind",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.Waits["wait"] = WaitRecord{ID: "wait", NodeID: "a", Kind: "bogus_wait_kind", Status: WaitStatusPending}
+				return st
+			}(),
+			code: "invalid_wait_kind",
+		},
+		{
+			name: "invalid wait status",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.Waits["wait"] = WaitRecord{ID: "wait", NodeID: "a", Kind: WaitKindHuman, Status: "bogus_wait_status"}
+				return st
+			}(),
+			code: "invalid_wait_status",
+		},
+		{
+			name: "invalid timer status",
+			st: func() State {
+				st := stateWithNodes(map[string]NodeState{"a": {Status: NodeStatusPending}})
+				st.Timers["timer"] = TimerRecord{ID: "timer", NodeID: "a", Status: "bogus_timer_status"}
+				return st
+			}(),
+			code: "invalid_timer_status",
 		},
 		{
 			name: "running attempt without command or actor",
@@ -673,6 +733,19 @@ func baseWithAttempt(attempt int) State {
 	node.Attempt = attempt
 	st.Nodes["implement"] = node
 	return st
+}
+
+func unblockedDecision(t *testing.T, st State) State {
+	t.Helper()
+	blocked, err := Apply(st, Event{Type: EventNodeBlocked, Seq: 10, NodeID: "decide", Reason: "recheck", Owner: "human:johan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unblocked, err := Apply(blocked, Event{Type: EventNodeUnblocked, Seq: 11, NodeID: "decide"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return unblocked
 }
 
 func stateWithNodes(nodes map[string]NodeState) State {

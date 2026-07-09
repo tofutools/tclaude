@@ -192,8 +192,8 @@ func applyEvent(st *State, event Event) error {
 		if err != nil {
 			return err
 		}
-		if node.Status == NodeStatusCompleted && (node.ChosenEdge != "" || len(node.Decisions) > 0) {
-			return fmt.Errorf("decision node %q is already completed", event.NodeID)
+		if node.ChosenEdge != "" || len(node.Decisions) > 0 {
+			return fmt.Errorf("decision node %q is already decided", event.NodeID)
 		}
 		if node.Type == "" {
 			node.Type = model.NodeTypeDecision
