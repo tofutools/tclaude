@@ -16,9 +16,11 @@ type CommandKind = state.CommandKind
 
 const (
 	CommandKindActivateNode   = state.CommandKindActivateNode
+	CommandKindExpandNode     = state.CommandKindExpandNode
 	CommandKindStartAttempt   = state.CommandKindStartAttempt
 	CommandKindSettleAttempt  = state.CommandKindSettleAttempt
 	CommandKindRecordDecision = state.CommandKindRecordDecision
+	CommandKindBlockNode      = state.CommandKindBlockNode
 	CommandKindSetTimer       = state.CommandKindSetTimer
 	CommandKindWaitSignal     = state.CommandKindWaitSignal
 	CommandKindCompleteRun    = state.CommandKindCompleteRun
@@ -43,6 +45,11 @@ type Command struct {
 	Until            string           `json:"until,omitempty"`
 	Signal           string           `json:"signal,omitempty"`
 	Performer        *model.Performer `json:"performer,omitempty"`
+
+	// Compound expansion and poison blocking (TCL-276).
+	Children []state.NodeInit `json:"children,omitempty"`
+	Reason   string           `json:"reason,omitempty"`
+	Owner    string           `json:"owner,omitempty"`
 }
 
 func (c Command) OutstandingCommand(createdAt time.Time) (state.OutstandingCommand, error) {

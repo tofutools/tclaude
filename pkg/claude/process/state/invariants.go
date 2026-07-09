@@ -23,6 +23,226 @@ func CheckInvariants(st *State) Diagnostics {
 	diagnostics = append(diagnostics, CompletedDecisionsHaveOneChosenEdge(st)...)
 	diagnostics = append(diagnostics, BlockedNodesHaveReasonAndOwner(st)...)
 	diagnostics = append(diagnostics, DecisionActorsAreValid(st)...)
+	diagnostics = append(diagnostics, CompoundLinkageIsConsistent(st)...)
+	diagnostics = append(diagnostics, CompletedStageChildrenHaveEvidence(st)...)
+	return diagnostics
+}
+
+// CheckTemplateInvariants verifies recorded state against the run's pinned
+// template. It complements CheckInvariants: state-only checks cannot see
+// whether a recorded expansion matches what the template actually derives.
+func CheckTemplateInvariants(st *State, tmpl *model.Template) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	if tmpl == nil {
+		return Diagnostics{diagError("nil_template", "", "process template is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.Parent != "" {
+			continue
+		}
+		templateNode, ok := tmpl.Nodes[nodeID]
+		if !ok {
+			diagnostics = append(diagnostics, diagError("node_not_in_template", "nodes."+nodeID, fmt.Sprintf("node %q is not declared in template", nodeID)))
+			continue
+		}
+		specs := model.ExpandNode(nodeID, templateNode)
+		if len(node.Children) == 0 {
+			if len(specs) > 0 && nodeProgressedWithoutExpansion(node.Status) {
+				diagnostics = append(diagnostics, diagError(
+					"compound_node_without_expansion",
+					"nodes."+nodeID,
+					fmt.Sprintf("compound node %q has status %q but no recorded expansion", nodeID, node.Status),
+				))
+			}
+			continue
+		}
+		if len(specs) == 0 {
+			diagnostics = append(diagnostics, diagError(
+				"expansion_without_compound_template",
+				"nodes."+nodeID+".children",
+				fmt.Sprintf("node %q records an expansion but template node is not compound", nodeID),
+			))
+			continue
+		}
+		diagnostics = append(diagnostics, compareExpansion(st, nodeID, node, specs)...)
+	}
+	return diagnostics
+}
+
+func compareExpansion(st *State, nodeID string, node NodeState, specs []model.StageSpec) Diagnostics {
+	var diagnostics Diagnostics
+	if len(node.Children) != len(specs) {
+		diagnostics = append(diagnostics, diagError(
+			"expansion_template_mismatch",
+			"nodes."+nodeID+".children",
+			fmt.Sprintf("node %q records %d children but template derives %d", nodeID, len(node.Children), len(specs)),
+		))
+		return diagnostics
+	}
+	for i, spec := range specs {
+		childID := node.Children[i]
+		if childID != spec.ChildID {
+			diagnostics = append(diagnostics, diagError(
+				"expansion_template_mismatch",
+				fmt.Sprintf("nodes.%s.children[%d]", nodeID, i),
+				fmt.Sprintf("node %q child %q does not match template-derived child %q", nodeID, childID, spec.ChildID),
+			))
+			continue
+		}
+		child, ok := st.Nodes[childID]
+		if !ok {
+			continue // flagged by CompoundLinkageIsConsistent
+		}
+		if child.Stage != spec.Stage || child.StepID != spec.StepID {
+			diagnostics = append(diagnostics, diagError(
+				"expansion_template_mismatch",
+				"nodes."+childID,
+				fmt.Sprintf("child %q has stage %q step %q; template derives stage %q step %q", childID, child.Stage, child.StepID, spec.Stage, spec.StepID),
+			))
+		}
+	}
+	return diagnostics
+}
+
+func nodeProgressedWithoutExpansion(status NodeStatus) bool {
+	switch status {
+	case NodeStatusPending, NodeStatusReady:
+		return false
+	default:
+		return true
+	}
+}
+
+// CompoundLinkageIsConsistent checks the recorded parent/child expansion
+// linkage without consulting the template: back-pointers, stage shape, and
+// the parent status being explainable by its children.
+func CompoundLinkageIsConsistent(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.Parent != "" {
+			diagnostics = append(diagnostics, checkStageChild(st, nodeID, node)...)
+		} else if node.Stage != "" || node.StepID != "" {
+			diagnostics = append(diagnostics, diagError("stage_without_parent", "nodes."+nodeID, fmt.Sprintf("node %q carries stage metadata but no parent", nodeID)))
+		}
+		if len(node.Children) > 0 {
+			diagnostics = append(diagnostics, checkExpandedParent(st, nodeID, node)...)
+		}
+	}
+	return diagnostics
+}
+
+func checkStageChild(st *State, nodeID string, node NodeState) Diagnostics {
+	var diagnostics Diagnostics
+	path := "nodes." + nodeID
+	if !node.Stage.IsValid() {
+		diagnostics = append(diagnostics, diagError("invalid_stage", path+".stage", fmt.Sprintf("stage child %q has invalid stage %q", nodeID, node.Stage)))
+	}
+	if (node.Stage == model.StageTest) != (node.StepID != "") {
+		diagnostics = append(diagnostics, diagError("stage_step_mismatch", path+".stepId", fmt.Sprintf("stage child %q stage %q and step id %q are inconsistent", nodeID, node.Stage, node.StepID)))
+	}
+	if len(node.Children) > 0 {
+		diagnostics = append(diagnostics, diagError("nested_expansion", path+".children", fmt.Sprintf("stage child %q must not itself be expanded", nodeID)))
+	}
+	parent, ok := st.Nodes[node.Parent]
+	if !ok {
+		diagnostics = append(diagnostics, diagError("stage_child_unknown_parent", path+".parent", fmt.Sprintf("stage child %q references undeclared parent %q", nodeID, node.Parent)))
+		return diagnostics
+	}
+	if !slices.Contains(parent.Children, nodeID) {
+		diagnostics = append(diagnostics, diagError("stage_child_not_in_parent", path+".parent", fmt.Sprintf("stage child %q is not listed in parent %q children", nodeID, node.Parent)))
+	}
+	if node.Status == NodeStatusBlocked && parent.Status != NodeStatusBlocked {
+		diagnostics = append(diagnostics, diagError("blocked_child_unblocked_parent", path+".status", fmt.Sprintf("stage child %q is blocked but parent %q is %q", nodeID, node.Parent, parent.Status)))
+	}
+	return diagnostics
+}
+
+func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
+	var diagnostics Diagnostics
+	path := "nodes." + nodeID
+	switch node.Status {
+	case NodeStatusRunning, NodeStatusBlocked, NodeStatusCompleted:
+	default:
+		diagnostics = append(diagnostics, diagError("expanded_parent_invalid_status", path+".status", fmt.Sprintf("expanded node %q has status %q; expected running, blocked, or completed", nodeID, node.Status)))
+	}
+	seen := map[string]bool{}
+	blockedChild := false
+	var doneCompleted bool
+	for i, childID := range node.Children {
+		childPath := fmt.Sprintf("%s.children[%d]", path, i)
+		if seen[childID] {
+			diagnostics = append(diagnostics, diagError("duplicate_expansion_child", childPath, fmt.Sprintf("expanded node %q lists child %q twice", nodeID, childID)))
+			continue
+		}
+		seen[childID] = true
+		if !strings.HasPrefix(childID, nodeID+".") {
+			diagnostics = append(diagnostics, diagError("expansion_child_bad_prefix", childPath, fmt.Sprintf("child %q must be prefixed with %q", childID, nodeID+".")))
+		}
+		child, ok := st.Nodes[childID]
+		if !ok {
+			diagnostics = append(diagnostics, diagError("expansion_child_missing", childPath, fmt.Sprintf("expanded node %q lists undeclared child %q", nodeID, childID)))
+			continue
+		}
+		if child.Parent != nodeID {
+			diagnostics = append(diagnostics, diagError("expansion_child_wrong_parent", childPath, fmt.Sprintf("child %q has parent %q; expected %q", childID, child.Parent, nodeID)))
+		}
+		if child.Status == NodeStatusBlocked {
+			blockedChild = true
+		}
+		if isLast := i == len(node.Children)-1; (child.Stage == model.StageDone) != isLast {
+			diagnostics = append(diagnostics, diagError("expansion_done_stage_misplaced", childPath, fmt.Sprintf("expanded node %q: exactly the last child must be the done stage", nodeID)))
+		}
+		if child.Stage == model.StageDone && child.Status == NodeStatusCompleted {
+			doneCompleted = true
+		}
+	}
+	switch node.Status {
+	case NodeStatusCompleted:
+		if !doneCompleted {
+			diagnostics = append(diagnostics, diagError("expanded_parent_completed_without_done", path+".status", fmt.Sprintf("expanded node %q is completed but its done stage is not", nodeID)))
+		}
+	case NodeStatusRunning:
+		if doneCompleted {
+			diagnostics = append(diagnostics, diagError("expanded_parent_running_after_done", path+".status", fmt.Sprintf("expanded node %q is running but its done stage is completed", nodeID)))
+		}
+	case NodeStatusBlocked:
+		if !blockedChild {
+			diagnostics = append(diagnostics, diagError("blocked_parent_without_blocked_child", path+".status", fmt.Sprintf("expanded node %q is blocked but no child is blocked", nodeID)))
+		}
+	}
+	return diagnostics
+}
+
+// CompletedStageChildrenHaveEvidence enforces claimed-done-is-not-done for
+// recorded state: a completed stage child (other than the done marker) must
+// have a settled attempt carrying an evidence ref.
+func CompletedStageChildrenHaveEvidence(st *State) Diagnostics {
+	if st == nil {
+		return Diagnostics{diagError("nil_state", "", "process state is nil")}
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(st.Nodes) {
+		node := st.Nodes[nodeID]
+		if node.Parent == "" || node.Stage == model.StageDone || node.Status != NodeStatusCompleted {
+			continue
+		}
+		if node.ActiveAttempt != nil && strings.TrimSpace(node.ActiveAttempt.EvidenceRef) != "" {
+			continue
+		}
+		diagnostics = append(diagnostics, diagError(
+			"completed_stage_child_without_evidence",
+			"nodes."+nodeID+".activeAttempt",
+			fmt.Sprintf("completed stage child %q has no settled attempt with an evidence ref", nodeID),
+		))
+	}
 	return diagnostics
 }
 
@@ -97,6 +317,11 @@ func RunningAttemptsHaveCommandOrActor(st *State) Diagnostics {
 	for _, nodeID := range sortedKeys(st.Nodes) {
 		node := st.Nodes[nodeID]
 		if node.Status != NodeStatusRunning {
+			continue
+		}
+		if len(node.Children) > 0 {
+			// Expanded compound parents run while their stage children carry the
+			// attempts; child-level invariants cover them.
 			continue
 		}
 		if node.ActiveAttempt != nil && (strings.TrimSpace(node.ActiveAttempt.CommandID) != "" || strings.TrimSpace(string(node.ActiveAttempt.Actor)) != "") {

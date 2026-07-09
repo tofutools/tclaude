@@ -69,7 +69,10 @@ type Step struct {
 	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
 	Doc         string       `json:"doc,omitempty" yaml:"doc,omitempty"`
 	Performer   Performer    `json:"performer" yaml:"performer"`
-	Retry       *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
+	// Approval is only valid on plan steps: human requires an explicit
+	// plan-approval gate before work starts, auto (the default) does not.
+	Approval string       `json:"approval,omitempty" yaml:"approval,omitempty"`
+	Retry    *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
 }
 
 type Performer struct {

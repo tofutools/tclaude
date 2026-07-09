@@ -74,16 +74,27 @@ func validateNodes(tmpl *Template) Diagnostics {
 			} else {
 				diagnostics = append(diagnostics, validatePerformer(*node.Performer, path+".performer")...)
 			}
+			checkIDs := map[string]int{}
 			for i, check := range node.Checks {
-				diagnostics = append(diagnostics, validateStep(check, fmt.Sprintf("%s.checks[%d]", path, i))...)
+				checkPath := fmt.Sprintf("%s.checks[%d]", path, i)
+				diagnostics = append(diagnostics, validateStep(check, checkPath, false)...)
+				if check.ID == "" {
+					continue
+				}
+				if first, ok := checkIDs[check.ID]; ok {
+					diagnostics = append(diagnostics, diagError("duplicate_step_id", checkPath+".id", fmt.Sprintf("check step id %q is already used by checks[%d]", check.ID, first)))
+					continue
+				}
+				checkIDs[check.ID] = i
 			}
 			if node.Plan != nil {
-				diagnostics = append(diagnostics, validateStep(*node.Plan, path+".plan")...)
+				diagnostics = append(diagnostics, validateStep(*node.Plan, path+".plan", true)...)
 			}
 			if node.Review != nil {
-				diagnostics = append(diagnostics, validateStep(*node.Review, path+".review")...)
+				diagnostics = append(diagnostics, validateStep(*node.Review, path+".review", false)...)
 			}
 			diagnostics = append(diagnostics, validateRetry(node.Retry, path+".retry")...)
+			diagnostics = append(diagnostics, validateExpansionCollisions(tmpl, nodeID, node)...)
 			if len(node.Next) == 0 {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "task node requires at least one next outcome"))
 			}
@@ -143,13 +154,40 @@ func validateEndResult(result string, path string) Diagnostics {
 	}
 }
 
-func validateStep(step Step, path string) Diagnostics {
+func validateStep(step Step, path string, allowApproval bool) Diagnostics {
 	var diagnostics Diagnostics
 	if strings.TrimSpace(step.ID) == "" {
 		diagnostics = append(diagnostics, diagError("missing_step_id", path+".id", "step id is required"))
+	} else if !idPattern.MatchString(step.ID) {
+		diagnostics = append(diagnostics, diagError("invalid_id", path+".id", "step id must match "+idPattern.String()))
+	}
+	switch {
+	case step.Approval == "":
+	case !allowApproval:
+		diagnostics = append(diagnostics, diagError("approval_on_non_plan_step", path+".approval", "approval is only valid on plan steps"))
+	case step.Approval != PlanApprovalHuman && step.Approval != PlanApprovalAuto:
+		diagnostics = append(diagnostics, diagError("invalid_plan_approval", path+".approval", fmt.Sprintf("plan approval must be %s or %s; got %q", PlanApprovalHuman, PlanApprovalAuto, step.Approval)))
 	}
 	diagnostics = append(diagnostics, validatePerformer(step.Performer, path+".performer")...)
 	diagnostics = append(diagnostics, validateRetry(step.Retry, path+".retry")...)
+	return diagnostics
+}
+
+// validateExpansionCollisions rejects authored node ids that collide with the
+// ids a compound node reserves for its expanded children: node ids may contain
+// dots, so an author could otherwise declare a node named exactly like a
+// derived child (for example "implement.do").
+func validateExpansionCollisions(tmpl *Template, nodeID string, node Node) Diagnostics {
+	var diagnostics Diagnostics
+	for _, spec := range ExpandNode(nodeID, node) {
+		if _, ok := tmpl.Nodes[spec.ChildID]; ok {
+			diagnostics = append(diagnostics, diagError(
+				"node_id_collides_with_expansion",
+				"nodes."+spec.ChildID,
+				fmt.Sprintf("node id %q collides with a child stage of compound node %q", spec.ChildID, nodeID),
+			))
+		}
+	}
 	return diagnostics
 }
 
@@ -184,6 +222,11 @@ func validateRetry(retry *RetryPolicy, path string) Diagnostics {
 	var diagnostics Diagnostics
 	if retry.MaxAttempts <= 0 {
 		diagnostics = append(diagnostics, diagError("invalid_retry_budget", path+".maxAttempts", "retry policy requires maxAttempts greater than zero"))
+	}
+	switch retry.OnFail {
+	case "", RetryModeFeedbackSameSession, RetryModeFreshAttempt:
+	default:
+		diagnostics = append(diagnostics, diagError("invalid_retry_mode", path+".onFail", fmt.Sprintf("retry onFail must be %s or %s; got %q", RetryModeFeedbackSameSession, RetryModeFreshAttempt, retry.OnFail)))
 	}
 	diagnostics = append(diagnostics, checkInertParamRef(path+".backoff", retry.Backoff)...)
 	diagnostics = append(diagnostics, validateDuration(path+".backoff", retry.Backoff)...)

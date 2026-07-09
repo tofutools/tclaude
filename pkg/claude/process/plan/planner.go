@@ -23,6 +23,14 @@ func Plan(st *state.State, tmpl *model.Template) ([]Command, error) {
 	var commands []Command
 	for _, nodeID := range sortedNodeIDs(st.Nodes) {
 		node := st.Nodes[nodeID]
+		if node.Parent != "" {
+			childCommands, err := planStageChild(st, tmpl, nodeID, node)
+			if err != nil {
+				return nil, err
+			}
+			commands = append(commands, childCommands...)
+			continue
+		}
 		templateNode, ok := tmpl.Nodes[nodeID]
 		if !ok {
 			return nil, fmt.Errorf("node %q is not in template", nodeID)
@@ -93,6 +101,16 @@ func planRunningNode(st *state.State, nodeID string, node state.NodeState, templ
 func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
 	switch templateNode.Type {
 	case model.NodeTypeTask:
+		if templateNode.IsCompound() {
+			specs := model.ExpandNode(nodeID, templateNode)
+			cmd := newCommand(CommandKindExpandNode, st.RunID, nodeID, "expand")
+			cmd.NodeID = nodeID
+			cmd.Children = ExpansionInits(nodeID, specs)
+			if commandOutstanding(st, cmd.ID) {
+				return nil, nil
+			}
+			return []Command{cmd}, nil
+		}
 		attempt := node.Attempt + 1
 		cmd := newCommand(CommandKindStartAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "start")
 		cmd.NodeID = nodeID
@@ -169,11 +187,165 @@ func planFailedNode(st *state.State, tmpl *model.Template, nodeID string, templa
 		}
 		return []Command{cmd}, nil
 	}
-	target := ResolveFailEdge(templateNode.Next, templateNode.Retry)
+	target := ResolveFailEdge(templateNode.Next)
 	if target == "" {
 		return completeRunCommands(st, nodeID, state.RunStatusFailed), nil
 	}
 	return activationCommand(st, tmpl, nodeID, target)
+}
+
+func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState) ([]Command, error) {
+	parent, ok := st.Nodes[node.Parent]
+	if !ok {
+		return nil, fmt.Errorf("stage child %q references undeclared parent %q", nodeID, node.Parent)
+	}
+	specs, err := CompoundSpecs(tmpl, node.Parent, parent)
+	if err != nil {
+		return nil, err
+	}
+	spec, err := StageSpecFor(specs, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	switch node.Status {
+	case state.NodeStatusReady:
+		attempt := node.Attempt + 1
+		cmd := newCommand(CommandKindStartAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "start")
+		cmd.NodeID = nodeID
+		cmd.Attempt = attempt
+		cmd.Performer = spec.Performer
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case state.NodeStatusRunning:
+		if node.ActiveAttempt == nil || strings.TrimSpace(node.ActiveAttempt.CommandID) == "" {
+			return nil, nil
+		}
+		source, ok := st.OutstandingCommands[node.ActiveAttempt.CommandID]
+		if !ok || source.Status != state.CommandStatusObserved {
+			return nil, nil
+		}
+		attempt := node.ActiveAttempt.Attempt
+		if attempt <= 0 {
+			attempt = node.Attempt
+		}
+		cmd := newCommand(CommandKindSettleAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "settle")
+		cmd.NodeID = nodeID
+		cmd.Attempt = attempt
+		cmd.MaxAttempts = maxAttempts(spec.Retry)
+		cmd.SourceCommandID = source.ID
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case state.NodeStatusCompleted:
+		if spec.Stage == model.StageDone {
+			if parent.Status != state.NodeStatusRunning {
+				return nil, nil
+			}
+			cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", node.Parent)
+			cmd.NodeID = nodeID
+			cmd.TargetNodeID = node.Parent
+			cmd.NodeStatus = state.NodeStatusCompleted
+			if commandOutstanding(st, cmd.ID) {
+				return nil, nil
+			}
+			return []Command{cmd}, nil
+		}
+		return planSettledStageTransition(st, nodeID, node, parent, specs, EffectiveStageOutcome(node))
+	case state.NodeStatusFailed:
+		return planSettledStageTransition(st, nodeID, node, parent, specs, "fail")
+	default:
+		return nil, nil
+	}
+}
+
+func planSettledStageTransition(st *state.State, nodeID string, node state.NodeState, parent state.NodeState, specs []model.StageSpec, outcome string) ([]Command, error) {
+	transition, err := NextAfterStage(node.Parent, parent.Children, specs, nodeID, outcome, node.Attempt)
+	if err != nil {
+		return nil, err
+	}
+	switch transition.Kind {
+	case TransitionActivateChild:
+		next, ok := st.Nodes[transition.NextChildID]
+		if !ok {
+			return nil, fmt.Errorf("stage child %q is not in state", transition.NextChildID)
+		}
+		if next.Status != state.NodeStatusPending {
+			return nil, nil
+		}
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.NextChildID)
+		cmd.NodeID = nodeID
+		cmd.TargetNodeID = transition.NextChildID
+		cmd.NodeStatus = state.NodeStatusReady
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case TransitionCompleteParent:
+		done, ok := st.Nodes[transition.DoneChildID]
+		if !ok {
+			return nil, fmt.Errorf("done stage %q is not in state", transition.DoneChildID)
+		}
+		if done.Status != state.NodeStatusPending {
+			return nil, nil
+		}
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "to", transition.DoneChildID)
+		cmd.NodeID = nodeID
+		cmd.TargetNodeID = transition.DoneChildID
+		cmd.NodeStatus = state.NodeStatusCompleted
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case TransitionRetryChild:
+		cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "retry", fmt.Sprintf("attempt-%d", node.Attempt+1))
+		cmd.NodeID = nodeID
+		cmd.TargetNodeID = nodeID
+		cmd.NodeStatus = state.NodeStatusReady
+		if commandOutstanding(st, cmd.ID) {
+			return nil, nil
+		}
+		return []Command{cmd}, nil
+	case TransitionPoison:
+		return poisonCommands(st, nodeID, node, transition), nil
+	default:
+		return nil, fmt.Errorf("unsupported stage transition %q", transition.Kind)
+	}
+}
+
+func poisonCommands(st *state.State, nodeID string, node state.NodeState, transition StageTransition) []Command {
+	var out []Command
+	if node.Status != state.NodeStatusBlocked {
+		block := newCommand(CommandKindBlockNode, st.RunID, nodeID, "block", fmt.Sprintf("attempt-%d", node.Attempt))
+		block.NodeID = nodeID
+		block.Reason = transition.Reason
+		block.Owner = transition.Owner
+		if !commandOutstanding(st, block.ID) {
+			out = append(out, block)
+		}
+	}
+	if parent, ok := st.Nodes[node.Parent]; ok && parent.Status != state.NodeStatusBlocked {
+		block := newCommand(CommandKindBlockNode, st.RunID, node.Parent, "block", "poison", nodeID, fmt.Sprintf("attempt-%d", node.Attempt))
+		block.NodeID = node.Parent
+		block.Reason = transition.Reason
+		block.Owner = transition.Owner
+		if !commandOutstanding(st, block.ID) {
+			out = append(out, block)
+		}
+	}
+	return out
+}
+
+// StageSpecFor finds the template-derived spec for a stage child id.
+func StageSpecFor(specs []model.StageSpec, childID string) (model.StageSpec, error) {
+	for _, spec := range specs {
+		if spec.ChildID == childID {
+			return spec, nil
+		}
+	}
+	return model.StageSpec{}, fmt.Errorf("stage child %q is not derivable from its parent template", childID)
 }
 
 func activationCommand(st *state.State, tmpl *model.Template, fromNodeID, targetNodeID string) ([]Command, error) {

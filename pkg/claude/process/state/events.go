@@ -14,6 +14,7 @@ const (
 	EventRunInitialized           EventType = "run_initialized"
 	EventRunStatusSet             EventType = "run_status_set"
 	EventNodeStatusSet            EventType = "node_status_set"
+	EventNodeExpanded             EventType = "node_expanded"
 	EventNodeAttemptStarted       EventType = "node_attempt_started"
 	EventNodeAttemptSettled       EventType = "node_attempt_settled"
 	EventDecisionRecorded         EventType = "decision_recorded"
@@ -152,6 +153,59 @@ func applyEvent(st *State, event Event) error {
 		node.Status = event.NodeStatus
 		st.Nodes[event.NodeID] = node
 		return nil
+	case EventNodeExpanded:
+		node, err := getNode(st, event.NodeID)
+		if err != nil {
+			return err
+		}
+		if len(node.Children) > 0 {
+			return fmt.Errorf("node %q is already expanded", event.NodeID)
+		}
+		if node.Parent != "" {
+			return fmt.Errorf("stage child %q cannot expand", event.NodeID)
+		}
+		if node.Status != NodeStatusReady {
+			return fmt.Errorf("node %q is %s; only ready nodes can expand", event.NodeID, node.Status)
+		}
+		if len(event.Nodes) < 2 {
+			return fmt.Errorf("node_expanded requires at least one work stage and a done stage")
+		}
+		children := make([]string, 0, len(event.Nodes))
+		for i, child := range event.Nodes {
+			if !strings.HasPrefix(child.ID, event.NodeID+".") {
+				return fmt.Errorf("expanded child id %q must be prefixed with %q", child.ID, event.NodeID+".")
+			}
+			if _, exists := st.Nodes[child.ID]; exists {
+				return fmt.Errorf("expanded child %q is already declared", child.ID)
+			}
+			if !child.Stage.IsValid() {
+				return fmt.Errorf("expanded child %q has invalid stage %q", child.ID, child.Stage)
+			}
+			if (child.Stage == model.StageTest) != (child.StepID != "") {
+				return fmt.Errorf("expanded child %q stage %q and step id %q are inconsistent", child.ID, child.Stage, child.StepID)
+			}
+			if child.Parent != "" && child.Parent != event.NodeID {
+				return fmt.Errorf("expanded child %q parent %q must be %q", child.ID, child.Parent, event.NodeID)
+			}
+			if isLast := i == len(event.Nodes)-1; (child.Stage == model.StageDone) != isLast {
+				return fmt.Errorf("expanded child %q: exactly the last child must be the done stage", child.ID)
+			}
+			status := NodeStatusPending
+			if i == 0 {
+				status = NodeStatusReady
+			}
+			st.Nodes[child.ID] = NodeState{
+				Status: status,
+				Parent: event.NodeID,
+				Stage:  child.Stage,
+				StepID: child.StepID,
+			}
+			children = append(children, child.ID)
+		}
+		node.Status = NodeStatusRunning
+		node.Children = children
+		st.Nodes[event.NodeID] = node
+		return nil
 	case EventNodeAttemptStarted:
 		node, err := getNode(st, event.NodeID)
 		if err != nil {
@@ -213,6 +267,12 @@ func applyEvent(st *State, event Event) error {
 			if !IsPassOutcome(event.Outcome) {
 				status = NodeStatusFailed
 			}
+		}
+		// Claimed done is not done: an expanded stage child may only settle as
+		// completed when an evidence ref backs the claim; otherwise it flips to
+		// failed (design doc section 4).
+		if node.Parent != "" && status == NodeStatusCompleted && strings.TrimSpace(node.ActiveAttempt.EvidenceRef) == "" {
+			status = NodeStatusFailed
 		}
 		node.Status = status
 		st.Nodes[event.NodeID] = node

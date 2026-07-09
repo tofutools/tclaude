@@ -108,6 +108,70 @@ tclaude process templates ls --store-root "$STORE"
 tclaude process runs ls --store-root "$STORE"
 ```
 
+## Compound task nodes
+
+A task node that declares `plan`, `checks`, or `review` is a compound node.
+Activating it expands it into explicit child stage nodes, recorded in run
+state (logical zoom is the data model, not a UI trick):
+
+```
+implement  ->  implement.plan
+               implement.plan.approval   (only when plan.approval: human)
+               implement.do
+               implement.test.<check-id> (one per checks entry, in order)
+               implement.review
+               implement.done
+```
+
+```yaml
+nodes:
+  implement:
+    type: task
+    performer: { kind: agent, profile: dev, prompt: "Implement {{ params.issue }}" }
+    plan:
+      id: plan
+      approval: human            # human | auto (default auto)
+      performer: { kind: agent, prompt: "Plan it" }
+    checks:
+      - id: tests
+        performer: { kind: program, run: "go test ./..." }
+    review:
+      id: review
+      performer: { kind: agent, profile: reviewer, prompt: "Cold-review the diff" }
+    retry:
+      maxAttempts: 2             # budget for the do stage
+      onFail: feedback-same-session   # retry mode: feedback-same-session | fresh-attempt
+    next:
+      pass: done
+```
+
+Rules that make compound runs trustworthy:
+
+- **Expansion is recorded state.** The `node_expanded` event lists the derived
+  children; `verify` re-derives the expansion from the pinned template and
+  flags any mismatch (`expansion_template_mismatch`).
+- **Claimed done is not done.** A stage child can only settle as completed
+  with an `--evidence` ref; a pass claim without evidence flips to failed.
+- **Gate failure poisons, it never auto-fails the run.** A failed
+  `test`/`review`/`plan.approval` gate blocks the child and its parent with a
+  reason and owner; the run keeps running and a human (or later, a decision
+  node) resolves it. Gate feedback loops and per-gate budgets land in the next
+  phase; in this phase a gate failure blocks immediately.
+- **Retry mode is policy, not routing.** `retry.onFail` selects how a retry
+  re-engages the performer (`feedback-same-session` keeps the session,
+  `fresh-attempt` starts clean; unset defaults to `fresh-attempt`). Failure
+  routing comes only from `next` keys such as `fail`.
+- The parent completes only when its `done` stage completes, which happens
+  automatically after the last gate passes.
+
+Advance the stages of a compound run manually:
+
+```bash
+tclaude process advance demo-1 implement --store-root "$STORE" --verdict pass          # expands
+tclaude process advance demo-1 implement.plan --store-root "$STORE" --verdict pass --evidence artifacts/plan.md
+tclaude process advance demo-1 implement.do --store-root "$STORE" --verdict pass --evidence commit:abc123
+```
+
 ## Notes
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.

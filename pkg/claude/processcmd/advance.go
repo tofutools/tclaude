@@ -103,16 +103,25 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 	if node.Status == state.NodeStatusFailed {
 		return nil, fmt.Errorf("node %q is failed and cannot be advanced", nodeID)
 	}
+	at := processNow().UTC()
+	if node.Parent != "" {
+		return planStageAdvance(snapshot, tmpl, nodeID, node, verdict, actor, evidenceRef, at)
+	}
 	templateNode, ok := tmpl.Nodes[nodeID]
 	if !ok {
 		return nil, fmt.Errorf("node %q is not in template", nodeID)
 	}
 	if node.Status != state.NodeStatusReady {
+		if len(node.Children) > 0 {
+			return nil, fmt.Errorf("node %q is %s and expanded; advance its stage children instead (%s)", nodeID, node.Status, strings.Join(node.Children, ", "))
+		}
 		return nil, fmt.Errorf("node %q is %s; only ready nodes can be advanced manually", nodeID, node.Status)
 	}
-	at := processNow().UTC()
 	switch templateNode.Type {
 	case model.NodeTypeTask:
+		if templateNode.IsCompound() {
+			return planExpandAdvance(nodeID, templateNode, verdict, at)
+		}
 		return planTaskAdvance(snapshot, tmpl, nodeID, node, templateNode, verdict, actor, evidenceRef, at)
 	case model.NodeTypeDecision:
 		return planDecisionAdvance(snapshot, tmpl, nodeID, templateNode, verdict, actor, evidenceRef, at)
@@ -134,6 +143,113 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
+	}
+}
+
+func planExpandAdvance(nodeID string, templateNode model.Node, verdict string, at time.Time) ([]evidence.LogEntry, error) {
+	if !processplan.IsPassVerdict(verdict) {
+		return nil, fmt.Errorf("compound node %q expands with a pass verdict", nodeID)
+	}
+	specs := model.ExpandNode(nodeID, templateNode)
+	return []evidence.LogEntry{
+		nodeLogEntry(nodeID, evidence.EntryKindExpansion, state.Event{
+			Type:  state.EventNodeExpanded,
+			Nodes: processplan.ExpansionInits(nodeID, specs),
+		}, "", at),
+	}, nil
+}
+
+func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID string, node state.NodeState, verdict string, actor state.ActorRef, evidenceRef string, at time.Time) ([]evidence.LogEntry, error) {
+	if node.Status != state.NodeStatusReady {
+		return nil, fmt.Errorf("stage child %q is %s; only ready nodes can be advanced manually", nodeID, node.Status)
+	}
+	parent, ok := snapshot.State.Nodes[node.Parent]
+	if !ok {
+		return nil, fmt.Errorf("stage child %q references undeclared parent %q", nodeID, node.Parent)
+	}
+	specs, err := processplan.CompoundSpecs(tmpl, node.Parent, parent)
+	if err != nil {
+		return nil, err
+	}
+	spec, err := processplan.StageSpecFor(specs, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if spec.Stage == model.StageDone {
+		return nil, fmt.Errorf("done stage %q settles automatically and cannot be advanced", nodeID)
+	}
+	normalized := strings.ToLower(strings.TrimSpace(verdict))
+	if normalized != "pass" && normalized != "fail" {
+		return nil, fmt.Errorf("stage child %q verdict must be pass or fail", nodeID)
+	}
+	if normalized == "pass" && evidenceRef == "" {
+		return nil, fmt.Errorf("stage child %q pass verdict requires --evidence (claimed done is not done)", nodeID)
+	}
+	attempt := node.Attempt + 1
+	entries := []evidence.LogEntry{
+		nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
+			Type:    state.EventNodeAttemptStarted,
+			Actor:   actor,
+			Attempt: attempt,
+		}, "", at),
+	}
+	transition, err := processplan.NextAfterStage(node.Parent, parent.Children, specs, nodeID, normalized, attempt)
+	if err != nil {
+		return nil, err
+	}
+	switch transition.Kind {
+	case processplan.TransitionRetryChild:
+		return append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
+			Type:       state.EventNodeAttemptSettled,
+			Outcome:    "fail",
+			NodeStatus: state.NodeStatusReady,
+		}, evidenceRef, at)), nil
+	case processplan.TransitionPoison:
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
+			Type:       state.EventNodeAttemptSettled,
+			Outcome:    "fail",
+			NodeStatus: state.NodeStatusFailed,
+		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{
+			Type:   state.EventNodeBlocked,
+			Reason: transition.Reason,
+			Owner:  transition.Owner,
+		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(node.Parent, evidence.EntryKindGate, state.Event{
+			Type:   state.EventNodeBlocked,
+			Reason: transition.Reason,
+			Owner:  transition.Owner,
+		}, evidenceRef, at))
+		return entries, nil
+	case processplan.TransitionActivateChild:
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
+			Type:    state.EventNodeAttemptSettled,
+			Outcome: "pass",
+		}, evidenceRef, at))
+		return append(entries, nodeLogEntry(transition.NextChildID, evidence.EntryKindGate, state.Event{
+			Type:       state.EventNodeStatusSet,
+			NodeStatus: state.NodeStatusReady,
+		}, "", at)), nil
+	case processplan.TransitionCompleteParent:
+		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
+			Type:    state.EventNodeAttemptSettled,
+			Outcome: "pass",
+		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(transition.DoneChildID, evidence.EntryKindGate, state.Event{
+			Type:       state.EventNodeStatusSet,
+			NodeStatus: state.NodeStatusCompleted,
+		}, evidenceRef, at))
+		entries = append(entries, nodeLogEntry(node.Parent, evidence.EntryKindGate, state.Event{
+			Type:       state.EventNodeStatusSet,
+			NodeStatus: state.NodeStatusCompleted,
+		}, evidenceRef, at))
+		parentTemplate, ok := tmpl.Nodes[node.Parent]
+		if !ok {
+			return nil, fmt.Errorf("node %q is not in template", node.Parent)
+		}
+		return appendActivationEntries(entries, snapshot, tmpl, processplan.ResolvePassEdge(parentTemplate.Next, "pass"), evidenceRef, at)
+	default:
+		return nil, fmt.Errorf("unsupported stage transition %q", transition.Kind)
 	}
 }
 
@@ -166,7 +282,7 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 	}, evidenceRef, at))
 	target := processplan.ResolvePassEdge(templateNode.Next, normalized)
 	if normalized == "fail" {
-		target = processplan.ResolveFailEdge(templateNode.Next, templateNode.Retry)
+		target = processplan.ResolveFailEdge(templateNode.Next)
 	}
 	if normalized == "fail" && target == "" {
 		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: state.RunStatusFailed}, evidenceRef, at))

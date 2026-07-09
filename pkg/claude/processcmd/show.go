@@ -72,10 +72,31 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	fmt.Fprintf(out, "Last seq: %d\n", snapshot.State.LastLogSeq)
 	fmt.Fprintln(out, "\nNodes:")
 	tw := newTable(out)
-	fmt.Fprintln(tw, "ID\tTYPE\tSTATUS\tATTEMPT\tCHOSEN")
+	fmt.Fprintln(tw, "ID\tTYPE\tSTATUS\tATTEMPT\tCHOSEN\tDETAIL")
+	rendered := map[string]bool{}
 	for _, nodeID := range sortedNodeIDs(snapshot.State.Nodes) {
 		node := snapshot.State.Nodes[nodeID]
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", nodeID, node.Type, node.Status, node.Attempt, orDash(node.ChosenEdge))
+		if node.Parent != "" {
+			continue
+		}
+		renderNodeRow(tw, nodeID, node, false)
+		rendered[nodeID] = true
+		for _, childID := range node.Children {
+			child, ok := snapshot.State.Nodes[childID]
+			if !ok {
+				continue
+			}
+			renderNodeRow(tw, childID, child, true)
+			rendered[childID] = true
+		}
+	}
+	// Stage children not listed by their parent (corrupt linkage) still render;
+	// verify flags the inconsistency.
+	for _, nodeID := range sortedNodeIDs(snapshot.State.Nodes) {
+		if rendered[nodeID] {
+			continue
+		}
+		renderNodeRow(tw, nodeID, snapshot.State.Nodes[nodeID], true)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -108,6 +129,28 @@ func renderMermaid(out io.Writer, snapshot store.Snapshot, tmpl *model.Template)
 		node := snapshot.State.Nodes[nodeID]
 		fmt.Fprintf(out, "  %s[\"%s<br/>%s\"]\n", mermaidID(nodeID), mermaidLabel(nodeID), mermaidLabel(string(node.Status)))
 	}
+}
+
+func renderNodeRow(tw io.Writer, nodeID string, node state.NodeState, indent bool) {
+	id := nodeID
+	if indent {
+		id = "  " + nodeID
+	}
+	nodeType := string(node.Type)
+	if node.Stage != "" {
+		nodeType = "stage:" + string(node.Stage)
+	}
+	fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", id, orDash(nodeType), node.Status, node.Attempt, orDash(node.ChosenEdge), orDash(nodeDetail(node)))
+}
+
+func nodeDetail(node state.NodeState) string {
+	if node.Status == state.NodeStatusBlocked {
+		return fmt.Sprintf("blocked: %s (owner %s)", node.BlockedReason, node.BlockedOwner)
+	}
+	if node.ActiveAttempt != nil && node.ActiveAttempt.EvidenceRef != "" {
+		return "evidence: " + node.ActiveAttempt.EvidenceRef
+	}
+	return ""
 }
 
 func sortedNodeIDs(nodes map[string]state.NodeState) []string {

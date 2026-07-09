@@ -10,7 +10,7 @@ var (
 	templateFields  = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
 	paramFields     = stringSet("type", "name", "description", "doc", "required", "default")
 	nodeFields      = stringSet("type", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "metadata")
-	stepFields      = stringSet("id", "name", "description", "doc", "performer", "retry")
+	stepFields      = stringSet("id", "name", "description", "doc", "performer", "approval", "retry")
 	performerFields = stringSet(
 		"kind",
 		"profile",

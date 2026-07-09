@@ -57,9 +57,11 @@ type CommandKind string
 
 const (
 	CommandKindActivateNode   CommandKind = "activate_node"
+	CommandKindExpandNode     CommandKind = "expand_node"
 	CommandKindStartAttempt   CommandKind = "start_attempt"
 	CommandKindSettleAttempt  CommandKind = "settle_attempt"
 	CommandKindRecordDecision CommandKind = "record_decision"
+	CommandKindBlockNode      CommandKind = "block_node"
 	CommandKindSetTimer       CommandKind = "set_timer"
 	CommandKindWaitSignal     CommandKind = "wait_signal"
 	CommandKindCompleteRun    CommandKind = "complete_run"
@@ -116,6 +118,13 @@ type NodeState struct {
 	Status   NodeStatus     `json:"status"`
 	Assignee string         `json:"assignee,omitempty"`
 	Attempt  int            `json:"attempt,omitempty"`
+
+	// Compound expansion linkage: Parent/Stage/StepID are set on expanded stage
+	// children; Children is the ordered stage-child list on the expanded parent.
+	Parent   string          `json:"parent,omitempty"`
+	Stage    model.StageKind `json:"stage,omitempty"`
+	StepID   string          `json:"stepId,omitempty"`
+	Children []string        `json:"children,omitempty"`
 
 	ActiveAttempt *AttemptState    `json:"activeAttempt,omitempty"`
 	Decisions     []DecisionRecord `json:"decisions,omitempty"`
@@ -197,4 +206,9 @@ type NodeInit struct {
 	Type     model.NodeType `json:"type,omitempty"`
 	Status   NodeStatus     `json:"status,omitempty"`
 	Assignee string         `json:"assignee,omitempty"`
+
+	// Stage metadata for children introduced by node_expanded events.
+	Parent string          `json:"parent,omitempty"`
+	Stage  model.StageKind `json:"stage,omitempty"`
+	StepID string          `json:"stepId,omitempty"`
 }

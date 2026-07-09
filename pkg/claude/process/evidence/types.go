@@ -16,16 +16,17 @@ const (
 type EntryKind string
 
 const (
-	EntryKindAttempt  EntryKind = "attempt"
-	EntryKindDecision EntryKind = "decision"
-	EntryKindGate     EntryKind = "gate"
-	EntryKindSignal   EntryKind = "signal"
-	EntryKindAdmin    EntryKind = "admin"
+	EntryKindAttempt   EntryKind = "attempt"
+	EntryKindDecision  EntryKind = "decision"
+	EntryKindGate      EntryKind = "gate"
+	EntryKindSignal    EntryKind = "signal"
+	EntryKindAdmin     EntryKind = "admin"
+	EntryKindExpansion EntryKind = "expansion"
 )
 
 func (k EntryKind) IsValid() bool {
 	switch k {
-	case EntryKindAttempt, EntryKindDecision, EntryKindGate, EntryKindSignal, EntryKindAdmin:
+	case EntryKindAttempt, EntryKindDecision, EntryKindGate, EntryKindSignal, EntryKindAdmin, EntryKindExpansion:
 		return true
 	default:
 		return false
