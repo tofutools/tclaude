@@ -35,6 +35,16 @@ func EnsureClaudeCleanupPeriod() error {
 		// rest of tclaude surfaces that. Nothing to sync here.
 		return nil
 	}
+	return SyncClaudeCleanupPeriod(cfg)
+}
+
+// SyncClaudeCleanupPeriod applies an already-loaded config's transcript-
+// retention override to ~/.claude/settings.json. It's the shared core of
+// EnsureClaudeCleanupPeriod (which loads config first), and is also called
+// directly by agentd right after the dashboard Config tab saves — so a value
+// set in the UI takes effect immediately instead of only on the next session
+// start. No-op when the override is unset (≤ 0); logs and returns on failure.
+func SyncClaudeCleanupPeriod(cfg *config.Config) error {
 	days, ok := cfg.ClaudeCleanupPeriodDaysOverride()
 	if !ok {
 		return nil
