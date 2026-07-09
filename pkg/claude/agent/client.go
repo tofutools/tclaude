@@ -302,12 +302,23 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 // multi-table transaction, well beyond the default JSON-call budget.
 const daemonRawTimeout = 10 * time.Minute
 
+// DaemonGetRawImpl is the indirection point for DaemonGetRaw, the same
+// seam DaemonRequestImpl provides for the JSON transport: CLI tests
+// reassign it (with t.Cleanup restoration) to serve canned daemon bytes
+// without a real Unix-socket daemon.
+var DaemonGetRawImpl = daemonGetRaw
+
 // DaemonGetRaw performs a GET against the daemon and returns the raw
-// response body plus its headers — used for binary downloads such as a
-// group-export .zip, where the body is not JSON. A >= 400 status is
-// returned as a *DaemonError, its message decoded from the JSON error
-// envelope the daemon writes on failure.
+// response body plus its headers — used for downloads where the body
+// must pass through unparsed: a group-export .zip, or a template export
+// whose JSON the daemon owns the shape of. A >= 400 status is returned
+// as a *DaemonError, its message decoded from the JSON error envelope
+// the daemon writes on failure.
 func DaemonGetRaw(path string) ([]byte, http.Header, error) {
+	return DaemonGetRawImpl(path)
+}
+
+func daemonGetRaw(path string) ([]byte, http.Header, error) {
 	req, err := http.NewRequest(http.MethodGet, "http://_"+path, nil)
 	if err != nil {
 		return nil, nil, err

@@ -185,3 +185,99 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 	assert.False(t, *p.RemoteControl)
 	assert.Equal(t, map[string]string{agentd.PermGroupsSpawn: "grant"}, p.PermissionOverrides)
 }
+
+// Scenario: harness-composition validation at SAVE. A blank-harness
+// profile_inline is validated against the default (Claude) catalog on its
+// own, but its fields overlay ABOVE the referenced profile at instantiate —
+// so over a Codex spawn_profile ref they'd ride onto a Codex launch and the
+// template would be saveable yet never instantiable. The save must reject
+// the composed shape with a message naming profile_inline; the same fields
+// explicitly tagged with the ref's harness (and a model that harness takes)
+// stay saveable.
+func TestGroupTemplate_ProfileInline_HarnessMismatchWithRefRejectedAtSave(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		createProfile(t, f, map[string]any{"name": "cx-base", "harness": "codex", "model": "gpt-5-codex"}).Code,
+		"create codex profile")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "mixed",
+		"agents": []map[string]any{
+			{"name": "a", "spawn_profile": "cx-base",
+				"profile_inline": map[string]any{"model": "opus"}},
+		},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"blank-harness inline Claude model over a codex ref must fail at save, not deploy: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "profile_inline", "error names the offending tier")
+
+	// Positive control: same shape, inline profile explicitly codex-tagged
+	// with a model that harness accepts — saves fine.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "mixed-ok",
+		"agents": []map[string]any{
+			{"name": "a", "spawn_profile": "cx-base",
+				"profile_inline": map[string]any{"harness": "codex", "model": "gpt-5"}},
+		},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "codex-tagged inline over codex ref saves: %s", rec.Body.String())
+}
+
+// Scenario: tri-state owner. The referenced registry profile defaults
+// is_owner=true; the template-local custom config explicitly turns it off.
+// More specific wins — the deployed agent must NOT be a group owner. (The
+// resolver previously honoured only true, so the registry default silently
+// re-granted ownership past an explicit local "off" — exactly what the
+// dashboard's custom-config editor lets a human express.)
+func TestGroupTemplate_ProfileInline_ExplicitNotOwnerOverridesRefProfile(t *testing.T) {
+	f := newFlow(t)
+
+	require.Equalf(t, http.StatusCreated,
+		createProfile(t, f, map[string]any{"name": "owner-kit", "is_owner": true}).Code,
+		"create owner profile")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "crew-tri",
+		"agents": []map[string]any{
+			{"name": "lead", "spawn_profile": "owner-kit",
+				"profile_inline": map[string]any{"is_owner": false}},
+		},
+	}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/crew-tri/instantiate",
+		map[string]any{"group_name": "flotilla"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Equal(t, 0, res.Failed, "no spawn failures: %+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	g, err := db.GetAgentGroupByName("flotilla")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.False(t, ownsGroup(t, g.ID, res.Agents[0].ConvID),
+		"explicit profile_inline.is_owner=false beats the referenced profile's owner default")
+
+	// The legacy per-agent flag stays a pure raise: with it set, the explicit
+	// inline false is overridden (legacy inline is the highest tier).
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "crew-legacy",
+		"agents": []map[string]any{
+			{"name": "lead", "is_owner": true, "spawn_profile": "owner-kit",
+				"profile_inline": map[string]any{"is_owner": false}},
+		},
+	}).Code, "create legacy-flag template")
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates/crew-legacy/instantiate",
+		map[string]any{"group_name": "armada"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 0, res.Failed)
+	agentd.WaitForBackgroundForTest()
+	g2, err := db.GetAgentGroupByName("armada")
+	require.NoError(t, err)
+	require.NotNil(t, g2)
+	assert.True(t, ownsGroup(t, g2.ID, res.Agents[0].ConvID),
+		"the legacy per-agent owner flag still raises past an inline false")
+}

@@ -746,6 +746,24 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval",
 			fmt.Sprintf("agent %q: %s", agentName, err.Error())}
 	}
+	// The template-local profile's fields were validated against its OWN
+	// harness by buildInlineProfileFromJSON (blank = the Claude default). When
+	// the agent's harness and the inline profile's harness are both blank, the
+	// instantiate-time overlay leaves the accumulator's harness OPEN, so a
+	// referenced spawn profile beneath can still impose a different harness —
+	// and the inline fields (validated as Claude) would ride onto it, making
+	// the template saveable but never instantiable (e.g. profile_inline.model
+	// "opus" over a Codex spawn_profile ref). Revalidate the inline fields
+	// against the effective harness resolved above so that shape is rejected
+	// at save, with a message that names the actual conflict. (When the inline
+	// profile's harness IS set, valHarness already picked it up — or, if the
+	// agent's own harness mismatches it, the overlay drops the whole inline
+	// tier at instantiate, so there is nothing to revalidate.)
+	if inline != nil && inlineHarness == "" && harnessOrDefault(inline.Harness) != h.Name {
+		if fail := validateInlineProfileForHarness(agentName, h, inline); fail != nil {
+			return templateAgentLaunch{}, fail
+		}
+	}
 	// Store the inline harness as typed (blank stays blank so it falls through to
 	// the profile at instantiate), NOT the resolved validation harness.
 	return templateAgentLaunch{
@@ -756,6 +774,51 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 		Sandbox:      sandbox,
 		Approval:     approval,
 	}, nil
+}
+
+// validateInlineProfileForHarness re-checks a template-local profile's launch
+// fields against a harness other than the one they were validated under at
+// buildInlineProfileFromJSON time — the harness the instantiate-time overlay
+// will actually adopt (see the call site in validateTemplateAgentLaunch). The
+// per-field checks mirror buildProfileFromJSON's; blank fields stay no-ops.
+func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db.SpawnProfile) *spawnFailure {
+	wrap := func(kind, msg string) *spawnFailure {
+		return &spawnFailure{http.StatusBadRequest, kind, fmt.Sprintf(
+			"agent %q: profile_inline: %s — the custom config has no harness of its own, so its fields "+
+				"apply on the %q launch this agent resolves to; align them with that harness or set "+
+				"profile_inline.harness explicitly", agentName, msg, h.Name)}
+	}
+	if _, err := h.Models.ValidateModel(p.Model); err != nil {
+		return wrap("invalid_model", err.Error())
+	}
+	if _, err := h.Models.ValidateEffort(p.Effort); err != nil {
+		return wrap("invalid_effort", err.Error())
+	}
+	if _, err := harness.ValidateSandboxMode(h, p.Sandbox); err != nil {
+		return wrap("invalid_sandbox", err.Error())
+	}
+	if _, err := harness.ValidateApprovalPolicy(h, p.Approval); err != nil {
+		return wrap("invalid_approval", err.Error())
+	}
+	if _, err := harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
+		return wrap("invalid_ask_user_question_timeout", err.Error())
+	}
+	if p.AutoReview != nil {
+		if _, err := harness.ResolveAutoReview(h, *p.AutoReview); err != nil {
+			return wrap("invalid_auto_review", err.Error())
+		}
+	}
+	if p.TrustDir != nil {
+		if _, err := harness.ResolveTrustDir(h, *p.TrustDir); err != nil {
+			return wrap("invalid_trust_dir", err.Error())
+		}
+	}
+	if p.RemoteControl != nil {
+		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
+			return wrap("invalid_remote_control", err.Error())
+		}
+	}
+	return nil
 }
 
 // launchAccum accumulates the effective launch fields as tiers overlay onto
@@ -1776,7 +1839,14 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			set(s, db.PermEffectGrant)
 		}
 	}
-	owner := a.IsOwner
+	// Ownership composes tri-state up the tiers, most specific last: the
+	// referenced profile's owner default, then an explicit
+	// profile_inline.is_owner — true OR false, so a template-local "not an
+	// owner" really does override the registry profile's default, the same
+	// more-specific-wins rule the per-slug overrides below follow — then the
+	// legacy per-agent flag, which is a plain bool and can only grant (false
+	// just means "unset" there).
+	owner := false
 	// Tier 2: the agent's referenced spawn profile — its owner default + its
 	// grant/deny overrides. Profile slugs are applied in sorted order so a
 	// deploy's per-agent grant report is deterministic (the map itself is not).
@@ -1789,8 +1859,8 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			return false, nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		if prof.IsOwner != nil && *prof.IsOwner {
-			owner = true
+		if prof.IsOwner != nil {
+			owner = *prof.IsOwner
 		}
 		slugs := make([]string, 0, len(prof.PermissionOverrides))
 		for slug := range prof.PermissionOverrides {
@@ -1804,8 +1874,8 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 	// Tier 2.5: the agent's template-local profile — more specific than the
 	// registry reference, so its owner default + overrides apply on top of it.
 	if p := a.ProfileInline; p != nil {
-		if p.IsOwner != nil && *p.IsOwner {
-			owner = true
+		if p.IsOwner != nil {
+			owner = *p.IsOwner
 		}
 		slugs := make([]string, 0, len(p.PermissionOverrides))
 		for slug := range p.PermissionOverrides {
@@ -1816,7 +1886,11 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 			set(slug, p.PermissionOverrides[slug])
 		}
 	}
-	// Tier 3: the agent's own inline grants (legacy per-agent list) — highest.
+	// Tier 3: the agent's own legacy inline access — highest. The owner flag
+	// is a plain bool (no "explicit false"), so it can only raise.
+	if a.IsOwner {
+		owner = true
+	}
 	for _, s := range a.Permissions {
 		set(s, db.PermEffectGrant)
 	}

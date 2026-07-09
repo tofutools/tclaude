@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -143,19 +144,6 @@ type templateJSON struct {
 	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
 	CreatedAt   string `json:"created_at,omitempty"`
 	UpdatedAt   string `json:"updated_at,omitempty"`
-}
-
-// templateExportEnvelope mirrors the daemon's portable export shape
-// (see agentd/templates.go): a small versioned wrapper around the inner
-// template JSON. `export` writes it; `import` sends it back.
-type templateExportEnvelope struct {
-	Format        string       `json:"format"`
-	FormatVersion int          `json:"format_version"`
-	ExportedAt    string       `json:"exported_at,omitempty"`
-	Template      templateJSON `json:"template"`
-	// Roles embeds the referenced role definitions (JOH-240) so the export
-	// round-trips through the CLI; import re-creates any missing on the target.
-	Roles []roleJSON `json:"roles,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents.
@@ -971,24 +959,39 @@ func runTemplatesExport(p *templatesExportParams, stdout, stderr io.Writer) int 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	var env templateExportEnvelope
-	if err := DaemonRequest(http.MethodGet, "/v1/templates/"+url.PathEscape(name)+"/export", nil, &env, DaemonOpts{}); err != nil {
+	// Write the daemon's export bytes through VERBATIM (re-indented only): the
+	// daemon is the authority on the envelope shape, and decoding into a
+	// CLI-side mirror struct silently strips any envelope field the mirror
+	// doesn't carry (the embedded `profiles` array was lost exactly that way).
+	// Import already posts the file's bytes raw for the same reason.
+	raw, _, err := DaemonGetRaw("/v1/templates/" + url.PathEscape(name) + "/export")
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	buf, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: encoding export JSON: %v\n", err)
+	var out bytes.Buffer
+	if err := json.Indent(&out, raw, "", "  "); err != nil {
+		fmt.Fprintf(stderr, "Error: malformed export JSON from daemon: %v\n", err)
 		return rcIOFailure
 	}
-	buf = append(buf, '\n')
+	out.WriteByte('\n')
+	buf := out.Bytes()
 	if file := strings.TrimSpace(p.File); file != "" {
 		if err := os.WriteFile(file, buf, 0o644); err != nil {
 			fmt.Fprintf(stderr, "Error: writing %s: %v\n", file, err)
 			return rcIOFailure
 		}
+		// Decode just the agent list for the confirmation line — the envelope
+		// itself stays opaque to the CLI.
+		var env struct {
+			Template struct {
+				Agents []json.RawMessage `json:"agents"`
+			} `json:"template"`
+		}
+		_ = json.Unmarshal(raw, &env)
+		n := len(env.Template.Agents)
 		fmt.Fprintf(stderr, "Exported template %q → %s (%d agent%s)\n",
-			name, file, len(env.Template.Agents), plural(len(env.Template.Agents)))
+			name, file, n, plural(n))
 		return rcOK
 	}
 	if _, err := stdout.Write(buf); err != nil {

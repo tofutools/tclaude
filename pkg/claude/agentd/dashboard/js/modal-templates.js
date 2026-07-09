@@ -222,10 +222,26 @@ function templateWaveCount(t) {
   return waves.size;
 }
 
+// templateAgentIsOwner mirrors the server's owner resolution
+// (resolveTemplateAgentAccess): the referenced registry profile's owner
+// default, overridden by an explicit profile_inline.is_owner (tri-state — an
+// explicit false really turns it off), raised by the legacy per-agent flag.
+// Registry lookups ride the profiles cache; before it loads, a ref-only owner
+// star may lag one render, same as the deploy-default preview.
+function templateAgentIsOwner(a) {
+  let owner = false;
+  const ref = a.spawn_profile && cachedProfiles().find(p => p.name === a.spawn_profile);
+  if (ref && typeof ref.is_owner === 'boolean') owner = ref.is_owner;
+  const inline = a.profile_inline;
+  if (inline && typeof inline.is_owner === 'boolean') owner = inline.is_owner;
+  if (a.is_owner) owner = true;
+  return owner;
+}
+
 function templateCardHTML(t) {
   const agents = (t.agents || []).map(a => {
     const inlineOverrides = (a.profile_inline && a.profile_inline.permission_overrides) || {};
-    const owner = (a.is_owner || (a.profile_inline && a.profile_inline.is_owner))
+    const owner = templateAgentIsOwner(a)
       ? '<span class="tc-owner" title="group owner">★</span> ' : '';
     const role = a.role ? ` <span class="tc-role">${esc(a.role)}</span>` : '';
     // A slug in both the legacy list and the custom config counts once.
@@ -340,12 +356,14 @@ export function templateRosterRowsHTML(t, prefix, defaultProfile) {
     // its own (no profile, no role, no inline field) — the same eligibility the
     // deploy submit uses, so the preview matches what will be sent per-member.
     const adoptsDefault = !!dp && !a.spawn_profile && agentInheritsDeployDefault(a);
-    // Owner / perm chips reflect the member's OWN access (incl. a template-local
-    // custom config's owner/overrides) PLUS, when it adopts the default profile,
-    // that profile's owner default + override count — so the birth-time
-    // permissions/ownership the launch config carries is visible, not silent.
+    // Owner / perm chips reflect the member's effective access — the referenced
+    // registry profile's owner default, a template-local custom config's
+    // tri-state owner/overrides, the legacy flag (templateAgentIsOwner mirrors
+    // the server) — PLUS, when it adopts the default profile, that profile's
+    // owner default + override count — so the birth-time permissions/ownership
+    // the launch config carries is visible, not silent.
     const inline = a.profile_inline || null;
-    const owner = (a.is_owner || (inline && inline.is_owner) || (adoptsDefault && dp.is_owner))
+    const owner = (templateAgentIsOwner(a) || (adoptsDefault && dp.is_owner))
       ? '<span class="tp-owner" title="group owner">★ owner</span>' : '';
     let np = (a.permissions || []).length;
     if (inline && inline.permission_overrides) np += Object.keys(inline.permission_overrides).length;
