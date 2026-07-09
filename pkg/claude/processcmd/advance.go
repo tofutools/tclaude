@@ -79,6 +79,9 @@ func runAdvance(cmd *cobra.Command, p *advanceParams, out io.Writer) error {
 	if !state.ValidateActorRef(actor) {
 		return fmt.Errorf("invalid actor %q; use human:<id>, agent:agt_<id>, or program:<cmd>@exit<code>", actor)
 	}
+	if state.IsEngineActor(actor) {
+		return fmt.Errorf("actor %q is reserved: engine actors mark engine-synthesized decisions and cannot be supplied to a manual advance", actor)
+	}
 	entries, err := planAdvance(snapshot, tmpl, p.NodeID, strings.TrimSpace(p.Verdict), actor, advanceInputs{
 		EvidenceRef:  strings.TrimSpace(p.EvidenceRef),
 		EvidenceHash: strings.TrimSpace(p.EvidenceHash),

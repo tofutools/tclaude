@@ -200,6 +200,23 @@ func TestCompoundWorkBudgetBoundsLoop(t *testing.T) {
 	assertOutputContains(t, out.String(), `stage "implement.do" has exhausted its budget of 3 attempts`)
 }
 
+func TestAdvanceRejectsReservedEngineActor(t *testing.T) {
+	// The engine: namespace asserts the ENGINE synthesized a decision; a
+	// manual advance claiming it would forge short-circuit provenance
+	// without the reducer's hash check.
+	cmd, root := gateLoopFlowSetup(t, "loop_engine_actor", "2")
+	advanceOK(t, cmd, root, "loop_engine_actor", "implement", "pass", "")
+
+	var out bytes.Buffer
+	err := runAdvance(cmd, &advanceParams{
+		RunID: "loop_engine_actor", NodeID: "implement.plan", StoreRoot: root,
+		Verdict: "pass", EvidenceRef: "artifacts/plan.md", Actor: "engine:evidence-unchanged",
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expected reserved-actor refusal, got %v", err)
+	}
+}
+
 func TestTamperedGateFailCountFailsVerify(t *testing.T) {
 	cmd, root := gateLoopFlowSetup(t, "loop_tamper_count", "2")
 	advanceOK(t, cmd, root, "loop_tamper_count", "implement", "pass", "")

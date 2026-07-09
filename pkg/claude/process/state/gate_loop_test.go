@@ -121,6 +121,33 @@ func TestGateFailFeedbackReentryAndPass(t *testing.T) {
 	}
 }
 
+func TestHashlessGateSettleClearsLastEvidenceHash(t *testing.T) {
+	// A settle without a work-evidence hash must CLEAR the recorded hash, not
+	// preserve the previous window's: otherwise a later re-entry could
+	// short-circuit against a verdict that evaluated different, unhashed work
+	// (e.g. window 3 reverts to window 1's bytes while window 2 settled with
+	// no --evidence-hash).
+	events, seq := gateLoopEvents()
+	events = append(events,
+		Event{Type: EventNodeAttemptStarted, Seq: seq, NodeID: "implement.test.tests", Actor: "program:go test@exit1"},
+		Event{Type: EventNodeAttemptSettled, Seq: seq + 1, NodeID: "implement.test.tests", Outcome: "fail", NodeStatus: NodeStatusFailed, EvidenceRef: "artifact:log-1", WorkEvidenceHash: workHash1},
+		Event{Type: EventFeedbackRecorded, Seq: seq + 2, NodeID: "implement.do", FromNodeID: "implement.test.tests", Feedback: "fails"},
+		Event{Type: EventGateLoopReset, Seq: seq + 3, NodeID: "implement", Gates: []string{"implement.test.tests"}, Reason: "tests failed"},
+		Event{Type: EventNodeStatusSet, Seq: seq + 4, NodeID: "implement.do", NodeStatus: NodeStatusReady},
+		// The do stage re-runs and settles WITHOUT an evidence hash.
+		Event{Type: EventNodeAttemptStarted, Seq: seq + 5, NodeID: "implement.do", Actor: "agent:agt_dev123"},
+		Event{Type: EventNodeAttemptSettled, Seq: seq + 6, NodeID: "implement.do", Outcome: "pass", NodeStatus: NodeStatusCompleted, EvidenceRef: "commit:def"},
+		Event{Type: EventNodeStatusSet, Seq: seq + 7, NodeID: "implement.test.tests", NodeStatus: NodeStatusReady},
+		Event{Type: EventNodeAttemptStarted, Seq: seq + 8, NodeID: "implement.test.tests", Actor: "program:go test@exit1"},
+		Event{Type: EventNodeAttemptSettled, Seq: seq + 9, NodeID: "implement.test.tests", Outcome: "fail", NodeStatus: NodeStatusFailed, EvidenceRef: "artifact:log-2"},
+	)
+	st := applyAll(t, events)
+	gate := st.Nodes["implement.test.tests"]
+	if gate.LastEvidenceHash != "" {
+		t.Fatalf("hashless settle must clear the recorded hash, got %q", gate.LastEvidenceHash)
+	}
+}
+
 func TestGateLoopResetZeroesCrossKindCounters(t *testing.T) {
 	events, seq := gateLoopEvents()
 	events = append(events,

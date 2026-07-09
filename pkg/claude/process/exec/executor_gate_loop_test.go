@@ -46,6 +46,13 @@ func (a *scriptedAdapter) performsFor(nodeID string) int {
 	return count
 }
 
+func TestValidateObservationRejectsReservedEngineActor(t *testing.T) {
+	err := validateObservation(Observation{Actor: state.ActorEvidenceUnchanged, Verdict: "pass", EvidenceRef: "e1"})
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expected reserved-actor refusal, got %v", err)
+	}
+}
+
 func pass(hash, ref string) Observation {
 	return Observation{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: ref, EvidenceHash: hash}
 }
@@ -377,6 +384,168 @@ func TestDriveResumesStaleGateFeedbackAfterManualReentry(t *testing.T) {
 	}
 	if report := processverify.StoreRun(t.Context(), fs, snapshot.Run.ID); report.HasErrors() {
 		t.Fatalf("verify after recovered drive: %#v", report.Diagnostics)
+	}
+}
+
+func TestDriveHashlessSettleCannotShortCircuitLaterRevert(t *testing.T) {
+	// Cross-vendor review repro: window 2's do settle carries NO evidence
+	// hash. The gate's recorded hash must clear on that window's verdict —
+	// otherwise window 3 reverting to window 1's bytes would short-circuit
+	// against window 2's verdict, which evaluated different, unhashed work.
+	// All three gate verdicts must come from real performs.
+	fs, snapshot := gateLoopExecutorFixture(t, 3, 3, 2)
+	adapter := &scriptedAdapter{script: map[string][]Observation{
+		"work.do": {
+			pass("hash-1", "e-do-1"),
+			pass("", "e-do-2"),       // hashless settle
+			pass("hash-1", "e-do-3"), // revert to window 1 bytes
+		},
+		"work.test.tests": {fail("broken", "e-t-1"), fail("still broken", "e-t-2"), pass("hash-1", "e-t-3")},
+		"work.review":     {pass("hash-1", "e-r-1")},
+	}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State.Status != state.RunStatusCompleted {
+		t.Fatalf("finished status = %s", finished.State.Status)
+	}
+	if got := adapter.performsFor("work.test.tests"); got != 3 {
+		t.Fatalf("tests gate performs = %d, want 3 (no short-circuit may fire)", got)
+	}
+	for _, decision := range finished.State.Nodes["work.test.tests"].Decisions {
+		if strings.HasPrefix(string(decision.Actor), "engine:") {
+			t.Fatalf("bogus engine decision: %#v", finished.State.Nodes["work.test.tests"].Decisions)
+		}
+	}
+	if report := processverify.StoreRun(t.Context(), fs, snapshot.Run.ID); report.HasErrors() {
+		t.Fatalf("verify: %#v", report.Diagnostics)
+	}
+}
+
+// gateLoopGuardSnapshot builds the minimal expanded state the stale-resume
+// guard tests need: a do stage and a tests gate under one parent.
+func gateLoopGuardSnapshot(gate, target state.NodeState) store.Snapshot {
+	gate.Parent = "work"
+	gate.Stage = model.StageTest
+	gate.StepID = "tests"
+	target.Parent = "work"
+	target.Stage = model.StageDo
+	return store.Snapshot{State: &state.State{
+		RunID:  "run_gate_loop",
+		Status: state.RunStatusRunning,
+		Nodes: map[string]state.NodeState{
+			"work":            {Type: model.NodeTypeTask, Status: state.NodeStatusRunning, Children: []string{"work.do", "work.test.tests", "work.done"}},
+			"work.do":         target,
+			"work.test.tests": gate,
+			"work.done":       {Parent: "work", Stage: model.StageDone, Status: state.NodeStatusPending},
+		},
+	}}
+}
+
+func TestStaleShortCircuitFromOlderGenerationIsNoOp(t *testing.T) {
+	// Cross-vendor review repro: a claimed short-circuit from window 1
+	// resumes in a LATER window that reverted to the same evidence bytes.
+	// The shape checks (ready, decisions, hash match) all pass; only the
+	// generation binding stops the replay from standing the wrong
+	// generation's verdict.
+	gate := state.NodeState{
+		Status: state.NodeStatusReady, Attempt: 2, LastEvidenceHash: "hash-1",
+		Decisions: []state.DecisionRecord{
+			{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "e-t-1"},
+			{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "e-t-2"},
+			{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "e-t-3"},
+		},
+	}
+	target := state.NodeState{Status: state.NodeStatusCompleted, Attempt: 3,
+		ActiveAttempt: &state.AttemptState{Attempt: 3, Outcome: "pass", EvidenceRef: "e-do-3", EvidenceHash: "hash-1", SettledAt: executorTestTime}}
+	snapshot := gateLoopGuardSnapshot(gate, target)
+
+	stale := plan.Command{ID: "cmd_stale", Kind: plan.CommandKindShortCircuit, RunID: "run_gate_loop",
+		NodeID: "work.test.tests", EvidenceHash: "hash-1", DecisionCount: 1}
+	entries, err := observationEntries(stale, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("stale generation must observe as a no-op, got %d entries", len(entries))
+	}
+
+	current := stale
+	current.DecisionCount = 3
+	entries, err = observationEntries(current, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Event.Type != state.EventGateShortCircuited {
+		t.Fatalf("current generation must apply, got %#v", entries)
+	}
+}
+
+func TestStaleGateFeedbackFromOlderGenerationIsNoOp(t *testing.T) {
+	// Cross-vendor review repro: a claimed gate_feedback from window 1
+	// resumes after the loop manually cycled back to the same
+	// failed/completed shape with a NEWER failure. Without the generation
+	// binding the replay would route the old payload and lose the newer
+	// feedback.
+	gate := state.NodeState{
+		Status: state.NodeStatusFailed, Attempt: 2, FailCount: 2,
+		Decisions: []state.DecisionRecord{
+			{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "e-t-1"},
+			{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "e-t-2"},
+		},
+	}
+	target := state.NodeState{Status: state.NodeStatusCompleted, Attempt: 2,
+		ActiveAttempt: &state.AttemptState{Attempt: 2, Outcome: "pass", EvidenceRef: "e-do-2", SettledAt: executorTestTime}}
+	snapshot := gateLoopGuardSnapshot(gate, target)
+
+	stale := plan.Command{ID: "cmd_stale_fb", Kind: plan.CommandKindGateFeedback, RunID: "run_gate_loop",
+		NodeID: "work.test.tests", TargetNodeID: "work.do",
+		Attempt: 1, DecisionCount: 1, Feedback: "OLD window feedback",
+		Gates: []string{"work.test.tests"}}
+	entries, err := observationEntries(stale, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("stale generation must observe as a no-op, got %d entries", len(entries))
+	}
+
+	current := stale
+	current.Attempt = 2
+	current.DecisionCount = 2
+	current.Feedback = "current window feedback"
+	entries, err = observationEntries(current, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 || entries[1].Event.Type != state.EventFeedbackRecorded || entries[1].Event.Feedback != "current window feedback" {
+		t.Fatalf("current generation must apply the batch, got %#v", entries)
+	}
+}
+
+func TestForgedEvidenceHashOnStoredArtifactIsRejected(t *testing.T) {
+	// Cross-vendor review repro: an adapter supplying evidence CONTENT plus
+	// a forged constant hash must not override the store-computed sha256 —
+	// the mismatch is an invalid observation.
+	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
+	adapter := &fakeAdapter{observation: Observation{
+		Actor:        "program:fake@exit0",
+		Verdict:      "pass",
+		Evidence:     &Artifact{Name: "fake.json", Data: []byte("changing evidence bytes")},
+		EvidenceHash: "constant-forged-hash",
+	}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("commands = %#v", commands)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err == nil || !strings.Contains(err.Error(), "does not match stored artifact") {
+		t.Fatalf("expected forged-hash rejection, got %v", err)
 	}
 }
 

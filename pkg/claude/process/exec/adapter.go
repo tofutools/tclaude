@@ -94,6 +94,9 @@ func validateObservation(observation Observation) error {
 	if !state.ValidateActorRef(observation.Actor) {
 		return fmt.Errorf("invalid performer observation actor %q", observation.Actor)
 	}
+	if state.IsEngineActor(observation.Actor) {
+		return fmt.Errorf("performer observation actor %q is reserved: engine actors mark engine-synthesized decisions, not performer results", observation.Actor)
+	}
 	if strings.TrimSpace(observation.Verdict) == "" {
 		return fmt.Errorf("performer observation verdict is required")
 	}

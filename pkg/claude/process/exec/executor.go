@@ -413,9 +413,15 @@ func (e *Executor) persistPerformerObservation(ctx context.Context, command plan
 			return Observation{}, fmt.Errorf("store evidence for process command %q: %w", command.ID, err)
 		}
 		observation.EvidenceRef = artifact.Ref
-		if observation.EvidenceHash == "" {
-			observation.EvidenceHash = artifact.SHA256
+		// The store-computed content hash always wins over an adapter-claimed
+		// one: silently keeping a supplied hash would let a constant claim on
+		// changing evidence bytes drive the evidence-unchanged short-circuit
+		// against work the gate never evaluated. A mismatching claim is an
+		// invalid observation, not something to correct quietly.
+		if observation.EvidenceHash != "" && observation.EvidenceHash != artifact.SHA256 {
+			return Observation{}, fmt.Errorf("record process command %q observation: supplied evidence hash %q does not match stored artifact sha256 %q", command.ID, observation.EvidenceHash, artifact.SHA256)
 		}
+		observation.EvidenceHash = artifact.SHA256
 	}
 	return observation, nil
 }
@@ -599,15 +605,20 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		// loop-reset pending) gate fails the reducer forever and wedges
 		// Drive. Applicability mirrors what the planner required when it
 		// emitted the command — a READY re-entering gate holding a prior
-		// verdict whose recorded work-evidence hash still matches; anything
-		// else is idempotent success: mark observed, append nothing.
-		if node, ok := snapshot.State.Nodes[command.NodeID]; ok {
-			applicable := node.Status == state.NodeStatusReady &&
-				len(node.Decisions) > 0 &&
-				node.LastEvidenceHash != "" && node.LastEvidenceHash == command.EvidenceHash
-			if !applicable {
-				return entries, nil
-			}
+		// verdict whose recorded work-evidence hash still matches — AND the
+		// command must be bound to the exact loop generation it was issued
+		// for: the shape checks alone would also pass in a LATER window that
+		// reverted to the same evidence bytes, standing the wrong
+		// generation's verdict. Anything else, including a gate missing from
+		// state entirely, is idempotent success: mark observed, append
+		// nothing.
+		node, ok := snapshot.State.Nodes[command.NodeID]
+		applicable := ok && node.Status == state.NodeStatusReady &&
+			len(node.Decisions) > 0 &&
+			len(node.Decisions) == command.DecisionCount &&
+			node.LastEvidenceHash != "" && node.LastEvidenceHash == command.EvidenceHash
+		if !applicable {
+			return entries, nil
 		}
 		entries = append(entries, commandEntry(command, state.Event{
 			Type:         state.EventGateShortCircuited,
@@ -619,15 +630,22 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		// re-entered (gate no longer failed, or the target work stage is no
 		// longer settled-completed) must not re-apply: it would re-ready the
 		// target mid-attempt and reset gates against work it has not seen.
-		// Idempotent success, same as the expand/block guards.
+		// The command is additionally bound to the loop generation it was
+		// issued for (gate attempt AND verdict count): without that, a loop
+		// that manually cycled back to the same failed/completed shape would
+		// accept the replay and route the OLD window's payload against the
+		// NEW failure, losing the newer feedback. Idempotent success, same as
+		// the expand/block guards; a node missing from state entirely is also
+		// inapplicable.
 		gate, gok := snapshot.State.Nodes[command.NodeID]
 		target, tok := snapshot.State.Nodes[command.TargetNodeID]
-		if gok && tok {
-			applicable := gate.Status == state.NodeStatusFailed &&
-				target.Status == state.NodeStatusCompleted
-			if !applicable {
-				return entries, nil
-			}
+		applicable := gok && tok &&
+			gate.Status == state.NodeStatusFailed &&
+			gate.Attempt == command.Attempt &&
+			len(gate.Decisions) == command.DecisionCount &&
+			target.Status == state.NodeStatusCompleted
+		if !applicable {
+			return entries, nil
 		}
 		// One append batch routes the gate payload to its work stage, resets
 		// the re-entering gate span, and re-readies the work stage; splitting

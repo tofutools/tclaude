@@ -2,6 +2,7 @@ package state
 
 import (
 	"regexp"
+	"strings"
 )
 
 var (
@@ -25,4 +26,14 @@ func ValidateActorRef(actor ActorRef) bool {
 		agentActorPattern.MatchString(value) ||
 		programActorPattern.MatchString(value) ||
 		engineActorPattern.MatchString(value)
+}
+
+// IsEngineActor reports whether an actor ref claims the reserved engine
+// namespace. External inputs (CLI verdicts, performer observations) must
+// never carry it: an engine actor asserts the ENGINE synthesized the
+// decision, and accepting one from outside would forge short-circuit
+// provenance without the hash check the gate_short_circuited reducer
+// enforces.
+func IsEngineActor(actor ActorRef) bool {
+	return strings.HasPrefix(string(actor), "engine:")
 }

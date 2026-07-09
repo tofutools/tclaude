@@ -466,6 +466,44 @@ func TestPlanGateSettleIsWindowTerminal(t *testing.T) {
 	}
 }
 
+func TestPlanApprovalFailureFeedsBackIntoPlanStage(t *testing.T) {
+	// The plan.approval gate re-enters the PLAN stage, not do. ExpandNode
+	// gives approval no retry knob today (budget 1, so template-derived
+	// approval failures poison before looping); hand-built specs exercise
+	// the routing so the mechanism is pinned for when a budget knob lands
+	// (TCL-280).
+	specs := []model.StageSpec{
+		{ChildID: "implement.plan", Stage: model.StagePlan, Retry: &model.RetryPolicy{MaxAttempts: 2}},
+		{ChildID: "implement.plan.approval", Stage: model.StagePlanApproval, Retry: &model.RetryPolicy{MaxAttempts: 2}},
+		{ChildID: "implement.do", Stage: model.StageDo},
+		{ChildID: "implement.done", Stage: model.StageDone},
+	}
+	children := []string{"implement.plan", "implement.plan.approval", "implement.do", "implement.done"}
+	nodes := map[string]state.NodeState{
+		"implement.plan": {Parent: "implement", Stage: model.StagePlan, Status: state.NodeStatusCompleted,
+			Attempt: 1, ActiveAttempt: &state.AttemptState{Attempt: 1, Outcome: "pass", EvidenceRef: "e1", SettledAt: fixedTime()}},
+		"implement.plan.approval": {Parent: "implement", Stage: model.StagePlanApproval, Status: state.NodeStatusFailed,
+			Attempt: 1, FailCount: 1},
+		"implement.do":   {Parent: "implement", Stage: model.StageDo, Status: state.NodeStatusPending},
+		"implement.done": {Parent: "implement", Stage: model.StageDone, Status: state.NodeStatusPending},
+	}
+	transition, err := NextAfterStage("implement", children, specs, nodes, StageSettle{
+		ChildID: "implement.plan.approval", Outcome: "fail", Attempt: 1, FailCount: 1, Feedback: "plan misses the rollout step",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.Kind != TransitionFeedbackLoop || transition.TargetStageID != "implement.plan" {
+		t.Fatalf("transition = %#v", transition)
+	}
+	if strings.Join(transition.ResetGates, " ") != "implement.plan.approval" || len(transition.ResetCounters) != 0 {
+		t.Fatalf("reset span = %#v", transition)
+	}
+	if transition.Feedback != "plan misses the rollout step" {
+		t.Fatalf("feedback = %q", transition.Feedback)
+	}
+}
+
 func TestNextAfterStageRejectsDoneAndUnknownChildren(t *testing.T) {
 	tmplNode := compoundTemplate().Nodes["implement"]
 	specs := model.ExpandNode("implement", tmplNode)

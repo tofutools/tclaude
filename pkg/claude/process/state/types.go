@@ -7,7 +7,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-const StateSchemaVersion = 2
+// StateSchemaVersion 3 added the gate feedback-loop fields (NodeState
+// FailCount/LastEvidenceHash/PendingFeedback, AttemptState EvidenceHash/
+// Feedback); older binaries must see ErrNewerSchemaVersion instead of a
+// DisallowUnknownFields decode error.
+const StateSchemaVersion = 3
 
 type RunStatus string
 

@@ -378,9 +378,12 @@ func applyEvent(st *State, event Event) error {
 			if status == NodeStatusFailed {
 				node.FailCount++
 			}
-			if event.WorkEvidenceHash != "" {
-				node.LastEvidenceHash = event.WorkEvidenceHash
-			}
+			// Assign unconditionally: LastEvidenceHash must describe what the
+			// LATEST verdict evaluated. Preserving a stale hash across a
+			// hashless settle would let a later re-entry short-circuit against
+			// a verdict that evaluated different, unhashed work (empty is
+			// ineligible for short-circuiting).
+			node.LastEvidenceHash = event.WorkEvidenceHash
 		}
 		node.Status = status
 		st.Nodes[event.NodeID] = node

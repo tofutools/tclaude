@@ -121,13 +121,10 @@ func compareExpansion(st *State, nodeID string, node NodeState, specs []model.St
 	return diagnostics
 }
 
-// gateBudget mirrors plan.GateBudget without importing the plan package
-// (plan imports state): the gate's declared retry budget, default 1.
+// gateBudget matches plan.GateBudget through the shared model helper (this
+// package cannot import plan: plan imports state).
 func gateBudget(spec model.StageSpec) int {
-	if spec.Retry != nil && spec.Retry.MaxAttempts > 0 {
-		return spec.Retry.MaxAttempts
-	}
-	return 1
+	return model.RetryBudget(spec.Retry)
 }
 
 func nodeProgressedWithoutExpansion(status NodeStatus) bool {

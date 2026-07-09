@@ -22,7 +22,7 @@ const (
 	EntryKindDecision EntryKind = "decision"
 	// EntryKindGate covers gate machinery: verdicts, blocks, feedback
 	// routing, loop resets, short-circuits, and timer/wait bookkeeping.
-	EntryKindGate EntryKind = "gate"
+	EntryKindGate   EntryKind = "gate"
 	EntryKindSignal EntryKind = "signal"
 	EntryKindAdmin  EntryKind = "admin"
 	// EntryKindExpansion covers compound-node expansion records.

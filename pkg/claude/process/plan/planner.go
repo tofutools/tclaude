@@ -216,6 +216,7 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 				cmd := newCommand(CommandKindShortCircuit, st.RunID, nodeID, "short-circuit", settleGeneration(node), hash)
 				cmd.NodeID = nodeID
 				cmd.EvidenceHash = hash
+				cmd.DecisionCount = len(node.Decisions)
 				if commandOutstanding(st, cmd.ID) {
 					return nil, nil
 				}
@@ -345,6 +346,7 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 		cmd := newCommand(CommandKindGateFeedback, st.RunID, nodeID, "feedback", settleGeneration(node))
 		cmd.NodeID = nodeID
 		cmd.Attempt = node.Attempt
+		cmd.DecisionCount = len(node.Decisions)
 		cmd.TargetNodeID = transition.TargetStageID
 		cmd.Gates = transition.ResetGates
 		cmd.ResetCounters = transition.ResetCounters
@@ -492,10 +494,7 @@ func settleGeneration(node state.NodeState) string {
 }
 
 func maxAttempts(retry *model.RetryPolicy) int {
-	if retry != nil && retry.MaxAttempts > 0 {
-		return retry.MaxAttempts
-	}
-	return 1
+	return model.RetryBudget(retry)
 }
 
 func deterministicSlotID(kind CommandKind, runID, nodeID string, parts ...string) string {

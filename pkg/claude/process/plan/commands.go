@@ -58,12 +58,18 @@ type Command struct {
 	// carry the gate payload a work attempt answers; EvidenceHash rides
 	// short-circuit commands; WorkEvidenceHash rides gate settle commands;
 	// Gates/ResetCounters/EvidenceRef ride gate_feedback commands.
+	// DecisionCount pins the gate's verdict count at issue time on
+	// short_circuit_gate and gate_feedback commands — the resume guards
+	// require it to still match, so a stale command from an earlier loop
+	// generation observes as a no-op instead of replaying against newer
+	// verdicts that happen to satisfy the shape checks.
 	RetryMode        string   `json:"retryMode,omitempty"`
 	Feedback         string   `json:"feedback,omitempty"`
 	FeedbackFrom     string   `json:"feedbackFrom,omitempty"`
 	EvidenceRef      string   `json:"evidenceRef,omitempty"`
 	EvidenceHash     string   `json:"evidenceHash,omitempty"`
 	WorkEvidenceHash string   `json:"workEvidenceHash,omitempty"`
+	DecisionCount    int      `json:"decisionCount,omitempty"`
 	Gates            []string `json:"gates,omitempty"`
 	ResetCounters    []string `json:"resetCounters,omitempty"`
 }
