@@ -9,7 +9,10 @@ func compoundTestNode() Node {
 	return Node{
 		Type:      NodeTypeTask,
 		Performer: &Performer{Kind: PerformerAgent, Prompt: "Implement the change"},
-		Plan:      &Step{ID: "plan", Performer: Performer{Kind: PerformerAgent, Prompt: "Plan the change"}, Approval: PlanApprovalHuman},
+		Plan: &Step{
+			ID: "plan", Performer: Performer{Kind: PerformerAgent, Prompt: "Plan the change"},
+			Approval: PlanApprovalHuman, ApprovalRetry: &RetryPolicy{MaxAttempts: 2},
+		},
 		Checks: []Step{
 			{ID: "tests", Performer: Performer{Kind: PerformerProgram, Run: "go test ./..."}},
 			{ID: "lint", Performer: Performer{Kind: PerformerProgram, Run: "golangci-lint run"}},
@@ -51,6 +54,9 @@ func TestExpandNodeDerivesCanonicalStageChain(t *testing.T) {
 	}
 	if specs[1].Performer == nil || specs[1].Performer.Kind != PerformerHuman || !strings.Contains(specs[1].Performer.Ask, "implement") {
 		t.Fatalf("plan approval must synthesize a human gate: %#v", specs[1].Performer)
+	}
+	if specs[1].Retry == nil || specs[1].Retry.MaxAttempts != 2 {
+		t.Fatalf("plan approval must carry its declared retry budget: %#v", specs[1].Retry)
 	}
 	if specs[6].Performer != nil {
 		t.Fatalf("done stage must not have a performer: %#v", specs[6].Performer)
@@ -107,6 +113,23 @@ func TestValidateCompoundTemplateAdditions(t *testing.T) {
 			name: "invalid plan approval value",
 			yaml: compoundYAML("sometimes", "tests", "lint", "", "fresh-attempt", ""),
 			code: "invalid_plan_approval",
+		},
+		{
+			name: "approval retry on check step",
+			yaml: compoundYAML("human", "tests", "lint", "approvalRetry: { maxAttempts: 2 }", "fresh-attempt", ""),
+			code: "approval_retry_on_non_plan_step",
+		},
+		{
+			name: "approval retry without human approval",
+			yaml: strings.Replace(compoundYAML("auto", "tests", "lint", "", "fresh-attempt", ""),
+				"      approval: auto", "      approval: auto\n      approvalRetry: { maxAttempts: 2 }", 1),
+			code: "approval_retry_without_human_approval",
+		},
+		{
+			name: "invalid approval retry budget",
+			yaml: strings.Replace(compoundYAML("human", "tests", "lint", "", "fresh-attempt", ""),
+				"      approval: human", "      approval: human\n      approvalRetry: { maxAttempts: 0 }", 1),
+			code: "invalid_retry_budget",
 		},
 		{
 			name: "invalid retry mode",

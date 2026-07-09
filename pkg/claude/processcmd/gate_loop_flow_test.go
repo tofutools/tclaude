@@ -37,6 +37,10 @@ nodes:
     plan:
       id: plan
       approval: human
+      approvalRetry:
+        maxAttempts: 2
+      retry:
+        maxAttempts: 2
       performer:
         kind: agent
         prompt: Plan the implementation of {{ params.issue }}
@@ -146,6 +150,33 @@ func TestCompoundGateFeedbackLoopWithinBudgetsCompletes(t *testing.T) {
 	if strings.Contains(out.String(), "feedback pending") {
 		t.Fatalf("consumed feedback still rendered:\n%s", out.String())
 	}
+}
+
+func TestPlanApprovalFeedbackLoopFromTemplateCompletes(t *testing.T) {
+	cmd, root := gateLoopFlowSetup(t, "approval_loop", "2")
+
+	advanceOK(t, cmd, root, "approval_loop", "implement", "pass", "")
+	advanceOK(t, cmd, root, "approval_loop", "implement.plan", "pass", "artifacts/plan-v1.md")
+	advanceLoopOK(t, cmd, root, "approval_loop", "implement.plan.approval", "fail", "approval:johan", "", "Add a rollback step")
+
+	var out bytes.Buffer
+	if err := runShow(cmd, &showParams{RunID: "approval_loop", StoreRoot: root}, &out); err != nil {
+		t.Fatal(err)
+	}
+	assertOutputContains(t, out.String(), "fails 1/2")
+	assertOutputContains(t, out.String(), "feedback pending from implement.plan.approval")
+
+	advanceOK(t, cmd, root, "approval_loop", "implement.plan", "pass", "artifacts/plan-v2.md")
+	advanceOK(t, cmd, root, "approval_loop", "implement.plan.approval", "pass", "approval:johan")
+	advanceLoopOK(t, cmd, root, "approval_loop", "implement.do", "pass", "commit:abc123", "hash-1", "")
+	advanceLoopOK(t, cmd, root, "approval_loop", "implement.test.tests", "pass", "artifacts/test-log.txt", "", "")
+	advanceOK(t, cmd, root, "approval_loop", "implement.review", "pass", "artifacts/review.md")
+
+	out.Reset()
+	if err := runVerify(cmd.Context(), &verifyParams{RunID: "approval_loop", StoreRoot: root}, &out); err != nil {
+		t.Fatalf("final verify: %v\n%s", err, out.String())
+	}
+	assertOutputContains(t, out.String(), "Effective status: completed")
 }
 
 func TestCompoundGateBudgetExhaustionBlocks(t *testing.T) {

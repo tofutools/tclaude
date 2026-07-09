@@ -64,15 +64,18 @@ type Node struct {
 }
 
 type Step struct {
-	ID          string       `json:"id,omitempty" yaml:"id,omitempty"`
-	Name        string       `json:"name,omitempty" yaml:"name,omitempty"`
-	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
-	Doc         string       `json:"doc,omitempty" yaml:"doc,omitempty"`
-	Performer   Performer    `json:"performer" yaml:"performer"`
+	ID          string    `json:"id,omitempty" yaml:"id,omitempty"`
+	Name        string    `json:"name,omitempty" yaml:"name,omitempty"`
+	Description string    `json:"description,omitempty" yaml:"description,omitempty"`
+	Doc         string    `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Performer   Performer `json:"performer" yaml:"performer"`
 	// Approval is only valid on plan steps: human requires an explicit
 	// plan-approval gate before work starts, auto (the default) does not.
-	Approval string       `json:"approval,omitempty" yaml:"approval,omitempty"`
-	Retry    *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
+	Approval string `json:"approval,omitempty" yaml:"approval,omitempty"`
+	// ApprovalRetry is the synthesized plan-approval gate's failed-verdict
+	// budget. It is only meaningful with Approval set to human.
+	ApprovalRetry *RetryPolicy `json:"approvalRetry,omitempty" yaml:"approvalRetry,omitempty"`
+	Retry         *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
 }
 
 type Performer struct {
