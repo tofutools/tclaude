@@ -1,0 +1,170 @@
+package model
+
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
+var (
+	templateFields  = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "start", "nodes", "layout")
+	paramFields     = stringSet("type", "name", "description", "doc", "required", "default")
+	nodeFields      = stringSet("type", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "result", "metadata")
+	stepFields      = stringSet("id", "name", "description", "doc", "performer", "retry")
+	performerFields = stringSet(
+		"kind",
+		"profile",
+		"prompt",
+		"ask",
+		"run",
+		"args",
+		"timeout",
+	)
+	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
+	waitFields       = stringSet("duration", "until", "signal")
+	layoutFields     = stringSet("nodes")
+	layoutNodeFields = stringSet("x", "y")
+)
+
+func unknownFieldDiagnostics(root *yaml.Node) Diagnostics {
+	if root == nil {
+		return nil
+	}
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return nil
+		}
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	return checkKnownFields(root, "", templateFields, templateChildSchema)
+}
+
+func templateChildSchema(key string) schemaFunc {
+	switch key {
+	case "params":
+		return mapValuesSchema(paramFields, paramChildSchema)
+	case "nodes":
+		return mapValuesSchema(nodeFields, nodeChildSchema)
+	case "layout":
+		return namedSchema(layoutFields, layoutChildSchema)
+	default:
+		return nil
+	}
+}
+
+func paramChildSchema(key string) schemaFunc {
+	if key == "default" {
+		return freeformSchema
+	}
+	return nil
+}
+
+func nodeChildSchema(key string) schemaFunc {
+	switch key {
+	case "performer":
+		return namedSchema(performerFields, nil)
+	case "plan", "review":
+		return namedSchema(stepFields, stepChildSchema)
+	case "checks":
+		return sequenceValuesSchema(stepFields, stepChildSchema)
+	case "retry":
+		return namedSchema(retryFields, nil)
+	case "wait":
+		return namedSchema(waitFields, nil)
+	case "next", "metadata":
+		return freeformSchema
+	default:
+		return nil
+	}
+}
+
+func stepChildSchema(key string) schemaFunc {
+	switch key {
+	case "performer":
+		return namedSchema(performerFields, nil)
+	case "retry":
+		return namedSchema(retryFields, nil)
+	default:
+		return nil
+	}
+}
+
+func layoutChildSchema(key string) schemaFunc {
+	if key == "nodes" {
+		return mapValuesSchema(layoutNodeFields, nil)
+	}
+	return nil
+}
+
+type schemaFunc func(node *yaml.Node, path string) Diagnostics
+
+func namedSchema(allowed map[string]struct{}, child func(string) schemaFunc) schemaFunc {
+	return func(node *yaml.Node, path string) Diagnostics {
+		return checkKnownFields(node, path, allowed, child)
+	}
+}
+
+func mapValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc) schemaFunc {
+	return func(node *yaml.Node, path string) Diagnostics {
+		if node.Kind != yaml.MappingNode {
+			return nil
+		}
+		var diagnostics Diagnostics
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			value := node.Content[i+1]
+			diagnostics = append(diagnostics, checkKnownFields(value, joinPath(path, key.Value), allowed, child)...)
+		}
+		return diagnostics
+	}
+}
+
+func sequenceValuesSchema(allowed map[string]struct{}, child func(string) schemaFunc) schemaFunc {
+	return func(node *yaml.Node, path string) Diagnostics {
+		if node.Kind != yaml.SequenceNode {
+			return nil
+		}
+		var diagnostics Diagnostics
+		for i, childNode := range node.Content {
+			diagnostics = append(diagnostics, checkKnownFields(childNode, fmt.Sprintf("%s[%d]", path, i), allowed, child)...)
+		}
+		return diagnostics
+	}
+}
+
+func freeformSchema(_ *yaml.Node, _ string) Diagnostics {
+	return nil
+}
+
+func checkKnownFields(node *yaml.Node, path string, allowed map[string]struct{}, child func(string) schemaFunc) Diagnostics {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	var diagnostics Diagnostics
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i]
+		value := node.Content[i+1]
+		keyPath := joinPath(path, key.Value)
+		if _, ok := allowed[key.Value]; !ok {
+			diagnostics = append(diagnostics, diagError("unknown_field", keyPath, fmt.Sprintf("unknown field %q", key.Value)))
+			continue
+		}
+		if child != nil {
+			if schema := child(key.Value); schema != nil {
+				diagnostics = append(diagnostics, schema(value, keyPath)...)
+			}
+		}
+	}
+	return diagnostics
+}
+
+func stringSet(values ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
+}
