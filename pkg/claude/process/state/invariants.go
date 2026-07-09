@@ -1,6 +1,9 @@
 package state
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -131,6 +134,14 @@ func OutstandingCommandsAreWellFormed(st *State) Diagnostics {
 		}
 		if command.Attempt < 0 {
 			diagnostics = append(diagnostics, diagError("invalid_command_attempt", path+".attempt", "command attempt must be non-negative"))
+		}
+		if len(command.Payload) > 0 {
+			var compact bytes.Buffer
+			err := json.Compact(&compact, command.Payload)
+			sum := sha256.Sum256(compact.Bytes())
+			if err != nil || command.PayloadHash == "" || command.PayloadHash != fmt.Sprintf("%x", sum) {
+				diagnostics = append(diagnostics, diagError("command_payload_hash_mismatch", path+".payloadHash", "outstanding command payload does not match its payload hash"))
+			}
 		}
 		if command.Status == CommandStatusObserved {
 			if command.Actor != "" && !ValidateActorRef(command.Actor) {

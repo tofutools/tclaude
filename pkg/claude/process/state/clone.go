@@ -17,6 +17,7 @@ func Clone(st State) State {
 	}
 	out.OutstandingCommands = make(map[string]OutstandingCommand, len(st.OutstandingCommands))
 	for key, value := range st.OutstandingCommands {
+		value.Payload = append([]byte(nil), value.Payload...)
 		out.OutstandingCommands[key] = value
 	}
 	out.Waits = make(map[string]WaitRecord, len(st.Waits))

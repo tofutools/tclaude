@@ -3,8 +3,10 @@ package processexec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,6 +61,15 @@ func (e *Executor) Drive(ctx context.Context, runID string) (store.Snapshot, err
 			return store.Snapshot{}, err
 		}
 		if len(commands) == 0 {
+			internal := issuedInternalCommandIDs(snapshot.State)
+			if len(internal) > 0 {
+				for _, commandID := range internal {
+					if _, err := e.ResumeOutstanding(ctx, runID, commandID); err != nil {
+						return store.Snapshot{}, err
+					}
+				}
+				continue
+			}
 			return snapshot, nil
 		}
 		progressed := false
@@ -74,6 +85,21 @@ func (e *Executor) Drive(ctx context.Context, runID string) (store.Snapshot, err
 		}
 	}
 	return store.Snapshot{}, fmt.Errorf("process run %q exceeded %d executor rounds", runID, maxDriveRounds)
+}
+
+func issuedInternalCommandIDs(st *state.State) []string {
+	var ids []string
+	for commandID, command := range st.OutstandingCommands {
+		if command.Status != state.CommandStatusIssued {
+			continue
+		}
+		if command.Kind == plan.CommandKindStartAttempt || command.Kind == plan.CommandKindRecordDecision {
+			continue
+		}
+		ids = append(ids, commandID)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, error) {
@@ -162,15 +188,25 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 		return nil, err
 	}
 	outstanding, ok := snapshot.State.OutstandingCommands[command.ID]
-	if !ok || outstanding.Status != state.CommandStatusIssued {
+	if !ok {
 		return nil, fmt.Errorf("process command %q is not issued and cannot be reconciled", command.ID)
 	}
-	if outstanding.Kind != command.Kind || outstanding.NodeID != command.NodeID || outstanding.Attempt != command.Attempt ||
-		(outstanding.IdempotencyKey != "" && outstanding.IdempotencyKey != command.IdempotencyKey) {
-		return nil, fmt.Errorf("process command %q does not match its issued command record", command.ID)
+	if err := validateIssuedPayload(outstanding, command); err != nil {
+		return nil, err
 	}
-	if command.Performer == nil {
+	if command.Kind != plan.CommandKindStartAttempt && command.Kind != plan.CommandKindRecordDecision {
 		return nil, fmt.Errorf("process command %q is not a performer command", command.ID)
+	}
+	if outstanding.Status == state.CommandStatusObserved {
+		if observation.Actor != "" && observation.Actor != outstanding.Actor ||
+			strings.TrimSpace(observation.Verdict) != "" && observation.Verdict != outstanding.Verdict ||
+			strings.TrimSpace(observation.EvidenceRef) != "" && observation.EvidenceRef != outstanding.EvidenceRef {
+			return nil, fmt.Errorf("process command %q was already observed with a different result", command.ID)
+		}
+		return snapshot.State, nil
+	}
+	if outstanding.Status != state.CommandStatusIssued {
+		return nil, fmt.Errorf("process command %q is %s and cannot be reconciled", command.ID, outstanding.Status)
 	}
 	observation, err = e.persistPerformerObservation(ctx, command, observation)
 	if err != nil {
@@ -180,6 +216,96 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 		observation.ExternalRef = observation.EvidenceRef
 	}
 	return e.appendObservation(ctx, command, observation)
+}
+
+// RecordOutstandingObservation recovers a performer command directly from its
+// durable issued payload, so a restarted host does not need an in-memory copy
+// of the planner output.
+func (e *Executor) RecordOutstandingObservation(ctx context.Context, runID, commandID string, observation Observation) (*state.State, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	return e.RecordObservation(ctx, command, observation)
+}
+
+// ResumeIssued completes an already-issued internal command. Internal commands
+// have no external side effect, so recovery only appends their deterministic
+// observation and reducer transition; it never invokes a performer adapter.
+func (e *Executor) ResumeIssued(ctx context.Context, command plan.Command) (*state.State, error) {
+	if e == nil || e.Store == nil {
+		return nil, fmt.Errorf("process executor store is required")
+	}
+	snapshot, err := e.Store.LoadRun(ctx, command.RunID)
+	if err != nil {
+		return nil, err
+	}
+	outstanding, ok := snapshot.State.OutstandingCommands[command.ID]
+	if !ok {
+		return nil, fmt.Errorf("process command %q is not issued and cannot be resumed", command.ID)
+	}
+	if err := validateIssuedPayload(outstanding, command); err != nil {
+		return nil, err
+	}
+	if command.Kind == plan.CommandKindStartAttempt || command.Kind == plan.CommandKindRecordDecision {
+		return nil, fmt.Errorf("process command %q is a performer command and requires RecordObservation", command.ID)
+	}
+	if outstanding.Status == state.CommandStatusObserved {
+		return snapshot.State, nil
+	}
+	if outstanding.Status != state.CommandStatusIssued {
+		return nil, fmt.Errorf("process command %q is %s and cannot be resumed", command.ID, outstanding.Status)
+	}
+	return e.appendObservation(ctx, command, Observation{Verdict: "pass"})
+}
+
+// ResumeOutstanding recovers an internal command directly from its durable
+// issued payload. The command's full payload hash is checked before its
+// deterministic reducer transition is appended.
+func (e *Executor) ResumeOutstanding(ctx context.Context, runID, commandID string) (*state.State, error) {
+	command, err := e.outstandingCommand(ctx, runID, commandID)
+	if err != nil {
+		return nil, err
+	}
+	return e.ResumeIssued(ctx, command)
+}
+
+func (e *Executor) outstandingCommand(ctx context.Context, runID, commandID string) (plan.Command, error) {
+	if e == nil || e.Store == nil {
+		return plan.Command{}, fmt.Errorf("process executor store is required")
+	}
+	snapshot, err := e.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return plan.Command{}, err
+	}
+	outstanding, ok := snapshot.State.OutstandingCommands[commandID]
+	if !ok {
+		return plan.Command{}, fmt.Errorf("process command %q is not outstanding", commandID)
+	}
+	if len(outstanding.Payload) == 0 {
+		return plan.Command{}, fmt.Errorf("process command %q has no durable command payload", commandID)
+	}
+	var command plan.Command
+	if err := json.Unmarshal(outstanding.Payload, &command); err != nil {
+		return plan.Command{}, fmt.Errorf("decode process command %q payload: %w", commandID, err)
+	}
+	if command.ID != commandID || command.RunID != runID {
+		return plan.Command{}, fmt.Errorf("process command %q durable payload identity does not match its record", commandID)
+	}
+	if err := validateIssuedPayload(outstanding, command); err != nil {
+		return plan.Command{}, err
+	}
+	return command, nil
+}
+
+func validateIssuedPayload(outstanding state.OutstandingCommand, command plan.Command) error {
+	payloadHash := command.PayloadHash()
+	if payloadHash == "" || outstanding.PayloadHash == "" || outstanding.PayloadHash != payloadHash ||
+		outstanding.Kind != command.Kind || outstanding.NodeID != command.NodeID || outstanding.Attempt != command.Attempt ||
+		(outstanding.IdempotencyKey != "" && outstanding.IdempotencyKey != command.IdempotencyKey) {
+		return fmt.Errorf("process command %q does not match its issued command record", command.ID)
+	}
+	return nil
 }
 
 func (e *Executor) persistPerformerObservation(ctx context.Context, command plan.Command, observation Observation) (Observation, error) {

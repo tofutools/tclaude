@@ -273,24 +273,33 @@ func (s *FS) SetProgramsAllowed(ctx context.Context, runID string) (RunRecord, e
 		return RunRecord{}, err
 	}
 	defer unlock()
-	run, err := s.readRun(runID)
+	snapshot, err := s.LoadRun(ctx, runID)
 	if err != nil {
 		return RunRecord{}, err
 	}
-	entries, err := s.ReadRunLog(ctx, runID)
-	if err != nil {
-		return RunRecord{}, err
+	diagnostics := append(
+		evidence.VerifySequence(snapshot.Manifest, snapshot.NodeLogs),
+		evidence.VerifyStateAnchors(snapshot.State, snapshot.Manifest)...,
+	)
+	if diagnostics.HasErrors() {
+		return RunRecord{}, fmt.Errorf("%w: program opt-in audit is not fully committed: %v", ErrRunInconsistent, diagnostics)
 	}
-	audited := false
-	for _, entry := range entries {
-		if entry.Event != nil && entry.Event.Type == state.EventAdminProgramsAllowed {
-			audited = true
-			break
+	var audit *state.Event
+	for _, log := range snapshot.NodeLogs {
+		if log.NodeID != "" {
+			continue
+		}
+		for _, entry := range log.Entries {
+			if entry.Event != nil && entry.Event.Type == state.EventAdminProgramsAllowed {
+				audit = entry.Event
+				break
+			}
 		}
 	}
-	if !audited {
+	if audit == nil || !adminRecordApplied(snapshot.State, *audit) {
 		return RunRecord{}, fmt.Errorf("process run %q has no admin program opt-in audit entry", runID)
 	}
+	run := snapshot.Run
 	if run.AllowPrograms {
 		return run, nil
 	}
@@ -305,6 +314,18 @@ func (s *FS) SetProgramsAllowed(ctx context.Context, runID string) (RunRecord, e
 		return RunRecord{}, err
 	}
 	return run, nil
+}
+
+func adminRecordApplied(st *state.State, event state.Event) bool {
+	if st == nil {
+		return false
+	}
+	for _, record := range st.AdminRecords {
+		if record.Actor == event.Actor && record.Reason == event.Reason && record.EvidenceRef == event.EvidenceRef && record.Timestamp.Equal(event.At) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *FS) GetRun(ctx context.Context, runID string) (RunRecord, error) {

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -135,11 +136,13 @@ type AttemptState struct {
 }
 
 type OutstandingCommand struct {
-	ID             string      `json:"id"`
-	IdempotencyKey string      `json:"idempotencyKey,omitempty"`
-	NodeID         string      `json:"nodeId"`
-	Attempt        int         `json:"attempt,omitempty"`
-	Kind           CommandKind `json:"kind"`
+	ID             string          `json:"id"`
+	IdempotencyKey string          `json:"idempotencyKey,omitempty"`
+	PayloadHash    string          `json:"payloadHash,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	NodeID         string          `json:"nodeId"`
+	Attempt        int             `json:"attempt,omitempty"`
+	Kind           CommandKind     `json:"kind"`
 	// Inactive commands (canceled or reconciled) are retained as evidence but may
 	// be replaced by a deterministic reissue with the same ID.
 	Status         CommandStatus `json:"status"`

@@ -213,6 +213,61 @@ func TestSetProgramsAllowedRequiresDurableAdminAudit(t *testing.T) {
 	}
 }
 
+func TestSetProgramsAllowedRejectsUncommittedAuditLogTail(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run_programs_tail"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{{ID: "implement"}})
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref}, st); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 7, 9, 20, 0, 0, 0, time.UTC)
+	entry := evidence.LogEntry{
+		SchemaVersion: evidence.LogEntrySchemaVersion,
+		Seq:           1,
+		At:            at,
+		Scope:         evidence.Scope{Kind: evidence.ScopeRun},
+		Kind:          evidence.EntryKindAdmin,
+		Event: &state.Event{
+			Type:   state.EventAdminProgramsAllowed,
+			Seq:    1,
+			At:     at,
+			Actor:  "human:test",
+			Reason: "uncommitted test opt-in",
+		},
+	}
+	path := filepath.Join(root, "runs", runID, "run", "log.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidence.AppendLogEntry(file, entry); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.SetProgramsAllowed(ctx, runID); !errors.Is(err, store.ErrRunInconsistent) {
+		t.Fatalf("expected inconsistent audit refusal, got %v", err)
+	}
+	run, err := fs.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.AllowPrograms {
+		t.Fatal("uncommitted audit enabled program execution")
+	}
+}
+
 func TestListRunsToleratesBadRunJSON(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()

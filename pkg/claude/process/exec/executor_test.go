@@ -113,10 +113,10 @@ func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command := loaded.State.OutstandingCommands[commands[0].ID]; command.Status != state.CommandStatusIssued || command.IdempotencyKey != commands[0].IdempotencyKey {
+	if command := loaded.State.OutstandingCommands[commands[0].ID]; command.Status != state.CommandStatusIssued || command.IdempotencyKey != commands[0].IdempotencyKey || command.PayloadHash == "" || len(command.Payload) == 0 {
 		t.Fatalf("outstanding command = %#v", command)
 	}
-	reconciled, err := executor.RecordObservation(t.Context(), commands[0], Observation{
+	reconciled, err := executor.RecordOutstandingObservation(t.Context(), snapshot.Run.ID, commands[0].ID, Observation{
 		Actor:   "program:fake@exit0",
 		Verdict: "pass",
 		Evidence: &Artifact{
@@ -130,12 +130,71 @@ func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	if reconciled.OutstandingCommands[commands[0].ID].Status != state.CommandStatusObserved {
 		t.Fatalf("reconciled command = %#v", reconciled.OutstandingCommands[commands[0].ID])
 	}
+	retriedObservation, err := executor.RecordOutstandingObservation(t.Context(), snapshot.Run.ID, commands[0].ID, Observation{
+		Actor:   "program:fake@exit0",
+		Verdict: "pass",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retriedObservation.LastLogSeq != reconciled.LastLogSeq {
+		t.Fatalf("observation retry appended state: first seq %d, retry seq %d", reconciled.LastLogSeq, retriedObservation.LastLogSeq)
+	}
 	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if finished.State.Status != state.RunStatusCompleted || len(adapter.requests) != 0 {
 		t.Fatalf("finished status = %s, adapter calls = %d", finished.State.Status, len(adapter.requests))
+	}
+}
+
+func TestIssuedInternalCommandResumesFromDurablePayload(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	running, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err = plan.Plan(running.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Kind != plan.CommandKindSettleAttempt {
+		t.Fatalf("settle commands = %#v", commands)
+	}
+	settle := commands[0]
+	claimed, _, err := executor.claim(t.Context(), running, settle)
+	if err != nil || !claimed {
+		t.Fatalf("claim = %v, err = %v", claimed, err)
+	}
+	altered := settle
+	altered.MaxAttempts++
+	altered.Performer = &model.Performer{Kind: model.PerformerProgram, Run: "/forged"}
+	if _, err := executor.ResumeIssued(t.Context(), altered); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected altered internal command refusal, got %v", err)
+	}
+	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State.Status != state.RunStatusCompleted || finished.State.Nodes["work"].Status != state.NodeStatusCompleted {
+		t.Fatalf("resumed state = %#v", finished.State)
+	}
+	retried, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, settle.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.LastLogSeq != finished.State.LastLogSeq {
+		t.Fatalf("retry appended state: first seq %d, retry seq %d", finished.State.LastLogSeq, retried.LastLogSeq)
 	}
 }
 

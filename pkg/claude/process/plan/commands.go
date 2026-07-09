@@ -3,6 +3,7 @@ package plan
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -44,15 +45,30 @@ type Command struct {
 }
 
 func (c Command) OutstandingCommand(createdAt time.Time) state.OutstandingCommand {
+	payload, _ := json.Marshal(c)
 	return state.OutstandingCommand{
 		ID:             c.ID,
 		IdempotencyKey: c.IdempotencyKey,
+		PayloadHash:    c.PayloadHash(),
+		Payload:        payload,
 		NodeID:         c.NodeID,
 		Attempt:        c.Attempt,
 		Kind:           c.Kind,
 		Status:         state.CommandStatusIssued,
 		CreatedAt:      createdAt,
 	}
+}
+
+// PayloadHash binds an issued command to every typed field the executor will
+// later use. Recovery can therefore accept the original planner command
+// without trusting altered transition or performer fields from the caller.
+func (c Command) PayloadHash() string {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func newCommand(kind CommandKind, runID string, parts ...string) Command {
