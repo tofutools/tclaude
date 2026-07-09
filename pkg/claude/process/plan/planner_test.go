@@ -195,7 +195,11 @@ func TestPlanSkipsOutstandingCommand(t *testing.T) {
 	if len(commands) != 1 {
 		t.Fatalf("commands = %#v", commands)
 	}
-	st.OutstandingCommands[commands[0].ID] = commands[0].OutstandingCommand(testTime)
+	outstanding, err := commands[0].OutstandingCommand(testTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.OutstandingCommands[commands[0].ID] = outstanding
 
 	commands, err = Plan(st, plannerTemplate())
 	if err != nil {

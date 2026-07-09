@@ -3,6 +3,8 @@ package plan
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -43,15 +45,35 @@ type Command struct {
 	Performer        *model.Performer `json:"performer,omitempty"`
 }
 
-func (c Command) OutstandingCommand(createdAt time.Time) state.OutstandingCommand {
-	return state.OutstandingCommand{
-		ID:        c.ID,
-		NodeID:    c.NodeID,
-		Attempt:   c.Attempt,
-		Kind:      c.Kind,
-		Status:    state.CommandStatusIssued,
-		CreatedAt: createdAt,
+func (c Command) OutstandingCommand(createdAt time.Time) (state.OutstandingCommand, error) {
+	payload, err := json.Marshal(c)
+	if err != nil {
+		return state.OutstandingCommand{}, fmt.Errorf("encode process command %q payload: %w", c.ID, err)
 	}
+	sum := sha256.Sum256(payload)
+	return state.OutstandingCommand{
+		ID:             c.ID,
+		IdempotencyKey: c.IdempotencyKey,
+		PayloadHash:    hex.EncodeToString(sum[:]),
+		Payload:        payload,
+		NodeID:         c.NodeID,
+		Attempt:        c.Attempt,
+		Kind:           c.Kind,
+		Status:         state.CommandStatusIssued,
+		CreatedAt:      createdAt,
+	}, nil
+}
+
+// PayloadHash binds an issued command to every typed field the executor will
+// later use. Recovery can therefore accept the original planner command
+// without trusting altered transition or performer fields from the caller.
+func (c Command) PayloadHash() string {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func newCommand(kind CommandKind, runID string, parts ...string) Command {

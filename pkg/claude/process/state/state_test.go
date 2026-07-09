@@ -280,7 +280,7 @@ func TestReducerSequences(t *testing.T) {
 				if st.Status != RunStatusDirty {
 					t.Fatalf("run status = %q", st.Status)
 				}
-				if len(st.AdminRecords) != 1 {
+				if len(st.AdminRecords) != 1 || st.AdminRecords[0].Type != EventAdminRepairRecorded {
 					t.Fatalf("admin records = %#v", st.AdminRecords)
 				}
 				node := st.Nodes["implement"]

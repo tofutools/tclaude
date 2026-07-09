@@ -87,11 +87,12 @@ type TemplateRecord struct {
 }
 
 type RunRecord struct {
-	ID          string            `json:"id"`
-	TemplateRef string            `json:"templateRef"`
-	Params      map[string]string `json:"params,omitempty"`
-	CreatedAt   time.Time         `json:"createdAt"`
-	UpdatedAt   time.Time         `json:"updatedAt"`
+	ID            string            `json:"id"`
+	TemplateRef   string            `json:"templateRef"`
+	Params        map[string]string `json:"params,omitempty"`
+	AllowPrograms bool              `json:"allowPrograms,omitempty"`
+	CreatedAt     time.Time         `json:"createdAt"`
+	UpdatedAt     time.Time         `json:"updatedAt"`
 }
 
 type Snapshot struct {

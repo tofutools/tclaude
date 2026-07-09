@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -125,23 +126,30 @@ type NodeState struct {
 }
 
 type AttemptState struct {
-	Attempt   int       `json:"attempt"`
-	Actor     ActorRef  `json:"actor,omitempty"`
-	CommandID string    `json:"commandId,omitempty"`
-	StartedAt time.Time `json:"startedAt,omitzero"`
-	SettledAt time.Time `json:"settledAt,omitzero"`
-	Outcome   string    `json:"outcome,omitempty"`
+	Attempt     int       `json:"attempt"`
+	Actor       ActorRef  `json:"actor,omitempty"`
+	CommandID   string    `json:"commandId,omitempty"`
+	EvidenceRef string    `json:"evidenceRef,omitempty"`
+	StartedAt   time.Time `json:"startedAt,omitzero"`
+	SettledAt   time.Time `json:"settledAt,omitzero"`
+	Outcome     string    `json:"outcome,omitempty"`
 }
 
 type OutstandingCommand struct {
-	ID      string      `json:"id"`
-	NodeID  string      `json:"nodeId"`
-	Attempt int         `json:"attempt,omitempty"`
-	Kind    CommandKind `json:"kind"`
+	ID             string          `json:"id"`
+	IdempotencyKey string          `json:"idempotencyKey,omitempty"`
+	PayloadHash    string          `json:"payloadHash,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	NodeID         string          `json:"nodeId"`
+	Attempt        int             `json:"attempt,omitempty"`
+	Kind           CommandKind     `json:"kind"`
 	// Inactive commands (canceled or reconciled) are retained as evidence but may
 	// be replaced by a deterministic reissue with the same ID.
 	Status         CommandStatus `json:"status"`
 	ExternalRef    string        `json:"externalRef,omitempty"`
+	Actor          ActorRef      `json:"actor,omitempty"`
+	Verdict        string        `json:"verdict,omitempty"`
+	EvidenceRef    string        `json:"evidenceRef,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt,omitzero"`
 	ReconcileAfter time.Time     `json:"reconcileAfter,omitzero"`
 }
@@ -177,6 +185,7 @@ type DecisionRecord struct {
 }
 
 type AdminRecord struct {
+	Type        EventType `json:"type,omitempty"`
 	Actor       ActorRef  `json:"actor"`
 	Reason      string    `json:"reason"`
 	EvidenceRef string    `json:"evidenceRef,omitempty"`

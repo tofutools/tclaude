@@ -186,6 +186,9 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if err := ctx.Err(); err != nil {
 		return RunRecord{}, err
 	}
+	if run.AllowPrograms {
+		return RunRecord{}, fmt.Errorf("allowPrograms must be enabled after an admin audit entry")
+	}
 	if err := safeSegment(run.ID); err != nil {
 		return RunRecord{}, fmt.Errorf("invalid run id: %w", err)
 	}
@@ -255,6 +258,74 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 		return RunRecord{}, err
 	}
 	return run, nil
+}
+
+// SetProgramsAllowed enables program performers only after the run evidence
+// log contains the explicit admin opt-in event. The audit is therefore durable
+// before run.json becomes executable; a crash between the two leaves the run
+// safely disabled and the operation can be retried.
+func (s *FS) SetProgramsAllowed(ctx context.Context, runID string) (RunRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return RunRecord{}, err
+	}
+	unlock, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	defer unlock()
+	snapshot, err := s.LoadRun(ctx, runID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	diagnostics := append(
+		evidence.VerifySequence(snapshot.Manifest, snapshot.NodeLogs),
+		evidence.VerifyStateAnchors(snapshot.State, snapshot.Manifest)...,
+	)
+	if diagnostics.HasErrors() {
+		return RunRecord{}, fmt.Errorf("%w: program opt-in audit is not fully committed: %v", ErrRunInconsistent, diagnostics)
+	}
+	var audit *state.Event
+	for _, log := range snapshot.NodeLogs {
+		if log.NodeID != "" {
+			continue
+		}
+		for _, entry := range log.Entries {
+			if entry.Event != nil && entry.Event.Type == state.EventAdminProgramsAllowed {
+				audit = entry.Event
+				break
+			}
+		}
+	}
+	if audit == nil || !adminRecordApplied(snapshot.State, *audit) {
+		return RunRecord{}, fmt.Errorf("process run %q has no admin program opt-in audit entry", runID)
+	}
+	run := snapshot.Run
+	if run.AllowPrograms {
+		return run, nil
+	}
+	run.AllowPrograms = true
+	run.UpdatedAt = s.now().UTC()
+	data, err := json.MarshalIndent(run, "", "  ")
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("encode run: %w", err)
+	}
+	data = append(data, '\n')
+	if err := writeFileAtomic(filepath.Join(s.runDir(runID), "run.json"), data, 0o644); err != nil {
+		return RunRecord{}, err
+	}
+	return run, nil
+}
+
+func adminRecordApplied(st *state.State, event state.Event) bool {
+	if st == nil {
+		return false
+	}
+	for _, record := range st.AdminRecords {
+		if record.Type == event.Type && record.Actor == event.Actor && record.Reason == event.Reason && record.EvidenceRef == event.EvidenceRef && record.Timestamp.Equal(event.At) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *FS) GetRun(ctx context.Context, runID string) (RunRecord, error) {
