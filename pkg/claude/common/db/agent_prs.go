@@ -78,6 +78,33 @@ func MarkAgentPRHandled(agentID, prURL string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// UpdateAgentPRState refreshes a presented PR's state without touching its
+// summary. It is used by the daemon's best-effort GitHub polling path, where
+// writing an old summary from a stale in-memory row would be surprising.
+func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
+	agentID = strings.TrimSpace(agentID)
+	prURL = strings.TrimSpace(prURL)
+	state = strings.TrimSpace(state)
+	if agentID == "" {
+		return 0, errors.New("UpdateAgentPRState: agent_id required")
+	}
+	if prURL == "" {
+		return 0, errors.New("UpdateAgentPRState: pr_url required")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE agent_prs
+		SET state = ?, updated_at = ?
+		WHERE agent_id = ? AND pr_url = ? AND state <> ?`,
+		state, time.Now().UTC().Format(time.RFC3339Nano), agentID, prURL, state)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // GetAgentPR returns the row for an agent+URL pair, or the zero value when
 // missing.
 func GetAgentPR(agentID, prURL string) (AgentPR, error) {

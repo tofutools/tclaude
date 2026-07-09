@@ -1506,7 +1506,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	taskRefFor := func(convID string) taskRefView {
 		return taskRefViewFor(taskRefs[peerAgentID(convID)])
 	}
-	presentedPRs, _ := db.ListUnhandledAgentPRs()
+	presentedPRs := preloadPresentedPRsForDashboard(time.Now())
 	presentedPRsFor := func(convID string) []presentedPRView {
 		return presentedPRViews(presentedPRs[peerAgentID(convID)])
 	}

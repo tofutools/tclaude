@@ -24,6 +24,10 @@ The URL must be http(s). GitHub PR URLs get a `#42` badge automatically;
 existing branch/statusline PR detection and dedupes by PR URL, so presenting a
 PR is safe even when the automatic path already found the same link.
 
+For GitHub PR URLs, the agent daemon refreshes the PR state on the dashboard's
+normal polling cadence. Merged or closed PRs remain visible briefly, then are
+omitted automatically.
+
 When the PR no longer needs operator attention:
 
 ```bash
