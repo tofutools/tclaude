@@ -26,6 +26,18 @@ type CrashFixture struct {
 	Store *store.FS
 }
 
+func BuildInitializedFixture(t testing.TB) CrashFixture {
+	t.Helper()
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run_fixture"
+	createInitializedRun(t, fs, runID)
+	return CrashFixture{Root: root, RunID: runID, Store: fs}
+}
+
 func BuildCrashFixture(t testing.TB, window CrashWindow) CrashFixture {
 	t.Helper()
 	root := t.TempDir()
@@ -33,16 +45,8 @@ func BuildCrashFixture(t testing.TB, window CrashWindow) CrashFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := Template()
-	templateRecord, err := fs.PutTemplate(t.Context(), tmpl)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runID := "run_fixture"
-	st := state.New(runID, templateRecord.Ref, templateRecord.Ref, []state.NodeInit{{ID: "implement", Type: model.NodeTypeTask}})
-	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: templateRecord.Ref}, st); err != nil {
-		t.Fatal(err)
-	}
+	createInitializedRun(t, fs, runID)
 
 	entry := LogEntry(runID, "implement", 1)
 	switch window {
@@ -69,6 +73,42 @@ func BuildCrashFixture(t testing.TB, window CrashWindow) CrashFixture {
 	return CrashFixture{Root: root, RunID: runID, Store: fs}
 }
 
+func BuildSemanticViolationFixture(t testing.TB) CrashFixture {
+	t.Helper()
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := BuildSemanticViolationSnapshot(t, fs, "run_semantic_violation")
+	data, err := state.Encode(snapshot.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runs", snapshot.Run.ID, "state.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return CrashFixture{Root: root, RunID: snapshot.Run.ID, Store: fs}
+}
+
+func BuildSemanticViolationSnapshot(t testing.TB, st store.Store, runID string) store.Snapshot {
+	t.Helper()
+	createInitializedRun(t, st, runID)
+	entry := LogEntry(runID, "implement", 0)
+	if _, err := st.Append(t.Context(), runID, 0, []evidence.LogEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := st.LoadRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := snapshot.State.Nodes["implement"]
+	node.ActiveAttempt.Actor = ""
+	node.ActiveAttempt.CommandID = ""
+	snapshot.State.Nodes["implement"] = node
+	return snapshot
+}
+
 func Template() *model.Template {
 	return &model.Template{
 		APIVersion: model.APIVersion,
@@ -79,6 +119,19 @@ func Template() *model.Template {
 			"implement": {Type: model.NodeTypeTask, Next: model.Next{"done": "end"}},
 			"end":       {Type: model.NodeTypeEnd},
 		},
+	}
+}
+
+func createInitializedRun(t testing.TB, st store.Store, runID string) {
+	t.Helper()
+	tmpl := Template()
+	templateRecord, err := st.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := state.New(runID, templateRecord.Ref, templateRecord.Ref, []state.NodeInit{{ID: "implement", Type: model.NodeTypeTask}})
+	if _, err := st.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: templateRecord.Ref}, initial); err != nil {
+		t.Fatal(err)
 	}
 }
 
