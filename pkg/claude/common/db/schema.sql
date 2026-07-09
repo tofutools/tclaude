@@ -294,7 +294,7 @@ CREATE TABLE session_cost_daily (
 			session_id TEXT NOT NULL,
 			day        TEXT NOT NULL,
 			conv_id    TEXT NOT NULL DEFAULT '',
-			cost_usd   REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '',
+			cost_usd   REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '', virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude',
 			PRIMARY KEY (session_id, day)
 		);
 

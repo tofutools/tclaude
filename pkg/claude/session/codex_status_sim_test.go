@@ -207,6 +207,45 @@ func TestApplyHook_CodexPublishesWorkspaceBranch(t *testing.T) {
 	assert.Equal(t, "main", loc.StartupBranch, "dashboard resolver keeps Codex init branch stable")
 }
 
+func TestApplyHook_CodexPersistsWhatIfCost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	const convID = "019ec004-4250-79b1-9ade-ebaea4159020"
+	const sessionID = "agent-codex-cost"
+	cx := testharness.NewCodexSimWithID(t, home, convID, "/home/u/proj")
+	cx.Model = "gpt-5.3-codex"
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteUserInput("estimate this"))
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 2000, CachedInputTokens: 400, OutputTokens: 100, TotalTokens: 2100},
+		testharness.CodexTokenUsage{InputTokens: 2000, CachedInputTokens: 400, OutputTokens: 100, TotalTokens: 2100}))
+
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      sessionID,
+		ConvID:  convID,
+		Status:  session.StatusIdle,
+		Harness: "codex",
+		Cwd:     "/home/u/proj",
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:  "Stop",
+		ConvID:         convID,
+		Cwd:            "/home/u/proj",
+		TranscriptPath: cx.RolloutPath,
+		Model:          "gpt-5.3-codex",
+	}, sessionID))
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.00427, snap.VirtualCostUSD, 1e-9,
+		"Codex token_count total usage is priced into the WHAT-IF column")
+	assert.Zero(t, snap.CostUSD, "Codex subscription estimate must not look like real API spend")
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

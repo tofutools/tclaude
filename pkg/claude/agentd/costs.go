@@ -36,6 +36,7 @@ type costDelta struct {
 	usd       float64
 	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 	model     string // model display name denormalised onto the row; "" if unknown
+	harness   string // harness denormalised onto the row; "" if unknown
 }
 
 // costDeltasFromRows recovers per-day spend deltas from cumulative
@@ -51,7 +52,7 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 	deltas := db.CostDeltas(rows, whatif)
 	out := make([]costDelta, 0, len(deltas))
 	for _, d := range deltas {
-		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAt: d.UpdatedAt, model: d.Model})
+		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAt: d.UpdatedAt, model: d.Model, harness: d.Harness})
 	}
 	return out
 }
@@ -131,6 +132,7 @@ type costAgentRow struct {
 	LastDay      string  `json:"last_day"`
 	LastActivity string  `json:"last_activity,omitempty"`
 	Model        string  `json:"model"`
+	Harness      string  `json:"harness"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -188,6 +190,10 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 	if err != nil {
 		return costsResponse{}, err
 	}
+	harnesses, err := db.SessionHarnesses()
+	if err != nil {
+		return costsResponse{}, err
+	}
 
 	byDay := map[string]float64{}
 	type sliceAgg struct {
@@ -202,6 +208,9 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 		// tick yet) never blanks a value recorded earlier the same day.
 		model   string
 		modelAt string
+		// harness of the slice's latest-stamped delta with a known harness.
+		harness   string
+		harnessAt string
 	}
 	// One aggregate per (conv, day): a conversation that spent across
 	// several days breaks into one row per day, so a resume shows its true
@@ -238,6 +247,13 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 		if m != "" && d.updatedAt >= a.modelAt {
 			a.model, a.modelAt = m, d.updatedAt
 		}
+		h := d.harness
+		if h == "" {
+			h = harnesses[d.sessionID]
+		}
+		if h != "" && d.updatedAt >= a.harnessAt {
+			a.harness, a.harnessAt = h, d.updatedAt
+		}
 		if d.day > convMaxDay[d.convID] {
 			convMaxDay[d.convID] = d.day
 		}
@@ -264,6 +280,7 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 			LastDay:      k.day,
 			LastActivity: a.lastActivity,
 			Model:        a.model,
+			Harness:      a.harness,
 		})
 	}
 	sortCostAgentRows(out.Agents)

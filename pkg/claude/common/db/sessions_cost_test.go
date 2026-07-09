@@ -68,6 +68,27 @@ func TestUpdateSessionCost_WritesDailySnapshot(t *testing.T) {
 	require.NotNil(t, row, "today's daily row exists")
 	assert.InDelta(t, 1.50, row.CostUSD, 1e-9, "daily snapshot keeps the day's maximum")
 	assert.Equal(t, "conv-dcost-a", row.ConvID, "conv_id denormalised from the sessions row")
+	assert.Equal(t, DefaultHarness, row.Harness, "default harness denormalised from the sessions row")
+}
+
+// TestUpdateSessionCost_DenormalisesHarness pins the harness sibling of conv_id
+// and model: the Costs tab can filter historical spend by harness even after
+// the live sessions row has been deleted.
+func TestUpdateSessionCost_DenormalisesHarness(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "hc-a", TmuxSession: "tmux-hc-a", ConvID: "conv-hc-a", Cwd: "/tmp/hc-a", Status: "idle", Harness: "codex",
+	}), "SaveSession")
+	require.NoError(t, UpdateSessionCost("hc-a", 1.00), "UpdateSessionCost")
+	require.NoError(t, DeleteSession("hc-a"), "DeleteSession")
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	row := dailyRowFor(t, rows, "hc-a", today)
+	require.NotNil(t, row, "daily row survives the sessions row's deletion")
+	assert.Equal(t, "codex", row.Harness, "harness denormalised onto cost history")
 }
 
 // TestUpdateSessionCost_StampsUpdatedAt pins the daily row's
@@ -158,6 +179,7 @@ func TestUpdateSessionVirtualCost_WritesVirtualColumnOnly(t *testing.T) {
 	assert.InDelta(t, 1.50, row.VirtualCostUSD, 1e-9, "daily snapshot keeps the day's maximum virtual cost")
 	assert.Zero(t, row.CostUSD, "real cost_usd stays 0 for a subscription session")
 	assert.Equal(t, "conv-vc-a", row.ConvID, "conv_id denormalised from the sessions row")
+	assert.Equal(t, DefaultHarness, row.Harness, "default harness denormalised from the sessions row")
 
 	// And the real-cost surfaces ignore it: a subscription account still
 	// reads as having no real spend.
@@ -167,6 +189,23 @@ func TestUpdateSessionVirtualCost_WritesVirtualColumnOnly(t *testing.T) {
 	total, err := SumCostSinceDay(today)
 	require.NoError(t, err, "SumCostSinceDay")
 	assert.Zero(t, total, "month-to-date real spend ignores virtual cost")
+}
+
+func TestUpdateSessionVirtualCost_DenormalisesHarness(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vhc-a", TmuxSession: "tmux-vhc-a", ConvID: "conv-vhc-a", Cwd: "/tmp/vhc-a", Status: "idle", Harness: "codex",
+	}), "SaveSession")
+	require.NoError(t, UpdateSessionVirtualCost("vhc-a", 1.00), "UpdateSessionVirtualCost")
+	require.NoError(t, DeleteSession("vhc-a"), "DeleteSession")
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err, "AllCostDailyRows")
+	row := dailyRowFor(t, rows, "vhc-a", today)
+	require.NotNil(t, row, "daily row survives the sessions row's deletion")
+	assert.Equal(t, "codex", row.Harness, "harness denormalised onto virtual cost history")
 }
 
 // TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
