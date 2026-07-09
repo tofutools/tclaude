@@ -7,6 +7,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
@@ -107,6 +108,104 @@ func TestDriveCompoundNodeThroughGates(t *testing.T) {
 	}
 	if report := processverify.StoreRun(t.Context(), fs, snapshot.Run.ID); report.HasErrors() {
 		t.Fatalf("verify after drive: %#v", report.Diagnostics)
+	}
+}
+
+func TestDriveResumesStaleExpandAfterManualExpansion(t *testing.T) {
+	// Wedge regression: the executor claims expand_node and crashes before
+	// observing it; a human unsticks the run with a manual advance, which
+	// records the expansion directly. When Drive later hits a quiescent round
+	// while the run is still running (here: the check gate poisons the node),
+	// issuedInternalCommandIDs resumes the stale expand — which must treat
+	// the identical recorded expansion as idempotent success. Replaying
+	// node_expanded would fail the reducer ("already expanded") on every
+	// subsequent Drive, forever.
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	tmpl := mustTemplate(t, fs, snapshot.Run.TemplateRef)
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Kind != plan.CommandKindExpandNode {
+		t.Fatalf("commands = %#v", commands)
+	}
+	expand := commands[0]
+	claimed, claimState, err := executor.claim(t.Context(), snapshot, expand)
+	if err != nil || !claimed {
+		t.Fatalf("claim = %v, err = %v", claimed, err)
+	}
+
+	// Manual advance lands the expansion while the command is still issued.
+	if _, err := fs.Append(t.Context(), snapshot.Run.ID, claimState.LastLogSeq, []evidence.LogEntry{{
+		At:    executorTestTime,
+		Scope: evidence.Scope{Kind: evidence.ScopeNode, ID: "work"},
+		Kind:  evidence.EntryKindExpansion,
+		Event: &state.Event{
+			Type:   state.EventNodeExpanded,
+			At:     executorTestTime,
+			NodeID: "work",
+			Nodes:  plan.ExpansionInits("work", model.ExpandNode("work", tmpl.Nodes["work"])),
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	finished, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatalf("Drive must not wedge on the stale expand: %v", err)
+	}
+	// The run reached its quiescent poisoned state and the stale expand was
+	// resumed as an idempotent no-op observation.
+	if finished.State.Status != state.RunStatusRunning || finished.State.Nodes["work"].Status != state.NodeStatusBlocked {
+		t.Fatalf("finished = %#v", finished.State)
+	}
+	if cmd := finished.State.OutstandingCommands[expand.ID]; cmd.Status != state.CommandStatusObserved {
+		t.Fatalf("stale expand command = %#v", cmd)
+	}
+	if report := processverify.StoreRun(t.Context(), fs, snapshot.Run.ID); report.HasErrors() {
+		t.Fatalf("verify after recovered drive: %#v", report.Diagnostics)
+	}
+}
+
+func TestResumeStaleExpandRejectsMismatchedRecordedExpansion(t *testing.T) {
+	// The idempotent-success path only covers an identical recorded
+	// expansion; a differing one stays a hard error.
+	fs, snapshot := compoundExecutorFixture(t, "exit 0")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	tmpl := mustTemplate(t, fs, snapshot.Run.TemplateRef)
+	commands, err := plan.Plan(snapshot.State, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expand := commands[0]
+	claimed, claimState, err := executor.claim(t.Context(), snapshot, expand)
+	if err != nil || !claimed {
+		t.Fatalf("claim = %v, err = %v", claimed, err)
+	}
+	inits := plan.ExpansionInits("work", model.ExpandNode("work", tmpl.Nodes["work"]))
+	inits[1].StepID = "forged"
+	inits[1].Stage = model.StageTest
+	inits[1].ID = "work.test.forged"
+	if _, err := fs.Append(t.Context(), snapshot.Run.ID, claimState.LastLogSeq, []evidence.LogEntry{{
+		At:    executorTestTime,
+		Scope: evidence.Scope{Kind: evidence.ScopeNode, ID: "work"},
+		Kind:  evidence.EntryKindExpansion,
+		Event: &state.Event{
+			Type:   state.EventNodeExpanded,
+			At:     executorTestTime,
+			NodeID: "work",
+			Nodes:  inits,
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, expand.ID); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected mismatch refusal, got %v", err)
 	}
 }
 

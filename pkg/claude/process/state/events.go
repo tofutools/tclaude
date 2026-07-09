@@ -227,6 +227,12 @@ func applyEvent(st *State, event Event) error {
 		if err != nil {
 			return err
 		}
+		if node.Parent != "" && node.Stage == model.StageDone {
+			// The done marker settles automatically with its parent; an attempt
+			// on it could complete the done stage without the parent and forge
+			// the state expanded_parent_running_after_done exists to catch.
+			return fmt.Errorf("done stage %q settles automatically and cannot start attempts", event.NodeID)
+		}
 		if node.Status == NodeStatusRunning || (node.ActiveAttempt != nil && node.ActiveAttempt.SettledAt.IsZero() && node.ActiveAttempt.Outcome == "") {
 			return fmt.Errorf("node %q already has an active attempt", event.NodeID)
 		}

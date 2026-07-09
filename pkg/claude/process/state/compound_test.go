@@ -306,6 +306,11 @@ func TestNodeStatusSetGuardsStageChain(t *testing.T) {
 		t.Fatalf("err = %v, want prior-stage guard", err)
 	}
 
+	// The done marker settles automatically; attempts on it are rejected.
+	if _, err := Apply(st, Event{Type: EventNodeAttemptStarted, NodeID: "implement.done", Actor: "human:johan", Attempt: 1}); err == nil || !strings.Contains(err.Error(), "settles automatically") {
+		t.Fatalf("err = %v, want done-stage attempt rejection", err)
+	}
+
 	// The legit chain still works: settle plan with evidence, then ready do.
 	st, err := ApplyAll(st, []Event{
 		{Type: EventNodeAttemptStarted, Seq: 3, NodeID: "implement.plan", Actor: "human:johan", Attempt: 1},

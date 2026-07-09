@@ -309,8 +309,12 @@ func planSettledStageTransition(st *state.State, nodeID string, node state.NodeS
 
 // poisonCommands emits ONE block command covering the failed stage child and
 // its parent mirror (TargetNodeID). A single command keeps both node_blocked
-// events in one atomic append: a child-only intermediate state would violate
-// the blocked-mirror invariant and stall a replanning executor.
+// events in one append batch (CAS-level, not a crash guarantee): a child-only
+// intermediate checkpoint would violate the blocked-mirror invariant and
+// stall a replanning executor. The future unblock flow (poison resolution,
+// PR2) needs the same child+parent pairing in reverse — a child-only unblock
+// would trip blocked_parent_without_blocked_child, and auto-complete never
+// clears BlockedReason/BlockedOwner.
 func poisonCommands(st *state.State, nodeID string, node state.NodeState, transition StageTransition) []Command {
 	if node.Status == state.NodeStatusBlocked {
 		return nil
