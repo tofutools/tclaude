@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMigrateV102toV103_FreshSchema builds a fresh DB through the full
-// migrate() chain and asserts it lands at currentVersion. v103 is head, so the
+// TestMigrateV103toV104_FreshSchema builds a fresh DB through the full
+// migrate() chain and asserts it lands at currentVersion. v104 is head, so the
 // literal currentVersion tripwire lives here.
-func TestMigrateV102toV103_FreshSchema(t *testing.T) {
+func TestMigrateV103toV104_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "Open")
@@ -18,7 +18,7 @@ func TestMigrateV102toV103_FreshSchema(t *testing.T) {
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	require.Equal(t, currentVersion, ver, "fresh DB migrates to currentVersion")
-	require.Equal(t, 103, currentVersion, "tripwire: bump this and add a v103->v104 test when you add a migration")
+	require.Equal(t, 104, currentVersion, "tripwire: bump this and add a v104->v105 test when you add a migration")
 
 	var have int
 	require.NoError(t, d.QueryRow(
@@ -26,16 +26,16 @@ func TestMigrateV102toV103_FreshSchema(t *testing.T) {
 	assert.Equal(t, 1, have, "fresh schema has session_cost_daily.harness")
 }
 
-// TestMigrateV102toV103_AddsAndBackfillsHarness drives the real v102→v103 ALTER
-// over a v102-pinned DB. Live sessions backfill first; conv_index fills rows
+// TestMigrateV103toV104_AddsAndBackfillsHarness drives the real v103→v104 ALTER
+// over a v103-pinned DB. Live sessions backfill first; conv_index fills rows
 // whose sessions row is already gone.
-func TestMigrateV102toV103_AddsAndBackfillsHarness(t *testing.T) {
+func TestMigrateV103toV104_AddsAndBackfillsHarness(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err, "Open")
 
 	mustExec(t, d, `ALTER TABLE session_cost_daily DROP COLUMN harness`)
-	mustExec(t, d, `UPDATE schema_version SET version = 102`)
+	mustExec(t, d, `UPDATE schema_version SET version = 103`)
 
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "live-codex", TmuxSession: "tmux-live-codex", ConvID: "conv-live", Status: "idle", Harness: "codex",
@@ -48,7 +48,7 @@ func TestMigrateV102toV103_AddsAndBackfillsHarness(t *testing.T) {
 	mustExec(t, d, `INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd)
 		VALUES ('retired-codex', '2026-07-09', 'conv-retired', 2.00)`)
 
-	require.NoError(t, migrateV102toV103(d), "v102→v103")
+	require.NoError(t, migrateV103toV104(d), "v103→v104")
 
 	var live, retired string
 	require.NoError(t, d.QueryRow(
@@ -60,7 +60,7 @@ func TestMigrateV102toV103_AddsAndBackfillsHarness(t *testing.T) {
 
 	var ver int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
-	assert.Equal(t, 103, ver, "version advanced")
+	assert.Equal(t, 104, ver, "version advanced")
 
-	require.NoError(t, migrateV102toV103(d), "v102→v103 re-run is a clean no-op")
+	require.NoError(t, migrateV103toV104(d), "v103→v104 re-run is a clean no-op")
 }

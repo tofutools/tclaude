@@ -551,3 +551,18 @@ CREATE TABLE codex_usage_cache (
 			source      TEXT NOT NULL DEFAULT ''
 		);
 
+CREATE TABLE agent_prs (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_id    TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			pr_url      TEXT NOT NULL,
+			summary     TEXT NOT NULL DEFAULT '',
+			state       TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL,
+			updated_at  TEXT NOT NULL,
+			UNIQUE(agent_id, pr_url)
+		);
+
+CREATE INDEX idx_agent_prs_agent ON agent_prs(agent_id);
+
+CREATE INDEX idx_agent_prs_state_updated ON agent_prs(state, updated_at);
+

@@ -15,7 +15,7 @@ import (
 // agent harness's user skill directory on demand, since `go install` strips the
 // source tree and we can't symlink something that's no longer on disk.
 //
-//go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-task/SKILL.md skills/agent-lifecycle/SKILL.md skills/reincarnate/SKILL.md skills/agent-schedule/SKILL.md skills/agent-remote-control/SKILL.md skills/agent-dir/SKILL.md skills/agent-circles/SKILL.md skills/human-notify/SKILL.md skills/human-clipboard/SKILL.md
+//go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-task/SKILL.md skills/present-pr-to-operator/SKILL.md skills/agent-lifecycle/SKILL.md skills/reincarnate/SKILL.md skills/agent-schedule/SKILL.md skills/agent-remote-control/SKILL.md skills/agent-dir/SKILL.md skills/agent-circles/SKILL.md skills/human-notify/SKILL.md skills/human-clipboard/SKILL.md
 var skillsFS embed.FS
 
 // bundledSkills is the registry of skills shipped with tclaude. Add a new
@@ -25,6 +25,7 @@ var bundledSkills = []string{
 	"agent-coord",
 	"agent-rename",
 	"agent-task",
+	"present-pr-to-operator",
 	"agent-lifecycle",
 	"reincarnate",
 	"agent-schedule",

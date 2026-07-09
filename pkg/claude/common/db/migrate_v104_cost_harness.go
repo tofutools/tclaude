@@ -5,39 +5,39 @@ import (
 	"fmt"
 )
 
-// migrateV102toV103 adds session_cost_daily.harness — the coding harness
+// migrateV103toV104 adds session_cost_daily.harness — the coding harness
 // ("claude", "codex", …) denormalised onto each cost-history row. Costs history
 // intentionally outlives sessions rows, so the dashboard cannot rely on a live
 // sessions lookup when filtering historical spend by harness.
-func migrateV102toV103(db *sql.DB) error {
+func migrateV103toV104(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v102→v103: begin: %w", err)
+		return fmt.Errorf("migrate v103→v104: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	haveTable, err := txTableExists(tx, "session_cost_daily")
 	if err != nil {
-		return fmt.Errorf("migrate v102→v103 (probe session_cost_daily): %w", err)
+		return fmt.Errorf("migrate v103→v104 (probe session_cost_daily): %w", err)
 	}
 	if haveTable {
 		var haveCol int
 		if err := tx.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('session_cost_daily') WHERE name = 'harness'`,
 		).Scan(&haveCol); err != nil {
-			return fmt.Errorf("migrate v102→v103 (probe column): %w", err)
+			return fmt.Errorf("migrate v103→v104 (probe column): %w", err)
 		}
 		if haveCol == 0 {
 			if _, err := tx.Exec(
 				`ALTER TABLE session_cost_daily ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude'`,
 			); err != nil {
-				return fmt.Errorf("migrate v102→v103 (add column): %w", err)
+				return fmt.Errorf("migrate v103→v104 (add column): %w", err)
 			}
 		}
 
 		haveSessions, err := txTableExists(tx, "sessions")
 		if err != nil {
-			return fmt.Errorf("migrate v102→v103 (probe sessions): %w", err)
+			return fmt.Errorf("migrate v103→v104 (probe sessions): %w", err)
 		}
 		if haveSessions {
 			if _, err := tx.Exec(`
@@ -47,13 +47,13 @@ func migrateV102toV103(db *sql.DB) error {
 				)
 				WHERE session_id IN (SELECT id FROM sessions WHERE COALESCE(NULLIF(harness, ''), 'claude') <> '')
 			`); err != nil {
-				return fmt.Errorf("migrate v102→v103 (backfill from sessions): %w", err)
+				return fmt.Errorf("migrate v103→v104 (backfill from sessions): %w", err)
 			}
 		}
 
 		haveConvIndex, err := txTableExists(tx, "conv_index")
 		if err != nil {
-			return fmt.Errorf("migrate v102→v103 (probe conv_index): %w", err)
+			return fmt.Errorf("migrate v103→v104 (probe conv_index): %w", err)
 		}
 		if haveConvIndex {
 			convBackfillSQL := `
@@ -74,13 +74,13 @@ func migrateV102toV103(db *sql.DB) error {
 				`
 			}
 			if _, err := tx.Exec(convBackfillSQL); err != nil {
-				return fmt.Errorf("migrate v102→v103 (backfill from conv_index): %w", err)
+				return fmt.Errorf("migrate v103→v104 (backfill from conv_index): %w", err)
 			}
 		}
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 103`); err != nil {
-		return fmt.Errorf("migrate v102→v103 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 104`); err != nil {
+		return fmt.Errorf("migrate v103→v104 (version): %w", err)
 	}
 	return tx.Commit()
 }

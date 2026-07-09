@@ -1506,6 +1506,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	taskRefFor := func(convID string) taskRefView {
 		return taskRefViewFor(taskRefs[peerAgentID(convID)])
 	}
+	presentedPRs, _ := db.ListUnhandledAgentPRs()
+	presentedPRsFor := func(convID string) []presentedPRView {
+		return presentedPRViews(presentedPRs[peerAgentID(convID)])
+	}
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -1520,12 +1524,14 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			return existing
 		}
 		loc := locationView(convID)
+		links := branchLinksFor(convID, loc)
+		links.PresentedPRs = presentedPRsFor(convID)
 		a := &dashboardAgent{
 			AgentID:           peerAgentID(convID),
 			ConvID:            convID,
 			Title:             agent.CachedTitle(convID),
 			agentLocationView: loc,
-			repoLinksView:     branchLinksFor(convID, loc),
+			repoLinksView:     links,
 			taskRefView:       taskRefFor(convID),
 			tagsView:          tagsFor(convID),
 			Online:            isConvOnlineIn(convID, aliveSessions),
@@ -1624,6 +1630,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			memberSet[m.ConvID] = true
 			online := isConvOnlineIn(m.ConvID, aliveSessions)
 			loc := locationView(m.ConvID)
+			links := branchLinksFor(m.ConvID, loc)
+			links.PresentedPRs = presentedPRsFor(m.ConvID)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           peerAgentID(m.ConvID),
 				ConvID:            m.ConvID,
@@ -1632,7 +1640,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				Role:              m.Role,
 				Descr:             m.Descr,
 				agentLocationView: loc,
-				repoLinksView:     branchLinksFor(m.ConvID, loc),
+				repoLinksView:     links,
 				taskRefView:       taskRefFor(m.ConvID),
 				tagsView:          tagsFor(m.ConvID),
 				Online:            online,
@@ -1659,6 +1667,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			online := isConvOnlineIn(ownerConv, aliveSessions)
 			ownerLoc := locationView(ownerConv)
+			ownerLinks := branchLinksFor(ownerConv, ownerLoc)
+			ownerLinks.PresentedPRs = presentedPRsFor(ownerConv)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           peerAgentID(ownerConv),
 				ConvID:            ownerConv,
@@ -1666,7 +1676,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				CreatedAt:         agent.CachedCreated(ownerConv),
 				Role:              "owner",
 				agentLocationView: ownerLoc,
-				repoLinksView:     branchLinksFor(ownerConv, ownerLoc),
+				repoLinksView:     ownerLinks,
 				taskRefView:       taskRefFor(ownerConv),
 				tagsView:          tagsFor(ownerConv),
 				Online:            online,

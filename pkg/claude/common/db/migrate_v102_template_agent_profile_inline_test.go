@@ -8,8 +8,7 @@ import (
 )
 
 // TestMigrateV101toV102_FreshSchema builds a fresh DB through the full
-// migrate() chain and asserts it lands at currentVersion. The literal
-// currentVersion tripwire moved forward to the v103 test.
+// migrate() chain and asserts it still includes the v102 column.
 func TestMigrateV101toV102_FreshSchema(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

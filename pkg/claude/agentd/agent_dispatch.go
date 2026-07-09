@@ -98,6 +98,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentContext(w, r, convID)
 	case "task":
 		handleAgentTask(w, r, convID)
+	case "prs":
+		handleAgentPRs(w, r, convID)
 	case "tags":
 		handleAgentTags(w, r, convID)
 	default:

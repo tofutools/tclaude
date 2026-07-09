@@ -106,6 +106,7 @@ type dashMember struct {
 	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
 	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
 	BranchPRState   string    `json:"branch_pr_state,omitempty"`
+	PresentedPRs    []dashPR  `json:"presented_prs,omitempty"`
 	TaskURL         string    `json:"task_ref_url,omitempty"`
 	TaskLabel       string    `json:"task_ref_label,omitempty"`
 	Tags            []string  `json:"tags,omitempty"`
@@ -126,11 +127,20 @@ type dashAgent struct {
 	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
 	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
 	BranchPRState   string    `json:"branch_pr_state,omitempty"`
+	PresentedPRs    []dashPR  `json:"presented_prs,omitempty"`
 	Online          bool      `json:"online"`
 	Groups          []string  `json:"groups"`
 	Notify          string    `json:"notify,omitempty"`
 	NotifyEffective bool      `json:"notify_effective"`
 	State           dashState `json:"state"`
+}
+
+type dashPR struct {
+	URL       string `json:"url"`
+	Number    int    `json:"number,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	State     string `json:"state,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // dashHarness mirrors the relevant fields of agentd.dashboardHarness.
