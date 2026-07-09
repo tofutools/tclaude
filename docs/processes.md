@@ -144,6 +144,8 @@ nodes:
     checks:
       - id: tests
         performer: { kind: program, run: "go test ./..." }
+        retry:
+          maxAttempts: 3         # gate budget: failed verdicts before poison
     review:
       id: review
       performer: { kind: agent, profile: reviewer, prompt: "Cold-review the diff" }
@@ -161,15 +163,32 @@ Rules that make compound runs trustworthy:
   flags any mismatch (`expansion_template_mismatch`).
 - **Claimed done is not done.** A stage child can only settle as completed
   with an `--evidence` ref; a pass claim without evidence flips to failed.
-- **Gate failure poisons, it never auto-fails the run.** A failed
-  `test`/`review`/`plan.approval` gate blocks the child and its parent with a
-  reason and owner; the run keeps running and a human (or later, a decision
-  node) resolves it. Gate feedback loops and per-gate budgets land in the next
-  phase; in this phase a gate failure blocks immediately.
+- **Gate failure feeds back within budgets.** A failed gate whose budget is
+  not exhausted routes its feedback to the stage it re-enters
+  (`plan.approval` re-enters `plan`; `test`/`review` re-enter `do`): the work
+  stage re-readies with the gate's feedback pending, and every gate between
+  the work stage and the failing gate resets to pending so the loop re-runs
+  them against the new work. A gate's budget is its own `retry.maxAttempts`
+  (default 1) and counts failed verdicts in the current loop window; gates of
+  a different stage kind inside the reset span get their counters zeroed too
+  (a review failure restarts the testing window). The feedback loop is also
+  bounded by the work stage's `retry.maxAttempts`.
+- **Exhausted budgets poison, they never auto-fail the run.** When a gate's
+  budget (or the target work stage's attempt budget) is spent, the gate blocks
+  itself and its parent with a reason and owner; the run keeps running and a
+  human (or later, a decision node) resolves it.
+- **Unchanged evidence short-circuits a re-entered gate.** When a gate
+  re-enters but the work stage settled with the same evidence hash its
+  previous verdict evaluated, the engine does not re-run the gate's performer:
+  it appends a decision record by the `engine:evidence-unchanged` actor that
+  stands the prior verdict (and its evidence ref). Manual `advance` verdicts
+  are always honored — the short-circuit is planner/executor-only.
 - **Retry mode is policy, not routing.** `retry.onFail` selects how a retry
   re-engages the performer (`feedback-same-session` keeps the session,
-  `fresh-attempt` starts clean; unset defaults to `fresh-attempt`). Failure
-  routing comes only from `next` keys such as `fail`.
+  `fresh-attempt` starts clean; unset defaults to `fresh-attempt`). The mode
+  and any pending gate feedback ride the work stage's start commands, so
+  adapters see them. Failure routing comes only from `next` keys such as
+  `fail`.
 - The parent completes only when its `done` stage completes, which happens
   automatically after the last gate passes.
 
@@ -178,8 +197,14 @@ Advance the stages of a compound run manually:
 ```bash
 tclaude process advance demo-1 implement --store-root "$STORE" --verdict pass          # expands
 tclaude process advance demo-1 implement.plan --store-root "$STORE" --verdict pass --evidence artifacts/plan.md
-tclaude process advance demo-1 implement.do --store-root "$STORE" --verdict pass --evidence commit:abc123
+tclaude process advance demo-1 implement.do --store-root "$STORE" --verdict pass --evidence commit:abc123 --evidence-hash "$(sha256sum diff.patch | cut -d' ' -f1)"
+tclaude process advance demo-1 implement.test.tests --store-root "$STORE" --verdict fail --feedback "unit tests fail on TestFoo"   # re-readies implement.do with feedback
 ```
+
+`--evidence-hash` records the content hash of the settle's evidence — on a
+work stage it is the hash later gate verdicts evaluate, which powers the
+evidence-unchanged short-circuit; `--feedback` is the gate payload the next
+work attempt answers.
 
 ## Notes
 

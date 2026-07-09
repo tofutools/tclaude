@@ -594,12 +594,41 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			WorkEvidenceHash: command.WorkEvidenceHash,
 		}, source.EvidenceRef, at))
 	case plan.CommandKindShortCircuit:
+		// A stale issued short-circuit resumed after the gate moved on must
+		// not re-apply: replaying gate_short_circuited against a settled (or
+		// loop-reset pending) gate fails the reducer forever and wedges
+		// Drive. Applicability mirrors what the planner required when it
+		// emitted the command — a READY re-entering gate holding a prior
+		// verdict whose recorded work-evidence hash still matches; anything
+		// else is idempotent success: mark observed, append nothing.
+		if node, ok := snapshot.State.Nodes[command.NodeID]; ok {
+			applicable := node.Status == state.NodeStatusReady &&
+				len(node.Decisions) > 0 &&
+				node.LastEvidenceHash != "" && node.LastEvidenceHash == command.EvidenceHash
+			if !applicable {
+				return entries, nil
+			}
+		}
 		entries = append(entries, commandEntry(command, state.Event{
 			Type:         state.EventGateShortCircuited,
 			Actor:        state.ActorEvidenceUnchanged,
 			EvidenceHash: command.EvidenceHash,
 		}, "", at))
 	case plan.CommandKindGateFeedback:
+		// A stale issued feedback command resumed after the loop already
+		// re-entered (gate no longer failed, or the target work stage is no
+		// longer settled-completed) must not re-apply: it would re-ready the
+		// target mid-attempt and reset gates against work it has not seen.
+		// Idempotent success, same as the expand/block guards.
+		gate, gok := snapshot.State.Nodes[command.NodeID]
+		target, tok := snapshot.State.Nodes[command.TargetNodeID]
+		if gok && tok {
+			applicable := gate.Status == state.NodeStatusFailed &&
+				target.Status == state.NodeStatusCompleted
+			if !applicable {
+				return entries, nil
+			}
+		}
 		// One append batch routes the gate payload to its work stage, resets
 		// the re-entering gate span, and re-readies the work stage; splitting
 		// these would leave checkpoints mid-loop that replanning rejects.
@@ -668,8 +697,8 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 		//
 		// A stale issued block resumed after the child already blocked is
 		// idempotent success and must not re-apply: replaying could overwrite
-		// a newer reason, and once PR2 adds an unblock flow it would silently
-		// re-block a deliberately released node.
+		// a newer reason, and once the poison-resolution flow lands it would
+		// silently re-block a deliberately released node.
 		if node, ok := snapshot.State.Nodes[command.NodeID]; ok && node.Status == state.NodeStatusBlocked {
 			return entries, nil
 		}
@@ -818,14 +847,14 @@ func nodeEntry(nodeID string, event state.Event, evidenceRef string, at time.Tim
 	return evidence.LogEntry{
 		At:          at,
 		Scope:       evidence.Scope{Kind: evidence.ScopeNode, ID: nodeID},
-		Kind:        evidence.EntryKindGate,
+		Kind:        evidence.KindForEvent(event.Type),
 		Event:       &event,
 		EvidenceRef: evidenceRef,
 	}
 }
 
 func runEntry(event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {
-	return runEntryWithKind(evidence.EntryKindGate, event, evidenceRef, at)
+	return runEntryWithKind(evidence.KindForEvent(event.Type), event, evidenceRef, at)
 }
 
 func runEntryWithKind(kind evidence.EntryKind, event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {

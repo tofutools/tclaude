@@ -16,20 +16,42 @@ const (
 type EntryKind string
 
 const (
-	EntryKindAttempt   EntryKind = "attempt"
-	EntryKindDecision  EntryKind = "decision"
-	EntryKindGate      EntryKind = "gate"
-	EntryKindSignal    EntryKind = "signal"
-	EntryKindAdmin     EntryKind = "admin"
+	// EntryKindAttempt covers attempt starts and settles.
+	EntryKindAttempt EntryKind = "attempt"
+	// EntryKindDecision covers decision-node verdict records.
+	EntryKindDecision EntryKind = "decision"
+	// EntryKindGate covers gate machinery: verdicts, blocks, feedback
+	// routing, loop resets, short-circuits, and timer/wait bookkeeping.
+	EntryKindGate EntryKind = "gate"
+	EntryKindSignal EntryKind = "signal"
+	EntryKindAdmin  EntryKind = "admin"
+	// EntryKindExpansion covers compound-node expansion records.
 	EntryKindExpansion EntryKind = "expansion"
+	// EntryKindStatus covers pure status transitions (node_status_set,
+	// run_status_set, run_paused, run_resumed) that carry no verdict of
+	// their own. Entries written before this kind existed carry
+	// EntryKindGate.
+	EntryKindStatus EntryKind = "status"
 )
 
 func (k EntryKind) IsValid() bool {
 	switch k {
-	case EntryKindAttempt, EntryKindDecision, EntryKindGate, EntryKindSignal, EntryKindAdmin, EntryKindExpansion:
+	case EntryKindAttempt, EntryKindDecision, EntryKindGate, EntryKindSignal, EntryKindAdmin, EntryKindExpansion, EntryKindStatus:
 		return true
 	default:
 		return false
+	}
+}
+
+// KindForEvent labels a node/run-scoped entry by its event: pure status
+// transitions get EntryKindStatus, everything else defaults to the gate
+// machinery kind (writers with a more specific kind pass it explicitly).
+func KindForEvent(t state.EventType) EntryKind {
+	switch t {
+	case state.EventNodeStatusSet, state.EventRunStatusSet, state.EventRunPaused, state.EventRunResumed:
+		return EntryKindStatus
+	default:
+		return EntryKindGate
 	}
 }
 

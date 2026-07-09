@@ -11,6 +11,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	processplan "github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
@@ -73,6 +74,12 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 		fmt.Fprintf(out, "Waiting: %s\n", snapshot.State.Pause.Reason)
 	}
 	fmt.Fprintf(out, "Last seq: %d\n", snapshot.State.LastLogSeq)
+	// Budgets come from the pinned template; a run whose template cannot load
+	// still renders (verify reports the broken store separately).
+	budgets := map[string]int{}
+	if tmpl, err := fs.GetTemplate(cmd.Context(), snapshot.Run.TemplateRef); err == nil {
+		budgets = gateBudgets(snapshot.State.Nodes, tmpl)
+	}
 	fmt.Fprintln(out, "\nNodes:")
 	tw := newTable(out)
 	fmt.Fprintln(tw, "ID\tTYPE\tSTATUS\tATTEMPT\tCHOSEN\tDETAIL")
@@ -82,14 +89,14 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 		if node.Parent != "" {
 			continue
 		}
-		renderNodeRow(tw, nodeID, node, false)
+		renderNodeRow(tw, nodeID, node, false, budgets[nodeID])
 		rendered[nodeID] = true
 		for _, childID := range node.Children {
 			child, ok := snapshot.State.Nodes[childID]
 			if !ok {
 				continue
 			}
-			renderNodeRow(tw, childID, child, true)
+			renderNodeRow(tw, childID, child, true, budgets[childID])
 			rendered[childID] = true
 		}
 	}
@@ -99,7 +106,7 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 		if rendered[nodeID] {
 			continue
 		}
-		renderNodeRow(tw, nodeID, snapshot.State.Nodes[nodeID], true)
+		renderNodeRow(tw, nodeID, snapshot.State.Nodes[nodeID], true, budgets[nodeID])
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -134,7 +141,7 @@ func renderMermaid(out io.Writer, snapshot store.Snapshot, tmpl *model.Template)
 	}
 }
 
-func renderNodeRow(tw io.Writer, nodeID string, node state.NodeState, indent bool) {
+func renderNodeRow(tw io.Writer, nodeID string, node state.NodeState, indent bool, gateBudget int) {
 	id := nodeID
 	if indent {
 		id = "  " + nodeID
@@ -143,17 +150,53 @@ func renderNodeRow(tw io.Writer, nodeID string, node state.NodeState, indent boo
 	if node.Stage != "" {
 		nodeType = "stage:" + string(node.Stage)
 	}
-	fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", id, orDash(nodeType), node.Status, node.Attempt, orDash(node.ChosenEdge), orDash(nodeDetail(node)))
+	fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", id, orDash(nodeType), node.Status, node.Attempt, orDash(node.ChosenEdge), orDash(nodeDetail(node, gateBudget)))
 }
 
-func nodeDetail(node state.NodeState) string {
+func nodeDetail(node state.NodeState, gateBudget int) string {
+	var parts []string
 	if node.Status == state.NodeStatusBlocked {
-		return fmt.Sprintf("blocked: %s (owner %s)", node.BlockedReason, node.BlockedOwner)
+		parts = append(parts, fmt.Sprintf("blocked: %s (owner %s)", node.BlockedReason, node.BlockedOwner))
 	}
-	if node.ActiveAttempt != nil && node.ActiveAttempt.EvidenceRef != "" {
-		return "evidence: " + node.ActiveAttempt.EvidenceRef
+	if node.Parent != "" && node.Stage.IsGateStage() {
+		if gateBudget > 0 {
+			parts = append(parts, fmt.Sprintf("fails %d/%d", node.FailCount, gateBudget))
+		} else if node.FailCount > 0 {
+			parts = append(parts, fmt.Sprintf("fails %d", node.FailCount))
+		}
+		if len(node.Decisions) > 0 {
+			parts = append(parts, fmt.Sprintf("verdicts %d", len(node.Decisions)))
+		}
 	}
-	return ""
+	if node.PendingFeedback != nil {
+		parts = append(parts, "feedback pending from "+node.PendingFeedback.FromNodeID)
+	}
+	if node.Status != state.NodeStatusBlocked && node.ActiveAttempt != nil && node.ActiveAttempt.EvidenceRef != "" {
+		parts = append(parts, "evidence: "+node.ActiveAttempt.EvidenceRef)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// gateBudgets derives each gate stage child's failed-verdict budget from the
+// pinned template, keyed by child node id.
+func gateBudgets(nodes map[string]state.NodeState, tmpl *model.Template) map[string]int {
+	budgets := map[string]int{}
+	for _, nodeID := range sortedNodeIDs(nodes) {
+		node := nodes[nodeID]
+		if node.Parent != "" || len(node.Children) == 0 {
+			continue
+		}
+		templateNode, ok := tmpl.Nodes[nodeID]
+		if !ok {
+			continue
+		}
+		for _, spec := range model.ExpandNode(nodeID, templateNode) {
+			if spec.Stage.IsGateStage() {
+				budgets[spec.ChildID] = processplan.GateBudget(spec)
+			}
+		}
+	}
+	return budgets
 }
 
 func sortedNodeIDs(nodes map[string]state.NodeState) []string {

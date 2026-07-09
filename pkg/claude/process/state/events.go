@@ -310,6 +310,10 @@ func applyEvent(st *State, event Event) error {
 			CommandID: event.CommandID,
 			StartedAt: event.At,
 		}
+		// The attempt consumes any pending gate feedback: the planner already
+		// threaded the payload onto this attempt's command, and a stale marker
+		// would leak into the loop's NEXT window.
+		node.PendingFeedback = nil
 		st.Nodes[event.NodeID] = node
 		return nil
 	case EventNodeAttemptSettled:

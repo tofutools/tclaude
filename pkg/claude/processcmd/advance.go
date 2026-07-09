@@ -145,7 +145,7 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 			return nil, fmt.Errorf("node %q of type %s only accepts pass verdict", nodeID, templateNode.Type)
 		}
 		entries := []evidence.LogEntry{
-			nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
+			nodeLogEntry(nodeID, evidence.EntryKindStatus, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
 		}
 		return appendActivationEntries(entries, snapshot, tmpl, processplan.ResolvePassEdge(templateNode.Next, verdict), evidenceRef, at)
 	case model.NodeTypeEnd:
@@ -153,8 +153,8 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 			return nil, fmt.Errorf("end node %q only accepts pass verdict", nodeID)
 		}
 		return []evidence.LogEntry{
-			nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
-			runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(templateNode)}, evidenceRef, at),
+			nodeLogEntry(nodeID, evidence.EntryKindStatus, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
+			runLogEntry(evidence.EntryKindStatus, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(templateNode)}, evidenceRef, at),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
@@ -253,7 +253,7 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 			ResetCounters: transition.ResetCounters,
 			Reason:        transition.Reason,
 		}, "", at))
-		return append(entries, nodeLogEntry(transition.TargetStageID, evidence.EntryKindGate, state.Event{
+		return append(entries, nodeLogEntry(transition.TargetStageID, evidence.EntryKindStatus, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusReady,
 		}, "", at)), nil
@@ -273,7 +273,7 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 		return entries, nil
 	case processplan.TransitionActivateChild:
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
-		return append(entries, nodeLogEntry(transition.NextChildID, evidence.EntryKindGate, state.Event{
+		return append(entries, nodeLogEntry(transition.NextChildID, evidence.EntryKindStatus, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusReady,
 		}, "", at)), nil
@@ -281,7 +281,7 @@ func planStageAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID stri
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, settleEvent, evidenceRef, at))
 		// Completing the done marker completes the parent in the same reducer
 		// event; no separate parent status entry exists to forge or skip.
-		entries = append(entries, nodeLogEntry(transition.DoneChildID, evidence.EntryKindGate, state.Event{
+		entries = append(entries, nodeLogEntry(transition.DoneChildID, evidence.EntryKindStatus, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: state.NodeStatusCompleted,
 		}, evidenceRef, at))
@@ -327,7 +327,7 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 		target = processplan.ResolveFailEdge(templateNode.Next)
 	}
 	if normalized == "fail" && target == "" {
-		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: state.RunStatusFailed}, evidenceRef, at))
+		entries = append(entries, runLogEntry(evidence.EntryKindStatus, state.Event{Type: state.EventRunStatusSet, RunStatus: state.RunStatusFailed}, evidenceRef, at))
 		return entries, nil
 	}
 	return appendActivationEntries(entries, snapshot, tmpl, target, evidenceRef, at)
@@ -373,9 +373,9 @@ func appendActivationEntries(entries []evidence.LogEntry, snapshot store.Snapsho
 	if targetTemplate.Type == model.NodeTypeEnd {
 		status = state.NodeStatusCompleted
 	}
-	entries = append(entries, nodeLogEntry(targetNodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: status}, evidenceRef, at))
+	entries = append(entries, nodeLogEntry(targetNodeID, evidence.EntryKindStatus, state.Event{Type: state.EventNodeStatusSet, NodeStatus: status}, evidenceRef, at))
 	if status == state.NodeStatusCompleted && targetTemplate.Type == model.NodeTypeEnd {
-		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(targetTemplate)}, evidenceRef, at))
+		entries = append(entries, runLogEntry(evidence.EntryKindStatus, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(targetTemplate)}, evidenceRef, at))
 	}
 	return entries, nil
 }

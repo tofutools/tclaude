@@ -229,7 +229,9 @@ func TestDriveCompoundGateFailurePoisonsToBlocked(t *testing.T) {
 		t.Fatalf("gate = %#v, parent = %#v", gate, parent)
 	}
 	for _, node := range []state.NodeState{gate, parent} {
-		if !strings.Contains(node.BlockedReason, `gate "work.test.tests" failed`) || node.BlockedOwner == "" {
+		// The default gate budget is 1 failed verdict, so the first failure
+		// exhausts it and poisons without a feedback loop.
+		if !strings.Contains(node.BlockedReason, `gate "work.test.tests" exhausted its budget of 1 failed verdicts`) || node.BlockedOwner == "" {
 			t.Fatalf("blocked node = %#v", node)
 		}
 	}
