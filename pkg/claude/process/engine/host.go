@@ -457,9 +457,20 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		contact.Used = 0
 		contact.EscalatedAt = time.Time{}
 		contact.LastRecoveredAt = activity.At.UTC()
+		clearHumanPreemption(&contact)
 		if cadence, parseErr := time.ParseDuration(contact.Cadence); parseErr == nil {
 			contact.NextContactAt = now.Add(cadence)
 		}
+		changed = true
+	}
+	// A delivery-correlated UserPromptSubmit is our own automation, not human
+	// preemption. It may arrive after an earlier tick tentatively recorded the
+	// same hook as human activity, so clear that latch once delivery metadata
+	// makes the origin unambiguous.
+	if activity.AutomatedDelivery &&
+		(!contact.HumanInteractedAt.IsZero() || contact.PauseReason == "human interaction with live agent session") &&
+		!activity.At.Before(contact.HumanInteractedAt) {
+		clearHumanPreemption(&contact)
 		changed = true
 	}
 	if activity.HumanInteracted && activity.At.After(contact.HumanInteractedAt) {
@@ -482,6 +493,9 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		return describeContact(contact), nil
 	}
 	if contact.Used < contact.Budget {
+		// The external nudge happens before its state append. A crash in that
+		// narrow window can resend one duplicate; escalation is exactly-once
+		// with respect to persisted ContactState, not the external transport.
 		if err := contactAdapter.Contact(ctx, request, false); err != nil {
 			return "", err
 		}
@@ -498,6 +512,8 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		return describeContact(contact), nil
 	}
 	if contact.EscalatedAt.IsZero() {
+		// Same accepted crash window as nudges above: one duplicate external
+		// escalation is possible before EscalatedAt becomes durable.
 		if err := contactAdapter.Contact(ctx, request, true); err != nil {
 			return "", err
 		}
@@ -508,6 +524,14 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		}
 	}
 	return describeContact(contact), nil
+}
+
+func clearHumanPreemption(contact *state.ContactState) {
+	contact.HumanInteractedAt = time.Time{}
+	if contact.PauseReason == "human interaction with live agent session" {
+		contact.Paused = false
+		contact.PauseReason = ""
+	}
 }
 
 func (h *Host) updateContact(ctx context.Context, snapshot store.Snapshot, contact state.ContactState) (store.Snapshot, error) {

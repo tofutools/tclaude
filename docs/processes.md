@@ -90,6 +90,10 @@ process-owned, ungrouped agent and records the deterministic process command id
 on its stable agent metadata. On restart, that metadata is used to rediscover
 the live attempt rather than spawning it again.
 
+Process agents currently start in the agentd daemon's working directory. The
+template and saved spawn profile do not yet provide a per-slot cwd/worktree
+override.
+
 The agent receives a fixed reporting protocol in its startup brief. A
 successful result must include an evidence reference:
 
@@ -115,9 +119,12 @@ tclaude process resolve RUN NODE \
 ```
 
 The obligation also appears in the dashboard Messages channel. Replying to its
-message starts with the verdict (for example `pass approved after review`) and
-records the dashboard reply as approval evidence. `process show` renders both
-the obligation and its nudge state.
+message starts with an advertised action. On task obligations, `approve` maps
+to `pass`, while `reject` and `ask-changes` map to `fail`; decision obligations
+advertise and preserve their actual edge names. Unknown actions are rejected
+instead of silently settling the wrong edge. The dashboard reply is recorded
+as approval evidence. `process show` renders both the obligation and its nudge
+state.
 
 Asynchronous performer slots use kind defaults (humans: every 30 minutes, five
 nudges; agents: every five minutes, three nudges) or a per-slot override:
@@ -133,8 +140,9 @@ performer:
     escalationTarget: human:operator
 ```
 
-Nudge exhaustion sends one human escalation and leaves the node waiting; it
-never fails the node. The budget resets when an agent becomes active again.
+Nudge exhaustion sends one human escalation, names the configured escalation
+target in that dashboard message, and leaves the node waiting; it never fails
+the node. The budget resets when an agent becomes active again.
 If the human interacts directly with a live process agent, automation for that
 node pauses after the same five-second grace used by the task runner, so an
 automated nudge never competes with the human for the session.

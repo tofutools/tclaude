@@ -174,6 +174,13 @@ func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
 		"/v1/process/runs/agent-run/nodes/work/report", reportBody), foreignConv))
 	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	invalidBody := map[string]string{
+		"command_id": commandID, "verdict": "approve", "evidence_ref": "commit:invalid",
+	}
+	invalid := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/process/runs/agent-run/nodes/work/report", invalidBody), agentRow.CurrentConvID))
+	require.Equal(t, http.StatusConflict, invalid.Code, invalid.Body.String())
+	assert.Contains(t, invalid.Body.String(), "allowed: pass, fail, ask-changes")
 
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/agent-run/nodes/work/report", reportBody)
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
@@ -186,6 +193,54 @@ func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(settled.State).Status)
 	assert.Equal(t, state.ActorRef("agent:"+firstAgentID), settled.State.Nodes["work"].ActiveAttempt.Actor)
+}
+
+func TestProcessEngineOwnInboxDeliveryDoesNotPreemptAgent(t *testing.T) {
+	_, root := processEngineFlow(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "process-preempt", Harness: "claude"})
+	require.NoError(t, err)
+	fs := createEngineRun(t, root, "agent-delivery-run", programTemplate("agent-delivery", model.Performer{
+		Kind: model.PerformerAgent, Profile: "process-preempt", Prompt: "Implement the requested change",
+		Contact: &model.ContactSchedule{Cadence: "1s", Budget: 2, EscalationTarget: "human:operator"},
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	snapshot, err := fs.LoadRun(t.Context(), "agent-delivery-run")
+	require.NoError(t, err)
+	commandID := firstContact(snapshot.State).CommandID
+	agentRow, err := db.AgentForProcessCommand(commandID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRow)
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: 0, ToConv: agentRow.CurrentConvID, Subject: "Process nudge", Body: "continue",
+		ToRecipients: []string{agentRow.CurrentConvID},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.MarkAgentMessageDelivered(messageID))
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+	require.NotNil(t, message)
+	require.False(t, message.DeliveredAt.IsZero())
+
+	sessionRow, err := db.FindSessionByConvID(agentRow.CurrentConvID)
+	require.NoError(t, err)
+	require.NotNil(t, sessionRow)
+	sessionRow.StatusDetail = "UserPromptSubmit"
+	sessionRow.LastHook = message.DeliveredAt
+	require.NoError(t, db.SaveSession(sessionRow))
+	host.Now = func() time.Time { return message.DeliveredAt.Add(6 * time.Second) }
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	snapshot, err = fs.LoadRun(t.Context(), "agent-delivery-run")
+	require.NoError(t, err)
+	contact := firstContact(snapshot.State)
+	assert.False(t, contact.Paused)
+	assert.True(t, contact.HumanInteractedAt.IsZero())
+	assert.Equal(t, 1, contact.Used, "the due nudge proceeds after an automated UserPromptSubmit")
 }
 
 func TestProcessEngineHumanObligationAppearsAndResolvesThroughCLI(t *testing.T) {
@@ -210,7 +265,7 @@ func TestProcessEngineHumanObligationAppearsAndResolvesThroughCLI(t *testing.T) 
 	assert.Contains(t, messages[0].Body, "Approve the release?")
 
 	cmd := processcmd.Cmd()
-	cmd.SetArgs([]string{"resolve", "human-run", "work", "--store-root", root, "--verdict", "pass", "--actor", "human:johan", "--evidence", "approval:dashboard-1"})
+	cmd.SetArgs([]string{"resolve", "human-run", "work", "--store-root", root, "--verdict", "approve", "--actor", "human:johan", "--evidence", "approval:dashboard-1"})
 	require.NoError(t, cmd.Execute())
 	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -236,7 +291,7 @@ func TestProcessEngineHumanObligationResolvesThroughDashboardMessages(t *testing
 	message := messages[0]
 	assert.Equal(t, "human-dashboard-run", message.ProcessRunID)
 	assert.NotEmpty(t, message.ProcessCommandID)
-	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": message.ID, "body": "pass approved in dashboard"})
+	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": message.ID, "body": "approve looks good in dashboard"})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -246,6 +301,31 @@ func TestProcessEngineHumanObligationResolvesThroughDashboardMessages(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, state.ActorRef("human:operator"), snapshot.State.Nodes["work"].ActiveAttempt.Actor)
 	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(snapshot.State).Status)
+}
+
+func TestProcessEngineHumanDecisionAdvertisesAndPreservesEdgeVerdict(t *testing.T) {
+	_, root := processEngineFlow(t)
+	performer := model.Performer{Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve the release?"}
+	fs := createEngineRun(t, root, "human-decision-run", decisionTemplate("human-decision", performer), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err := fs.LoadRun(t.Context(), "human-decision-run")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"approve", "reject"}, firstObligation(snapshot.State).AvailableActions)
+	messages, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, messages)
+	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": messages[0].ID, "body": "approve release reviewed"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
+	snapshot, err = fs.LoadRun(t.Context(), "human-decision-run")
+	require.NoError(t, err)
+	assert.Equal(t, "approve", snapshot.State.Nodes["decide"].ChosenEdge)
 }
 
 func TestProcessEngineNudgeBudgetEscalatesAndResetsOnRecovery(t *testing.T) {
@@ -313,6 +393,42 @@ func TestProcessEngineHumanPreemptionPausesAgentAutomation(t *testing.T) {
 	snapshot, err := fs.LoadRun(t.Context(), "preempt-run")
 	require.NoError(t, err)
 	assert.True(t, firstContact(snapshot.State).Paused)
+
+	// Real agent activity clears the human-preemption latch and schedules the
+	// next contact from a fresh budget.
+	now = now.Add(time.Second)
+	adapter.activity = processexec.Activity{Recovered: true, At: now}
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err = fs.LoadRun(t.Context(), "preempt-run")
+	require.NoError(t, err)
+	contact := firstContact(snapshot.State)
+	assert.False(t, contact.Paused)
+	assert.Empty(t, contact.PauseReason)
+	assert.True(t, contact.HumanInteractedAt.IsZero())
+}
+
+func TestProcessEngineAutomatedDeliveryDoesNotPauseAgent(t *testing.T) {
+	_, root := processEngineFlow(t)
+	adapter := &deferredContactAdapter{}
+	fs := createEngineRun(t, root, "automated-delivery-run", programTemplate("automated-delivery", model.Performer{
+		Kind: model.PerformerAgent, Profile: "fake", Prompt: "work",
+		Contact: &model.ContactSchedule{Cadence: "1s", Budget: 2, EscalationTarget: "human:oncall"},
+	}), false)
+	now := time.Date(2026, 7, 10, 1, 30, 0, 0, time.UTC)
+	host := processengine.New(fs, "agentd:automated-delivery", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	host.Now = func() time.Time { return now }
+	_, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	now = now.Add(10 * time.Second)
+	adapter.activity = processexec.Activity{AutomatedDelivery: true, At: now.Add(-6 * time.Second)}
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err := fs.LoadRun(t.Context(), "automated-delivery-run")
+	require.NoError(t, err)
+	assert.False(t, firstContact(snapshot.State).Paused)
+	assert.Equal(t, 1, adapter.nudges)
 }
 
 type deferredContactAdapter struct {
@@ -625,6 +741,20 @@ func programTemplate(id string, performer model.Performer) *model.Template {
 		Nodes: map[string]model.Node{
 			"work": {Type: model.NodeTypeTask, Performer: &performer, Next: model.Next{"pass": "end"}},
 			"end":  {Type: model.NodeTypeEnd},
+		},
+	}
+}
+
+func decisionTemplate(id string, performer model.Performer) *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         id,
+		Start:      "decide",
+		Nodes: map[string]model.Node{
+			"decide": {Type: model.NodeTypeDecision, Performer: &performer, Next: model.Next{"approve": "end", "reject": "failed"}},
+			"end":    {Type: model.NodeTypeEnd},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 }

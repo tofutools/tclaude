@@ -90,7 +90,10 @@ type DeferredAdapter interface {
 type Activity struct {
 	Recovered       bool
 	HumanInteracted bool
-	At              time.Time
+	// AutomatedDelivery identifies a UserPromptSubmit caused by tclaude's own
+	// inbox delivery rather than a human typing in the performer pane.
+	AutomatedDelivery bool
+	At                time.Time
 }
 
 // ContactAdapter is the optional nudge/preemption surface for a deferred

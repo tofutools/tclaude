@@ -160,9 +160,9 @@ Task:
 %s
 
 When the task is complete, report a structured result through the daemon:
-tclaude process report %s %s --command %s --verdict <pass|fail> --evidence <ref> [--feedback <text>]
+tclaude process report %s %s --command %s --verdict <action> --evidence <ref> [--feedback <text>]
 
-A pass without an evidence ref is not complete. Do not claim another actor identity; agentd derives your stable identity from the calling pane.`,
+Use pass/fail for task work. For a decision, use the selected decision-edge name. Unknown actions are rejected. A result without an evidence ref is not complete. Do not claim another actor identity; agentd derives your stable identity from the calling pane.`,
 		request.Input.RunID, request.Input.NodeID, request.Input.Attempt, request.Command.ID,
 		request.Performer.Prompt, request.Input.RunID, request.Input.NodeID, request.Command.ID)
 }
@@ -184,8 +184,13 @@ func (processAgentAdapter) Contact(_ context.Context, request processexec.Reques
 		return err
 	}
 	if escalation {
-		_, err = recordHumanMessage("", "Process performer escalation",
-			fmt.Sprintf("Process %s node %s exhausted its agent nudge budget. Command: %s", request.Input.RunID, request.Input.NodeID, request.Command.ID))
+		_, _, target, scheduleErr := processexec.ContactScheduleFor(request.Performer)
+		if scheduleErr != nil {
+			return scheduleErr
+		}
+		_, err = recordHumanMessageWithProcess("", "Process performer escalation",
+			fmt.Sprintf("Process %s node %s exhausted its agent nudge budget. Command: %s. Escalation target: %s", request.Input.RunID, request.Input.NodeID, request.Command.ID, target),
+			request.Input.RunID, request.Input.NodeID, request.Command.ID)
 		return err
 	}
 	if agent == nil {
@@ -215,8 +220,44 @@ func (processAgentAdapter) Activity(_ context.Context, request processexec.Reque
 	if err != nil || sessionRow == nil || !sessionRow.LastHook.After(since) {
 		return processexec.Activity{}, err
 	}
-	human := sessionRow.StatusDetail == "UserPromptSubmit"
-	return processexec.Activity{Recovered: !human, HumanInteracted: human, At: sessionRow.LastHook}, nil
+	if sessionRow.StatusDetail != "UserPromptSubmit" {
+		return processexec.Activity{Recovered: true, At: sessionRow.LastHook}, nil
+	}
+	automated, err := processAutomatedDeliveryNear(agent, sessionRow.LastHook)
+	if err != nil {
+		return processexec.Activity{}, err
+	}
+	if automated {
+		return processexec.Activity{AutomatedDelivery: true, At: sessionRow.LastHook}, nil
+	}
+	return processexec.Activity{HumanInteracted: true, At: sessionRow.LastHook}, nil
+}
+
+const processDeliveryCorrelationWindow = 10 * time.Second
+
+// processAutomatedDeliveryNear correlates a UserPromptSubmit hook with the
+// daemon's durable inbox delivery timestamp. Hooks do not carry prompt origin,
+// so an ambiguous hook is preemptive only when it is not near a known tclaude
+// delivery. This deliberately favors a missed preemption over pausing the
+// automation because of its own nudge.
+func processAutomatedDeliveryNear(agent *db.Agent, at time.Time) (bool, error) {
+	messages, err := db.ListInboxForActor(agent.CurrentConvID, agent.AgentID, 32)
+	if err != nil {
+		return false, err
+	}
+	for _, message := range messages {
+		if message.DeliveredAt.IsZero() {
+			continue
+		}
+		delta := message.DeliveredAt.Sub(at)
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta <= processDeliveryCorrelationWindow {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type processHumanAdapter struct{}
@@ -279,10 +320,16 @@ func (processHumanAdapter) ReconcileDeferred(_ context.Context, _ processexec.Re
 
 func (processHumanAdapter) Contact(_ context.Context, request processexec.Request, escalation bool) error {
 	subject := "Process reminder"
+	body := fmt.Sprintf("Waiting on process %s node %s (command %s).", request.Input.RunID, request.Input.NodeID, request.Command.ID)
 	if escalation {
 		subject = "Process obligation escalation"
+		_, _, target, err := processexec.ContactScheduleFor(request.Performer)
+		if err != nil {
+			return err
+		}
+		body += " Escalation target: " + target + "."
 	}
-	_, err := recordHumanMessageWithProcess("", subject, fmt.Sprintf("Waiting on process %s node %s (command %s).", request.Input.RunID, request.Input.NodeID, request.Command.ID), request.Input.RunID, request.Input.NodeID, request.Command.ID)
+	_, err := recordHumanMessageWithProcess("", subject, body, request.Input.RunID, request.Input.NodeID, request.Command.ID)
 	return err
 }
 

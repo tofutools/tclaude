@@ -209,6 +209,10 @@ func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dis
 	if err != nil {
 		return nil, fmt.Errorf("dispatch process command %q: %w", command.ID, err)
 	}
+	actions, err := e.obligationActions(ctx, command, dispatched.AvailableActions)
+	if err != nil {
+		return nil, err
+	}
 	at := e.now()
 	waitKind := state.WaitKindAgent
 	if command.Performer.Kind == model.PerformerHuman {
@@ -244,7 +248,7 @@ func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dis
 			Status:           state.WaitStatusPending,
 			DueAt:            dueAt,
 			Summary:          strings.TrimSpace(dispatched.Summary),
-			AvailableActions: append([]string(nil), dispatched.AvailableActions...),
+			AvailableActions: actions,
 			NodeLink:         command.RunID + "/" + command.NodeID,
 			CreatedAt:        at,
 		}
@@ -284,6 +288,37 @@ func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dis
 	return nil, fmt.Errorf("record process command %q dispatch: exceeded %d CAS attempts", command.ID, maxObservationCASAttempts)
 }
 
+// obligationActions makes decision obligations advertise the pinned
+// template's real edge vocabulary. Task obligations keep the adapter's action
+// vocabulary, whose approve/reject forms are normalized to pass/fail when the
+// observation is recorded.
+func (e *Executor) obligationActions(ctx context.Context, command plan.Command, fallback []string) ([]string, error) {
+	if command.Kind != plan.CommandKindRecordDecision {
+		return append([]string(nil), fallback...), nil
+	}
+	run, err := e.Store.GetRun(ctx, command.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("load run %q for decision actions: %w", command.RunID, err)
+	}
+	tmpl, err := e.Store.GetTemplate(ctx, run.TemplateRef)
+	if err != nil {
+		return nil, fmt.Errorf("load template %q for decision actions: %w", run.TemplateRef, err)
+	}
+	node, ok := tmpl.Nodes[command.NodeID]
+	if !ok {
+		return nil, fmt.Errorf("decision node %q is missing from template %q", command.NodeID, run.TemplateRef)
+	}
+	actions := make([]string, 0, len(node.Next))
+	for action := range node.Next {
+		actions = append(actions, action)
+	}
+	slices.Sort(actions)
+	if len(actions) == 0 {
+		return nil, fmt.Errorf("decision node %q has no available actions", command.NodeID)
+	}
+	return actions, nil
+}
+
 // RecordObservation reconciles an already-issued performer command without
 // performing it again. Engine hosts can use the command identity embedded in an
 // external side effect to recover the actor, verdict, and evidence after a
@@ -317,6 +352,10 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 	if outstanding.Status != state.CommandStatusIssued {
 		return nil, fmt.Errorf("process command %q is %s and cannot be reconciled", command.ID, outstanding.Status)
 	}
+	observation, err = normalizeObligationObservation(snapshot, command, observation)
+	if err != nil {
+		return nil, err
+	}
 	observation, err = e.persistPerformerObservation(ctx, command, observation)
 	if err != nil {
 		return nil, err
@@ -325,6 +364,62 @@ func (e *Executor) RecordObservation(ctx context.Context, command plan.Command, 
 		observation.ExternalRef = observation.EvidenceRef
 	}
 	return e.appendObservation(ctx, command, observation)
+}
+
+func normalizeObligationObservation(snapshot store.Snapshot, command plan.Command, observation Observation) (Observation, error) {
+	for _, id := range sortedObligationIDs(snapshot.State.Obligations) {
+		obligation := snapshot.State.Obligations[id]
+		if obligation.CommandID != command.ID || obligation.Status != state.WaitStatusPending {
+			continue
+		}
+		raw := strings.ToLower(strings.TrimSpace(observation.Verdict))
+		allowed := make([]string, 0, len(obligation.AvailableActions)+2)
+		allowedSet := map[string]struct{}{}
+		addAllowed := func(value string) {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				return
+			}
+			if _, exists := allowedSet[value]; exists {
+				return
+			}
+			allowedSet[value] = struct{}{}
+			allowed = append(allowed, value)
+		}
+		for _, action := range obligation.AvailableActions {
+			addAllowed(action)
+		}
+		if command.Kind != plan.CommandKindRecordDecision {
+			addAllowed("pass")
+			addAllowed("fail")
+		}
+		if _, ok := allowedSet[raw]; !ok {
+			return Observation{}, fmt.Errorf("verdict %q is not allowed for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
+		}
+		if command.Kind == plan.CommandKindRecordDecision {
+			observation.Verdict = raw
+			return observation, nil
+		}
+		switch raw {
+		case "pass", "approve":
+			observation.Verdict = "pass"
+		case "fail", "reject", "ask-changes":
+			observation.Verdict = "fail"
+		default:
+			return Observation{}, fmt.Errorf("action %q has no pass/fail semantics for obligation %q; allowed: %s", observation.Verdict, obligation.ID, strings.Join(allowed, ", "))
+		}
+		return observation, nil
+	}
+	return observation, nil
+}
+
+func sortedObligationIDs(obligations map[string]state.ObligationRecord) []string {
+	ids := make([]string, 0, len(obligations))
+	for id := range obligations {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // RecordOutstandingObservation recovers a performer command directly from its
