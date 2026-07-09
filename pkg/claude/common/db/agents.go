@@ -455,6 +455,58 @@ func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	return err
 }
 
+// SetAgentProcessCommand binds a spawned actor to the deterministic process
+// command that created it. The database's partial unique index rejects a
+// second actor for the same non-empty command id.
+func SetAgentProcessCommand(agentID, commandID string) error {
+	agentID = strings.TrimSpace(agentID)
+	commandID = strings.TrimSpace(commandID)
+	if agentID == "" || commandID == "" {
+		return errors.New("SetAgentProcessCommand: agent_id and command_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agents SET process_command_id = ? WHERE agent_id = ?`, commandID, agentID)
+	return err
+}
+
+func AgentForProcessCommand(commandID string) (*Agent, error) {
+	commandID = strings.TrimSpace(commandID)
+	if commandID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var agentID string
+	err = d.QueryRow(`SELECT agent_id FROM agents WHERE process_command_id = ?`, commandID).Scan(&agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return GetAgent(agentID)
+}
+
+func ClearAgentProcessCommandForConv(convID string) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agents SET process_command_id = '' WHERE agent_id = (
+		SELECT agent_id FROM agent_conversations WHERE conv_id = ?
+	)`, convID)
+	return err
+}
+
 // RetireAgentByID demotes an active actor: it sets retired_at so the agent
 // drops off every live surface, leaving its conversation generations intact.
 // Returns false (no error) when the agent was not active, so a repeated

@@ -37,6 +37,15 @@ func Clone(st State) State {
 	for key, value := range st.Timers {
 		out.Timers[key] = value
 	}
+	out.Obligations = make(map[string]ObligationRecord, len(st.Obligations))
+	for key, value := range st.Obligations {
+		value.AvailableActions = append([]string(nil), value.AvailableActions...)
+		out.Obligations[key] = value
+	}
+	out.Contacts = make(map[string]ContactState, len(st.Contacts))
+	for key, value := range st.Contacts {
+		out.Contacts[key] = value
+	}
 	out.AdminRecords = append([]AdminRecord(nil), st.AdminRecords...)
 	return out
 }

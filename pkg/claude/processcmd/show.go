@@ -111,6 +111,40 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	if len(snapshot.State.Obligations) > 0 {
+		fmt.Fprintln(out, "\nObligations:")
+		ow := newTable(out)
+		fmt.Fprintln(ow, "ID\tNODE\tKIND\tASSIGNEE\tSTATUS\tDUE\tACTIONS\tSUMMARY")
+		for _, id := range sortedObligationIDs(snapshot.State.Obligations) {
+			obligation := snapshot.State.Obligations[id]
+			fmt.Fprintf(ow, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				id, obligation.NodeID, obligation.Kind, obligation.Assignee, obligation.Status,
+				formatTime(obligation.DueAt), strings.Join(obligation.AvailableActions, ","), obligation.Summary)
+		}
+		if err := ow.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(snapshot.State.Contacts) > 0 {
+		fmt.Fprintln(out, "\nNudges:")
+		cw := newTable(out)
+		fmt.Fprintln(cw, "COMMAND\tASSIGNEE\tLAST\tNEXT\tBUDGET\tESCALATION\tSTATE")
+		for _, id := range sortedContactIDs(snapshot.State.Contacts) {
+			contact := snapshot.State.Contacts[id]
+			contactState := "active"
+			if contact.Paused {
+				contactState = "paused: " + contact.PauseReason
+			} else if !contact.EscalatedAt.IsZero() {
+				contactState = "escalated"
+			}
+			fmt.Fprintf(cw, "%s\t%s\t%s\t%s\t%d/%d\t%s\t%s\n", id, contact.Assignee,
+				formatTime(contact.LastContactedAt), formatTime(contact.NextContactAt), contact.Used, contact.Budget,
+				contact.EscalationTarget, contactState)
+		}
+		if err := cw.Flush(); err != nil {
+			return err
+		}
+	}
 	recent := p.Recent
 	if recent <= 0 {
 		recent = 8
@@ -124,6 +158,24 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 		fmt.Fprintf(out, "  #%d %s %s %s\n", entry.Seq, entry.Scope.Kind, orDash(entry.Scope.ID), entry.EventRef)
 	}
 	return nil
+}
+
+func sortedObligationIDs(values map[string]state.ObligationRecord) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedContactIDs(values map[string]state.ContactState) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func renderMermaid(out io.Writer, snapshot store.Snapshot, tmpl *model.Template) {

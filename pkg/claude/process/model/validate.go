@@ -234,6 +234,18 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 	diagnostics = append(diagnostics, checkInertParamRef(path+".profile", performer.Profile)...)
 	diagnostics = append(diagnostics, checkInertParamRef(path+".timeout", performer.Timeout)...)
 	diagnostics = append(diagnostics, validateDuration(path+".timeout", performer.Timeout)...)
+	if performer.Contact != nil {
+		diagnostics = append(diagnostics, validateDuration(path+".contact.cadence", performer.Contact.Cadence)...)
+		if strings.TrimSpace(performer.Contact.Cadence) == "" {
+			diagnostics = append(diagnostics, diagError("missing_contact_cadence", path+".contact.cadence", "contact schedule requires cadence"))
+		}
+		if performer.Contact.Budget <= 0 {
+			diagnostics = append(diagnostics, diagError("invalid_contact_budget", path+".contact.budget", "contact schedule requires budget greater than zero"))
+		}
+		if strings.TrimSpace(performer.Contact.EscalationTarget) == "" {
+			diagnostics = append(diagnostics, diagError("missing_escalation_target", path+".contact.escalationTarget", "contact schedule requires an escalation target"))
+		}
+	}
 	return diagnostics
 }
 

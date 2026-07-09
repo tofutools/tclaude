@@ -30,7 +30,12 @@ const (
 	EventTimerCreated             EventType = "timer_created"
 	EventTimerSatisfied           EventType = "timer_satisfied"
 	EventCommandIssued            EventType = "command_issued"
+	EventCommandDispatched        EventType = "command_dispatched"
 	EventCommandObserved          EventType = "command_observed"
+	EventObligationCreated        EventType = "obligation_created"
+	EventObligationResolved       EventType = "obligation_resolved"
+	EventContactScheduled         EventType = "contact_scheduled"
+	EventContactUpdated           EventType = "contact_updated"
 	EventAdminRepairRecorded      EventType = "admin_repair_recorded"
 	EventAdminProgramsAllowed     EventType = "admin_programs_allowed"
 	EventTemplateDivergenceMarked EventType = "template_divergence_marked"
@@ -60,8 +65,11 @@ type Event struct {
 	CommandID  string         `json:"commandId,omitempty"`
 	Outcome    string         `json:"outcome,omitempty"`
 
-	Command     *OutstandingCommand `json:"command,omitempty"`
-	ExternalRef string              `json:"externalRef,omitempty"`
+	Command      *OutstandingCommand `json:"command,omitempty"`
+	ExternalRef  string              `json:"externalRef,omitempty"`
+	Obligation   *ObligationRecord   `json:"obligation,omitempty"`
+	ObligationID string              `json:"obligationId,omitempty"`
+	Contact      *ContactState       `json:"contact,omitempty"`
 
 	Decision   *DecisionRecord `json:"decision,omitempty"`
 	ChosenEdge string          `json:"chosenEdge,omitempty"`
@@ -737,6 +745,99 @@ func applyEvent(st *State, event Event) error {
 			command.Feedback = event.Feedback
 		}
 		st.OutstandingCommands[event.CommandID] = command
+		return nil
+	case EventCommandDispatched:
+		if strings.TrimSpace(event.CommandID) == "" || strings.TrimSpace(event.ExternalRef) == "" {
+			return fmt.Errorf("command_dispatched requires command id and external ref")
+		}
+		command, ok := st.OutstandingCommands[event.CommandID]
+		if !ok {
+			return fmt.Errorf("command %q is not outstanding", event.CommandID)
+		}
+		if command.Status != CommandStatusIssued {
+			return fmt.Errorf("command %q is %s and cannot be dispatched", event.CommandID, command.Status)
+		}
+		if command.ExternalRef != "" && command.ExternalRef != event.ExternalRef {
+			return fmt.Errorf("command %q is already dispatched as %q", event.CommandID, command.ExternalRef)
+		}
+		command.ExternalRef = event.ExternalRef
+		st.OutstandingCommands[event.CommandID] = command
+		return nil
+	case EventObligationCreated:
+		if event.Obligation == nil {
+			return fmt.Errorf("obligation_created requires obligation")
+		}
+		obligation := *event.Obligation
+		if obligation.ID == "" || obligation.RunID == "" || obligation.NodeID == "" || obligation.CommandID == "" {
+			return fmt.Errorf("obligation_created requires id, run, node, and command")
+		}
+		if obligation.RunID != st.RunID {
+			return fmt.Errorf("obligation %q run %q does not match state run %q", obligation.ID, obligation.RunID, st.RunID)
+		}
+		if !obligation.Kind.IsValid() || !obligation.Status.IsValid() {
+			return fmt.Errorf("obligation %q has invalid kind or status", obligation.ID)
+		}
+		if strings.TrimSpace(obligation.Assignee) == "" || strings.TrimSpace(obligation.Summary) == "" {
+			return fmt.Errorf("obligation %q requires assignee and summary", obligation.ID)
+		}
+		if _, ok := st.OutstandingCommands[obligation.CommandID]; !ok {
+			return fmt.Errorf("obligation %q command %q is not outstanding", obligation.ID, obligation.CommandID)
+		}
+		if obligation.CreatedAt.IsZero() {
+			obligation.CreatedAt = event.At
+		}
+		obligation.AvailableActions = append([]string(nil), obligation.AvailableActions...)
+		st.StateSchemaVersion = StateSchemaVersion
+		st.Obligations[obligation.ID] = obligation
+		node, err := getNode(st, obligation.NodeID)
+		if err != nil {
+			return err
+		}
+		node.Assignee = obligation.Assignee
+		node.Status = waitingStatus(obligation.Kind)
+		st.Nodes[obligation.NodeID] = node
+		return nil
+	case EventObligationResolved:
+		id := event.ObligationID
+		if id == "" && event.Obligation != nil {
+			id = event.Obligation.ID
+		}
+		obligation, ok := st.Obligations[id]
+		if !ok {
+			return fmt.Errorf("obligation %q is not declared", id)
+		}
+		obligation.Status = WaitStatusSatisfied
+		st.StateSchemaVersion = StateSchemaVersion
+		obligation.ResolvedAt = event.At
+		if event.EvidenceRef != "" {
+			obligation.EvidenceRef = event.EvidenceRef
+		}
+		st.Obligations[id] = obligation
+		node, err := getNode(st, obligation.NodeID)
+		if err != nil {
+			return err
+		}
+		if node.ActiveAttempt != nil && node.ActiveAttempt.SettledAt.IsZero() {
+			node.Status = NodeStatusRunning
+			st.Nodes[obligation.NodeID] = node
+		}
+		return nil
+	case EventContactScheduled, EventContactUpdated:
+		if event.Contact == nil {
+			return fmt.Errorf("%s requires contact", event.Type)
+		}
+		contact := *event.Contact
+		if contact.CommandID == "" || !contact.Kind.IsValid() || strings.TrimSpace(contact.Cadence) == "" || contact.Budget <= 0 || strings.TrimSpace(contact.EscalationTarget) == "" {
+			return fmt.Errorf("contact for command %q is incomplete", contact.CommandID)
+		}
+		if _, ok := st.OutstandingCommands[contact.CommandID]; !ok {
+			return fmt.Errorf("contact command %q is not outstanding", contact.CommandID)
+		}
+		if contact.Used < 0 || contact.Used > contact.Budget {
+			return fmt.Errorf("contact command %q budget usage %d/%d is invalid", contact.CommandID, contact.Used, contact.Budget)
+		}
+		st.StateSchemaVersion = StateSchemaVersion
+		st.Contacts[contact.CommandID] = contact
 		return nil
 	case EventAdminRepairRecorded, EventAdminProgramsAllowed:
 		record := AdminRecord{

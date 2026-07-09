@@ -77,6 +77,8 @@ func New(runID, originalTemplateRef, currentTemplateRef string, nodes []NodeInit
 		OutstandingCommands: map[string]OutstandingCommand{},
 		Waits:               map[string]WaitRecord{},
 		Timers:              map[string]TimerRecord{},
+		Obligations:         map[string]ObligationRecord{},
+		Contacts:            map[string]ContactState{},
 	}
 	for _, node := range nodes {
 		status := node.Status
@@ -110,5 +112,11 @@ func normalizeState(st *State) {
 	}
 	if st.Timers == nil {
 		st.Timers = map[string]TimerRecord{}
+	}
+	if st.Obligations == nil {
+		st.Obligations = map[string]ObligationRecord{}
+	}
+	if st.Contacts == nil {
+		st.Contacts = map[string]ContactState{}
 	}
 }

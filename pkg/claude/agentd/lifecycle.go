@@ -1872,6 +1872,10 @@ type spawnParams struct {
 	// paths that have no SpawnRequest to snapshot (the pending-spawn sweeper,
 	// the group-template instantiator), where the column simply stays "".
 	SpawnConfigJSON string
+	// ProcessCommandID binds a process-owned spawn to its deterministic
+	// command. It is metadata only (never sent through pane injection) and is
+	// persisted on the stable agent identity during enrollment.
+	ProcessCommandID string
 }
 
 // spawnOutcome is the success result of executeSpawn.
@@ -2086,22 +2090,24 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // pending display name, drops the startup briefing into the new agent's
 // inbox, and kicks off the post-init /rename + welcome injection (the
 // shared finishSpawnEnrollment tail). It optionally opens a terminal as soon
-// as the pane exists. It is the single code path behind both the
-// /v1/groups/{name}/spawn endpoint and the group-template instantiator.
+// as the pane exists. It is the single code path behind the group spawn
+// surfaces and ungrouped process-performer spawns.
 //
 // On the Async path (the HTTP endpoint) a conv-id that does not materialise
 // within asyncSpawnInlineGrace does not fail: the spawn is recorded in
 // pending_spawns and returned as a PENDING outcome (empty conv-id) for the
-// sweeper to enroll later. On the synchronous path (the template
-// instantiator, which needs the conv-id for grants) a timeout is still a hard
-// failure.
+// sweeper to enroll later. On the synchronous path (a template instantiator
+// or ungrouped process performer, both of which need the conv-id immediately)
+// a timeout is still a hard failure.
 //
 // Returns either an outcome or a typed failure — never both. On an inline
-// success the agent is fully spawned and group-joined (post-membership
-// best-effort steps — pending name, inbox insert — only log on failure); on
+// success the agent is fully spawned and, when a group was supplied,
+// group-joined (post-membership best-effort steps — pending name, inbox insert
+// — only log on failure); on
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
+	groupName := spawnGroupName(g)
 	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -2188,7 +2194,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// SAME assembly enrollSpawnedConv stored in the inbox, recomputed here
 		// (a cheap pure function of the same inputs) so the inlined copy is
 		// byte-identical to the inbox row — no shared mutable state to drift.
-		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
 		// Capture the inline decision from the SAME inputs (and cap) the prompt
 		// build uses, so the post-launch read-marking matches what actually went
@@ -2199,7 +2205,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// inline". (markBriefingConsumed also no-ops on msgID 0, so this is
 		// belt-and-braces — but it keeps the flag honest at the call site.)
 		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
-		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, g.Name,
+		spawnArgs.InitialPrompt = buildSpawnLaunchPrompt(p.Name, p.Role, p.Descr, groupName,
 			preMsgID, p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), inlineCap)
 	} else if spawnHarness.NeedsSpawnSeed() {
@@ -2216,8 +2222,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		// once the inbox row + id exist. No conv-id is known here, so the welcome
 		// carries no inbox-message id (msgID 0). (CC on the legacy-injection
 		// revert reports its id via hook and needs no seed, so it is excluded.)
-		spawnContextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
-		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, g.Name,
+		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
+		spawnArgs.InitialPrompt = buildSpawnSeedPrompt(p.Name, p.Role, p.Descr, groupName,
 			p.InitialMessage != "", spawnContextBody, p.WorktreePath, p.WorktreeBranch,
 			resolveSpawnerTitle(p.SpawnedByConv, p.SpawnedByAgent), spawnInlineMaxChars())
 	}
@@ -2394,6 +2400,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// appears. Restart-safe: the row carries everything finishSpawnEnrollment
 	// needs.
 	if p.Async {
+		if g == nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
+		}
 		focusSpawn() // belt-and-suspenders: open the pane even if it came up slow
 		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -2409,11 +2418,25 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return &spawnOutcome{ConvID: "", Label: label, TmuxSession: tmuxSession, FocusMode: focusMode}, nil
 	}
 
-	// Synchronous (template) path: the caller needs the conv-id now, so a
-	// timeout is a hard failure — unchanged from before inc2.
+	// Synchronous (template or process-performer) path: the caller needs the
+	// conv-id now, so a timeout is a hard failure — unchanged from before inc2.
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+func spawnGroupName(g *db.AgentGroup) string {
+	if g == nil {
+		return ""
+	}
+	return g.Name
+}
+
+func spawnGroupID(g *db.AgentGroup) int64 {
+	if g == nil {
+		return 0
+	}
+	return g.ID
 }
 
 func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.PendingSpawn {
@@ -2431,6 +2454,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		WorktreeBranch:      p.WorktreeBranch,
 		IsOwner:             p.IsOwner,
 		PermissionOverrides: p.PermissionOverrides,
+		ProcessCommandID:    p.ProcessCommandID,
 	}
 }
 
@@ -2534,9 +2558,9 @@ func requeuePendingSpawn(label string, ps *db.PendingSpawn) {
 	}
 }
 
-// finishSpawnEnrollment completes a spawn once its conv-id is known: it joins
-// the conv to the group, records the requested display name, drops the
-// startup briefing into the new agent's inbox, and kicks off the post-init
+// finishSpawnEnrollment completes a spawn once its conv-id is known: it
+// optionally joins the conv to a group, records the requested display name,
+// drops the startup briefing into the new agent's inbox, and kicks off the post-init
 // /rename + welcome injection. It is the shared tail of executeSpawn — run
 // inline when the conv-id resolves during the spawn poll, and run later by
 // the pending-spawn sweeper once a gated Codex finally takes its first turn
@@ -2547,9 +2571,9 @@ func requeuePendingSpawn(label string, ps *db.PendingSpawn) {
 // at spawn time (label-based, conv-id-independent), so a pending spawn is
 // already focusable while it waits.
 //
-// Returns a typed failure only for the membership write — the one step the
-// agent cannot do without; the later steps (pending name, inbox insert) are
-// best-effort and only log, since the agent is already spawned and grouped.
+// Returns a typed failure only for an applicable group membership write; the
+// later steps (pending name, inbox insert) are best-effort and only log, since
+// the agent is already spawned.
 //
 // SAFETY: runSpawnPostInit's pane injection (send-keys) runs ONLY from here,
 // i.e. only after the conv-id exists — which for Codex means after it cleared
@@ -2587,7 +2611,8 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// decision on the pending_spawns row; deliberately skipped as disproportionate
 	// to an operator-induced, recoverable, cosmetic window.
 	h := harnessForConv(convID)
-	contextBody := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
+	groupName := spawnGroupName(g)
+	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
 
 	// Post-spawn injection: rename the new pane to the agent's name and
@@ -2597,7 +2622,7 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	// goroutine so the caller returns promptly; the goroutine waits for
 	// the pane to come alive before injecting.
 	goBackground(func() {
-		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, g.Name,
+		runSpawnPostInit(convID, p.Name, p.Role, p.Descr, groupName,
 			spawnContextMsgID, p.InitialMessage != "", p.WorktreePath, p.WorktreeBranch,
 			p.SpawnedByConv, p.SpawnedByAgent, welcomeInSeed)
 	})
@@ -2635,16 +2660,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
 	}
 
-	// Membership add. Permission gating already happened in the caller;
-	// this is just the DB write.
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID,
-		ConvID:  convID,
-		Role:    p.Role,
-		Descr:   p.Descr,
-	}); err != nil {
-		return 0, &spawnFailure{http.StatusInternalServerError, "io",
-			"spawned conv " + convID + " but failed to add to group: " + err.Error()}
+	// Membership is optional for process-owned v1 agents. Ordinary spawn
+	// callers still pass a group and retain the existing fatal membership
+	// contract.
+	if g != nil {
+		if err := db.AddAgentGroupMember(&db.AgentGroupMember{
+			GroupID: g.ID,
+			ConvID:  convID,
+			Role:    p.Role,
+			Descr:   p.Descr,
+		}); err != nil {
+			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+				"spawned conv " + convID + " but failed to add to group: " + err.Error()}
+		}
 	}
 
 	// If the up-front EnsureAgentForConv failed transiently, AddAgentGroupMember's
@@ -2667,6 +2695,11 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		if err := db.SetAgentInitialSpawnConfig(agentID, p.SpawnConfigJSON); err != nil {
 			slog.Warn("spawn: failed to record initial spawn config",
 				"agent", agentID, "error", err)
+		}
+	}
+	if agentID != "" && p.ProcessCommandID != "" {
+		if err := db.SetAgentProcessCommand(agentID, p.ProcessCommandID); err != nil {
+			return 0, &spawnFailure{http.StatusConflict, "process_command", "failed to bind spawned agent to process command: " + err.Error()}
 		}
 	}
 
@@ -2698,7 +2731,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	// NOT via-sudo-annotated in the audit row the way the dedicated endpoints
 	// annotate it — an accepted residual; the authorization is identical.
 	granter := granterLabel(p.SpawnedByConv)
-	if p.IsOwner {
+	if p.IsOwner && g != nil {
 		if err := db.AddAgentGroupOwner(g.ID, convID, granter); err != nil {
 			slog.Warn("spawn: failed to grant group ownership at birth",
 				"conv", convID, "group", g.Name, "error", err)
@@ -2734,7 +2767,8 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 	// overflowing its input-size limit, and the inbox keeps newlines
 	// verbatim regardless. The welcome line points the agent at the
 	// message; the spawn path marks it delivered once the welcome lands.
-	spawnContext := buildSpawnContextBody(g.Name, p.GroupContext, p.InitialMessage, p.Attachments)
+	groupName := spawnGroupName(g)
+	spawnContext := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 	var spawnContextMsgID int64
 	if spawnContext != "" {
 		// Address the briefing FROM the reply-to actor's LIVE generation. On the
@@ -2744,7 +2778,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string) (int64, *
 		// falling back to the recorded conv when the companion is empty.
 		replyToConv := liveConvForActor(p.ReplyToConv, p.ReplyToAgent)
 		mid, msgErr := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:      g.ID,
+			GroupID:      spawnGroupID(g),
 			FromConv:     replyToConv,
 			ToConv:       convID,
 			Subject:      "Startup context",
@@ -2792,17 +2826,22 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 				"conv", convID, "msg_id", msgID, "error", err)
 		}
 	}
-	if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
-		slog.Warn("spawn: rollback failed to remove group member",
-			"conv", convID, "group", g.Name, "error", err)
-	}
-	if _, err := db.RemoveAgentGroupOwner(g.ID, convID); err != nil {
-		slog.Warn("spawn: rollback failed to remove birth owner grant",
-			"conv", convID, "group", g.Name, "error", err)
+	if g != nil {
+		if err := db.RemoveAgentGroupMember(g.ID, convID); err != nil {
+			slog.Warn("spawn: rollback failed to remove group member",
+				"conv", convID, "group", g.Name, "error", err)
+		}
+		if _, err := db.RemoveAgentGroupOwner(g.ID, convID); err != nil {
+			slog.Warn("spawn: rollback failed to remove birth owner grant",
+				"conv", convID, "group", g.Name, "error", err)
+		}
 	}
 	if _, err := db.RevokeAllAgentPermissionsForConv(convID); err != nil {
 		slog.Warn("spawn: rollback failed to revoke birth permission overrides",
 			"conv", convID, "error", err)
+	}
+	if err := db.ClearAgentProcessCommandForConv(convID); err != nil {
+		slog.Warn("spawn: rollback failed to clear process command metadata", "conv", convID, "error", err)
 	}
 }
 

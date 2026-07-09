@@ -24,6 +24,10 @@ nodes:
       kind: agent
       profile: dev
       prompt: "Implement {{ params.issue }}"
+      contact:
+        cadence: 5m
+        budget: 3
+        escalationTarget: human:operator
     checks:
       - id: unit-tests
         performer:
@@ -87,6 +91,10 @@ func TestParseValidTemplate(t *testing.T) {
 	assertEdge(t, parsed.Edges, Edge{From: "", Outcome: "start", To: "implement"})
 	assertEdge(t, parsed.Edges, Edge{From: "implement", Outcome: "pass", To: "done"})
 	assertEdge(t, parsed.Edges, Edge{From: "implement", Outcome: "fail", To: "escalate"})
+	contact := parsed.Template.Nodes["implement"].Performer.Contact
+	if contact == nil || contact.Cadence != "5m" || contact.Budget != 3 || contact.EscalationTarget != "human:operator" {
+		t.Fatalf("contact = %#v", contact)
+	}
 }
 
 func TestCanonicalYAMLRoundTripPreservesSemantics(t *testing.T) {

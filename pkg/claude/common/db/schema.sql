@@ -260,7 +260,7 @@ CREATE TABLE human_messages (
 			body        TEXT NOT NULL,
 			created_at  TEXT NOT NULL,
 			read_at     TEXT NOT NULL DEFAULT ''
-		, from_agent TEXT NOT NULL DEFAULT '');
+		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_human_messages_created
 			ON human_messages(created_at);
@@ -319,7 +319,9 @@ CREATE TABLE pending_spawns (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      TEXT NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '');
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '');
+
+CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
 
 CREATE TABLE spawn_profiles (
 			id                            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,7 +403,9 @@ CREATE TABLE agents (
 			retired_by      TEXT NOT NULL DEFAULT '',
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
-		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '');
+		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '');
+
+CREATE UNIQUE INDEX idx_agents_process_command ON agents(process_command_id) WHERE process_command_id <> '';
 
 CREATE TABLE agent_conversations (
 			conv_id   TEXT PRIMARY KEY,

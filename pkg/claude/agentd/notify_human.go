@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -97,22 +101,40 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("subject too long: %d bytes, max %d", len(body.Subject), maxNotifyHumanSubjectLen))
 		return
 	}
-	// Snapshot the sender attribution once, reused for both the persisted
-	// row and the OS notification below.
-	fromTitle := notifyHumanCallerTitle(callerConv)
-	groupName := notifyHumanCallerGroup(callerConv)
-	id, err := db.InsertHumanMessage(&db.HumanMessage{
-		FromConv:  callerConv,
-		FromTitle: fromTitle,
-		GroupName: groupName,
-		Subject:   body.Subject,
-		Body:      body.Body,
-		CreatedAt: time.Now(),
-	})
+	id, err := recordHumanMessage(callerConv, body.Subject, body.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"failed to record message: "+err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
+}
+
+// recordHumanMessage is the daemon-internal half of notify-human. Process
+// obligations and escalations use it without inventing an authorization
+// bypass: the permission gate remains exclusively at the external HTTP
+// boundary, while trusted daemon code shares the same persistence and desktop
+// notification path.
+func recordHumanMessage(fromConv, subject, body string) (int64, error) {
+	return recordHumanMessageWithProcess(fromConv, subject, body, "", "", "")
+}
+
+func recordHumanMessageWithProcess(fromConv, subject, body, runID, nodeID, commandID string) (int64, error) {
+	fromTitle := notifyHumanCallerTitle(fromConv)
+	groupName := notifyHumanCallerGroup(fromConv)
+	id, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromConv:         fromConv,
+		FromTitle:        fromTitle,
+		GroupName:        groupName,
+		Subject:          subject,
+		Body:             body,
+		CreatedAt:        time.Now(),
+		ProcessRunID:     runID,
+		ProcessNodeID:    nodeID,
+		ProcessCommandID: commandID,
+	})
+	if err != nil {
+		return 0, err
 	}
 	// Also raise a desktop notification (off the request goroutine — a
 	// platform send can spawn a subprocess). Self-gates on config, so this
@@ -120,14 +142,14 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 	// notification filters apply here too: a muted sender's ping still
 	// lands in the Messages tab (with the unread badge), it just skips
 	// the OS banner. Checked outside the seam so flow tests observe it.
-	senderSession := notifyHumanSenderSessionID(callerConv)
+	senderSession := notifyHumanSenderSessionID(fromConv)
 	goBackground(func() {
-		if !notify.AllowedForConv(callerConv) {
+		if fromConv != "" && !notify.AllowedForConv(fromConv) {
 			return
 		}
-		humanMsgNotify(senderSession, fromTitle, groupName, body.Subject, body.Body)
+		humanMsgNotify(senderSession, fromTitle, groupName, subject, body)
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
+	return id, nil
 }
 
 // notifyHumanSenderSessionID resolves the caller conv-id to its tclaude
@@ -452,6 +474,17 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("no human message #%d to reply to", body.ID))
 		return
 	}
+	if orig.ProcessCommandID != "" {
+		if err := resolveProcessHumanMessage(r.Context(), orig, body.Body); err != nil {
+			writeError(w, http.StatusConflict, "process_resolve", err.Error())
+			return
+		}
+		if _, err := db.MarkHumanMessageRead(body.ID); err != nil {
+			slog.Warn("reply: mark process obligation message read failed", "id", body.ID, "error", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"resolved": true, "run_id": orig.ProcessRunID, "node_id": orig.ProcessNodeID})
+		return
+	}
 	// Resolve who to reply to. Lead with the stable agent_id (rotation-immune
 	// across reincarnation), falling back to the raw from_conv for old rows /
 	// a sender that never became an actor. ResolveSelector then walks any
@@ -513,4 +546,32 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		"delivered":  outcome.delivered(),
 		"held":       outcome.held(),
 	})
+}
+
+func resolveProcessHumanMessage(ctx context.Context, message *db.HumanMessage, reply string) error {
+	fields := strings.Fields(strings.TrimSpace(reply))
+	if len(fields) == 0 {
+		return fmt.Errorf("reply must begin with a verdict")
+	}
+	verdict := fields[0]
+	feedback := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(reply), verdict))
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return err
+	}
+	snapshot, err := fs.LoadRun(ctx, message.ProcessRunID)
+	if err != nil {
+		return err
+	}
+	command, ok := snapshot.State.OutstandingCommands[message.ProcessCommandID]
+	if !ok || command.NodeID != message.ProcessNodeID {
+		return fmt.Errorf("process obligation command no longer matches run/node")
+	}
+	_, err = processexec.New(fs, nil).RecordOutstandingObservation(ctx, message.ProcessRunID, message.ProcessCommandID, processexec.Observation{
+		Actor:       state.ActorRef("human:operator"),
+		Verdict:     verdict,
+		Feedback:    feedback,
+		EvidenceRef: fmt.Sprintf("human-message:%d:reply", message.ID),
+	})
+	return err
 }

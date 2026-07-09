@@ -15,12 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/processcmd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -112,6 +114,247 @@ func TestProcessEngineDrivesProgramRunEndToEnd(t *testing.T) {
 	loads, leases := counting.counts()
 	assert.Zero(t, loads, "terminal checkpoint must not load evidence")
 	assert.Zero(t, leases, "terminal checkpoint must not churn leases")
+}
+
+func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
+	f, root := processEngineFlow(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "process-dev", Harness: "claude"})
+	require.NoError(t, err)
+	fs := createEngineRun(t, root, "agent-run", programTemplate("agent-process", model.Performer{
+		Kind: model.PerformerAgent, Profile: "process-dev", Prompt: "Implement the requested change",
+		Contact: &model.ContactSchedule{Cadence: "1h", Budget: 2, EscalationTarget: "human:operator"},
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].Error)
+
+	snapshot, err := fs.LoadRun(t.Context(), "agent-run")
+	require.NoError(t, err)
+	require.Len(t, snapshot.State.Obligations, 1)
+	require.Len(t, snapshot.State.Contacts, 1)
+	var commandID string
+	for id, command := range snapshot.State.OutstandingCommands {
+		if command.Kind == state.CommandKindStartAttempt {
+			commandID = id
+			assert.NotEmpty(t, command.ExternalRef)
+		}
+	}
+	require.NotEmpty(t, commandID)
+	agentRow, err := db.AgentForProcessCommand(commandID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRow)
+	firstAgentID := agentRow.AgentID
+	assert.Equal(t, firstAgentID, snapshot.State.OutstandingCommands[commandID].ExternalRef)
+	assert.Equal(t, "agent:"+firstAgentID, firstObligation(snapshot.State).Assignee)
+	assert.Equal(t, "agent:"+firstAgentID, snapshot.State.Contacts[commandID].Assignee)
+	assert.NotEqual(t, agentRow.CurrentConvID, snapshot.State.OutstandingCommands[commandID].ExternalRef)
+
+	// A fresh host rediscovers the metadata-bound actor and leaves it in
+	// flight; it must not dispatch a second agent.
+	restarted, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	results, err = agentd.RunProcessEngineTickForTest(t.Context(), restarted)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Contains(t, results[0].Waiting, "waiting on agent:")
+	agentRow, err = db.AgentForProcessCommand(commandID)
+	require.NoError(t, err)
+	require.NotNil(t, agentRow)
+	assert.Equal(t, firstAgentID, agentRow.AgentID)
+
+	reportBody := map[string]string{
+		"command_id": commandID, "verdict": "pass", "evidence_ref": "commit:abc123",
+	}
+	foreignConv := "ffff-1111-2222-3333-444444444444"
+	_, _, err = db.EnsureAgentForConv(foreignConv, "test")
+	require.NoError(t, err)
+	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/process/runs/agent-run/nodes/work/report", reportBody), foreignConv))
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+
+	req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/agent-run/nodes/work/report", reportBody)
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	results, err = agentd.RunProcessEngineTickForTest(t.Context(), restarted)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
+	settled, err := fs.LoadRun(t.Context(), "agent-run")
+	require.NoError(t, err)
+	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(settled.State).Status)
+	assert.Equal(t, state.ActorRef("agent:"+firstAgentID), settled.State.Nodes["work"].ActiveAttempt.Actor)
+}
+
+func TestProcessEngineHumanObligationAppearsAndResolvesThroughCLI(t *testing.T) {
+	_, root := processEngineFlow(t)
+	fs := createEngineRun(t, root, "human-run", programTemplate("human-process", model.Performer{
+		Kind: model.PerformerHuman, Profile: "johan", Ask: "Approve the release?",
+		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:operator"},
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err := fs.LoadRun(t.Context(), "human-run")
+	require.NoError(t, err)
+	obligation := firstObligation(snapshot.State)
+	assert.Equal(t, state.WaitStatusPending, obligation.Status)
+	assert.Equal(t, "human:johan", obligation.Assignee)
+	assert.Equal(t, []string{"approve", "reject", "ask-changes"}, obligation.AvailableActions)
+	messages, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, messages)
+	assert.Contains(t, messages[0].Body, "Approve the release?")
+
+	cmd := processcmd.Cmd()
+	cmd.SetArgs([]string{"resolve", "human-run", "work", "--store-root", root, "--verdict", "pass", "--actor", "human:johan", "--evidence", "approval:dashboard-1"})
+	require.NoError(t, cmd.Execute())
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
+	settled, err := fs.LoadRun(t.Context(), "human-run")
+	require.NoError(t, err)
+	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(settled.State).Status)
+}
+
+func TestProcessEngineHumanObligationResolvesThroughDashboardMessages(t *testing.T) {
+	_, root := processEngineFlow(t)
+	fs := createEngineRun(t, root, "human-dashboard-run", programTemplate("human-dashboard-process", model.Performer{
+		Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve from Messages?",
+	}), false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	messages, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.NotEmpty(t, messages)
+	message := messages[0]
+	assert.Equal(t, "human-dashboard-run", message.ProcessRunID)
+	assert.NotEmpty(t, message.ProcessCommandID)
+	rec := postDashReply(t, dashMessageMux(t), map[string]any{"id": message.ID, "body": "pass approved in dashboard"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusCompleted, results[0].Status)
+	snapshot, err := fs.LoadRun(t.Context(), "human-dashboard-run")
+	require.NoError(t, err)
+	assert.Equal(t, state.ActorRef("human:operator"), snapshot.State.Nodes["work"].ActiveAttempt.Actor)
+	assert.Equal(t, state.WaitStatusSatisfied, firstObligation(snapshot.State).Status)
+}
+
+func TestProcessEngineNudgeBudgetEscalatesAndResetsOnRecovery(t *testing.T) {
+	_, root := processEngineFlow(t)
+	adapter := &deferredContactAdapter{}
+	fs := createEngineRun(t, root, "nudge-run", programTemplate("nudge", model.Performer{
+		Kind: model.PerformerAgent, Profile: "fake", Prompt: "work",
+		Contact: &model.ContactSchedule{Cadence: "1s", Budget: 1, EscalationTarget: "human:oncall"},
+	}), false)
+	now := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	host := processengine.New(fs, "agentd:nudges", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	host.Now = func() time.Time { return now }
+	_, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+
+	now = now.Add(2 * time.Second)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.nudges)
+	assert.Equal(t, 0, adapter.escalations)
+
+	now = now.Add(2 * time.Second)
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.nudges)
+	assert.Equal(t, 1, adapter.escalations)
+	snapshot, err := fs.LoadRun(t.Context(), "nudge-run")
+	require.NoError(t, err)
+	contact := firstContact(snapshot.State)
+	assert.False(t, contact.EscalatedAt.IsZero())
+	assert.Equal(t, 1, contact.Used)
+	assert.Equal(t, state.RunStatusRunning, snapshot.State.Status, "exhaustion escalates and keeps waiting")
+
+	now = now.Add(time.Second)
+	adapter.activity = processexec.Activity{Recovered: true, At: now}
+	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	snapshot, err = fs.LoadRun(t.Context(), "nudge-run")
+	require.NoError(t, err)
+	contact = firstContact(snapshot.State)
+	assert.Zero(t, contact.Used)
+	assert.True(t, contact.EscalatedAt.IsZero())
+	assert.Equal(t, now.Add(time.Second), contact.NextContactAt)
+}
+
+func TestProcessEngineHumanPreemptionPausesAgentAutomation(t *testing.T) {
+	_, root := processEngineFlow(t)
+	adapter := &deferredContactAdapter{}
+	fs := createEngineRun(t, root, "preempt-run", programTemplate("preempt", model.Performer{
+		Kind: model.PerformerAgent, Profile: "fake", Prompt: "work",
+		Contact: &model.ContactSchedule{Cadence: "1s", Budget: 2, EscalationTarget: "human:oncall"},
+	}), false)
+	now := time.Date(2026, 7, 10, 1, 0, 0, 0, time.UTC)
+	host := processengine.New(fs, "agentd:preempt", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	host.Now = func() time.Time { return now }
+	_, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	now = now.Add(10 * time.Second)
+	adapter.activity = processexec.Activity{HumanInteracted: true, At: now.Add(-6 * time.Second)}
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Contains(t, results[0].Waiting, "automation paused")
+	assert.Zero(t, adapter.nudges)
+	snapshot, err := fs.LoadRun(t.Context(), "preempt-run")
+	require.NoError(t, err)
+	assert.True(t, firstContact(snapshot.State).Paused)
+}
+
+type deferredContactAdapter struct {
+	nudges      int
+	escalations int
+	activity    processexec.Activity
+}
+
+func (*deferredContactAdapter) Validate(processexec.Request) error { return nil }
+func (*deferredContactAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	return processexec.Observation{}, errors.New("unexpected synchronous perform")
+}
+func (*deferredContactAdapter) Dispatch(context.Context, processexec.Request) (processexec.DispatchResult, error) {
+	return processexec.DispatchResult{ExternalRef: "agent:agt_fake", Assignee: "agent:agt_fake", Summary: "fake work", CreateObligation: true}, nil
+}
+func (*deferredContactAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	return processexec.Observation{}, processexec.DeferredInFlight, nil
+}
+func (a *deferredContactAdapter) Contact(_ context.Context, _ processexec.Request, escalation bool) error {
+	if escalation {
+		a.escalations++
+	} else {
+		a.nudges++
+	}
+	return nil
+}
+func (a *deferredContactAdapter) Activity(context.Context, processexec.Request, time.Time) (processexec.Activity, error) {
+	return a.activity, nil
+}
+
+func firstContact(st *state.State) state.ContactState {
+	for _, contact := range st.Contacts {
+		return contact
+	}
+	return state.ContactState{}
+}
+
+func firstObligation(st *state.State) state.ObligationRecord {
+	for _, obligation := range st.Obligations {
+		return obligation
+	}
+	return state.ObligationRecord{}
 }
 
 func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {

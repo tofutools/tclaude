@@ -19,7 +19,9 @@ var (
 		"run",
 		"args",
 		"timeout",
+		"contact",
 	)
+	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
 	layoutFields     = stringSet("nodes")
@@ -76,7 +78,7 @@ func paramChildSchema(key string) schemaFunc {
 func nodeChildSchema(key string) schemaFunc {
 	switch key {
 	case "performer":
-		return namedSchema(performerFields, nil)
+		return namedSchema(performerFields, performerChildSchema)
 	case "plan", "review":
 		return namedSchema(stepFields, stepChildSchema)
 	case "checks":
@@ -123,12 +125,19 @@ func mergeKeyDiag(key *yaml.Node, path string) Diagnostic {
 func stepChildSchema(key string) schemaFunc {
 	switch key {
 	case "performer":
-		return namedSchema(performerFields, nil)
+		return namedSchema(performerFields, performerChildSchema)
 	case "approvalRetry", "retry":
 		return namedSchema(retryFields, nil)
 	default:
 		return nil
 	}
+}
+
+func performerChildSchema(key string) schemaFunc {
+	if key == "contact" {
+		return namedSchema(contactFields, nil)
+	}
+	return nil
 }
 
 func layoutChildSchema(key string) schemaFunc {
