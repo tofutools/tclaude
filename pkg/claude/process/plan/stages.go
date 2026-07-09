@@ -74,6 +74,17 @@ func ExpansionInits(parentID string, specs []model.StageSpec) []state.NodeInit {
 	return inits
 }
 
+// StageMaxAttempts is the attempt budget a stage child actually gets in this
+// phase. Gate stages poison on their first failure until gate feedback loops
+// land, so commands must not advertise a gate's declared (but unhonored)
+// retry budget — that would let an executor and NextAfterStage disagree.
+func StageMaxAttempts(spec model.StageSpec) int {
+	if spec.Stage.IsGateStage() {
+		return 1
+	}
+	return maxAttempts(spec.Retry)
+}
+
 // NextAfterStage decides what follows a stage child settling with the given
 // effective outcome on the given attempt. In this phase gates carry no
 // feedback loops yet: a failed gate exhausts its budget immediately and

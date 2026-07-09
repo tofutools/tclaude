@@ -252,6 +252,34 @@ func TestPlanBlockedCompoundEmitsNothing(t *testing.T) {
 	}
 }
 
+func TestPlanGateSettleDoesNotAdvertiseUnhonoredBudget(t *testing.T) {
+	// Gate stages poison on first failure in this phase, so the settle
+	// command must publish maxAttempts=1 even when the template declares a
+	// gate retry budget — otherwise a command executor and NextAfterStage
+	// would disagree.
+	tmpl := compoundTemplate()
+	node := tmpl.Nodes["implement"]
+	node.Review = &model.Step{ID: "review", Retry: &model.RetryPolicy{MaxAttempts: 3}, Performer: model.Performer{Kind: model.PerformerAgent, Prompt: "Review it"}}
+	tmpl.Nodes["implement"] = node
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.review": {
+			Status:        state.NodeStatusRunning,
+			Attempt:       1,
+			ActiveAttempt: &state.AttemptState{Attempt: 1, CommandID: "cmd_source"},
+		},
+	})
+	st.OutstandingCommands["cmd_source"] = state.OutstandingCommand{
+		ID: "cmd_source", NodeID: "implement.review", Kind: state.CommandKindStartAttempt, Status: state.CommandStatusObserved,
+	}
+	got, err := Plan(st, tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != CommandKindSettleAttempt || got[0].MaxAttempts != 1 {
+		t.Fatalf("commands = %#v", got)
+	}
+}
+
 func TestNextAfterStageRejectsDoneAndUnknownChildren(t *testing.T) {
 	tmplNode := compoundTemplate().Nodes["implement"]
 	specs := model.ExpandNode("implement", tmplNode)

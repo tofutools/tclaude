@@ -150,6 +150,72 @@ func TestValidateCompoundTemplateAdditions(t *testing.T) {
 	}
 }
 
+func TestValidateFlagsDerivedChildCollisionAcrossCompoundNodes(t *testing.T) {
+	// Node ids may contain dots: node "a" with check id "do" derives
+	// "a.test.do", and a compound node authored as "a.test" derives the same
+	// id for its do stage. Undetected, the second expansion would be rejected
+	// at runtime and wedge the run.
+	body := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: collide-demo
+start: a
+nodes:
+  a:
+    type: task
+    performer: { kind: agent, prompt: work }
+    checks:
+      - id: do
+        performer: { kind: program, run: check }
+    next: { pass: a.test }
+  a.test:
+    type: task
+    performer: { kind: agent, prompt: work }
+    checks:
+      - id: other
+        performer: { kind: program, run: check }
+    next: { pass: done }
+  done:
+    type: end
+`
+	parsed, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(parsed.Diagnostics, SeverityError, "node_id_collides_with_expansion") {
+		t.Fatalf("derived-vs-derived collision must be flagged:\n%#v", parsed.Diagnostics)
+	}
+}
+
+func TestValidateWarnsOnUnhonoredGateRetry(t *testing.T) {
+	node := compoundTestNode()
+	node.Checks[0].Retry = &RetryPolicy{MaxAttempts: 3}
+	node.Review.Retry = &RetryPolicy{MaxAttempts: 2}
+	tmpl := &Template{
+		APIVersion: APIVersion,
+		Kind:       Kind,
+		ID:         "gate-retry-demo",
+		Start:      "implement",
+		Nodes: map[string]Node{
+			"implement": func() Node { node.Next = Next{"pass": "done", "fail": "escalate"}; return node }(),
+			"done":      {Type: NodeTypeEnd},
+			"escalate":  {Type: NodeTypeEnd, Result: "failed"},
+		},
+	}
+	diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+	if diagnostics.HasErrors() {
+		t.Fatalf("gate retry must stay valid: %#v", diagnostics.Errors())
+	}
+	count := 0
+	for _, diag := range diagnostics.Warnings() {
+		if diag.Code == "gate_retry_not_yet_honored" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("want 2 gate retry warnings, got %d: %#v", count, diagnostics)
+	}
+}
+
 func compoundYAML(approval, check1, check2, check2Extra, onFail, extraNode string) string {
 	body := `apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate

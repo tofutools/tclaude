@@ -270,6 +270,56 @@ func TestCompoundLinkageInvariants(t *testing.T) {
 	}
 }
 
+func TestStageSkipForgeryIsDetected(t *testing.T) {
+	// Forged completion: done stage and parent claim completion while the do
+	// and test stages never ran. Verify must not bless the run.
+	st := expandedState(t)
+	for _, nodeID := range []string{"implement.done", "implement"} {
+		node := st.Nodes[nodeID]
+		node.Status = NodeStatusCompleted
+		st.Nodes[nodeID] = node
+	}
+	diags := CompoundLinkageIsConsistent(&st)
+	if !hasDiagCode(diags, "expanded_parent_completed_with_incomplete_stages") {
+		t.Fatalf("forged completion with skipped stages must be flagged: %#v", diags)
+	}
+
+	// Out-of-order activation: the review stage is ready while do is pending.
+	st = expandedState(t)
+	review := st.Nodes["implement.review"]
+	review.Status = NodeStatusReady
+	st.Nodes["implement.review"] = review
+	diags = CompoundLinkageIsConsistent(&st)
+	if !hasDiagCode(diags, "stage_activated_out_of_order") {
+		t.Fatalf("out-of-order stage activation must be flagged: %#v", diags)
+	}
+}
+
+func TestNodeStatusSetGuardsStageChain(t *testing.T) {
+	st := expandedState(t)
+	// implement.plan is ready but not completed; skipping ahead to ready or
+	// complete a later stage must be rejected by the reducer.
+	if _, err := Apply(st, Event{Type: EventNodeStatusSet, NodeID: "implement.do", NodeStatus: NodeStatusReady}); err == nil || !strings.Contains(err.Error(), "cannot activate before earlier stage") {
+		t.Fatalf("err = %v, want prior-stage guard", err)
+	}
+	if _, err := Apply(st, Event{Type: EventNodeStatusSet, NodeID: "implement.done", NodeStatus: NodeStatusCompleted}); err == nil || !strings.Contains(err.Error(), "cannot activate before earlier stage") {
+		t.Fatalf("err = %v, want prior-stage guard", err)
+	}
+
+	// The legit chain still works: settle plan with evidence, then ready do.
+	st, err := ApplyAll(st, []Event{
+		{Type: EventNodeAttemptStarted, Seq: 3, NodeID: "implement.plan", Actor: "human:johan", Attempt: 1},
+		{Type: EventNodeAttemptSettled, Seq: 4, NodeID: "implement.plan", Outcome: "pass", EvidenceRef: "artifacts/plan.md"},
+		{Type: EventNodeStatusSet, Seq: 5, NodeID: "implement.do", NodeStatus: NodeStatusReady},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Nodes["implement.do"].Status != NodeStatusReady {
+		t.Fatalf("do stage should be ready, got %s", st.Nodes["implement.do"].Status)
+	}
+}
+
 func TestCompletedStageChildrenHaveEvidence(t *testing.T) {
 	st := expandedState(t)
 	child := st.Nodes["implement.do"]

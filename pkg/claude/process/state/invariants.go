@@ -176,6 +176,8 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 	seen := map[string]bool{}
 	blockedChild := false
 	var doneCompleted bool
+	var incompleteStages []string
+	priorCompleted := true
 	for i, childID := range node.Children {
 		childPath := fmt.Sprintf("%s.children[%d]", path, i)
 		if seen[childID] {
@@ -203,6 +205,28 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 		if child.Stage == model.StageDone && child.Status == NodeStatusCompleted {
 			doneCompleted = true
 		}
+		if child.Stage != model.StageDone && child.Status != NodeStatusCompleted {
+			incompleteStages = append(incompleteStages, childID)
+		}
+		// A stage may only be active (activated but not yet settled) when every
+		// earlier sibling has completed: stages run as a chain, and a later
+		// stage that is ready/running while an earlier one is still pending
+		// means a stage was skipped.
+		if stageChildIsActive(child.Status) && !priorCompleted {
+			diagnostics = append(diagnostics, diagError(
+				"stage_activated_out_of_order",
+				childPath,
+				fmt.Sprintf("stage child %q is %s but an earlier stage of node %q has not completed", childID, child.Status, nodeID),
+			))
+		}
+		priorCompleted = priorCompleted && child.Status == NodeStatusCompleted
+	}
+	if (doneCompleted || node.Status == NodeStatusCompleted) && len(incompleteStages) > 0 {
+		diagnostics = append(diagnostics, diagError(
+			"expanded_parent_completed_with_incomplete_stages",
+			path+".children",
+			fmt.Sprintf("expanded node %q claims completion but stages did not complete: %s", nodeID, strings.Join(incompleteStages, ", ")),
+		))
 	}
 	switch node.Status {
 	case NodeStatusCompleted:
@@ -219,6 +243,12 @@ func checkExpandedParent(st *State, nodeID string, node NodeState) Diagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// stageChildIsActive reports whether a stage child holds an activation that
+// has not settled: ready, running, or waiting on a performer.
+func stageChildIsActive(status NodeStatus) bool {
+	return status == NodeStatusReady || status == NodeStatusRunning || isWaitingStatus(status)
 }
 
 // CompletedStageChildrenHaveEvidence enforces claimed-done-is-not-done for

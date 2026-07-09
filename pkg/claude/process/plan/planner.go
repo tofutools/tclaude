@@ -233,7 +233,7 @@ func planStageChild(st *state.State, tmpl *model.Template, nodeID string, node s
 		cmd := newCommand(CommandKindSettleAttempt, st.RunID, nodeID, fmt.Sprintf("attempt-%d", attempt), "settle")
 		cmd.NodeID = nodeID
 		cmd.Attempt = attempt
-		cmd.MaxAttempts = maxAttempts(spec.Retry)
+		cmd.MaxAttempts = StageMaxAttempts(spec)
 		cmd.SourceCommandID = source.ID
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil

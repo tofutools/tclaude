@@ -18,6 +18,7 @@ func Validate(tmpl *Template, edges []Edge) Diagnostics {
 
 	diagnostics = append(diagnostics, validateHeader(tmpl)...)
 	diagnostics = append(diagnostics, validateNodes(tmpl)...)
+	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
 	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateReachability(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateAcyclic(edges)...)
@@ -94,7 +95,7 @@ func validateNodes(tmpl *Template) Diagnostics {
 				diagnostics = append(diagnostics, validateStep(*node.Review, path+".review", false)...)
 			}
 			diagnostics = append(diagnostics, validateRetry(node.Retry, path+".retry")...)
-			diagnostics = append(diagnostics, validateExpansionCollisions(tmpl, nodeID, node)...)
+			diagnostics = append(diagnostics, validateGateRetryWarnings(node, path)...)
 			if len(node.Next) == 0 {
 				diagnostics = append(diagnostics, diagError("missing_next", path+".next", "task node requires at least one next outcome"))
 			}
@@ -173,20 +174,58 @@ func validateStep(step Step, path string, allowApproval bool) Diagnostics {
 	return diagnostics
 }
 
-// validateExpansionCollisions rejects authored node ids that collide with the
-// ids a compound node reserves for its expanded children: node ids may contain
-// dots, so an author could otherwise declare a node named exactly like a
-// derived child (for example "implement.do").
-func validateExpansionCollisions(tmpl *Template, nodeID string, node Node) Diagnostics {
+// validateExpansionCollisions rejects child-stage id collisions across the
+// whole template: node ids may contain dots, so an authored node id can
+// collide with a derived child id (for example "implement.do"), and two
+// different compound nodes can derive the same child id (for example node "a"
+// with check id "do" and node "a.test" both derive "a.test.do"). Either kind
+// of collision would wedge the run at expansion time.
+func validateExpansionCollisions(tmpl *Template) Diagnostics {
 	var diagnostics Diagnostics
-	for _, spec := range ExpandNode(nodeID, node) {
-		if _, ok := tmpl.Nodes[spec.ChildID]; ok {
-			diagnostics = append(diagnostics, diagError(
-				"node_id_collides_with_expansion",
-				"nodes."+spec.ChildID,
-				fmt.Sprintf("node id %q collides with a child stage of compound node %q", spec.ChildID, nodeID),
+	derivedBy := map[string]string{}
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		for _, spec := range ExpandNode(nodeID, tmpl.Nodes[nodeID]) {
+			if owner, ok := derivedBy[spec.ChildID]; ok {
+				diagnostics = append(diagnostics, diagError(
+					"node_id_collides_with_expansion",
+					"nodes."+nodeID,
+					fmt.Sprintf("compound nodes %q and %q both derive child stage %q", owner, nodeID, spec.ChildID),
+				))
+				continue
+			}
+			derivedBy[spec.ChildID] = nodeID
+			if _, ok := tmpl.Nodes[spec.ChildID]; ok {
+				diagnostics = append(diagnostics, diagError(
+					"node_id_collides_with_expansion",
+					"nodes."+spec.ChildID,
+					fmt.Sprintf("node id %q collides with a child stage of compound node %q", spec.ChildID, nodeID),
+				))
+			}
+		}
+	}
+	return diagnostics
+}
+
+// validateGateRetryWarnings surfaces that gate budgets (retry on checks and
+// review steps) are accepted by the schema but not honored yet: gates poison
+// on their first failure until the gate-feedback-loop phase lands.
+func validateGateRetryWarnings(node Node, path string) Diagnostics {
+	var diagnostics Diagnostics
+	for i, check := range node.Checks {
+		if check.Retry != nil {
+			diagnostics = append(diagnostics, diagWarning(
+				"gate_retry_not_yet_honored",
+				fmt.Sprintf("%s.checks[%d].retry", path, i),
+				"gate retry budgets are not honored yet; this gate poisons the node on its first failure",
 			))
 		}
+	}
+	if node.Review != nil && node.Review.Retry != nil {
+		diagnostics = append(diagnostics, diagWarning(
+			"gate_retry_not_yet_honored",
+			path+".review.retry",
+			"gate retry budgets are not honored yet; this gate poisons the node on its first failure",
+		))
 	}
 	return diagnostics
 }

@@ -150,6 +150,11 @@ func applyEvent(st *State, event Event) error {
 		default:
 			return fmt.Errorf("node_status_set cannot set status %q", event.NodeStatus)
 		}
+		if node.Parent != "" && event.NodeStatus != NodeStatusSkipped {
+			if err := requirePriorStagesCompleted(st, event.NodeID, node); err != nil {
+				return err
+			}
+		}
 		node.Status = event.NodeStatus
 		st.Nodes[event.NodeID] = node
 		return nil
@@ -566,6 +571,27 @@ func applyEvent(st *State, event Event) error {
 	default:
 		return fmt.Errorf("unsupported process state event type %q", event.Type)
 	}
+}
+
+// requirePriorStagesCompleted enforces the stage chain on activation: a stage
+// child may only be set ready or completed once every earlier sibling has
+// completed. This holds for retry loops too, which re-activate a stage whose
+// earlier siblings already completed.
+func requirePriorStagesCompleted(st *State, childID string, child NodeState) error {
+	parent, ok := st.Nodes[child.Parent]
+	if !ok {
+		return fmt.Errorf("stage child %q references undeclared parent %q", childID, child.Parent)
+	}
+	for _, siblingID := range parent.Children {
+		if siblingID == childID {
+			return nil
+		}
+		sibling, ok := st.Nodes[siblingID]
+		if !ok || sibling.Status != NodeStatusCompleted {
+			return fmt.Errorf("stage child %q cannot activate before earlier stage %q completes", childID, siblingID)
+		}
+	}
+	return fmt.Errorf("stage child %q is not listed in parent %q children", childID, child.Parent)
 }
 
 func commandIsActive(command OutstandingCommand) bool {
