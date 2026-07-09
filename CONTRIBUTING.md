@@ -99,10 +99,14 @@ When adding a new scenario:
 
 ## Layout
 
-See `CLAUDE.md` for the full architecture map. High-level:
+High-level:
 
-- `pkg/claude/` — main packages (session, conv, agent, agentd, …).
+- `pkg/claude/` — main packages (session, conv, agent, agentd, etc.).
 - `pkg/claude/common/` — shared utilities (config, db, tmux,
-  notify, …).
+  notify, etc.).
 - `pkg/testharness/` — flow-test DSL (CCSim + TmuxSim + Given/When/Then).
 - `pkg/common/` — generic utilities (dirs, locking, size parsing).
+
+For feature-level architecture, prefer the focused docs under `docs/` and the
+package comments near the code. `CLAUDE.md` / `AGENTS.md` is intentionally only
+agent startup context, not a complete architecture inventory.
