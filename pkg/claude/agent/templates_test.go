@@ -535,3 +535,35 @@ func TestRunTemplatesExport_FileBranchKeepsEnvelopeAndCountsAgents(t *testing.T)
 	assert.True(t, isArr, "embedded profiles land in the file")
 	assert.Contains(t, stderr.String(), "(1 agent)", "agent count decoded for the confirmation line")
 }
+
+// The owner column and show tags must reflect EFFECTIVE ownership (the
+// daemon's derived effective_is_owner, which folds in profile-granted owner
+// bits), not just the legacy per-agent flag — a roster whose ownership comes
+// from a spawn profile is not "ownerless". Absent field (older daemon) falls
+// back to the legacy flag.
+func TestTemplates_OwnerDisplayUsesEffectiveOwnership(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`[
+		{"name":"board","agents":[
+			{"name":"chair","permissions":[],"spawn_profile":"boss-kit","effective_is_owner":true},
+			{"name":"guest","permissions":[]}]}]`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesLs(&stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.Contains(t, stdout.String(), "chair", "profile-granted owner listed in the owner column")
+
+	// show: the tag distinguishes a profile-granted owner from the legacy flag
+	// (flipping is_owner would not clear it).
+	stubDaemon(t, &calls, ok(`
+		{"name":"board","agents":[
+			{"name":"chair","permissions":[],"spawn_profile":"boss-kit","effective_is_owner":true},
+			{"name":"boss","permissions":[],"is_owner":true,"effective_is_owner":true},
+			{"name":"guest","permissions":[]}]}`))
+	stdout.Reset()
+	rc = runTemplatesShow(&templatesShowParams{Name: "board"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, "owner(via profile)", "profile-granted owner tagged with its source")
+	assert.Contains(t, out, "[owner]", "legacy-flag owner keeps the plain tag")
+}

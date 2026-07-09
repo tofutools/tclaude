@@ -90,6 +90,15 @@ type templateAgentJSON struct {
 	// in ascending order; a template whose every agent is wave 0 spawns in one
 	// synchronous pass (today's behaviour). The party's marching order.
 	Wave int `json:"wave,omitempty"`
+
+	// EffectiveIsOwner is DERIVED, read-only output: the owner bit a deploy of
+	// this agent would grant right now, composed across the tiers the deploy
+	// walks (referenced profile's owner default → profile_inline tri-state →
+	// the legacy is_owner flag). Emitted so thin clients (the CLI's owner
+	// column) don't have to re-resolve registry refs; ignored on save/import
+	// (it re-derives from the stored fields), and omitted when false so
+	// exports stay lean.
+	EffectiveIsOwner bool `json:"effective_is_owner,omitempty"`
 }
 
 // rhythmJSON is the wire shape for one template rhythm (JOH-244): a recurring
@@ -180,26 +189,43 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 	if !t.UpdatedAt.IsZero() {
 		out.UpdatedAt = t.UpdatedAt.Format(time.RFC3339)
 	}
+	// Batch the registry reads behind the derived effective_is_owner bits: one
+	// lazy ListSpawnProfiles per template (and none for ref-free rosters)
+	// instead of a GetSpawnProfile per roster agent — templateToJSON runs for
+	// every template on every recurring dashboard poll.
+	var profByName map[string]*db.SpawnProfile
+	lookupProfile := func(name string) *db.SpawnProfile {
+		if profByName == nil {
+			profByName = map[string]*db.SpawnProfile{}
+			if all, err := db.ListSpawnProfiles(); err == nil {
+				for _, p := range all {
+					profByName[p.Name] = p
+				}
+			}
+		}
+		return profByName[name]
+	}
 	for _, a := range t.Agents {
 		perms := a.Permissions
 		if perms == nil {
 			perms = []string{}
 		}
 		aj := templateAgentJSON{
-			Name:           a.Name,
-			Role:           a.Role,
-			Descr:          a.Descr,
-			InitialMessage: a.InitialMessage,
-			IsOwner:        a.IsOwner,
-			Permissions:    perms,
-			RoleRef:        a.RoleRef,
-			SpawnProfile:   a.SpawnProfile,
-			Harness:        a.Harness,
-			Model:          a.Model,
-			Effort:         a.Effort,
-			Sandbox:        a.Sandbox,
-			Approval:       a.Approval,
-			Wave:           a.Wave,
+			Name:             a.Name,
+			Role:             a.Role,
+			Descr:            a.Descr,
+			InitialMessage:   a.InitialMessage,
+			IsOwner:          a.IsOwner,
+			Permissions:      perms,
+			RoleRef:          a.RoleRef,
+			SpawnProfile:     a.SpawnProfile,
+			Harness:          a.Harness,
+			Model:            a.Model,
+			Effort:           a.Effort,
+			Sandbox:          a.Sandbox,
+			Approval:         a.Approval,
+			Wave:             a.Wave,
+			EffectiveIsOwner: effectiveTemplateAgentOwner(a, lookupProfile),
 		}
 		if a.ProfileInline != nil {
 			pj := profileToJSON(a.ProfileInline)
@@ -395,24 +421,13 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			inline = p
 		}
 
-		// Per-role launch profile (JOH-239). Validate the referenced spawn
-		// profile exists and the inline overrides against the harness they will
-		// launch on. The validation harness mirrors the instantiate-time
-		// resolution — the agent's inline harness wins, else the template-local
-		// profile's harness, else the referenced profile's harness, else the
-		// default (Claude Code) — so a value accepted here is checked against the
-		// same catalog the spawn will use. Blank fields stay blank (Validate*,
-		// not Resolve*): the launch boundary applies its own defaults at
-		// instantiate.
-		launch, fail := validateTemplateAgentLaunch(an, a, inline)
-		if fail != nil {
-			return nil, fail
-		}
-
 		// Role reference (JOH-240): validate the referenced role exists at save,
 		// exactly as the spawn-profile reference is validated — so a template
-		// can't persist a dangling role_ref. Blank = no role.
+		// can't persist a dangling role_ref. Blank = no role. Resolved BEFORE
+		// the launch validation so the role's tiers can feed the validation
+		// harness below.
 		roleRef := strings.TrimSpace(a.RoleRef)
+		var role *db.Role
 		if roleRef != "" {
 			rl, err := db.GetRole(roleRef)
 			if err != nil {
@@ -424,6 +439,21 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 						"Create it first (`tclaude agent roles create`, needs roles.manage) or clear role_ref.",
 						an, roleRef, availableHint("roles", knownRoleNames()))}
 			}
+			role = rl
+		}
+
+		// Per-role launch profile (JOH-239). Validate the referenced spawn
+		// profile exists and the inline overrides against the harness they will
+		// launch on. The validation harness mirrors the instantiate-time
+		// resolution — the agent's inline harness wins, else the template-local
+		// profile's harness, else the referenced profile's, else the role's,
+		// else the role's own profile's, else the default (Claude Code) — so a
+		// value accepted here is checked against the same catalog the spawn
+		// will use. Blank fields stay blank (Validate*, not Resolve*): the
+		// launch boundary applies its own defaults at instantiate.
+		launch, fail := validateTemplateAgentLaunch(an, a, inline, role)
+		if fail != nil {
+			return nil, fail
 		}
 
 		// Wave (JOH-244): the agent's staged-spawn wave. Non-negative; a sanity
@@ -692,12 +722,21 @@ type templateAgentLaunch struct {
 // profile at SAVE time and returns the normalized fields to store (JOH-239).
 // It checks the referenced spawn profile exists and validates the inline
 // overrides against the harness they will launch on — the agent's inline
-// harness wins, else the referenced profile's harness, else the default (Claude
-// Code) — so a value accepted here is checked against the same catalog the
-// spawn will use. Blank fields stay blank (Validate*, not Resolve*): the launch
+// harness wins, else the template-local profile's, else the referenced
+// profile's, else the role's, else the role's own profile's, else the default
+// (Claude Code) — the same adoption order the instantiate-time overlay walks,
+// so a value accepted here is checked against the same catalog the spawn will
+// use. (Without the role tiers in the chain, a template whose harness comes
+// from its role — e.g. blank agent fields over a role whose profile is Codex —
+// was validated against the wrong catalog: Claude-only models saved fine and
+// then failed every deploy, while legitimate Codex models were falsely
+// rejected at save.) role is the agent's resolved role_ref (nil = none); a
+// role edited AFTER the template is saved can still shift the harness — that
+// surfaces as a per-agent deploy failure, exactly like a post-save registry
+// profile edit. Blank fields stay blank (Validate*, not Resolve*): the launch
 // boundary applies its own secure defaults at instantiate. Mirrors
 // buildProfileFromJSON's harness-scoped validation.
-func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *db.SpawnProfile) (templateAgentLaunch, *spawnFailure) {
+func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *db.SpawnProfile, role *db.Role) (templateAgentLaunch, *spawnFailure) {
 	profRef := strings.TrimSpace(a.SpawnProfile)
 	var refProfile *db.SpawnProfile
 	if profRef != "" {
@@ -720,6 +759,23 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 	}
 	if valHarness == "" && refProfile != nil {
 		valHarness = refProfile.Harness
+	}
+	if valHarness == "" && role != nil {
+		valHarness = strings.TrimSpace(role.Harness)
+		if valHarness == "" {
+			if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
+				rp, err := db.GetSpawnProfile(ref)
+				if err != nil {
+					return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+				}
+				// A dangling role profile is tolerated here (role save enforces
+				// existence; a profile deleted since is a per-agent deploy
+				// failure) — the chain just falls through to the default.
+				if rp != nil {
+					valHarness = rp.Harness
+				}
+			}
+		}
 	}
 	h, err := harness.ResolveSpawnable(valHarness)
 	if err != nil {
@@ -1787,6 +1843,30 @@ func appendRoleBlock(groupContext, brief string) string {
 type permOverride struct {
 	Slug   string
 	Effect string // db.PermEffectGrant | db.PermEffectDeny
+}
+
+// effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
+// would grant — resolveTemplateAgentAccess's owner tiers (referenced profile's
+// default → profile_inline tri-state → legacy flag raise), for DISPLAY
+// (templateToJSON's effective_is_owner). lookupProfile resolves a registry
+// profile by name; a nil result (dangling/unreadable ref) leaves that tier
+// silent instead of failing, because a GET must render the template either way
+// (the deploy path keeps its strict failure). Callers rendering many agents
+// feed a batch map, not a per-call DB read.
+func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(string) *db.SpawnProfile) bool {
+	owner := false
+	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" {
+		if prof := lookupProfile(ref); prof != nil && prof.IsOwner != nil {
+			owner = *prof.IsOwner
+		}
+	}
+	if p := a.ProfileInline; p != nil && p.IsOwner != nil {
+		owner = *p.IsOwner
+	}
+	if a.IsOwner {
+		owner = true
+	}
+	return owner
 }
 
 // resolveTemplateAgentAccess computes the effective birth-time access controls

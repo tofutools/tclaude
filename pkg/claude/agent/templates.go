@@ -93,6 +93,24 @@ type templateAgentJSON struct {
 	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
 	// in ascending order; all-wave-0 = one synchronous pass (today's behaviour).
 	Wave int `json:"wave,omitempty"`
+
+	// EffectiveIsOwner is the daemon's DERIVED owner bit: what a deploy would
+	// grant right now, composed across the tiers (referenced profile's owner
+	// default → profile_inline tri-state → legacy is_owner flag). Read-only —
+	// the daemon ignores it on create/edit and re-derives. A *bool so an older
+	// daemon (field absent) reads as nil and display falls back to the legacy
+	// flag.
+	EffectiveIsOwner *bool `json:"effective_is_owner,omitempty"`
+}
+
+// effectiveOwner is the agent's owner bit for display: the daemon's derived
+// effective_is_owner (which folds in profile-granted ownership) when present,
+// else the legacy per-agent flag.
+func (a templateAgentJSON) effectiveOwner() bool {
+	if a.EffectiveIsOwner != nil {
+		return *a.EffectiveIsOwner
+	}
+	return a.IsOwner
 }
 
 // rhythmJSON mirrors the daemon's wire shape for one template rhythm (JOH-244):
@@ -146,11 +164,13 @@ type templateJSON struct {
 	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
-// ownerNames returns the names of the template's owner agents.
+// ownerNames returns the names of the template's owner agents — effective
+// ownership (profile-granted included), not just the legacy flag, so
+// `templates ls`/`show` don't render a profile-owned roster as ownerless.
 func (t templateJSON) ownerNames() []string {
 	out := []string{}
 	for _, a := range t.Agents {
-		if a.IsOwner {
+		if a.effectiveOwner() {
 			out = append(out, a.Name)
 		}
 	}
@@ -321,8 +341,15 @@ func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 	fmt.Fprintf(stdout, "  agents (%d):\n", len(t.Agents))
 	for i, a := range t.Agents {
 		tags := []string{}
-		if a.IsOwner {
-			tags = append(tags, "owner")
+		// Effective ownership (profile-granted included). When it comes from a
+		// tier other than the legacy flag, say so — an edit loop needs to know
+		// the bit isn't cleared by flipping is_owner.
+		if a.effectiveOwner() {
+			if a.IsOwner {
+				tags = append(tags, "owner")
+			} else {
+				tags = append(tags, "owner(via profile)")
+			}
 		}
 		if a.Role != "" {
 			tags = append(tags, "role="+a.Role)
