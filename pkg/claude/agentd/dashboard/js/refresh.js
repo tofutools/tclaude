@@ -1170,9 +1170,13 @@ export function bindBackdropDiscard(modalId, closeFn) {
   // Return a small handle so a caller can consult the SAME dirty flag before an
   // action that would abandon the form some other way — e.g. the template
   // editor's "Edit with agent" button, which closes the editor to hand off to a
-  // scribe and must offer the discard confirm first (JOH-361). Existing callers
-  // ignore the return value, so this is purely additive.
-  return { isDirty: () => dirty };
+  // scribe and must offer the discard confirm first (JOH-361). markDirty lets a
+  // caller flag an edit the DOM listeners can't see — a model-only mutation
+  // applied from a STACKED modal (the template editor's per-agent custom launch
+  // config, applied from the profile editor on top) fires no input/change in
+  // this modal, yet abandoning it would lose real work. Existing callers ignore
+  // the return value, so this is purely additive.
+  return { isDirty: () => dirty, markDirty };
 }
 
 // bindManageOverlayDismiss wires backdrop-click + Escape close for the

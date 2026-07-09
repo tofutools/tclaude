@@ -193,6 +193,15 @@ async function summonScribe(brief) {
 // confirm before it closes the editor to hand off (JOH-361).
 let templateEditorDiscard = null;
 
+// markTemplateEditorDirty flags a model-only edit the editor's own DOM
+// listeners can't see — a mutation applied from a stacked modal (a custom
+// launch config Apply, a profile created for an agent) or a button-click
+// mutation (remove legacy inline). Without it, Escape after such an edit
+// would close the editor silently and lose the work.
+function markTemplateEditorDirty() {
+  if (templateEditorDiscard) templateEditorDiscard.markDirty();
+}
+
 // summonScribeFromEditor hands the open editor off to a scribe. Handling dirty
 // state first is a correctness requirement: `edit` is a full replace, so an
 // editor left open with unsaved changes would overwrite the scribe's work on
@@ -790,6 +799,7 @@ function newProfileForAgent(idx) {
       if (cur) {
         cur.spawn_profile = name;
         cur.profile_inline = null;
+        markTemplateEditorDirty();
       }
       reloadProfilesAndRender();
     },
@@ -818,6 +828,7 @@ function customLaunchForAgent(idx) {
         if (cur) {
           cur.profile_inline = payload;
           cur.spawn_profile = '';
+          markTemplateEditorDirty();
         }
         renderEditorAgents();
       },
@@ -848,6 +859,7 @@ async function removeAgentLegacyInline(idx) {
   if (cur) {
     cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
     cur.permissions = [];
+    markTemplateEditorDirty();
   }
   renderEditorAgents();
 }
@@ -878,6 +890,7 @@ function extractAgentToProfile(idx) {
         cur.profile_inline = null;
         cur.harness = cur.model = cur.effort = cur.sandbox = cur.approval = '';
         cur.permissions = [];
+        markTemplateEditorDirty();
       }
       reloadProfilesAndRender();
     },
