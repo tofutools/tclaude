@@ -17,17 +17,22 @@ func EventRefForLogEntry(entry LogEntry) string {
 	case ScopeRun:
 		return "run/log.jsonl#" + itoa64(entry.Seq)
 	default:
-		return "unknown#" + itoa64(entry.Seq)
+		return ""
 	}
 }
 
 func ManifestEntryForLog(entry LogEntry, previousChecksum string) (ManifestEntry, error) {
+	entryChecksum, err := LogEntryChecksum(entry)
+	if err != nil {
+		return ManifestEntry{}, err
+	}
 	manifest := ManifestEntry{
 		SchemaVersion: ManifestEntrySchemaVersion,
 		Seq:           entry.Seq,
 		Timestamp:     entry.At,
 		Scope:         entry.Scope,
 		EventRef:      EventRefForLogEntry(entry),
+		EntryChecksum: entryChecksum,
 	}
 	checksum, err := NextChecksum(previousChecksum, manifest)
 	if err != nil {
@@ -80,6 +85,18 @@ func NextChecksum(previous string, entry ManifestEntry) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
+func LogEntryChecksum(entry LogEntry) (string, error) {
+	if entry.SchemaVersion == 0 {
+		entry.SchemaVersion = LogEntrySchemaVersion
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("hash log entry: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
 func VerifyManifestChecksums(entries []ManifestEntry) Diagnostics {
 	var diagnostics Diagnostics
 	previous := ""
@@ -104,12 +121,14 @@ func canonicalManifestPayload(entry ManifestEntry) ([]byte, error) {
 		Timestamp     string `json:"ts"`
 		Scope         Scope  `json:"scope"`
 		EventRef      string `json:"eventRef"`
+		EntryChecksum string `json:"entryChecksum"`
 	}{
 		SchemaVersion: entry.SchemaVersion,
 		Seq:           entry.Seq,
 		Timestamp:     entry.Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
 		Scope:         entry.Scope,
 		EventRef:      entry.EventRef,
+		EntryChecksum: entry.EntryChecksum,
 	}
 	return json.Marshal(payload)
 }

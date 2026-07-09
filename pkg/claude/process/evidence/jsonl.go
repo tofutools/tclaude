@@ -69,9 +69,6 @@ func ReadNodeLog(nodeID string, r io.Reader) ([]LogEntry, error) {
 		if err := strictDecodeLine(line.Data, &entry); err != nil {
 			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: err}
 		}
-		if nodeID != "" && entry.Scope.Kind == ScopeNode && entry.Scope.ID != nodeID {
-			return nil, &ReadError{Kind: ReadErrorMalformed, Line: line.Number, Err: fmt.Errorf("log entry scope node %q does not match node log %q", entry.Scope.ID, nodeID)}
-		}
 		entries = append(entries, entry)
 	}
 	return entries, nil
@@ -119,7 +116,7 @@ func readJSONLLines(r io.Reader) ([]jsonlLine, error) {
 				if errors.Is(err, io.EOF) {
 					return nil, &ReadError{Kind: ReadErrorTornTail, Line: lineNumber, Err: fmt.Errorf("final JSONL line is not newline-terminated")}
 				}
-				return nil, &ReadError{Kind: ReadErrorMalformed, Line: lineNumber, Err: err}
+				return nil, err
 			}
 			line = bytes.TrimSuffix(line, []byte{'\n'})
 			line = bytes.TrimSuffix(line, []byte{'\r'})

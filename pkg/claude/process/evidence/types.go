@@ -23,6 +23,15 @@ const (
 	EntryKindAdmin    EntryKind = "admin"
 )
 
+func (k EntryKind) IsValid() bool {
+	switch k {
+	case EntryKindAttempt, EntryKindDecision, EntryKindGate, EntryKindSignal, EntryKindAdmin:
+		return true
+	default:
+		return false
+	}
+}
+
 type ScopeKind string
 
 const (
@@ -51,6 +60,7 @@ type ManifestEntry struct {
 	Timestamp     time.Time `json:"ts"`
 	Scope         Scope     `json:"scope"`
 	EventRef      string    `json:"eventRef"`
+	EntryChecksum string    `json:"entryChecksum"`
 	Checksum      string    `json:"checksum"`
 }
 
@@ -76,7 +86,11 @@ func (e *ReadError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return string(e.Kind) + " at line " + itoa(e.Line) + ": " + e.Err.Error()
+	message := "<nil>"
+	if e.Err != nil {
+		message = e.Err.Error()
+	}
+	return string(e.Kind) + " at line " + itoa(e.Line) + ": " + message
 }
 
 func (e *ReadError) Unwrap() error {

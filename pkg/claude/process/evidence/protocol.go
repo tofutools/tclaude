@@ -12,7 +12,8 @@ import (
 // The ordered write discipline is:
 //  1. append exactly one LogEntry to the owning node log;
 //  2. append exactly one ManifestEntry for that log entry, using the next
-//     run-global seq and the rolling manifest checksum;
+//     run-global seq, the log entry's content checksum, and the rolling
+//     manifest checksum;
 //  3. write the state checkpoint whose LastLogSeq and LogChecksum match the
 //     manifest head after applying the entry's state.Event payload.
 //
@@ -40,8 +41,10 @@ func VerifyStateAnchors(st *state.State, manifest []ManifestEntry) Diagnostics {
 	if len(manifest) > 0 {
 		headSeq = manifest[len(manifest)-1].Seq
 	}
-	if st.LastLogSeq != headSeq {
-		diagnostics = append(diagnostics, diagError("state_log_seq_mismatch", "state.lastLogSeq", fmt.Sprintf("state lastLogSeq %d does not match manifest head %d", st.LastLogSeq, headSeq)))
+	if st.LastLogSeq < headSeq {
+		diagnostics = append(diagnostics, diagError("state_behind_manifest", "state.lastLogSeq", fmt.Sprintf("state lastLogSeq %d is behind manifest head %d", st.LastLogSeq, headSeq)))
+	} else if st.LastLogSeq > headSeq {
+		diagnostics = append(diagnostics, diagError("state_ahead_of_manifest", "state.lastLogSeq", fmt.Sprintf("state lastLogSeq %d is ahead of manifest head %d", st.LastLogSeq, headSeq)))
 	}
 	checksum, err := ManifestChecksum(manifest)
 	if err != nil {

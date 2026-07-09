@@ -41,6 +41,9 @@ func TestAppendReadRoundTrip(t *testing.T) {
 	if len(manifest) != 1 || manifest[0].EventRef != EventRefForLogEntry(entry) {
 		t.Fatalf("manifest = %#v", manifest)
 	}
+	if diagnostics := VerifyManifestChecksums(manifest); diagnostics.HasErrors() {
+		t.Fatalf("round-tripped manifest checksum failed: %#v", diagnostics)
+	}
 }
 
 func TestReadErrorsDistinguishTornTailAndMidFileCorruption(t *testing.T) {
@@ -58,6 +61,29 @@ func TestReadErrorsDistinguishTornTailAndMidFileCorruption(t *testing.T) {
 
 	_, err = ReadNodeLog("implement", strings.NewReader(`{"schemaVersion":1,"seq":1`+"\n"+string(second)))
 	assertReadError(t, err, ReadErrorMalformed, 1)
+}
+
+func TestReadTransportErrorsAreNotCorruption(t *testing.T) {
+	_, err := ReadNodeLog("implement", &errReader{data: []byte(`{"schemaVersion":1}` + "\n"), err: errors.New("disk exploded")})
+	if err == nil || strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("expected bare transport error, got %v", err)
+	}
+	var readErr *ReadError
+	if errors.As(err, &readErr) {
+		t.Fatalf("transport error should not be ReadError: %#v", readErr)
+	}
+
+	_, err = ReadNodeLog("implement", &errReader{data: []byte(`{"schemaVersion":1`), err: errors.New("disk exploded")})
+	if err == nil || strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("expected bare mid-line transport error, got %v", err)
+	}
+}
+
+func TestReadErrorNilErrIsSafe(t *testing.T) {
+	readErr := &ReadError{Kind: ReadErrorMalformed, Line: 7}
+	if got := readErr.Error(); !strings.Contains(got, "<nil>") {
+		t.Fatalf("unexpected error string: %q", got)
+	}
 }
 
 func TestStrictDecodeAndVersionPreflight(t *testing.T) {
@@ -130,6 +156,85 @@ func TestVerifySequenceDetectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestVerifySequenceDetectsLogContentTampering(t *testing.T) {
+	logs, manifest := sampleEvidence(t, 1)
+	logs[0].Entries[0].Kind = EntryKindDecision
+	logs[0].Entries[0].At = logs[0].Entries[0].At.Add(24 * time.Hour)
+	logs[0].Entries[0].EvidenceRef = "tampered"
+	logs[0].Entries[0].Event.Actor = "agent:agt_tampered"
+
+	diagnostics := VerifySequence(manifest, logs)
+	if !hasDiagnostic(diagnostics, "entry_checksum_mismatch") {
+		t.Fatalf("expected entry checksum mismatch, got %#v", diagnostics)
+	}
+	if !hasDiagnostic(diagnostics, "timestamp_mismatch") {
+		t.Fatalf("expected timestamp mismatch, got %#v", diagnostics)
+	}
+}
+
+func TestVerifySequenceValidatesScopeKindAndEventSeq(t *testing.T) {
+	tests := []struct {
+		name string
+		log  LogEntry
+		code string
+	}{
+		{name: "invalid scope", log: func() LogEntry {
+			entry := sampleLogEntry(1, "implement")
+			entry.Scope = Scope{Kind: "bogus", ID: "implement"}
+			return entry
+		}(), code: "invalid_scope_kind"},
+		{name: "node scope missing id", log: func() LogEntry {
+			entry := sampleLogEntry(1, "implement")
+			entry.Scope.ID = ""
+			return entry
+		}(), code: "missing_scope_id"},
+		{name: "run scope has id", log: func() LogEntry {
+			entry := sampleLogEntry(1, "implement")
+			entry.Scope = Scope{Kind: ScopeRun, ID: "not-allowed"}
+			return entry
+		}(), code: "run_scope_has_id"},
+		{name: "invalid entry kind", log: func() LogEntry {
+			entry := sampleLogEntry(1, "implement")
+			entry.Kind = "bogus"
+			return entry
+		}(), code: "invalid_entry_kind"},
+		{name: "event seq mismatch", log: func() LogEntry {
+			entry := sampleLogEntry(1, "implement")
+			entry.Event.Seq = 42
+			return entry
+		}(), code: "event_seq_mismatch"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifestEntry, err := ManifestEntryForLog(tt.log, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagnostics := VerifySequence([]ManifestEntry{manifestEntry}, []NodeLog{{NodeID: "implement", Entries: []LogEntry{tt.log}}})
+			if !hasDiagnostic(diagnostics, tt.code) {
+				t.Fatalf("expected %q, got %#v", tt.code, diagnostics)
+			}
+		})
+	}
+}
+
+func TestReadNodeLogAllowsMisplacedScopeForVerification(t *testing.T) {
+	entry := sampleLogEntry(1, "other")
+	var buf bytes.Buffer
+	if err := AppendLogEntry(&buf, entry); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ReadNodeLog("implement", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := VerifySequence(nil, []NodeLog{{NodeID: "implement", Entries: entries}})
+	if !hasDiagnostic(diagnostics, "scope_mismatch") {
+		t.Fatalf("expected scope mismatch diagnostic, got %#v", diagnostics)
+	}
+}
+
 func TestVerifySequenceDetectsCrossReferenceProblems(t *testing.T) {
 	logs, manifest := sampleEvidence(t, 2)
 
@@ -170,8 +275,13 @@ func TestVerifyStateAnchors(t *testing.T) {
 
 	st.LastLogSeq = 1
 	diagnostics := VerifyStateAnchors(st, manifest)
-	if !hasDiagnostic(diagnostics, "state_log_seq_mismatch") {
+	if !hasDiagnostic(diagnostics, "state_behind_manifest") {
 		t.Fatalf("expected seq mismatch, got %#v", diagnostics)
+	}
+	st.LastLogSeq = 3
+	diagnostics = VerifyStateAnchors(st, manifest)
+	if !hasDiagnostic(diagnostics, "state_ahead_of_manifest") {
+		t.Fatalf("expected state ahead mismatch, got %#v", diagnostics)
 	}
 	st.LastLogSeq = 2
 	st.LogChecksum = "sha256:bad"
@@ -194,10 +304,30 @@ func TestDualWriteCrashWindowsAreDetectable(t *testing.T) {
 	t.Run("after manifest before state", func(t *testing.T) {
 		st := &state.State{LastLogSeq: 0, LogChecksum: ""}
 		diagnostics := VerifyStateAnchors(st, manifest)
-		if !hasDiagnostic(diagnostics, "state_log_seq_mismatch") || !hasDiagnostic(diagnostics, "state_checksum_mismatch") {
+		if !hasDiagnostic(diagnostics, "state_behind_manifest") || !hasDiagnostic(diagnostics, "state_checksum_mismatch") {
 			t.Fatalf("expected stale state anchors, got %#v", diagnostics)
 		}
 	})
+}
+
+func TestManifestJSONRoundTripChecksumWithNonUTCTimestamp(t *testing.T) {
+	entry := sampleLogEntry(1, "implement")
+	entry.At = time.Date(2026, 7, 9, 16, 30, 15, 120000000, time.FixedZone("TST", 90*60))
+	manifestEntry, err := ManifestEntryForLog(entry, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := AppendManifestEntry(&buf, manifestEntry); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := ReadManifest(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics := VerifyManifestChecksums(manifest); diagnostics.HasErrors() {
+		t.Fatalf("checksum failed after JSON round trip: %#v", diagnostics)
+	}
 }
 
 func sampleEvidence(t *testing.T, count int) ([]NodeLog, []ManifestEntry) {
@@ -273,4 +403,18 @@ func hasDiagnostic(diagnostics Diagnostics, code string) bool {
 		}
 	}
 	return false
+}
+
+type errReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		return copy(p, r.data), nil
+	}
+	return 0, r.err
 }
