@@ -35,6 +35,7 @@
 
 import { isVegasActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
+import { dashPrefs } from './prefs.js';
 
 // The station catalog. SomaFM is listener-supported and genuinely
 // commercial-free; each entry is one of its channels. The first
@@ -77,6 +78,7 @@ const CHANNELS = [
 
 const DEFAULT_CHANNEL = 'illstreet';        // Vegas group default (config.DefaultSlopChannel)
 const WIZARD_DEFAULT_CHANNEL = 'thistle';   // Wizard group default (config.DefaultWizardChannel)
+const PLAY_INTENT_KEY = 'tclaude.dash.music.playIntent';
 
 // The channel groups the top-level picker offers. `key` matches each
 // channel's `group`; deliberately NOT keyed `id:` so the pin test's channel
@@ -250,7 +252,16 @@ export function setConnectionLost(lost) {
   else syncVegas();
 }
 
-function startMusic() {
+function shouldAutoPlayMusic() {
+  return dashPrefs.getItem(PLAY_INTENT_KEY) !== 'pause';
+}
+
+function rememberPlayIntent(intent) {
+  if (intent === 'pause') dashPrefs.setItem(PLAY_INTENT_KEY, 'pause');
+  else dashPrefs.setItem(PLAY_INTENT_KEY, 'play');
+}
+
+function startMusic({ autoplay = true } = {}) {
   const host = document.getElementById('vegas-player');
   if (!host) return;
   // Already playing — don't rebuild, which would restart the stream on a
@@ -329,7 +340,7 @@ function startMusic() {
   // a big empty white pill.
   const audio = document.createElement('audio');
   audio.src = streamFor(chan.id);
-  audio.autoplay = true;
+  audio.autoplay = autoplay;
   audio.preload = 'auto';
   audio.setAttribute('aria-label', 'SomaFM — ' + chan.label);
   audio.volume = musicVolume / 100;
@@ -360,9 +371,11 @@ function startMusic() {
     // state: the document-level unmute arm (armMutedUntilGesture) fires on
     // this same gesture and would otherwise flip a "play" into a pause.
     if (playBtn.getAttribute('aria-label') === 'Play') {
+      rememberPlayIntent('play');
       audio.muted = false;
       audio.play().catch(() => {});
     } else {
+      rememberPlayIntent('pause');
       audio.pause();
     }
   });
@@ -378,7 +391,7 @@ function startMusic() {
   host.appendChild(label);
   host.appendChild(audio);
   host.appendChild(transport);
-  playWithSound(audio);
+  if (autoplay) playWithSound(audio);
   startNowPlayingPoll();
 }
 
@@ -598,9 +611,12 @@ function leaveVegasTabIfActive() {
 
 // syncVegas brings the radio in line with the live state. It plays when
 // the Vegas features are active (slop OR the regular-mode opt-in) AND the
-// master sound switch is on; otherwise it stops. Idempotent — startMusic
-// no-ops if a player already exists, stopMusic if none does — so it's safe
-// to call on every tclaude:vegas / tclaude:slopsound event and on boot.
+// master sound switch is on, unless the operator's last explicit
+// player-button intent was pause. In that saved-paused case it still builds
+// the player chrome so the Play button is available, but it does not start
+// the stream. Idempotent — startMusic no-ops if a player already exists,
+// stopMusic if none does — so it's safe to call on every tclaude:vegas /
+// tclaude:slopsound event and on boot.
 //
 // When reached from a toggle click (or the master-switch click) we're
 // inside that gesture's call stack, so autoplay-with-sound is granted; on
@@ -626,7 +642,7 @@ function syncVegas() {
     // Load the persisted channel once (lazily, on first activation) so a
     // later unmute starts on the saved station.
     loadChannel();
-    if (isSlopSoundEnabled()) startMusic();
+    if (isSlopSoundEnabled()) startMusic({ autoplay: shouldAutoPlayMusic() });
     else stopMusic(); // master mute → no stream, but keep the tab/HUD
   } else {
     stopMusic();

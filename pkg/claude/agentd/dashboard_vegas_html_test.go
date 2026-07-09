@@ -46,7 +46,19 @@ func TestDashboardHTML_VegasTab(t *testing.T) {
 	must("ice1.somafm.com", "the stream host is embedded")
 	must("illstreet", "the lounge station is embedded")
 	must("createElement('audio')", "vegas.js builds an <audio> player")
-	must("audio.autoplay = true", "the player autoplays so music starts with the mode")
+	must("audio.autoplay = autoplay", "the player can render without autoplay when the operator paused it")
+	must("playWithSound(audio)", "the player still autoplays when the saved intent allows it")
+
+	// The transport's explicit play/pause intent is remembered server-side via
+	// dashPrefs: a saved pause suppresses mode-switch/startup autoplay, while a
+	// saved play (or no saved value) preserves the historical auto-start.
+	must("import { dashPrefs } from './prefs.js'", "vegas.js uses server-backed dashboard prefs")
+	must("const PLAY_INTENT_KEY = 'tclaude.dash.music.playIntent'",
+		"the music play/pause intent persists under a stable dashPrefs key")
+	must("dashPrefs.getItem(PLAY_INTENT_KEY) !== 'pause'",
+		"only an explicit saved pause suppresses autoplay")
+	must("rememberPlayIntent('pause')", "pressing pause records the suppress-autoplay intent")
+	must("rememberPlayIntent('play')", "pressing play records the resume-autoplay intent")
 
 	// HTML hooks: the nav button, its section, and the player host
 	// vegas.js injects the iframe into.
