@@ -321,7 +321,7 @@ func adminRecordApplied(st *state.State, event state.Event) bool {
 		return false
 	}
 	for _, record := range st.AdminRecords {
-		if record.Actor == event.Actor && record.Reason == event.Reason && record.EvidenceRef == event.EvidenceRef && record.Timestamp.Equal(event.At) {
+		if record.Type == event.Type && record.Actor == event.Actor && record.Reason == event.Reason && record.EvidenceRef == event.EvidenceRef && record.Timestamp.Equal(event.At) {
 			return true
 		}
 	}

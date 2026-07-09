@@ -80,3 +80,29 @@ func TestProgramAdapterTimesOutCommand(t *testing.T) {
 		t.Fatalf("process descendants outlived timeout: %s", elapsed)
 	}
 }
+
+func TestProgramAdapterDoesNotInheritParentSecrets(t *testing.T) {
+	t.Setenv("TCLAUDE_SECRET_TOKEN", "must-not-leak")
+	adapter := ProgramAdapter{DefaultTimeout: 5 * time.Second}
+	observation, err := adapter.Perform(t.Context(), Request{
+		Command: plan.Command{ID: "cmd_env", IdempotencyKey: "run/env", RunID: "run"},
+		Performer: model.Performer{
+			Kind: model.PerformerProgram,
+			Run:  "/bin/sh",
+			Args: []string{"-c", `printf %s "${TCLAUDE_SECRET_TOKEN-unset}"`},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.Evidence == nil {
+		t.Fatalf("observation = %#v", observation)
+	}
+	var evidence ProgramEvidence
+	if err := json.Unmarshal(observation.Evidence.Data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.StdoutTail != "unset" || strings.Contains(string(observation.Evidence.Data), "must-not-leak") {
+		t.Fatalf("parent secret leaked into program evidence: %#v", evidence)
+	}
+}

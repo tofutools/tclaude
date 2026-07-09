@@ -82,17 +82,20 @@ opt-in on each run:
 tclaude process run program-demo.yaml --store-root "$STORE" --run-id program-1 --allow-programs
 ```
 
-The opt-in is stored on the run record and written to the run's admin evidence
-log. The executor refuses a program command when its run was instantiated
-without `--allow-programs`.
+The opt-in is stored on the run record and only becomes executable after its
+admin audit event is committed through the log, manifest, and state checkpoint.
+The executor refuses a program command when its run was instantiated without
+`--allow-programs`. The opt-in's integrity is only as strong as the filesystem
+permissions protecting the process store root.
 
 `performer.run` is an executable name or path; `performer.args` is passed as a
 literal argument vector, without a shell. `performer.timeout` accepts a Go
 duration such as `30s` or `5m` and defaults to 10 minutes. Program commands
 receive `TCLAUDE_PROCESS_COMMAND_ID` and
-`TCLAUDE_PROCESS_IDEMPOTENCY_KEY` in their environment. Their exit code and
-bounded stdout/stderr tails are stored as an evidence artifact; exit code zero
-settles as pass and every other exit code settles as fail.
+`TCLAUDE_PROCESS_IDEMPOTENCY_KEY` in their environment. Only `PATH`, `HOME`,
+`TMPDIR`, `LANG`, and `LC_*` are inherited from the parent process. Exit code
+and bounded stdout/stderr tails are stored as an evidence artifact; exit code
+zero settles as pass and every other exit code settles as fail.
 
 This phase does not provide command allowlists or process sandboxing. Treat
 templates as untrusted input and only enable program execution when you have

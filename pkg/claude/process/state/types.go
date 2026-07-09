@@ -185,6 +185,7 @@ type DecisionRecord struct {
 }
 
 type AdminRecord struct {
+	Type        EventType `json:"type,omitempty"`
 	Actor       ActorRef  `json:"actor"`
 	Reason      string    `json:"reason"`
 	EvidenceRef string    `json:"evidenceRef,omitempty"`

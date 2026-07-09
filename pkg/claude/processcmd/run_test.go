@@ -129,7 +129,7 @@ nodes:
 	if !snapshot.Run.AllowPrograms {
 		t.Fatal("run did not persist allowPrograms")
 	}
-	if len(snapshot.State.AdminRecords) != 1 || !strings.Contains(snapshot.State.AdminRecords[0].Reason, "--allow-programs") {
+	if len(snapshot.State.AdminRecords) != 1 || snapshot.State.AdminRecords[0].Type != state.EventAdminProgramsAllowed || !strings.Contains(snapshot.State.AdminRecords[0].Reason, "--allow-programs") {
 		t.Fatalf("admin records = %#v", snapshot.State.AdminRecords)
 	}
 	runLog, err := fs.ReadRunLog(t.Context(), "program_demo")

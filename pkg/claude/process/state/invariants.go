@@ -139,8 +139,11 @@ func OutstandingCommandsAreWellFormed(st *State) Diagnostics {
 			var compact bytes.Buffer
 			err := json.Compact(&compact, command.Payload)
 			sum := sha256.Sum256(compact.Bytes())
-			if err != nil || command.PayloadHash == "" || command.PayloadHash != fmt.Sprintf("%x", sum) {
-				diagnostics = append(diagnostics, diagError("command_payload_hash_mismatch", path+".payloadHash", "outstanding command payload does not match its payload hash"))
+			recomputed := fmt.Sprintf("%x", sum)
+			if err != nil {
+				diagnostics = append(diagnostics, diagError("command_payload_hash_mismatch", path+".payloadHash", fmt.Sprintf("outstanding command payload has stored hash %q but is invalid JSON: %v", command.PayloadHash, err)))
+			} else if command.PayloadHash == "" || command.PayloadHash != recomputed {
+				diagnostics = append(diagnostics, diagError("command_payload_hash_mismatch", path+".payloadHash", fmt.Sprintf("outstanding command payload has stored hash %q, recomputed %q", command.PayloadHash, recomputed)))
 			}
 		}
 		if command.Status == CommandStatusObserved {

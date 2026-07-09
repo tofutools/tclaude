@@ -22,6 +22,18 @@ type fakeAdapter struct {
 	requests    []Request
 }
 
+type allowProgramsMirrorStore struct {
+	store.Store
+}
+
+func (s allowProgramsMirrorStore) LoadRun(ctx context.Context, runID string) (store.Snapshot, error) {
+	snapshot, err := s.Store.LoadRun(ctx, runID)
+	if err == nil {
+		snapshot.Run.AllowPrograms = true
+	}
+	return snapshot, err
+}
+
 func (a *fakeAdapter) Validate(Request) error { return nil }
 
 func (a *fakeAdapter) Perform(_ context.Context, request Request) (Observation, error) {
@@ -312,6 +324,27 @@ func TestExecuteRefusesProgramWithoutRunOptIn(t *testing.T) {
 	_, err = executor.Execute(t.Context(), commands[0])
 	if err == nil || !strings.Contains(err.Error(), "--allow-programs") {
 		t.Fatalf("expected opt-in refusal, got %v", err)
+	}
+	loaded, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requests) != 0 || len(loaded.State.OutstandingCommands) != 0 {
+		t.Fatalf("adapter calls = %d, outstanding = %#v", len(adapter.requests), loaded.State.OutstandingCommands)
+	}
+}
+
+func TestExecuteRefusesTamperedAllowProgramsMirrorWithoutAudit(t *testing.T) {
+	fs, snapshot := executorFixture(t, false, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(allowProgramsMirrorStore{Store: fs}, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = executor.Execute(t.Context(), commands[0])
+	if err == nil || !strings.Contains(err.Error(), "--allow-programs") {
+		t.Fatalf("expected unaudited mirror refusal, got %v", err)
 	}
 	loaded, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
 	if err != nil {

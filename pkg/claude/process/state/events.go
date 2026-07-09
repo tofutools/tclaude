@@ -465,6 +465,7 @@ func applyEvent(st *State, event Event) error {
 		return nil
 	case EventAdminRepairRecorded, EventAdminProgramsAllowed:
 		record := AdminRecord{
+			Type:        event.Type,
 			Actor:       normalizeActor(event.Actor),
 			Reason:      event.Reason,
 			EvidenceRef: event.EvidenceRef,

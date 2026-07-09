@@ -120,7 +120,7 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 			}
 		}
 	}
-	if err := validateCommand(snapshot, command); err != nil {
+	if err := validateCommand(snapshot, command, e.now()); err != nil {
 		return Result{}, err
 	}
 	if commandIsClaimed(snapshot.State, command) {
@@ -133,7 +133,7 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	var adapter Adapter
 	var request Request
 	if command.Performer != nil {
-		if command.Performer.Kind == model.PerformerProgram && !snapshot.Run.AllowPrograms {
+		if command.Performer.Kind == model.PerformerProgram && (!snapshot.Run.AllowPrograms || !programExecutionAudited(snapshot.State)) {
 			return Result{}, fmt.Errorf("process run %q does not allow program performers; instantiate it with --allow-programs", command.RunID)
 		}
 		adapter = e.Adapters[command.Performer.Kind]
@@ -333,9 +333,13 @@ func (e *Executor) claim(ctx context.Context, snapshot store.Snapshot, command p
 		return false, snapshot.State, nil
 	}
 	at := e.now()
+	outstanding, err := command.OutstandingCommand(at)
+	if err != nil {
+		return false, nil, err
+	}
 	entries := []evidence.LogEntry{commandEntry(command, state.Event{
 		Type:    state.EventCommandIssued,
-		Command: ptr(command.OutstandingCommand(at)),
+		Command: &outstanding,
 	}, "", at)}
 	if command.Kind == plan.CommandKindStartAttempt {
 		entries = append(entries, commandEntry(command, state.Event{
@@ -420,7 +424,19 @@ func commandIsClaimed(st *state.State, command plan.Command) bool {
 	return false
 }
 
-func validateCommand(snapshot store.Snapshot, command plan.Command) error {
+func programExecutionAudited(st *state.State) bool {
+	if st == nil {
+		return false
+	}
+	for _, record := range st.AdminRecords {
+		if record.Type == state.EventAdminProgramsAllowed {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time) error {
 	if strings.TrimSpace(command.ID) == "" {
 		return fmt.Errorf("process command id is required")
 	}
@@ -440,7 +456,7 @@ func validateCommand(snapshot store.Snapshot, command plan.Command) error {
 		return fmt.Errorf("process command %q kind %q requires a performer", command.ID, command.Kind)
 	}
 	if command.Kind == plan.CommandKindSetTimer {
-		if _, err := commandDueAt(command, time.Now()); err != nil {
+		if _, err := commandDueAt(command, at); err != nil {
 			return err
 		}
 	}
@@ -614,10 +630,6 @@ func runEntryWithKind(kind evidence.EntryKind, event state.Event, evidenceRef st
 		Event:       &event,
 		EvidenceRef: evidenceRef,
 	}
-}
-
-func ptr[T any](value T) *T {
-	return &value
 }
 
 func (e *Executor) now() time.Time {

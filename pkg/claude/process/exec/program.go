@@ -83,7 +83,7 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 	configureProgramCommand(command)
 	command.Stdout = stdout
 	command.Stderr = stderr
-	command.Env = append(os.Environ(),
+	command.Env = append(minimalProgramEnvironment(),
 		"TCLAUDE_PROCESS_COMMAND_ID="+request.Command.ID,
 		"TCLAUDE_PROCESS_IDEMPOTENCY_KEY="+request.Command.IdempotencyKey,
 	)
@@ -116,7 +116,7 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 	}
 	body, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
-		return Observation{}, fmt.Errorf("encode program evidence: %w", err)
+		return Observation{}, fmt.Errorf("encode program evidence for command %q: %w", request.Command.ID, err)
 	}
 	body = append(body, '\n')
 	verdict := "fail"
@@ -129,6 +129,25 @@ func (a ProgramAdapter) Perform(ctx context.Context, request Request) (Observati
 		Feedback: evidence.StderrTail,
 		Evidence: &Artifact{Name: "program-" + request.Command.ID + ".json", Data: body},
 	}, nil
+}
+
+func minimalProgramEnvironment() []string {
+	environment := make([]string, 0, 8)
+	for _, entry := range os.Environ() {
+		name, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch name {
+		case "PATH", "HOME", "TMPDIR", "LANG":
+			environment = append(environment, entry)
+		default:
+			if strings.HasPrefix(name, "LC_") {
+				environment = append(environment, entry)
+			}
+		}
+	}
+	return environment
 }
 
 func (a ProgramAdapter) timeout(value string) (time.Duration, error) {
