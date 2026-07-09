@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	processplan "github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -116,20 +117,20 @@ func planAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID, verdict 
 	case model.NodeTypeDecision:
 		return planDecisionAdvance(snapshot, tmpl, nodeID, templateNode, verdict, actor, evidenceRef, at)
 	case model.NodeTypeWait, model.NodeTypeStart:
-		if !isPassVerdict(verdict) {
+		if !processplan.IsPassVerdict(verdict) {
 			return nil, fmt.Errorf("node %q of type %s only accepts pass verdict", nodeID, templateNode.Type)
 		}
 		entries := []evidence.LogEntry{
 			nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
 		}
-		return appendActivationEntries(entries, snapshot, tmpl, resolvePassEdge(templateNode.Next, verdict), evidenceRef, at)
+		return appendActivationEntries(entries, snapshot, tmpl, processplan.ResolvePassEdge(templateNode.Next, verdict), evidenceRef, at)
 	case model.NodeTypeEnd:
-		if !isPassVerdict(verdict) {
+		if !processplan.IsPassVerdict(verdict) {
 			return nil, fmt.Errorf("end node %q only accepts pass verdict", nodeID)
 		}
 		return []evidence.LogEntry{
 			nodeLogEntry(nodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: state.NodeStatusCompleted}, evidenceRef, at),
-			runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: terminalRunStatus(tmpl, nodeID)}, evidenceRef, at),
+			runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(templateNode)}, evidenceRef, at),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
@@ -142,10 +143,6 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 		return nil, fmt.Errorf("task node %q verdict must be pass or fail", nodeID)
 	}
 	attempt := node.Attempt + 1
-	maxAttempts := 1
-	if templateNode.Retry != nil && templateNode.Retry.MaxAttempts > 0 {
-		maxAttempts = templateNode.Retry.MaxAttempts
-	}
 	entries := []evidence.LogEntry{
 		nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
 			Type:    state.EventNodeAttemptStarted,
@@ -153,7 +150,7 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 			Attempt: attempt,
 		}, evidenceRef, at),
 	}
-	if normalized == "fail" && attempt < maxAttempts {
+	if normalized == "fail" && processplan.SettleNodeStatus(normalized, attempt, templateNode.Retry) == state.NodeStatusReady {
 		entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
 			Type:       state.EventNodeAttemptSettled,
 			Outcome:    "fail",
@@ -161,18 +158,15 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 		}, evidenceRef, at))
 		return entries, nil
 	}
-	status := state.NodeStatusCompleted
-	if normalized == "fail" {
-		status = state.NodeStatusFailed
-	}
+	status := processplan.SettleNodeStatus(normalized, attempt, templateNode.Retry)
 	entries = append(entries, nodeLogEntry(nodeID, evidence.EntryKindAttempt, state.Event{
 		Type:       state.EventNodeAttemptSettled,
 		Outcome:    normalized,
 		NodeStatus: status,
 	}, evidenceRef, at))
-	target := resolvePassEdge(templateNode.Next, normalized)
+	target := processplan.ResolvePassEdge(templateNode.Next, normalized)
 	if normalized == "fail" {
-		target = resolveFailEdge(templateNode.Next, templateNode.Retry)
+		target = processplan.ResolveFailEdge(templateNode.Next, templateNode.Retry)
 	}
 	if normalized == "fail" && target == "" {
 		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: state.RunStatusFailed}, evidenceRef, at))
@@ -182,10 +176,7 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 }
 
 func planDecisionAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID string, templateNode model.Node, verdict string, actor state.ActorRef, evidenceRef string, at time.Time) ([]evidence.LogEntry, error) {
-	target, ok := templateNode.Next[verdict]
-	if !ok {
-		target, ok = templateNode.Next[strings.ToLower(strings.TrimSpace(verdict))]
-	}
+	target, ok := processplan.DecisionEdge(templateNode.Next, verdict)
 	if !ok {
 		return nil, fmt.Errorf("decision node %q has no edge for verdict %q; available edges: %s", nodeID, verdict, strings.Join(sortedEdgeKeys(templateNode.Next), ", "))
 	}
@@ -226,57 +217,7 @@ func appendActivationEntries(entries []evidence.LogEntry, snapshot store.Snapsho
 	}
 	entries = append(entries, nodeLogEntry(targetNodeID, evidence.EntryKindGate, state.Event{Type: state.EventNodeStatusSet, NodeStatus: status}, evidenceRef, at))
 	if status == state.NodeStatusCompleted && targetTemplate.Type == model.NodeTypeEnd {
-		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: terminalRunStatus(tmpl, targetNodeID)}, evidenceRef, at))
+		entries = append(entries, runLogEntry(evidence.EntryKindGate, state.Event{Type: state.EventRunStatusSet, RunStatus: processplan.TerminalRunStatus(targetTemplate)}, evidenceRef, at))
 	}
 	return entries, nil
-}
-
-func resolvePassEdge(next model.Next, verdict string) string {
-	for _, key := range []string{verdict, strings.ToLower(verdict), "pass", "done", "success", model.DefaultOutcome} {
-		if target := next[key]; target != "" {
-			return target
-		}
-	}
-	if len(next) == 1 {
-		for _, target := range next {
-			return target
-		}
-	}
-	return ""
-}
-
-func resolveFailEdge(next model.Next, retry *model.RetryPolicy) string {
-	if retry != nil && strings.TrimSpace(retry.OnFail) != "" {
-		if target := next[retry.OnFail]; target != "" {
-			return target
-		}
-		return retry.OnFail
-	}
-	for _, key := range []string{"fail", "failed", "failure", "error"} {
-		if target := next[key]; target != "" {
-			return target
-		}
-	}
-	return ""
-}
-
-func terminalRunStatus(tmpl *model.Template, nodeID string) state.RunStatus {
-	node := tmpl.Nodes[nodeID]
-	switch strings.ToLower(strings.TrimSpace(node.Result)) {
-	case "fail", "failed", "failure", "error":
-		return state.RunStatusFailed
-	case "cancel", "canceled", "cancelled":
-		return state.RunStatusCanceled
-	default:
-		return state.RunStatusCompleted
-	}
-}
-
-func isPassVerdict(verdict string) bool {
-	switch strings.ToLower(strings.TrimSpace(verdict)) {
-	case "pass", "passed", "success", "succeeded", "ok", "done":
-		return true
-	default:
-		return false
-	}
 }

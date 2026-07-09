@@ -203,7 +203,7 @@ func applyEvent(st *State, event Event) error {
 		}
 		if status == "" {
 			status = NodeStatusCompleted
-			if !isPassOutcome(event.Outcome) {
+			if !IsPassOutcome(event.Outcome) {
 				status = NodeStatusFailed
 			}
 		}
@@ -394,34 +394,52 @@ func applyEvent(st *State, event Event) error {
 			return fmt.Errorf("command_issued requires command")
 		}
 		command := *event.Command
+		if strings.TrimSpace(command.ID) == "" {
+			return fmt.Errorf("command_issued requires command id")
+		}
+		if !command.Kind.IsValid() {
+			return fmt.Errorf("invalid command kind %q", command.Kind)
+		}
 		if command.Status == "" {
 			command.Status = CommandStatusIssued
 		}
 		if !command.Status.IsValid() {
 			return fmt.Errorf("invalid command status %q", command.Status)
 		}
+		if command.Status != CommandStatusIssued {
+			return fmt.Errorf("command_issued requires issued status")
+		}
+		if command.Attempt < 0 {
+			return fmt.Errorf("command_issued attempt must be non-negative")
+		}
 		if command.CreatedAt.IsZero() {
 			command.CreatedAt = event.At
 		}
-		if command.ID == "" {
-			return fmt.Errorf("command_issued requires command id")
+		if existing, exists := st.OutstandingCommands[command.ID]; exists && commandIsActive(existing) {
+			return fmt.Errorf("command %q is already outstanding", command.ID)
 		}
-		st.OutstandingCommands[command.ID] = command
 		if command.NodeID != "" {
 			node, err := getNode(st, command.NodeID)
 			if err != nil {
 				return err
 			}
-			if node.ActiveAttempt != nil && node.ActiveAttempt.CommandID == "" {
+			if command.Kind == CommandKindStartAttempt && node.ActiveAttempt != nil && node.ActiveAttempt.CommandID == "" {
 				node.ActiveAttempt.CommandID = command.ID
 				st.Nodes[command.NodeID] = node
 			}
 		}
+		st.OutstandingCommands[command.ID] = command
 		return nil
 	case EventCommandObserved:
+		if strings.TrimSpace(event.CommandID) == "" {
+			return fmt.Errorf("command_observed requires command id")
+		}
 		command, ok := st.OutstandingCommands[event.CommandID]
 		if !ok {
 			return fmt.Errorf("command %q is not outstanding", event.CommandID)
+		}
+		if command.Status != CommandStatusIssued {
+			return fmt.Errorf("command %q is %s and cannot be observed", event.CommandID, command.Status)
 		}
 		command.Status = CommandStatusObserved
 		if event.ExternalRef != "" {
@@ -473,6 +491,10 @@ func applyEvent(st *State, event Event) error {
 	}
 }
 
+func commandIsActive(command OutstandingCommand) bool {
+	return command.Status == CommandStatusIssued || command.Status == CommandStatusObserved
+}
+
 func canSetNodeStatusDirectly(status NodeStatus) bool {
 	switch status {
 	case NodeStatusReady, NodeStatusCompleted, NodeStatusFailed, NodeStatusSkipped:
@@ -497,13 +519,36 @@ func normalizeActor(actor ActorRef) ActorRef {
 	return ActorRef(strings.TrimSpace(string(actor)))
 }
 
-func isPassOutcome(outcome string) bool {
+func IsPassOutcome(outcome string) bool {
 	switch strings.ToLower(strings.TrimSpace(outcome)) {
-	case "pass", "passed", "success", "succeeded", "ok", "completed":
+	case "pass", "passed", "success", "succeeded", "ok", "done", "completed":
 		return true
 	default:
 		return false
 	}
+}
+
+func IsFailOutcome(outcome string) bool {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "fail", "failed", "failure", "error", "cancel", "canceled", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func SettleNodeStatus(outcome string, attempt int, retry *model.RetryPolicy) NodeStatus {
+	if IsPassOutcome(outcome) {
+		return NodeStatusCompleted
+	}
+	maxAttempts := 1
+	if retry != nil && retry.MaxAttempts > 0 {
+		maxAttempts = retry.MaxAttempts
+	}
+	if attempt > 0 && attempt < maxAttempts {
+		return NodeStatusReady
+	}
+	return NodeStatusFailed
 }
 
 func waitingStatus(kind WaitKind) NodeStatus {

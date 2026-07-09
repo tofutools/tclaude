@@ -52,6 +52,18 @@ const (
 	CommandStatusCanceled   CommandStatus = "canceled"
 )
 
+type CommandKind string
+
+const (
+	CommandKindActivateNode   CommandKind = "activate_node"
+	CommandKindStartAttempt   CommandKind = "start_attempt"
+	CommandKindSettleAttempt  CommandKind = "settle_attempt"
+	CommandKindRecordDecision CommandKind = "record_decision"
+	CommandKindSetTimer       CommandKind = "set_timer"
+	CommandKindWaitSignal     CommandKind = "wait_signal"
+	CommandKindCompleteRun    CommandKind = "complete_run"
+)
+
 type WaitStatus string
 
 const (
@@ -122,10 +134,12 @@ type AttemptState struct {
 }
 
 type OutstandingCommand struct {
-	ID             string        `json:"id"`
-	NodeID         string        `json:"nodeId"`
-	Attempt        int           `json:"attempt,omitempty"`
-	Kind           string        `json:"kind"`
+	ID      string      `json:"id"`
+	NodeID  string      `json:"nodeId"`
+	Attempt int         `json:"attempt,omitempty"`
+	Kind    CommandKind `json:"kind"`
+	// Inactive commands (canceled or reconciled) are retained as evidence but may
+	// be replaced by a deterministic reissue with the same ID.
 	Status         CommandStatus `json:"status"`
 	ExternalRef    string        `json:"externalRef,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt,omitzero"`
