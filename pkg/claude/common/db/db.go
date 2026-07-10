@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/common"
 	_ "modernc.org/sqlite"
@@ -63,11 +65,12 @@ func relocateLegacyDBFiles() error {
 	}
 	newMain := filepath.Join(dataDir, "db.sqlite")
 	if _, err := os.Stat(newMain); err == nil {
-		if _, oldErr := os.Stat(filepath.Join(root, "db.sqlite")); oldErr == nil {
-			return fmt.Errorf("both legacy and new databases exist (%s and %s); refusing to choose one", filepath.Join(root, "db.sqlite"), newMain)
-		} else if !os.IsNotExist(oldErr) {
-			return fmt.Errorf("stat legacy database: %w", oldErr)
-		}
+		// The load-path relocation always runs before creating data/db.sqlite,
+		// so an existing canonical DB is authoritative. A not-yet-restarted old
+		// binary may recreate a legacy DB (and sidecars) during the transition;
+		// preserve that whole stray group for recovery without bricking every
+		// new-binary command that opens the canonical DB.
+		quarantineRecreatedLegacyDBFiles(root, dataDir)
 		return nil // already relocated
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat %s: %w", newMain, err)
@@ -102,7 +105,7 @@ func relocateLegacyDBFiles() error {
 func renameIfAbsentAtDest(oldPath, newPath string) error {
 	if _, err := os.Stat(newPath); err == nil {
 		if _, oldErr := os.Stat(oldPath); oldErr == nil {
-			return fmt.Errorf("both migration source and destination exist (%s and %s)", oldPath, newPath)
+			return replacePartialMigrationDestinationWithSource(oldPath, newPath)
 		} else if !os.IsNotExist(oldErr) {
 			return fmt.Errorf("stat %s: %w", oldPath, oldErr)
 		}
@@ -118,6 +121,84 @@ func renameIfAbsentAtDest(oldPath, newPath string) error {
 	}
 	slog.Info("relocated legacy database file into data dir", "from", oldPath, "to", newPath)
 	return nil
+}
+
+// quarantineRecreatedLegacyDBFiles preserves a stale DB group recreated by an
+// old binary after the canonical data DB already exists. Best effort by design:
+// failure leaves the stray files at the root and logs loudly, but the caller
+// still opens the authoritative data DB instead of taking the whole CLI down.
+func quarantineRecreatedLegacyDBFiles(root, dataDir string) {
+	paths, err := filepath.Glob(filepath.Join(root, "db.sqlite*"))
+	if err != nil || len(paths) == 0 {
+		return
+	}
+	// Preserve the same recovery gate as the primary migration: sidecars and
+	// backups first, main last. If this process crashes partway through, the
+	// legacy main still marks a group that should be swept again next time.
+	sort.SliceStable(paths, func(i, j int) bool {
+		return filepath.Base(paths[i]) != "db.sqlite" && filepath.Base(paths[j]) == "db.sqlite"
+	})
+	quarantineDir := filepath.Join(dataDir, "legacy-db-recreated-"+migrationQuarantineSuffix())
+	if err := os.Mkdir(quarantineDir, 0o700); err != nil {
+		slog.Warn("legacy database was recreated alongside canonical database; unable to create quarantine, preferring canonical database",
+			"legacy_root", root, "canonical", filepath.Join(dataDir, "db.sqlite"), "error", err)
+		return
+	}
+	moved := 0
+	for _, oldPath := range paths {
+		info, err := os.Lstat(oldPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		newPath := filepath.Join(quarantineDir, filepath.Base(oldPath))
+		if err := os.Rename(oldPath, newPath); err != nil {
+			if !os.IsNotExist(err) {
+				slog.Warn("failed to quarantine recreated legacy database file; preferring canonical database",
+					"legacy", oldPath, "canonical", filepath.Join(dataDir, "db.sqlite"), "error", err)
+			}
+			continue
+		}
+		moved++
+	}
+	if moved == 0 {
+		_ = os.Remove(quarantineDir)
+		return
+	}
+	slog.Warn("quarantined database files recreated by an old binary; canonical data database remains active",
+		"legacy_root", root, "quarantine", quarantineDir, "canonical", filepath.Join(dataDir, "db.sqlite"), "files", moved)
+}
+
+// replacePartialMigrationDestinationWithSource handles a crash-recovery case
+// in the PRIMARY migration, where data/db.sqlite does not exist and therefore
+// the root DB group is still authoritative. A destination sidecar can be an
+// orphan moved by the crashed run while an old binary has since recreated the
+// live root sidecar. Preserve the orphan, then put the authoritative root file
+// at the destination before the main DB moves last.
+func replacePartialMigrationDestinationWithSource(oldPath, newPath string) error {
+	orphanPath := newPath + ".orphan-" + migrationQuarantineSuffix()
+	if err := os.Rename(newPath, orphanPath); err != nil {
+		if os.IsNotExist(err) {
+			// A racing migrator removed/replaced it; retry normal source movement.
+			return renameIfAbsentAtDest(oldPath, newPath)
+		}
+		return fmt.Errorf("quarantine partial-migration destination %s -> %s: %w", newPath, orphanPath, err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		if os.IsNotExist(err) {
+			if _, destErr := os.Stat(newPath); destErr == nil {
+				return nil // a racing migrator installed the source
+			}
+		}
+		return fmt.Errorf("install authoritative migration source %s -> %s (orphan preserved at %s): %w",
+			oldPath, newPath, orphanPath, err)
+	}
+	slog.Warn("replaced orphaned partial-migration database file with authoritative legacy source",
+		"source", oldPath, "active", newPath, "orphan", orphanPath)
+	return nil
+}
+
+func migrationQuarantineSuffix() string {
+	return fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102T150405.000000000Z"), os.Getpid())
 }
 
 // Open returns the singleton database connection, creating and migrating

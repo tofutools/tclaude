@@ -985,7 +985,11 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 }
 
 func newSpawnCwdReadinessFile() (string, func(), error) {
-	base := strings.TrimSpace(config.ConfigDir())
+	// This file is written by the unsandboxed tmux bootstrap shell before it
+	// execs the harness (and therefore before the harness sandbox exists), then
+	// read by the unsandboxed parent. Keep it with private daemon state rather
+	// than leaving proof status files at the agent-readable tclaude root.
+	base := strings.TrimSpace(config.DataDir())
 	if base == "" {
 		return "", func() {}, fmt.Errorf("resolve private spawn-readiness directory")
 	}
