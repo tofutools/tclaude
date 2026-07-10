@@ -216,6 +216,56 @@ follow-up etiquette live in the dedicated **`agent-lifecycle`** skill —
 load that one when you need to compact or reincarnate yourself, not this
 one.
 
+## Spawning workers — default resolution
+
+When you delegate work by spawning a fresh agent
+(`tclaude agent spawn <group> …`, needs `groups.spawn`), the launch shape is
+**not** simply "the flags you passed, else the harness default". Each launch
+field (`--harness`, `--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
+`--ask-user-question-timeout`) is resolved independently through this
+precedence, highest first:
+
+1. the **explicit flag**
+2. **`--profile`** — a saved spawn profile you name on the command line
+3. the **group's default spawn profile**
+4. the **global (dashboard) default spawn profile**
+5. the **harness's own default**
+
+> ⚠️ **A default profile carries its own harness, so an unset `--harness` can
+> silently flip vendor.** `spawn` without `--harness`/`--model` does **not**
+> mean "Claude Code". If a default profile at tier 3 or 4 selects `codex`, a
+> no-flag spawn lands on **codex** with that profile's model — even though the
+> per-flag help calls Claude Code the harness default. This is exactly how a
+> lead who expected Claude Code got workers running on a Codex GPT model.
+>
+> **Policy-bound spawns — where a specific model or vendor is required — MUST
+> pass explicit `--harness` + `--model`, or a `--profile` that pins them.**
+> Omitting them inherits whatever default profile is set, including a different
+> vendor.
+
+Inspect the defaults before you spawn:
+
+```bash
+tclaude agent profiles default show   # the global default spawn profile (if any)
+tclaude agent groups ls               # PROFILE column = each group's default profile
+```
+
+The spawn output now **echoes the resolved launch shape and where each value
+came from**, so you can catch a surprise at a glance:
+
+```
+Spawned agt_… in group "team"
+  Label:   team-worker
+  Harness: codex (global default profile "gpt5.6-sol-high")
+  Model:   gpt-5.6-sol (global default profile "gpt5.6-sol-high")
+  Effort:  high (global default profile "gpt5.6-sol-high")
+```
+
+The provenance tag reads `explicit`, `profile "<name>"`,
+`group default profile "<name>"`, `global default profile "<name>"`, or
+`harness default`. If a field shows a profile tier you didn't intend, re-spawn
+with the explicit flag.
+
 ## Etiquette
 
 - **One message, one purpose.** If you have multiple unrelated asks,
