@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -33,6 +34,42 @@ type writeProofChallengeResp struct {
 		Filename string   `json:"filename"`
 		Dirs     []string `json:"dirs"`
 	} `json:"write_proof"`
+}
+
+// codexCopyCompatSpawner lets copy-path tests use the existing Claude
+// conversation-copy fixture while still asserting the Codex launch args. The
+// production args are recorded unchanged; only the simulator delegate sees a
+// Claude harness so it can reopen the copied Claude-format fixture.
+type codexCopyCompatSpawner struct {
+	inner agentd.Spawner
+}
+
+func (s codexCopyCompatSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnNew(args)
+}
+
+func (s codexCopyCompatSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	delegated := args
+	delegated.Harness = harness.DefaultName
+	delegated.Sandbox = harness.ClaudeSandboxInherit
+	delegated.Approval = ""
+	return s.inner.SpawnResume(delegated)
+}
+
+func installCodexCopyCompatSpawner(t *testing.T) {
+	t.Helper()
+	prev := agentd.Spawn
+	agentd.Spawn = codexCopyCompatSpawner{inner: prev}
+	t.Cleanup(func() { agentd.Spawn = prev })
+}
+
+func markSessionAsCodex(t *testing.T, label string) {
+	t.Helper()
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	row.Harness = harness.CodexName
+	require.NoError(t, db.SaveSession(row))
 }
 
 // decodeWriteProofChallenge asserts rec is a write_proof_required 403 and
@@ -321,8 +358,39 @@ func TestSpawnDirProof_CodexManagedSpawnProvesAndPinsGitCommonDir(t *testing.T) 
 	got, ok := f.World.SpawnCodexGitCommonDir(resp.ConvID)
 	require.True(t, ok)
 	assert.Equal(t, commonDir, got, "child launch must use the daemon-pinned common dir")
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, pinned, "managed Codex spawn must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
+}
+
+func TestSpawnDirProof_CodexManagedSpawnPinsEmptyGitCommonDir(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "parent-empty-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, "alpha", parent, harness.DefaultName, harness.ClaudeSandboxInherit)
+	cwd := t.TempDir()
+
+	body := map[string]any{"name": "codex-worker", "cwd": cwd, "harness": harness.CodexName}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	assert.Equal(t, []string{cwd}, ch.WriteProof.Dirs)
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved codex spawn; body=%s", rec.Body.String())
+
+	var resp struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	got, ok := f.World.SpawnCodexGitCommonDir(resp.ConvID)
+	require.True(t, ok)
+	assert.Empty(t, got)
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.ConvID)
+	require.True(t, ok)
+	assert.True(t, pinned, "proved absence must remain distinguishable from an unpinned launch")
 }
 
 // Scenario: the challenge round-trip must not burn a spawn-rate slot — with
@@ -527,8 +595,50 @@ func TestSpawnDirProof_CodexCloneCwdOverrideProvesAndPinsGitCommonDir(t *testing
 	got, ok := f.World.SpawnCodexGitCommonDir(resp.NewConv)
 	require.True(t, ok)
 	assert.Equal(t, commonDir, got, "clone launch must use the daemon-pinned common dir")
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.NewConv)
+	require.True(t, ok)
+	assert.True(t, pinned, "no-copy clone must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
+}
+
+func TestSpawnDirProof_CodexCloneCopyForwardsPinnedGitCommonDirOnResume(t *testing.T) {
+	prevCooldown := agentd.CloneCooldown
+	agentd.CloneCooldown = 0
+	t.Cleanup(func() { agentd.CloneCooldown = prevCooldown })
+
+	f := newFlow(t)
+	const caller = "8b72f5ca-2480-4f9f-a693-b29fefc12201"
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", caller)
+	sourceCwd := t.TempDir()
+	f.HaveAliveSession(caller, "spwn-codex-copy", "tclaude-spwn-codex-copy", sourceCwd)
+	markSessionAsCodex(t, "spwn-codex-copy")
+	installCodexCopyCompatSpawner(t)
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
+	repo, _ := initRepoOnMain(t)
+	commonDir, err := harness.CodexGitCommonDir(repo)
+	require.NoError(t, err)
+
+	body := map[string]any{"cwd": repo}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body))
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/whoami/clone", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "proved copy clone; body=%s", rec.Body.String())
+
+	var resp struct {
+		NewConv string `json:"new_conv"`
+	}
+	testharness.DecodeJSON(t, rec, &resp)
+	require.NotEmpty(t, resp.NewConv)
+	got, ok := f.World.SpawnCodexGitCommonDir(resp.NewConv)
+	require.True(t, ok)
+	assert.Equal(t, commonDir, got)
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(resp.NewConv)
+	require.True(t, ok)
+	assert.True(t, pinned, "copy clone resume must carry pin-presence")
 }
 
 func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
@@ -567,6 +677,9 @@ func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
 	got, ok := f.World.SpawnCodexGitCommonDir(res.Agents[0].ConvID)
 	require.True(t, ok)
 	assert.Equal(t, commonDir, got, "template child launch must use the daemon-pinned common dir")
+	pinned, ok := f.World.SpawnCodexGitCommonDirPinned(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.True(t, pinned, "template child must carry pin-presence")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, commonDir)
 }

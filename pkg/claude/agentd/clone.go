@@ -80,6 +80,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// original is the operator-decided semantics — drive either from the phone.
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
+	cloneSandbox := sandboxForHarness(srcHarness)
+	codexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
 	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
 	// that recorded none (a non-Claude or pre-column source).
@@ -95,17 +97,18 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			return "", "", "", "", fail
 		}
 		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-			Label:                  label,
-			Cwd:                    cwd,
-			CwdWriteProof:          proofToken,
-			Effort:                 effort,
-			Model:                  model,
-			Harness:                srcHarness,
-			Sandbox:                sandboxForHarness(srcHarness),
-			CodexGitCommonDir:      codexGitCommonDir,
-			Approval:               approvalForHarness(srcHarness),
-			AskUserQuestionTimeout: askTimeout,
-			RemoteControl:          remoteControl,
+			Label:                   label,
+			Cwd:                     cwd,
+			CwdWriteProof:           proofToken,
+			Effort:                  effort,
+			Model:                   model,
+			Harness:                 srcHarness,
+			Sandbox:                 cloneSandbox,
+			CodexGitCommonDir:       codexGitCommonDir,
+			CodexGitCommonDirPinned: codexGitCommonDirPinned,
+			Approval:                approvalForHarness(srcHarness),
+			AskUserQuestionTimeout:  askTimeout,
+			RemoteControl:           remoteControl,
 		}); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
@@ -150,17 +153,18 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		return "", "", "", "", fail
 	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:                 newConv,
-		Cwd:                    cwd,
-		CwdWriteProof:          proofToken,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                srcHarness,
-		Sandbox:                sandboxForHarness(srcHarness),
-		CodexGitCommonDir:      codexGitCommonDir,
-		Approval:               approvalForHarness(srcHarness),
-		AskUserQuestionTimeout: askTimeout,
-		RemoteControl:          remoteControl,
+		ConvID:                  newConv,
+		Cwd:                     cwd,
+		CwdWriteProof:           proofToken,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 srcHarness,
+		Sandbox:                 cloneSandbox,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexGitCommonDirPinned,
+		Approval:                approvalForHarness(srcHarness),
+		AskUserQuestionTimeout:  askTimeout,
+		RemoteControl:           remoteControl,
 	}); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",

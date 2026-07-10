@@ -54,6 +54,7 @@ type World struct {
 	spawnRemoteControl map[string]bool
 	spawnCwdProofs     map[string]string
 	spawnGitCommonDirs map[string]string
+	spawnGitCommonPins map[string]bool
 	// spawnNames / spawnInitialPrompts record the launch-arg display name
 	// (`--name`) and first-turn prompt (`--initial-prompt`) the launch-
 	// enrollment spawn path threaded through, keyed by the new conv-id, so a
@@ -91,6 +92,7 @@ func New(t *testing.T) *World {
 		spawnRemoteControl:  map[string]bool{},
 		spawnCwdProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
+		spawnGitCommonPins:  map[string]bool{},
 		spawnNames:          map[string]string{},
 		spawnInitialPrompts: map[string]string{},
 	}
@@ -319,6 +321,23 @@ func (w *World) SpawnCodexGitCommonDir(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	dir, ok := w.spawnGitCommonDirs[convID]
 	return dir, ok
+}
+
+// RecordSpawnCodexGitCommonDirPinned captures whether the daemon supplied an
+// authoritative Git common-dir result. true with an empty path means the
+// daemon proved that the launch cwd was not in a Git repository.
+func (w *World) RecordSpawnCodexGitCommonDirPinned(convID string, pinned bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnGitCommonPins[convID] = pinned
+}
+
+// SpawnCodexGitCommonDirPinned returns the recorded pin-presence bit.
+func (w *World) SpawnCodexGitCommonDirPinned(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	pinned, ok := w.spawnGitCommonPins[convID]
+	return pinned, ok
 }
 
 // CCRegistry maps conv-id → CCSim so the resume mock can locate the

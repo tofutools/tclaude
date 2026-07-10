@@ -296,11 +296,15 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 }
 
 func codexManagedProfileGitCommonDir(harnessName, sandboxMode, cwd string) (string, error) {
-	if harnessOrDefault(harnessName) != harness.CodexName ||
-		strings.TrimSpace(sandboxMode) != harness.SandboxManagedProfile {
+	if !codexManagedProfileUsesPinnedGitCommonDir(harnessName, sandboxMode) {
 		return "", nil
 	}
 	return harness.CodexGitCommonDir(cwd)
+}
+
+func codexManagedProfileUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
+	return harnessOrDefault(harnessName) == harness.CodexName &&
+		strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
 }
 
 // requireTemplateDirWriteProof gates the template spawn surfaces (instantiate

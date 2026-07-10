@@ -13,7 +13,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -201,35 +200,37 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			cwdProofToken = proofToken
 		}
 		spawnCodexGitCommonDir := ""
-		if launch.Harness == harness.CodexName && launch.Sandbox == harness.SandboxManagedProfile {
+		spawnCodexGitCommonDirPinned := codexManagedProfileUsesPinnedGitCommonDir(launch.Harness, launch.Sandbox)
+		if spawnCodexGitCommonDirPinned {
 			spawnCodexGitCommonDir = codexGitCommonDir
 		}
 		outcome, fail := executeSpawn(g, spawnParams{
-			Name:                   finalName,
-			Role:                   a.Role,
-			Descr:                  a.Descr,
-			InitialMessage:         a.InitialMessage,
-			Cwd:                    agentCwd,
-			WorktreePath:           agentWorktreePath,
-			WorktreeBranch:         agentWorktreeBranch,
-			DirWriteProofDirs:      spawnProofDirs,
-			DirWriteProofToken:     proofToken,
-			CwdWriteProofToken:     cwdProofToken,
-			CodexGitCommonDir:      spawnCodexGitCommonDir,
-			Harness:                launch.Harness,
-			Model:                  launch.Model,
-			Effort:                 launch.Effort,
-			SandboxMode:            launch.Sandbox,
-			ApprovalPolicy:         launch.Approval,
-			TrustDir:               launch.TrustDir,
-			TrustDirSet:            launch.TrustDirSet,
-			AutoReview:             launch.AutoReview,
-			AutoReviewSet:          launch.AutoReviewSet,
-			RemoteControl:          launch.RemoteControl,
-			AskUserQuestionTimeout: launch.AskUserQuestionTimeout,
-			GroupContext:           agentContext,
-			ReplyToConv:            caller,
-			SpawnedByConv:          caller,
+			Name:                    finalName,
+			Role:                    a.Role,
+			Descr:                   a.Descr,
+			InitialMessage:          a.InitialMessage,
+			Cwd:                     agentCwd,
+			WorktreePath:            agentWorktreePath,
+			WorktreeBranch:          agentWorktreeBranch,
+			DirWriteProofDirs:       spawnProofDirs,
+			DirWriteProofToken:      proofToken,
+			CwdWriteProofToken:      cwdProofToken,
+			CodexGitCommonDir:       spawnCodexGitCommonDir,
+			CodexGitCommonDirPinned: spawnCodexGitCommonDirPinned,
+			Harness:                 launch.Harness,
+			Model:                   launch.Model,
+			Effort:                  launch.Effort,
+			SandboxMode:             launch.Sandbox,
+			ApprovalPolicy:          launch.Approval,
+			TrustDir:                launch.TrustDir,
+			TrustDirSet:             launch.TrustDirSet,
+			AutoReview:              launch.AutoReview,
+			AutoReviewSet:           launch.AutoReviewSet,
+			RemoteControl:           launch.RemoteControl,
+			AskUserQuestionTimeout:  launch.AskUserQuestionTimeout,
+			GroupContext:            agentContext,
+			ReplyToConv:             caller,
+			SpawnedByConv:           caller,
 		})
 		cleanupCwdProof()
 		if fail != nil {

@@ -167,6 +167,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(cc.ConvID, args.CwdWriteProof)
 	s.w.RecordSpawnCodexGitCommonDir(cc.ConvID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(cc.ConvID, args.CodexGitCommonDirPinned)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
 	s.w.RecordSpawnInitialPrompt(cc.ConvID, args.InitialPrompt)
 	// Use cc.Cwd (post-default-substitution) so the SessionRow agrees
@@ -232,6 +233,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -311,6 +313,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(cx.ConvID, args.CwdWriteProof)
 	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(cx.ConvID, args.CodexGitCommonDirPinned)
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt
@@ -361,6 +364,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
+	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
 	if err := db.SaveSession(&db.SessionRow{
 		ID:                     label,

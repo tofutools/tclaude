@@ -340,16 +340,17 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm, 
 		return
 	}
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-		Label:                  label,
-		Cwd:                    cwd,
-		Effort:                 effort,
-		Model:                  model,
-		Harness:                oldSess.Harness,
-		Sandbox:                reincarnateSandbox,
-		CodexGitCommonDir:      codexGitCommonDir,
-		Approval:               approvalForHarness(oldSess.Harness),
-		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
-		RemoteControl:          remoteControl,
+		Label:                   label,
+		Cwd:                     cwd,
+		Effort:                  effort,
+		Model:                   model,
+		Harness:                 oldSess.Harness,
+		Sandbox:                 reincarnateSandbox,
+		CodexGitCommonDir:       codexGitCommonDir,
+		CodexGitCommonDirPinned: codexManagedProfileUsesPinnedGitCommonDir(oldSess.Harness, reincarnateSandbox),
+		Approval:                approvalForHarness(oldSess.Harness),
+		AskUserQuestionTimeout:  askTimeoutForRelaunch(target),
+		RemoteControl:           remoteControl,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())

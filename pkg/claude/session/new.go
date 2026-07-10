@@ -32,11 +32,14 @@ type NewParams struct {
 	// grant. It is used only with the managed Codex profile and hidden from
 	// normal CLI help.
 	CodexGitCommonDir string `long:"codex-git-common-dir" optional:"true" help:"Internal: pinned Git common dir for the managed Codex profile"`
-	Resume            string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
-	Global            bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label             string `long:"label" optional:"true" help:"Custom label for the session"`
-	Detached          bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
-	WaitForRateLimit  bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
+	// CodexGitCommonDirPinned disambiguates an intentionally empty daemon pin
+	// from a direct launch that should derive the common dir from cwd.
+	CodexGitCommonDirPinned bool   `long:"codex-git-common-dir-pinned" help:"Internal: use the daemon-pinned Git common-dir result, including an empty result"`
+	Resume                  string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Global                  bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
+	Label                   string `long:"label" optional:"true" help:"Custom label for the session"`
+	Detached                bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
+	WaitForRateLimit        bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
 	// Effort sets Claude Code's reasoning effort for the session via
 	// `claude --effort <level>`. Empty (the default) omits the flag so
@@ -184,6 +187,7 @@ func NewCmd() *cobra.Command {
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
+	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -309,14 +313,8 @@ func runNew(params *NewParams) error {
 	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
 		return fmt.Errorf("invalid internal cwd write proof")
 	}
-	params.CodexGitCommonDir = strings.TrimSpace(params.CodexGitCommonDir)
-	if params.CodexGitCommonDir != "" {
-		if params.Resume != "" {
-			return fmt.Errorf("internal Codex git-common-dir grant is only valid for a fresh spawn")
-		}
-		if !filepath.IsAbs(params.CodexGitCommonDir) {
-			return fmt.Errorf("internal Codex git-common-dir grant must be absolute")
-		}
+	if err := validateCodexGitCommonDirPin(params); err != nil {
+		return err
 	}
 
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
@@ -620,14 +618,8 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		var eerr error
-		if params.CodexGitCommonDir != "" {
-			_, eerr = harness.EnsureCodexAgentProfileForGitCommonDir(params.CodexGitCommonDir)
-		} else {
-			_, eerr = harness.EnsureCodexAgentProfileForCwd(cwd)
-		}
-		if eerr != nil {
-			return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, eerr)
+		if err := ensureCodexManagedProfile(params, cwd); err != nil {
+			return err
 		}
 	}
 
@@ -755,6 +747,35 @@ func runNew(params *NewParams) error {
 	}
 
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func validateCodexGitCommonDirPin(params *NewParams) error {
+	params.CodexGitCommonDir = strings.TrimSpace(params.CodexGitCommonDir)
+	if params.CodexGitCommonDir == "" {
+		return nil
+	}
+	if !params.CodexGitCommonDirPinned {
+		return fmt.Errorf("internal Codex git-common-dir grant requires a pinned result")
+	}
+	if !filepath.IsAbs(params.CodexGitCommonDir) {
+		return fmt.Errorf("internal Codex git-common-dir grant must be absolute")
+	}
+	return nil
+}
+
+func ensureCodexManagedProfile(params *NewParams, cwd string) error {
+	var err error
+	if params.CodexGitCommonDirPinned && params.CodexGitCommonDir != "" {
+		_, err = harness.EnsureCodexAgentProfileForGitCommonDir(params.CodexGitCommonDir)
+	} else if params.CodexGitCommonDirPinned {
+		_, err = harness.EnsureCodexAgentProfile()
+	} else {
+		_, err = harness.EnsureCodexAgentProfileForCwd(cwd)
+	}
+	if err != nil {
+		return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+	}
+	return nil
 }
 
 // The CC launch-command builder lives behind the harness seam now —

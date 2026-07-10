@@ -70,8 +70,12 @@ type SpawnArgs struct {
 	CwdWriteProof string
 
 	// CodexGitCommonDir is a daemon-pinned Git common dir grant for the managed
-	// Codex profile. Empty means the session launcher may derive it normally.
-	CodexGitCommonDir string
+	// Codex profile. CodexGitCommonDirPinned distinguishes a proved empty grant
+	// (the cwd was not a Git repo) from an unpinned direct-human launch, which may
+	// derive the common dir from cwd. Daemon-managed Codex launches set the bit
+	// even when the path is empty.
+	CodexGitCommonDir       string
+	CodexGitCommonDirPinned bool
 
 	// Effort is the reasoning-effort flag; "" omits --effort. Resume surfaces
 	// pass the predecessor's inherited effort so the agent stays on it
