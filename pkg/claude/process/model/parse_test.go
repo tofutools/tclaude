@@ -115,6 +115,7 @@ func TestParseRejectsUnsupportedPoisonEscalationChoices(t *testing.T) {
 		{name: "extra choice", data: strings.Replace(validTemplateYAML, "      cancel: canceled", "      cancel: canceled\n      ship-anyway: done", 1)},
 		{name: "retry targets other node", data: strings.Replace(validTemplateYAML, "      retry: implement", "      retry: done", 1)},
 		{name: "cancel targets successful end", data: strings.Replace(validTemplateYAML, "      cancel: canceled", "      cancel: done", 1)},
+		{name: "non-reserved incoming edge", data: strings.Replace(validTemplateYAML, "  done:\n", "  intruder:\n    type: task\n    performer: { kind: agent, prompt: intrude }\n    next: { pass: done, fail: escalate }\n  done:\n", 1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			parsed, err := Parse([]byte(test.data))

@@ -260,6 +260,47 @@ func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
 	assertCapstoneAuditableFromRunDir(t, root, "capstone-cancel")
 }
 
+func TestProcessEngineClosesClaimedResolutionSupersededByManualCancel(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, _ := createCapstoneRun(t, root, "capstone-superseded", 99)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneReachDo(t, f, fs, host, "capstone-superseded")
+	capstoneReportAgent(t, f, fs, "capstone-superseded", "implement.do", "commit:superseded-1")
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "capstone-superseded", "implement.do", "commit:superseded-2")
+	capstoneTickWaiting(t, host, "escalate")
+	capstoneReplyHuman(t, fs, "capstone-superseded", "escalate", "retry reviewed")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	crashStore := &cancelAfterResolveClaimStore{Store: fs, cancel: cancel}
+	beforeRestart := processengine.New(crashStore, "agentd:superseded-before-restart", nil)
+	_, _ = agentd.RunProcessEngineTickForTest(ctx, beforeRestart)
+	claimed, err := fs.LoadRun(t.Context(), "capstone-superseded")
+	require.NoError(t, err)
+	resolveID := outstandingCommandForNode(t, claimed.State, "escalate", state.CommandKindResolveBlock)
+	assert.Equal(t, state.CommandStatusIssued, claimed.State.OutstandingCommands[resolveID].Status)
+
+	executor := processexec.New(fs, nil)
+	_, err = executor.ResolveBlocked(t.Context(), processexec.BlockResolutionRequest{
+		RunID: "capstone-superseded", NodeID: "implement.test.tests", BlockedAttempt: 2,
+		Decision: state.BlockDecisionCancel, Actor: "human:operator", Reason: "operator canceled during restart",
+		EvidenceRef: "human-message:manual-cancel",
+	})
+	require.NoError(t, err)
+
+	restarted, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	result := capstoneTick(t, restarted)
+	assert.Equal(t, state.RunStatusCanceled, result.Status)
+	assert.Empty(t, result.Error)
+	closed, err := fs.LoadRun(t.Context(), "capstone-superseded")
+	require.NoError(t, err)
+	assert.Equal(t, state.CommandStatusObserved, closed.State.OutstandingCommands[resolveID].Status)
+	assert.Equal(t, "superseded", closed.State.OutstandingCommands[resolveID].Verdict)
+}
+
 func TestProcessEngineConsumedDecisionDoesNotRetryLaterPoison(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, _ := createCapstoneRun(t, root, "capstone-repoison", 99)

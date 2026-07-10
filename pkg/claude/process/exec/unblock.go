@@ -31,7 +31,7 @@ type BlockResolutionRequest struct {
 // and attempt. Callers persist/pass the returned request to ResolveBlocked;
 // replaying it after a later poison generation is then rejected as stale.
 func BindBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest) (BlockResolutionRequest, error) {
-	normalized, err := normalizeBlockResolution(snapshot, request, time.Time{}, false)
+	normalized, err := normalizeBlockResolution(snapshot, request, time.Time{}, false, false)
 	if err != nil {
 		return BlockResolutionRequest{}, err
 	}
@@ -46,6 +46,7 @@ type normalizedBlockResolution struct {
 	childStatus     state.NodeStatus
 	runStatus       state.RunStatus
 	alreadyResolved bool
+	commandOutcome  string
 }
 
 // ResolveBlocked records one explicit decision and clears the poisoned stage
@@ -76,7 +77,7 @@ func (e *Executor) resolveBlocked(ctx context.Context, request BlockResolutionRe
 				}
 			}
 		}
-		normalized, err := normalizeBlockResolution(snapshot, request, e.now(), true)
+		normalized, err := normalizeBlockResolution(snapshot, request, e.now(), true, command != nil)
 		if err != nil {
 			return nil, err
 		}
@@ -84,8 +85,12 @@ func (e *Executor) resolveBlocked(ctx context.Context, request BlockResolutionRe
 			if command == nil || commandObserved(snapshot.State, command.ID) {
 				return snapshot.State, nil
 			}
+			outcome := normalized.commandOutcome
+			if outcome == "" {
+				outcome = "pass"
+			}
 			appended, appendErr := e.Store.Append(ctx, request.RunID, snapshot.State.LastLogSeq, []evidence.LogEntry{
-				commandEntry(*command, state.Event{Type: state.EventCommandObserved, CommandID: command.ID, Outcome: "pass"}, "", e.now()),
+				commandEntry(*command, state.Event{Type: state.EventCommandObserved, CommandID: command.ID, Outcome: outcome}, "", e.now()),
 			})
 			if appendErr == nil {
 				return appended.State, nil
@@ -116,6 +121,10 @@ func (e *Executor) resolveBlocked(ctx context.Context, request BlockResolutionRe
 			}, normalized.resolution.EvidenceRef, at),
 		}
 		if normalized.runStatus != "" {
+			// The shared CLI/engine resolution funnel intentionally owns run
+			// status, not an authored terminal-node id. A decision-driven cancel
+			// therefore leaves its canceled end marker pending; activating that
+			// presentation node requires a future typed resolution target.
 			entries = append(entries, runEntry(state.Event{
 				Type:      state.EventRunStatusSet,
 				RunStatus: normalized.runStatus,
@@ -142,7 +151,7 @@ func commandObserved(st *state.State, commandID string) bool {
 	return ok && command.Status == state.CommandStatusObserved
 }
 
-func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest, at time.Time, requireBinding bool) (normalizedBlockResolution, error) {
+func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRequest, at time.Time, requireBinding, commandRecovery bool) (normalizedBlockResolution, error) {
 	request.RunID = strings.TrimSpace(request.RunID)
 	request.NodeID = strings.TrimSpace(request.NodeID)
 	request.Decision = state.BlockDecision(strings.ToLower(strings.TrimSpace(string(request.Decision))))
@@ -172,6 +181,21 @@ func normalizeBlockResolution(snapshot store.Snapshot, request BlockResolutionRe
 	}
 	if request.EvidenceRef == "" {
 		return normalizedBlockResolution{}, fmt.Errorf("block resolution evidence ref is required")
+	}
+	if commandRecovery {
+		for _, record := range snapshot.State.AdminRecords {
+			if record.Type != state.EventBlockResolutionRecorded || record.Resolution == nil ||
+				record.Resolution.NodeID != request.NodeID || record.Resolution.BlockedAttempt != request.BlockedAttempt {
+				continue
+			}
+			outcome := "pass"
+			if record.Resolution.Decision != request.Decision {
+				outcome = "superseded"
+			}
+			request.NodeID = record.Resolution.NodeID
+			request.BlockedAttempt = record.Resolution.BlockedAttempt
+			return normalizedBlockResolution{request: request, alreadyResolved: true, commandOutcome: outcome}, nil
+		}
 	}
 
 	selected, ok := snapshot.State.Nodes[request.NodeID]

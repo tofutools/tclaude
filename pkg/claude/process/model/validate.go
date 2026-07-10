@@ -366,7 +366,7 @@ func validatePoisonEscalations(tmpl *Template) Diagnostics {
 		if !source.IsCompound() {
 			continue
 		}
-		decisionID := poisonFailTarget(source.Next)
+		decisionID := FailTarget(source.Next)
 		decision, ok := tmpl.Nodes[decisionID]
 		if decisionID == "" || !ok || decision.Type != NodeTypeDecision || decision.Performer == nil || decision.Performer.Kind != PerformerHuman {
 			continue
@@ -380,29 +380,28 @@ func validatePoisonEscalations(tmpl *Template) Diagnostics {
 		}
 		cancelTarget, ok := decision.Next["cancel"]
 		cancelNode, targetOK := tmpl.Nodes[cancelTarget]
-		if !ok || !targetOK || cancelNode.Type != NodeTypeEnd || !isCanceledResult(cancelNode.Result) {
+		if !ok || !targetOK || cancelNode.Type != NodeTypeEnd || !IsCanceledResult(cancelNode.Result) {
 			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".cancel", "poison escalation cancel must target an end node with result canceled"))
+		}
+		if tmpl.Start == decisionID {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", "start", fmt.Sprintf("poison escalation decision %q cannot also be the template start", decisionID)))
+		}
+		for _, incomingID := range sortedKeys(tmpl.Nodes) {
+			incoming := tmpl.Nodes[incomingID].Next
+			for _, outcome := range sortedKeys(incoming) {
+				target := incoming[outcome]
+				if target != decisionID || incomingID == sourceID && IsFailOutcomeLabel(outcome) {
+					continue
+				}
+				diagnostics = append(diagnostics, diagError(
+					"invalid_poison_escalation",
+					"nodes."+incomingID+".next."+outcome,
+					fmt.Sprintf("poison escalation decision %q may only be entered by compound node %q's fail edge", decisionID, sourceID),
+				))
+			}
 		}
 	}
 	return diagnostics
-}
-
-func poisonFailTarget(next Next) string {
-	for _, outcome := range []string{"fail", "failed", "failure", "error"} {
-		if target := next[outcome]; target != "" {
-			return target
-		}
-	}
-	return ""
-}
-
-func isCanceledResult(result string) bool {
-	switch strings.ToLower(strings.TrimSpace(result)) {
-	case "cancel", "canceled", "cancelled":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
@@ -459,7 +458,7 @@ func isPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
 	decision, decisionOK := tmpl.Nodes[edge.From]
 	target, targetOK := tmpl.Nodes[edge.To]
 	return decisionOK && targetOK && decision.Type == NodeTypeDecision && decision.Performer != nil && decision.Performer.Kind == PerformerHuman &&
-		target.IsCompound() && poisonFailTarget(target.Next) == edge.From
+		target.IsCompound() && FailTarget(target.Next) == edge.From
 }
 
 func adjacency(edges []Edge) map[string][]string {

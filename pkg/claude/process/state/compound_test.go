@@ -577,3 +577,35 @@ func hasDiagCode(diags model.Diagnostics, code string) bool {
 	}
 	return false
 }
+
+func TestPoisonEscalationDecisionCannotBypassResolutionFunnel(t *testing.T) {
+	tmpl := &model.Template{Nodes: map[string]model.Node{
+		"implement": {
+			Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"},
+			Checks: []model.Step{{ID: "tests", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}},
+			Next:   model.Next{"fail": "escalate"},
+		},
+		"escalate": {
+			Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "retry?"},
+			Next: model.Next{"retry": "implement", "cancel": "canceled"},
+		},
+		"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+	}}
+	st := State{Nodes: map[string]NodeState{
+		"implement": {
+			Type: model.NodeTypeTask, Status: NodeStatusBlocked, BlockedAttempt: 2, BlockedNodeID: "implement.test.tests",
+		},
+		"escalate": {
+			Type: model.NodeTypeDecision, Status: NodeStatusCompleted, Attempt: 2, PoisonedNodeID: "implement.test.tests",
+		},
+	}}
+	if diags := PoisonEscalationDecisionsUseResolutionFunnel(&st, tmpl); !hasDiagCode(diags, "escalation_decision_bypassed_resolution") {
+		t.Fatalf("manual escalation decision bypass verified cleanly: %#v", diags)
+	}
+	st.OutstandingCommands = map[string]OutstandingCommand{
+		"cmd_decision": {ID: "cmd_decision", NodeID: "escalate", Kind: CommandKindRecordDecision, Status: CommandStatusObserved},
+	}
+	if diags := PoisonEscalationDecisionsUseResolutionFunnel(&st, tmpl); diags.HasErrors() {
+		t.Fatalf("normal observed engine decision was rejected: %#v", diags)
+	}
+}

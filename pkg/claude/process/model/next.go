@@ -2,13 +2,46 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 const DefaultOutcome = "next"
 
+var failOutcomeLabels = [...]string{"fail", "failed", "failure", "error"}
+
 type Next map[string]string
+
+// FailTarget resolves the shared fail-edge vocabulary used by template
+// validation and runtime planning. Keeping it here prevents those layers from
+// silently reserving different poison-escalation decisions.
+func FailTarget(next Next) string {
+	for _, outcome := range failOutcomeLabels {
+		if target := next[outcome]; target != "" {
+			return target
+		}
+	}
+	return ""
+}
+
+func IsFailOutcomeLabel(outcome string) bool {
+	for _, candidate := range failOutcomeLabels {
+		if outcome == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func IsCanceledResult(result string) bool {
+	switch strings.ToLower(strings.TrimSpace(result)) {
+	case "cancel", "canceled", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
 
 func (n *Next) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {

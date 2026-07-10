@@ -533,6 +533,9 @@ func applyEvent(st *State, event Event) error {
 		if decision.EvidenceRef == "" {
 			decision.EvidenceRef = event.EvidenceRef
 		}
+		if node.Attempt > 0 && node.PoisonedNodeID != "" && strings.TrimSpace(decision.EvidenceRef) == "" {
+			return fmt.Errorf("poison escalation decision %q requires an evidence reference", event.NodeID)
+		}
 		if event.ChosenEdge != "" && decision.Verdict != "" && event.ChosenEdge != decision.Verdict {
 			return fmt.Errorf("decision node %q chosenEdge %q must match verdict %q", event.NodeID, event.ChosenEdge, decision.Verdict)
 		}

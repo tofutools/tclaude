@@ -227,15 +227,83 @@ func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
 	if gate := latest.State.Nodes["work.test.tests"]; gate.Status != state.NodeStatusBlocked || gate.BlockedAttempt != 2 {
 		t.Fatalf("later poison = %#v", gate)
 	}
-	if _, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID); err == nil || !strings.Contains(err.Error(), "stale") {
-		t.Fatalf("stale decision command resolved attempt 2: %v", err)
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("superseded decision command wedged recovery: %v", err)
 	}
-	latest, err = fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if resumed.OutstandingCommands[command.ID].Status != state.CommandStatusObserved || resumed.Nodes["work"].Status != state.NodeStatusBlocked {
+		t.Fatalf("superseded command changed later poison or stayed issued: command=%#v parent=%#v", resumed.OutstandingCommands[command.ID], resumed.Nodes["work"])
+	}
+	current := blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)
+	current.BlockedAttempt = 2
+	if _, err := executor.ResolveBlocked(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Drive(t.Context(), snapshot.Run.ID); err != nil {
+		t.Fatalf("run could not drive after stale command closure: %v", err)
+	}
+}
+
+func TestClaimedResolutionAcceptsEquivalentManualProvenance(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.State.Nodes["work"].Status != state.NodeStatusBlocked {
-		t.Fatalf("stale decision changed later poison: %#v", latest.State.Nodes["work"])
+	command := plan.Command{
+		ID: "cmd_equivalent_resolution", IdempotencyKey: snapshot.Run.ID + "/resolve/equivalent",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry,
+		Actor: "human:reviewer", Reason: "decision selected retry", EvidenceRef: "human-message:decision",
+	}
+	if claimed, _, err := executor.claim(t.Context(), blocked, command); err != nil || !claimed {
+		t.Fatalf("claim resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("equivalent manual resolution wedged command: %v", err)
+	}
+	if got := resumed.OutstandingCommands[command.ID]; got.Status != state.CommandStatusObserved || got.Verdict != "pass" {
+		t.Fatalf("equivalent command was not closed as pass: %#v", got)
+	}
+}
+
+func TestClaimedResolutionClosesAfterContradictingManualDecision(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := plan.Command{
+		ID: "cmd_superseded_resolution", IdempotencyKey: snapshot.Run.ID + "/resolve/superseded",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry,
+		Actor: "human:reviewer", Reason: "decision selected retry", EvidenceRef: "human-message:decision",
+	}
+	if claimed, _, err := executor.claim(t.Context(), blocked, command); err != nil || !claimed {
+		t.Fatalf("claim resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionCancel)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("contradicted manual resolution wedged command: %v", err)
+	}
+	if got := resumed.OutstandingCommands[command.ID]; got.Status != state.CommandStatusObserved || got.Verdict != "superseded" {
+		t.Fatalf("contradicted command was not explicitly superseded: %#v", got)
+	}
+	if resumed.Status != state.RunStatusCanceled {
+		t.Fatalf("superseded retry changed manual cancel: %s", resumed.Status)
 	}
 }
 

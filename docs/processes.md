@@ -248,6 +248,9 @@ Rules that make compound runs trustworthy:
   unblock`. A restart between the human verdict and the resolution append
   rediscovers that command. Non-decision fail targets stay inactive, so poison
   cannot silently turn into failure or continuation.
+  Reserved poison-escalation decisions cannot be completed with `process
+  advance`, because ordinary decision-edge activation would bypass that
+  funnel; answer the engine worklist obligation or use `process unblock`.
   Decision nodes are single-use in v1: if a decision-driven retry later
   poisons again, the completed escalation node is not reset; use the explicit
   `process unblock` path for that later generation.
@@ -342,8 +345,9 @@ recovery, and the terminal result without consulting SQLite or a live daemon.
 
 - `advance` runs `verify` first and refuses dirty or inconsistent runs.
 - All state changes go through `store.Append`, the manifest, and reducer events.
-- Template params are validated and stored on the run record; interpolation is
-  not executed by this phase.
+- Template params are validated and stored on the run record. Performer
+  prompt/ask/run/args interpolation is bound, with the parameter snapshot, into
+  the issued command so recovery replays the exact request.
 - Retry support is node-level `retry.maxAttempts`; repair and poison release
   are always explicit audited operations. The daemon host verifies and leases every run before advancing it,
   persists timer and rate-limit waits, and parks commands whose external side
@@ -355,6 +359,9 @@ recovery, and the terminal result without consulting SQLite or a live daemon.
   AND-join semantics are deferred until the engine can track live paths.
 - End nodes default to completed runs; set `result: failed` on a failure
   terminal node when that path should fail the run.
+- A poison-resolution `cancel` settles the run directly; the authored canceled
+  end marker remains pending until the resolution command grows a typed
+  terminal-node target in a later phase.
 
 ## Param templating surface
 

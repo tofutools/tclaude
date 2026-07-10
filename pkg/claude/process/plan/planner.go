@@ -158,12 +158,15 @@ func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node st
 		}
 		return []Command{cmd}, nil
 	case model.NodeTypeDecision:
-		if node.Attempt > 0 {
-			_, source, linked, err := poisonEscalationSource(st, tmpl, nodeID)
-			if err != nil {
-				return nil, err
+		_, source, linked, err := poisonEscalationSource(st, tmpl, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		if linked {
+			if node.Attempt <= 0 || node.PoisonedNodeID == "" {
+				return nil, fmt.Errorf("poison escalation decision %q is ready without a bound poison generation", nodeID)
 			}
-			if linked && (source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt || source.BlockedNodeID != node.PoisonedNodeID) {
+			if source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt || source.BlockedNodeID != node.PoisonedNodeID {
 				return nil, nil
 			}
 		}
@@ -247,7 +250,10 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	if !linked {
 		return Command{}, false, nil
 	}
-	if decision.Attempt <= 0 || blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" || blocked.BlockedNodeID != decision.PoisonedNodeID {
+	if decision.Attempt <= 0 || decision.PoisonedNodeID == "" {
+		return Command{}, true, fmt.Errorf("completed poison escalation decision %q is not generation-bound", decisionID)
+	}
+	if blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" || blocked.BlockedNodeID != decision.PoisonedNodeID {
 		// This decision was never offered for the current poison generation,
 		// or explicit unblock already made it stale. Suppress ordinary routing.
 		return Command{}, true, nil
@@ -256,6 +262,9 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 		return Command{}, false, fmt.Errorf("completed escalation decision %q has no decision record", decisionID)
 	}
 	record := decision.Decisions[len(decision.Decisions)-1]
+	if strings.TrimSpace(record.EvidenceRef) == "" {
+		return Command{}, true, fmt.Errorf("completed poison escalation decision %q has no evidence reference", decisionID)
+	}
 
 	resolution := state.BlockDecision("")
 	if targetID == blockedID {

@@ -25,12 +25,7 @@ func ResolvePassEdge(next model.Next, verdict string) string {
 // come only from next keys: retry.onFail is the retry-mode policy axis
 // (feedback-same-session | fresh-attempt), never an edge target.
 func ResolveFailEdge(next model.Next) string {
-	for _, key := range []string{"fail", "failed", "failure", "error"} {
-		if target := next[key]; target != "" {
-			return target
-		}
-	}
-	return ""
+	return model.FailTarget(next)
 }
 
 func DecisionEdge(next model.Next, verdict string) (string, bool) {
@@ -42,11 +37,12 @@ func DecisionEdge(next model.Next, verdict string) (string, bool) {
 }
 
 func TerminalRunStatus(node model.Node) state.RunStatus {
+	if model.IsCanceledResult(node.Result) {
+		return state.RunStatusCanceled
+	}
 	switch strings.ToLower(strings.TrimSpace(node.Result)) {
 	case "fail", "failed", "failure", "error":
 		return state.RunStatusFailed
-	case "cancel", "canceled", "cancelled":
-		return state.RunStatusCanceled
 	default:
 		return state.RunStatusCompleted
 	}

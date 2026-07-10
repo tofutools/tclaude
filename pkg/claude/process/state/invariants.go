@@ -76,6 +76,7 @@ func CheckTemplateInvariants(st *State, tmpl *model.Template) Diagnostics {
 		}
 		diagnostics = append(diagnostics, compareExpansion(st, nodeID, node, specs)...)
 	}
+	diagnostics = append(diagnostics, PoisonEscalationDecisionsUseResolutionFunnel(st, tmpl)...)
 	return diagnostics
 }
 
@@ -119,6 +120,47 @@ func compareExpansion(st *State, nodeID string, node NodeState, specs []model.St
 				"gate_fail_count_over_budget",
 				"nodes."+childID+".failCount",
 				fmt.Sprintf("gate %q records %d failed verdicts but its budget is %d", childID, child.FailCount, gateBudget(spec)),
+			))
+		}
+	}
+	return diagnostics
+}
+
+// PoisonEscalationDecisionsUseResolutionFunnel catches authored/manual edge
+// activation that completed a generation-bound escalation decision without
+// the engine-issued decision command that feeds the audited unblock funnel.
+// A normal engine checkpoint between decision observation and resolve_block
+// is valid because its record_decision command is already observed.
+func PoisonEscalationDecisionsUseResolutionFunnel(st *State, tmpl *model.Template) Diagnostics {
+	var diagnostics Diagnostics
+	for _, sourceID := range sortedKeys(tmpl.Nodes) {
+		sourceTemplate := tmpl.Nodes[sourceID]
+		if !sourceTemplate.IsCompound() {
+			continue
+		}
+		decisionID := model.FailTarget(sourceTemplate.Next)
+		decisionTemplate, ok := tmpl.Nodes[decisionID]
+		if decisionID == "" || !ok || decisionTemplate.Type != model.NodeTypeDecision || decisionTemplate.Performer == nil || decisionTemplate.Performer.Kind != model.PerformerHuman {
+			continue
+		}
+		source, sourceOK := st.Nodes[sourceID]
+		decision, decisionOK := st.Nodes[decisionID]
+		if !sourceOK || !decisionOK || source.Status != NodeStatusBlocked || decision.Status != NodeStatusCompleted ||
+			decision.Attempt <= 0 || decision.PoisonedNodeID == "" || source.BlockedAttempt != decision.Attempt || source.BlockedNodeID != decision.PoisonedNodeID {
+			continue
+		}
+		observed := false
+		for _, command := range st.OutstandingCommands {
+			if command.Kind == CommandKindRecordDecision && command.NodeID == decisionID && command.Status == CommandStatusObserved {
+				observed = true
+				break
+			}
+		}
+		if !observed {
+			diagnostics = append(diagnostics, diagError(
+				"escalation_decision_bypassed_resolution",
+				"nodes."+decisionID,
+				fmt.Sprintf("completed poison escalation decision %q bypassed the audited engine resolution funnel", decisionID),
 			))
 		}
 	}

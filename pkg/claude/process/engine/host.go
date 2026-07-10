@@ -221,7 +221,7 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 		return result
 	}
 	result.Status = checkpoint.Status
-	if isTerminal(checkpoint.Status) {
+	if isTerminal(checkpoint.Status) && !hasIssuedInternalCommand(checkpoint) {
 		return result
 	}
 	ttl := h.LeaseTTL
@@ -331,6 +331,18 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 	}
 	result.Error = fmt.Sprintf("process run %q exceeded engine tick rounds", runID)
 	return result
+}
+
+func hasIssuedInternalCommand(st *state.State) bool {
+	if st == nil {
+		return false
+	}
+	for _, command := range st.OutstandingCommands {
+		if command.Status == state.CommandStatusIssued && !isPerformerCommand(command.Kind) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Host) resume(ctx context.Context, snapshot store.Snapshot) (bool, string, error) {

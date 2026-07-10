@@ -558,17 +558,14 @@ func TestPlanDoesNotReuseConsumedEscalationDecision(t *testing.T) {
 	}
 }
 
-func TestPlanDoesNotReuseDecisionCompletedBeforePoison(t *testing.T) {
+func TestPlanRejectsDecisionCompletedBeforePoison(t *testing.T) {
 	st := blockedEscalationState("retry")
 	decision := st.Nodes["escalate"]
 	decision.Attempt = 0
+	decision.PoisonedNodeID = ""
 	st.Nodes["escalate"] = decision
-	got, err := Plan(st, escalationTemplate())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("decision predating poison replayed into resolution: %#v", got)
+	if _, err := Plan(st, escalationTemplate()); err == nil || !strings.Contains(err.Error(), "not generation-bound") {
+		t.Fatalf("decision predating poison was silently accepted: %v", err)
 	}
 }
 

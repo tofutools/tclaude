@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
 	"github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
@@ -88,6 +90,38 @@ func TestSnapshotReportsSemanticDirtyState(t *testing.T) {
 	}
 	if !report.Dirty {
 		t.Fatal("semantic violation with matching evidence anchors should be dirty")
+	}
+}
+
+func TestSnapshotRejectsEscalationDecisionThatBypassedResolution(t *testing.T) {
+	tmpl := &model.Template{Nodes: map[string]model.Node{
+		"implement": {
+			Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"},
+			Checks: []model.Step{{ID: "tests", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}},
+			Next:   model.Next{"fail": "escalate"},
+		},
+		"escalate": {
+			Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "retry?"},
+			Next: model.Next{"retry": "implement", "cancel": "canceled"},
+		},
+		"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+	}}
+	st := &state.State{
+		StateSchemaVersion: state.StateSchemaVersion, RunID: "run", Status: state.RunStatusCanceled,
+		Nodes: map[string]state.NodeState{
+			"implement": {
+				Type: model.NodeTypeTask, Status: state.NodeStatusBlocked, BlockedAttempt: 2, BlockedNodeID: "implement.test.tests",
+			},
+			"escalate": {
+				Type: model.NodeTypeDecision, Status: state.NodeStatusCompleted, Attempt: 2, PoisonedNodeID: "implement.test.tests",
+				ChosenEdge: "cancel", Decisions: []state.DecisionRecord{{Actor: "human:johan", Verdict: "cancel", EvidenceRef: "human-message:42", Timestamp: time.Now()}},
+			},
+			"canceled": {Type: model.NodeTypeEnd, Status: state.NodeStatusCompleted},
+		},
+	}
+	report := verify.SnapshotWithTemplate(store.Snapshot{Run: store.RunRecord{ID: "run"}, State: st}, tmpl)
+	if !hasDiagnostic(report, verify.LayerSemantic, "escalation_decision_bypassed_resolution") {
+		t.Fatalf("manual decision-edge bypass verified cleanly: %#v", report.Diagnostics)
 	}
 }
 

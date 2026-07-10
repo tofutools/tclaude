@@ -300,10 +300,10 @@ func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dis
 	return nil, fmt.Errorf("record process command %q dispatch: exceeded %d CAS attempts", command.ID, maxObservationCASAttempts)
 }
 
-// obligationActions makes decision obligations advertise the pinned
-// template's real edge vocabulary. Task obligations keep the adapter's action
-// vocabulary, whose approve/reject forms are normalized to pass/fail when the
-// observation is recorded.
+// obligationActions makes decision obligations advertise the store template's
+// real edge vocabulary. Run-local template execution is a separate follow-up;
+// task obligations keep the adapter's action vocabulary, whose approve/reject
+// forms are normalized to pass/fail when the observation is recorded.
 func (e *Executor) obligationActions(ctx context.Context, command plan.Command, fallback []string) ([]string, error) {
 	if command.Kind != plan.CommandKindRecordDecision {
 		return append([]string(nil), fallback...), nil
@@ -619,16 +619,9 @@ func (e *Executor) ResumeIssued(ctx context.Context, command plan.Command) (*sta
 // command_observed, ResumeOutstanding repeats the idempotent resolution and
 // marks the original command observed without issuing a second decision.
 func (e *Executor) applyResolveBlockCommand(ctx context.Context, command plan.Command) (*state.State, error) {
-	snapshot, err := e.Store.LoadRun(ctx, command.RunID)
-	if err != nil {
-		return nil, err
-	}
-	request, err := BindBlockResolution(snapshot, BlockResolutionRequest{
+	request := BlockResolutionRequest{
 		RunID: command.RunID, NodeID: command.PoisonedNodeID, BlockedAttempt: command.BlockedAttempt,
 		Decision: command.BlockDecision, Actor: command.Actor, Reason: command.Reason, EvidenceRef: command.EvidenceRef,
-	})
-	if err != nil {
-		return nil, err
 	}
 	return e.resolveBlocked(ctx, request, &command)
 }
