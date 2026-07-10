@@ -689,6 +689,54 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_ProcessWorklistWired pins the Worklist sub-view's
+// cross-file wiring (TCL-297): the HTML panel (view chips, degraded strip,
+// list mount, sub-nav badge), the JS fetch/action paths, and the poll hook.
+// The module has no build step, so literal asset pins catch a renamed DOM id,
+// data-attr, or route before it becomes a browser-only failure. The pure view
+// logic itself is covered by jstest/process-worklist.test.mjs.
+func TestDashboardAssets_ProcessWorklistWired(t *testing.T) {
+	for _, needle := range []string{
+		// dashboard.html — the panel shell: every §8c view chip, the shared
+		// toolbar, the degraded strip, the list mount, and the sub-nav badge.
+		`data-worklist-view="my-work"`,
+		`data-worklist-view="waiting-on"`,
+		`data-worklist-view="due"`,
+		`data-worklist-view="blocked"`,
+		`data-worklist-view="decision"`,
+		`data-worklist-view="review"`,
+		`data-worklist-view="recent"`,
+		`id="process-worklist-degraded"`,
+		`id="process-worklist-list"`,
+		`id="process-worklist-badge"`,
+		`id="process-worklist-refresh"`,
+		// process-worklist.js — the REST consumption: list fetch, the action
+		// POST with a fresh idempotency key per click, and the advertised-
+		// spelling + required-comment funnel from the core module.
+		"processJSON('/v1/process/worklist')",
+		"crypto.randomUUID()",
+		"buildWorklistAction(item, action, comment, crypto.randomUUID())",
+		// process-worklist-core.js — the action request builder the funnel
+		// rides (URL-escaped item id, advertised spelling resolution).
+		"/v1/process/worklist/${encodeURIComponent(item.id)}/action",
+		// Live refresh rides the snapshot poll's custom event.
+		"document.addEventListener('tclaude:snapshot'",
+		// Rows are keyed for the morph reconciler by item id.
+		`data-key="${esc(item.id)}"`,
+		// Agent obligations render without action buttons.
+		"agent reports via evidence",
+		// processes.js routes the sub-tab to the worklist loader.
+		"if (name === 'worklist') loadProcessWorklist();",
+		// dashboard.css — the degraded strip and comment-required affordance.
+		".wl-degraded {",
+		".wl-comment.wl-comment-missing { border-color: #f85149; }",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — Processes worklist wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_ClaudeCleanupPeriodWired guards the Claude Code
 // transcript-retention override (config claude_cleanup_period_days → Claude
 // Code's cleanupPeriodDays), whose Config-tab pieces span dashboard.html +

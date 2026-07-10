@@ -304,6 +304,12 @@ func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {
 	agentd.RegisterDashboardRoutesForTest(mux)
 	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/templates", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/wi_x/action", map[string]string{
+		"action": "approve", "comment": "c", "idempotencyKey": "k",
+	}))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 func TestDashboardSnapshotDynamicallyGatesProcessesTab(t *testing.T) {
