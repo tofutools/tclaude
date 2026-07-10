@@ -19,6 +19,10 @@ func ApplyAgentSocketEnv(harnessName, sandboxMode, permissionProfile string, env
 		return nil
 	}
 	canonical := agentipc.CanonicalSocketPath()
+	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical {
+		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
+			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
+	}
 	legacy := agentipc.LegacySocketPath()
 	if !agentipc.SocketReachable(canonical) && agentipc.SocketReachable(legacy) {
 		return fmt.Errorf("agentd is still listening only on the legacy socket %s; "+

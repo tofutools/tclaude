@@ -20,7 +20,9 @@ func TestSocketPaths(t *testing.T) {
 	t.Setenv(SocketEnv, override)
 	assert.Equal(t, override, ClientSocketPath())
 	assert.Equal(t, []string{override}, ClientSocketPaths())
+	assert.Equal(t, override, ExplicitSocketPath())
 
 	t.Setenv(SocketEnv, "relative.sock")
 	assert.Equal(t, CanonicalSocketPath(), ClientSocketPath())
+	assert.Empty(t, ExplicitSocketPath())
 }

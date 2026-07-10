@@ -20,6 +20,7 @@ import (
 	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
@@ -144,7 +145,24 @@ func serveSocketPaths(requested string) []string {
 	return appendSocketPath(paths, LegacySocketPath())
 }
 
+func configureServeSocketEnv(requested string) error {
+	if requested == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(requested)
+	if err != nil {
+		return fmt.Errorf("resolve custom socket path %s: %w", requested, err)
+	}
+	if err := os.Setenv(agentipc.SocketEnv, abs); err != nil {
+		return fmt.Errorf("export custom socket path: %w", err)
+	}
+	return nil
+}
+
 func runServe(p *serveParams) error {
+	if err := configureServeSocketEnv(p.Socket); err != nil {
+		return err
+	}
 	socketPaths := serveSocketPaths(p.Socket)
 	sockPath := socketPaths[0]
 	if sockPath == "" {

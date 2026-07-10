@@ -42,14 +42,23 @@ func ClientSocketPath() string {
 	return ClientSocketPaths()[0]
 }
 
+// ExplicitSocketPath returns a valid absolute SocketEnv override, or "" when
+// the variable is unset/invalid.
+func ExplicitSocketPath() string {
+	if path := strings.TrimSpace(os.Getenv(SocketEnv)); filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return ""
+}
+
 // ClientSocketPaths returns dial candidates in priority order. An explicit
 // absolute override is authoritative. Without one, current clients prefer the
 // canonical path and fall back to the legacy path so an updated CLI still
 // works with a running older daemon or previously installed Claude sandbox
 // settings during the migration window.
 func ClientSocketPaths() []string {
-	if path := strings.TrimSpace(os.Getenv(SocketEnv)); filepath.IsAbs(path) {
-		return []string{filepath.Clean(path)}
+	if path := ExplicitSocketPath(); path != "" {
+		return []string{path}
 	}
 	paths := []string{CanonicalSocketPath()}
 	if legacy := LegacySocketPath(); legacy != "" && legacy != paths[0] {

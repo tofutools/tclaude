@@ -311,6 +311,10 @@ func installSandboxHardening() error {
 
 func sandboxHardeningSocketMigrationError() error {
 	canonical := agentipc.CanonicalSocketPath()
+	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical {
+		return fmt.Errorf("sandbox hardening requires the canonical agentd socket %s; "+
+			"custom socket %s is unsupported", canonical, explicit)
+	}
 	legacy := agentipc.LegacySocketPath()
 	if !agentipc.SocketReachable(canonical) && agentipc.SocketReachable(legacy) {
 		return fmt.Errorf("agentd is still listening only on the legacy socket %s; "+

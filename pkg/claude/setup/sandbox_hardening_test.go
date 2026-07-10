@@ -36,7 +36,9 @@ func freshSpecTree(t *testing.T) map[string]any {
 }
 
 func TestSandboxHardeningRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "tc-setup-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
 	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
@@ -46,6 +48,16 @@ func TestSandboxHardeningRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 	err = sandboxHardeningSocketMigrationError()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "restart agentd")
+}
+
+func TestSandboxHardeningRejectsCustomSocket(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, filepath.Join(home, "custom.sock"))
+
+	err := sandboxHardeningSocketMigrationError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "custom socket")
 }
 
 // runMerge merges the hardening spec into tree and returns the report.

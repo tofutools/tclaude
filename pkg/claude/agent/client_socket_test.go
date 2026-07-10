@@ -11,7 +11,9 @@ import (
 )
 
 func TestRealDaemonAvailableFallsBackToLegacySocket(t *testing.T) {
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "tc-agent-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 

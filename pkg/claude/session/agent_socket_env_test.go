@@ -38,7 +38,9 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 }
 
 func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "tc-session-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentipc.LegacySocketPath()), 0o755))
 	legacy, err := net.Listen("unix", agentipc.LegacySocketPath())
@@ -64,7 +66,9 @@ func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 }
 
 func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
-	home := t.TempDir()
+	home, err := os.MkdirTemp("/tmp", "tc-session-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	canonical, err := net.Listen("unix", agentipc.CanonicalSocketPath())
 	require.NoError(t, err)
@@ -74,4 +78,17 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	require.NoError(t, ApplyAgentSocketEnv(
 		harness.CodexName, "", harness.CodexAgentProfile, env))
 	assert.Equal(t, agentipc.CanonicalSocketPath(), env[agentipc.SocketEnv])
+}
+
+func TestApplyAgentSocketEnvRejectsCustomSocket(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	custom := filepath.Join(home, "custom.sock")
+	t.Setenv(agentipc.SocketEnv, custom)
+
+	err := ApplyAgentSocketEnv(
+		harness.CodexName, "", harness.CodexAgentProfile, map[string]string{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "custom socket")
+	assert.Contains(t, err.Error(), agentipc.CanonicalSocketPath())
 }
