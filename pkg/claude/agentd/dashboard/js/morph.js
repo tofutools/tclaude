@@ -166,6 +166,15 @@ function morphNode(from, to) {
   }
   if (type !== 1 /* ELEMENT_NODE */) return;
 
+  // Imperative widgets (currently the shared process SVG) own live interaction
+  // state that does not exist in a freshly rendered HTML string: pan/zoom,
+  // selection, transient drags, and event-bound SVG nodes. The widget marks its
+  // HOST data-morph-owned before mounting. Stop at that boundary even when the
+  // fresh host is empty; reconciling inside it would delete the SVG every poll.
+  // The host remains a normal keyed/positional child of its parent, so removing
+  // the host from fresh output still removes the whole widget as expected.
+  if (from.hasAttribute('data-morph-owned')) return;
+
   // A form control carries LIVE PROPERTY state (a checkbox's `checked`, a
   // <select>'s `value`) that isEqualNode does NOT compare — it only looks at
   // attributes, and a user click dirties the property without touching the

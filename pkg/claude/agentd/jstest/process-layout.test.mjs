@@ -1,0 +1,141 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { layoutProcessGraph } from '../dashboard/js/process-layout.js';
+
+const linear = {
+  nodes: [
+    { id: 'start', type: 'start', label: 'Start' },
+    { id: 'work', type: 'task', label: 'Do the work' },
+    { id: 'wait', type: 'wait', label: 'Wait' },
+    { id: 'end', type: 'end', label: 'Done' },
+  ],
+  edges: [
+    { from: 'start', to: 'work' },
+    { from: 'work', to: 'wait' },
+    { from: 'wait', to: 'end' },
+  ],
+};
+
+function byID(layout) {
+  return new Map(layout.nodes.map((node) => [node.id, node]));
+}
+
+function overlaps(a, b) {
+  return Math.abs(a.x - b.x) < (a.width + b.width) / 2
+    && Math.abs(a.y - b.y) < (a.height + b.height) / 2;
+}
+
+test('forward edges advance to a downstream layer and route with arrow paths', () => {
+  const result = layoutProcessGraph(linear);
+  const nodes = byID(result);
+  for (const edge of result.edges) {
+    assert.equal(edge.kind, 'forward');
+    assert.ok(nodes.get(edge.to).layer > nodes.get(edge.from).layer, `${edge.from} -> ${edge.to} must advance layers`);
+    assert.ok(edge.path.startsWith('M '));
+    assert.ok(edge.points.at(-1).y > edge.points[0].y, `${edge.from} -> ${edge.to} must point down`);
+  }
+});
+
+test('sanctioned retry back-edge is excluded from layering and routed distinctly', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'implement', type: 'task' },
+      { id: 'review', type: 'decision' },
+      { id: 'escalate', type: 'task' },
+      { id: 'done', type: 'end' },
+    ],
+    edges: [
+      { from: 'implement', to: 'review' },
+      { from: 'review', to: 'done', outcome: 'approved' },
+      { from: 'review', to: 'escalate', outcome: 'poison' },
+      { from: 'escalate', to: 'implement', outcome: 'retry', back: true },
+    ],
+  });
+  const retry = result.edges.find((edge) => edge.back);
+  assert.ok(retry);
+  assert.equal(retry.kind, 'back');
+  assert.equal(retry.outcome, 'retry');
+  assert.match(retry.path, /^M .* C /);
+  assert.ok(retry.points[1].x > Math.max(...result.nodes.map((node) => node.x + node.width / 2)), 'return lane routes outside nodes');
+  assert.equal(byID(result).get('implement').layer, 0, 'retry edge must not push its target downstream');
+});
+
+test('decision fan-out and join do not overlap nodes', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'start', type: 'start' },
+      { id: 'choice', type: 'decision' },
+      { id: 'left', type: 'task' },
+      { id: 'right', type: 'task' },
+      { id: 'join', type: 'task' },
+      { id: 'end', type: 'end' },
+    ],
+    edges: [
+      { from: 'start', to: 'choice' },
+      { from: 'choice', to: 'left', outcome: 'yes' },
+      { from: 'choice', to: 'right', outcome: 'no' },
+      { from: 'left', to: 'join', joinOnTarget: 'all' },
+      { from: 'right', to: 'join', joinOnTarget: 'all' },
+      { from: 'join', to: 'end' },
+    ],
+  });
+  for (let i = 0; i < result.nodes.length; i += 1) {
+    for (let j = i + 1; j < result.nodes.length; j += 1) {
+      assert.equal(overlaps(result.nodes[i], result.nodes[j]), false, `${result.nodes[i].id} overlaps ${result.nodes[j].id}`);
+    }
+  }
+});
+
+test('pinned nodes retain exact editor-owned coordinates and auto nodes avoid them', () => {
+  const result = layoutProcessGraph({
+    nodes: [
+      { id: 'a', type: 'start' },
+      { id: 'pinned', type: 'task', pinned: { x: 156, y: 272 } },
+      { id: 'auto', type: 'task' },
+      { id: 'z', type: 'end' },
+    ],
+    edges: [
+      { from: 'a', to: 'pinned' },
+      { from: 'pinned', to: 'auto' },
+      { from: 'auto', to: 'z' },
+    ],
+  });
+  const nodes = byID(result);
+  assert.deepEqual({ x: nodes.get('pinned').x, y: nodes.get('pinned').y }, { x: 156, y: 272 });
+  assert.equal(nodes.get('pinned').pinned, true);
+  assert.equal(overlaps(nodes.get('pinned'), nodes.get('auto')), false);
+});
+
+test('same input produces byte-for-byte deterministic layout output', () => {
+  const graph = {
+    nodes: [
+      { id: 'c', type: 'end' },
+      { id: 'a', type: 'start' },
+      { id: 'b2', type: 'task' },
+      { id: 'b1', type: 'task', compound: { stages: ['one', 'two'], collapsed: true } },
+    ],
+    edges: [
+      { from: 'b2', to: 'c' },
+      { from: 'a', to: 'b2' },
+      { from: 'a', to: 'b1' },
+      { from: 'b1', to: 'c' },
+    ],
+  };
+  assert.equal(JSON.stringify(layoutProcessGraph(graph)), JSON.stringify(layoutProcessGraph(graph)));
+});
+
+test('cycle-breaking heuristic stays isolated at the feedback-arc seam', () => {
+  let called = 0;
+  const result = layoutProcessGraph({
+    nodes: [{ id: 'a', type: 'task' }, { id: 'b', type: 'task' }],
+    edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }],
+  }, {
+    feedbackArc(nodes, edges) {
+      called += 1;
+      assert.equal(nodes.length, 2);
+      return new Set([edges.find((edge) => edge.from === 'b').inputIndex]);
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(result.edges.filter((edge) => edge.back).length, 1);
+});

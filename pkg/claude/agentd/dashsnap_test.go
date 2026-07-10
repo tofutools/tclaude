@@ -324,7 +324,7 @@ func baseStates() []dashsnap.State {
     if (b) b.click();
   }
 })();`
-	return []dashsnap.State{
+	states := []dashsnap.State{
 		{
 			Key:     "groups",
 			Title:   "Groups tab",
@@ -503,6 +503,119 @@ func baseStates() []dashsnap.State {
 			SettleMS: 800,
 		},
 	}
+	return append(states, processGraphStates()...)
+}
+
+// processGraphStates is a test-only host surface for the otherwise standalone
+// graph core. Production still imports/renders nothing until the feature-gated
+// Processes host does so; dashsnap dynamically imports the module and mounts it
+// in a fixed overlay solely to exercise the shared SVG vocabulary in both skins.
+func processGraphStates() []dashsnap.State {
+	return []dashsnap.State{
+		{
+			Key:     "process-linear",
+			Title:   "Process graph — linear",
+			Caption: "Graph core: start → task → wait/timer → end, including state glyph/progress anchors and the explicitly themed Fit control.",
+			JS: processGraphStateJS("Small linear graph", `{
+  nodes: [
+    {id:'start',type:'start',label:'Start'},
+    {id:'plan',type:'task',label:'Plan the change',overlay:{glyph:'✓',status:'complete'}},
+    {id:'timer',type:'wait',label:'Wait for signal',overlay:{glyph:'…',status:'waiting'}},
+    {id:'end',type:'end',label:'Done'}
+  ],
+  edges: [{from:'start',to:'plan'},{from:'plan',to:'timer'},{from:'timer',to:'end'}]
+}`),
+		},
+		{
+			Key:     "process-decision-join",
+			Title:   "Process graph — decision fan-out + join",
+			Caption: "Diamond decision with labelled yes/no branches converging on an all-join; edge and node shapes remain legible without relying on colour.",
+			JS: processGraphStateJS("Decision fan-out and join", `{
+  nodes: [
+    {id:'start',type:'start'}, {id:'gate',type:'decision',label:'Checks pass?'},
+    {id:'ship',type:'task',label:'Ship change',overlay:{glyph:'▶',status:'running',attempt:2}},
+    {id:'fix',type:'task',label:'Fix findings',overlay:{glyph:'!',badge:'2 issues'}},
+    {id:'join',type:'task',label:'Record outcome'}, {id:'end',type:'end'}
+  ],
+  edges: [
+    {from:'start',to:'gate'}, {from:'gate',to:'ship',outcome:'yes'},
+    {from:'gate',to:'fix',outcome:'no'}, {from:'ship',to:'join',joinOnTarget:'all'},
+    {from:'fix',to:'join',joinOnTarget:'all'}, {from:'join',to:'end'}
+  ]
+}`),
+		},
+		{
+			Key:     "process-compound",
+			Title:   "Process graph — collapsed compound",
+			Caption: "Collapsed compound node with stage-stack, stage count, expand affordance, progress slot, plus ordinary start/end vocabulary.",
+			JS: processGraphStateJS("Collapsed compound", `{
+  nodes: [
+    {id:'start',type:'start'},
+    {id:'delivery',type:'task',label:'Code change with review',compound:{stages:['plan','implement','review'],collapsed:true},overlay:{glyph:'▶',progress:{current:2,total:3},retry:1}},
+    {id:'end',type:'end'}
+  ],
+  edges: [{from:'start',to:'delivery'},{from:'delivery',to:'end'}]
+}`),
+		},
+		{
+			Key:     "process-retry",
+			Title:   "Process graph — retry back-edge",
+			Caption: "Sanctioned poison-escalation retry is routed outside the layers as a dashed curved return, labelled retry and never disguised as forward flow.",
+			JS: processGraphStateJS("Retry return edge", `{
+  nodes: [
+    {id:'implement',type:'task',label:'Implement',overlay:{glyph:'▶',attempt:3,retry:2}},
+    {id:'review',type:'decision',label:'Review passes?'},
+    {id:'escalate',type:'task',label:'Escalate poison'}, {id:'done',type:'end'}
+  ],
+  edges: [
+    {from:'implement',to:'review'}, {from:'review',to:'done',outcome:'approved'},
+    {from:'review',to:'escalate',outcome:'poison'},
+    {from:'escalate',to:'implement',outcome:'retry',back:true}
+  ]
+}`),
+		},
+		{
+			Key:     "process-pinned-auto",
+			Title:   "Process graph — pinned + automatic",
+			Caption: "Mixed layout: the editor-owned Review position stays pinned while unpinned task/decision/end nodes auto-layout around it without overlap.",
+			JS: processGraphStateJS("Pinned and automatic nodes", `{
+  nodes: [
+    {id:'start',type:'start'}, {id:'draft',type:'task',label:'Draft'},
+    {id:'review',type:'decision',label:'Review',pinned:{x:420,y:380},overlay:{glyph:'◆',badge:'pinned'}},
+    {id:'revise',type:'task',label:'Revise'}, {id:'end',type:'end'}
+  ],
+  edges: [
+    {from:'start',to:'draft'}, {from:'draft',to:'review'},
+    {from:'review',to:'revise',outcome:'changes'}, {from:'review',to:'end',outcome:'approve'},
+    {from:'revise',to:'review',outcome:'resubmit',back:true}
+  ]
+}`),
+		},
+	}
+}
+
+func processGraphStateJS(title, graph string) string {
+	return fmt.Sprintf(`return import('/static/js/process-graph.js').then(function(mod) {
+  var shell = document.createElement('section');
+  shell.setAttribute('data-dashsnap-process-graph', '');
+  shell.style.cssText = 'position:fixed;z-index:9500;inset:72px 28px 42px;background:#0d1117;border:1px solid #4a5568;border-radius:12px;padding:14px;box-shadow:0 18px 60px rgba(0,0,0,.65);display:grid;grid-template-rows:auto 1fr;gap:10px;';
+  var heading = document.createElement('h2');
+  heading.textContent = %q;
+  heading.style.cssText = 'margin:0;color:#e6edf3;font:650 16px system-ui';
+  var host = document.createElement('div');
+  host.style.cssText = 'min-height:0;height:100%%';
+  shell.append(heading, host);
+  document.body.append(shell);
+  var instance = mod.createProcessGraph(host, %s, {fitOnRender:false, ariaLabel:%q});
+  return new Promise(function(resolve) {
+    requestAnimationFrame(function() { requestAnimationFrame(function() {
+      instance.fitToView();
+      if (!host.querySelector('.process-graph-svg')) throw new Error('process graph SVG did not render');
+      if (!host.hasAttribute('data-morph-owned')) throw new Error('process graph host lacks morph ownership boundary');
+      resolve();
+    }); });
+  });
+});`, title, graph, title)
 }
 
 // scrollClearJS builds a self-checking JOH-388 req-3 state: on the groups tab
@@ -619,16 +732,16 @@ return new Promise(function(resolve, reject){
 // feature. Two assertions, both rejecting on a miss so a regression fails the run
 // instead of passing as a silent captured "ok":
 //
-//   (a) Up-flip clip guard — the reason toggleCardMenu measures #dock-body and
-//       NOT the viewport. Force the dock body to overflow (short max-height),
-//       scroll the LAST card to its fold, open that card's menu, and assert it
-//       stays within #dock-body's bottom. A downward drop there spills under the
-//       body's overflow:auto fold, so it only clears if the menu flipped up —
-//       which the OLD viewport-measuring code would miss (the body bottom sits a
-//       footer-height ABOVE window.innerHeight, so the spill stayed "on screen").
-//   (b) Horizontal clip guard + the SCREENSHOT — restore the body, open the
-//       FIRST profile card's menu, assert it stays within #agent-dock's width (a
-//       narrow, right-anchored menu must fit), and leave it open for the capture.
+//	(a) Up-flip clip guard — the reason toggleCardMenu measures #dock-body and
+//	    NOT the viewport. Force the dock body to overflow (short max-height),
+//	    scroll the LAST card to its fold, open that card's menu, and assert it
+//	    stays within #dock-body's bottom. A downward drop there spills under the
+//	    body's overflow:auto fold, so it only clears if the menu flipped up —
+//	    which the OLD viewport-measuring code would miss (the body bottom sits a
+//	    footer-height ABOVE window.innerHeight, so the spill stayed "on screen").
+//	(b) Horizontal clip guard + the SCREENSHOT — restore the body, open the
+//	    FIRST profile card's menu, assert it stays within #agent-dock's width (a
+//	    narrow, right-anchored menu must fit), and leave it open for the capture.
 func cardMenuJS() string {
 	return `document.querySelector('nav button[data-tab="groups"]').click();
 document.body.classList.add('dock-open');
