@@ -53,8 +53,10 @@ type World struct {
 	spawnTrustDir      map[string]bool
 	spawnRemoteControl map[string]bool
 	spawnCwdProofs     map[string]string
+	spawnDirProofs     map[string]string
 	spawnGitCommonDirs map[string]string
 	spawnGitCommonPins map[string]bool
+	spawnGitWriteDirs  map[string][]string
 	// spawnNames / spawnInitialPrompts record the launch-arg display name
 	// (`--name`) and first-turn prompt (`--initial-prompt`) the launch-
 	// enrollment spawn path threaded through, keyed by the new conv-id, so a
@@ -91,8 +93,10 @@ func New(t *testing.T) *World {
 		spawnTrustDir:       map[string]bool{},
 		spawnRemoteControl:  map[string]bool{},
 		spawnCwdProofs:      map[string]string{},
+		spawnDirProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
 		spawnGitCommonPins:  map[string]bool{},
+		spawnGitWriteDirs:   map[string][]string{},
 		spawnNames:          map[string]string{},
 		spawnInitialPrompts: map[string]string{},
 	}
@@ -304,6 +308,32 @@ func (w *World) SpawnCwdWriteProof(convID string) (string, bool) {
 	defer w.spawnMu.Unlock()
 	token, ok := w.spawnCwdProofs[convID]
 	return token, ok
+}
+
+func (w *World) RecordSpawnDirWriteProof(convID, token string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnDirProofs[convID] = token
+}
+
+func (w *World) SpawnDirWriteProof(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	token, ok := w.spawnDirProofs[convID]
+	return token, ok
+}
+
+func (w *World) RecordSpawnGitWorktreeWriteDirs(convID string, dirs []string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnGitWriteDirs[convID] = append([]string(nil), dirs...)
+}
+
+func (w *World) SpawnGitWorktreeWriteDirs(convID string) ([]string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	dirs, ok := w.spawnGitWriteDirs[convID]
+	return append([]string(nil), dirs...), ok
 }
 
 // RecordSpawnCodexGitCommonDir captures the pinned Git common dir forwarded to

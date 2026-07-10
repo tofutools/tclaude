@@ -28,6 +28,7 @@ type NewParams struct {
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode. Hidden from normal CLI help.
 	CwdWriteProof string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
+	DirWriteProof string `short:"Z" long:"dir-write-proof" optional:"true" help:"Internal: verify daemon-issued repository-root markers before launching the harness"`
 	// CodexGitCommonDir is the historical name for an internal, daemon-pinned
 	// linked-worktree metadata result. The managed Codex profile and Claude
 	// Code's per-session sandbox allowWrite overlay both consume it. Hidden from
@@ -35,12 +36,16 @@ type NewParams struct {
 	CodexGitCommonDir string `long:"codex-git-common-dir" optional:"true" help:"Internal: pinned Git common dir for repository sandbox grants"`
 	// CodexGitCommonDirPinned disambiguates an intentionally empty daemon pin
 	// from a direct launch that should derive the common dir from cwd.
-	CodexGitCommonDirPinned bool   `long:"codex-git-common-dir-pinned" help:"Internal: use the daemon-pinned Git common-dir result, including an empty result"`
-	Resume                  string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
-	Global                  bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label                   string `long:"label" optional:"true" help:"Custom label for the session"`
-	Detached                bool   `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
-	WaitForRateLimit        bool   `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
+	CodexGitCommonDirPinned bool `long:"codex-git-common-dir-pinned" help:"Internal: use the daemon-pinned Git common-dir result, including an empty result"`
+	// GitWorktreeWriteDirs is the exact proof-pinned repository grant set. It
+	// avoids re-deriving permission roots from a mutable path in the child.
+	GitWorktreeWriteDirs       []string `short:"X" long:"git-worktree-write-dir" optional:"true" help:"Internal: proof-pinned repository sandbox write root"`
+	GitWorktreeWriteDirsPinned bool     `short:"Y" long:"git-worktree-write-dirs-pinned" help:"Internal: use the daemon-pinned repository write roots, including an empty set"`
+	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Global                     bool     `short:"g" help:"Search for conversation across all projects (with --resume)"`
+	Label                      string   `long:"label" optional:"true" help:"Custom label for the session"`
+	Detached                   bool     `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
+	WaitForRateLimit           bool     `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
 	// Effort sets Claude Code's reasoning effort for the session via
 	// `claude --effort <level>`. Empty (the default) omits the flag so
@@ -187,8 +192,11 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
+	_ = cmd.Flags().MarkHidden("dir-write-proof")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir")
 	_ = cmd.Flags().MarkHidden("codex-git-common-dir-pinned")
+	_ = cmd.Flags().MarkHidden("git-worktree-write-dir")
+	_ = cmd.Flags().MarkHidden("git-worktree-write-dirs-pinned")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -314,7 +322,17 @@ func runNew(params *NewParams) error {
 	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
 		return fmt.Errorf("invalid internal cwd write proof")
 	}
+	params.DirWriteProof = strings.TrimSpace(params.DirWriteProof)
+	if params.DirWriteProof != "" && !isValidSpawnCwdProofToken(params.DirWriteProof) {
+		return fmt.Errorf("invalid internal dir write proof")
+	}
+	if params.CwdWriteProof != "" && params.DirWriteProof != "" && params.CwdWriteProof != params.DirWriteProof {
+		return fmt.Errorf("internal cwd and dir write proofs must use the same token")
+	}
 	if err := validateCodexGitCommonDirPin(params); err != nil {
+		return err
+	}
+	if err := validateGitWorktreeWriteDirPins(params); err != nil {
 		return err
 	}
 
@@ -582,6 +600,14 @@ func runNew(params *NewParams) error {
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID": sessionID,
 	}
+	launchPermissionProfile := params.PermissionProfile
+	launchProfilePath := ""
+	launchProfileOwnedByPane := false
+	defer func() {
+		if launchProfilePath != "" && !launchProfileOwnedByPane {
+			_ = os.Remove(launchProfilePath)
+		}
+	}()
 	// Pin managed Codex sessions to agentd's canonical state-free socket. That
 	// socket lives outside the profile's denied ~/.tclaude private-state tree.
 	if err := ApplyAgentSocketEnv(h.Name, params.Sandbox, params.PermissionProfile, additionalEnv); err != nil {
@@ -619,9 +645,12 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		if err := ensureCodexManagedProfile(params, cwd); err != nil {
+		profileName, profilePath, err := ensureCodexManagedProfile(params, cwd, GenerateSessionID())
+		if err != nil {
 			return err
 		}
+		launchPermissionProfile = profileName
+		launchProfilePath = profilePath
 	}
 
 	// Pre-trust the launch dir for Codex when the operator opted in
@@ -661,23 +690,35 @@ func runNew(params *NewParams) error {
 		Model:                  model,
 		ExtraArgs:              extraArgs,
 		SandboxMode:            sandboxMode,
-		SandboxWriteDirs:       claudeGitWorktreeWriteDirs(params, h.Name, sandboxMode),
+		SandboxWriteDirs:       gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd),
 		AskUserQuestionTimeout: askTimeout,
-		PermissionProfile:      params.PermissionProfile,
+		PermissionProfile:      launchPermissionProfile,
 		ApprovalPolicy:         approvalPolicy,
 		AutoReview:             autoReview,
 		RemoteControl:          remoteControl,
 		InitialPrompt:          params.InitialPrompt,
 	})
+	if launchProfilePath != "" {
+		// The launch-specific profile must remain present until Codex exits: it
+		// may not have loaded the file when tmux reports the pane ready. Keeping
+		// cleanup in the pane shell also prevents one launch from ever sharing or
+		// overwriting another launch's proof-scoped authority.
+		harnessCmd = commandWithFileCleanup(harnessCmd, launchProfilePath)
+	}
 	proofReadyPath := ""
-	if params.CwdWriteProof != "" {
+	proofToken := params.CwdWriteProof
+	if proofToken == "" {
+		proofToken = params.DirWriteProof
+	}
+	if proofToken != "" {
 		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
 		if readyErr != nil {
 			return readyErr
 		}
 		defer cleanupProofReady()
 		proofReadyPath = path
-		harnessCmd = guardHarnessCommandWithCwdProof(harnessCmd, params.CwdWriteProof, proofReadyPath)
+		harnessCmd = guardHarnessCommandWithDirProof(
+			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", params.GitWorktreeWriteDirs)
 	}
 
 	// Create the detached tmux session running the harness command.
@@ -690,6 +731,9 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
+	// The pane shell now owns normal profile cleanup after Codex exits. Until
+	// this point any launch/readiness failure is cleaned by the parent defer.
+	launchProfileOwnedByPane = launchProfilePath != ""
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 
@@ -751,16 +795,32 @@ func runNew(params *NewParams) error {
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
-func claudeGitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode string) []string {
-	if harnessName != harness.DefaultName || sandboxMode == harness.ClaudeSandboxOff ||
-		!params.CodexGitCommonDirPinned || params.CodexGitCommonDir == "" {
+func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd string) []string {
+	if !spawnSandboxUsesGitWriteDirs(harnessName, sandboxMode) {
 		return nil
+	}
+	if params.GitWorktreeWriteDirsPinned {
+		return append([]string(nil), params.GitWorktreeWriteDirs...)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	return harness.GitWorktreeWriteDirs(params.CodexGitCommonDir, home)
+	commonDir := params.CodexGitCommonDir
+	if !params.CodexGitCommonDirPinned {
+		commonDir, err = harness.GitCommonDir(cwd)
+		if err != nil {
+			return nil
+		}
+	}
+	return harness.GitWorktreeWriteDirs(commonDir, home)
+}
+
+func spawnSandboxUsesGitWriteDirs(harnessName, sandboxMode string) bool {
+	if harnessName == harness.CodexName {
+		return sandboxMode == harness.SandboxManagedProfile
+	}
+	return harnessName == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff
 }
 
 func validateCodexGitCommonDirPin(params *NewParams) error {
@@ -771,25 +831,72 @@ func validateCodexGitCommonDirPin(params *NewParams) error {
 	if !params.CodexGitCommonDirPinned {
 		return fmt.Errorf("internal Codex git-common-dir grant requires a pinned result")
 	}
+	if params.CwdWriteProof == "" && params.DirWriteProof == "" {
+		return fmt.Errorf("internal Codex git-common-dir grant requires a daemon write proof")
+	}
 	if !filepath.IsAbs(params.CodexGitCommonDir) {
 		return fmt.Errorf("internal Codex git-common-dir grant must be absolute")
 	}
 	return nil
 }
 
-func ensureCodexManagedProfile(params *NewParams, cwd string) error {
-	var err error
-	if params.CodexGitCommonDirPinned && params.CodexGitCommonDir != "" {
-		_, err = harness.EnsureCodexAgentProfileForGitCommonDir(params.CodexGitCommonDir)
-	} else if params.CodexGitCommonDirPinned {
-		_, err = harness.EnsureCodexAgentProfile()
-	} else {
-		_, err = harness.EnsureCodexAgentProfileForCwd(cwd)
+func validateGitWorktreeWriteDirPins(params *NewParams) error {
+	if len(params.GitWorktreeWriteDirs) > 0 && !params.GitWorktreeWriteDirsPinned {
+		return fmt.Errorf("internal Git worktree write-dir grants require a pinned result")
 	}
-	if err != nil {
-		return fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+	if len(params.GitWorktreeWriteDirs) > 0 && params.CwdWriteProof == "" && params.DirWriteProof == "" {
+		return fmt.Errorf("internal Git worktree write-dir grants require a daemon write proof")
 	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(params.GitWorktreeWriteDirs))
+	for _, dir := range params.GitWorktreeWriteDirs {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "." || !filepath.IsAbs(dir) {
+			return fmt.Errorf("internal Git worktree write-dir grant must be absolute")
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			out = append(out, dir)
+		}
+	}
+	params.GitWorktreeWriteDirs = out
 	return nil
+}
+
+func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string, string, error) {
+	var writeDirs []string
+	if params.GitWorktreeWriteDirsPinned {
+		writeDirs = append([]string(nil), params.GitWorktreeWriteDirs...)
+	} else if params.CodexGitCommonDirPinned && params.CodexGitCommonDir != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", err
+		}
+		writeDirs = harness.GitWorktreeWriteDirs(params.CodexGitCommonDir, home)
+	} else if params.CodexGitCommonDirPinned {
+		writeDirs = nil
+	} else {
+		commonDir, err := harness.GitCommonDir(cwd)
+		if err != nil {
+			return "", "", err
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", err
+		}
+		writeDirs = harness.GitWorktreeWriteDirs(commonDir, home)
+	}
+	profileName, path, err := harness.EnsureCodexAgentLaunchProfile(writeDirs, launchID)
+	if err != nil {
+		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+	}
+	return profileName, path, nil
+}
+
+func commandWithFileCleanup(cmd, path string) string {
+	statusVar := "tclaude_launch_status"
+	return cmd + "; " + statusVar + "=$?; rm -f -- " + clcommon.ShellQuoteArg(path) +
+		"; exit $" + statusVar
 }
 
 // The CC launch-command builder lives behind the harness seam now —
@@ -850,21 +957,31 @@ func isValidSpawnCwdProofToken(proof string) bool {
 	return true
 }
 
-// guardHarnessCommandWithCwdProof prefixes the harness command with a marker
-// check performed by the shell tmux starts after tmux has chdir'd the pane. At
-// that point the shell's cwd is an inode, not a future path lookup: a path swap
-// before launch lands in a directory without the unpredictable marker and the
-// harness never starts.
-func guardHarnessCommandWithCwdProof(harnessCmd, proof, readyPath string) string {
+// guardHarnessCommandWithDirProof prefixes the harness command with marker
+// checks performed by the shell tmux starts. The relative cwd check binds to
+// tmux's already-established directory inode. Every extra permission root is
+// also required to remain canonical and carry the same unpredictable marker,
+// so the child never consumes a path substituted after daemon verification.
+func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
 		return "printf '%s' " + clcommon.ShellQuoteArg("error:"+reason) + " > " + ready + "; exit 126"
 	}
-	return "tclaude_cwd_proof=" + clcommon.ShellQuoteArg(marker) + "; " +
-		"if [ ! -f \"$tclaude_cwd_proof\" ] || [ -L \"$tclaude_cwd_proof\" ] || [ -s \"$tclaude_cwd_proof\" ]; then " +
-		"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; " + fail("proof") + "; fi; " +
-		"printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
+	guard := ""
+	if checkCwd {
+		guard = "tclaude_cwd_proof=" + clcommon.ShellQuoteArg(marker) + "; " +
+			"if [ ! -f \"$tclaude_cwd_proof\" ] || [ -L \"$tclaude_cwd_proof\" ] || [ -s \"$tclaude_cwd_proof\" ]; then " +
+			"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; " + fail("proof") + "; fi; "
+	}
+	for _, dir := range dirs {
+		quotedDir := clcommon.ShellQuoteArg(dir)
+		quotedMarker := clcommon.ShellQuoteArg(filepath.Join(dir, marker))
+		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
+			" ] || [ ! -f " + quotedMarker + " ] || [ -L " + quotedMarker + " ] || [ -s " + quotedMarker + " ]; then " +
+			"echo 'tclaude: repository write proof changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+	}
+	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }
 
 func newSpawnCwdReadinessFile() (string, func(), error) {

@@ -281,6 +281,27 @@ func reassertDirWriteProof(dirs []string) *spawnFailure {
 	return nil
 }
 
+func canonicalizeRepositoryWriteDirs(dirs, proofDirs []string, proofToken string) ([]string, *spawnFailure) {
+	proved := map[string]bool{}
+	for _, dir := range proofDirs {
+		proved[dir] = true
+	}
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusForbidden, "write_proof_failed",
+				fmt.Sprintf("repository write directory %s changed before launch: %v", dir, err)}
+		}
+		if strings.TrimSpace(proofToken) != "" && !proved[real] {
+			return nil, &spawnFailure{http.StatusForbidden, "write_proof_failed",
+				fmt.Sprintf("repository write directory %s resolved to unproved path %s", dir, real)}
+		}
+		out = appendUniqueDirs(out, real)
+	}
+	return out, nil
+}
+
 func cleanupDirWriteProofMarkers(token string, dirs []string) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -375,10 +396,6 @@ func requireTemplateDirWriteProof(w http.ResponseWriter, caller, token, cwd, wor
 	if perAgentWorktreeParent != "" && perAgentWorktreeParent != cwd &&
 		perAgentWorktreeParent != worktreePath && perAgentWorktreeParent != repo {
 		dirs = append(dirs, perAgentWorktreeParent)
-	}
-	if codexGitCommonDir != "" && codexGitCommonDir != cwd && codexGitCommonDir != worktreePath &&
-		codexGitCommonDir != repo && codexGitCommonDir != perAgentWorktreeParent {
-		dirs = append(dirs, codexGitCommonDir)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(codexGitCommonDir, home)...)

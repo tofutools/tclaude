@@ -68,6 +68,9 @@ type SpawnArgs struct {
 	// closing pathname-swap races between daemon validation and launch. Fresh
 	// agent spawn only; empty on human launches and resumes.
 	CwdWriteProof string
+	// DirWriteProof is the same daemon challenge token when only extra
+	// repository roots (not cwd) require child-side marker verification.
+	DirWriteProof string
 
 	// CodexGitCommonDir is the historical name for the daemon-pinned Git common
 	// dir that drives repository write grants for both harnesses: the managed
@@ -78,6 +81,14 @@ type SpawnArgs struct {
 	// when the path is empty.
 	CodexGitCommonDir       string
 	CodexGitCommonDirPinned bool
+
+	// GitWorktreeWriteDirs are the daemon-proofed, symlink-resolved repository
+	// permission roots. GitWorktreeWriteDirsPinned distinguishes an intentional
+	// empty set from a direct human launch that may derive roots from cwd.
+	// CwdWriteProof's marker must exist in every listed root before the harness
+	// starts, so the child consumes exactly the paths the daemon verified.
+	GitWorktreeWriteDirs       []string
+	GitWorktreeWriteDirsPinned bool
 
 	// Effort is the reasoning-effort flag; "" omits --effort. Resume surfaces
 	// pass the predecessor's inherited effort so the agent stays on it

@@ -152,7 +152,9 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Action        string `json:"action"`
 		Detail        string `json:"detail,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
+		func(token string) any { return withWriteProofToken(nil, token) },
+		&resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

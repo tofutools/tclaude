@@ -1,13 +1,17 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -41,6 +45,13 @@ func TestCrossAgentAskHuman_NoHeaderStillRefuses(t *testing.T) {
 	// agent.reincarnate slug. The default newFlow human path bypasses
 	// permissions, so we route as an agent peer.
 	const callerConv = "cccc-1111-2222-3333-4444"
+	f.HaveMember("alpha", callerConv)
+	f.HaveAliveSession(callerConv, "caller-open", "tmux-caller-open", f.World.HomeDir)
+	callerSession, err := db.LoadSession("caller-open")
+	require.NoError(t, err)
+	callerSession.Harness = harness.DefaultName
+	callerSession.SandboxMode = harness.ClaudeSandboxOff
+	require.NoError(t, db.SaveSession(callerSession))
 	r := testharness.JSONRequest(t, http.MethodPost,
 		"/v1/agent/"+targetConv+"/reincarnate", map[string]any{})
 	r = agentd.AsAgentPeer(r, callerConv)
@@ -81,6 +92,30 @@ func TestCrossAgentAskHuman_HeaderAndApprovalAllowsCall(t *testing.T) {
 	r.Header.Set("X-Tclaude-Ask-Human", "30s")
 	r = agentd.AsAgentPeer(r, callerConv)
 	rec := testharness.Serve(f.Mux, r)
+	var challenge struct {
+		Code       string `json:"code"`
+		WriteProof struct {
+			Token    string   `json:"token"`
+			Filename string   `json:"filename"`
+			Dirs     []string `json:"dirs"`
+		} `json:"write_proof"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &challenge))
+	require.Equal(t, "write_proof_required", challenge.Code, "body=%s", rec.Body.String())
+	for _, dir := range challenge.WriteProof.Dirs {
+		marker := filepath.Join(dir, challenge.WriteProof.Filename)
+		require.NoError(t, os.WriteFile(marker, nil, 0o600))
+		t.Cleanup(func() { _ = os.Remove(marker) })
+	}
+	r = testharness.JSONRequest(t, http.MethodPost,
+		"/v1/agent/"+targetConv+"/reincarnate",
+		map[string]any{
+			"follow_up":         "fresh start",
+			"write_proof_token": challenge.WriteProof.Token,
+		})
+	r.Header.Set("X-Tclaude-Ask-Human", "30s")
+	r = agentd.AsAgentPeer(r, callerConv)
+	rec = testharness.Serve(f.Mux, r)
 	require.Equal(t, http.StatusOK, rec.Code,
 		"expected 200 after popup-approve, body=%s", rec.Body.String())
 	// reincarnate orchestration ran: there should be a succession row

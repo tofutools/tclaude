@@ -265,17 +265,34 @@ func livePanePID(tmuxSession string) int {
 // — resume is idempotent. The "ensure my team is up" reconciliation
 // the TODO design described.
 func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requireGroupPermission(w, r, PermGroupsResume, g); !ok {
+	caller, ok := requireGroupPermission(w, r, PermGroupsResume, g)
+	if !ok {
 		return
+	}
+	var body struct {
+		WriteProofToken string `json:"write_proof_token"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
 	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, caller, body.WriteProofToken, memberConvIDs(members))
+	if !proofOK {
+		return
+	}
+	if proofToken != "" {
+		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+	}
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	for _, m := range members {
-		res := resumeOneConv(m.ConvID)
+		res := resumeOneConvWithGrant(m.ConvID, false, grants[m.ConvID], proofToken, proofDirs)
 		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
@@ -364,7 +381,107 @@ func resumeOneConv(convID string) memberOpResult {
 // confirms. When false, a missing cwd short-circuits to `error:missing_cwd`
 // instead of spawning a child that would wedge at startup.
 func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResult {
+	return resumeOneConvWithGrant(convID, recreateMissingDir, nil, "", nil)
+}
+
+type resumeGrant struct {
+	Cwd          string
+	GitCommonDir string
+	WriteDirs    []string
+	// SkipOnline binds the proof-time online snapshot. An agent caller may not
+	// turn a member that needed no proof while online into an unproved launch if
+	// that pane exits later in the same bulk-resume request.
+	SkipOnline bool
+}
+
+func memberConvIDs(members []*db.AgentGroupMember) []string {
+	ids := make([]string, 0, len(members))
+	for _, member := range members {
+		ids = append(ids, member.ConvID)
+	}
+	return ids
+}
+
+func requireResumeWriteProofs(w http.ResponseWriter, caller, token string, convIDs []string) (map[string]*resumeGrant, string, []string, bool) {
+	if isHumanCloneCaller(caller) {
+		return nil, "", nil, true
+	}
+	grants := map[string]*resumeGrant{}
+	var dirs []string
+	for _, convID := range convIDs {
+		if convID == "" {
+			continue
+		}
+		if isConvOnline(convID) {
+			grants[convID] = &resumeGrant{SkipOnline: true}
+			continue
+		}
+		cwd, _, _, harnessName, ok := resolveConvLaunchMetadata(convID)
+		if !ok {
+			continue
+		}
+		missing, err := launchDirMissing(cwd)
+		if err != nil || missing {
+			// The ordinary resume path reports missing_cwd without spawning.
+			// Agent callers may not use the daemon to recreate it (the handler
+			// rejects that opt-in), so there is no grant to prove here.
+			continue
+		}
+		sandboxMode := sandboxForHarness(harnessName)
+		if !childSandboxGrantsDirWrite(harnessName, sandboxMode) {
+			continue
+		}
+		commonDir, err := spawnGitCommonDir(harnessName, sandboxMode, cwd)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return nil, "", nil, false
+		}
+		grant := &resumeGrant{Cwd: cwd, GitCommonDir: commonDir}
+		if spawnUsesPinnedGitCommonDir(harnessName, sandboxMode) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return nil, "", nil, false
+			}
+			grant.WriteDirs = harness.GitWorktreeWriteDirs(commonDir, home)
+		}
+		grants[convID] = grant
+		dirs = appendUniqueDirs(dirs, cwd)
+		dirs = appendUniqueDirs(dirs, grant.WriteDirs...)
+	}
+	if len(dirs) == 0 {
+		return grants, "", nil, true
+	}
+	resolved, ok := requireDirWriteProof(w, caller, token, dirs)
+	if !ok {
+		return nil, "", nil, false
+	}
+	if resolved == nil {
+		return nil, "", nil, true
+	}
+	for _, grant := range grants {
+		if v := resolved[grant.Cwd]; v != "" {
+			grant.Cwd = v
+		}
+		for i, dir := range grant.WriteDirs {
+			if v := resolved[dir]; v != "" {
+				grant.WriteDirs[i] = v
+			}
+		}
+	}
+	proofDirs := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		proofDirs = appendUniqueDirs(proofDirs, resolved[dir])
+	}
+	return grants, strings.TrimSpace(token), proofDirs, true
+}
+
+func resumeOneConvWithGrant(convID string, recreateMissingDir bool, grant *resumeGrant, proofToken string, proofDirs []string) memberOpResult {
 	res := memberOpResult{ConvID: convID}
+	if grant != nil && grant.SkipOnline {
+		res.Action = "skipped:already_online"
+		return res
+	}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
 		return res
@@ -386,6 +503,9 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 		res.Action = "error"
 		res.Detail = "no resumable session metadata for this agent (no sessions row, conversation index row, or harness-native conversation); delete/recreate the orphaned agent or restore it from a real conversation"
 		return res
+	}
+	if grant != nil {
+		cwd = grant.Cwd
 	}
 	// The recorded launch dir may have been deleted since the agent last ran.
 	// Spawning `session new -r` into a non-existent cwd leaves the child
@@ -428,18 +548,50 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 		res.Detail = gerr.Error()
 		return res
 	}
+	var gitWriteDirs []string
+	if grant != nil {
+		codexGitCommonDir = grant.GitCommonDir
+		gitWriteDirs = grant.WriteDirs
+	} else if spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox) {
+		if home, err := os.UserHomeDir(); err == nil {
+			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+		}
+	}
+	if fail := reassertDirWriteProof(proofDirs); fail != nil {
+		res.Action = "error"
+		res.Detail = fail.Msg
+		return res
+	}
+	gitWriteDirs, grantFail := canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
+	if grantFail != nil {
+		res.Action = "error"
+		res.Detail = grantFail.Msg
+		return res
+	}
+	exactGrantPinned := spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox) && proofToken != ""
+	if !exactGrantPinned {
+		gitWriteDirs = nil
+		codexGitCommonDir = ""
+	}
+	cwdProof := ""
+	if grant != nil {
+		cwdProof = proofToken
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:                  convID,
-		Cwd:                     cwd,
-		Effort:                  effort,
-		Model:                   model,
-		Harness:                 harnessName,
-		Sandbox:                 relaunchSandbox,
-		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: spawnUsesPinnedGitCommonDir(harnessName, relaunchSandbox),
-		Approval:                approvalForHarness(harnessName),
-		AskUserQuestionTimeout:  askTimeoutForRelaunch(convID),
-		RemoteControl:           remoteControl,
+		ConvID:                     convID,
+		Cwd:                        cwd,
+		CwdWriteProof:              cwdProof,
+		Effort:                     effort,
+		Model:                      model,
+		Harness:                    harnessName,
+		Sandbox:                    relaunchSandbox,
+		CodexGitCommonDir:          codexGitCommonDir,
+		CodexGitCommonDirPinned:    exactGrantPinned,
+		GitWorktreeWriteDirs:       gitWriteDirs,
+		GitWorktreeWriteDirsPinned: exactGrantPinned,
+		Approval:                   approvalForHarness(harnessName),
+		AskUserQuestionTimeout:     askTimeoutForRelaunch(convID),
+		RemoteControl:              remoteControl,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1099,12 +1251,36 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	if !ok {
 		return
 	}
+	// Recreating a missing path is a daemon-side mkdir with the human's
+	// filesystem authority. Keep that opt-in human-only; an agent cannot prove
+	// write access inside a directory that does not exist.
+	recreate := r.URL.Query().Get("recreate") == "1"
+	if recreate && !isHumanCloneCaller(caller) {
+		writeError(w, http.StatusForbidden, "recreate_dir_restricted",
+			"agent-initiated resume may not recreate a missing launch directory; ask the human to run resume --recreate-dir")
+		return
+	}
+	var body struct {
+		WriteProofToken string `json:"write_proof_token"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+	}
+	grants, proofToken, proofDirs, proofOK := requireResumeWriteProofs(w, caller, body.WriteProofToken, []string{targetConv})
+	if !proofOK {
+		return
+	}
+	if proofToken != "" {
+		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
+	}
 	// ?recreate=1 opts into recreating a deleted launch dir empty before the
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
 	// Absent it, a vanished cwd comes back as `error:missing_cwd` so the caller
 	// can decide.
-	recreate := r.URL.Query().Get("recreate") == "1"
-	res := resumeOneConvRecreate(targetConv, recreate)
+	res := resumeOneConvWithGrant(targetConv, recreate, grants[targetConv], proofToken, proofDirs)
 	resp := map[string]any{
 		"conv_id": res.ConvID,
 		"action":  res.Action,
@@ -1604,6 +1780,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 					codexGitCommonDir = v
 				}
 			}
+			for i, dir := range gitWorktreeWriteDirs {
+				if v := resolved[dir]; v != "" {
+					gitWorktreeWriteDirs[i] = v
+				}
+			}
 			// Carry the verified, symlink-resolved dirs to executeSpawn, which
 			// re-asserts they are still canonical immediately before the fork —
 			// closing the window between verification here and the child's
@@ -1748,39 +1929,41 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
-		Name:                    body.Name,
-		Role:                    body.Role,
-		Descr:                   body.Descr,
-		TaskURL:                 strings.TrimSpace(body.TaskURL),
-		TaskLabel:               strings.TrimSpace(body.TaskLabel),
-		InitialMessage:          body.InitialMessage,
-		Attachments:             attachments,
-		Cwd:                     cwd,
-		WorktreePath:            worktreePath,
-		WorktreeBranch:          worktreeBranch,
-		DirWriteProofDirs:       proofDirs,
-		DirWriteProofToken:      proofToken,
-		CwdWriteProofToken:      proofToken,
-		CleanupDirWriteProof:    true,
-		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: codexGitCommonDirPinned,
-		AutoFocus:               body.AutoFocus,
-		Effort:                  effort,
-		Model:                   model,
-		Harness:                 h.Name,
-		SandboxMode:             sandboxMode,
-		AskUserQuestionTimeout:  askTimeout,
-		ApprovalPolicy:          approvalPolicy,
-		AutoReview:              autoReview,
-		AutoReviewSet:           overlayState.autoReviewSet,
-		TrustDir:                trustDir,
-		TrustDirSet:             overlayState.trustDirSet,
-		RemoteControl:           remoteControl,
-		ReplyToConv:             replyToConv,
-		SpawnedByConv:           spawnerConvID,
-		IsOwner:                 body.IsOwner,
-		PermissionOverrides:     permOverrides,
-		Timeout:                 timeout,
+		Name:                       body.Name,
+		Role:                       body.Role,
+		Descr:                      body.Descr,
+		TaskURL:                    strings.TrimSpace(body.TaskURL),
+		TaskLabel:                  strings.TrimSpace(body.TaskLabel),
+		InitialMessage:             body.InitialMessage,
+		Attachments:                attachments,
+		Cwd:                        cwd,
+		WorktreePath:               worktreePath,
+		WorktreeBranch:             worktreeBranch,
+		DirWriteProofDirs:          proofDirs,
+		DirWriteProofToken:         proofToken,
+		CwdWriteProofToken:         proofToken,
+		CleanupDirWriteProof:       true,
+		CodexGitCommonDir:          codexGitCommonDir,
+		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
+		GitWorktreeWriteDirs:       gitWorktreeWriteDirs,
+		GitWorktreeWriteDirsPinned: codexGitCommonDirPinned,
+		AutoFocus:                  body.AutoFocus,
+		Effort:                     effort,
+		Model:                      model,
+		Harness:                    h.Name,
+		SandboxMode:                sandboxMode,
+		AskUserQuestionTimeout:     askTimeout,
+		ApprovalPolicy:             approvalPolicy,
+		AutoReview:                 autoReview,
+		AutoReviewSet:              overlayState.autoReviewSet,
+		TrustDir:                   trustDir,
+		TrustDirSet:                overlayState.trustDirSet,
+		RemoteControl:              remoteControl,
+		ReplyToConv:                replyToConv,
+		SpawnedByConv:              spawnerConvID,
+		IsOwner:                    body.IsOwner,
+		PermissionOverrides:        permOverrides,
+		Timeout:                    timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -1875,9 +2058,11 @@ type spawnParams struct {
 	CleanupDirWriteProof bool
 	// Historical field name: both the managed Codex profile and Claude Code's
 	// per-session allowWrite overlay consume this pinned repository layout.
-	CodexGitCommonDir       string
-	CodexGitCommonDirPinned bool
-	AutoFocus               bool
+	CodexGitCommonDir          string
+	CodexGitCommonDirPinned    bool
+	GitWorktreeWriteDirs       []string
+	GitWorktreeWriteDirsPinned bool
+	AutoFocus                  bool
 	// Effort is the validated Claude reasoning effort to forward to the
 	// new session's `tclaude session new --effort`, or "" to omit it.
 	Effort string
@@ -2349,6 +2534,26 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.CodexGitCommonDir = gitCommonDir
 		p.CodexGitCommonDirPinned = true
 	}
+	if p.CodexGitCommonDirPinned && !p.GitWorktreeWriteDirsPinned {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		p.GitWorktreeWriteDirs = harness.GitWorktreeWriteDirs(p.CodexGitCommonDir, home)
+		p.GitWorktreeWriteDirsPinned = true
+	}
+	if p.GitWorktreeWriteDirsPinned {
+		var fail *spawnFailure
+		p.GitWorktreeWriteDirs, fail = canonicalizeRepositoryWriteDirs(
+			p.GitWorktreeWriteDirs, p.DirWriteProofDirs, p.DirWriteProofToken)
+		if fail != nil {
+			return nil, fail
+		}
+	}
+	if strings.TrimSpace(p.DirWriteProofToken) == "" {
+		p.GitWorktreeWriteDirs = nil
+		p.GitWorktreeWriteDirsPinned = false
+	}
 	autoTrustSiblingWorktree, err := defaultSiblingWorktreeTrust(p.Harness, p.Cwd, p.CodexGitCommonDir)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
@@ -2363,6 +2568,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if fail := spawnSandboxLineageFailure(p.SpawnedByConv, p.Harness, p.SandboxMode); fail != nil {
 		return nil, fail
 	}
+	if strings.TrimSpace(p.DirWriteProofToken) == "" {
+		p.CodexGitCommonDir = ""
+		p.CodexGitCommonDirPinned = false
+	}
 
 	// Generate a label that's unlikely to collide with existing
 	// session IDs: crypto-random hex (like GenerateSessionID()), with
@@ -2371,20 +2580,22 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	label := generateSpawnLabel()
 
 	spawnArgs := clcommon.SpawnArgs{
-		Label:                   label,
-		Cwd:                     p.Cwd,
-		CwdWriteProof:           p.CwdWriteProofToken,
-		CodexGitCommonDir:       p.CodexGitCommonDir,
-		CodexGitCommonDirPinned: p.CodexGitCommonDirPinned,
-		Effort:                  p.Effort,
-		Model:                   p.Model,
-		Harness:                 p.Harness,
-		Sandbox:                 p.SandboxMode,
-		AskUserQuestionTimeout:  p.AskUserQuestionTimeout,
-		Approval:                p.ApprovalPolicy,
-		AutoReview:              p.AutoReview,
-		TrustDir:                p.TrustDir,
-		RemoteControl:           p.RemoteControl,
+		Label:                      label,
+		Cwd:                        p.Cwd,
+		CwdWriteProof:              p.CwdWriteProofToken,
+		CodexGitCommonDir:          p.CodexGitCommonDir,
+		CodexGitCommonDirPinned:    p.CodexGitCommonDirPinned,
+		GitWorktreeWriteDirs:       p.GitWorktreeWriteDirs,
+		GitWorktreeWriteDirsPinned: p.GitWorktreeWriteDirsPinned,
+		Effort:                     p.Effort,
+		Model:                      p.Model,
+		Harness:                    p.Harness,
+		Sandbox:                    p.SandboxMode,
+		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
+		Approval:                   p.ApprovalPolicy,
+		AutoReview:                 p.AutoReview,
+		TrustDir:                   p.TrustDir,
+		RemoteControl:              p.RemoteControl,
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -3634,11 +3845,20 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
+	if a.DirWriteProof != "" {
+		args = append(args, "--dir-write-proof", a.DirWriteProof)
+	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
 	}
 	if a.CodexGitCommonDirPinned {
 		args = append(args, "--codex-git-common-dir-pinned")
+	}
+	for _, dir := range a.GitWorktreeWriteDirs {
+		args = append(args, "--git-worktree-write-dir", dir)
+	}
+	if a.GitWorktreeWriteDirsPinned {
+		args = append(args, "--git-worktree-write-dirs-pinned")
 	}
 	// Launch-enrollment fields (set only on the launch-args spawn path, CC):
 	// the preset conv-id, display name, and welcome ride in as launch flags so
@@ -3706,11 +3926,20 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
+	if a.DirWriteProof != "" {
+		args = append(args, "--dir-write-proof", a.DirWriteProof)
+	}
 	if a.CodexGitCommonDir != "" {
 		args = append(args, "--codex-git-common-dir", a.CodexGitCommonDir)
 	}
 	if a.CodexGitCommonDirPinned {
 		args = append(args, "--codex-git-common-dir-pinned")
+	}
+	for _, dir := range a.GitWorktreeWriteDirs {
+		args = append(args, "--git-worktree-write-dir", dir)
+	}
+	if a.GitWorktreeWriteDirsPinned {
+		args = append(args, "--git-worktree-write-dirs-pinned")
 	}
 	if a.Effort != "" {
 		args = append(args, "--effort", a.Effort)
@@ -3905,7 +4134,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
-	if a.CwdWriteProof != "" {
+	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		if err := cmd.Wait(); err != nil {
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
@@ -3961,7 +4190,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
-	if a.CwdWriteProof != "" {
+	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		if err := cmd.Wait(); err != nil {
 			slog.Error("resume subprocess exited with error",
 				"conv", convID, "pid", pid, "err", err,

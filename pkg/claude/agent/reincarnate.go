@@ -118,7 +118,7 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
-	body := map[string]string{"follow_up": followUp}
+	body := map[string]any{"follow_up": followUp}
 	path := "/v1/whoami/reincarnate"
 	if target != "" {
 		path = "/v1/agent/" + url.PathEscape(target) + "/reincarnate"
@@ -136,7 +136,9 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 		MessageID     int64    `json:"message_id,omitempty"`
 		Note          string   `json:"note,omitempty"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
+		func(token string) any { return withWriteProofToken(body, token) },
+		&resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

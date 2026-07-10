@@ -166,6 +166,8 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(cc.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnDirWriteProof(cc.ConvID, args.DirWriteProof)
+	s.w.RecordSpawnGitWorktreeWriteDirs(cc.ConvID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(cc.ConvID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(cc.ConvID, args.CodexGitCommonDirPinned)
 	s.w.RecordSpawnName(cc.ConvID, args.Name)
@@ -232,6 +234,8 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnDirWriteProof(convID, args.DirWriteProof)
+	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
@@ -255,16 +259,33 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 }
 
 func checkSpawnDirProofMarker(args clcommon.SpawnArgs) error {
-	if args.CwdWriteProof == "" {
+	proof := args.CwdWriteProof
+	if proof == "" {
+		proof = args.DirWriteProof
+	}
+	if proof == "" {
 		return nil
 	}
-	marker := filepath.Join(args.Cwd, clcommon.SpawnDirWriteProofPrefix+args.CwdWriteProof)
-	info, err := os.Lstat(marker)
-	if err != nil {
-		return fmt.Errorf("spawn dir proof marker: %w", err)
+	check := func(dir string) error {
+		marker := filepath.Join(dir, clcommon.SpawnDirWriteProofPrefix+proof)
+		info, err := os.Lstat(marker)
+		if err != nil {
+			return fmt.Errorf("spawn dir proof marker in %s: %w", dir, err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != 0 {
+			return fmt.Errorf("spawn dir proof marker in %s is not an empty regular file", dir)
+		}
+		return nil
 	}
-	if !info.Mode().IsRegular() || info.Size() != 0 {
-		return fmt.Errorf("spawn dir proof marker is not an empty regular file")
+	if args.CwdWriteProof != "" {
+		if err := check(args.Cwd); err != nil {
+			return err
+		}
+	}
+	for _, dir := range args.GitWorktreeWriteDirs {
+		if err := check(dir); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -312,6 +333,8 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(cx.ConvID, args.CwdWriteProof)
+	s.w.RecordSpawnDirWriteProof(cx.ConvID, args.DirWriteProof)
+	s.w.RecordSpawnGitWorktreeWriteDirs(cx.ConvID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(cx.ConvID, args.CodexGitCommonDirPinned)
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
@@ -363,6 +386,8 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
+	s.w.RecordSpawnDirWriteProof(convID, args.DirWriteProof)
+	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
 	label := generateResumeLabel()
@@ -533,6 +558,11 @@ func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 // `agent groups members`, and the dashboard.
 func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch string) {
 	f.T.Helper()
+	// A live pane necessarily has an existing cwd. Most flow tests use a
+	// synthetic /tmp path, so materialize it when the test user can; paths such
+	// as /work may be intentionally outside the test sandbox and remain a
+	// best-effort simulation.
+	f.materializeTestCwd(cwd)
 	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
 	cc.GitBranch = branch
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
@@ -572,6 +602,7 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 // rename (ThreadTitle).
 func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *CodexSim {
 	f.T.Helper()
+	f.materializeTestCwd(cwd)
 	cx := NewCodexSimWithID(f.T, f.World.HomeDir, convID, cwd)
 	if err := cx.Start(); err != nil {
 		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
@@ -589,6 +620,22 @@ func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *Co
 	f.World.Tmux.Register(tmuxSession, cwd, cx)
 	f.World.Codexes.Set(label, cx)
 	return cx
+}
+
+func (f *Flow) materializeTestCwd(cwd string) {
+	f.T.Helper()
+	if _, err := os.Stat(cwd); err == nil {
+		return
+	} else if !os.IsNotExist(err) {
+		return
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		return // some tests deliberately model an inaccessible absolute path
+	}
+	// Non-recursive on purpose: if another test/process placed anything in this
+	// shared absolute path after we created it, leave the directory behind
+	// rather than deleting data we do not own.
+	f.T.Cleanup(func() { _ = os.Remove(cwd) })
 }
 
 // MarkOffline flips a tmux session off (handler side believes it's

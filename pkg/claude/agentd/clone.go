@@ -58,15 +58,10 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 //
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
-// proofDirs, when non-empty, are the write-proof-verified launch dirs (an
-// agent caller's cwd override); cloneSpawnOnce re-asserts they are still
-// canonical immediately before each fork, closing the verify→launch window
-// the same way executeSpawn does for spawns. nil for callers that take no
-// request-controlled cwd (export, groups-clone) and for exempt callers.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofDirs []string, codexGitCommonDir string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
-	if proofToken != "" {
-		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
-	}
+// proofDirs, when non-empty, are the write-proof-verified cwd and/or repository
+// roots. cloneSpawnOnce re-asserts they are still canonical immediately before
+// each fork, closing the verify→launch window the same way executeSpawn does.
+func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofCwd bool, proofDirs []string, codexGitCommonDir string, gitWriteDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
 	reassertFail := func() *cloneSpawnError {
 		if fail := reassertDirWriteProof(proofDirs); fail != nil {
 			return &cloneSpawnError{Status: fail.Status, Code: fail.Kind, Msg: fail.Msg}
@@ -84,6 +79,22 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
 	cloneSandbox := sandboxForHarness(srcHarness)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
+	if codexGitCommonDirPinned && gitWriteDirs == nil {
+		if home, err := os.UserHomeDir(); err == nil {
+			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+		}
+	}
+	var grantFail *spawnFailure
+	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
+	if grantFail != nil {
+		return "", "", "", "", &cloneSpawnError{Status: grantFail.Status, Code: grantFail.Kind, Msg: grantFail.Msg}
+	}
+	exactGrantPinned := codexGitCommonDirPinned && proofToken != ""
+	if !exactGrantPinned {
+		gitWriteDirs = nil
+		codexGitCommonDir = ""
+		codexGitCommonDirPinned = false
+	}
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
 	// (schema v97) — unlike sandbox/approval, which re-default. "" for a source
 	// that recorded none (a non-Claude or pre-column source).
@@ -98,20 +109,25 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		if fail := reassertFail(); fail != nil {
 			return "", "", "", "", fail
 		}
-		if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
-			Label:                   label,
-			Cwd:                     cwd,
-			CwdWriteProof:           proofToken,
-			Effort:                  effort,
-			Model:                   model,
-			Harness:                 srcHarness,
-			Sandbox:                 cloneSandbox,
-			CodexGitCommonDir:       codexGitCommonDir,
-			CodexGitCommonDirPinned: codexGitCommonDirPinned,
-			Approval:                approvalForHarness(srcHarness),
-			AskUserQuestionTimeout:  askTimeout,
-			RemoteControl:           remoteControl,
-		}); err != nil {
+		proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken}
+		if proofCwd {
+			proofArgs.CwdWriteProof = proofToken
+			proofArgs.DirWriteProof = ""
+		}
+		proofArgs.Label = label
+		proofArgs.Cwd = cwd
+		proofArgs.Effort = effort
+		proofArgs.Model = model
+		proofArgs.Harness = srcHarness
+		proofArgs.Sandbox = cloneSandbox
+		proofArgs.CodexGitCommonDir = codexGitCommonDir
+		proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
+		proofArgs.GitWorktreeWriteDirs = gitWriteDirs
+		proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
+		proofArgs.Approval = approvalForHarness(srcHarness)
+		proofArgs.AskUserQuestionTimeout = askTimeout
+		proofArgs.RemoteControl = remoteControl
+		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
 			return "", "", "", "", &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
@@ -154,20 +170,25 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	if fail := reassertFail(); fail != nil {
 		return "", "", "", "", fail
 	}
-	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		ConvID:                  newConv,
-		Cwd:                     cwd,
-		CwdWriteProof:           proofToken,
-		Effort:                  effort,
-		Model:                   model,
-		Harness:                 srcHarness,
-		Sandbox:                 cloneSandbox,
-		CodexGitCommonDir:       codexGitCommonDir,
-		CodexGitCommonDirPinned: codexGitCommonDirPinned,
-		Approval:                approvalForHarness(srcHarness),
-		AskUserQuestionTimeout:  askTimeout,
-		RemoteControl:           remoteControl,
-	}); err != nil {
+	proofArgs := clcommon.SpawnArgs{DirWriteProof: proofToken}
+	if proofCwd {
+		proofArgs.CwdWriteProof = proofToken
+		proofArgs.DirWriteProof = ""
+	}
+	proofArgs.ConvID = newConv
+	proofArgs.Cwd = cwd
+	proofArgs.Effort = effort
+	proofArgs.Model = model
+	proofArgs.Harness = srcHarness
+	proofArgs.Sandbox = cloneSandbox
+	proofArgs.CodexGitCommonDir = codexGitCommonDir
+	proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
+	proofArgs.GitWorktreeWriteDirs = gitWriteDirs
+	proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
+	proofArgs.Approval = approvalForHarness(srcHarness)
+	proofArgs.AskUserQuestionTimeout = askTimeout
+	proofArgs.RemoteControl = remoteControl
+	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
 		return "", "", "", "", &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
@@ -490,21 +511,20 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 			writeError(w, http.StatusInternalServerError, "io", gerr.Error())
 			return
 		}
-
-		// Dir write-proof (spawn_dir_proof.go) — a cwd override aims the
-		// clone's write access at a directory of the CALLER's choosing, so an
-		// agent caller must prove its own sandbox can write there, exactly as
-		// for a spawn. A clone that inherits the source's cwd mints no new
-		// directory authority (the target already lives there) and passes
-		// untouched, as do humans (the dashboard's clone modal / cwd picker)
-		// and clones of a no-cwd-write target (Codex read-only — the clone
-		// relaunches with the target's own harness+sandbox, so the target's
-		// recorded posture is the child posture here).
-		if caller != "" && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
-			dirs := []string{cwd}
-			if home, err := os.UserHomeDir(); err == nil {
-				dirs = appendUniqueDirs(dirs, harness.GitWorktreeWriteDirs(codexGitCommonDir, home)...)
-			}
+	}
+	var gitWriteDirs []string
+	if spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox) {
+		if home, err := os.UserHomeDir(); err == nil {
+			gitWriteDirs = harness.GitWorktreeWriteDirs(codexGitCommonDir, home)
+		}
+	}
+	// Every agent-triggered clone proves all authority the child receives,
+	// including repository roots added by the managed sandbox. Inheriting cwd
+	// alone is not an exemption: a newly installed profile may grant a broader
+	// sibling-worktree container than the source session held.
+	if !isHumanCloneCaller(caller) && childSandboxGrantsDirWrite(srcHarness, cloneSandbox) {
+		dirs := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+		if len(dirs) > 0 {
 			proofed, ok := requireDirWriteProof(w, caller, body.WriteProofToken, dirs)
 			if !ok {
 				return
@@ -514,23 +534,20 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 				if v := proofed[cwd]; v != "" {
 					cwd = v
 				}
-				if codexGitCommonDir != "" {
-					if v := proofed[codexGitCommonDir]; v != "" {
-						codexGitCommonDir = v
+				for i, dir := range gitWriteDirs {
+					if v := proofed[dir]; v != "" {
+						gitWriteDirs[i] = v
 					}
 				}
-				// Re-asserted just before the clone fork (cloneSpawnOnce), closing
-				// the verify→launch window the same way executeSpawn does.
 				proofDirs = make([]string, 0, len(dirs))
 				for _, raw := range dirs {
-					resolvedDir := raw
-					if v := proofed[raw]; v != "" {
-						resolvedDir = v
-					}
-					proofDirs = appendUniqueDirs(proofDirs, resolvedDir)
+					proofDirs = appendUniqueDirs(proofDirs, proofed[raw])
 				}
 			}
 		}
+	}
+	if proofToken != "" {
+		defer cleanupDirWriteProofMarkers(proofToken, proofDirs)
 	}
 
 	// Snapshot group membership up-front — before the rate-limit claim
@@ -607,7 +624,7 @@ func runCloneOrchestration(w http.ResponseWriter, target, caller, perm string, b
 	// model + effort (inheritedLaunchFlags; "" falls back to claude's
 	// default) — a fork should run what the original runs.
 	effort, model := inheritedLaunchFlags(oldSess.ID)
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofDirs, codexGitCommonDir)
+	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofToken != "", proofDirs, codexGitCommonDir, gitWriteDirs)
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return

@@ -32,6 +32,7 @@ func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 
 	withProof := sessionNewArgs(clcommon.SpawnArgs{
 		Label: "lbl", Cwd: "/tmp/x", CwdWriteProof: "proof_123", CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true,
+		GitWorktreeWriteDirs: []string{"/tmp/repo-parent"}, GitWorktreeWriteDirsPinned: true,
 	})
 	if i := slices.Index(withProof, "--cwd-write-proof"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "proof_123" {
 		t.Fatalf("cwd proof must ride into the forked session launcher, got %v", withProof)
@@ -42,6 +43,12 @@ func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	if !slices.Contains(withProof, "--codex-git-common-dir-pinned") {
 		t.Fatalf("git common dir pin-presence must ride into the forked session launcher, got %v", withProof)
 	}
+	if i := slices.Index(withProof, "--git-worktree-write-dir"); i < 0 || i+1 >= len(withProof) || withProof[i+1] != "/tmp/repo-parent" {
+		t.Fatalf("exact repository write root must ride into the forked session launcher, got %v", withProof)
+	}
+	if !slices.Contains(withProof, "--git-worktree-write-dirs-pinned") {
+		t.Fatalf("repository write-root pin-presence must ride into the forked session launcher, got %v", withProof)
+	}
 
 	pinnedEmpty := sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", CodexGitCommonDirPinned: true})
 	if slices.Contains(pinnedEmpty, "--codex-git-common-dir") || !slices.Contains(pinnedEmpty, "--codex-git-common-dir-pinned") {
@@ -49,17 +56,24 @@ func TestSessionNewArgs_InternalWriteProofFlags(t *testing.T) {
 	}
 
 	resume := sessionResumeArgs(clcommon.SpawnArgs{
-		ConvID: "conv", Cwd: "/tmp/x", CwdWriteProof: "proof_456",
+		ConvID: "conv", Cwd: "/tmp/x", DirWriteProof: "proof_456",
 		CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true,
+		GitWorktreeWriteDirs: []string{"/tmp/repo-parent"}, GitWorktreeWriteDirsPinned: true,
 	})
-	if i := slices.Index(resume, "--cwd-write-proof"); i < 0 || i+1 >= len(resume) || resume[i+1] != "proof_456" {
-		t.Fatalf("resume cwd proof must ride into clone resume launches, got %v", resume)
+	if i := slices.Index(resume, "--dir-write-proof"); i < 0 || i+1 >= len(resume) || resume[i+1] != "proof_456" {
+		t.Fatalf("resume repository proof must ride into relaunches, got %v", resume)
 	}
 	if i := slices.Index(resume, "--codex-git-common-dir"); i < 0 || i+1 >= len(resume) || resume[i+1] != "/tmp/repo/.git" {
 		t.Fatalf("resume must forward the pinned git common dir, got %v", resume)
 	}
 	if !slices.Contains(resume, "--codex-git-common-dir-pinned") {
 		t.Fatalf("resume must forward git common dir pin-presence, got %v", resume)
+	}
+	if i := slices.Index(resume, "--git-worktree-write-dir"); i < 0 || i+1 >= len(resume) || resume[i+1] != "/tmp/repo-parent" {
+		t.Fatalf("resume must forward the exact repository write root, got %v", resume)
+	}
+	if !slices.Contains(resume, "--git-worktree-write-dirs-pinned") {
+		t.Fatalf("resume must forward repository write-root pin-presence, got %v", resume)
 	}
 }
 

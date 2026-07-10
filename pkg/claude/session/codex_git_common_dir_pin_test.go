@@ -15,6 +15,7 @@ import (
 func TestCodexGitCommonDirPinValidationAllowsResume(t *testing.T) {
 	p := &NewParams{
 		Resume:                  "conv",
+		DirWriteProof:           "proof_123",
 		CodexGitCommonDir:       "/tmp/repo/.git",
 		CodexGitCommonDirPinned: true,
 	}
@@ -24,6 +25,18 @@ func TestCodexGitCommonDirPinValidationAllowsResume(t *testing.T) {
 func TestCodexGitCommonDirPinValidationRejectsPathWithoutPresence(t *testing.T) {
 	p := &NewParams{CodexGitCommonDir: "/tmp/repo/.git"}
 	require.ErrorContains(t, validateCodexGitCommonDirPin(p), "requires a pinned result")
+}
+
+func TestCodexGitCommonDirPinValidationRejectsPathWithoutProof(t *testing.T) {
+	p := &NewParams{CodexGitCommonDir: "/tmp/repo/.git", CodexGitCommonDirPinned: true}
+	require.ErrorContains(t, validateCodexGitCommonDirPin(p), "requires a daemon write proof")
+}
+
+func TestGitWorktreeWriteDirPinsRequireDaemonProof(t *testing.T) {
+	p := &NewParams{GitWorktreeWriteDirs: []string{"/tmp/repo-parent"}, GitWorktreeWriteDirsPinned: true}
+	require.ErrorContains(t, validateGitWorktreeWriteDirPins(p), "require a daemon write proof")
+	p.DirWriteProof = "proof_123"
+	require.NoError(t, validateGitWorktreeWriteDirPins(p))
 }
 
 func TestEnsureCodexManagedProfilePinnedEmptyDoesNotDeriveFromCwd(t *testing.T) {
@@ -42,18 +55,31 @@ func TestEnsureCodexManagedProfilePinnedEmptyDoesNotDeriveFromCwd(t *testing.T) 
 		PermissionProfile:       harness.CodexAgentProfile,
 		CodexGitCommonDirPinned: true,
 	}
-	require.NoError(t, ensureCodexManagedProfile(pinnedEmpty, repo))
-	profilePath, err := harness.CodexAgentProfilePath()
+	profileName, profilePath, err := ensureCodexManagedProfile(pinnedEmpty, repo, "1111111111111111")
 	require.NoError(t, err)
+	assert.Equal(t, harness.CodexAgentProfile+"-1111111111111111", profileName)
 	raw, err := os.ReadFile(profilePath)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), commonDir,
 		"pinned-empty must write the base profile instead of deriving from cwd")
 
 	unpinned := &NewParams{PermissionProfile: harness.CodexAgentProfile}
-	require.NoError(t, ensureCodexManagedProfile(unpinned, repo))
+	_, profilePath, err = ensureCodexManagedProfile(unpinned, repo, "2222222222222222")
+	require.NoError(t, err)
 	raw, err = os.ReadFile(profilePath)
 	require.NoError(t, err)
-	assert.True(t, strings.Contains(string(raw), commonDir),
+	resolvedRepo, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	assert.True(t, strings.Contains(string(raw), resolvedRepo),
 		"an intentionally unpinned direct launch still derives from cwd")
+}
+
+func TestCommandWithFileCleanupPreservesExitAndRemovesProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "launch-profile.toml")
+	require.NoError(t, os.WriteFile(path, []byte("profile"), 0o600))
+	err := exec.Command("sh", "-c", commandWithFileCleanup("sh -c 'exit 7'", path)).Run()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 7, exitErr.ExitCode())
+	assert.NoFileExists(t, path)
 }
