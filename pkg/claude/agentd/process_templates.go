@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,13 +40,14 @@ type processTemplateListView struct {
 // and deliberately does not contribute to SemanticHash. Edges are normalized
 // out of nodes[*].next so a graph editor need not reverse-engineer that shape.
 type processTemplateEditView struct {
-	Template     *model.Template   `json:"template"`
-	Edges        []model.Edge      `json:"edges,omitempty"`
-	Layout       *model.Layout     `json:"layout,omitempty"`
-	SourceHash   string            `json:"sourceHash,omitempty"`
-	SemanticHash string            `json:"semanticHash,omitempty"`
-	Source       string            `json:"source,omitempty"`
-	Diagnostics  []processEditDiag `json:"diagnostics,omitempty"`
+	Template      *model.Template   `json:"template"`
+	Edges         []model.Edge      `json:"edges,omitempty"`
+	Layout        *model.Layout     `json:"layout,omitempty"`
+	SourceHash    string            `json:"sourceHash,omitempty"`
+	SemanticHash  string            `json:"semanticHash,omitempty"`
+	Source        string            `json:"source,omitempty"`
+	Diagnostics   []processEditDiag `json:"diagnostics,omitempty"`
+	layoutPresent bool
 }
 
 type processEditDiag struct {
@@ -62,6 +64,9 @@ func handleProcessTemplates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
+	// This endpoint is loaded on an explicit dashboard tab visit, not polled.
+	// Its per-template version scans favor a simple durable store layout; add an
+	// index if template counts make this observable in real workloads.
 	records, err := fs.ListTemplates(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_templates", err.Error())
@@ -186,7 +191,14 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 		writeError(w, http.StatusBadRequest, "invalid_arg", "template.id must match the path id")
 		return
 	}
-	assembleProcessEditModel(body)
+	if err := store.ValidateTemplateID(id); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_template_invalid_id", err.Error())
+		return
+	}
+	if err := assembleProcessEditModel(body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_template_edit_model", err.Error())
+		return
+	}
 
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {
@@ -207,15 +219,15 @@ func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store
 	var conflict *store.TemplateSourceConflictError
 	if errors.As(err, &conflict) {
 		writeProcessJSON(w, http.StatusConflict, map[string]any{
-			"error":             "process_template_conflict",
-			"message":           "template head changed since it was opened",
+			"error":             "template head changed since it was opened",
+			"code":              "process_template_conflict",
 			"currentSourceHash": conflict.CurrentSourceHash,
 			"currentRef":        conflict.CurrentRef,
 		})
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
+		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
 		return
 	}
 	view, err := loadProcessTemplateEditView(r, fs, record.Ref)
@@ -241,7 +253,10 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "template is required")
 		return
 	}
-	assembleProcessEditModel(body)
+	if err := assembleProcessEditModel(body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_template_edit_model", err.Error())
+		return
+	}
 	canonical, err := model.CanonicalYAML(body.Template)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
@@ -257,7 +272,11 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 
 func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemplateEditView, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxProcessEditBody)
-	dec := json.NewDecoder(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var body processTemplateEditView
 	if err := dec.Decode(&body); err != nil {
@@ -269,20 +288,38 @@ func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemp
 		}
 		return nil, err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	_, body.layoutPresent = fields["layout"]
 	return &body, nil
 }
 
-func assembleProcessEditModel(body *processTemplateEditView) {
-	body.Template.Layout = body.Layout
+func assembleProcessEditModel(body *processTemplateEditView) error {
+	// A top-level layout is the editor wire model's authoritative value when
+	// present. For API clients that send a complete Template directly, retain
+	// template.layout when the top-level field is omitted instead of clearing it.
+	if body.layoutPresent {
+		body.Template.Layout = body.Layout
+	} else {
+		body.Layout = body.Template.Layout
+	}
 	if body.Edges == nil {
-		return
+		return nil
 	}
 	for id, node := range body.Template.Nodes {
 		node.Next = nil
 		body.Template.Nodes[id] = node
 	}
 	body.Template.Start = ""
+	seen := make(map[string]struct{}, len(body.Edges))
 	for _, edge := range body.Edges {
+		key := edge.From + "\x00" + edge.Outcome
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate edge for from %q and outcome %q", edge.From, edge.Outcome)
+		}
+		seen[key] = struct{}{}
 		if edge.From == "" {
 			if edge.Outcome == "start" {
 				body.Template.Start = edge.To
@@ -299,6 +336,7 @@ func assembleProcessEditModel(body *processTemplateEditView) {
 		node.Next[edge.Outcome] = edge.To
 		body.Template.Nodes[edge.From] = node
 	}
+	return nil
 }
 
 func loadProcessTemplateEditView(r *http.Request, fs *store.FS, ref string) (*processTemplateEditView, error) {

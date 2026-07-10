@@ -62,6 +62,17 @@ func (s *FS) SetNowForTest(now func() time.Time) func() {
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
+	return s.putTemplate(ctx, tmpl, true)
+}
+
+// PutTemplateVersion persists immutable template content without changing the
+// editor head. Run creation uses this for templates loaded from files: merely
+// instantiating an older file must not change which version editors reopen.
+func (s *FS) PutTemplateVersion(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
+	return s.putTemplate(ctx, tmpl, false)
+}
+
+func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead bool) (TemplateRecord, error) {
 	if tmpl == nil {
 		return TemplateRecord{}, fmt.Errorf("nil process template")
 	}
@@ -70,12 +81,31 @@ func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRec
 		return TemplateRecord{}, err
 	}
 	defer unlock()
+	var preservedHead TemplateRecord
+	if !moveHead {
+		preservedHead, err = s.getTemplateHeadUnlocked(ctx, tmpl.ID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return TemplateRecord{}, err
+		}
+		if preservedHead.Ref != "" {
+			// Freeze a legacy mtime-derived fallback before publishing the new
+			// version. If this write fails, the new content remains unpublished
+			// and therefore cannot become the fallback head by accident.
+			if err := s.writeTemplateHead(preservedHead); err != nil {
+				return TemplateRecord{}, err
+			}
+		}
+	}
 	record, err := s.putTemplateUnlocked(ctx, tmpl, false)
 	if err != nil {
 		return TemplateRecord{}, err
 	}
-	if err := s.writeTemplateHead(record); err != nil {
-		return TemplateRecord{}, err
+	if moveHead || preservedHead.Ref == "" {
+		// A first non-moving write still establishes a head. Later file-backed
+		// runs will preserve it through the pre-publication path above.
+		if err := s.writeTemplateHead(record); err != nil {
+			return TemplateRecord{}, err
+		}
 	}
 	return record, nil
 }
@@ -1283,6 +1313,13 @@ func safeSegment(value string) error {
 		return fmt.Errorf("path segment %q must match %s", value, safeSegmentPattern.String())
 	}
 	return nil
+}
+
+// ValidateTemplateID reports whether id is safe for use as a persisted
+// template identity. REST callers use it to classify invalid input before a
+// filesystem operation turns that client error into an apparent store fault.
+func ValidateTemplateID(id string) error {
+	return safeSegment(id)
 }
 
 func parseTemplateRef(ref string) (string, string, error) {

@@ -160,6 +160,49 @@ func TestTemplateEditorSourceCASRejectsConcurrentLayoutSave(t *testing.T) {
 	}
 }
 
+func TestPutTemplateVersionFreezesLegacyHeadBeforePublishing(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+	latest := storetest.Template()
+	latest.Description = "latest editor head"
+	latestRecord, err := fs.PutTemplate(ctx, latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headPath := filepath.Join(root, "templates", latest.ID, "head")
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the pointer path forces the pre-publication atomic head
+	// write to fail while leaving version directories otherwise writable.
+	if err := os.Mkdir(headPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	older := storetest.Template()
+	older.Description = "older file-backed version"
+	if _, err := fs.PutTemplateVersion(ctx, older); err == nil {
+		t.Fatal("expected head-freeze failure")
+	}
+	records, err := fs.ListTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Ref != latestRecord.Ref {
+		t.Fatalf("failed head freeze published a version: %#v", records)
+	}
+	if err := os.Remove(headPath); err != nil {
+		t.Fatal(err)
+	}
+	head, err := fs.GetTemplateHead(ctx, latest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head.Ref != latestRecord.Ref {
+		t.Fatalf("legacy fallback head = %s, want %s", head.Ref, latestRecord.Ref)
+	}
+}
+
 func TestTemplateGetRejectsTamperedContent(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -103,7 +105,18 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	conflictBody.SourceHash = "stale-source-hash"
 	conflictRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/release", conflictBody)
 	assert.Equal(t, http.StatusConflict, conflictRec.Code, conflictRec.Body.String())
-	assert.Contains(t, conflictRec.Body.String(), "currentSourceHash")
+	var conflict struct {
+		Code              string `json:"code"`
+		Error             string `json:"error"`
+		CurrentSourceHash string `json:"currentSourceHash"`
+		CurrentRef        string `json:"currentRef"`
+	}
+	testharness.DecodeJSON(t, conflictRec, &conflict)
+	assert.Equal(t, "process_template_conflict", conflict.Code)
+	assert.Equal(t, "template head changed since it was opened", conflict.Error)
+	assert.Equal(t, edit.SourceHash, conflict.CurrentSourceHash)
+	assert.Equal(t, latestRecord.Ref, conflict.CurrentRef)
+	assert.NotContains(t, conflictRec.Body.String(), `"message"`)
 
 	edit.Template.Description = "saved from editor"
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/release", edit)
@@ -118,6 +131,51 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.NotEqual(t, latestRecord.Ref, saved.Ref)
 	assert.NotEqual(t, edit.SourceHash, saved.SourceHash)
 	assert.NotEmpty(t, saved.SemanticHash)
+}
+
+func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	_, err = fs.PutTemplate(t.Context(), processRESTTemplate("broken-head", "before corruption", 10))
+	require.NoError(t, err)
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/broken-head", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var edit processEditResponse
+	testharness.DecodeJSON(t, getRec, &edit)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "templates", "broken-head", "head"), []byte("invalid-ref\n"), 0o644))
+
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/broken-head", edit)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"process_template_store"`)
+	assert.NotContains(t, rec.Body.String(), "process_template_unserializable")
+}
+
+func TestProcessTemplateSaveRejectsUnsafeIdentityAsClientError(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := processRESTTemplate("Bad", "unsafe identity", 10)
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/Bad", map[string]any{
+		"template": tmpl,
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"process_template_invalid_id"`)
+	assert.NotContains(t, rec.Body.String(), "process_template_store")
+}
+
+func TestProcessTemplateSaveHonorsNestedLayoutWhenTopLevelOmitted(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := processRESTTemplate("nested-layout", "complete template client", 321)
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/nested-layout", map[string]any{
+		"template": tmpl,
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	reopenRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/nested-layout", nil)
+	require.Equal(t, http.StatusOK, reopenRec.Code, reopenRec.Body.String())
+	var reopened processEditResponse
+	testharness.DecodeJSON(t, reopenRec, &reopened)
+	require.NotNil(t, reopened.Layout)
+	assert.Equal(t, float64(321), reopened.Layout.Nodes["begin"].X)
 }
 
 func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
@@ -224,6 +282,20 @@ func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/validate-me", body)
 	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
 	assert.Contains(t, saveRec.Body.String(), "unknown_target")
+}
+
+func TestProcessValidateRejectsDuplicateNormalizedEdges(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	tmpl := processRESTTemplate("duplicate-edge", "ambiguous graph", 10)
+	edges := model.NormalizeEdges(tmpl)
+	require.NotEmpty(t, edges)
+	edges = append(edges, edges[0])
+	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", processEditResponse{
+		Template: semanticProcessTemplate(tmpl), Edges: edges, Layout: tmpl.Layout,
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"process_template_edit_model"`)
+	assert.Contains(t, rec.Body.String(), "duplicate edge")
 }
 
 func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {

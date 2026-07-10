@@ -90,6 +90,54 @@ nodes:
 	}
 }
 
+func TestRunFromOlderTemplateFileDoesNotMoveEditorHead(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	root := filepath.Join(t.TempDir(), "store")
+	v1Path := writeTemplate(t, `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: stable-head
+description: first
+start: end
+nodes:
+  end:
+    type: end
+`)
+	v1Source, err := os.ReadFile(v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2Source := strings.Replace(string(v1Source), "description: first", "description: second", 1)
+	v2, err := model.Parse([]byte(v2Source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2Path := writeTemplate(t, v2Source)
+	var out bytes.Buffer
+	if err := runRun(cmd, &runParams{Template: v2Path, StoreRoot: root, RunID: "new_file_run"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2Record, err := fs.GetTemplateHead(t.Context(), v2.Template.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runRun(cmd, &runParams{Template: v1Path, StoreRoot: root, RunID: "old_file_run"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	head, err := fs.GetTemplateHead(t.Context(), "stable-head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head.Ref != v2Record.Ref {
+		t.Fatalf("editor head moved while running old file: got %s, want %s", head.Ref, v2Record.Ref)
+	}
+}
+
 func TestRunAllowProgramsPersistsOptInAndAdminAudit(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
