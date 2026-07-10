@@ -26,7 +26,7 @@ type NewParams struct {
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode, then removes it before exec. Hidden from normal CLI help.
-	CwdWriteProof    string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
+	CwdWriteProof    string `short:"-" long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
 	Resume           string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
 	Global           bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
@@ -302,6 +302,9 @@ func runNew(params *NewParams) error {
 	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
 	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
 		return fmt.Errorf("invalid internal cwd write proof")
+	}
+	if params.CwdWriteProof != "" && params.Resume != "" {
+		return fmt.Errorf("internal cwd write proof is only valid for a fresh spawn")
 	}
 
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
