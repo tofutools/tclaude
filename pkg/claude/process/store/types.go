@@ -101,8 +101,13 @@ type TemplateRecord struct {
 }
 
 type RunRecord struct {
-	ID            string            `json:"id"`
-	TemplateRef   string            `json:"templateRef"`
+	ID          string `json:"id"`
+	TemplateRef string `json:"templateRef"`
+	// Template is the immutable canonical snapshot pinned at instantiation.
+	// Keeping it inside run.json makes the run independently auditable after
+	// the store-level template library is unavailable. Legacy runs omit it and
+	// verification falls back to TemplateRef.
+	Template      *model.Template   `json:"template,omitempty"`
 	Params        map[string]string `json:"params,omitempty"`
 	AllowPrograms bool              `json:"allowPrograms,omitempty"`
 	CreatedAt     time.Time         `json:"createdAt"`

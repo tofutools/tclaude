@@ -170,6 +170,247 @@ func TestDelayedResolutionRequestCannotResolveLaterPoison(t *testing.T) {
 	}
 }
 
+func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
+	fs, snapshot := escalationExecutorFixture(t)
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+		model.PerformerHuman: &fakeAdapter{observation: Observation{
+			Actor: "human:operator", Verdict: "retry", EvidenceRef: "human-message:auto-retry",
+		}},
+	})
+	block, _ := driveUntilBlockCommand(t, executor, fs, snapshot.Run.ID)
+	if _, err := executor.Execute(t.Context(), block); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := plan.Command{
+		ID: "cmd_0123456789abcdef01234567", IdempotencyKey: snapshot.Run.ID + "/resolve_block/escalate/work/attempt-1/retry",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "escalate", TargetNodeID: "work",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry, Actor: "human:operator",
+		Reason: "escalation decision chose retry", EvidenceRef: "human-message:42:reply",
+	}
+	claimed, _, err := executor.claim(t.Context(), blocked, command)
+	if err != nil || !claimed {
+		t.Fatalf("claim decision resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drive only the fresh gate-attempt commands, leaving the deliberately
+	// delayed resolve command issued until attempt 2 poisons the node again.
+	for round := 0; round < 20; round++ {
+		latest, loadErr := fs.LoadRun(t.Context(), snapshot.Run.ID)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		gate := latest.State.Nodes["work.test.tests"]
+		if gate.Status == state.NodeStatusBlocked && gate.BlockedAttempt == 2 {
+			break
+		}
+		commands, planErr := plan.Plan(latest.State, mustTemplate(t, fs, latest.Run.TemplateRef))
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		if len(commands) == 0 {
+			t.Fatal("later poison made no progress")
+		}
+		for _, next := range commands {
+			if next.ID == command.ID {
+				continue
+			}
+			if _, executeErr := executor.Execute(t.Context(), next); executeErr != nil {
+				t.Fatal(executeErr)
+			}
+		}
+	}
+	latest, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gate := latest.State.Nodes["work.test.tests"]; gate.Status != state.NodeStatusBlocked || gate.BlockedAttempt != 2 {
+		t.Fatalf("later poison = %#v", gate)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("superseded decision command wedged recovery: %v", err)
+	}
+	if resumed.OutstandingCommands[command.ID].Status != state.CommandStatusObserved || resumed.Nodes["work"].Status != state.NodeStatusBlocked {
+		t.Fatalf("superseded command changed later poison or stayed issued: command=%#v parent=%#v", resumed.OutstandingCommands[command.ID], resumed.Nodes["work"])
+	}
+	current := blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)
+	current.BlockedAttempt = 2
+	if _, err := executor.ResolveBlocked(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executor.Drive(t.Context(), snapshot.Run.ID); err != nil {
+		t.Fatalf("run could not drive after stale command closure: %v", err)
+	}
+}
+
+func TestClaimedResolutionAcceptsEquivalentManualProvenance(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := plan.Command{
+		ID: "cmd_equivalent_resolution", IdempotencyKey: snapshot.Run.ID + "/resolve/equivalent",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry,
+		Actor: "human:reviewer", Reason: "decision selected retry", EvidenceRef: "human-message:decision",
+	}
+	if claimed, _, err := executor.claim(t.Context(), blocked, command); err != nil || !claimed {
+		t.Fatalf("claim resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("equivalent manual resolution wedged command: %v", err)
+	}
+	if got := resumed.OutstandingCommands[command.ID]; got.Status != state.CommandStatusObserved || got.Verdict != "pass" {
+		t.Fatalf("equivalent command was not closed as pass: %#v", got)
+	}
+}
+
+func TestClaimedResolutionClosesAfterContradictingManualDecision(t *testing.T) {
+	fs, snapshot := compoundExecutorFixture(t, "exit 1")
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	blocked, err := executor.Drive(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := plan.Command{
+		ID: "cmd_superseded_resolution", IdempotencyKey: snapshot.Run.ID + "/resolve/superseded",
+		Kind: plan.CommandKindResolveBlock, RunID: snapshot.Run.ID, NodeID: "work", TargetNodeID: "work",
+		PoisonedNodeID: "work.test.tests", BlockedAttempt: 1, BlockDecision: state.BlockDecisionRetry,
+		Actor: "human:reviewer", Reason: "decision selected retry", EvidenceRef: "human-message:decision",
+	}
+	if claimed, _, err := executor.claim(t.Context(), blocked, command); err != nil || !claimed {
+		t.Fatalf("claim resolution = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionCancel)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, command.ID)
+	if err != nil {
+		t.Fatalf("contradicted manual resolution wedged command: %v", err)
+	}
+	if got := resumed.OutstandingCommands[command.ID]; got.Status != state.CommandStatusObserved || got.Verdict != "superseded" {
+		t.Fatalf("contradicted command was not explicitly superseded: %#v", got)
+	}
+	if resumed.Status != state.RunStatusCanceled {
+		t.Fatalf("superseded retry changed manual cancel: %s", resumed.Status)
+	}
+}
+
+func TestResumeStalePoisonEscalationActivationIsNoOp(t *testing.T) {
+	fs, snapshot := escalationExecutorFixture(t)
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	block, _ := driveUntilBlockCommand(t, executor, fs, snapshot.Run.ID)
+	if _, err := executor.Execute(t.Context(), block); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := plan.Plan(blocked.State, mustTemplate(t, fs, blocked.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Kind != plan.CommandKindActivateNode || commands[0].TargetNodeID != "escalate" {
+		t.Fatalf("escalation activation = %#v", commands)
+	}
+	activation := commands[0]
+	claimed, _, err := executor.claim(t.Context(), blocked, activation)
+	if err != nil || !claimed {
+		t.Fatalf("claim escalation activation = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, activation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Nodes["escalate"].Status != state.NodeStatusPending {
+		t.Fatalf("stale activation created obsolete decision: %#v", resumed.Nodes["escalate"])
+	}
+	if resumed.OutstandingCommands[activation.ID].Status != state.CommandStatusObserved {
+		t.Fatalf("stale activation not closed: %#v", resumed.OutstandingCommands[activation.ID])
+	}
+	assertRunVerifies(t, fs, snapshot.Run.ID)
+}
+
+func escalationExecutorFixture(t *testing.T) (*store.FS, store.Snapshot) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := func(script string) *model.Performer {
+		return &model.Performer{Kind: model.PerformerProgram, Run: "/bin/sh", Args: []string{"-c", script}}
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "executor-escalation", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {
+				Type: model.NodeTypeTask, Performer: program("exit 0"),
+				Checks: []model.Step{{ID: "tests", Performer: *program("exit 1")}},
+				Next:   model.Next{"pass": "end", "fail": "escalate"},
+			},
+			"escalate": {
+				Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Continue?"},
+				Next: model.Next{"retry": "work", "cancel": "canceled"},
+			},
+			"end":      {Type: model.NodeTypeEnd},
+			"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run_escalation"
+	initial := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "escalate", Type: model.NodeTypeDecision, Status: state.NodeStatusPending},
+		{ID: "end", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "canceled", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	initial.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, initial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{{
+		At: executorTestTime, Scope: evidence.Scope{Kind: evidence.ScopeRun}, Kind: evidence.EntryKindAdmin,
+		Event: &state.Event{Type: state.EventAdminProgramsAllowed, At: executorTestTime, Actor: "human:test", Reason: "test program opt-in"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.SetProgramsAllowed(t.Context(), runID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fs, snapshot
+}
+
 func TestBindBlockResolutionPinsParentSelectionToChildGeneration(t *testing.T) {
 	fs, snapshot := compoundExecutorFixture(t, "exit 1")
 	executor := New(fs, map[model.PerformerKind]Adapter{

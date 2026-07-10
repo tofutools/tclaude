@@ -435,6 +435,171 @@ func TestPlanBlockedCompoundEmitsNothing(t *testing.T) {
 	}
 }
 
+func escalationTemplate() *model.Template {
+	tmpl := compoundTemplate()
+	node := tmpl.Nodes["implement"]
+	node.Next = model.Next{"pass": "end", "fail": "escalate"}
+	tmpl.Nodes["implement"] = node
+	tmpl.Nodes["escalate"] = model.Node{
+		Type:      model.NodeTypeDecision,
+		Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Continue?"},
+		Next:      model.Next{"retry": "implement", "cancel": "canceled"},
+	}
+	tmpl.Nodes["canceled"] = model.Node{Type: model.NodeTypeEnd, Result: "canceled"}
+	return tmpl
+}
+
+func blockedEscalationState(choice string) *state.State {
+	st := expandedPlannerState(map[string]state.NodeState{
+		"implement.test.tests": {
+			Status: state.NodeStatusBlocked, Attempt: 2, BlockedAttempt: 2, BlockedNodeID: "implement.test.tests",
+			BlockedReason: "tests exhausted", BlockedOwner: DefaultBlockedOwner,
+		},
+	})
+	parent := st.Nodes["implement"]
+	parent.Status = state.NodeStatusBlocked
+	parent.BlockedAttempt = 2
+	parent.BlockedNodeID = "implement.test.tests"
+	parent.BlockedReason = "tests exhausted"
+	parent.BlockedOwner = DefaultBlockedOwner
+	st.Nodes["implement"] = parent
+	st.Nodes["escalate"] = state.NodeState{Type: model.NodeTypeDecision, Status: state.NodeStatusPending}
+	st.Nodes["canceled"] = state.NodeState{Type: model.NodeTypeEnd, Status: state.NodeStatusPending}
+	if choice != "" {
+		st.Nodes["escalate"] = state.NodeState{
+			Type: model.NodeTypeDecision, Status: state.NodeStatusCompleted, Attempt: 2, PoisonedNodeID: "implement.test.tests", ChosenEdge: choice,
+			Decisions: []state.DecisionRecord{{Actor: "human:operator", Verdict: choice, EvidenceRef: "human-message:42", Timestamp: fixedTime()}},
+		}
+	}
+	return st
+}
+
+func TestPlanBlockedCompoundActivatesOnlyDecisionFailEdge(t *testing.T) {
+	got, err := Plan(blockedEscalationState(""), escalationTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCommands(t, got, []commandWant{{
+		Kind: CommandKindActivateNode, NodeID: "implement", TargetNodeID: "escalate",
+		SourceNodeStatus: state.NodeStatusBlocked, NodeStatus: state.NodeStatusReady, Attempt: 2,
+		Key: "run_1/activate_node/implement/blocked-to/escalate/attempt-2",
+	}})
+	if got[0].PoisonedNodeID != "implement.test.tests" {
+		t.Fatalf("activation poison identity = %q", got[0].PoisonedNodeID)
+	}
+
+	tmpl := escalationTemplate()
+	implement := tmpl.Nodes["implement"]
+	implement.Next["fail"] = "canceled"
+	tmpl.Nodes["implement"] = implement
+	got, err = Plan(blockedEscalationState(""), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("poison must not activate non-decision fail target: %#v", got)
+	}
+
+	tmpl = escalationTemplate()
+	escalate := tmpl.Nodes["escalate"]
+	escalate.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "choose"}
+	tmpl.Nodes["escalate"] = escalate
+	got, err = Plan(blockedEscalationState(""), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("poison must not activate a non-human decision: %#v", got)
+	}
+}
+
+func TestPlanEscalationDecisionEmitsGenerationBoundResolution(t *testing.T) {
+	for _, test := range []struct {
+		choice string
+		want   state.BlockDecision
+	}{
+		{choice: "retry", want: state.BlockDecisionRetry},
+		{choice: "cancel", want: state.BlockDecisionCancel},
+	} {
+		t.Run(test.choice, func(t *testing.T) {
+			got, err := Plan(blockedEscalationState(test.choice), escalationTemplate())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Kind != CommandKindResolveBlock {
+				t.Fatalf("commands = %#v", got)
+			}
+			command := got[0]
+			if command.NodeID != "escalate" || command.TargetNodeID != "implement" || command.PoisonedNodeID != "implement.test.tests" || command.BlockedAttempt != 2 || command.BlockDecision != test.want {
+				t.Fatalf("resolution command = %#v", command)
+			}
+			if command.Actor != "human:operator" || command.EvidenceRef != "human-message:42" {
+				t.Fatalf("resolution provenance = %#v", command)
+			}
+		})
+	}
+}
+
+func TestPlanDoesNotReuseConsumedEscalationDecision(t *testing.T) {
+	st := blockedEscalationState("retry")
+	child := st.Nodes["implement.test.tests"]
+	child.Attempt = 3
+	child.BlockedAttempt = 3
+	st.Nodes["implement.test.tests"] = child
+	parent := st.Nodes["implement"]
+	parent.BlockedAttempt = 3
+	st.Nodes["implement"] = parent
+	got, err := Plan(st, escalationTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("consumed decision replayed into later poison: %#v", got)
+	}
+}
+
+func TestPlanRejectsDecisionCompletedBeforePoison(t *testing.T) {
+	st := blockedEscalationState("retry")
+	decision := st.Nodes["escalate"]
+	decision.Attempt = 0
+	decision.PoisonedNodeID = ""
+	st.Nodes["escalate"] = decision
+	if _, err := Plan(st, escalationTemplate()); err == nil || !strings.Contains(err.Error(), "not generation-bound") {
+		t.Fatalf("decision predating poison was silently accepted: %v", err)
+	}
+}
+
+func TestPlanDoesNotReuseDecisionForDifferentPoisonedChild(t *testing.T) {
+	st := blockedEscalationState("retry")
+	parent := st.Nodes["implement"]
+	parent.BlockedNodeID = "implement.review"
+	st.Nodes["implement"] = parent
+	review := st.Nodes["implement.review"]
+	review.Status = state.NodeStatusBlocked
+	review.Attempt = 2
+	review.BlockedAttempt = 2
+	review.BlockedNodeID = "implement.review"
+	st.Nodes["implement.review"] = review
+	got, err := Plan(st, escalationTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("decision for a different poisoned child replayed: %#v", got)
+	}
+}
+
+func TestPlanRejectsUnsupportedPoisonEscalationChoice(t *testing.T) {
+	tmpl := escalationTemplate()
+	escalate := tmpl.Nodes["escalate"]
+	escalate.Next["ship-anyway"] = "end"
+	tmpl.Nodes["escalate"] = escalate
+	st := blockedEscalationState("ship-anyway")
+	if _, err := Plan(st, tmpl); err == nil || !strings.Contains(err.Error(), "must retry blocked node") {
+		t.Fatalf("unsupported escalation choice advanced past poison: %v", err)
+	}
+}
+
 func TestPlanRejectsUnauditedSkippedStage(t *testing.T) {
 	st := expandedPlannerState(map[string]state.NodeState{
 		"implement.test.tests": {Status: state.NodeStatusSkipped, Attempt: 1},

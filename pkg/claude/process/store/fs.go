@@ -203,6 +203,11 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if strings.TrimSpace(run.TemplateRef) == "" {
 		return RunRecord{}, fmt.Errorf("templateRef is required")
 	}
+	pinnedTemplate, err := s.GetTemplate(ctx, run.TemplateRef)
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
+	}
+	run.Template = pinnedTemplate
 	unlock, err := s.lockRun(ctx, run.ID)
 	if err != nil {
 		return RunRecord{}, err

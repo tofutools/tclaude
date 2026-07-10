@@ -1051,6 +1051,21 @@ func stateWithNodes(nodes map[string]NodeState) State {
 	}
 }
 
+func TestPoisonEscalationDecisionRequiresEvidence(t *testing.T) {
+	st := New("run", "demo@sha256:x", "demo@sha256:x", []NodeInit{{ID: "escalate", Type: model.NodeTypeDecision, Status: NodeStatusReady}})
+	node := st.Nodes["escalate"]
+	node.Attempt = 2
+	node.PoisonedNodeID = "implement.test.tests"
+	st.Nodes["escalate"] = node
+	_, err := Apply(st, Event{
+		Type: EventDecisionRecorded, Seq: 1, NodeID: "escalate", ChosenEdge: "retry",
+		Decision: &DecisionRecord{Actor: "human:johan", Verdict: "retry", Timestamp: testTime},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires an evidence reference") {
+		t.Fatalf("evidence-less poison decision was accepted: %v", err)
+	}
+}
+
 func hasDiagnostic(diagnostics Diagnostics, code string) bool {
 	for _, diag := range diagnostics {
 		if diag.Code == code {

@@ -70,9 +70,46 @@ func planNode(st *state.State, tmpl *model.Template, nodeID string, node state.N
 		return planCompletedNode(st, tmpl, nodeID, node, templateNode)
 	case state.NodeStatusFailed:
 		return planFailedNode(st, tmpl, nodeID, templateNode)
+	case state.NodeStatusBlocked:
+		return planBlockedNode(st, tmpl, nodeID, node, templateNode)
 	default:
 		return nil, nil
 	}
+}
+
+// planBlockedNode makes a compound node's authored fail-edge decision
+// reachable without treating poison as failure. The poisoned child and parent
+// remain blocked while the independent decision obligation is resolved.
+func planBlockedNode(st *state.State, tmpl *model.Template, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
+	if node.Parent != "" || node.BlockedNodeID == "" {
+		return nil, nil
+	}
+	targetID := ResolveFailEdge(templateNode.Next)
+	if targetID == "" {
+		return nil, nil
+	}
+	targetTemplate, ok := tmpl.Nodes[targetID]
+	if !ok || targetTemplate.Type != model.NodeTypeDecision || targetTemplate.Performer == nil || targetTemplate.Performer.Kind != model.PerformerHuman {
+		return nil, nil
+	}
+	target, ok := st.Nodes[targetID]
+	if !ok {
+		return nil, fmt.Errorf("blocked node %q escalation target %q is not in state", nodeID, targetID)
+	}
+	if target.Status != state.NodeStatusPending {
+		return nil, nil
+	}
+	cmd := newCommand(CommandKindActivateNode, st.RunID, nodeID, "blocked-to", targetID, fmt.Sprintf("attempt-%d", node.BlockedAttempt))
+	cmd.NodeID = nodeID
+	cmd.TargetNodeID = targetID
+	cmd.SourceNodeStatus = state.NodeStatusBlocked
+	cmd.NodeStatus = state.NodeStatusReady
+	cmd.Attempt = node.BlockedAttempt
+	cmd.PoisonedNodeID = node.BlockedNodeID
+	if commandOutstanding(st, cmd.ID) {
+		return nil, nil
+	}
+	return []Command{cmd}, nil
 }
 
 func planRunningNode(st *state.State, nodeID string, node state.NodeState, templateNode model.Node) ([]Command, error) {
@@ -121,8 +158,22 @@ func planReadyNode(st *state.State, tmpl *model.Template, nodeID string, node st
 		}
 		return []Command{cmd}, nil
 	case model.NodeTypeDecision:
+		_, source, linked, err := poisonEscalationSource(st, tmpl, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		if linked {
+			if node.Attempt <= 0 || node.PoisonedNodeID == "" {
+				return nil, fmt.Errorf("poison escalation decision %q is ready without a bound poison generation", nodeID)
+			}
+			if source.Status != state.NodeStatusBlocked || source.BlockedAttempt != node.Attempt || source.BlockedNodeID != node.PoisonedNodeID {
+				return nil, nil
+			}
+		}
 		cmd := newCommand(CommandKindRecordDecision, st.RunID, nodeID, "decision")
 		cmd.NodeID = nodeID
+		cmd.Attempt = node.Attempt
+		cmd.PoisonedNodeID = node.PoisonedNodeID
 		cmd.Performer = templateNode.Performer
 		if commandOutstanding(st, cmd.ID) {
 			return nil, nil
@@ -165,6 +216,14 @@ func planCompletedNode(st *state.State, tmpl *model.Template, nodeID string, nod
 		if !ok {
 			return nil, fmt.Errorf("decision node %q has no edge for verdict %q; available edges: %s", nodeID, node.ChosenEdge, strings.Join(sortedEdgeKeys(templateNode.Next), ", "))
 		}
+		if command, found, err := escalationResolutionCommand(st, tmpl, nodeID, node, target); err != nil {
+			return nil, err
+		} else if found {
+			if command.Kind == "" {
+				return nil, nil
+			}
+			return []Command{command}, nil
+		}
 		return activationCommand(st, tmpl, nodeID, target)
 	case model.NodeTypeStart, model.NodeTypeWait:
 		return activationCommand(st, tmpl, nodeID, ResolvePassEdge(templateNode.Next, "pass"))
@@ -173,6 +232,85 @@ func planCompletedNode(st *state.State, tmpl *model.Template, nodeID string, nod
 	default:
 		return nil, fmt.Errorf("unsupported node type %q", templateNode.Type)
 	}
+}
+
+// escalationResolutionCommand recognizes a decision reached from a poisoned
+// compound node's fail edge. A choice back to that node means retry; a choice
+// to a canceled end means cancel. Both flow through ResolveBlocked so the
+// release is generation-bound and recorded as an admin decision.
+func escalationResolutionCommand(st *state.State, tmpl *model.Template, decisionID string, decision state.NodeState, targetID string) (Command, bool, error) {
+	decisionTemplate, ok := tmpl.Nodes[decisionID]
+	if !ok || decisionTemplate.Performer == nil || decisionTemplate.Performer.Kind != model.PerformerHuman {
+		return Command{}, false, nil
+	}
+	blockedID, blocked, linked, err := poisonEscalationSource(st, tmpl, decisionID)
+	if err != nil {
+		return Command{}, false, err
+	}
+	if !linked {
+		return Command{}, false, nil
+	}
+	if decision.Attempt <= 0 || decision.PoisonedNodeID == "" {
+		return Command{}, true, fmt.Errorf("completed poison escalation decision %q is not generation-bound", decisionID)
+	}
+	if blocked.Status != state.NodeStatusBlocked || blocked.BlockedAttempt != decision.Attempt || blocked.BlockedNodeID == "" || blocked.BlockedNodeID != decision.PoisonedNodeID {
+		// This decision was never offered for the current poison generation,
+		// or explicit unblock already made it stale. Suppress ordinary routing.
+		return Command{}, true, nil
+	}
+	if len(decision.Decisions) == 0 {
+		return Command{}, false, fmt.Errorf("completed escalation decision %q has no decision record", decisionID)
+	}
+	record := decision.Decisions[len(decision.Decisions)-1]
+	if strings.TrimSpace(record.EvidenceRef) == "" {
+		return Command{}, true, fmt.Errorf("completed poison escalation decision %q has no evidence reference", decisionID)
+	}
+
+	resolution := state.BlockDecision("")
+	if targetID == blockedID {
+		resolution = state.BlockDecisionRetry
+	} else if target, ok := tmpl.Nodes[targetID]; ok && target.Type == model.NodeTypeEnd && TerminalRunStatus(target) == state.RunStatusCanceled {
+		resolution = state.BlockDecisionCancel
+	} else {
+		return Command{}, true, fmt.Errorf("escalation decision %q choice %q must retry blocked node %q or target a canceled end", decisionID, decision.ChosenEdge, blockedID)
+	}
+	cmd := newCommand(CommandKindResolveBlock, st.RunID, decisionID, blockedID, fmt.Sprintf("attempt-%d", blocked.BlockedAttempt), string(resolution))
+	cmd.NodeID = decisionID
+	cmd.TargetNodeID = blockedID
+	cmd.BlockedAttempt = blocked.BlockedAttempt
+	cmd.PoisonedNodeID = blocked.BlockedNodeID
+	cmd.BlockDecision = resolution
+	cmd.Actor = record.Actor
+	cmd.Reason = fmt.Sprintf("decision by %s selected %q", record.Actor, record.Verdict)
+	cmd.EvidenceRef = record.EvidenceRef
+	if commandOutstanding(st, cmd.ID) {
+		// The decision is linked and its generation-bound resolution is already
+		// claimed. Suppress ordinary edge routing while recovery resumes it.
+		return Command{}, true, nil
+	}
+	return cmd, true, nil
+}
+
+func poisonEscalationSource(st *state.State, tmpl *model.Template, decisionID string) (string, state.NodeState, bool, error) {
+	var sourceID string
+	for _, candidateID := range sortedNodeIDs(st.Nodes) {
+		candidate := st.Nodes[candidateID]
+		if candidate.Parent != "" {
+			continue
+		}
+		templateNode, ok := tmpl.Nodes[candidateID]
+		if !ok || !templateNode.IsCompound() || ResolveFailEdge(templateNode.Next) != decisionID {
+			continue
+		}
+		if sourceID != "" {
+			return "", state.NodeState{}, false, fmt.Errorf("decision node %q escalates multiple compound nodes (%q and %q)", decisionID, sourceID, candidateID)
+		}
+		sourceID = candidateID
+	}
+	if sourceID == "" {
+		return "", state.NodeState{}, false, nil
+	}
+	return sourceID, st.Nodes[sourceID], true, nil
 }
 
 func planFailedNode(st *state.State, tmpl *model.Template, nodeID string, templateNode model.Node) ([]Command, error) {

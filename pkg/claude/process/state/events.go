@@ -81,10 +81,11 @@ type Event struct {
 	Timer   *TimerRecord `json:"timer,omitempty"`
 	TimerID string       `json:"timerId,omitempty"`
 
-	Reason      string           `json:"reason,omitempty"`
-	Owner       string           `json:"owner,omitempty"`
-	EvidenceRef string           `json:"evidenceRef,omitempty"`
-	Resolution  *BlockResolution `json:"resolution,omitempty"`
+	Reason         string           `json:"reason,omitempty"`
+	Owner          string           `json:"owner,omitempty"`
+	PoisonedNodeID string           `json:"poisonedNodeId,omitempty"`
+	EvidenceRef    string           `json:"evidenceRef,omitempty"`
+	Resolution     *BlockResolution `json:"resolution,omitempty"`
 
 	// Gate feedback-loop fields. EvidenceHash is the hash of THIS settle's
 	// evidence; WorkEvidenceHash is the work-evidence hash a gate verdict
@@ -220,6 +221,13 @@ func applyEvent(st *State, event Event) error {
 			}
 		}
 		node.Status = event.NodeStatus
+		if node.Type == model.NodeTypeDecision && event.NodeStatus == NodeStatusReady && event.Attempt > 0 {
+			if strings.TrimSpace(event.PoisonedNodeID) == "" {
+				return fmt.Errorf("generation-bound decision activation requires poisonedNodeId")
+			}
+			node.Attempt = event.Attempt
+			node.PoisonedNodeID = event.PoisonedNodeID
+		}
 		st.Nodes[event.NodeID] = node
 		// Completing the done marker IS completing the compound parent: one
 		// event, so no checkpoint ever shows a completed done stage under a
@@ -524,6 +532,9 @@ func applyEvent(st *State, event Event) error {
 		}
 		if decision.EvidenceRef == "" {
 			decision.EvidenceRef = event.EvidenceRef
+		}
+		if node.Attempt > 0 && node.PoisonedNodeID != "" && strings.TrimSpace(decision.EvidenceRef) == "" {
+			return fmt.Errorf("poison escalation decision %q requires an evidence reference", event.NodeID)
 		}
 		if event.ChosenEdge != "" && decision.Verdict != "" && event.ChosenEdge != decision.Verdict {
 			return fmt.Errorf("decision node %q chosenEdge %q must match verdict %q", event.NodeID, event.ChosenEdge, decision.Verdict)

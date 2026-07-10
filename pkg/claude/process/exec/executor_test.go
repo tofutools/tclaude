@@ -100,6 +100,78 @@ func TestExecutePerformerCommandRecordsObservationAndSettlement(t *testing.T) {
 	}
 }
 
+func TestExecuteBindsRenderedPerformerIntoIssuedPayload(t *testing.T) {
+	fs, snapshot := executorFixture(t, true, model.Performer{
+		Kind: model.PerformerProgram,
+		Run:  "/fake/{{ params.ticket }}",
+		Args: []string{"--ticket={{ params.ticket }}"},
+	})
+	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}
+	executor := New(fs, map[model.PerformerKind]Adapter{model.PerformerProgram: adapter})
+	commands, err := plan.Plan(snapshot.State, mustTemplate(t, fs, snapshot.Run.TemplateRef))
+	if err != nil || len(commands) != 1 {
+		t.Fatalf("commands = %#v, err = %v", commands, err)
+	}
+	if _, err := executor.Execute(t.Context(), commands[0]); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outstanding := loaded.State.OutstandingCommands[commands[0].ID]
+	var issued plan.Command
+	if err := json.Unmarshal(outstanding.Payload, &issued); err != nil {
+		t.Fatal(err)
+	}
+	if issued.Performer == nil || issued.Performer.Run != "/fake/TCL-274" || len(issued.Performer.Args) != 1 || issued.Performer.Args[0] != "--ticket=TCL-274" {
+		t.Fatalf("issued performer was not parameter-bound: %#v", issued.Performer)
+	}
+	if got := adapter.requests[0].Performer; got.Run != issued.Performer.Run || got.Args[0] != issued.Performer.Args[0] {
+		t.Fatalf("adapter request %#v differs from durable payload %#v", got, issued.Performer)
+	}
+	recovered := performerRequest(store.RunRecord{ID: snapshot.Run.ID, Params: map[string]string{"ticket": "TCL-999"}}, issued)
+	if recovered.Performer.Run != "/fake/TCL-274" || recovered.Performer.Args[0] != "--ticket=TCL-274" || recovered.Input.Params["ticket"] != "TCL-274" {
+		t.Fatalf("recovery re-rendered durable payload from mutable params: %#v", recovered.Performer)
+	}
+}
+
+func TestMaterializedPerformerIsNotRecursivelyInterpolated(t *testing.T) {
+	command := plan.Command{Performer: &model.Performer{Kind: model.PerformerProgram, Run: "{{ params.ticket }}"}}
+	issued := materializePerformer(command, map[string]string{
+		"ticket": "{{ params.other }}",
+		"other":  "original",
+	})
+	recovered := performerRequest(store.RunRecord{ID: "run", Params: map[string]string{
+		"ticket": "changed",
+		"other":  "changed",
+	}}, issued)
+	if !issued.ParamsBound || recovered.Performer.Run != "{{ params.other }}" || recovered.Input.Params["other"] != "original" {
+		t.Fatalf("materialized request changed during recovery: issued=%#v recovered=%#v", issued, recovered)
+	}
+}
+
+func TestStalePoisonActivationForDifferentChildIsNoOp(t *testing.T) {
+	command := plan.Command{
+		ID: "cmd_activate", Kind: plan.CommandKindActivateNode, RunID: "run",
+		NodeID: "work", TargetNodeID: "escalate", SourceNodeStatus: state.NodeStatusBlocked,
+		NodeStatus: state.NodeStatusReady, Attempt: 2, PoisonedNodeID: "work.test.first",
+	}
+	snapshot := store.Snapshot{State: &state.State{Nodes: map[string]state.NodeState{
+		"work": {
+			Status: state.NodeStatusBlocked, BlockedAttempt: 2, BlockedNodeID: "work.test.second",
+		},
+		"escalate": {Type: model.NodeTypeDecision, Status: state.NodeStatusPending},
+	}}}
+	entries, err := observationEntries(command, Observation{Verdict: "pass"}, snapshot, executorTestTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Event == nil || entries[0].Event.Type != state.EventCommandObserved {
+		t.Fatalf("stale activation emitted transitions: %#v", entries)
+	}
+}
+
 func TestClaimedCommandIsNeverReperformedAfterCrash(t *testing.T) {
 	fs, snapshot := executorFixture(t, true, model.Performer{Kind: model.PerformerProgram, Run: "/fake"})
 	adapter := &fakeAdapter{observation: Observation{Actor: "program:fake@exit0", Verdict: "pass"}}

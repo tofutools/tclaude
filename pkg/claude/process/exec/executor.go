@@ -135,6 +135,10 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 	if err := validateCurrentPlan(ctx, e.Store, snapshot, command); err != nil {
 		return Result{}, err
 	}
+	// Bind the run parameters into the durable issued payload. Recovery must
+	// replay the exact performer request that was claimed, even if run.json is
+	// edited after the claim or the store is restarted.
+	command = materializePerformer(command, snapshot.Run.Params)
 
 	var adapter Adapter
 	var request Request
@@ -160,6 +164,14 @@ func (e *Executor) Execute(ctx context.Context, command plan.Command) (Result, e
 		return Result{Command: command, State: claimState}, nil
 	}
 	result := Result{Command: command, Claimed: true, State: claimState}
+	if command.Kind == plan.CommandKindResolveBlock {
+		resolved, resolveErr := e.applyResolveBlockCommand(ctx, command)
+		if resolveErr != nil {
+			return result, resolveErr
+		}
+		result.State = resolved
+		return result, nil
+	}
 
 	if deferred, ok := adapter.(DeferredAdapter); ok {
 		dispatched, dispatchErr := deferred.Dispatch(ctx, request)
@@ -288,10 +300,10 @@ func (e *Executor) appendDispatch(ctx context.Context, command plan.Command, dis
 	return nil, fmt.Errorf("record process command %q dispatch: exceeded %d CAS attempts", command.ID, maxObservationCASAttempts)
 }
 
-// obligationActions makes decision obligations advertise the pinned
-// template's real edge vocabulary. Task obligations keep the adapter's action
-// vocabulary, whose approve/reject forms are normalized to pass/fail when the
-// observation is recorded.
+// obligationActions makes decision obligations advertise the store template's
+// real edge vocabulary. Run-local template execution is a separate follow-up;
+// task obligations keep the adapter's action vocabulary, whose approve/reject
+// forms are normalized to pass/fail when the observation is recorded.
 func (e *Executor) obligationActions(ctx context.Context, command plan.Command, fallback []string) ([]string, error) {
 	if command.Kind != plan.CommandKindRecordDecision {
 		return append([]string(nil), fallback...), nil
@@ -592,10 +604,26 @@ func (e *Executor) ResumeIssued(ctx context.Context, command plan.Command) (*sta
 	if outstanding.Status != state.CommandStatusIssued {
 		return nil, fmt.Errorf("process command %q is %s and cannot be resumed", command.ID, outstanding.Status)
 	}
+	if command.Kind == plan.CommandKindResolveBlock {
+		return e.applyResolveBlockCommand(ctx, command)
+	}
 	if !plan.AllowsExecution(snapshot.State.Status) {
 		return nil, fmt.Errorf("process run %q is %s and command %q cannot be resumed", command.RunID, snapshot.State.Status, command.ID)
 	}
 	return e.appendObservation(ctx, command, Observation{Verdict: "pass"})
+}
+
+// applyResolveBlockCommand is the crash-safe decision-node bridge into the
+// shared poison-resolution funnel. The command is claimed before this method
+// runs. If the process stops after the audited resolution append but before
+// command_observed, ResumeOutstanding repeats the idempotent resolution and
+// marks the original command observed without issuing a second decision.
+func (e *Executor) applyResolveBlockCommand(ctx context.Context, command plan.Command) (*state.State, error) {
+	request := BlockResolutionRequest{
+		RunID: command.RunID, NodeID: command.PoisonedNodeID, BlockedAttempt: command.BlockedAttempt,
+		Decision: command.BlockDecision, Actor: command.Actor, Reason: command.Reason, EvidenceRef: command.EvidenceRef,
+	}
+	return e.resolveBlocked(ctx, request, &command)
 }
 
 // ResumeOutstanding recovers an internal command directly from its durable
@@ -809,6 +837,21 @@ func validateCommand(snapshot store.Snapshot, command plan.Command, at time.Time
 			return err
 		}
 	}
+	if command.Kind == plan.CommandKindResolveBlock {
+		child, childOK := snapshot.State.Nodes[command.PoisonedNodeID]
+		if command.TargetNodeID == "" || command.BlockedAttempt <= 0 || !command.BlockDecision.IsValid() ||
+			strings.TrimSpace(command.PoisonedNodeID) == "" || !childOK || child.Parent != command.TargetNodeID {
+			return fmt.Errorf("process command %q has an invalid block resolution target", command.ID)
+		}
+		if !state.ValidateActorRef(command.Actor) || state.IsEngineActor(command.Actor) || strings.TrimSpace(command.Reason) == "" || strings.TrimSpace(command.EvidenceRef) == "" {
+			return fmt.Errorf("process command %q has invalid block resolution provenance", command.ID)
+		}
+	}
+	if command.Kind == plan.CommandKindActivateNode && command.SourceNodeStatus == state.NodeStatusBlocked {
+		if command.Attempt <= 0 || strings.TrimSpace(command.PoisonedNodeID) == "" {
+			return fmt.Errorf("process command %q has an invalid poison generation", command.ID)
+		}
+	}
 	return nil
 }
 
@@ -940,9 +983,23 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			},
 		}, observation.EvidenceRef, at))
 	case plan.CommandKindActivateNode:
+		if command.SourceNodeStatus == state.NodeStatusBlocked {
+			source, sourceOK := snapshot.State.Nodes[command.NodeID]
+			target, targetOK := snapshot.State.Nodes[command.TargetNodeID]
+			if !sourceOK || !targetOK || source.Status != state.NodeStatusBlocked ||
+				source.BlockedAttempt != command.Attempt || source.BlockedNodeID != command.PoisonedNodeID ||
+				target.Status != state.NodeStatusPending {
+				// A claimed poison-escalation activation may resume after a
+				// human used process unblock. Observe that stale command as a
+				// no-op; never create an obsolete decision obligation.
+				return entries, nil
+			}
+		}
 		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
-			Type:       state.EventNodeStatusSet,
-			NodeStatus: command.NodeStatus,
+			Type:           state.EventNodeStatusSet,
+			NodeStatus:     command.NodeStatus,
+			Attempt:        command.Attempt,
+			PoisonedNodeID: command.PoisonedNodeID,
 		}, "", at))
 	case plan.CommandKindExpandNode:
 		// The children come from the command's durable payload, so a crashed
@@ -997,6 +1054,11 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 				Owner:      command.Owner,
 			}, "", at))
 		}
+	case plan.CommandKindResolveBlock:
+		// resolveBlocked handles this command because its observation must be
+		// atomic with the audited release (especially when cancel turns the run
+		// terminal). Reaching the generic observation path is a programming bug.
+		return nil, fmt.Errorf("resolve-block command %q requires the resolution funnel", command.ID)
 	case plan.CommandKindCompleteRun:
 		entries = append(entries, runEntry(state.Event{
 			Type:      state.EventRunStatusSet,
@@ -1082,13 +1144,22 @@ func commandDueAt(command plan.Command, at time.Time) (time.Time, error) {
 }
 
 func performerRequest(run store.RunRecord, command plan.Command) Request {
-	params := make(map[string]string, len(run.Params))
-	for key, value := range run.Params {
+	paramsSource := run.Params
+	performer := *command.Performer
+	if command.ParamsBound {
+		paramsSource = command.Params
+	} else {
+		// Compatibility for performer commands issued before request
+		// materialization was added.
+		performer = model.InterpolatePerformer(performer, run.Params)
+	}
+	params := make(map[string]string, len(paramsSource))
+	for key, value := range paramsSource {
 		params[key] = value
 	}
 	return Request{
 		Command:   command,
-		Performer: *command.Performer,
+		Performer: performer,
 		Input: Input{
 			RunID:   run.ID,
 			NodeID:  command.NodeID,
@@ -1096,6 +1167,20 @@ func performerRequest(run store.RunRecord, command plan.Command) Request {
 			Params:  params,
 		},
 	}
+}
+
+func materializePerformer(command plan.Command, params map[string]string) plan.Command {
+	if command.Performer == nil {
+		return command
+	}
+	performer := model.InterpolatePerformer(*command.Performer, params)
+	command.Performer = &performer
+	command.Params = make(map[string]string, len(params))
+	for key, value := range params {
+		command.Params[key] = value
+	}
+	command.ParamsBound = true
+	return command
 }
 
 func commandEntry(command plan.Command, event state.Event, evidenceRef string, at time.Time) evidence.LogEntry {

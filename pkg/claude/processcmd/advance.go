@@ -340,6 +340,9 @@ func planTaskAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID strin
 }
 
 func planDecisionAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID string, templateNode model.Node, verdict string, actor state.ActorRef, evidenceRef string, at time.Time) ([]evidence.LogEntry, error) {
+	if poisonEscalationSourceID(tmpl, nodeID) != "" {
+		return nil, fmt.Errorf("decision node %q is reserved for poison escalation and cannot be advanced manually; answer it through the engine worklist or use process unblock", nodeID)
+	}
 	target, ok := processplan.DecisionEdge(templateNode.Next, verdict)
 	if !ok {
 		return nil, fmt.Errorf("decision node %q has no edge for verdict %q; available edges: %s", nodeID, verdict, strings.Join(sortedEdgeKeys(templateNode.Next), ", "))
@@ -358,6 +361,19 @@ func planDecisionAdvance(snapshot store.Snapshot, tmpl *model.Template, nodeID s
 		}, evidenceRef, at),
 	}
 	return appendActivationEntries(entries, snapshot, tmpl, target, evidenceRef, at)
+}
+
+func poisonEscalationSourceID(tmpl *model.Template, decisionID string) string {
+	decision, ok := tmpl.Nodes[decisionID]
+	if !ok || decision.Type != model.NodeTypeDecision || decision.Performer == nil || decision.Performer.Kind != model.PerformerHuman {
+		return ""
+	}
+	for sourceID, source := range tmpl.Nodes {
+		if source.IsCompound() && model.FailTarget(source.Next) == decisionID {
+			return sourceID
+		}
+	}
+	return ""
 }
 
 func appendActivationEntries(entries []evidence.LogEntry, snapshot store.Snapshot, tmpl *model.Template, targetNodeID, evidenceRef string, at time.Time) ([]evidence.LogEntry, error) {

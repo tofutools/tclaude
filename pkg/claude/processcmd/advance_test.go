@@ -57,6 +57,37 @@ func TestPlanAdvanceRefusesPendingNode(t *testing.T) {
 	}
 }
 
+func TestPlanAdvanceRefusesReservedPoisonEscalationDecision(t *testing.T) {
+	snapshot := store.Snapshot{State: &state.State{Nodes: map[string]state.NodeState{
+		"implement": {
+			Type: model.NodeTypeTask, Status: state.NodeStatusBlocked,
+			BlockedAttempt: 2, BlockedNodeID: "implement.test.tests",
+		},
+		"escalate": {
+			Type: model.NodeTypeDecision, Status: state.NodeStatusReady,
+			Attempt: 2, PoisonedNodeID: "implement.test.tests",
+		},
+		"canceled": {Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	}}}
+	tmpl := &model.Template{Nodes: map[string]model.Node{
+		"implement": {
+			Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"},
+			Checks: []model.Step{{ID: "tests", Performer: model.Performer{Kind: model.PerformerProgram, Run: "true"}}},
+			Next:   model.Next{"fail": "escalate"},
+		},
+		"escalate": {
+			Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "retry?"},
+			Next: model.Next{"retry": "implement", "cancel": "canceled"},
+		},
+		"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+	}}
+
+	_, err := planAdvance(snapshot, tmpl, "escalate", "cancel", "human:johan", advanceInputs{EvidenceRef: "human-message:42"})
+	if err == nil || !strings.Contains(err.Error(), "reserved for poison escalation") || !strings.Contains(err.Error(), "process unblock") {
+		t.Fatalf("reserved escalation decision bypassed the resolution funnel: %v", err)
+	}
+}
+
 func TestPlanTaskFailDoesNotUsePassFallback(t *testing.T) {
 	snapshot := store.Snapshot{
 		State: &state.State{

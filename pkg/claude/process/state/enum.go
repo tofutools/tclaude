@@ -68,6 +68,7 @@ func (k CommandKind) IsValid() bool {
 		CommandKindShortCircuit,
 		CommandKindGateFeedback,
 		CommandKindBlockNode,
+		CommandKindResolveBlock,
 		CommandKindSetTimer,
 		CommandKindWaitSignal,
 		CommandKindCompleteRun:

@@ -20,8 +20,9 @@ func Validate(tmpl *Template, edges []Edge) Diagnostics {
 	diagnostics = append(diagnostics, validateNodes(tmpl)...)
 	diagnostics = append(diagnostics, validateExpansionCollisions(tmpl)...)
 	diagnostics = append(diagnostics, validateEdges(tmpl, edges)...)
+	diagnostics = append(diagnostics, validatePoisonEscalations(tmpl)...)
 	diagnostics = append(diagnostics, validateReachability(tmpl, edges)...)
-	diagnostics = append(diagnostics, validateAcyclic(edges)...)
+	diagnostics = append(diagnostics, validateAcyclic(tmpl, edges)...)
 	diagnostics = append(diagnostics, validateParamRefs(tmpl)...)
 	diagnostics = append(diagnostics, validateLayout(tmpl)...)
 	return diagnostics
@@ -354,8 +355,64 @@ func validateReachability(tmpl *Template, edges []Edge) Diagnostics {
 	return diagnostics
 }
 
-func validateAcyclic(edges []Edge) Diagnostics {
-	adj := adjacency(edges)
+// validatePoisonEscalations reserves the human decision reached by a compound
+// fail edge for the engine's generation-bound poison resolution bridge. The
+// v1 bridge intentionally supports only retrying that compound or canceling
+// the run, so an unsupported choice is rejected before a run can be created.
+func validatePoisonEscalations(tmpl *Template) Diagnostics {
+	var diagnostics Diagnostics
+	for _, sourceID := range sortedKeys(tmpl.Nodes) {
+		source := tmpl.Nodes[sourceID]
+		if !source.IsCompound() {
+			continue
+		}
+		decisionID := FailTarget(source.Next)
+		decision, ok := tmpl.Nodes[decisionID]
+		if decisionID == "" || !ok || decision.Type != NodeTypeDecision || decision.Performer == nil || decision.Performer.Kind != PerformerHuman {
+			continue
+		}
+		path := "nodes." + decisionID + ".next"
+		if len(decision.Next) != 2 {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path, "poison escalation requires exactly retry and cancel choices"))
+		}
+		if retryTarget, ok := decision.Next["retry"]; !ok || retryTarget != sourceID {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".retry", fmt.Sprintf("poison escalation retry must target compound node %q", sourceID)))
+		}
+		cancelTarget, ok := decision.Next["cancel"]
+		cancelNode, targetOK := tmpl.Nodes[cancelTarget]
+		if !ok || !targetOK || cancelNode.Type != NodeTypeEnd || !IsCanceledResult(cancelNode.Result) {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", path+".cancel", "poison escalation cancel must target an end node with result canceled"))
+		}
+		if tmpl.Start == decisionID {
+			diagnostics = append(diagnostics, diagError("invalid_poison_escalation", "start", fmt.Sprintf("poison escalation decision %q cannot also be the template start", decisionID)))
+		}
+		for _, incomingID := range sortedKeys(tmpl.Nodes) {
+			incoming := tmpl.Nodes[incomingID].Next
+			for _, outcome := range sortedKeys(incoming) {
+				target := incoming[outcome]
+				if target != decisionID || incomingID == sourceID && IsFailOutcomeLabel(outcome) {
+					continue
+				}
+				diagnostics = append(diagnostics, diagError(
+					"invalid_poison_escalation",
+					"nodes."+incomingID+".next."+outcome,
+					fmt.Sprintf("poison escalation decision %q may only be entered by compound node %q's fail edge", decisionID, sourceID),
+				))
+			}
+		}
+	}
+	return diagnostics
+}
+
+func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
+	acyclicEdges := make([]Edge, 0, len(edges))
+	for _, edge := range edges {
+		if isPoisonEscalationRetryEdge(tmpl, edge) {
+			continue
+		}
+		acyclicEdges = append(acyclicEdges, edge)
+	}
+	adj := adjacency(acyclicEdges)
 	const (
 		unseen = 0
 		active = 1
@@ -387,6 +444,21 @@ func validateAcyclic(edges []Edge) Diagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// isPoisonEscalationRetryEdge recognizes the one v1 loop that is not an
+// arbitrary graph cycle: a compound task's fail edge offers a human decision,
+// whose retry edge points back to that same task. Runtime planning intercepts
+// this edge as an audited block resolution; it never re-activates a completed
+// graph node through the ordinary edge machinery.
+func isPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
+	if tmpl == nil || edge.Outcome != "retry" {
+		return false
+	}
+	decision, decisionOK := tmpl.Nodes[edge.From]
+	target, targetOK := tmpl.Nodes[edge.To]
+	return decisionOK && targetOK && decision.Type == NodeTypeDecision && decision.Performer != nil && decision.Performer.Kind == PerformerHuman &&
+		target.IsCompound() && FailTarget(target.Next) == edge.From
 }
 
 func adjacency(edges []Edge) map[string][]string {
