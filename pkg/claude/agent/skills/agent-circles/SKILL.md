@@ -130,6 +130,9 @@ Each roster agent (`templateAgentJSON`):
 > does). See the **`agent-coord`** skill's "Spawning workers — default
 > resolution" section for the full precedence chain and the resolved-shape echo
 > that surfaces what each spawn actually launched with.
+> The harness resolves first. Direct field overrides incompatible with it are
+> errors; incompatible lower-profile fields are skipped with echo disclosure,
+> while compatible generic fields still participate.
 
 `work_pattern` entry (`workPatternEntryJSON`):
 - `send_to` — a roster agent's `name`, or `"all"` (broadcast to every member).
