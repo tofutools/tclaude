@@ -49,7 +49,10 @@ func TestRunSpawn_FileAndFlagMutuallyExclusive(t *testing.T) {
 
 // The spawn command's long help must state the default-resolution chain once,
 // and the --harness flag help must warn that an unset value is NOT forced to
-// claude — the TCL-304 documentation fix.
+// claude — the TCL-304 documentation fix. Both must also disclose the harness
+// pin (any explicit launch field or a named --profile pins an unset harness to
+// claude before the default-profile tiers run) — the TCL-304 post-merge
+// must-fix from the #951 cross-vendor review.
 func TestSpawnHelp_DefaultResolutionDocumented(t *testing.T) {
 	cmd := spawnCmd()
 	long := cmd.Long
@@ -58,11 +61,14 @@ func TestSpawnHelp_DefaultResolutionDocumented(t *testing.T) {
 	assert.Contains(t, long, "global (dashboard) default spawn profile")
 	assert.Contains(t, long, "harness's own default")
 	assert.Contains(t, long, "tclaude agent profiles default show")
+	assert.Contains(t, long, "the harness pin")
+	assert.Contains(t, long, "fully blank launch shape")
 
 	harnessFlag := cmd.Flags().Lookup("harness")
 	require.NotNil(t, harnessFlag)
 	assert.Contains(t, harnessFlag.Usage, "does NOT force claude")
 	assert.Contains(t, harnessFlag.Usage, "codex")
+	assert.Contains(t, harnessFlag.Usage, "pins an unset harness to claude")
 }
 
 // formatResolvedField renders "value (source)" for a pinned field and a bare

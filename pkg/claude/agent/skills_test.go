@@ -62,6 +62,8 @@ func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	assert.Contains(t, body, "group's default spawn profile")
 	assert.Contains(t, body, "global (dashboard) default spawn profile")
 	assert.Contains(t, body, "silently flip vendor")
+	assert.Contains(t, body, "The harness pin")
+	assert.Contains(t, body, "fully blank launch")
 	assert.Contains(t, body, "tclaude agent profiles default show")
 	assert.Contains(t, body, "tclaude agent groups ls")
 

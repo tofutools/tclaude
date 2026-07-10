@@ -243,6 +243,19 @@ precedence, highest first:
 > Omitting them inherits whatever default profile is set, including a different
 > vendor.
 
+> ⚠️ **The harness pin — the vendor flip only happens on a fully blank launch
+> shape.** If `--harness` is unset but ANY other launch field is explicit
+> (`--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
+> `--ask-user-question-timeout`, `--auto-review`, `--remote-control`, a profile
+> `trust_dir`) — or a `--profile` is named at all — the harness is **pinned to
+> `claude`** before the default-profile tiers run: a default profile can only
+> choose the harness when nothing else about the launch shape was specified.
+> (The pin exists so explicit fields are validated against a known harness
+> catalog rather than reinterpreted by a foreign-harness profile.) Corollary:
+> `spawn <group> --effort high` under a global codex default profile launches
+> **claude** — tier-3/4 harness selection is skipped entirely, while the other
+> unset fields still fill from those tiers.
+
 Inspect the defaults before you spawn:
 
 ```bash

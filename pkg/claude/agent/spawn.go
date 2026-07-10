@@ -410,7 +410,7 @@ type SpawnParams struct {
 	// Harness picks the coding harness the new agent runs. Declared last
 	// (no explicit short) for the same reason as Effort/Model — boa's
 	// short-flag enricher must not steal a letter from an existing field.
-	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Unset does NOT force claude — it is filled from the group default profile's harness, then the global default profile's harness, then claude. A default profile carries its own harness, so an unset --harness can land on codex. See 'Default resolution' in the command help"`
+	Harness string `long:"harness" optional:"true" help:"Coding harness for the new agent: claude | codex. Unset does NOT force claude — it is filled from the group default profile's harness, then the global default profile's harness, then claude. A default profile carries its own harness, so an unset --harness can land on codex. EXCEPTION: any other explicit launch field (--model/--effort/--sandbox/--ask-for-approval/--ask-user-question-timeout/--auto-review/--remote-control/a profile trust_dir) or a named --profile pins an unset harness to claude before the default-profile tiers run. See 'Default resolution' in the command help"`
 
 	// Sandbox is the launch-time OS-sandbox mode for the new agent. Codex takes
 	// a native --sandbox enum; Claude Code has no launch flag, so its
@@ -476,7 +476,17 @@ func spawnCmd() *cobra.Command {
 			"  5. the harness's own default\n" +
 			"A spawn profile carries its OWN harness, so an unset --harness is NOT the " +
 			"same as claude: if a default profile at tier 3 or 4 selects codex, a " +
-			"no-flag spawn lands on codex (and that profile's model). When a policy " +
+			"no-flag spawn lands on codex (and that profile's model). " +
+			"EXCEPTION — the harness pin: tiers 3-4 only choose the harness for a " +
+			"fully blank launch shape. If the harness is still unset after tiers 1-2 " +
+			"but any launch field is explicit (--model, --effort, --sandbox, " +
+			"--ask-for-approval, --ask-user-question-timeout, --auto-review, " +
+			"--remote-control, a profile trust_dir) — or a --profile was named at " +
+			"all — the harness pins to claude before the default-profile tiers run, " +
+			"so those fields are validated against a known harness catalog instead " +
+			"of being reinterpreted by a lower-tier foreign-harness profile. So " +
+			"`spawn <group> --effort high` under a global codex default profile " +
+			"launches claude. When a policy " +
 			"requires a specific vendor/model, pass explicit --harness + --model (or a " +
 			"--profile that pins them) rather than relying on the default. The spawn " +
 			"output echoes the resolved Harness/Model/Effort and where each came from; " +
