@@ -3064,14 +3064,14 @@ func importLegacyData(db *sql.DB) error {
 
 	if importedSessions {
 		oldDir := filepath.Join(home, ".tclaude", "claude-sessions")
-		newDir := oldDir + ".migrated"
+		newDir := filepath.Join(home, ".tclaude", "data", "claude-sessions.migrated")
 		if err := os.Rename(oldDir, newDir); err != nil {
 			slog.Warn("failed to rename legacy sessions dir", "error", err)
 		}
 	}
 	if importedNotify {
 		oldDir := filepath.Join(home, ".tclaude", "notify-state")
-		newDir := oldDir + ".migrated"
+		newDir := filepath.Join(home, ".tclaude", "data", "notify-state.migrated")
 		if err := os.Rename(oldDir, newDir); err != nil {
 			slog.Warn("failed to rename legacy notify-state dir", "error", err)
 		}

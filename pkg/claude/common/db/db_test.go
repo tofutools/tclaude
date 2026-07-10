@@ -1,13 +1,74 @@
 package db
 
 import (
+	"database/sql"
+	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpenRelocatesLegacyDatabaseWithoutLosingRows(t *testing.T) {
+	setupTestDB(t)
+	root := filepath.Join(os.Getenv("HOME"), ".tclaude")
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	legacyPath := filepath.Join(root, "db.sqlite")
+	legacy, err := sql.Open("sqlite", legacyPath)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE migration_probe (value TEXT NOT NULL);
+		INSERT INTO migration_probe(value) VALUES ('kept');`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	d, err := Open()
+	require.NoError(t, err)
+	var got string
+	require.NoError(t, d.QueryRow(`SELECT value FROM migration_probe`).Scan(&got))
+	assert.Equal(t, "kept", got)
+	assert.NoFileExists(t, legacyPath)
+	assert.FileExists(t, filepath.Join(root, "data", "db.sqlite"))
+}
+
+func TestOpenRefusesConflictingLegacyAndNewDatabases(t *testing.T) {
+	setupTestDB(t)
+	root := filepath.Join(os.Getenv("HOME"), ".tclaude")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "db.sqlite"), []byte("legacy"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "db.sqlite"), []byte("new"), 0o600))
+
+	d, err := Open()
+	assert.Nil(t, d)
+	require.ErrorContains(t, err, "both legacy and new databases exist")
+}
+
+func TestOpenKeepsLegacyDatabaseWhilePreSplitDaemonIsLive(t *testing.T) {
+	setupTestDB(t)
+	home := os.Getenv("HOME")
+	legacySocket, err := net.Listen("unix", filepath.Join(home, ".tclaude-agentd.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = legacySocket.Close() })
+	root := filepath.Join(home, ".tclaude")
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	legacyPath := filepath.Join(root, "db.sqlite")
+	legacy, err := sql.Open("sqlite", legacyPath)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`CREATE TABLE live_daemon_probe (value TEXT NOT NULL);
+		INSERT INTO live_daemon_probe(value) VALUES ('legacy-layout');`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	d, err := Open()
+	require.NoError(t, err)
+	var got string
+	require.NoError(t, d.QueryRow(`SELECT value FROM live_daemon_probe`).Scan(&got))
+	assert.Equal(t, "legacy-layout", got)
+	assert.FileExists(t, legacyPath)
+	assert.NoFileExists(t, filepath.Join(root, "data", "db.sqlite"))
+}
 
 func setupTestDB(t *testing.T) {
 	t.Helper()
@@ -432,7 +493,7 @@ func TestLegacyImport(t *testing.T) {
 	// Verify old dirs renamed
 	_, err = os.Stat(sessDir)
 	assert.True(t, os.IsNotExist(err), "old sessions dir should be renamed")
-	_, err = os.Stat(sessDir + ".migrated")
+	_, err = os.Stat(dir + "/.tclaude/data/claude-sessions.migrated")
 	assert.NoError(t, err, "expected .migrated sessions dir")
 
 	// Verify debug.log moved to the new (private data/) location
@@ -443,6 +504,6 @@ func TestLegacyImport(t *testing.T) {
 		assert.Equal(t, "old debug data\n", string(data), "debug.log content")
 	}
 	// Old location should be gone (it was moved before the dir rename)
-	_, err = os.Stat(sessDir + ".migrated/debug.log")
+	_, err = os.Stat(dir + "/.tclaude/data/claude-sessions.migrated/debug.log")
 	assert.True(t, os.IsNotExist(err), "debug.log should not remain in old dir")
 }

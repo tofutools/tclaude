@@ -1967,7 +1967,7 @@ func APIDir() string {
 // (~/.tclaude/data/config.json — private daemon state, migrated automatically
 // from the legacy ~/.tclaude/config.json location by the daemon at startup).
 func ConfigPath() string {
-	return filepath.Join(DataDir(), "config.json")
+	return common.TclaudeStatePath("config.json")
 }
 
 // Load loads the config from ~/.tclaude/config.json.
@@ -2124,10 +2124,10 @@ func Save(config *Config) error {
 }
 
 func saveLocked(config *Config) error {
-	// config.json lives in the private state dir (~/.tclaude/data). Write the
-	// temp file there too so the rename below is same-directory (atomic, never
-	// cross-filesystem) and never fails because data/ does not exist yet.
-	dir := DataDir()
+	// Capture the compatibility-selected target once: an old daemon can exit
+	// during this save, but the whole atomic write must stay in one layout.
+	target := ConfigPath()
+	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -2161,7 +2161,7 @@ func saveLocked(config *Config) error {
 	if err := os.Chmod(tmpName, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, ConfigPath())
+	return os.Rename(tmpName, target)
 }
 
 // Validate checks a Config for problems that would make it unsafe or

@@ -1,8 +1,10 @@
 package common
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // tclaude's on-disk home is split by ACCESS CLASS so a sandboxed agent can be
@@ -54,4 +56,60 @@ func TclaudeAPIDir() string {
 		return ""
 	}
 	return filepath.Join(root, "api")
+}
+
+// TclaudeStatePath returns the active location for one private state entry.
+// Normally that is data/<name>. While a pre-split daemon is live — or when a
+// legacy entry still exists and its destination does not — callers stay on the
+// legacy root path. The existence fallback closes the race where the old
+// daemon exits after a command's migration preflight but before the command
+// resolves its own path.
+func TclaudeStatePath(name string) string {
+	root := TclaudeDir()
+	dataDir := TclaudeDataDir()
+	if root == "" || dataDir == "" {
+		return ""
+	}
+	oldPath := filepath.Join(root, name)
+	newPath := filepath.Join(dataDir, name)
+	if PreSplitAgentdReachable() {
+		return oldPath
+	}
+	if _, oldErr := os.Lstat(oldPath); oldErr == nil {
+		if _, newErr := os.Lstat(newPath); os.IsNotExist(newErr) {
+			return oldPath
+		}
+	}
+	return newPath
+}
+
+// PreSplitAgentdReachable reports whether an older daemon is reachable only
+// through one of the pre-split socket paths. Migration code must not rename
+// state out from under such a daemon: open file descriptors survive rename on
+// Unix, but the daemon can subsequently reopen/recreate a sidecar or state file
+// at the old name and split the live state across both layouts.
+func PreSplitAgentdReachable() bool {
+	root := TclaudeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || root == "" {
+		return false
+	}
+	canonical := filepath.Join(TclaudeAPIDir(), "agentd.sock")
+	if unixSocketReachable(canonical) {
+		return false
+	}
+	return unixSocketReachable(filepath.Join(home, ".tclaude-agentd.sock")) ||
+		unixSocketReachable(filepath.Join(root, "agentd.sock"))
+}
+
+func unixSocketReachable(path string) bool {
+	if path == "" {
+		return false
+	}
+	c, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
 }

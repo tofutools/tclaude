@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
@@ -18,11 +17,7 @@ import (
 // process CLI inspection (~/.tclaude/data/processes — private daemon state).
 // Commands may still accept an explicit root for portable stores and tests.
 func DefaultRoot() string {
-	dataDir := common.TclaudeDataDir()
-	if dataDir == "" {
-		return ""
-	}
-	return filepath.Join(dataDir, "processes")
+	return common.TclaudeStatePath("processes")
 }
 
 var (

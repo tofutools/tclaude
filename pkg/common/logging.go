@@ -13,11 +13,7 @@ import (
 // OutputLogPath returns the path to the general output log file
 // (~/.tclaude/data/output.log — private daemon state).
 func OutputLogPath() string {
-	dataDir := TclaudeDataDir()
-	if dataDir == "" {
-		return ""
-	}
-	return filepath.Join(dataDir, "output.log")
+	return TclaudeStatePath("output.log")
 }
 
 // SetupLogging configures slog to write to ~/.tclaude/data/output.log (file
