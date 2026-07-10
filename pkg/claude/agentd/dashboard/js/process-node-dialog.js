@@ -101,10 +101,17 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
   // decider) so the same component edits every slot uniformly.
   const performerEditor = (performer, locate) => {
     const wrap = h('div', { class: 'process-performer-editor' });
-    const kind = PERFORMER_KINDS.includes(performer?.kind) ? performer.kind : 'agent';
-    wrap.append(selectField('kind', PERFORMER_KINDS, kind,
+    const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
+    const known = PERFORMER_KINDS.includes(kind);
+    // An unrecognized stored kind renders AS ITSELF (never silently coerced
+    // to agent — the card must not assert a kind the model rejects); picking
+    // a supported kind normalizes it through setPerformerKind.
+    wrap.append(selectField('kind', known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind], kind,
       (value) => commit((draft) => setPerformerKind(locate(draft), value))));
-    for (const field of performerFieldsFor(kind)) {
+    if (!known) {
+      wrap.append(h('p', { class: 'process-node-empty', text: `Unknown performer kind ${kind}: validation rejects it — pick a supported kind.` }));
+    }
+    for (const field of known ? performerFieldsFor(kind) : []) {
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];
       wrap.append(textField(field.label, value,
         (text) => commit((draft) => setPerformerField(locate(draft), field.key, text)),
@@ -198,7 +205,9 @@ export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, o
       textField('max attempts', node.retry?.maxAttempts === undefined ? '' : String(node.retry.maxAttempts),
         (value) => commit((draft) => setRetryField(draft, 'maxAttempts', value)), { placeholder: 'unset' }),
       selectField('on fail', RETRY_ON_FAIL_MODES, node.retry?.onFail,
-        (value) => commit((draft) => setRetryField(draft, 'onFail', value)), { blankLabel: 'default (feedback-same-session)' })));
+        // Unset onFail resolves to model.DefaultRetryMode: fresh-attempt (the
+        // conservative choice — never trust a possibly-poisoned context).
+        (value) => commit((draft) => setRetryField(draft, 'onFail', value)), { blankLabel: 'default (fresh-attempt)' })));
 
     root.append(section('captures',
       textField('published outputs', formatLines(node.captures),
@@ -286,12 +295,24 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated = null,
     return true;
   };
 
+  // Re-rendering replaces every control, so restore the scroll position and
+  // put focus back on the control at the same tab position — a change event
+  // fired from a focused select/checkbox must not dump keyboard users back
+  // at the top of the dialog after every single edit. (On structural edits
+  // the index can shift by the inserted/removed controls; landing on a
+  // neighbor is the acceptable degradation.)
+  const focusables = () => Array.from(body.querySelectorAll('input, select, textarea, button'));
   const render = () => {
+    const active = document.activeElement;
+    const focusIndex = active && body.contains(active) ? focusables().indexOf(active) : -1;
+    const scrollTop = body.scrollTop;
     const detail = buildNodeDetail(model, nodeId, {
       mode, onClose: dispose,
       commit: mode === 'edit' ? commit : null,
     });
     body.replaceChildren(detail, status);
+    body.scrollTop = scrollTop;
+    if (focusIndex >= 0) focusables()[focusIndex]?.focus();
   };
 
   render();

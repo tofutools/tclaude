@@ -281,12 +281,18 @@ func validatePerformer(performer Performer, path string) Diagnostics {
 }
 
 // validateKindScopedFields enforces the uniform-contract discipline rule
-// (design §2): choices/assignee are human-scoped and model/effort are
-// agent-scoped, so a field set on the wrong kind is a hard authoring error
-// rather than something the runtime silently ignores. Prompt stays shared
-// (agent instruction / human context) and run/args already fail their own
-// missing-field checks per kind.
+// (design §2): a kind-scoped field set on the wrong kind is a hard authoring
+// error, never something the runtime silently ignores — a stray field the
+// editing surface does not even show for the current kind (say, a run
+// command on a human performer) must not lurk until a kind switch makes it
+// live. Ask/run/args were historically unchecked on wrong kinds; they are
+// scoped here alongside the new fields. Prompt is shared by design: agent
+// instruction text or a human's long-form context. An unrecognized kind gets
+// its own invalid_performer_kind error; skip the scoping noise then.
 func validateKindScopedFields(performer Performer, path string) Diagnostics {
+	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram {
+		return nil
+	}
 	var diagnostics Diagnostics
 	scoped := func(field string, set bool, kinds ...PerformerKind) {
 		if !set || slices.Contains(kinds, performer.Kind) {
@@ -299,10 +305,14 @@ func validateKindScopedFields(performer Performer, path string) Diagnostics {
 		diagnostics = append(diagnostics, diagError("kind_scoped_field", path+"."+field,
 			fmt.Sprintf("%s is only valid on %s performers", field, strings.Join(kindNames, " or "))))
 	}
+	scoped("ask", !isBlank(performer.Ask), PerformerHuman)
 	scoped("choices", len(performer.Choices) > 0, PerformerHuman)
 	scoped("assignee", !isBlank(performer.Assignee), PerformerHuman)
+	scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman)
 	scoped("model", !isBlank(performer.Model), PerformerAgent)
 	scoped("effort", !isBlank(performer.Effort), PerformerAgent)
+	scoped("run", !isBlank(performer.Run), PerformerProgram)
+	scoped("args", len(performer.Args) > 0, PerformerProgram)
 	for i, choice := range performer.Choices {
 		if isBlank(choice) {
 			diagnostics = append(diagnostics, diagError("invalid_choice", fmt.Sprintf("%s.choices[%d]", path, i), "choices must not be blank"))

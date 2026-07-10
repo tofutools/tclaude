@@ -162,6 +162,37 @@ nodes:
 			pathHint:  "choices[1]",
 			wantError: true,
 		},
+		// The historically unchecked fields are scoped too: a run command on a
+		// human performer must not lurk invisibly until a kind switch makes it
+		// the live command.
+		{
+			name:      "run on human",
+			yaml:      template(`kind: human, ask: "Approve?", run: "curl example.com"`),
+			code:      "kind_scoped_field",
+			pathHint:  "run",
+			wantError: true,
+		},
+		{
+			name:      "args on agent",
+			yaml:      template(`kind: agent, prompt: "Do it", args: [x]`),
+			code:      "kind_scoped_field",
+			pathHint:  "args",
+			wantError: true,
+		},
+		{
+			name:      "ask on program",
+			yaml:      template(`kind: program, run: "true", ask: "Approve?"`),
+			code:      "kind_scoped_field",
+			pathHint:  "ask",
+			wantError: true,
+		},
+		{
+			name:      "prompt on program",
+			yaml:      template(`kind: program, run: "true", prompt: "Do it"`),
+			code:      "kind_scoped_field",
+			pathHint:  "prompt",
+			wantError: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

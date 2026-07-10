@@ -157,10 +157,12 @@ test('plan stage toggle mints a default step and approval policy is validated', 
   assert.throws(() => setStageEnabled(node, 'work', true), /unknown stage/);
 });
 
-test('review stage toggle defaults to a human gate', () => {
+test('review stage toggle defaults to a bare human gate (no agent-profile bleed)', () => {
   const node = { type: 'task', performer: { kind: 'agent', profile: 'dev', prompt: 'Do it' } };
   setStageEnabled(node, 'review', true);
-  assert.deepEqual(node.review, { id: 'review', performer: { kind: 'human', profile: 'dev', ask: 'Approve?' } });
+  // The work profile is an agent spawn profile; it must not mislabel the
+  // human reviewer. Only the plan stage inherits it.
+  assert.deepEqual(node.review, { id: 'review', performer: { kind: 'human', ask: 'Approve?' } });
   // Toggling an already-enabled stage keeps the configured step.
   node.review.performer.ask = 'Merge?';
   setStageEnabled(node, 'review', true);

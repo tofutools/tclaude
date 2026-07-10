@@ -117,8 +117,10 @@ export function setRetryField(holder, key, value) {
 }
 
 // setStageEnabled toggles the optional plan/review stages. Enabling mints a
-// step with a sensible default performer (plan inherits the work performer's
-// profile — the author refines from there); disabling drops the whole step.
+// step with a sensible default performer: plan inherits the work performer's
+// profile (same agent population plans and does); a review gate defaults to
+// a bare human slot — the work performer's profile is usually an agent spawn
+// profile and would mislabel the human reviewer. Disabling drops the step.
 export function setStageEnabled(node, stage, enabled) {
   if (stage !== 'plan' && stage !== 'review') throw new Error(`unknown stage ${stage}`);
   if (!enabled) {
@@ -127,7 +129,7 @@ export function setStageEnabled(node, stage, enabled) {
   }
   if (node[stage]) return;
   const performer = defaultPerformer(stage === 'review' ? 'human' : 'agent');
-  if (node.performer?.profile) performer.profile = node.performer.profile;
+  if (stage === 'plan' && node.performer?.profile) performer.profile = node.performer.profile;
   if (stage === 'review') performer.ask = 'Approve?';
   const step = { id: stage === 'review' ? 'review' : 'plan', performer };
   if (stage === 'plan') step.approval = 'auto';
