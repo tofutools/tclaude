@@ -592,6 +592,9 @@ func TestProcessWorklistActionUsesObservationFunnelAndIsIdempotent(t *testing.T)
 	afterReplay, err := fs.LoadRun(t.Context(), "worklist-decision-run")
 	require.NoError(t, err)
 	assert.Equal(t, firstSeq, afterReplay.State.LastLogSeq)
+	conflicting := map[string]string{"action": "approve", "comment": "different payload", "idempotencyKey": "dashboard-submit-1"}
+	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", conflicting)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -627,6 +630,23 @@ func TestProcessWorklistBlockedActionUsesUnblockFunnel(t *testing.T) {
 	assert.Equal(t, "implement.test.tests", item.Node)
 	assert.Contains(t, item.Summary, "exhausted its budget")
 	assert.Equal(t, "human:operator", item.Assignee)
+	blockedSnapshot, err := fs.LoadRun(t.Context(), "worklist-blocked-run")
+	require.NoError(t, err)
+	var foreignAgentConv string
+	for commandID := range blockedSnapshot.State.OutstandingCommands {
+		agentRow, lookupErr := db.AgentForProcessCommand(commandID)
+		require.NoError(t, lookupErr)
+		if agentRow != nil {
+			foreignAgentConv = agentRow.CurrentConvID
+			break
+		}
+	}
+	require.NotEmpty(t, foreignAgentConv)
+	foreignReq := testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", map[string]string{
+		"action": "retry", "comment": "agent must not resolve human work", "idempotencyKey": "foreign-agent-1",
+	})
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(foreignReq, foreignAgentConv))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 
 	body := map[string]string{"action": "retry", "comment": "transient failure reviewed", "idempotencyKey": "blocked-submit-1"}
 	rec = humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+item.ID+"/action", body)

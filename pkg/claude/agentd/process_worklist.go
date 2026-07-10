@@ -89,6 +89,10 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !isHuman && item.Assignee != string(actor) {
+		writeError(w, http.StatusForbidden, "forbidden", "agent caller is not the assignee for this work item")
+		return
+	}
 	if !slices.Contains(item.AvailableActions, body.Action) {
 		writeError(w, http.StatusConflict, "process_action", fmt.Sprintf("action %q is not available for item %q", body.Action, item.ID))
 		return
