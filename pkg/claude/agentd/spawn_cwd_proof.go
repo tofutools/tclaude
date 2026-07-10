@@ -13,10 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 const (
-	spawnCwdProofPrefix = ".tclaude-spawn-cwd-proof-"
 	// A proof may wait behind the longest supported --ask-human approval
 	// (five minutes), so keep it valid long enough for that round trip while
 	// still making leaked challenges short-lived.
@@ -73,7 +74,7 @@ func handleSpawnCwdProof(w http.ResponseWriter, r *http.Request) {
 		"required":    true,
 		"proof":       proof,
 		"cwd":         cwd,
-		"marker_path": filepath.Join(cwd, spawnCwdProofPrefix+proof),
+		"marker_path": filepath.Join(cwd, clcommon.SpawnCwdProofPrefix+proof),
 	})
 }
 
@@ -119,11 +120,16 @@ func spawnCwdProofMAC(caller, cwd string, payload []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// consumeSpawnCwdWriteProof verifies that proof was issued to caller for cwd,
-// then checks and removes the exact marker. A valid token without a marker is
-// intentionally insufficient: only creating the marker demonstrates that the
-// parent process's own sandbox admitted a write in the target directory.
-func consumeSpawnCwdWriteProof(caller, rawCwd, proof string, now time.Time) (string, *spawnFailure) {
+// validateSpawnCwdWriteProof verifies that proof was issued to caller for cwd,
+// then checks the exact marker. A valid token without a marker is intentionally
+// insufficient: only creating the marker demonstrates that the parent
+// process's own sandbox admitted a write in the target directory.
+//
+// The marker deliberately remains in place. The forked session launcher
+// consumes it only after tmux has established the pane's cwd inode; that second
+// check prevents a caller from swapping this now-validated pathname to a
+// forbidden directory before launch.
+func validateSpawnCwdWriteProof(caller, rawCwd, proof string, now time.Time) (string, *spawnFailure) {
 	if caller == "" {
 		return rawCwd, nil
 	}
@@ -150,7 +156,7 @@ func consumeSpawnCwdWriteProof(caller, rawCwd, proof string, now time.Time) (str
 		return "", invalidSpawnCwdProof("proof expired before the spawn was authorised")
 	}
 
-	marker := filepath.Join(cwd, spawnCwdProofPrefix+proof)
+	marker := filepath.Join(cwd, clcommon.SpawnCwdProofPrefix+proof)
 	info, err := os.Lstat(marker)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -160,10 +166,6 @@ func consumeSpawnCwdWriteProof(caller, rawCwd, proof string, now time.Time) (str
 	}
 	if !info.Mode().IsRegular() || info.Size() != 0 {
 		return "", invalidSpawnCwdProof("proof marker must be an empty regular file")
-	}
-	if err := os.Remove(marker); err != nil {
-		return "", &spawnFailure{http.StatusInternalServerError, "cwd_proof_cleanup",
-			"remove verified cwd proof marker: " + err.Error()}
 	}
 	return cwd, nil
 }

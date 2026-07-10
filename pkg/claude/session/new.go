@@ -22,7 +22,11 @@ import (
 )
 
 type NewParams struct {
-	Dir              string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	Dir string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	// CwdWriteProof is an internal daemon-to-session capability. The harness
+	// command checks its marker only after tmux has established the pane's cwd
+	// inode, then removes it before exec. Hidden from normal CLI help.
+	CwdWriteProof    string `long:"cwd-write-proof" optional:"true" help:"Internal: verify a daemon-issued cwd marker before launching the harness"`
 	Resume           string `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
 	Global           bool   `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label            string `long:"label" optional:"true" help:"Custom label for the session"`
@@ -173,6 +177,7 @@ func NewCmd() *cobra.Command {
 
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
+	_ = cmd.Flags().MarkHidden("cwd-write-proof")
 
 	// Register completion for --resume flag
 	_ = cmd.RegisterFlagCompletionFunc("resume", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -293,6 +298,10 @@ func runNew(params *NewParams) error {
 		if !clcommon.IsValidUUID(params.SessionID) {
 			return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
 		}
+	}
+	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
+	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
+		return fmt.Errorf("invalid internal cwd write proof")
 	}
 
 	// Validate --sandbox up front WITHOUT defaulting it: a direct
@@ -645,6 +654,9 @@ func runNew(params *NewParams) error {
 		RemoteControl:          remoteControl,
 		InitialPrompt:          params.InitialPrompt,
 	})
+	if params.CwdWriteProof != "" {
+		harnessCmd = guardHarnessCommandWithCwdProof(harnessCmd, params.CwdWriteProof)
+	}
 
 	// Create the detached tmux session running the harness command.
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
@@ -750,6 +762,40 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 	return nil
+}
+
+// isValidSpawnCwdProofToken accepts the daemon's base64url token alphabet and
+// a conservative length bound before the value enters a sh -c command. The
+// daemon-generated token is currently 75 characters; the larger bound leaves
+// room for a wire-compatible format revision.
+func isValidSpawnCwdProofToken(proof string) bool {
+	if len(proof) == 0 || len(proof) > 128 {
+		return false
+	}
+	for _, r := range proof {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// guardHarnessCommandWithCwdProof prefixes the harness command with a marker
+// check performed by the shell tmux starts *after* tmux has chdir'd the pane.
+// At that point the shell's cwd is an inode, not a path lookup: even if the
+// spawning agent renames the directory and replaces the original pathname,
+// this process and the exec'd harness remain in the verified directory object.
+// A pre-launch pathname swap instead lands the shell in a directory without
+// the unpredictable marker, so the harness never starts.
+func guardHarnessCommandWithCwdProof(harnessCmd, proof string) string {
+	marker := clcommon.SpawnCwdProofPrefix + proof
+	quoted := clcommon.ShellQuoteArg(marker)
+	return "tclaude_cwd_proof=" + quoted + "; " +
+		"if [ ! -f \"$tclaude_cwd_proof\" ] || [ -L \"$tclaude_cwd_proof\" ] || [ -s \"$tclaude_cwd_proof\" ]; then " +
+		"echo 'tclaude: spawn cwd write proof missing or invalid; refusing harness launch' >&2; exit 126; fi; " +
+		"rm -f -- \"$tclaude_cwd_proof\" || exit 126; " + harnessCmd
 }
 
 // applyTmuxWindowTitle sets this session's tmux window title to

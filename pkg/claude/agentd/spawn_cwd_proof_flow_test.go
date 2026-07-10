@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -19,6 +20,27 @@ type cwdProofResponse struct {
 	Proof      string `json:"proof"`
 	Cwd        string `json:"cwd"`
 	MarkerPath string `json:"marker_path"`
+}
+
+type cwdSwapSpawner struct {
+	inner     agentd.Spawner
+	target    string
+	moved     string
+	forbidden string
+}
+
+func (s *cwdSwapSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	if err := os.Rename(s.target, s.moved); err != nil {
+		return err
+	}
+	if err := os.Symlink(s.forbidden, s.target); err != nil {
+		return err
+	}
+	return s.inner.SpawnNew(args)
+}
+
+func (s *cwdSwapSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.inner.SpawnResume(args)
 }
 
 func spawnProofCapableAgent(t *testing.T, f *testharness.Flow, group, conv string) {
@@ -42,7 +64,7 @@ func issueCwdProof(t *testing.T, f *testharness.Flow, conv, cwd string) cwdProof
 
 func materialiseCwdProof(t *testing.T, proof cwdProofResponse) {
 	t.Helper()
-	require.Equal(t, filepath.Join(proof.Cwd, ".tclaude-spawn-cwd-proof-"+proof.Proof), proof.MarkerPath)
+	require.Equal(t, filepath.Join(proof.Cwd, clcommon.SpawnCwdProofPrefix+proof.Proof), proof.MarkerPath)
 	f, err := os.OpenFile(proof.MarkerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
@@ -99,6 +121,40 @@ func TestSpawnCwdProof_IsBoundToCanonicalDirectory(t *testing.T) {
 	require.Equalf(t, http.StatusForbidden, rec.Code, "spawn response: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "invalid_cwd_proof")
 	assert.Len(t, f.ListGroupMembers("alpha"), 1, "no child should be enrolled")
+}
+
+func TestSpawnCwdProof_PathSwapBeforePaneLaunchIsRefused(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "lead-proof-dddd-eeee-ffff-444444444444"
+	spawnProofCapableAgent(t, f, "alpha", lead)
+
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	moved := filepath.Join(root, "proved-target")
+	forbidden := filepath.Join(root, "forbidden")
+	require.NoError(t, os.Mkdir(target, 0o700))
+	require.NoError(t, os.Mkdir(forbidden, 0o700))
+	proof := issueCwdProof(t, f, lead, target)
+	materialiseCwdProof(t, proof)
+
+	inner := agentd.Spawn
+	agentd.Spawn = &cwdSwapSpawner{inner: inner, target: target, moved: moved, forbidden: forbidden}
+	t.Cleanup(func() { agentd.Spawn = inner })
+
+	req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/alpha/spawn", map[string]any{
+			"name": "worker", "cwd": target, "cwd_write_proof": proof.Proof,
+		}), lead)
+	rec := testharness.Serve(f.Mux, req)
+	require.Equalf(t, http.StatusInternalServerError, rec.Code, "spawn response: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "failed to launch")
+	assert.Len(t, f.ListGroupMembers("alpha"), 1, "swapped cwd must not launch or enroll a child")
+
+	// Restore the temp tree so cleanup can remove it and so the proof marker is
+	// visible at its original path for materialiseCwdProof's cleanup.
+	require.NoError(t, os.Remove(target))
+	require.NoError(t, os.Rename(moved, target))
 }
 
 func TestSpawnCwdProof_HumanDoesNotNeedProof(t *testing.T) {

@@ -458,8 +458,11 @@ checks would only prove that *agentd* can write the requested cwd. Before an
 agent-originated `groups spawn`, the CLI asks agentd for a short-lived challenge
 bound to that agent and the canonical cwd, creates the named empty marker from
 inside the caller's sandbox, and sends the opaque proof with the spawn request.
-Agentd verifies and removes the marker before launch. Human/dashboard spawns
-bypass this check. Custom clients of the spawn API must perform the same
+Agentd verifies the signature and marker before launch, then the shell tmux
+starts verifies and removes the marker again from its already-established cwd
+inode immediately before executing the harness. The second check prevents a
+rename/symlink swap between daemon validation and launch. Human/dashboard
+spawns bypass this check. Custom clients of the spawn API must perform the same
 `POST /v1/spawn-cwd-proof` preflight.
 
 ### clone / reincarnate / compact / context-info

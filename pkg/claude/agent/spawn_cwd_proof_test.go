@@ -8,13 +8,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 func TestPrepareSpawnCwdWriteProof_ReportsSandboxWriteDenial(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(dir, []byte("blocked"), 0o600))
 	proof := "signed-challenge"
-	marker := filepath.Join(dir, spawnCwdProofPrefix+proof)
+	marker := filepath.Join(dir, clcommon.SpawnCwdProofPrefix+proof)
 
 	prev := DaemonRequestImpl
 	DaemonRequestImpl = func(method, path string, _ any, out any, _ DaemonOpts) error {

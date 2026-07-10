@@ -1468,19 +1468,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	// The daemon is outside the caller's OS sandbox, so checking Unix mode bits
 	// here would only prove that agentd (the same uid) can write cwd. For an
-	// agent caller, consume the signed marker challenge created by the CLI while
+	// agent caller, validate the signed marker challenge created by the CLI while
 	// it was still inside the parent's sandbox. This prevents selecting an
 	// otherwise-unwritable directory merely to give the child a new writable
 	// sandbox root. Human callers are the trust root and bypass this check.
-	if provenCwd, proofFail := consumeSpawnCwdWriteProof(
+	cwdWriteProof := ""
+	if provenCwd, proofFail := validateSpawnCwdWriteProof(
 		spawnerConvID, cwd, body.CwdWriteProof, time.Now()); proofFail != nil {
 		writeError(w, proofFail.Status, proofFail.Kind, proofFail.Msg)
 		return
 	} else {
 		cwd = provenCwd
 	}
+	if spawnerConvID != "" {
+		cwdWriteProof = strings.TrimSpace(body.CwdWriteProof)
+	}
 	// The proof is an ephemeral capability, not durable launch configuration.
-	// Do not retain it in agents.initial_spawn_config after it has been consumed.
+	// Do not retain it in agents.initial_spawn_config after passing it to the
+	// forked session launcher's inode-bound second check.
 	body.CwdWriteProof = ""
 
 	// Validate the optional worktree dir the same way — it must exist
@@ -1668,6 +1673,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		InitialMessage:         body.InitialMessage,
 		Attachments:            attachments,
 		Cwd:                    cwd,
+		CwdWriteProof:          cwdWriteProof,
 		WorktreePath:           worktreePath,
 		WorktreeBranch:         worktreeBranch,
 		AutoFocus:              body.AutoFocus,
@@ -1762,8 +1768,12 @@ type spawnParams struct {
 	// "Attached files" section, so the agent can Read them on its first turn.
 	// Already sanitised at the spawn boundary (handleGroupSpawn); empty for a
 	// spawn with no attachments.
-	Attachments    []string
-	Cwd            string // resolved absolute directory
+	Attachments []string
+	Cwd         string // resolved absolute directory
+	// CwdWriteProof is the validated agent-caller capability whose marker the
+	// forked session launcher consumes from inside the tmux pane's established
+	// cwd inode. Empty for human and non-HTTP spawn paths.
+	CwdWriteProof  string
 	WorktreePath   string // resolved absolute directory, or ""
 	WorktreeBranch string
 	AutoFocus      bool
@@ -2151,6 +2161,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	spawnArgs := clcommon.SpawnArgs{
 		Label:                  label,
 		Cwd:                    p.Cwd,
+		CwdWriteProof:          p.CwdWriteProof,
 		Effort:                 p.Effort,
 		Model:                  p.Model,
 		Harness:                p.Harness,
@@ -3391,6 +3402,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "-d", "--global", "--label", a.Label}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
+	}
+	if a.CwdWriteProof != "" {
+		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
 	// Launch-enrollment fields (set only on the launch-args spawn path, CC):
 	// the preset conv-id, display name, and welcome ride in as launch flags so

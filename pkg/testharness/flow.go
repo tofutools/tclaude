@@ -2,6 +2,7 @@ package testharness
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -113,6 +114,23 @@ type simSpawner struct {
 // before the seam, so the production Spawner signature is satisfied with no
 // behaviour change for Claude Code.
 func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	// Model the production session launcher's second cwd-proof check. It runs
+	// after tmux has resolved args.Cwd, so a pathname swapped after agentd's
+	// first validation no longer contains the unpredictable marker and the
+	// harness never starts.
+	if args.CwdWriteProof != "" {
+		marker := filepath.Join(args.Cwd, clcommon.SpawnCwdProofPrefix+args.CwdWriteProof)
+		info, err := os.Lstat(marker)
+		if err != nil {
+			return fmt.Errorf("spawn cwd proof marker: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != 0 {
+			return fmt.Errorf("spawn cwd proof marker is not an empty regular file")
+		}
+		if err := os.Remove(marker); err != nil {
+			return fmt.Errorf("remove spawn cwd proof marker: %w", err)
+		}
+	}
 	if args.Harness == codexHarnessName {
 		return s.spawnNewCodex(args)
 	}
@@ -1339,7 +1357,7 @@ func (f *Flow) withSpawnCwdProof(spawnPath string, body any) (any, func()) {
 	if err := json.Unmarshal(proofRec.Body.Bytes(), &proof); err != nil || !proof.Required {
 		return body, cleanup
 	}
-	expected := filepath.Join(proof.Cwd, ".tclaude-spawn-cwd-proof-"+proof.Proof)
+	expected := filepath.Join(proof.Cwd, clcommon.SpawnCwdProofPrefix+proof.Proof)
 	if proof.Proof == "" || proof.MarkerPath != expected {
 		f.T.Fatalf("spawn cwd proof response malformed: %s", proofRec.Body.String())
 	}

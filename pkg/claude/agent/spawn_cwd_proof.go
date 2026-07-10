@@ -6,12 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
 
-// spawnCwdProofPrefix mirrors agentd's marker prefix. The agent package cannot
-// import agentd (agentd already imports agent), so keep this wire-level string
-// in sync with pkg/claude/agentd/spawn_cwd_proof.go.
-const spawnCwdProofPrefix = ".tclaude-spawn-cwd-proof-"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+)
 
 type spawnCwdProofResponse struct {
 	Required   bool   `json:"required"`
@@ -25,8 +22,9 @@ type spawnCwdProofResponse struct {
 // that file is the capability test: it happens in this CLI process, inside the
 // parent's sandbox, before the daemon (outside that sandbox) launches a child.
 //
-// The returned cleanup is always safe to call. Agentd normally removes the
-// marker while consuming the proof; cleanup covers pre-spawn failures.
+// The returned cleanup is always safe to call. The spawned pane normally
+// removes the marker after establishing its cwd; cleanup covers pre-launch
+// failures and rejected spawn requests.
 func prepareSpawnCwdWriteProof(cwd string) (proof, canonicalCwd string, cleanup func(), err error) {
 	cleanup = func() {}
 	var resp spawnCwdProofResponse
@@ -41,7 +39,7 @@ func prepareSpawnCwdWriteProof(cwd string) (proof, canonicalCwd string, cleanup 
 	resp.Proof = strings.TrimSpace(resp.Proof)
 	resp.Cwd = filepath.Clean(strings.TrimSpace(resp.Cwd))
 	resp.MarkerPath = filepath.Clean(strings.TrimSpace(resp.MarkerPath))
-	expected := filepath.Join(resp.Cwd, spawnCwdProofPrefix+resp.Proof)
+	expected := filepath.Join(resp.Cwd, clcommon.SpawnCwdProofPrefix+resp.Proof)
 	if resp.Proof == "" || !filepath.IsAbs(resp.Cwd) || resp.MarkerPath != expected {
 		return "", "", cleanup, fmt.Errorf("agentd returned an invalid spawn cwd proof challenge")
 	}
