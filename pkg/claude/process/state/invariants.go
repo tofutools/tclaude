@@ -667,6 +667,13 @@ func SkippedNodesHaveBlockResolution(st *State) Diagnostics {
 			continue
 		}
 		if node.BlockResolution != nil && (node.BlockResolution.Decision == BlockDecisionSkip || node.BlockResolution.Decision == BlockDecisionCancel) {
+			if node.BlockResolution.Decision == BlockDecisionCancel && st.Status != RunStatusCanceled {
+				diagnostics = append(diagnostics, diagError(
+					"cancel_resolution_without_canceled_run",
+					"nodes."+nodeID+".blockResolution.decision",
+					fmt.Sprintf("node %q has a cancel resolution but run status is %q", nodeID, st.Status),
+				))
+			}
 			continue
 		}
 		diagnostics = append(diagnostics, diagError(

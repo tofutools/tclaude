@@ -743,6 +743,24 @@ func TestInvariants(t *testing.T) {
 			code: "skipped_node_without_block_resolution",
 		},
 		{
+			name: "cancel resolution without canceled run",
+			st: func() State {
+				resolution := &BlockResolution{
+					NodeID: "a", BlockedAttempt: 1, Decision: BlockDecisionCancel,
+					Actor: "human:johan", Reason: "operator canceled", EvidenceRef: "decision:cancel", Timestamp: testTime,
+				}
+				st := stateWithNodes(map[string]NodeState{
+					"a": {Status: NodeStatusSkipped, BlockedAttempt: 1, BlockedNodeID: "a", BlockResolution: resolution},
+				})
+				st.AdminRecords = []AdminRecord{{
+					Type: EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
+					EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: resolution,
+				}}
+				return st
+			}(),
+			code: "cancel_resolution_without_canceled_run",
+		},
+		{
 			name: "invalid decision actor",
 			st: stateWithNodes(map[string]NodeState{
 				"a": {
