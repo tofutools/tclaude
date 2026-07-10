@@ -1558,6 +1558,49 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   padding-top: 3px;
 }
 .cost-amt { color: #6e9c7d; }
+/* Stacked per-harness segments within one recorded-spend column. Each is
+   one harness's spend that day; the height is set inline (its dollars over
+   the Y-axis top), the colour by the .cost-seg-hN palette below. The
+   topmost segment (first child, since the column packs bottom-up in DOM
+   order) keeps the single-bar rounded cap; a hairline inset separates
+   stacked segments so adjacent hues never read as one. */
+.cost-seg { width: 100%; min-height: 0; }
+.cost-seg:first-child { border-radius: 2px 2px 0 0; }
+.cost-seg:not(:last-child) { box-shadow: inset 0 -1px 0 rgba(13, 17, 23, 0.55); }
+.cost-col.weekend .cost-seg { opacity: 0.55; }
+/* Hover brightens the whole column's segments while keeping each harness's
+   own hue (a fixed colour would flatten the stack) — the stacked twin of
+   the single bar's .cost-bar highlight. */
+.cost-col[data-tip]:hover .cost-seg { filter: brightness(1.18); }
+/* Harness palette. h0 is the historical money-green so a claude-only
+   install (and "claude", which sorts first) is unchanged; the rest stay
+   distinct on the dark panel. Cycles past h5 for many-harness installs. */
+.cost-seg-h0 { background: #6e9c7d; }
+.cost-seg-h1 { background: #6a8fd0; }
+.cost-seg-h2 { background: #b58cd6; }
+.cost-seg-h3 { background: #d0a860; }
+.cost-seg-h4 { background: #5bb0a5; }
+.cost-seg-h5 { background: #cf8a8a; }
+/* Legend swatch on each harness filter toggle — reuses the palette class,
+   so the filter bar reads as the chart's legend. */
+.cost-legend-sw {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 3px; vertical-align: middle;
+}
+/* Rich hover tooltip: the per-harness split (swatch · name · $) over a
+   ruled total. Rows are flex so amounts align to the right edge; the total
+   carries a hidden swatch spacer so its name lines up with the rows'. */
+.cost-tip-day { font-weight: 600; color: #c9d1d9; margin-bottom: 4px; }
+.cost-tip-row, .cost-tip-total { display: flex; align-items: center; gap: 6px; }
+.cost-tip-total {
+  margin-top: 4px; padding-top: 4px; border-top: 1px solid #2a3340;
+}
+.cost-tip-sw { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.cost-tip-name { color: #9aa4b0; }
+.cost-tip-amt {
+  margin-left: 16px; color: #d4d4d4; font-variant-numeric: tabular-nums;
+}
+.cost-tip-row .cost-tip-amt, .cost-tip-total .cost-tip-amt { margin-left: auto; }
 .costs-harness-filter {
   display: inline-flex;
   align-items: center;
@@ -9702,6 +9745,35 @@ body.wizard .cost-col[data-tip]:hover::after {
   border-color: #d9b45a; color: #f3e6c0;
   box-shadow: 0 0 10px rgba(169, 123, 214, 0.4);
 }
+/* Stacked per-harness segments → a hoard of assorted coin. Each harness
+   mints in its own alloy (gold / copper / silver / amethyst / jade /
+   garnet) so a stacked column reads as layered treasure rather than one
+   ingot; the minted-sheen glow + coin-ridge separator match the single
+   .cost-bar's gilding. The base filter:brightness hover and 0.55 weekend
+   dim already carry over (they don't touch background), so no override. */
+body.wizard .cost-seg-h0 { background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
+body.wizard .cost-seg-h1 { background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
+body.wizard .cost-seg-h2 { background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
+body.wizard .cost-seg-h3 { background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
+body.wizard .cost-seg-h4 { background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
+body.wizard .cost-seg-h5 { background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
+body.wizard .cost-seg {
+  box-shadow: 0 0 5px rgba(217, 180, 90, 0.3), inset 0 1px 0 rgba(255, 246, 214, 0.45);
+}
+body.wizard .cost-seg:not(:last-child) { box-shadow: inset 0 -1px 0 rgba(20, 15, 40, 0.6); }
+/* Rich hover tooltip → the same arcane slab as the single-bar tip, its
+   swatches minted from the coin palette above (the .cost-seg-hN class the
+   swatch shares), its rule gilded. */
+body.wizard .cost-tip {
+  background: linear-gradient(180deg, #241b3d, #1a1233);
+  border-color: #d9b45a; color: #f3e6c0;
+  box-shadow: 0 0 10px rgba(169, 123, 214, 0.4);
+}
+body.wizard .cost-tip-day { color: #f3e6c0; }
+body.wizard .cost-tip-name { color: #c9b8e6; }
+body.wizard .cost-tip-amt { color: #f3e6c0; }
+body.wizard .cost-tip-total { border-top-color: rgba(217, 180, 90, 0.4); }
+
 /* Empty-state prompts (no span / no cost) read as muted arcane. */
 body.wizard #costs-chart .empty,
 body.wizard #costs-table .empty { color: #8f7bbf; }

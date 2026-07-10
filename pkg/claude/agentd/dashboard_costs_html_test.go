@@ -94,6 +94,18 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(".cost-col.projected .cost-bar", "projected bars styled hollow")
 	must(".cost-col.weekend .cost-bar", "weekend bars dimmed")
 
+	// Stacked per-harness chart: recorded columns split into coloured
+	// segments from the per-agent rows; the harness filter doubles as the
+	// legend, and the hover tooltip itemises the split over a ruled total.
+	must("function stackedColHTML", "recorded columns rendered as a per-harness stack")
+	must("function dailyBreakdown", "per-day per-harness split derived from the agent rows")
+	must("function costTipHTML", "per-harness hover legend builder present")
+	must(".cost-seg-h0", "harness palette defined (h0 = the historical money-green)")
+	must(".cost-col[data-tip]:hover .cost-seg", "stacked-segment hover highlight present")
+	must(".cost-legend-sw", "harness filter carries a colour-legend swatch")
+	must(".cost-tip-total", "tooltip's ruled total row styled")
+	must("body.wizard .cost-seg-h1", "wizard mode themes the stacked segments")
+
 	// Y axis: costs.js computes a nice scale top and renders tick
 	// labels + gridlines; css positions both on the same percentages.
 	must("function niceCeil", "nice Y-axis scale top computed")

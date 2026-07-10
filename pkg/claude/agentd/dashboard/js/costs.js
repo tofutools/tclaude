@@ -308,13 +308,57 @@ function monthProjection(data, fillEmpty, weekendsIncl) {
   };
 }
 
+// The chart's per-harness colour palette size. A harness is coloured by
+// its index in the tab's sorted harness list (harnessSegClass), cycling
+// through .cost-seg-h0…h{N-1} (defined in dashboard.css). h0 is the
+// historical money-green, so a claude-only install looks unchanged and
+// "claude" (sorting first) keeps its green; further harnesses get distinct
+// hues. The chart segments, the hover legend swatches and the harness
+// filter's legend swatches all key off the same class so a harness wears
+// one colour everywhere.
+const HARNESS_PALETTE_N = 6;
+
+// harnessSegClass maps a harness to its palette class, given the tab's
+// sorted harness list (costHarnesses) so the index — and thus the colour
+// — is stable across every day column and the legend. An unknown harness
+// (not in the list) falls back to h0.
+function harnessSegClass(harness, harnesses) {
+  const i = harnesses.indexOf(harnessLabel(harness));
+  return 'cost-seg-h' + (i >= 0 ? i % HARNESS_PALETTE_N : 0);
+}
+
+// dailyBreakdown sums the per-agent rows into a { day: { harness: usd } }
+// map over the selected harness subset. The chart's stacked segments and
+// the hover legend read from it, so both describe exactly the rows the
+// harness checkboxes leave enabled — the same subset costDataForSelected-
+// Harnesses narrows the totals to.
+function dailyBreakdown(agents, selected) {
+  const out = {};
+  for (const a of agents) {
+    const h = harnessLabel(a.harness);
+    if (!selected.has(h)) continue;
+    const day = (out[a.day] || (out[a.day] = {}));
+    day[h] = (day[h] || 0) + (a.cost_usd || 0);
+  }
+  return out;
+}
+
+// chartDayInfo holds each actual column's per-harness split for the hover
+// tooltip, rebuilt every renderChart keyed by day → { total, segs }. The
+// stacked columns carry only a plain data-tip summary string (so the CSS
+// hover-brighten and the string tests still apply); bindCostsChartTip
+// looks the richer split up here by the column's data-day.
+let chartDayInfo = {};
+
 // barColHTML renders one chart column, with bar height scaled against
 // the Y-axis top (scaleMax) so bars line up with the gridlines.
 // Projected bars are hollow (CSS) so estimated spend never reads as
 // recorded spend; weekend columns are dimmed. The hover tooltip is a
 // data-tip attribute (instant CSS tooltip, not the native delayed
 // title) and only exists on columns with actual value — hovering an
-// empty day shows nothing.
+// empty day shows nothing. Recorded columns render as a per-harness
+// stack instead (stackedColHTML); this path now draws only the projected
+// (and leading-fill) estimate bars, which have no harness split.
 function barColHTML(day, usd, scaleMax, projected, showLabel) {
   const pct = scaleMax > 0 ? Math.max(usd > 0 ? 2 : 0, Math.round(usd / scaleMax * 100)) : 0;
   const date = new Date(day + 'T12:00:00');
@@ -327,6 +371,35 @@ function barColHTML(day, usd, scaleMax, projected, showLabel) {
       : `${day} — ${fmtUSD(usd)}`;
   return `<div class="${cls.join(' ')}"${tip ? ` data-tip="${esc(tip)}"` : ''}>`
     + `<div class="cost-bararea"><div class="cost-bar" style="height:${pct}%"></div></div>`
+    + `<div class="cost-day">${showLabel ? date.getDate() : ''}</div>`
+    + `</div>`;
+}
+
+// stackedColHTML renders one recorded-spend column as a vertical stack of
+// per-harness segments (segs = [{ harness, usd, cls }], already filtered to
+// nonzero and in stable sorted-harness order — the topmost/first-child
+// keeps the rounded cap). Each segment's height is its own dollars scaled
+// against the Y-axis top, so the whole stack lines up with the gridlines
+// exactly as the old single bar did and its total height reads as the
+// day's spend. The column keeps a plain data-tip summary — so the CSS
+// hover-brighten rule and the data-tip string test still apply — and a
+// data-day the tooltip uses to pull the per-harness split from
+// chartDayInfo. A single-harness day is just a one-segment stack, visually
+// identical to the previous single green bar.
+function stackedColHTML(day, segs, total, scaleMax, showLabel) {
+  const date = new Date(day + 'T12:00:00');
+  const cls = ['cost-col'];
+  if (isWeekendKey(day)) cls.push('weekend');
+  const bars = segs.map(s => {
+    // Floor a nonzero segment at 1% so a tiny slice still shows a sliver;
+    // segments sum to the day total (≤ scaleMax), so the ≤ few % of min
+    // bumps never visibly overflow the plot.
+    const pct = scaleMax > 0 ? Math.max(s.usd > 0 ? 1 : 0, s.usd / scaleMax * 100) : 0;
+    return `<div class="cost-seg ${s.cls}" style="height:${pct.toFixed(3)}%"></div>`;
+  }).join('');
+  const tip = `${day} — ${fmtUSD(total)}`;
+  return `<div class="${cls.join(' ')}" data-tip="${esc(tip)}" data-day="${esc(day)}">`
+    + `<div class="cost-bararea">${bars}</div>`
     + `<div class="cost-day">${showLabel ? date.getDate() : ''}</div>`
     + `</div>`;
 }
@@ -350,18 +423,35 @@ function yAxisHTML(scaleMax) {
   return { axis, grid };
 }
 
-function renderChart(data, proj) {
+// renderChart draws the per-day bar chart. Recorded columns are stacked
+// per harness (from `breakdown`, keyed day → { harness: usd }, coloured via
+// `harnesses` — the tab's sorted harness list); projected and leading-fill
+// estimate columns stay single hollow bars (an estimate has no harness
+// split). Segments and the day total both derive from `breakdown`, so the
+// stack is internally consistent — its height and the hover total always
+// agree with the drawn segments.
+function renderChart(data, proj, breakdown, harnesses) {
+  chartDayInfo = {};
   // With the fill toggle on, the leading empty days render as projected
   // (hollow) bars at the per-unit average instead of empty actual
   // columns, so the chart matches the "average month" total. Which
   // leading days are filled (weekdays only, or weekends too) follows the
   // include-weekends switch via proj.leadingFill.
   const fill = (proj && proj.fillEmpty) ? proj.leadingFill : null;
-  const actual = data.days.map(d =>
-    fill && fill[d.day] != null
-      ? { day: d.day, cost_usd: fill[d.day], projected: true }
-      : { ...d, projected: false });
-  const future = (proj ? proj.future : []).map(d => ({ ...d, projected: true }));
+  const actual = data.days.map(d => {
+    // A leading empty day filled by the projection is a single hollow
+    // estimate bar, not a harness stack.
+    if (fill && fill[d.day] != null) {
+      return { day: d.day, cost_usd: fill[d.day], projected: true, segs: null };
+    }
+    const parts = breakdown[d.day] || {};
+    const segs = harnesses
+      .filter(h => (parts[h] || 0) > 0)
+      .map(h => ({ harness: h, usd: parts[h], cls: harnessSegClass(h, harnesses) }));
+    const total = segs.reduce((s, x) => s + x.usd, 0);
+    return { day: d.day, cost_usd: total, projected: false, segs };
+  });
+  const future = (proj ? proj.future : []).map(d => ({ ...d, projected: true, segs: null }));
   const all = actual.concat(future);
   if (!all.length) {
     $('#costs-chart').innerHTML = '<div class="empty">No days in span.</div>';
@@ -376,8 +466,15 @@ function renderChart(data, proj) {
   const scaleMax = niceCeil(maxUSD);
   // Thin the day-of-month labels on wide spans so they don't collide.
   const labelEvery = all.length > 62 ? 7 : (all.length > 35 ? 2 : 1);
-  const cols = all.map((d, i) =>
-    barColHTML(d.day, d.cost_usd, scaleMax, d.projected, i % labelEvery === 0));
+  const cols = all.map((d, i) => {
+    const showLabel = i % labelEvery === 0;
+    if (d.projected || !d.segs) {
+      return barColHTML(d.day, d.cost_usd, scaleMax, true, showLabel);
+    }
+    // Record the split for the hover tooltip, then draw the stack.
+    if (d.segs.length) chartDayInfo[d.day] = { total: d.cost_usd, segs: d.segs };
+    return stackedColHTML(d.day, d.segs, d.cost_usd, scaleMax, showLabel);
+  });
   const { axis, grid } = yAxisHTML(scaleMax);
   $('#costs-chart').innerHTML =
     `<div class="cost-chart">${axis}`
@@ -522,9 +619,13 @@ function renderHarnessFilter(agents) {
     return { selected: new Set() };
   }
   const selected = selectedCostHarnesses(harnesses);
+  // Each toggle carries a colour swatch matching its stacked-chart segment
+  // (same harnessSegClass index), so the filter bar doubles as the chart's
+  // legend.
   wrap.innerHTML = harnesses.map(h =>
     `<label class="filter-toggle costs-harness-choice" title="Show ${esc(h)} cost rows">`
     + `<input type="checkbox" data-harness="${esc(h)}"${selected.has(h) ? ' checked' : ''} />`
+    + `<span class="cost-legend-sw ${harnessSegClass(h, harnesses)}"></span>`
     + `<span>${esc(h)}</span></label>`
   ).join('');
   return { selected };
@@ -683,14 +784,17 @@ function bindCostsChartTip() {
   if (!chart) return;
   let tipEl = null;
   const hide = () => { if (tipEl) tipEl.style.display = 'none'; };
-  const show = (e, text) => {
+  const ensure = () => {
     if (!tipEl) {
       tipEl = document.createElement('div');
       tipEl.className = 'cost-tip';
       document.body.appendChild(tipEl);
     }
-    tipEl.textContent = text;
-    tipEl.style.display = 'block';
+    return tipEl;
+  };
+  // place floats the (already-shown) tip just off the cursor, flipping to
+  // the other side near a viewport edge so it never spills off-screen.
+  const place = e => {
     const pad = 14;
     const r = tipEl.getBoundingClientRect();
     let x = e.clientX + pad;
@@ -700,12 +804,36 @@ function bindCostsChartTip() {
     tipEl.style.left = Math.max(4, x) + 'px';
     tipEl.style.top = Math.max(4, y) + 'px';
   };
+  const showText = (e, text) => { ensure().textContent = text; tipEl.style.display = 'block'; place(e); };
+  const showHTML = (e, html) => { ensure().innerHTML = html; tipEl.style.display = 'block'; place(e); };
   chart.addEventListener('mousemove', e => {
     const col = e.target.closest('.cost-col[data-tip]');
     if (!col) { hide(); return; }
-    show(e, col.getAttribute('data-tip'));
+    // A recorded column with more than one harness gets the itemised split
+    // (colour swatch · harness · $, then a ruled total); everything else
+    // (a single-harness day, a projected/estimate bar) keeps the plain
+    // one-line data-tip summary.
+    const day = col.getAttribute('data-day');
+    const info = day ? chartDayInfo[day] : null;
+    if (info && info.segs.length > 1) showHTML(e, costTipHTML(day, info));
+    else showText(e, col.getAttribute('data-tip'));
   });
   chart.addEventListener('mouseleave', hide);
+}
+
+// costTipHTML builds the chart's per-harness hover legend: the day, one
+// row per contributing harness (a colour swatch matching its stack
+// segment, its name and its spend), then a ruled total. esc guards the
+// harness names — they originate in our own data but pass through anyway.
+function costTipHTML(day, info) {
+  const rows = info.segs.map(s =>
+    `<div class="cost-tip-row"><span class="cost-tip-sw ${s.cls}"></span>`
+    + `<span class="cost-tip-name">${esc(s.harness)}</span>`
+    + `<span class="cost-tip-amt">${esc(fmtUSD(s.usd))}</span></div>`).join('');
+  return `<div class="cost-tip-day">${esc(day)}</div>${rows}`
+    + `<div class="cost-tip-total"><span class="cost-tip-sw" style="visibility:hidden"></span>`
+    + `<span class="cost-tip-name">total</span>`
+    + `<span class="cost-tip-amt">${esc(fmtUSD(info.total))}</span></div>`;
 }
 
 // reRenderCostTable re-draws just the breakdown from the data already in
@@ -723,9 +851,17 @@ function reRenderCostTable() {
 // needs the unfiltered set for the "/ all" denominator.
 function renderCosts(payload, span) {
   const data = costDataForSelectedHarnesses(payload);
+  // The chart's stacked segments come from the per-agent rows, narrowed to
+  // the same selected harness subset costDataForSelectedHarnesses applied
+  // to the totals — sorted harness list drives the stable per-harness
+  // colour index (harnessSegClass), shared with the filter's legend.
+  const agents = payload.agents || [];
+  const harnesses = costHarnesses(agents);
+  const selected = selectedCostHarnesses(harnesses);
+  const breakdown = dailyBreakdown(agents, selected);
   const proj = span === 'month' ? monthProjection(data, fillEmptyWeekdays, includeWeekends) : null;
   renderSummary(data, proj, span);
-  renderChart(data, proj);
+  renderChart(data, proj, breakdown, harnesses);
   renderTable(payload);
 }
 
