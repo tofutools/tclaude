@@ -91,12 +91,16 @@ func TestBlockedMirrorDerivesCanonicalItemAndResolvedReplay(t *testing.T) {
 		"implement.test.tests": {
 			Status: state.NodeStatusBlocked, Parent: "implement", Attempt: 2,
 			BlockedAttempt: 2, BlockedNodeID: "implement.test.tests", BlockedReason: "tests exhausted", BlockedOwner: "human:oncall",
+			ActiveAttempt: &state.AttemptState{Attempt: 2, EvidenceRef: "artifact:test-output"},
 		},
 	}}}
 	items := Derive([]store.Snapshot{active})
 	if len(items) != 1 || items[0].Node != "implement.test.tests" || items[0].Kind != KindBlocked ||
 		items[0].Assignee != "human:oncall" || items[0].Summary != "tests exhausted" || items[0].Nudge != nil {
 		t.Fatalf("blocked items = %#v", items)
+	}
+	if len(items[0].Links.EvidenceRefs) != 1 || items[0].Links.EvidenceRefs[0] != "artifact:test-output" {
+		t.Fatalf("blocked evidence links = %#v", items[0].Links.EvidenceRefs)
 	}
 	wantID := items[0].ID
 	child := active.State.Nodes["implement.test.tests"]
@@ -115,6 +119,13 @@ func TestBlockedMirrorDerivesCanonicalItemAndResolvedReplay(t *testing.T) {
 	if len(resolved) != 1 || resolved[0].ID != wantID || resolved[0].Status != state.WaitStatusSatisfied ||
 		resolved[0].Summary != resolution.Reason || resolved[0].Assignee != string(resolution.Actor) {
 		t.Fatalf("resolved item = %#v", resolved)
+	}
+}
+
+func TestEmptyDerivationIsAnEmptyList(t *testing.T) {
+	items := Derive(nil)
+	if items == nil || len(items) != 0 {
+		t.Fatalf("empty worklist = %#v", items)
 	}
 }
 

@@ -71,7 +71,7 @@ type Filter struct {
 
 // Derive projects snapshots into a stable, deterministically ordered worklist.
 func Derive(snapshots []store.Snapshot) []Item {
-	var items []Item
+	items := make([]Item, 0)
 	for _, snapshot := range snapshots {
 		if snapshot.State == nil {
 			continue
@@ -184,12 +184,12 @@ func blockedItems(snapshot store.Snapshot) []Item {
 		}
 		status := state.WaitStatusPending
 		assignee, summary := node.BlockedOwner, node.BlockedReason
-		var refs []string
+		refs := nodeEvidenceRefs(node)
 		if node.BlockResolution != nil && node.Status != state.NodeStatusBlocked {
 			status = state.WaitStatusSatisfied
 			assignee = string(node.BlockResolution.Actor)
 			summary = node.BlockResolution.Reason
-			refs = evidenceRefs(node.BlockResolution.EvidenceRef)
+			refs = appendEvidenceRef(refs, node.BlockResolution.EvidenceRef)
 		}
 		items = append(items, Item{
 			ID:  stableID(snapshot.Run.ID, nodeID, "blocked", attempt),
@@ -213,4 +213,26 @@ func evidenceRefs(ref string) []string {
 		return nil
 	}
 	return []string{ref}
+}
+
+func nodeEvidenceRefs(node state.NodeState) []string {
+	var refs []string
+	if node.ActiveAttempt != nil {
+		refs = appendEvidenceRef(refs, node.ActiveAttempt.EvidenceRef)
+	}
+	for _, decision := range node.Decisions {
+		refs = appendEvidenceRef(refs, decision.EvidenceRef)
+	}
+	if node.BlockResolution != nil {
+		refs = appendEvidenceRef(refs, node.BlockResolution.EvidenceRef)
+	}
+	return refs
+}
+
+func appendEvidenceRef(refs []string, ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || slices.Contains(refs, ref) {
+		return refs
+	}
+	return append(refs, ref)
 }
