@@ -94,6 +94,28 @@ test('middle pointerdown pans even when it starts over a node', () => {
   assert.equal(fake.pointer.mode, 'pan');
 });
 
+test('touch and pen pan empty canvas but still drag nodes', () => {
+  for (const pointerType of ['touch', 'pen']) {
+    const fake = {
+      root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
+      view: { x: 0, y: 0, k: 1 }, svg: { setPointerCapture() {} },
+      eventTarget(event) { return event.overNode
+        ? { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }
+        : { node: null, edge: null, port: null }; },
+      clientToGraph() { return { x: 0, y: 0 }; },
+    };
+    const event = {
+      button: 0, pointerType, pointerId: 12, clientX: 0, clientY: 0,
+      preventDefault() {}, overNode: false,
+    };
+    ProcessGraph.prototype.onPointerDown.call(fake, event);
+    assert.equal(fake.pointer.mode, 'pan', `${pointerType} pans empty canvas`);
+    event.overNode = true;
+    ProcessGraph.prototype.onPointerDown.call(fake, event);
+    assert.equal(fake.pointer.mode, 'node', `${pointerType} still drags nodes`);
+  }
+});
+
 test('empty canvas click clears both graph and consumer selection', () => {
   const selected = [];
   let notified = 0;

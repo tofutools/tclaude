@@ -452,7 +452,11 @@ export class ProcessGraph {
     event.preventDefault();
     const target = this.eventTarget(event);
     const point = this.clientToGraph(event.clientX, event.clientY);
-    const mode = middle ? 'pan'
+    // Touch/pen have no middle button. Preserve their empty-canvas navigation
+    // while still letting a primary pointer drag nodes and ports normally.
+    const directPan = middle || (!target.node && !target.port
+      && (event.pointerType === 'touch' || event.pointerType === 'pen'));
+    const mode = directPan ? 'pan'
       : target.port ? 'port'
         : target.node ? 'node'
           : this.options.marqueeSelect ? 'marquee' : 'pan';
