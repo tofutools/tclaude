@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1286,9 +1288,74 @@ func (f *Flow) AssertDeleted(convID string) {
 
 func (f *Flow) do(method, path string, body any) *httptest.ResponseRecorder {
 	f.T.Helper()
+	var cleanup func()
+	if method == http.MethodPost && strings.HasPrefix(path, "/v1/groups/") &&
+		strings.HasSuffix(path, "/spawn") {
+		body, cleanup = f.withSpawnCwdProof(path, body)
+		defer cleanup()
+	}
 	r := JSONRequest(f.T, method, path, body)
 	if f.currPeer != nil {
 		r = f.currPeer(r)
 	}
 	return Serve(f.Mux, r)
+}
+
+// withSpawnCwdProof makes Flow's spawn helpers behave like the production CLI:
+// ask agentd whether the current peer needs a cwd proof, materialise the marker
+// when it does, and fold the opaque token into the spawn body. Tests that need
+// to exercise missing/forged proof paths intentionally build a raw request
+// instead of using Flow.Spawn/SpawnWith.
+func (f *Flow) withSpawnCwdProof(spawnPath string, body any) (any, func()) {
+	f.T.Helper()
+	cleanup := func() {}
+	in, ok := body.(map[string]any)
+	if !ok {
+		return body, cleanup
+	}
+	cwd, _ := in["cwd"].(string)
+	if strings.TrimSpace(cwd) == "" {
+		groupPart := strings.TrimSuffix(strings.TrimPrefix(spawnPath, "/v1/groups/"), "/spawn")
+		if groupName, err := url.PathUnescape(groupPart); err == nil {
+			if g, _ := db.GetAgentGroupByName(groupName); g != nil {
+				cwd = g.DefaultCwd
+			}
+		}
+	}
+	proofReq := JSONRequest(f.T, http.MethodPost, "/v1/spawn-cwd-proof", map[string]string{"cwd": cwd})
+	if f.currPeer != nil {
+		proofReq = f.currPeer(proofReq)
+	}
+	proofRec := Serve(f.Mux, proofReq)
+	if proofRec.Code != http.StatusOK {
+		return body, cleanup
+	}
+	var proof struct {
+		Required   bool   `json:"required"`
+		Proof      string `json:"proof"`
+		Cwd        string `json:"cwd"`
+		MarkerPath string `json:"marker_path"`
+	}
+	if err := json.Unmarshal(proofRec.Body.Bytes(), &proof); err != nil || !proof.Required {
+		return body, cleanup
+	}
+	expected := filepath.Join(proof.Cwd, ".tclaude-spawn-cwd-proof-"+proof.Proof)
+	if proof.Proof == "" || proof.MarkerPath != expected {
+		f.T.Fatalf("spawn cwd proof response malformed: %s", proofRec.Body.String())
+	}
+	marker, err := os.OpenFile(proof.MarkerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		f.T.Fatalf("create spawn cwd proof marker: %v", err)
+	}
+	if err := marker.Close(); err != nil {
+		f.T.Fatalf("close spawn cwd proof marker: %v", err)
+	}
+	cleanup = func() { _ = os.Remove(proof.MarkerPath) }
+	out := make(map[string]any, len(in)+2)
+	for k, v := range in {
+		out[k] = v
+	}
+	out["cwd"] = proof.Cwd
+	out["cwd_write_proof"] = proof.Proof
+	return out, cleanup
 }

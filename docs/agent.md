@@ -420,7 +420,7 @@ always uses the post-connect inbox pointer.
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
 explosion) or minting a less-confined child, an **agent** caller is
-bound by four checks — a human
+bound by five checks — a human
 bypasses the agent-only ones, exactly as humans bypass every other
 permission gate:
 
@@ -429,6 +429,7 @@ permission gate:
 | **Group restriction** — an agent may only spawn into a group it is a member or owner of | on | `403 group_restricted` |
 | **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
 | **Sandbox lineage** — the child may not have a weaker launch sandbox than the spawning agent | on | `403 sandbox_restricted` |
+| **Cwd write proof** — the caller must create a daemon-signed marker inside the child's launch directory, proving its own filesystem sandbox can write there | on | `403 cwd_proof_required` / `invalid_cwd_proof` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
 
 The first two are tuned in `~/.tclaude/config.json` under `agent`
@@ -450,6 +451,16 @@ default spawn profile has filled blank fields. In short:
 - Raw Codex `workspace-write` parents can spawn only raw Codex
   `workspace-write` or `read-only`; raw Codex `read-only` parents can spawn
   only raw Codex `read-only`.
+
+The cwd proof closes the orthogonal directory-escalation path. Agentd runs as
+the operator outside the calling agent's sandbox, so ordinary ownership/mode
+checks would only prove that *agentd* can write the requested cwd. Before an
+agent-originated `groups spawn`, the CLI asks agentd for a short-lived challenge
+bound to that agent and the canonical cwd, creates the named empty marker from
+inside the caller's sandbox, and sends the opaque proof with the spawn request.
+Agentd verifies and removes the marker before launch. Human/dashboard spawns
+bypass this check. Custom clients of the spawn API must perform the same
+`POST /v1/spawn-cwd-proof` preflight.
 
 ### clone / reincarnate / compact / context-info
 

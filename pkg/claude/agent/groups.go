@@ -389,15 +389,27 @@ func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.W
 		if cwd == "" {
 			cwd = callerCwd
 		}
+		proof, proofCwd, cleanupProof, proofErr := prepareSpawnCwdWriteProof(cwd)
+		if proofErr != nil {
+			fmt.Fprintf(stderr, "  Failed to prove spawn cwd for member name=%q: %v\n", spec.Name, proofErr)
+			failed++
+			continue
+		}
+		if proofCwd != "" {
+			cwd = proofCwd
+		}
 		body := map[string]any{
 			"name":            spec.Name,
 			"role":            spec.Role,
 			"descr":           spec.Descr,
 			"cwd":             cwd,
+			"cwd_write_proof": proof,
 			"timeout_seconds": 30,
 		}
 		var sresp SpawnResponse
-		if err := DaemonRequest(http.MethodPost, path, body, &sresp, DaemonOpts{}); err != nil {
+		err := DaemonRequest(http.MethodPost, path, body, &sresp, DaemonOpts{})
+		cleanupProof()
+		if err != nil {
 			fmt.Fprintf(stderr, "  Failed to spawn member name=%q: %v\n", spec.Name, err)
 			failed++
 			continue

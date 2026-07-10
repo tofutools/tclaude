@@ -1466,6 +1466,22 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
 		return
 	}
+	// The daemon is outside the caller's OS sandbox, so checking Unix mode bits
+	// here would only prove that agentd (the same uid) can write cwd. For an
+	// agent caller, consume the signed marker challenge created by the CLI while
+	// it was still inside the parent's sandbox. This prevents selecting an
+	// otherwise-unwritable directory merely to give the child a new writable
+	// sandbox root. Human callers are the trust root and bypass this check.
+	if provenCwd, proofFail := consumeSpawnCwdWriteProof(
+		spawnerConvID, cwd, body.CwdWriteProof, time.Now()); proofFail != nil {
+		writeError(w, proofFail.Status, proofFail.Kind, proofFail.Msg)
+		return
+	} else {
+		cwd = provenCwd
+	}
+	// The proof is an ephemeral capability, not durable launch configuration.
+	// Do not retain it in agents.initial_spawn_config after it has been consumed.
+	body.CwdWriteProof = ""
 
 	// Validate the optional worktree dir the same way — it must exist
 	// (the dashboard creates it just before spawning). Caught here so

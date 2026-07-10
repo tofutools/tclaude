@@ -65,6 +65,12 @@ type SpawnRequest struct {
 	// Cwd is the working directory for the new CC session. Empty falls
 	// back to the group's default_cwd, then the daemon's own cwd.
 	Cwd string `json:"cwd,omitempty"`
+	// CwdWriteProof is a short-lived, daemon-signed challenge that an agent
+	// caller materialised as a marker file inside Cwd. It proves the caller's
+	// own sandbox could write the directory before agentd launches a child
+	// there. Human callers do not need one. Spawn clients obtain it through
+	// POST /v1/spawn-cwd-proof; callers should treat the token as opaque.
+	CwdWriteProof string `json:"cwd_write_proof,omitempty"`
 	// TimeoutSeconds bounds how long the daemon waits for the new
 	// conv-id to materialise. <= 0 falls back to 30s; capped at 300s.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
@@ -791,6 +797,31 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			req.Cwd = wtPath
 		}
 	}
+
+	// An agentd-mediated spawn runs outside the caller's process tree, so the
+	// child cannot inherit the caller's filesystem sandbox automatically. Prove
+	// the caller can write the final launch cwd (after worktree resolution)
+	// before asking the daemon to create a child there. The proof endpoint tells
+	// human callers no proof is required; keeping this call unconditional means
+	// the CLI does not need to guess its own daemon-side identity.
+	proof, proofCwd, cleanupProof, proofErr := prepareSpawnCwdWriteProof(req.Cwd)
+	if proofErr != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", proofErr)
+		if createdWorktree != "" {
+			if _, rmErr := removeSpawnWorktree(createdWorktree); rmErr != nil {
+				fmt.Fprintf(stderr, "Note: could not remove the worktree created for this spawn (%s): %v\n",
+					createdWorktree, rmErr)
+			} else {
+				fmt.Fprintf(stderr, "Note: removed the worktree created for this spawn (%s)\n", createdWorktree)
+			}
+		}
+		return nil, rcIOFailure
+	}
+	defer cleanupProof()
+	if proofCwd != "" {
+		req.Cwd = proofCwd
+	}
+	req.CwdWriteProof = proof
 
 	var resp SpawnResponse
 	if ask > 0 {

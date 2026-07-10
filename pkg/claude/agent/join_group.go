@@ -72,6 +72,15 @@ func RunJoinGroup(params *session.NewParams) error {
 		Harness:        h.Name,
 		TimeoutSeconds: 30,
 	}
+	proof, proofCwd, cleanupProof, err := prepareSpawnCwdWriteProof(req.Cwd)
+	if err != nil {
+		return err
+	}
+	defer cleanupProof()
+	if proofCwd != "" {
+		req.Cwd = proofCwd
+	}
+	req.CwdWriteProof = proof
 	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"
 	if err := DaemonRequest(http.MethodPost, path, req, &resp, DaemonOpts{}); err != nil {
