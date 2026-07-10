@@ -421,17 +421,26 @@ func validateOutcomeRouting(tmpl *Template) Diagnostics {
 		passWinner := firstPresentLabel(node.Next, passOutcomeLabels[:])
 		switch node.Type {
 		case NodeTypeTask:
+			// Cancel-labeled edges can never be taken from a task: the runtime
+			// classifies cancel verdicts as failures (state.IsFailOutcome), and
+			// fail routing (FailTarget) only consults the fail vocabulary.
+			for _, outcome := range sortedKeys(node.Next) {
+				if IsCanceledResult(outcome) {
+					diagnostics = append(diagnostics, diagWarning("dead_edge", path+"."+outcome,
+						fmt.Sprintf("cancel verdicts route through the fail edge; outcome %q can never be taken", outcome)))
+				}
+			}
 			if passWinner == "" {
 				failOnly := true
 				for _, outcome := range sortedKeys(node.Next) {
-					if !IsFailOutcomeLabel(outcome) {
+					if !IsFailOutcomeLabel(outcome) && !IsCanceledResult(outcome) {
 						failOnly = false
 						break
 					}
 				}
 				if failOnly {
 					diagnostics = append(diagnostics, diagError("missing_pass_edge", path,
-						"task node has only fail edges; a passing attempt cannot route and stalls the run (add a pass, done, success, or next edge)"))
+						"task node has only fail/cancel edges; a passing attempt cannot route and stalls the run (add a pass, done, success, or next edge)"))
 				} else {
 					diagnostics = append(diagnostics, diagWarning("missing_pass_edge", path,
 						"task node has no pass, done, success, or next edge; an attempt that passes without a custom verdict matching an edge stalls the run"))

@@ -17,15 +17,11 @@ var failOutcomeLabels = [...]string{"fail", "failed", "failure", "error"}
 var passOutcomeLabels = [...]string{"pass", "done", "success", DefaultOutcome}
 
 // PassOutcomeLabels returns the plain-pass edge vocabulary in the precedence
-// order runtime pass routing uses.
+// order runtime pass routing uses. It returns a copy: the vocabulary is a
+// package-level invariant shared by validation and routing, and a caller
+// mutating an aliased slice would corrupt both.
 func PassOutcomeLabels() []string {
-	return passOutcomeLabels[:]
-}
-
-// FailOutcomeLabels returns the fail-edge vocabulary in the precedence order
-// FailTarget uses.
-func FailOutcomeLabels() []string {
-	return failOutcomeLabels[:]
+	return append([]string(nil), passOutcomeLabels[:]...)
 }
 
 type Next map[string]string

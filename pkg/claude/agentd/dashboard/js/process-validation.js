@@ -162,12 +162,10 @@ export function decorateGraph(graph, mapped) {
     if (!hit) continue;
     const severity = hit.error > 0 ? 'error' : 'warning';
     const count = hit.error + hit.warning;
-    node.overlay = {
-      ...node.overlay,
-      glyph: severityGlyph(severity),
-      severity,
-      badge: count > 1 ? `×${count}` : undefined,
-    };
+    node.overlay = { ...node.overlay, glyph: severityGlyph(severity), severity };
+    // Only claim the badge slot when there is a count to show; a single
+    // diagnostic must not blank a badge some other decorator already set.
+    if (count > 1) node.overlay.badge = `×${count}`;
   }
   for (const edge of graph.edges || []) {
     const hit = mapped.edges.get(edge.id);

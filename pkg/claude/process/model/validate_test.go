@@ -109,6 +109,31 @@ func TestValidateMissingPassEdgeCustomVerdictsIsWarning(t *testing.T) {
 	assertDiagnostic(t, diagnostics, SeverityWarning, "missing_pass_edge", "nodes.work.next")
 }
 
+func TestValidateCancelEdgesOnTasksAreDead(t *testing.T) {
+	// The runtime classifies cancel verdicts as failures (state.IsFailOutcome)
+	// and fail routing only consults the fail vocabulary, so a cancel-labeled
+	// task edge can never be taken.
+	diagnostics := mustParse(t, routingFixture(`
+  work:
+    type: task
+    performer: { kind: agent, prompt: Do it }
+    next: { pass: done, cancel: failed }
+`))
+	assertDiagnostic(t, diagnostics, SeverityWarning, "dead_edge", "nodes.work.next.cancel")
+	assertNoDiagnostic(t, diagnostics, "missing_pass_edge")
+
+	// Fail + cancel edges only: no verdict can ever route a pass — the
+	// guaranteed-stall error, not the softer custom-verdict warning.
+	diagnostics = mustParse(t, routingFixture(`
+  work:
+    type: task
+    performer: { kind: agent, prompt: Do it }
+    next: { fail: failed, canceled: failed }
+`))
+	assertDiagnostic(t, diagnostics, SeverityError, "missing_pass_edge", "nodes.work.next")
+	assertDiagnostic(t, diagnostics, SeverityWarning, "dead_edge", "nodes.work.next.canceled")
+}
+
 func TestValidateWaitNodeRouting(t *testing.T) {
 	// A wait node routes only through its pass edge: no pass alias is an
 	// error (guaranteed stall), any extra edge is dead.

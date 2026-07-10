@@ -203,3 +203,19 @@ test('decorateGraph sets node overlays and edge badges (never color-only)', () =
   assert.equal(edge.badge, severityGlyph('warning'));
   assert.equal(edge.badgeSeverity, 'warning');
 });
+
+test('decorateGraph preserves foreign overlay fields and badges', () => {
+  const model = modelWithEdge();
+  const mapped = mapDiagnostics([
+    { scope: 'node', targetId: 'work', severity: 'warning', code: 'a', message: 'm' },
+  ], model);
+  const graph = model.graph();
+  const work = graph.nodes.find((node) => node.id === 'work');
+  // A future run view may already decorate the node (state overlay); one
+  // validation diagnostic must not blank its badge or status.
+  work.overlay = { status: 'running', badge: '↻2' };
+  decorateGraph(graph, mapped);
+  assert.equal(work.overlay.badge, '↻2', 'single-diagnostic decoration keeps a foreign badge');
+  assert.equal(work.overlay.status, 'running');
+  assert.equal(work.overlay.severity, 'warning');
+});
