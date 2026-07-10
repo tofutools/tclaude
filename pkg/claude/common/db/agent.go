@@ -2033,7 +2033,7 @@ func ListUndeliveredAgentMessagesFor(toConv string) ([]*AgentMessage, error) {
 	}
 	q := `SELECT ` + agentMessageColumns + `
 		FROM agent_messages
-		WHERE to_conv = ? AND delivered_at = '' AND read_at = ''
+		WHERE to_conv = ? AND delivered_at = '' AND read_at = '' AND nudge_cancelled_at = ''
 		ORDER BY id ASC`
 	rows, err := db.Query(q, toConv)
 	if err != nil {
@@ -2315,7 +2315,16 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 // stamp. The nudge_claimed_at = '' guard leaves an in-flight delivery alone
 // (its worker owns the row until it completes or releases). Returns true iff
 // this call cancelled the row, so the caller can log exactly once.
-func CancelAgentMessageNudge(id int64, now time.Time, reason string) (bool, error) {
+//
+// targetAgentID is the actor the caller resolved as unavailable; the UPDATE
+// re-validates that verdict atomically with the stamp (`no ACTIVE agents row
+// with this id` covers both retired and deleted). Without this, the sweep's
+// read-then-write could race ReinstateAgentByID: reinstate clears existing
+// cancellations in its transaction, then a sweep holding a stale "retired"
+// verdict stamps a fresh one that nothing would ever clear again. SQLite
+// serializes the writers, so whichever of reinstate/cancel commits second
+// sees the other's effect and converges correctly.
+func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reason string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -2323,8 +2332,10 @@ func CancelAgentMessageNudge(id int64, now time.Time, reason string) (bool, erro
 	res, err := d.Exec(`UPDATE agent_messages
 		SET nudge_cancelled_at = ?, nudge_cancel_reason = ?
 		WHERE id = ? AND delivered_at = '' AND read_at = ''
-		  AND nudge_claimed_at = '' AND nudge_cancelled_at = ''`,
-		now.Format(time.RFC3339Nano), reason, id)
+		  AND nudge_claimed_at = '' AND nudge_cancelled_at = ''
+		  AND NOT EXISTS (
+			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = '')`,
+		now.Format(time.RFC3339Nano), reason, id, targetAgentID)
 	if err != nil {
 		return false, err
 	}
