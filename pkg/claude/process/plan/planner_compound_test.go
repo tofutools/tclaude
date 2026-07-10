@@ -496,6 +496,18 @@ func TestPlanBlockedCompoundActivatesOnlyDecisionFailEdge(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("poison must not activate non-decision fail target: %#v", got)
 	}
+
+	tmpl = escalationTemplate()
+	escalate := tmpl.Nodes["escalate"]
+	escalate.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "choose"}
+	tmpl.Nodes["escalate"] = escalate
+	got, err = Plan(blockedEscalationState(""), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("poison must not activate a non-human decision: %#v", got)
+	}
 }
 
 func TestPlanEscalationDecisionEmitsGenerationBoundResolution(t *testing.T) {

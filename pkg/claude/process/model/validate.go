@@ -407,7 +407,8 @@ func isPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
 	}
 	decision, decisionOK := tmpl.Nodes[edge.From]
 	target, targetOK := tmpl.Nodes[edge.To]
-	return decisionOK && targetOK && decision.Type == NodeTypeDecision && target.IsCompound() && target.Next["fail"] == edge.From
+	return decisionOK && targetOK && decision.Type == NodeTypeDecision && decision.Performer != nil && decision.Performer.Kind == PerformerHuman &&
+		target.IsCompound() && target.Next["fail"] == edge.From
 }
 
 func adjacency(edges []Edge) map[string][]string {

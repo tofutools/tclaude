@@ -89,7 +89,7 @@ func planBlockedNode(st *state.State, tmpl *model.Template, nodeID string, node 
 		return nil, nil
 	}
 	targetTemplate, ok := tmpl.Nodes[targetID]
-	if !ok || targetTemplate.Type != model.NodeTypeDecision {
+	if !ok || targetTemplate.Type != model.NodeTypeDecision || targetTemplate.Performer == nil || targetTemplate.Performer.Kind != model.PerformerHuman {
 		return nil, nil
 	}
 	target, ok := st.Nodes[targetID]
@@ -220,6 +220,10 @@ func planCompletedNode(st *state.State, tmpl *model.Template, nodeID string, nod
 // to a canceled end means cancel. Both flow through ResolveBlocked so the
 // release is generation-bound and recorded as an admin decision.
 func escalationResolutionCommand(st *state.State, tmpl *model.Template, decisionID string, decision state.NodeState, targetID string) (Command, bool, error) {
+	decisionTemplate, ok := tmpl.Nodes[decisionID]
+	if !ok || decisionTemplate.Performer == nil || decisionTemplate.Performer.Kind != model.PerformerHuman {
+		return Command{}, false, nil
+	}
 	var blockedID string
 	for _, candidateID := range sortedNodeIDs(st.Nodes) {
 		candidate := st.Nodes[candidateID]
