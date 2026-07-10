@@ -979,6 +979,16 @@ func observationEntries(command plan.Command, observation Observation, snapshot 
 			},
 		}, observation.EvidenceRef, at))
 	case plan.CommandKindActivateNode:
+		if command.SourceNodeStatus == state.NodeStatusBlocked {
+			source, sourceOK := snapshot.State.Nodes[command.NodeID]
+			target, targetOK := snapshot.State.Nodes[command.TargetNodeID]
+			if !sourceOK || !targetOK || source.Status != state.NodeStatusBlocked || target.Status != state.NodeStatusPending {
+				// A claimed poison-escalation activation may resume after a
+				// human used process unblock. Observe that stale command as a
+				// no-op; never create an obsolete decision obligation.
+				return entries, nil
+			}
+		}
 		entries = append(entries, nodeEntry(command.TargetNodeID, state.Event{
 			Type:       state.EventNodeStatusSet,
 			NodeStatus: command.NodeStatus,
@@ -1130,9 +1140,10 @@ func performerRequest(run store.RunRecord, command plan.Command) Request {
 	for key, value := range run.Params {
 		params[key] = value
 	}
+	performer := model.InterpolatePerformer(*command.Performer, params)
 	return Request{
 		Command:   command,
-		Performer: *command.Performer,
+		Performer: performer,
 		Input: Input{
 			RunID:   run.ID,
 			NodeID:  command.NodeID,

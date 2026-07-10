@@ -315,7 +315,8 @@ RUN_DIR="$STORE/runs/change-1"
 # outstanding command IDs, and the final run status.
 less "$RUN_DIR/state.json"
 
-# Immutable run metadata and the ordered checksum chain over every event.
+# Immutable run metadata, including the pinned canonical template snapshot,
+# and the ordered checksum chain over every event.
 less "$RUN_DIR/run.json"
 less "$RUN_DIR/manifest.jsonl"
 
@@ -330,7 +331,8 @@ find "$RUN_DIR/artifacts" -type f -print
 tclaude process verify change-1 --store-root "$STORE"
 ```
 
-`state.json` answers what the latest materialized state was; the node/run logs
+`state.json` answers what the latest materialized state was; the template
+snapshot in `run.json` preserves the exact workflow semantics; the node/run logs
 answer which actors and verdicts produced it; `manifest.jsonl` proves ordering
 and integrity; artifact filenames are their content hashes. Together they are
 enough to explain retries, human approvals, escalation decisions, crash

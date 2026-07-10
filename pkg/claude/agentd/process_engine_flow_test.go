@@ -240,6 +240,37 @@ func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
 	assertCapstoneAuditableFromRunDir(t, root, "capstone-cancel")
 }
 
+func TestProcessEngineConsumedDecisionDoesNotRetryLaterPoison(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, _ := createCapstoneRun(t, root, "capstone-repoison", 99)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+
+	capstoneReachDo(t, f, fs, host, "capstone-repoison")
+	capstoneReportAgent(t, f, fs, "capstone-repoison", "implement.do", "commit:repoison-1")
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "capstone-repoison", "implement.do", "commit:repoison-2")
+	capstoneTickWaiting(t, host, "escalate")
+	capstoneReplyHuman(t, fs, "capstone-repoison", "escalate", "retry reviewed once")
+
+	// The released check fails once within its fresh budget, feeds back into
+	// the last allowed do attempt, then fails again into a later poison.
+	capstoneTickWaiting(t, host, "implement.do")
+	capstoneReportAgent(t, f, fs, "capstone-repoison", "implement.do", "commit:repoison-3")
+	result := capstoneTick(t, host)
+	assert.Equal(t, state.RunStatusRunning, result.Status)
+	snapshot, err := fs.LoadRun(t.Context(), "capstone-repoison")
+	require.NoError(t, err)
+	assert.Equal(t, state.NodeStatusBlocked, snapshot.State.Nodes["implement"].Status)
+	assert.Equal(t, state.NodeStatusCompleted, snapshot.State.Nodes["escalate"].Status)
+	assert.Equal(t, 1, blockResolutionCount(snapshot.State), "old human decision must not resolve a later poison")
+	for _, command := range snapshot.State.OutstandingCommands {
+		if command.Kind == state.CommandKindResolveBlock && command.Status == state.CommandStatusIssued {
+			t.Fatalf("old decision emitted a fresh resolution: %#v", command)
+		}
+	}
+}
+
 func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 	f, root := processEngineFlow(t)
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "process-dev", Harness: "claude"})
@@ -828,6 +859,10 @@ func processEngineGet(t *testing.T, f *testharness.Flow, path string) *httptest.
 }
 
 func createEngineRun(t *testing.T, root, runID string, tmpl *model.Template, allowPrograms bool) *store.FS {
+	return createEngineRunWithParams(t, root, runID, tmpl, allowPrograms, nil)
+}
+
+func createEngineRunWithParams(t *testing.T, root, runID string, tmpl *model.Template, allowPrograms bool, params map[string]string) *store.FS {
 	t.Helper()
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
@@ -843,7 +878,7 @@ func createEngineRun(t *testing.T, root, runID string, tmpl *model.Template, all
 	}
 	initial := state.New(runID, templateRecord.Ref, templateRecord.Ref, nodes)
 	initial.Status = state.RunStatusRunning
-	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: templateRecord.Ref}, initial)
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: templateRecord.Ref, Params: params}, initial)
 	require.NoError(t, err)
 	if allowPrograms {
 		at := time.Date(2026, 7, 9, 19, 0, 0, 0, time.UTC)
@@ -889,7 +924,7 @@ func createCapstoneRun(t *testing.T, root, runID string, programPassAt int) (*st
 		"process-capstone", marker, strconv.Itoa(programPassAt),
 	}
 	tmpl.Nodes["implement"] = implement
-	return createEngineRun(t, root, runID, tmpl, true), marker
+	return createEngineRunWithParams(t, root, runID, tmpl, true, map[string]string{"issue": "TCL-278"}), marker
 }
 
 func capstoneReachDo(t *testing.T, f *testharness.Flow, fs *store.FS, host *processengine.Host, runID string) {
@@ -939,6 +974,10 @@ func capstoneReportAgent(t *testing.T, f *testharness.Flow, fs *store.FS, runID,
 	agentRow, err := db.AgentForProcessCommand(commandID)
 	require.NoError(t, err)
 	require.NotNil(t, agentRow)
+	brief, ok := f.World.SpawnInitialPrompt(agentRow.CurrentConvID)
+	require.True(t, ok)
+	assert.Contains(t, brief, "TCL-278")
+	assert.NotContains(t, brief, "{{ params.issue }}")
 	body := map[string]string{"command_id": commandID, "verdict": "pass", "evidence_ref": evidenceRef}
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/"+runID+"/nodes/"+nodeID+"/report", body)
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, agentRow.CurrentConvID))
@@ -990,8 +1029,11 @@ func assertCapstoneAuditableFromRunDir(t *testing.T, root, runID string) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, artifacts)
 
-	// Reconstruction uses only a fresh store pointed at the run directory's
-	// parent; no engine or database state participates in verification.
+	// Remove the store-level template library before reconstruction. A fresh
+	// store can still verify from the template snapshot pinned in run.json plus
+	// the state/log/manifest/artifact files under this run directory.
+	templateArchive := filepath.Join(t.TempDir(), "templates")
+	require.NoError(t, os.Rename(filepath.Join(root, "templates"), templateArchive))
 	fresh, err := store.NewFS(root)
 	require.NoError(t, err)
 	report := processverify.StoreRun(t.Context(), fresh, runID)

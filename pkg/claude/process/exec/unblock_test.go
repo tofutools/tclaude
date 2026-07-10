@@ -239,6 +239,103 @@ func TestStaleDecisionResolutionCommandCannotResolveLaterPoison(t *testing.T) {
 	}
 }
 
+func TestResumeStalePoisonEscalationActivationIsNoOp(t *testing.T) {
+	fs, snapshot := escalationExecutorFixture(t)
+	executor := New(fs, map[model.PerformerKind]Adapter{
+		model.PerformerProgram: ProgramAdapter{DefaultTimeout: 5 * time.Second},
+	})
+	block, _ := driveUntilBlockCommand(t, executor, fs, snapshot.Run.ID)
+	if _, err := executor.Execute(t.Context(), block); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := fs.LoadRun(t.Context(), snapshot.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := plan.Plan(blocked.State, mustTemplate(t, fs, blocked.Run.TemplateRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Kind != plan.CommandKindActivateNode || commands[0].TargetNodeID != "escalate" {
+		t.Fatalf("escalation activation = %#v", commands)
+	}
+	activation := commands[0]
+	claimed, _, err := executor.claim(t.Context(), blocked, activation)
+	if err != nil || !claimed {
+		t.Fatalf("claim escalation activation = %v, err = %v", claimed, err)
+	}
+	if _, err := executor.ResolveBlocked(t.Context(), blockRequest(snapshot.Run.ID, state.BlockDecisionRetry)); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := executor.ResumeOutstanding(t.Context(), snapshot.Run.ID, activation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Nodes["escalate"].Status != state.NodeStatusPending {
+		t.Fatalf("stale activation created obsolete decision: %#v", resumed.Nodes["escalate"])
+	}
+	if resumed.OutstandingCommands[activation.ID].Status != state.CommandStatusObserved {
+		t.Fatalf("stale activation not closed: %#v", resumed.OutstandingCommands[activation.ID])
+	}
+	assertRunVerifies(t, fs, snapshot.Run.ID)
+}
+
+func escalationExecutorFixture(t *testing.T) (*store.FS, store.Snapshot) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := func(script string) *model.Performer {
+		return &model.Performer{Kind: model.PerformerProgram, Run: "/bin/sh", Args: []string{"-c", script}}
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "executor-escalation", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {
+				Type: model.NodeTypeTask, Performer: program("exit 0"),
+				Checks: []model.Step{{ID: "tests", Performer: *program("exit 1")}},
+				Next:   model.Next{"pass": "end", "fail": "escalate"},
+			},
+			"escalate": {
+				Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Continue?"},
+				Next: model.Next{"retry": "work", "cancel": "canceled"},
+			},
+			"end":      {Type: model.NodeTypeEnd},
+			"canceled": {Type: model.NodeTypeEnd, Result: "canceled"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "run_escalation"
+	initial := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "escalate", Type: model.NodeTypeDecision, Status: state.NodeStatusPending},
+		{ID: "end", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "canceled", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	initial.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, initial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Append(t.Context(), runID, 0, []evidence.LogEntry{{
+		At: executorTestTime, Scope: evidence.Scope{Kind: evidence.ScopeRun}, Kind: evidence.EntryKindAdmin,
+		Event: &state.Event{Type: state.EventAdminProgramsAllowed, At: executorTestTime, Actor: "human:test", Reason: "test program opt-in"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.SetProgramsAllowed(t.Context(), runID); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fs, snapshot
+}
+
 func TestBindBlockResolutionPinsParentSelectionToChildGeneration(t *testing.T) {
 	fs, snapshot := compoundExecutorFixture(t, "exit 1")
 	executor := New(fs, map[model.PerformerKind]Adapter{

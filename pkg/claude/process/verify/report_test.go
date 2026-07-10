@@ -1,6 +1,7 @@
 package verify_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,6 +118,51 @@ func TestStoreRunReportsInvalidTamperedEnums(t *testing.T) {
 	}
 	if report.EffectiveStatus != state.RunStatusDirty {
 		t.Fatalf("effective status = %q", report.EffectiveStatus)
+	}
+}
+
+func TestStoreRunRejectsTamperedEmbeddedTemplate(t *testing.T) {
+	fixture := storetest.BuildInitializedFixture(t)
+	snapshot, err := fixture.Store.LoadRun(t.Context(), fixture.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Run.Template == nil {
+		t.Fatal("new run did not pin its template")
+	}
+	snapshot.Run.Template.Name = "tampered after instantiation"
+	data, err := json.MarshalIndent(snapshot.Run, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(fixture.Root, "runs", fixture.RunID, "run.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := verify.StoreRun(t.Context(), fixture.Store, fixture.RunID)
+	if !hasDiagnostic(report, verify.LayerLoad, "embedded_template_mismatch") || report.EffectiveStatus != state.RunStatusInconsistent {
+		t.Fatalf("tampered embedded template report = %#v", report)
+	}
+}
+
+func TestStoreRunLegacyRecordFallsBackToTemplateLibrary(t *testing.T) {
+	fixture := storetest.BuildInitializedFixture(t)
+	snapshot, err := fixture.Store.LoadRun(t.Context(), fixture.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Run.Template = nil
+	data, err := json.MarshalIndent(snapshot.Run, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(fixture.Root, "runs", fixture.RunID, "run.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := verify.StoreRun(t.Context(), fixture.Store, fixture.RunID)
+	if report.HasErrors() {
+		t.Fatalf("legacy template fallback diagnostics = %#v", report.Diagnostics)
 	}
 }
 

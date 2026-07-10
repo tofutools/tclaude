@@ -537,6 +537,43 @@ func TestPlanEscalationDecisionEmitsGenerationBoundResolution(t *testing.T) {
 	}
 }
 
+func TestPlanDoesNotReuseConsumedEscalationDecision(t *testing.T) {
+	st := blockedEscalationState("retry")
+	child := st.Nodes["implement.test.tests"]
+	child.Attempt = 3
+	child.BlockedAttempt = 3
+	st.Nodes["implement.test.tests"] = child
+	parent := st.Nodes["implement"]
+	parent.BlockedAttempt = 3
+	st.Nodes["implement"] = parent
+	resolution := &state.BlockResolution{
+		NodeID: "implement.test.tests", BlockedAttempt: 2, Decision: state.BlockDecisionRetry,
+		Actor: "human:operator", Reason: "retry", EvidenceRef: "human-message:42", Timestamp: fixedTime(),
+	}
+	st.AdminRecords = append(st.AdminRecords, state.AdminRecord{
+		Type: state.EventBlockResolutionRecorded, Actor: resolution.Actor, Reason: resolution.Reason,
+		EvidenceRef: resolution.EvidenceRef, Timestamp: resolution.Timestamp, Resolution: resolution,
+	})
+	got, err := Plan(st, escalationTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("consumed decision replayed into later poison: %#v", got)
+	}
+}
+
+func TestPlanRejectsUnsupportedPoisonEscalationChoice(t *testing.T) {
+	tmpl := escalationTemplate()
+	escalate := tmpl.Nodes["escalate"]
+	escalate.Next["ship-anyway"] = "end"
+	tmpl.Nodes["escalate"] = escalate
+	st := blockedEscalationState("ship-anyway")
+	if _, err := Plan(st, tmpl); err == nil || !strings.Contains(err.Error(), "must retry blocked node") {
+		t.Fatalf("unsupported escalation choice advanced past poison: %v", err)
+	}
+}
+
 func TestPlanRejectsUnauditedSkippedStage(t *testing.T) {
 	st := expandedPlannerState(map[string]state.NodeState{
 		"implement.test.tests": {Status: state.NodeStatusSkipped, Attempt: 1},

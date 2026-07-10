@@ -203,6 +203,9 @@ func planCompletedNode(st *state.State, tmpl *model.Template, nodeID string, nod
 		if command, found, err := escalationResolutionCommand(st, tmpl, nodeID, node, target); err != nil {
 			return nil, err
 		} else if found {
+			if command.Kind == "" {
+				return nil, nil
+			}
 			return []Command{command}, nil
 		}
 		return activationCommand(st, tmpl, nodeID, target)
@@ -242,6 +245,21 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	if blockedID == "" {
 		return Command{}, false, nil
 	}
+	if len(decision.Decisions) == 0 {
+		return Command{}, false, fmt.Errorf("completed escalation decision %q has no decision record", decisionID)
+	}
+	record := decision.Decisions[len(decision.Decisions)-1]
+	blocked := st.Nodes[blockedID]
+	for _, admin := range st.AdminRecords {
+		if admin.Type == state.EventBlockResolutionRecorded && admin.Resolution != nil &&
+			admin.Resolution.NodeID == blocked.BlockedNodeID && admin.Resolution.Actor == record.Actor &&
+			admin.Resolution.EvidenceRef == record.EvidenceRef {
+			// The audited resolution consumed this single-use decision. A later
+			// poison generation must wait for explicit process unblock rather
+			// than silently replaying the old human verdict.
+			return Command{}, true, nil
+		}
+	}
 
 	resolution := state.BlockDecision("")
 	if targetID == blockedID {
@@ -249,13 +267,8 @@ func escalationResolutionCommand(st *state.State, tmpl *model.Template, decision
 	} else if target, ok := tmpl.Nodes[targetID]; ok && target.Type == model.NodeTypeEnd && TerminalRunStatus(target) == state.RunStatusCanceled {
 		resolution = state.BlockDecisionCancel
 	} else {
-		return Command{}, false, nil
+		return Command{}, true, fmt.Errorf("escalation decision %q choice %q must retry blocked node %q or target a canceled end", decisionID, decision.ChosenEdge, blockedID)
 	}
-	if len(decision.Decisions) == 0 {
-		return Command{}, false, fmt.Errorf("completed escalation decision %q has no decision record", decisionID)
-	}
-	record := decision.Decisions[len(decision.Decisions)-1]
-	blocked := st.Nodes[blockedID]
 	cmd := newCommand(CommandKindResolveBlock, st.RunID, decisionID, blockedID, fmt.Sprintf("attempt-%d", blocked.BlockedAttempt), string(resolution))
 	cmd.NodeID = decisionID
 	cmd.TargetNodeID = blockedID
