@@ -74,7 +74,12 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 // and the async dispatcher remain production code.
 func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(25 * time.Millisecond))
+	// The shrunk deadline still has to absorb a healthy probe's fork/exec
+	// under CI load: at 25ms a loaded runner made the NON-hung tmux stub
+	// itself miss the deadline, failing delivery into retry backoff and
+	// flaking the test. One second keeps the hang/deadline contrast while
+	// leaving ~100x headroom over a normal subprocess spawn.
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
 	f.HaveGroup("team")
 	const sender = "nq05-send-bbbb-cccc-000000000001"
 	const recipient = "nq05-recv-bbbb-cccc-000000000002"
@@ -90,11 +95,11 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	// A local tmux command should finish in milliseconds. Sleeping much longer
 	// than the delivery deadline models the anomalous client that parked the
 	// live daemon's worker before ClaimAgentMessageNudge.
-	f.World.Tmux.HangNextCommand("has-session", 5*time.Second)
+	f.World.Tmux.HangNextCommand("has-session", 30*time.Second)
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
 	require.Eventually(t, func() bool {
 		return f.World.Tmux.CommandCount("has-session") >= 1
-	}, time.Second, time.Millisecond, "first worker reaches the hung liveness probe")
+	}, 5*time.Second, time.Millisecond, "first worker reaches the hung liveness probe")
 
 	// Arrive while the first pass is still in flight. The dispatcher marks the
 	// target `again`; once the timed-out probe returns, that pass must release
@@ -103,7 +108,7 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	assert.Equal(t, 2, r2.Pending, "both messages are unclaimed while the probe is hung")
 	drainStarted := time.Now()
 	agentd.WaitForBackgroundForTest()
-	assert.Less(t, time.Since(drainStarted), time.Second,
+	assert.Less(t, time.Since(drainStarted), 10*time.Second,
 		"the command deadline must recover well before the simulated tmux hang ends")
 
 	for _, id := range []int64{r1.ID, r2.ID} {
@@ -122,7 +127,11 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 // must retry the first after its per-message backoff.
 func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(25 * time.Millisecond))
+	// One second, not 25ms: the healthy has-session probe BEFORE the hung
+	// send-keys is a real subprocess spawn, and a loaded CI runner can blow
+	// a 25ms deadline on that alone — delivery then fails into the minute
+	// backoff below and send-keys is never reached (observed flake).
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
 	// Keep the coalesced `again` pass from retrying #1 before we can assert
 	// the failed state. The test switches backoff off explicitly when it is
 	// ready to drive the periodic reaper.
@@ -139,11 +148,11 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	f.HaveMember("team", recipient)
 	f.HaveAliveSession(recipient, "spwn-nq06-r", tmux, "/tmp/work")
 
-	f.World.Tmux.HangNextCommand("send-keys", 500*time.Millisecond)
+	f.World.Tmux.HangNextCommand("send-keys", 30*time.Second)
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
 	require.Eventually(t, func() bool {
 		return f.World.Tmux.CommandCount("send-keys") >= 1
-	}, time.Second, time.Millisecond, "first worker reaches the hung send-keys")
+	}, 5*time.Second, time.Millisecond, "first worker reaches the hung send-keys")
 	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
 	assert.Equal(t, 2, r2.Pending, "in-flight-but-unconfirmed #1 remains part of the durable queue")
 
