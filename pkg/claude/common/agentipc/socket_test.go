@@ -11,10 +11,14 @@ func TestSocketPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), CanonicalSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), CanonicalSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), LegacyHomeSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude", "agentd.sock"), LegacySocketPath())
+	assert.Equal(t, []string{LegacyHomeSocketPath(), LegacySocketPath()}, LegacySocketPaths())
 	assert.Equal(t, CanonicalSocketPath(), ClientSocketPath())
-	assert.Equal(t, []string{CanonicalSocketPath(), LegacySocketPath()}, ClientSocketPaths())
+	assert.Equal(t,
+		[]string{CanonicalSocketPath(), LegacyHomeSocketPath(), LegacySocketPath()},
+		ClientSocketPaths())
 
 	override := filepath.Join(home, "agent.sock")
 	t.Setenv(SocketEnv, override)

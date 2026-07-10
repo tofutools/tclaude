@@ -256,7 +256,7 @@ func TestDashboardConfig_MalformedFileGuardsSave(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	const corrupt = `{ broken json `
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(corrupt), 0o644))
 
@@ -304,7 +304,7 @@ func TestDashboardConfig_GetReportsUnknownKeys(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	// Top-level unknowns (human_notify, zzz_future); a nested unknown
 	// (agent.future_flag); and a sudo override whose map key is
 	// arbitrary-by-design (alice — must NOT be flagged) but which

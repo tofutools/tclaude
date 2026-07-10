@@ -109,9 +109,10 @@ const (
 	pluginCommandMax = 4096
 )
 
-// pluginsPath returns the definitions file path (~/.tclaude/plugins.json).
+// pluginsPath returns the definitions file path
+// (~/.tclaude/data/plugins.json — private daemon state).
 func pluginsPath() string {
-	return filepath.Join(config.ConfigDir(), "plugins.json")
+	return filepath.Join(config.DataDir(), "plugins.json")
 }
 
 // pluginsMu guards the read-modify-write cycle on plugins.json. The
@@ -139,14 +140,17 @@ func loadPlugins() ([]Plugin, error) {
 // savePlugins writes the definitions file atomically (temp + rename),
 // mirroring config.Save so a crash mid-write can't corrupt it.
 func savePlugins(plugins []Plugin) error {
-	if err := os.MkdirAll(config.ConfigDir(), 0o755); err != nil {
+	// plugins.json lives in the private state dir (~/.tclaude/data). Write the
+	// temp file there too so the rename is same-directory and never fails
+	// because data/ does not exist yet.
+	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(pluginsFile{Plugins: plugins}, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(config.ConfigDir(), "plugins-*.json.tmp")
+	tmp, err := os.CreateTemp(config.DataDir(), "plugins-*.json.tmp")
 	if err != nil {
 		return err
 	}

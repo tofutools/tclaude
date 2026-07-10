@@ -290,7 +290,10 @@ func unmappedIdentityRows(d *sql.DB) (map[string]int, error) {
 // ultimate safety net; this is convenience insurance). No-op when the DB path
 // is unknown (e.g. some test harnesses).
 func vacuumBackup(db *sql.DB, suffix string) {
-	path := DBPath()
+	path := globalDBPath
+	if path == "" {
+		path = DBPath()
+	}
 	if path == "" {
 		return
 	}

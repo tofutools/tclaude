@@ -135,11 +135,17 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 		t.Fatalf("on must set sandbox.enabled=true, got %v", on["enabled"])
 	}
 	settings := claudeSandboxSettingsJSON("on")
-	if !strings.Contains(settings, ".tclaude-agentd.sock") {
-		t.Fatal("on must allowlist the agentd socket so the agent can run `tclaude agent`")
+	if !strings.Contains(settings, "~/.tclaude/api/agentd.sock") {
+		t.Fatal("on must allowlist the canonical api/ agentd socket so the agent can run `tclaude agent`")
 	}
-	if strings.Contains(settings, ".tclaude/agentd.sock") {
-		t.Fatal("new Claude sandbox settings must use the state-free canonical socket")
+	// The private-state subtree ~/.tclaude/data must be denied; the socket lives
+	// outside it under api/, so denying data/ never hides the socket.
+	if !strings.Contains(settings, `"~/.tclaude/data"`) {
+		t.Fatal("on must deny the private state subtree ~/.tclaude/data")
+	}
+	// Never deny the whole ~/.tclaude tree — that would hide the api/ socket.
+	if strings.Contains(settings, `"~/.tclaude"`) {
+		t.Fatal("on must deny only ~/.tclaude/data, never the whole ~/.tclaude tree")
 	}
 
 	// off disables the sandbox.

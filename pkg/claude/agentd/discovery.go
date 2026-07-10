@@ -2,11 +2,13 @@ package agentd
 
 import "github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 
-// SocketPath is the canonical, state-free location for agentd's Unix socket.
+// SocketPath is the canonical, agent-reachable location for agentd's Unix
+// socket (~/.tclaude/api/agentd.sock).
 func SocketPath() string {
 	return agentipc.CanonicalSocketPath()
 }
 
-// LegacySocketPath remains live during the migration window for older clients
-// and previously installed Claude sandbox settings.
-func LegacySocketPath() string { return agentipc.LegacySocketPath() }
+// LegacySocketPaths are the pre-split endpoints agentd keeps binding during the
+// migration window so older clients and previously installed sandbox settings
+// still reach a restarted daemon.
+func LegacySocketPaths() []string { return agentipc.LegacySocketPaths() }

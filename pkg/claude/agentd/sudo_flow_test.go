@@ -278,14 +278,14 @@ func TestSudo_Ls_AgentSeesOnlyOwnGrants(t *testing.T) {
 		"agent ls --all body=%s", agentAllRec.Body.String())
 }
 
-// writeSudoConfig drops a config.json under $HOME/.tclaude with the
+// writeSudoConfig drops a config.json under $HOME/.tclaude/data with the
 // supplied agent.sudo block. Each test gets a fresh tmpdir-HOME via
 // testharness.New, so this scopes cleanly and reverts implicitly when
 // the temp dir is removed.
 func writeSudoConfig(t *testing.T, body string) {
 	t.Helper()
-	dir := filepath.Join(os.Getenv("HOME"), ".tclaude")
-	require.NoError(t, os.MkdirAll(dir, 0o755), "mkdir tclaude config dir")
+	dir := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(dir, 0o700), "mkdir tclaude data dir")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644), "write config.json")
 }
 

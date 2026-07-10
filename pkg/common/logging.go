@@ -11,15 +11,12 @@ import (
 )
 
 // OutputLogPath returns the path to the general output log file
+// (~/.tclaude/data/output.log — private daemon state).
 func OutputLogPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".tclaude", "output.log")
+	return TclaudeStatePath("output.log")
 }
 
-// SetupLogging configures slog to write to ~/.tclaude/output.log (file
+// SetupLogging configures slog to write to ~/.tclaude/data/output.log (file
 // only, not stderr).
 //
 // The file is written as JSON lines (one slog.JSONHandler record per
@@ -90,12 +87,43 @@ func fileWriter() *RotatingWriter {
 	if logPath == "" {
 		return nil
 	}
+	// Self-heal the api/data split in the log-open path: every tclaude
+	// invocation opens this log, so — like the DB — relocate a pre-split
+	// ~/.tclaude/output.log into ~/.tclaude/data BEFORE opening the new path,
+	// or the first post-upgrade command would create a fresh log there and
+	// strand the old one (still readable outside the denied data/ subtree).
+	relocateLegacyOutputLog(logPath)
 	rw, err := OpenRotatingWriter(logPath)
 	if err != nil {
 		return nil
 	}
 	activeLogRotator = rw
 	return rw
+}
+
+// relocateLegacyOutputLog moves a pre-split ~/.tclaude/output.log to newPath
+// (~/.tclaude/data/output.log) when the new path does not yet exist. Best
+// effort and idempotent: any error (or an already-present new log, or a missing
+// old one) leaves OpenRotatingWriter to create/append at the new path.
+func relocateLegacyOutputLog(newPath string) {
+	root := TclaudeDir()
+	if root == "" {
+		return
+	}
+	oldPath := filepath.Join(root, "output.log")
+	if oldPath == newPath {
+		return
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return // new log already exists
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		return // no legacy log to move
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o700); err != nil {
+		return
+	}
+	_ = os.Rename(oldPath, newPath)
 }
 
 // multiHandler fans out log records to multiple handlers.

@@ -109,8 +109,9 @@ func codexAgentProfilePath(name string) (string, error) {
 //
 // The profile:
 //   - extends the built-in `:workspace` profile (cwd-subtree writable, $HOME
-//     read-only), then denies all access to ~/.tclaude. The canonical agentd
-//     socket lives outside that private-state tree;
+//     read-only), then denies all access to ~/.tclaude/data (the private-state
+//     subtree). The canonical agentd socket lives under ~/.tclaude/api, outside
+//     that denied tree, so it stays reachable;
 //   - optionally allows writes to the minimal stable root covering the current
 //     repository and safe sibling-worktree container;
 //   - enables the network sandbox and allowlists exactly the agentd socket.
@@ -120,13 +121,16 @@ func codexAgentProfilePath(name string) (string, error) {
 //     socket-only is a tracked follow-up;
 //   - sets `default_permissions` so `codex -p <name>` activates the profile —
 //     the TUI/exec have no `-P` flag, so selection is via default_permissions.
-func codexAgentProfileContent(socketPath, privateStateDir, gitCommonDir string) (string, error) {
+func codexAgentProfileContent(socketPath, privateStateDir, homeDir, gitCommonDir string) (string, error) {
 	if gitCommonDir != "" {
 		if err := validateCodexProfilePath("git common dir", gitCommonDir); err != nil {
 			return "", err
 		}
 	}
-	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, filepath.Dir(privateStateDir))
+	// No cwd at this content-render site, so no exact-git-dir grant; homeDir is
+	// the real $HOME (privateStateDir is ~/.tclaude/data now, so its parent is
+	// no longer home — see codexAgentSandboxPaths).
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, homeDir)
 	return codexAgentProfileContentForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 
@@ -199,11 +203,11 @@ func validateCodexProfilePath(label, path string) error {
 // missing. Written 0600 (it only references a socket path, but matches the
 // private posture of the rest of ~/.codex).
 func EnsureCodexAgentProfile() (string, error) {
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, home, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", err
 	}
-	return ensureCodexAgentProfile(sock, privateStateDir, "")
+	return ensureCodexAgentProfile(sock, privateStateDir, home, "")
 }
 
 // EnsureCodexAgentProfileForCwd is the spawn-time variant of
@@ -214,7 +218,7 @@ func EnsureCodexAgentProfile() (string, error) {
 // root. If cwd is not in a Git repo (or git cannot answer), the base profile is
 // written.
 func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, home, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", err
 	}
@@ -222,7 +226,10 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	writeDirs := GitWorktreeWriteDirs(cwd, gitCommonDir, filepath.Dir(privateStateDir))
+	// Pass the real cwd (for the exact-git-dir grant, #963) and the real $HOME
+	// (the home guard; privateStateDir's parent is no longer home after the
+	// data/ split).
+	writeDirs := GitWorktreeWriteDirs(cwd, gitCommonDir, home)
 	return ensureCodexAgentProfileForWriteDirs(sock, privateStateDir, writeDirs)
 }
 
@@ -230,7 +237,7 @@ func EnsureCodexAgentProfileForCwd(cwd string) (string, error) {
 // after agentd has already resolved, proved, and pinned a Git common dir. It
 // intentionally does not recompute from cwd in the forked session launcher.
 func EnsureCodexAgentProfileForGitCommonDir(gitCommonDir string) (string, error) {
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, home, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", err
 	}
@@ -238,14 +245,14 @@ func EnsureCodexAgentProfileForGitCommonDir(gitCommonDir string) (string, error)
 	if gitCommonDir != "" {
 		gitCommonDir = filepath.Clean(gitCommonDir)
 	}
-	return ensureCodexAgentProfile(sock, privateStateDir, gitCommonDir)
+	return ensureCodexAgentProfile(sock, privateStateDir, home, gitCommonDir)
 }
 
 // EnsureCodexAgentProfileForWriteDirs renders the managed profile from the
 // daemon-proofed permission roots verbatim. The child must not re-derive them
 // from a path the caller could mutate between verification and launch.
 func EnsureCodexAgentProfileForWriteDirs(writeDirs []string) (string, error) {
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, _, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", err
 	}
@@ -273,7 +280,7 @@ func EnsureCodexAgentLaunchProfile(writeDirs []string, launchID string) (profile
 	if err != nil {
 		return "", "", err
 	}
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, _, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", "", err
 	}
@@ -330,20 +337,27 @@ func CodexGitCommonDir(cwd string) (string, error) {
 	return GitCommonDir(cwd)
 }
 
-func codexAgentSandboxPaths() (socketPath, privateStateDir string, err error) {
+// codexAgentSandboxPaths resolves the paths the managed Codex profile pins: the
+// agent-reachable agentd socket (allowlisted), the private-state dir
+// ~/.tclaude/data (denied), and the real $HOME. home is returned explicitly —
+// rather than derived from privateStateDir — because it is the home guard for
+// GitWorktreeWriteDirs, and privateStateDir is now two levels below home
+// (~/.tclaude/data), so filepath.Dir(privateStateDir) is ~/.tclaude, not home.
+func codexAgentSandboxPaths() (socketPath, privateStateDir, homeDir string, err error) {
 	socketPath = agentipc.CanonicalSocketPath()
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return socketPath, filepath.Join(home, ".tclaude"), nil
+	return socketPath, filepath.Join(home, ".tclaude", "data"), home, nil
 }
 
 // ensureCodexAgentProfile is the socket-path-injected core of
 // EnsureCodexAgentProfile, split out so tests can drive it without depending
 // on the caller's $HOME layout.
-func ensureCodexAgentProfile(socketPath, privateStateDir, gitCommonDir string) (string, error) {
-	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, filepath.Dir(privateStateDir))
+func ensureCodexAgentProfile(socketPath, privateStateDir, homeDir, gitCommonDir string) (string, error) {
+	// Base (no-cwd) path: no exact-git-dir grant; homeDir is the real $HOME.
+	writeDirs := GitWorktreeWriteDirs("", gitCommonDir, homeDir)
 	return ensureCodexAgentProfileForWriteDirs(socketPath, privateStateDir, writeDirs)
 }
 
@@ -388,11 +402,11 @@ func codexGitCommonDir(cwd string) (string, error) {
 // canonical content EnsureCodexAgentProfile would write (current). A present
 // but non-current file is a stale/corrupt profile the next spawn self-heals.
 func CodexAgentProfileStatus() (path string, present, current bool, err error) {
-	sock, privateStateDir, err := codexAgentSandboxPaths()
+	sock, privateStateDir, home, err := codexAgentSandboxPaths()
 	if err != nil {
 		return "", false, false, err
 	}
-	baseWant, err := codexAgentProfileContent(sock, privateStateDir, "")
+	baseWant, err := codexAgentProfileContent(sock, privateStateDir, home, "")
 	if err != nil {
 		return "", false, false, err
 	}
@@ -400,7 +414,7 @@ func CodexAgentProfileStatus() (path string, present, current bool, err error) {
 	acceptable = append(acceptable, baseWant)
 	if cwd, gerr := os.Getwd(); gerr == nil {
 		if gitCommonDir, gerr := codexGitCommonDir(cwd); gerr == nil && gitCommonDir != "" {
-			if want, gerr := codexAgentProfileContent(sock, privateStateDir, gitCommonDir); gerr == nil {
+			if want, gerr := codexAgentProfileContent(sock, privateStateDir, home, gitCommonDir); gerr == nil {
 				acceptable = append(acceptable, want)
 			}
 		}

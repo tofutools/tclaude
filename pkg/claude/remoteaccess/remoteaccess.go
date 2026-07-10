@@ -27,7 +27,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // File names under Dir(). The CA key is kept (0600) so `remote-access
@@ -44,8 +44,13 @@ const (
 	clientsSubdir  = "clients"
 )
 
-// Dir returns the remote-access material directory (~/.tclaude/remote-access/).
-func Dir() string { return filepath.Join(config.ConfigDir(), "remote-access") }
+// Dir returns the remote-access material directory
+// (~/.tclaude/data/remote-access/). It holds CA and server private keys, the
+// cookie key, and the auth passphrase hash, so it lives under the private
+// data/ subtree that is denied to sandboxed agents.
+func Dir() string {
+	return common.TclaudeStatePath("remote-access")
+}
 
 func caCertPath() string     { return filepath.Join(Dir(), caCertFile) }
 func caKeyPath() string      { return filepath.Join(Dir(), caKeyFile) }

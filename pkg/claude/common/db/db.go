@@ -4,11 +4,13 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/tofutools/tclaude/pkg/common"
 	_ "modernc.org/sqlite"
 )
 
@@ -20,19 +22,102 @@ var (
 	// sync.Once under such a concurrent caller is a data race that corrupts
 	// the Once's internal mutex and parks the next Open() forever (the macOS
 	// CI 10m timeout). The mutex makes init and reset mutually exclusive.
-	stateMu  sync.Mutex
-	globalDB *sql.DB
-	dbReady  bool
-	initErr  error
+	stateMu      sync.Mutex
+	globalDB     *sql.DB
+	globalDBPath string
+	dbReady      bool
+	initErr      error
 )
 
-// DBPath returns the path to the SQLite database file.
+// DBPath returns the path to the SQLite database file
+// (~/.tclaude/data/db.sqlite — private daemon state).
 func DBPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	dataDir := common.TclaudeDataDir()
+	if dataDir == "" {
 		return ""
 	}
-	return filepath.Join(home, ".tclaude", "db.sqlite")
+	return filepath.Join(dataDir, "db.sqlite")
+}
+
+// relocateLegacyDBFiles moves a pre-split database — ~/.tclaude/db.sqlite plus
+// its -wal/-shm sidecars and any db.sqlite*.bak backups — into ~/.tclaude/data
+// the first time the DB is opened after the api/data split. It self-heals in
+// the load path (not a one-shot migration): whichever process opens the DB
+// first relocates it, so a fresh empty database is never created at the new
+// path while the real one still sits at the old one.
+//
+// It moves the whole group BEFORE the DB is opened, so we never open a
+// db.sqlite whose -wal/-shm were left behind at the old path. The main file is
+// moved LAST because its presence at the new path is the idempotency gate: once
+// ~/.tclaude/data/db.sqlite exists this is a no-op. os.Rename within one
+// filesystem is atomic per file; a rare cross-process race resolves to ENOENT
+// on the source, which is treated as already-moved.
+func relocateLegacyDBFiles() error {
+	if common.PreSplitAgentdReachable() {
+		return nil
+	}
+	root := common.TclaudeDir()
+	dataDir := common.TclaudeDataDir()
+	if root == "" || dataDir == "" {
+		return nil // no home dir; nothing to relocate
+	}
+	newMain := filepath.Join(dataDir, "db.sqlite")
+	if _, err := os.Stat(newMain); err == nil {
+		if _, oldErr := os.Stat(filepath.Join(root, "db.sqlite")); oldErr == nil {
+			return fmt.Errorf("both legacy and new databases exist (%s and %s); refusing to choose one", filepath.Join(root, "db.sqlite"), newMain)
+		} else if !os.IsNotExist(oldErr) {
+			return fmt.Errorf("stat legacy database: %w", oldErr)
+		}
+		return nil // already relocated
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", newMain, err)
+	}
+	oldMain := filepath.Join(root, "db.sqlite")
+	if _, err := os.Stat(oldMain); os.IsNotExist(err) {
+		return nil // no legacy DB (fresh install)
+	} else if err != nil {
+		return fmt.Errorf("stat %s: %w", oldMain, err)
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return fmt.Errorf("create data dir %s: %w", dataDir, err)
+	}
+	// Sidecars and backups first; the main file last (idempotency gate).
+	names := []string{"db.sqlite-wal", "db.sqlite-shm"}
+	if baks, err := filepath.Glob(filepath.Join(root, "db.sqlite*.bak")); err == nil {
+		for _, bak := range baks {
+			names = append(names, filepath.Base(bak))
+		}
+	}
+	names = append(names, "db.sqlite")
+	for _, name := range names {
+		if err := renameIfAbsentAtDest(filepath.Join(root, name), filepath.Join(dataDir, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// renameIfAbsentAtDest moves oldPath to newPath unless newPath already exists
+// (idempotent) or oldPath is gone (nothing to move, or a racing mover took it).
+func renameIfAbsentAtDest(oldPath, newPath string) error {
+	if _, err := os.Stat(newPath); err == nil {
+		if _, oldErr := os.Stat(oldPath); oldErr == nil {
+			return fmt.Errorf("both migration source and destination exist (%s and %s)", oldPath, newPath)
+		} else if !os.IsNotExist(oldErr) {
+			return fmt.Errorf("stat %s: %w", oldPath, oldErr)
+		}
+		return nil // already at destination
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", newPath, err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil // source absent — never existed, or a racing mover won
+		}
+		return fmt.Errorf("move %s -> %s: %w", oldPath, newPath, err)
+	}
+	slog.Info("relocated legacy database file into data dir", "from", oldPath, "to", newPath)
+	return nil
 }
 
 // Open returns the singleton database connection, creating and migrating
@@ -49,12 +134,47 @@ func Open() (*sql.DB, error) {
 	// on every call — same memoization the previous sync.Once gave.
 	dbReady = true
 
+	// Resolve the layout once. Re-checking daemon reachability between choosing
+	// a path and relocating creates a TOCTOU hole: if an old daemon exits in
+	// that gap, we could move the legacy DB to data/ and then open the now-empty
+	// legacy path. When a pre-split daemon is observed, keep using its layout for
+	// this whole Open; otherwise relocate first and use the canonical path.
+	preSplitDaemon := common.PreSplitAgentdReachable()
 	dbPath := DBPath()
+	if preSplitDaemon {
+		dbPath = filepath.Join(common.TclaudeDir(), "db.sqlite")
+		if _, err := os.Stat(dbPath); err != nil {
+			if os.IsNotExist(err) {
+				initErr = fmt.Errorf("pre-split agentd is live but its legacy database is missing at %s; refusing to create an empty replacement", dbPath)
+			} else {
+				initErr = fmt.Errorf("stat live legacy database %s: %w", dbPath, err)
+			}
+			return globalDB, initErr
+		}
+	}
 	if dbPath == "" {
 		initErr = os.ErrNotExist
 		return globalDB, initErr
 	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	// Self-heal the api/data split in the load path: relocate a pre-split
+	// database (and its sidecars/backups) from ~/.tclaude into ~/.tclaude/data
+	// BEFORE creating or opening anything at the new path. Done here — rather
+	// than only at daemon startup — so whichever process opens the DB first
+	// (the daemon, or a CLI command run after an upgrade but before the daemon
+	// restarts) moves the real database instead of silently creating a fresh
+	// empty one beside it and stranding the old one.
+	if !preSplitDaemon {
+		if err := relocateLegacyDBFiles(); err != nil {
+			initErr = err
+			return globalDB, initErr
+		}
+		dbPath = filepath.Join(common.TclaudeDataDir(), "db.sqlite")
+	}
+	globalDBPath = dbPath
+	// filepath.Dir(dbPath) is ~/.tclaude/data — private daemon state, so create
+	// it 0700 (the daemon's startup migration does the same). Access is really
+	// gated by the sandbox config, but 0700 keeps the state private by default.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		initErr = err
 		return globalDB, initErr
 	}
@@ -108,7 +228,7 @@ func Open() (*sql.DB, error) {
 	// tests in this process reuse it via the fast path above. No-op when
 	// we just seeded from the template or in production.
 	if !seededFromTemplate {
-		maybeCaptureTemplate(globalDB, dbPath)
+		maybeCaptureTemplate(globalDB)
 	}
 	return globalDB, initErr
 }
@@ -125,6 +245,7 @@ func Close() {
 		}
 		globalDB = nil
 	}
+	globalDBPath = ""
 	dbReady = false
 	initErr = nil
 }
@@ -140,6 +261,7 @@ func ResetForTest() {
 		_ = globalDB.Close()
 		globalDB = nil
 	}
+	globalDBPath = ""
 	dbReady = false
 	initErr = nil
 	// Arm the migration-template fast path. The first Open in this process

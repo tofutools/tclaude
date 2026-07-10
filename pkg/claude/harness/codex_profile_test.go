@@ -12,12 +12,13 @@ import (
 
 // TestCodexAgentProfileContent pins the managed profile's TOML shape — the
 // exact form verified end-to-end against codex-cli 0.144.0 (extends
-// :workspace, denies ~/.tclaude, allowlists the state-free agentd socket, and
-// sets default_permissions so `codex -p <name>` activates it).
+// :workspace, denies the private-state subtree ~/.tclaude/data, allowlists the
+// agent-reachable agentd socket under ~/.tclaude/api, and sets
+// default_permissions so `codex -p <name>` activates it).
 func TestCodexAgentProfileContent(t *testing.T) {
-	sock := "/home/dev/.tclaude-agentd.sock"
-	stateDir := "/home/dev/.tclaude"
-	got, err := codexAgentProfileContent(sock, stateDir, "")
+	sock := "/home/dev/.tclaude/api/agentd.sock"
+	stateDir := "/home/dev/.tclaude/data"
+	got, err := codexAgentProfileContent(sock, stateDir, "/home/dev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,12 +26,12 @@ func TestCodexAgentProfileContent(t *testing.T) {
 		`default_permissions = "tclaude-agent"`,
 		`[permissions.tclaude-agent]`,
 		`extends = ":workspace"`,
-		`"/home/dev/.tclaude" = "none"`,
-		`"/home/dev/.tclaude-agentd.sock" = "read"`,
+		`"/home/dev/.tclaude/data" = "none"`,
+		`"/home/dev/.tclaude/api/agentd.sock" = "read"`,
 		`[permissions.tclaude-agent.network]`,
 		`enabled = true`,
 		`[permissions.tclaude-agent.network.unix_sockets]`,
-		`"/home/dev/.tclaude-agentd.sock" = "allow"`,
+		`"/home/dev/.tclaude/api/agentd.sock" = "allow"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("profile content missing %q\n--- got ---\n%s", want, got)
@@ -43,8 +44,9 @@ func TestCodexAgentProfileContent(t *testing.T) {
 // making the rest of $HOME writable.
 func TestCodexAgentProfileContent_WithGitCommonDir(t *testing.T) {
 	got, err := codexAgentProfileContent(
-		"/home/dev/.tclaude-agentd.sock",
-		"/home/dev/.tclaude",
+		"/home/dev/.tclaude/api/agentd.sock",
+		"/home/dev/.tclaude/data",
+		"/home/dev",
 		"/home/dev/git/project/.git",
 	)
 	if err != nil {
@@ -74,7 +76,7 @@ func TestCodexAgentProfileContent_RejectsUnsafePath(t *testing.T) {
 		"/home/dev/\t/agentd.sock",       // control char
 		`/home/dev\agentd.sock`,          // backslash
 	} {
-		if _, err := codexAgentProfileContent(bad, "/home/dev/.tclaude", ""); err == nil {
+		if _, err := codexAgentProfileContent(bad, "/home/dev/.tclaude/data", "/home/dev", ""); err == nil {
 			t.Fatalf("expected rejection of unsafe socket path %q", bad)
 		}
 	}
@@ -84,7 +86,7 @@ func TestCodexAgentProfileContent_RejectsUnsafePath(t *testing.T) {
 		"/home/dev/\t/.tclaude",
 		`/home/dev\.tclaude`,
 	} {
-		if _, err := codexAgentProfileContent("/home/dev/.tclaude-agentd.sock", bad, ""); err == nil {
+		if _, err := codexAgentProfileContent("/home/dev/.tclaude/api/agentd.sock", bad, "/home/dev", ""); err == nil {
 			t.Fatalf("expected rejection of unsafe private state dir %q", bad)
 		}
 	}
@@ -94,7 +96,7 @@ func TestCodexAgentProfileContent_RejectsUnsafePath(t *testing.T) {
 		"/home/dev/project/\t.git", // control char
 		`/home/dev/project\.git`,   // backslash
 	} {
-		if _, err := codexAgentProfileContent("/home/dev/.tclaude-agentd.sock", "/home/dev/.tclaude", bad); err == nil {
+		if _, err := codexAgentProfileContent("/home/dev/.tclaude/api/agentd.sock", "/home/dev/.tclaude/data", "/home/dev", bad); err == nil {
 			t.Fatalf("expected rejection of unsafe git common dir %q", bad)
 		}
 	}
@@ -125,9 +127,9 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 
-	sock := "/home/dev/.tclaude-agentd.sock"
-	stateDir := "/home/dev/.tclaude"
-	path, err := ensureCodexAgentProfile(sock, stateDir, "")
+	sock := "/home/dev/.tclaude/api/agentd.sock"
+	stateDir := "/home/dev/.tclaude/data"
+	path, err := ensureCodexAgentProfile(sock, stateDir, "/home/dev", "")
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -139,13 +141,13 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	content, _ := codexAgentProfileContent(sock, stateDir, "")
+	content, _ := codexAgentProfileContent(sock, stateDir, "/home/dev", "")
 	if string(first) != content {
 		t.Fatalf("written content mismatch\n--- got ---\n%s\n--- want ---\n%s", first, content)
 	}
 
 	// Idempotent: second call leaves identical bytes.
-	if _, err := ensureCodexAgentProfile(sock, stateDir, ""); err != nil {
+	if _, err := ensureCodexAgentProfile(sock, stateDir, "/home/dev", ""); err != nil {
 		t.Fatalf("ensure (2nd): %v", err)
 	}
 	again, _ := os.ReadFile(path)
@@ -157,7 +159,7 @@ func TestEnsureCodexAgentProfile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("garbage\n"), 0o600); err != nil {
 		t.Fatalf("corrupt: %v", err)
 	}
-	if _, err := ensureCodexAgentProfile(sock, stateDir, ""); err != nil {
+	if _, err := ensureCodexAgentProfile(sock, stateDir, "/home/dev", ""); err != nil {
 		t.Fatalf("ensure (heal): %v", err)
 	}
 	healed, _ := os.ReadFile(path)

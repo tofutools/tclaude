@@ -23,7 +23,7 @@ import (
 //   - on      : force the OS sandbox ON for this session via `--settings`,
 //     even if settings.json leaves it off. Reuses the hardening
 //     block (ClaudeSandboxOnBlock) so the agentd socket stays
-//     reachable and ~/.tclaude is hidden.
+//     reachable and ~/.tclaude/data is hidden.
 //   - off     : force the OS sandbox OFF for this session via `--settings`,
 //     even if settings.json enables it.
 const (
@@ -32,11 +32,27 @@ const (
 	ClaudeSandboxOff     = "off"
 )
 
-// tclaudeAgentdSocketTilde is agentd's state-free canonical Unix socket as a
-// ~-relative path, the form Claude Code's settings.json sandbox rules expect
-// (it expands ~ itself). It deliberately sits outside ~/.tclaude so that tree
-// can remain denied without a child-path exception.
-const tclaudeAgentdSocketTilde = "~/.tclaude-agentd.sock"
+// tclaude sandbox path tokens as ~-relative strings, the form Claude Code's
+// settings.json sandbox rules expect (it expands ~ itself).
+//
+// The canonical agentd socket lives under ~/.tclaude/api — an agent-reachable
+// surface OUTSIDE the denied private-state subtree ~/.tclaude/data — so the
+// socket stays reachable while all daemon state stays hidden under one deny
+// rule. The two legacy sockets are kept allowlisted for the migration window;
+// both sit outside ~/.tclaude/data, so the deny does not cover them.
+const (
+	tclaudeAgentdSocketTilde      = "~/.tclaude/api/agentd.sock"
+	tclaudeLegacyHomeSocketTilde  = "~/.tclaude-agentd.sock"
+	tclaudeLegacyRootSocketTilde  = "~/.tclaude/agentd.sock"
+	tclaudePrivateStateDirTilde   = "~/.tclaude/data"
+	tclaudeClaudeSessionsDirTilde = "~/.claude/sessions"
+)
+
+// tclaudeAgentdSocketTildes lists every agentd socket a sandboxed agent may need
+// to reach: the canonical api/ socket plus the retained legacy endpoints.
+func tclaudeAgentdSocketTildes() []any {
+	return []any{tclaudeAgentdSocketTilde, tclaudeLegacyHomeSocketTilde, tclaudeLegacyRootSocketTilde}
+}
 
 // claudeSandbox is Claude Code's SandboxCatalog. The default is `inherit`: a
 // tclaude-spawned Claude agent's containment is whatever the operator already
@@ -99,7 +115,7 @@ func (claudeSandbox) ValidateMode(mode string) (string, error) {
 // peers' state). Keyed by mode value.
 var claudeSandboxModeHelp = map[string]string{
 	ClaudeSandboxInherit: "Use your Claude Code settings.json sandbox config as-is, including any tclaude hardening already installed.",
-	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable and ~/.tclaude is hidden, so the agent can still run `tclaude agent` but can't read other agents' state.",
+	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable and ~/.tclaude/data (all daemon state) is hidden, so the agent can still run `tclaude agent` but can't read other agents' state.",
 	ClaudeSandboxOff:     "⚠ Force the OS sandbox OFF for this session, even if settings.json enables it. The agent's Bash runs unconfined.",
 }
 
@@ -118,10 +134,10 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // never drift (docs/sandbox-hardening.md is the human-facing source of truth).
 //
 // It enables the sandbox AND preserves the two properties a daemon-spawned
-// agent needs: the state-free agentd Unix socket stays reachable (network
-// allowlist + filesystem read allowance) so the agent can still run
-// `tclaude agent`, and
-// ~/.tclaude / ~/.claude/sessions are denied (read + write) so a sandboxed
+// agent needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
+// reachable (network allowlist + filesystem read allowance) so the agent can
+// still run `tclaude agent`, and
+// ~/.tclaude/data / ~/.claude/sessions are denied (read + write) so a sandboxed
 // agent can neither tamper with nor snoop on the shared daemon state. The
 // block is cross-platform: macOS honors per-path `allowUnixSockets`, Linux/WSL2
 // the broader `allowAllUnixSockets` — listing both keeps one block valid on
@@ -136,13 +152,13 @@ func ClaudeSandboxOnBlock() map[string]any {
 	return map[string]any{
 		"enabled": true,
 		"network": map[string]any{
-			"allowUnixSockets":    []any{tclaudeAgentdSocketTilde},
+			"allowUnixSockets":    tclaudeAgentdSocketTildes(),
 			"allowAllUnixSockets": true,
 		},
 		"filesystem": map[string]any{
-			"denyWrite": []any{"~/.tclaude", "~/.claude/sessions"},
-			"denyRead":  []any{"~/.tclaude", "~/.claude/sessions"},
-			"allowRead": []any{tclaudeAgentdSocketTilde},
+			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
+			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
+			"allowRead": tclaudeAgentdSocketTildes(),
 		},
 	}
 }

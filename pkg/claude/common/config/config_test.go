@@ -333,7 +333,7 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateConfigHome(t)
-			require.NoError(t, os.MkdirAll(ConfigDir(), 0o755))
+			require.NoError(t, os.MkdirAll(DataDir(), 0o700))
 			require.NoError(t, os.WriteFile(ConfigPath(), []byte(tc.file), 0o644))
 			c, err := Load()
 			require.NoError(t, err)
@@ -346,8 +346,10 @@ func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
 	isolateConfigHome(t)
 	t.Setenv(agentipc.SocketEnv, "")
 	t.Setenv(codexPermissionProfileEnv, "")
-	require.NoError(t, os.MkdirAll(ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"log_level":"debug"}`), 0o600))
+	// Make the whole ~/.tclaude subtree untraversable so reading
+	// data/config.json fails the way a sandbox-denied operator config would.
 	require.NoError(t, os.Chmod(ConfigDir(), 0))
 	t.Cleanup(func() { _ = os.Chmod(ConfigDir(), 0o755) })
 

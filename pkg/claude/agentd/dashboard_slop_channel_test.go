@@ -97,7 +97,7 @@ func TestDashboardSlopChannel_GetDegradesHandEditedUnknown(t *testing.T) {
 	// A hand-edited unknown channel parses fine (it's a string); Validate
 	// flags it in the Config tab, but GET must still hand the browser a
 	// streamable channel rather than a dead id.
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(),
 		[]byte(`{"slop":{"channel":"bogus"}}`), 0o644))
 
@@ -110,7 +110,7 @@ func TestDashboardSlopChannel_PostRefusesCorruptConfig(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
-	require.NoError(t, os.MkdirAll(config.ConfigDir(), 0o755))
+	require.NoError(t, os.MkdirAll(config.DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte("{not json"), 0o644))
 
 	w, resp := serveSlopChannel(t, http.MethodPost, `{"channel":"lush"}`)

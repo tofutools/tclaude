@@ -3045,13 +3045,18 @@ func importLegacyData(db *sql.DB) error {
 	importedSessions := importLegacySessions(db, home)
 	importedNotify := importLegacyNotifyState(db, home)
 
-	// Move debug.log from old location (~/.tclaude/claude-sessions/debug.log)
-	// to new location (~/.tclaude/debug.log) before renaming the directory.
+	// Move debug.log from the oldest location
+	// (~/.tclaude/claude-sessions/debug.log) into the private data dir
+	// (~/.tclaude/data/debug.log) before renaming the directory. This runs
+	// during DB open, i.e. after the api/data split relocation, so its target
+	// is the data/ subtree (denied to sandboxed agents), not the tclaude root.
 	oldDebugLog := filepath.Join(home, ".tclaude", "claude-sessions", "debug.log")
-	newDebugLog := filepath.Join(home, ".tclaude", "debug.log")
+	newDebugLog := filepath.Join(home, ".tclaude", "data", "debug.log")
 	if _, err := os.Stat(oldDebugLog); err == nil {
 		if _, err := os.Stat(newDebugLog); os.IsNotExist(err) {
-			if err := os.Rename(oldDebugLog, newDebugLog); err != nil {
+			if err := os.MkdirAll(filepath.Dir(newDebugLog), 0o700); err != nil {
+				slog.Warn("failed to create data dir for debug.log", "error", err)
+			} else if err := os.Rename(oldDebugLog, newDebugLog); err != nil {
 				slog.Warn("failed to move debug.log", "error", err)
 			}
 		}
@@ -3059,14 +3064,14 @@ func importLegacyData(db *sql.DB) error {
 
 	if importedSessions {
 		oldDir := filepath.Join(home, ".tclaude", "claude-sessions")
-		newDir := oldDir + ".migrated"
+		newDir := filepath.Join(home, ".tclaude", "data", "claude-sessions.migrated")
 		if err := os.Rename(oldDir, newDir); err != nil {
 			slog.Warn("failed to rename legacy sessions dir", "error", err)
 		}
 	}
 	if importedNotify {
 		oldDir := filepath.Join(home, ".tclaude", "notify-state")
-		newDir := oldDir + ".migrated"
+		newDir := filepath.Join(home, ".tclaude", "data", "notify-state.migrated")
 		if err := os.Rename(oldDir, newDir); err != nil {
 			slog.Warn("failed to rename legacy notify-state dir", "error", err)
 		}

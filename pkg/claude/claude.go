@@ -60,7 +60,10 @@ func Cmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
-	cmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	cmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if err := config.RelocateLegacyState(); err != nil {
+			return fmt.Errorf("relocate legacy tclaude state: %w", err)
+		}
 		cfg, cfgErr := config.Load()
 		finalLogLevel := logLevel
 		if !cmd.Flags().Changed("log-level") && cfgErr == nil && cfg.LogLevel != "" {
@@ -75,6 +78,7 @@ func Cmd() *cobra.Command {
 		if cfgErr == nil && cfg.Terminal != "" {
 			terminal.SetPreferred(cfg.Terminal)
 		}
+		return nil
 	}
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
